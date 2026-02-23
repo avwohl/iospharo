@@ -143,6 +143,7 @@ namespace ffi {
 // Forward declarations
 void registerSDL2Stubs();
 void registerFreeTypeStubs();
+void registerLibgit2Stubs();
 
 // Module handles
 static bool sInitialized = false;
@@ -158,11 +159,10 @@ bool initializeFFI() {
     // This makes OSWindow think SDL2 is available
     registerSDL2Stubs();
 
-    // On Mac Catalyst, let real FreeType be found via dlsym (Homebrew installs it).
-    // On iOS, register stubs since FreeType is unavailable.
-#if !TARGET_OS_MACCATALYST
+    // Register stubs for libraries not available on iOS/Mac Catalyst.
+    // Stubs return error codes so the image falls back gracefully.
     registerFreeTypeStubs();
-#endif
+    registerLibgit2Stubs();
 
     return true;
 }
@@ -202,10 +202,24 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // that crashes on our fake 0xDEADBEEF window handles).
     if (funcName.compare(0, 4, "SDL_") == 0) {
         fprintf(stderr, "[SDL-STUB] MISSING stub for: %s (returning no-op)\n", funcName.c_str());
-        // Generic no-op: returns 0 (safe for int/void/pointer returns).
-        // On ARM64, extra arguments are in registers and harmlessly ignored.
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
         void* func = reinterpret_cast<void*>(genericSDLNoOp);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+
+    // For FT_ (FreeType) functions, return error stub
+    if (funcName.compare(0, 3, "FT_") == 0) {
+        static auto genericFTError = +[]() -> intptr_t { return 1; };  // FT_Err generic
+        void* func = reinterpret_cast<void*>(genericFTError);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+
+    // For git_ (libgit2) functions, return error stub
+    if (funcName.compare(0, 4, "git_") == 0) {
+        static auto genericGitError = +[]() -> intptr_t { return -1; };  // GIT_ERROR
+        void* func = reinterpret_cast<void*>(genericGitError);
         sFunctionCache[funcName] = func;
         return func;
     }
@@ -1627,6 +1641,33 @@ static int stub_FT_Select_Charmap(void* face, int encoding) { return 1; }
 static void* stub_FT_Library_Version(void* lib, int* maj, int* min, int* pat) {
     if (maj) *maj = 0; if (min) *min = 0; if (pat) *pat = 0;
     return nullptr;
+}
+
+// ========== libgit2 stubs ==========
+// libgit2 is bundled with reference VM but not available on iOS/Mac Catalyst.
+// Register stubs that return error codes so Iceberg/LGit falls back gracefully.
+
+static int stub_git_libgit2_init() {
+    static int logged = 0;
+    if (!logged++) fprintf(stderr, "[GIT-STUB] git_libgit2_init -> error (libgit2 not available)\n");
+    return -1;  // GIT_ERROR
+}
+
+static int stub_git_libgit2_shutdown() { return 0; }
+
+static void stub_git_libgit2_version(int* major, int* minor, int* rev) {
+    if (major) *major = 0;
+    if (minor) *minor = 0;
+    if (rev) *rev = 0;
+}
+
+// Generic no-op for git_ functions we don't explicitly stub — returns -1 (GIT_ERROR)
+static int stub_git_generic_error() { return -1; }
+
+void registerLibgit2Stubs() {
+    registerFunction("git_libgit2_init", reinterpret_cast<void*>(stub_git_libgit2_init));
+    registerFunction("git_libgit2_shutdown", reinterpret_cast<void*>(stub_git_libgit2_shutdown));
+    registerFunction("git_libgit2_version", reinterpret_cast<void*>(stub_git_libgit2_version));
 }
 
 void registerFreeTypeStubs() {
