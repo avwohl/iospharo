@@ -177,11 +177,15 @@ if(APPLE)
 endif()
 
 # Third-party xcframeworks for iOS (built by scripts/build-third-party.sh)
-foreach(LIB_NAME cairo freetype pixman harfbuzz libpng16)
-    set(LIB_XCF ${CMAKE_SOURCE_DIR}/${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+# Each entry: xcframework_name:library_filename
+foreach(LIB_ENTRY cairo:libcairo.a freetype:libfreetype.a pixman:libpixman-1.a harfbuzz:libharfbuzz.a libpng16:libpng16.a)
+    string(REPLACE ":" ";" LIB_PARTS ${LIB_ENTRY})
+    list(GET LIB_PARTS 0 XCF_NAME)
+    list(GET LIB_PARTS 1 LIB_FILE)
+    set(LIB_XCF ${CMAKE_SOURCE_DIR}/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/${LIB_FILE})
     if(EXISTS ${LIB_XCF})
         target_link_libraries(PharoVMCore ${LIB_XCF})
-        message(STATUS "Using ${LIB_NAME}: ${LIB_XCF}")
+        message(STATUS "Using ${XCF_NAME}: ${LIB_XCF}")
     endif()
 endforeach()
 
