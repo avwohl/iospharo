@@ -73,6 +73,7 @@ setup_ios_simulator_arm64() {
     # Autotools config.sub doesn't understand iOS triples.
     # Use aarch64-apple-darwin and rely on CFLAGS for actual target.
     HOST_TRIPLE="aarch64-apple-darwin"
+    CMAKE_ARCH="arm64"
     MESON_CPU="aarch64"
 }
 
@@ -87,6 +88,7 @@ setup_ios_simulator_x86_64() {
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
     PLATFORM_NAME="ios-simulator-x86_64"
     HOST_TRIPLE="x86_64-apple-darwin"
+    CMAKE_ARCH="x86_64"
     MESON_CPU="x86_64"
 }
 
@@ -101,6 +103,7 @@ setup_maccatalyst_arm64() {
     export LDFLAGS="-arch arm64 -isysroot $SDKROOT -target arm64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-arm64"
     HOST_TRIPLE="aarch64-apple-darwin"
+    CMAKE_ARCH="arm64"
     MESON_CPU="aarch64"
 }
 
@@ -115,6 +118,7 @@ setup_maccatalyst_x86_64() {
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -target x86_64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-x86_64"
     HOST_TRIPLE="x86_64-apple-darwin"
+    CMAKE_ARCH="x86_64"
     MESON_CPU="x86_64"
 }
 
@@ -210,6 +214,7 @@ build_cmake() {
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+        -DCMAKE_OSX_ARCHITECTURES="$CMAKE_ARCH" \
         -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
@@ -251,6 +256,7 @@ build_freetype() {
         -DCMAKE_INSTALL_PREFIX="$prefix" \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
+        -DCMAKE_OSX_ARCHITECTURES="$CMAKE_ARCH" \
         -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
@@ -351,6 +357,7 @@ build_harfbuzz() {
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+        -DCMAKE_OSX_ARCHITECTURES="$CMAKE_ARCH" \
         -DCMAKE_FIND_ROOT_PATH="$prefix" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
