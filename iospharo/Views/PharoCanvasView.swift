@@ -656,9 +656,16 @@ class PharoCanvasViewController: UIViewController {
     @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
+        let button: Int
+        if bridge.middleClickActive {
+            button = IOS_BLUE_BUTTON
+            bridge.middleClickActive = false
+        } else {
+            button = IOS_RED_BUTTON
+        }
         bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        bridge.sendTouchUp(at: point)
+        bridge.sendTouchDown(at: point, buttons: button)
+        bridge.sendTouchUp(at: point, buttons: button)
     }
 
     @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
@@ -693,12 +700,12 @@ class PharoCanvasViewController: UIViewController {
         switch gesture.state {
         case .began:
             bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: IOS_BLUE_BUTTON)
+            bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
             bridge.hapticFeedback(style: .medium)
         case .changed:
-            bridge.sendTouchMoved(to: point, buttons: IOS_BLUE_BUTTON)
+            bridge.sendTouchMoved(to: point, buttons: IOS_YELLOW_BUTTON)
         case .ended, .cancelled:
-            bridge.sendTouchUp(at: point, buttons: IOS_BLUE_BUTTON)
+            bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
         default:
             break
         }

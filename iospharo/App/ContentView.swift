@@ -62,8 +62,15 @@ struct ContentView: View {
     // MARK: - Views
 
     private var pharoCanvas: some View {
-        PharoCanvasView(bridge: bridge)
-            .edgesIgnoringSafeArea(.all)
+        ZStack {
+            PharoCanvasView(bridge: bridge)
+                .edgesIgnoringSafeArea(.all)
+
+            #if !targetEnvironment(macCatalyst)
+            // Floating middle-click button (iOS only)
+            MiddleClickButton(isActive: $bridge.middleClickActive)
+            #endif
+        }
     }
 
     private var downloadingView: some View {
@@ -439,6 +446,55 @@ struct DiagnosticsView: View {
         return (readBack == 0xCAFEBABE, readBack == 0xCAFEBABE ? "Roundtrip OK" : "Corrupted")
     }
 }
+
+// MARK: - Floating Middle-Click Button (iOS only)
+
+#if !targetEnvironment(macCatalyst)
+struct MiddleClickButton: View {
+    @Binding var isActive: Bool
+    @State private var offset: CGSize = .zero
+    @State private var dragOffset: CGSize = .zero
+
+    var body: some View {
+        VStack {
+            Spacer()
+            HStack {
+                Spacer()
+                Button(action: {
+                    isActive.toggle()
+                }) {
+                    Image(systemName: "computermouse.fill")
+                        .font(.system(size: 18))
+                        .foregroundColor(isActive ? .white : .white.opacity(0.7))
+                        .frame(width: 44, height: 44)
+                        .background(isActive ? Color.blue : Color.black.opacity(0.4))
+                        .clipShape(Circle())
+                        .overlay(
+                            Circle()
+                                .stroke(isActive ? Color.white : Color.clear, lineWidth: 2)
+                        )
+                }
+                .offset(x: offset.width + dragOffset.width,
+                        y: offset.height + dragOffset.height)
+                .gesture(
+                    DragGesture()
+                        .onChanged { value in
+                            dragOffset = value.translation
+                        }
+                        .onEnded { value in
+                            offset.width += value.translation.width
+                            offset.height += value.translation.height
+                            dragOffset = .zero
+                        }
+                )
+                .padding(.trailing, 16)
+                .padding(.bottom, 80)
+            }
+        }
+        .allowsHitTesting(true)
+    }
+}
+#endif
 
 // MARK: - Preview
 

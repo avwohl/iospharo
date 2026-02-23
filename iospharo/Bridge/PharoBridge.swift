@@ -25,6 +25,9 @@ class PharoBridge: ObservableObject {
     @Published var displayWidth: Int = 1024
     @Published var displayHeight: Int = 768
 
+    /// Middle-click mode toggle (iOS floating button)
+    @Published var middleClickActive = false
+
     private var imagePath: String?
 
     /// Display update callback (stored to prevent deallocation)

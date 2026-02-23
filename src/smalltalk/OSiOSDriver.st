@@ -253,11 +253,11 @@ processMouseWheelEvent: anEventBuffer
 
 buttonFromBits: buttonBits
     "Convert VM button bitmask to OSWindow button number.
-    VM: red=1, blue=2, yellow=4 (bitmask)
+    VM: red=4, yellow=2, blue=1 (standard Pharo encoding)
     OSWindow: 1=left, 2=right, 3=middle"
-    (buttonBits bitAnd: 1) ~= 0 ifTrue: [^ 1].
-    (buttonBits bitAnd: 2) ~= 0 ifTrue: [^ 2].
-    (buttonBits bitAnd: 4) ~= 0 ifTrue: [^ 3].
+    (buttonBits bitAnd: 4) ~= 0 ifTrue: [^ 1].   "red → left"
+    (buttonBits bitAnd: 2) ~= 0 ifTrue: [^ 2].   "yellow → right"
+    (buttonBits bitAnd: 1) ~= 0 ifTrue: [^ 3].   "blue → middle"
     ^ 1!
 
 applyModifiers: modifierBits toEvent: osEvent
