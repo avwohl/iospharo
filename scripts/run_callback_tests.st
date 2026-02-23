@@ -9,14 +9,6 @@ Object subclass: #CallbackTestRunner
 runAllTests
   | stream classes testCount passCount failCount errorCount skipCount |
 
-  "Switch to NonInteractiveUIManager so callback dispatch works.
-   StartupUIManager doesn't implement executeCallback: / runStrategy."
-  UIManager default: NonInteractiveUIManager new.
-
-  "Force TFFI to re-initialize its callback runner with the new UIManager"
-  (Smalltalk globals at: #TFCallbackQueue ifAbsent: [nil]) ifNotNil: [:cls |
-    cls uniqueInstance resetRunStrategy].
-
   stream := '/tmp/callback_test_results.txt' asFileReference writeStream.
   stream truncate.
 

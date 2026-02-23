@@ -1926,6 +1926,13 @@ private:
     VMCallbackContext* callbackContextStack_[MaxCallbackDepth] = {};
     int callbackDepth_ = 0;
 
+    /// Deferred callback return: set by primitiveCallbackReturn, consumed by
+    /// the nested interpret loop in enterInterpreterFromCallback.
+    /// primitiveCallbackReturn returns true to Smalltalk so the image can
+    /// release mutexes and clean up. The nested loop then detects this,
+    /// restores the original process, and siglongjmps back to C.
+    VMCallbackContext* pendingCallbackReturn_ = nullptr;
+
     /// Signal a semaphore directly by external index (synchronous, not via atomic)
     void signalSemaphoreDirectly(int externalIndex);
 };

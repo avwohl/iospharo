@@ -2535,7 +2535,11 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
     size_t idx = static_cast<size_t>(externalIndex - 1);
     if (idx >= memory_.slotCountOf(semTable)) return;
     Oop semaphore = memory_.fetchPointer(idx, semTable);
-    if (semaphore.isNil() || !semaphore.isObject()) return;
+    if (semaphore.isNil() || !semaphore.isObject()) {
+        fprintf(stderr, "[CALLBACK] signalSemaphoreDirectly: semaphore at idx=%zu is nil/non-object\n", idx);
+        return;
+    }
+    fprintf(stderr, "[CALLBACK] signalSemaphoreDirectly idx=%zu\n", idx);
     synchronousSignal(semaphore);
 }
 
@@ -2544,6 +2548,9 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
 extern int g_callbackSemaphoreIndex;
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
+    fprintf(stderr, "[CALLBACK] enterInterpreterFromCallback depth=%d semIdx=%d\n",
+            callbackDepth_, g_callbackSemaphoreIndex);
+
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
     //    GC SAFETY: protect activeProcess across materializeFrameStack (it allocates).
@@ -2579,6 +2586,8 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 6. Find and transfer to highest-priority ready process
     //    (The callback handler process should now be ready from the semaphore signal)
     Oop readyProcess = wakeHighestPriority();
+    fprintf(stderr, "[CALLBACK] wakeHighestPriority returned: %s\n",
+            readyProcess.isNil() ? "nil" : (readyProcess.isObject() ? "object" : "other"));
     if (readyProcess.isObject() && !readyProcess.isNil()) {
         setActiveProcess(readyProcess);
         Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
@@ -2591,16 +2600,79 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     }
 
     // 7. Run a NESTED interpret loop on the C stack.
-    //    We CANNOT siglongjmp to the outer interpret() because that would move
-    //    the C stack pointer above the qsort/ffi_call frames, allowing new
-    //    step() calls to overwrite them. Instead, we run the interpreter right
-    //    here. When primitiveCallbackReturn fires, it siglongjmps to
-    //    vmcc->trampoline (in callbackClosureHandler), unwinding past this
-    //    frame but preserving all frames below us (qsort, ffi_call, etc.).
+    //    primitiveCallbackReturn sets pendingCallbackReturn_ instead of doing
+    //    siglongjmp directly, so the Smalltalk caller can release mutexes and
+    //    clean up. We detect the flag after each batch of steps (giving the
+    //    Smalltalk code time to finish), restore the original process, and
+    //    siglongjmp back to the C trampoline.
+    long nestedStepCount = 0;
     while (running_) {
         for (int batch = 0; batch < 1000 && running_; batch++) {
             step();
+            nestedStepCount++;
         }
+
+        if (nestedStepCount == 1000 || (nestedStepCount % 100000 == 0 && nestedStepCount > 0)) {
+            fprintf(stderr, "[CALLBACK] nested loop: %ld steps, pending=%s\n",
+                    nestedStepCount, pendingCallbackReturn_ ? "YES" : "no");
+        }
+
+        // Check for deferred callback return AFTER the batch completes.
+        // This gives the Smalltalk code ~1000 steps to release mutexes,
+        // pop the invocation stack, and clean up before we longjmp.
+        if (pendingCallbackReturn_) {
+            VMCallbackContext* retVmcc = pendingCallbackReturn_;
+            pendingCallbackReturn_ = nullptr;
+            fprintf(stderr, "[CALLBACK] Deferred return detected, saving current process\n");
+
+            // Save the current process's execution state before switching.
+            // The current process (the callback execution fork) may be in the
+            // middle of Smalltalk cleanup (releasing mutexes, popping stacks).
+            // Without saving, it becomes a zombie with stale context that will
+            // deadlock on the next callback.
+            {
+                Oop savedGcTemp = gcTempOop_;
+                gcTempOop_ = getActiveProcess();
+                Oop currentCtx = materializeFrameStack();
+                Oop currentProcess = gcTempOop_;
+                gcTempOop_ = savedGcTemp;
+                if (!currentCtx.isNil() && currentCtx.isObject()) {
+                    memory_.storePointer(ProcessSuspendedContextIndex,
+                                         currentProcess, currentCtx);
+                }
+            }
+
+            // Pop suspended process from SuspendedProcessInCallout (LIFO)
+            Oop suspendedProcess = memory_.specialObject(
+                SpecialObjectIndex::SuspendedProcessInCallout);
+            if (!suspendedProcess.isNil() && suspendedProcess.isObject()) {
+                Oop nextInChain = memory_.fetchPointer(
+                    ProcessNextLinkIndex, suspendedProcess);
+                memory_.setSpecialObject(
+                    SpecialObjectIndex::SuspendedProcessInCallout, nextInChain);
+                memory_.storePointer(
+                    ProcessNextLinkIndex, suspendedProcess, memory_.nil());
+
+                // Restore the original process as active
+                setActiveProcess(suspendedProcess);
+
+                // Restore execution state from saved context
+                Oop ctx = memory_.fetchPointer(
+                    ProcessSuspendedContextIndex, suspendedProcess);
+                memory_.storePointer(
+                    ProcessSuspendedContextIndex, suspendedProcess, memory_.nil());
+                stackPointer_ = stackBase_;
+                frameDepth_ = 0;
+                if (!ctx.isNil() && ctx.isObject()) {
+                    executeFromContext(ctx);
+                }
+            }
+
+            // siglongjmp back to C (callbackClosureHandler's sigsetjmp)
+            siglongjmp(retVmcc->trampoline, 1);
+            // DOES NOT RETURN
+        }
+
         if (hasPendingSignals() && !inExtension_) {
             processPendingSignals();
         }
@@ -2609,7 +2681,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         }
     }
     // If we reach here, the VM was stopped (running_ = false).
-    // primitiveCallbackReturn should have siglongjmp'd out before this.
     fprintf(stderr, "[CALLBACK] Warning: nested interpret loop exited without callback return\n");
 }
 
