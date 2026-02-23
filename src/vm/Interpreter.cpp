@@ -2618,18 +2618,26 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         }
 
         // Check for deferred callback return AFTER the batch completes.
-        // This gives the Smalltalk code ~1000 steps to release mutexes,
-        // pop the invocation stack, and clean up before we longjmp.
         if (pendingCallbackReturn_) {
             VMCallbackContext* retVmcc = pendingCallbackReturn_;
             pendingCallbackReturn_ = nullptr;
-            fprintf(stderr, "[CALLBACK] Deferred return detected, saving current process\n");
 
-            // Save the current process's execution state before switching.
-            // The current process (the callback execution fork) may be in the
-            // middle of Smalltalk cleanup (releasing mutexes, popping stacks).
-            // Without saving, it becomes a zombie with stale context that will
-            // deadlock on the next callback.
+            // COOLDOWN: Run extra steps so Smalltalk finishes cleanup.
+            // primitiveCallbackReturn returns true inside stackProtect critical:.
+            // The critical: block still needs to: release mutex, pop the
+            // callbackInvocationStack, signal callbackReturnSemaphore, and
+            // the forked process needs to terminate. ~50 bytecodes total,
+            // but we give 5000 for safety (process switches, GC, etc.).
+            fprintf(stderr, "[CALLBACK] Deferred return detected, running cooldown...\n");
+            for (int cooldown = 0; cooldown < 5000 && running_; cooldown++) {
+                step();
+                nestedStepCount++;
+            }
+            fprintf(stderr, "[CALLBACK] Cooldown complete, switching to original process\n");
+
+            // Save the current process's execution state and RE-QUEUE it.
+            // Without re-queuing, this process becomes permanently lost from
+            // the scheduler, causing deadlocks on subsequent callbacks.
             {
                 Oop savedGcTemp = gcTempOop_;
                 gcTempOop_ = getActiveProcess();
@@ -2640,6 +2648,8 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     memory_.storePointer(ProcessSuspendedContextIndex,
                                          currentProcess, currentCtx);
                 }
+                // Put the process back on its priority's ready queue
+                putToSleep(currentProcess);
             }
 
             // Pop suspended process from SuspendedProcessInCallout (LIFO)

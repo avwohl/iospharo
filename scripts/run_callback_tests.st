@@ -1,75 +1,129 @@
-"FFI callback test runner. Results: /tmp/callback_test_results.txt"!
+"Callback test via qsort with multiple elements. Results: /tmp/callback_test_results.txt"!
 
 Object subclass: #CallbackTestRunner
   instanceVariableNames: ''
   classVariableNames: ''
   package: 'Tests-Runner'!
 
+!CallbackTestRunner class methodsFor: 'ffi'!
+qsort: base nmemb: nmemb size: size compar: compar
+  ^ self ffiCall: #(void qsort(void* base, uint64 nmemb, uint64 size, void* compar)) module: 'libc.dylib'! !
+
 !CallbackTestRunner class methodsFor: 'running'!
 runAllTests
-  | stream classes testCount passCount failCount errorCount skipCount |
+  | stream |
 
   stream := '/tmp/callback_test_results.txt' asFileReference writeStream.
   stream truncate.
+  stream nextPutAll: 'Starting callback tests...'; cr; flush.
 
-  classes := #(
-    FFICallbackTest
-    FFICallbackParametersTest
-    TFCallbacksTest
-    TFBasicTypeMarshallingInCallbacksTest
-    TFUFFICallbackTest
-    TFUFFIBasicTypeMarshallingInCallbacksTest
-    TFUFFIDerivedTypeMarshallingInCallbackTest
-    TFUFFIMarshallingInCallbacksTest
-  ).
+  "Test 1: qsort with 5 elements (multiple callback invocations)"
+  [ | callback array cmpFn callCount |
+    callCount := 0.
+    stream nextPutAll: 'Test 1: qsort with 5 elements...'; cr; flush.
 
-  testCount := 0. passCount := 0. failCount := 0. errorCount := 0. skipCount := 0.
+    callback := TFCallback
+      forCallback: [ :a :b |
+        | va vb |
+        va := a signedLongAt: 1.
+        vb := b signedLongAt: 1.
+        callCount := callCount + 1.
+        (va - vb) sign ]
+      parameters: { TFBasicType pointer. TFBasicType pointer }
+      returnType: TFBasicType sint32
+      runner: TFRunner new.
 
-  classes do: [ :className |
-    | cls suite |
-    cls := Smalltalk globals at: className ifAbsent: [ nil ].
-    cls ifNil: [
-      skipCount := skipCount + 1.
-      stream nextPutAll: 'SKIP: '; nextPutAll: className asString;
-        nextPutAll: ' (class not found)'; cr.
-    ] ifNotNil: [
-      suite := cls buildSuite.
-      suite tests do: [ :test |
-        | testResult |
-        testCount := testCount + 1.
-        [ testResult := test run.
-          testResult hasPassed
-            ifTrue: [
-              passCount := passCount + 1.
-              stream nextPutAll: 'PASS: '; nextPutAll: test printString; cr.
-            ] ifFalse: [
-              testResult failures do: [ :f |
-                failCount := failCount + 1.
-                stream nextPutAll: 'FAIL: '; nextPutAll: test printString; cr.
-              ].
-              testResult errors do: [ :e |
-                errorCount := errorCount + 1.
-                stream nextPutAll: 'ERROR: '; nextPutAll: test printString;
-                  nextPutAll: ' - '; nextPutAll: e description; cr.
-              ].
-            ].
-        ] on: Error do: [ :ex |
-          errorCount := errorCount + 1.
-          stream nextPutAll: 'ERROR: '; nextPutAll: test printString;
-            nextPutAll: ' - '; nextPutAll: ex description; cr.
-        ].
-        stream flush.
-      ].
-    ].
+    "Create array of 5 ints: {42, 7, 99, 1, 23}"
+    array := ExternalAddress allocate: 20.  "5 * 4 bytes"
+    array signedLongAt: 1 put: 42.
+    array signedLongAt: 5 put: 7.
+    array signedLongAt: 9 put: 99.
+    array signedLongAt: 13 put: 1.
+    array signedLongAt: 17 put: 23.
+
+    stream nextPutAll: 'Before sort: '.
+    1 to: 5 do: [ :i |
+      stream nextPutAll: (array signedLongAt: (i - 1) * 4 + 1) printString; nextPut: Character space ].
+    stream cr; flush.
+
+    self qsort: array nmemb: 5 size: 4 compar: callback getHandle.
+
+    stream nextPutAll: 'qsort returned after '; nextPutAll: callCount printString; nextPutAll: ' comparisons'; cr; flush.
+
+    stream nextPutAll: 'After sort: '.
+    1 to: 5 do: [ :i |
+      stream nextPutAll: (array signedLongAt: (i - 1) * 4 + 1) printString; nextPut: Character space ].
+    stream cr; flush.
+
+    "Verify sorted order: 1 7 23 42 99"
+    ((array signedLongAt: 1) = 1
+      and: [ (array signedLongAt: 5) = 7
+      and: [ (array signedLongAt: 9) = 23
+      and: [ (array signedLongAt: 13) = 42
+      and: [ (array signedLongAt: 17) = 99 ]]]])
+      ifTrue: [ stream nextPutAll: 'PASS: 5-element qsort sorted correctly'; cr; flush ]
+      ifFalse: [ stream nextPutAll: 'FAIL: 5-element sort incorrect'; cr; flush ].
+
+    array free.
+  ] on: Error do: [ :ex |
+    stream nextPutAll: 'ERROR: '; nextPutAll: ex description; cr; flush.
+    ex signalerContext ifNotNil: [ :ctx |
+      stream nextPutAll: ctx printString; cr; flush ].
+  ].
+
+  "Test 2: qsort with 10 elements"
+  [ | callback array callCount sorted |
+    callCount := 0.
+    stream cr; nextPutAll: 'Test 2: qsort with 10 elements...'; cr; flush.
+
+    callback := TFCallback
+      forCallback: [ :a :b |
+        | va vb |
+        va := a signedLongAt: 1.
+        vb := b signedLongAt: 1.
+        callCount := callCount + 1.
+        (va - vb) sign ]
+      parameters: { TFBasicType pointer. TFBasicType pointer }
+      returnType: TFBasicType sint32
+      runner: TFRunner new.
+
+    "Create array of 10 ints"
+    array := ExternalAddress allocate: 40.
+    #(50 30 80 10 60 40 90 20 70 100) doWithIndex: [ :val :i |
+      array signedLongAt: (i - 1) * 4 + 1 put: val ].
+
+    stream nextPutAll: 'Before sort: '.
+    1 to: 10 do: [ :i |
+      stream nextPutAll: (array signedLongAt: (i - 1) * 4 + 1) printString; nextPut: Character space ].
+    stream cr; flush.
+
+    self qsort: array nmemb: 10 size: 4 compar: callback getHandle.
+
+    stream nextPutAll: 'qsort returned after '; nextPutAll: callCount printString; nextPutAll: ' comparisons'; cr; flush.
+
+    stream nextPutAll: 'After sort: '.
+    1 to: 10 do: [ :i |
+      stream nextPutAll: (array signedLongAt: (i - 1) * 4 + 1) printString; nextPut: Character space ].
+    stream cr; flush.
+
+    "Verify sorted"
+    sorted := true.
+    1 to: 9 do: [ :i |
+      (array signedLongAt: (i - 1) * 4 + 1) > (array signedLongAt: i * 4 + 1)
+        ifTrue: [ sorted := false ] ].
+    sorted
+      ifTrue: [ stream nextPutAll: 'PASS: 10-element qsort sorted correctly'; cr; flush ]
+      ifFalse: [ stream nextPutAll: 'FAIL: 10-element sort incorrect'; cr; flush ].
+
+    array free.
+  ] on: Error do: [ :ex |
+    stream nextPutAll: 'ERROR: '; nextPutAll: ex description; cr; flush.
+    ex signalerContext ifNotNil: [ :ctx |
+      stream nextPutAll: ctx printString; cr; flush ].
   ].
 
   stream cr.
-  stream nextPutAll: '=== SUMMARY ==='; cr.
-  stream nextPutAll: 'Total: '; nextPutAll: testCount printString; cr.
-  stream nextPutAll: 'Pass: '; nextPutAll: passCount printString; cr.
-  stream nextPutAll: 'Fail: '; nextPutAll: failCount printString; cr.
-  stream nextPutAll: 'Error: '; nextPutAll: errorCount printString; cr.
-  stream nextPutAll: 'Skip classes: '; nextPutAll: skipCount printString; cr.
+  stream nextPutAll: '=== DONE ==='; cr.
   stream close.
 
   Smalltalk exit: 0.! !
