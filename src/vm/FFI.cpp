@@ -216,10 +216,25 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         return func;
     }
 
-    // For git_ (libgit2) functions, return error stub
-    if (funcName.compare(0, 4, "git_") == 0) {
+    // For git_ and giterr_ (libgit2) functions, return error stub
+    if (funcName.compare(0, 4, "git_") == 0 || funcName.compare(0, 7, "giterr_") == 0) {
+        // giterr_last returns a pointer (NULL = no error)
+        if (funcName == "giterr_last" || funcName == "git_error_last") {
+            static auto gitErrNull = +[]() -> intptr_t { return 0; };  // NULL pointer
+            void* func = reinterpret_cast<void*>(gitErrNull);
+            sFunctionCache[funcName] = func;
+            return func;
+        }
         static auto genericGitError = +[]() -> intptr_t { return -1; };  // GIT_ERROR
         void* func = reinterpret_cast<void*>(genericGitError);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+
+    // For cairo_ functions, return NULL (no surface/context available)
+    if (funcName.compare(0, 6, "cairo_") == 0) {
+        static auto genericCairoNull = +[]() -> intptr_t { return 0; };
+        void* func = reinterpret_cast<void*>(genericCairoNull);
         sFunctionCache[funcName] = func;
         return func;
     }
