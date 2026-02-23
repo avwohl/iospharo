@@ -52,10 +52,15 @@ LIBS=(
     # Transitive dependencies of libxcb
     "libXau.6.dylib"
     "libXdmcp.6.dylib"
-    # Transitive dependencies of libssh2
-    "libssl.3.dylib"
-    "libcrypto.3.dylib"
 )
+
+# Crypto libraries (skipped in export-safe build)
+if [ "${PHARO_WITH_CRYPTO:-1}" = "1" ]; then
+    LIBS+=(
+        "libssl.3.dylib"
+        "libcrypto.3.dylib"
+    )
+fi
 
 # Versionless symlinks (e.g., libcairo.dylib -> libcairo.2.dylib)
 SYMLINKS=(

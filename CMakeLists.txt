@@ -5,6 +5,9 @@ project(PharoVM LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Crypto build option — controls DSAPrims, SqueakSSL, and bundled OpenSSL
+option(PHARO_WITH_CRYPTO "Include cryptographic libraries (DSAPrims, SqueakSSL, OpenSSL)" ON)
+
 # Detect platform for xcframework slice selection
 # FORCE_XCFRAMEWORK_PLATFORM can be set externally (e.g., for Mac Catalyst builds
 # where cmake configures for iOS but xcodebuild targets macabi)
@@ -24,6 +27,7 @@ endif()
 
 message(STATUS "Building for platform: ${CMAKE_SYSTEM_NAME}")
 message(STATUS "XCFramework slice: ${XCFRAMEWORK_PLATFORM}")
+message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 
 # VM Core Library
 set(VM_SOURCES
@@ -38,17 +42,48 @@ set(VM_SOURCES
     src/platform/iOSBridge.cpp
 )
 
-# B2DPlugin (BalloonEngine) - compiled as C, not C++
-set(B2D_SOURCES src/vm/plugins/B2DPlugin.c)
-set_source_files_properties(${B2D_SOURCES} PROPERTIES LANGUAGE C)
-list(APPEND VM_SOURCES ${B2D_SOURCES})
+# VMMaker-generated C plugins (compiled as C, not C++)
+set(PLUGIN_C_SOURCES
+    src/vm/plugins/B2DPlugin.c
+    src/vm/plugins/JPEGReaderPlugin.c
+)
+
+# JPEGReadWriter2Plugin with bundled libjpeg 6b
+file(GLOB JPEG_SOURCES src/vm/plugins/jpeg/*.c)
+list(APPEND PLUGIN_C_SOURCES ${JPEG_SOURCES})
+
+# FFI Test Library (force-loaded symbols available via dlsym)
+file(GLOB TESTLIB_SOURCES src/vm/plugins/testlib/*.c)
+list(APPEND PLUGIN_C_SOURCES ${TESTLIB_SOURCES})
+
+# Crypto plugins (conditional)
+if(PHARO_WITH_CRYPTO)
+    list(APPEND PLUGIN_C_SOURCES
+        src/vm/plugins/DSAPrims.c
+        src/vm/plugins/SqueakSSL.c
+        src/vm/plugins/sqMacSSL.c
+    )
+endif()
+
+# Mark all plugin sources as C language and set include paths
+set_source_files_properties(${PLUGIN_C_SOURCES} PROPERTIES LANGUAGE C)
+list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
+
+# Pass PHARO_WITH_CRYPTO as a compile definition
+if(PHARO_WITH_CRYPTO)
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_WITH_CRYPTO=1)
+else()
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_WITH_CRYPTO=0)
+endif()
 
 # Include directories - use platform-appropriate xcframework slice
 target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm
     ${CMAKE_SOURCE_DIR}/src/vm/plugins
+    ${CMAKE_SOURCE_DIR}/src/vm/plugins/jpeg
+    ${CMAKE_SOURCE_DIR}/src/vm/plugins/testlib
     ${CMAKE_SOURCE_DIR}/src/platform
     ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
     ${CMAKE_SOURCE_DIR}/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
@@ -57,6 +92,28 @@ target_include_directories(PharoVMCore PUBLIC
 target_compile_options(PharoVMCore PRIVATE
     -Wall -Wextra -Wno-unused-parameter
 )
+
+# Suppress warnings in third-party libjpeg code
+file(GLOB JPEG_ONLY_SOURCES src/vm/plugins/jpeg/j*.c src/vm/plugins/jpeg/Error.c)
+if(JPEG_ONLY_SOURCES)
+    set_source_files_properties(${JPEG_ONLY_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-w"
+    )
+endif()
+
+# Suppress warnings in testlib code
+if(TESTLIB_SOURCES)
+    set_source_files_properties(${TESTLIB_SOURCES} PROPERTIES
+        COMPILE_FLAGS "-w"
+    )
+endif()
+
+# Suppress deprecation warnings in SqueakSSL (Apple SecureTransport deprecated but still works)
+if(PHARO_WITH_CRYPTO)
+    set_source_files_properties(src/vm/plugins/sqMacSSL.c PROPERTIES
+        COMPILE_FLAGS "-w"
+    )
+endif()
 
 # Link SDL2 static library with force_load to ensure all symbols are available for dlsym
 set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
@@ -91,6 +148,10 @@ if(APPLE)
             "-framework CoreHaptics"
             "-framework CoreMotion"
         )
+        # SqueakSSL uses Apple Security.framework
+        if(PHARO_WITH_CRYPTO)
+            target_link_libraries(PharoVMCore "-framework Security")
+        endif()
     else()
         # macOS frameworks for SDL2 and text rendering
         target_link_libraries(PharoVMCore
@@ -108,7 +169,31 @@ if(APPLE)
             "-framework ForceFeedback"
             "-framework Carbon"
         )
+        # SqueakSSL uses Apple Security.framework
+        if(PHARO_WITH_CRYPTO)
+            target_link_libraries(PharoVMCore "-framework Security")
+        endif()
     endif()
+endif()
+
+# Third-party xcframeworks for iOS (built by scripts/build-third-party.sh)
+foreach(LIB_NAME cairo freetype pixman harfbuzz libpng16)
+    set(LIB_XCF ${CMAKE_SOURCE_DIR}/${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+    if(EXISTS ${LIB_XCF})
+        target_link_libraries(PharoVMCore ${LIB_XCF})
+        message(STATUS "Using ${LIB_NAME}: ${LIB_XCF}")
+    endif()
+endforeach()
+
+# Crypto xcframeworks (conditional)
+if(PHARO_WITH_CRYPTO)
+    foreach(LIB_NAME ssl crypto ssh2 git2)
+        set(LIB_XCF ${CMAKE_SOURCE_DIR}/lib${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+        if(EXISTS ${LIB_XCF})
+            target_link_libraries(PharoVMCore ${LIB_XCF})
+            message(STATUS "Using lib${LIB_NAME}: ${LIB_XCF}")
+        endif()
+    endforeach()
 endif()
 
 # Test executables (macOS only)

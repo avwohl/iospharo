@@ -13220,6 +13220,16 @@ void Interpreter::initializePrimitives() {
 
     // Initialize B2DPlugin (BalloonEngine) for vector graphics rendering
     initializeB2DPlugin(this);
+
+    // Initialize JPEG plugins
+    initializeJPEGReaderPlugin(this);
+    initializeJPEGReadWriter2Plugin(this);
+
+#if PHARO_WITH_CRYPTO
+    // Initialize crypto plugins (guarded by PHARO_WITH_CRYPTO build option)
+    initializeDSAPrims(this);
+    initializeSqueakSSL(this);
+#endif
 }
 
 void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {

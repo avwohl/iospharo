@@ -1094,10 +1094,10 @@ VirtualMachine* getInterpreterProxy() {
 // =====================================================================
 // B2DPlugin integration
 // =====================================================================
-// B2DPlugin exports these functions (defined in B2DPlugin.c)
+// B2DPlugin exports (symbol-renamed in B2DPlugin.c to avoid collisions)
 extern "C" {
-    sqInt setInterpreter(VirtualMachine* anInterpreter);
-    sqInt initialiseModule(void);
+    sqInt B2DPlugin_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt B2DPlugin_initialiseModule(void);
 
     // All B2DPlugin primitive functions
     sqInt primitiveAbortProcessing(void);
@@ -1173,8 +1173,8 @@ void initializeB2DPlugin(Interpreter* interp) {
     initializeInterpreterProxy(interp);
 
     // Initialize B2DPlugin
-    setInterpreter(&theProxy);
-    initialiseModule();
+    B2DPlugin_setInterpreter(&theProxy);
+    B2DPlugin_initialiseModule();
 
     // Register all B2DPlugin primitives as named primitives under "B2DPlugin"
     struct { const char* name; B2DPrimFn fn; } prims[] = {
@@ -1229,3 +1229,153 @@ void initializeB2DPlugin(Interpreter* interp) {
 
     fprintf(stderr, "[B2D] B2DPlugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
+
+// =====================================================================
+// DSAPrims integration (CRYPTO — guarded by PHARO_WITH_CRYPTO)
+// =====================================================================
+#if PHARO_WITH_CRYPTO
+extern "C" {
+    sqInt DSAPrims_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt primitiveBigDivide(void);
+    sqInt primitiveBigMultiply(void);
+    sqInt primitiveExpandBlock(void);
+    sqInt primitiveHashBlock(void);
+    sqInt primitiveHasSecureHashPrimitive(void);
+    sqInt primitiveHighestNonZeroDigitIndex(void);
+}
+
+void initializeDSAPrims(Interpreter* interp) {
+    DSAPrims_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primitiveBigDivide", primitiveBigDivide},
+        {"primitiveBigMultiply", primitiveBigMultiply},
+        {"primitiveExpandBlock", primitiveExpandBlock},
+        {"primitiveHashBlock", primitiveHashBlock},
+        {"primitiveHasSecureHashPrimitive", primitiveHasSecureHashPrimitive},
+        {"primitiveHighestNonZeroDigitIndex", primitiveHighestNonZeroDigitIndex},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("DSAPrims", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+    }
+
+    fprintf(stderr, "[DSA] DSAPrims initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
+}
+#endif // PHARO_WITH_CRYPTO
+
+// =====================================================================
+// JPEGReaderPlugin integration
+// =====================================================================
+extern "C" {
+    sqInt JPEGReaderPlugin_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt primitiveColorConvertGrayscaleMCU(void);
+    sqInt primitiveColorConvertMCU(void);
+    sqInt primitiveDecodeMCU(void);
+    sqInt primitiveIdctInt(void);
+}
+
+void initializeJPEGReaderPlugin(Interpreter* interp) {
+    JPEGReaderPlugin_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primitiveColorConvertGrayscaleMCU", primitiveColorConvertGrayscaleMCU},
+        {"primitiveColorConvertMCU", primitiveColorConvertMCU},
+        {"primitiveDecodeMCU", primitiveDecodeMCU},
+        {"primitiveIdctInt", primitiveIdctInt},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("JPEGReaderPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+    }
+
+    fprintf(stderr, "[JPEG] JPEGReaderPlugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
+}
+
+// =====================================================================
+// JPEGReadWriter2Plugin integration
+// =====================================================================
+extern "C" {
+    sqInt JPEGReadWriter2Plugin_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt primImageHeight(void);
+    sqInt primImageNumComponents(void);
+    sqInt primImageWidth(void);
+    sqInt primJPEGCompressStructSize(void);
+    sqInt primJPEGDecompressStructSize(void);
+    sqInt primJPEGErrorMgr2StructSize(void);
+    sqInt primJPEGPluginIsPresent(void);
+    sqInt primJPEGReadHeaderfromByteArrayerrorMgr(void);
+    sqInt primJPEGReadImagefromByteArrayonFormdoDitheringerrorMgr(void);
+    sqInt primJPEGWriteImageonByteArrayformqualityprogressiveJPEGerrorMgr(void);
+    sqInt primSupports8BitGrayscaleJPEGs(void);
+}
+
+void initializeJPEGReadWriter2Plugin(Interpreter* interp) {
+    JPEGReadWriter2Plugin_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primImageHeight", primImageHeight},
+        {"primImageNumComponents", primImageNumComponents},
+        {"primImageWidth", primImageWidth},
+        {"primJPEGCompressStructSize", primJPEGCompressStructSize},
+        {"primJPEGDecompressStructSize", primJPEGDecompressStructSize},
+        {"primJPEGErrorMgr2StructSize", primJPEGErrorMgr2StructSize},
+        {"primJPEGPluginIsPresent", primJPEGPluginIsPresent},
+        {"primJPEGReadHeaderfromByteArrayerrorMgr", primJPEGReadHeaderfromByteArrayerrorMgr},
+        {"primJPEGReadImagefromByteArrayonFormdoDitheringerrorMgr", primJPEGReadImagefromByteArrayonFormdoDitheringerrorMgr},
+        {"primJPEGWriteImageonByteArrayformqualityprogressiveJPEGerrorMgr", primJPEGWriteImageonByteArrayformqualityprogressiveJPEGerrorMgr},
+        {"primSupports8BitGrayscaleJPEGs", primSupports8BitGrayscaleJPEGs},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("JPEGReadWriter2Plugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+    }
+
+    fprintf(stderr, "[JPEG2] JPEGReadWriter2Plugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
+}
+
+// =====================================================================
+// SqueakSSL integration (CRYPTO — guarded by PHARO_WITH_CRYPTO)
+// =====================================================================
+#if PHARO_WITH_CRYPTO
+extern "C" {
+    sqInt SqueakSSL_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt primitiveAccept(void);
+    sqInt primitiveConnect(void);
+    sqInt primitiveCreate(void);
+    sqInt primitiveDecrypt(void);
+    sqInt primitiveDestroy(void);
+    sqInt primitiveEncrypt(void);
+    sqInt primitiveGetIntProperty(void);
+    sqInt primitiveGetStringProperty(void);
+    sqInt primitiveSetIntProperty(void);
+    sqInt primitiveSetStringProperty(void);
+}
+
+void initializeSqueakSSL(Interpreter* interp) {
+    SqueakSSL_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primitiveAccept", primitiveAccept},
+        {"primitiveConnect", primitiveConnect},
+        {"primitiveCreate", primitiveCreate},
+        {"primitiveDecrypt", primitiveDecrypt},
+        {"primitiveDestroy", primitiveDestroy},
+        {"primitiveEncrypt", primitiveEncrypt},
+        {"primitiveGetIntProperty", primitiveGetIntProperty},
+        {"primitiveGetStringProperty", primitiveGetStringProperty},
+        {"primitiveSetIntProperty", primitiveSetIntProperty},
+        {"primitiveSetStringProperty", primitiveSetStringProperty},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("SqueakSSL", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+    }
+
+    fprintf(stderr, "[SSL] SqueakSSL initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
+}
+#endif // PHARO_WITH_CRYPTO

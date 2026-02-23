@@ -20,6 +20,20 @@ VirtualMachine* getInterpreterProxy();
 // Initialize B2DPlugin and register its primitives
 void initializeB2DPlugin(pharo::Interpreter* interp);
 
+// Initialize DSAPrims (crypto — compiled only when PHARO_WITH_CRYPTO=1)
+#if PHARO_WITH_CRYPTO
+void initializeDSAPrims(pharo::Interpreter* interp);
+#endif
+
+// Initialize JPEG plugins
+void initializeJPEGReaderPlugin(pharo::Interpreter* interp);
+void initializeJPEGReadWriter2Plugin(pharo::Interpreter* interp);
+
+// Initialize SqueakSSL (crypto — compiled only when PHARO_WITH_CRYPTO=1)
+#if PHARO_WITH_CRYPTO
+void initializeSqueakSSL(pharo::Interpreter* interp);
+#endif
+
 // Reset the proxy failure flag before calling external primitives
 void resetProxyFailure();
 
