@@ -13283,6 +13283,10 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("BitBltPlugin", "primitiveCopyBits", &Interpreter::primitiveCopyBits);
     registerNamedPrimitive("BitBltPlugin", "primitiveDrawLoop", &Interpreter::primitiveDrawLoop);
 
+    // FloatArrayPlugin
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveAt", &Interpreter::primitiveFloatArrayAt);
+    registerNamedPrimitive("FloatArrayPlugin", "primitiveAtPut", &Interpreter::primitiveFloatArrayAtPut);
+
     // MiscPrimitivePlugin
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveStringHash", &Interpreter::primitiveStringHashInitialHash);
     registerNamedPrimitive("MiscPrimitivePlugin", "primitiveFindSubstring", &Interpreter::primitiveFindSubstring);
@@ -13392,10 +13396,13 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
     registerNamedPrimitive("SDL_Event", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
 
-    // SocketPlugin stubs (minimal for UUID generation / NetNameResolver)
+    // SocketPlugin stubs (NetNameResolver DNS + UUID generation)
     registerNamedPrimitive("SocketPlugin", "primitiveInitializeNetwork", &Interpreter::primitiveInitializeNetwork);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverStatus", &Interpreter::primitiveResolverStatus);
     registerNamedPrimitive("SocketPlugin", "primitiveResolverLocalAddress", &Interpreter::primitiveResolverLocalAddress);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverStartNameLookup", &Interpreter::primitiveResolverStartNameLookup);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverNameLookupResult", &Interpreter::primitiveResolverNameLookupResult);
+    registerNamedPrimitive("SocketPlugin", "primitiveResolverAbortLookup", &Interpreter::primitiveResolverAbortLookup);
 
     // UUIDPlugin
     registerNamedPrimitive("UUIDPlugin", "primitiveMakeUUID", &Interpreter::primitiveMakeUUID);

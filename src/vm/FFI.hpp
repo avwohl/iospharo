@@ -57,6 +57,13 @@ bool initializeFFI();
 // Shutdown FFI system
 void shutdownFFI();
 
+// Set the app bundle path so libraries in Contents/Frameworks can be found.
+// Must be called before any FFI lookups (typically at app startup).
+void setAppBundlePath(const std::string& bundlePath);
+
+// Get the app's Frameworks search path (empty if not set)
+const std::string& getAppFrameworksPath();
+
 // Check if a module/function is available
 bool isModuleLoaded(const std::string& moduleName);
 void* lookupFunction(const std::string& moduleName, const std::string& funcName);

@@ -427,6 +427,8 @@ private:
     bool primitiveFailed_;
     int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
     int64_t osErrorCode_ = 0;  // OS error code for PrimErrOSError (e.g., errno)
+    uint8_t resolverResult_[4] = {};  // DNS lookup result (IPv4 address)
+    bool resolverResultValid_ = false;
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
@@ -1763,10 +1765,13 @@ private:
     PrimitiveResult primitivePathMax(int argCount);                  // Named: FileAttributesPlugin pathMax
     PrimitiveResult primitiveGetenv(int argCount);                    // Named: get environment variable
 
-    // SocketPlugin stubs (minimal for UUID generation)
+    // SocketPlugin stubs
     PrimitiveResult primitiveInitializeNetwork(int argCount);         // Named: SocketPlugin
     PrimitiveResult primitiveResolverStatus(int argCount);            // Named: SocketPlugin
     PrimitiveResult primitiveResolverLocalAddress(int argCount);      // Named: SocketPlugin
+    PrimitiveResult primitiveResolverStartNameLookup(int argCount);   // Named: SocketPlugin
+    PrimitiveResult primitiveResolverNameLookupResult(int argCount);  // Named: SocketPlugin
+    PrimitiveResult primitiveResolverAbortLookup(int argCount);       // Named: SocketPlugin
 
     // UUIDPlugin
     PrimitiveResult primitiveMakeUUID(int argCount);                  // Named: UUIDPlugin

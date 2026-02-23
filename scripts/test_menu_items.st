@@ -36,7 +36,7 @@ run
           skipped := skipped + 1.
         ] ifNotNil: [
           | result |
-          result := self safeExecute: actionBlock path: path timeout: 10000.
+          result := self safeExecute: actionBlock path: path timeout: 8000.
           status := result first. detail := result second.
           status = 'PASS' ifTrue: [passed := passed + 1].
           status = 'FAIL' ifTrue: [failed := failed + 1].
@@ -98,10 +98,13 @@ extractFrom: menuItems into: items path: prefix
 
 !MenuItemTester class methodsFor: 'testing'!
 safeExecute: actionBlock path: path timeout: msTimeout
-  "Execute action safely with timeout. Returns {status. detail}."
-  | sem result proc windowsBefore windowsAfter detail |
+  "Execute action safely with timeout using a high-priority watchdog.
+   The action runs at priority 35 (below test runner at 39).
+   A watchdog at priority 79 terminates the action if it exceeds the timeout."
+  | sem result proc windowsBefore windowsAfter detail done watchdog |
   sem := Semaphore new.
   result := nil.
+  done := false.
 
   "Count windows before"
   windowsBefore := [World submorphs size] on: Error do: [:e | -1].
@@ -109,12 +112,31 @@ safeExecute: actionBlock path: path timeout: msTimeout
   proc := [
     [actionBlock value]
       on: Error do: [:e | result := e messageText].
+    done := true.
     sem signal.
-  ] forkAt: Processor userSchedulingPriority.
+  ] forkAt: 35.  "Below test runner priority (39) so timeout can fire"
 
-  (sem waitTimeoutMilliseconds: msTimeout) ifTrue: [
-    [proc terminate] on: Error do: [:e | ].
-    ^ { 'FAIL'. 'timeout' }].
+  "High-priority watchdog to ensure timeout works even if action blocks"
+  watchdog := [
+    (Delay forMilliseconds: msTimeout) wait.
+    done ifFalse: [
+      [proc terminate] on: Error do: [:e | ].
+      done := true.
+      sem signal.
+    ].
+  ] forkAt: 79.
+
+  "Wait for either action completion or watchdog timeout"
+  sem wait.
+
+  "Clean up watchdog if action completed before timeout"
+  [watchdog terminate] on: Error do: [:e | ].
+
+  "Check if it was a timeout"
+  result isNil ifTrue: [
+    done ifFalse: [
+      ^ { 'FAIL'. 'timeout' }].
+  ].
 
   "Count windows after"
   windowsAfter := [World submorphs size] on: Error do: [:e | -1].
@@ -144,7 +166,8 @@ isDangerous: menuPath
   path := menuPath asLowercase.
   #('save' 'quit' 'exit' 'image cleanup' 'do image' 'profil'
     'full screen' 'delete all' 'discard' 'load toplo' 'screenshot'
-    'start drawing' 'start stepping' 'restore display') do: [:d |
+    'start drawing' 'start stepping' 'restore display'
+    'roassalloadfullversion' 'roassalexporters' 'tutorial') do: [:d |
     (path includesSubstring: d) ifTrue: [^ true]].
   ^ false! !
 

@@ -14,6 +14,7 @@
 #include <dlfcn.h>
 #include <ffi.h>
 #include <unistd.h>
+#include <vector>
 #include <sys/mman.h>
 
 #ifdef __APPLE__
@@ -155,14 +156,14 @@ bool initializeFFI() {
     if (sInitialized) return true;
     sInitialized = true;
 
-    // Register SDL2 stub functions for iOS
-    // This makes OSWindow think SDL2 is available
+    // Register SDL2 stub functions — these MUST win over any real SDL2
+    // because we use fake window handles that real SDL2 can't handle.
     registerSDL2Stubs();
 
-    // Register stubs for libraries not available on iOS/Mac Catalyst.
-    // Stubs return error codes so the image falls back gracefully.
-    registerFreeTypeStubs();
-    registerLibgit2Stubs();
+    // FreeType and libgit2 stubs are NOT registered at init time.
+    // lookupFunction() tries real libraries first (via dlsym/dlopen),
+    // and only falls back to generic stubs if the real libs aren't available
+    // (e.g., on iOS where Homebrew doesn't exist).
 
     return true;
 }
@@ -190,6 +191,93 @@ bool isModuleLoaded(const std::string& moduleName) {
     return true;  // Assume available, will fail on lookup if not
 }
 
+// App bundle Frameworks path — set at init from main bundle.
+// Libraries must be bundled and re-signed (Mac Catalyst requires team ID match).
+static std::string sAppFrameworksPath;
+
+void setAppBundlePath(const std::string& bundlePath) {
+    sAppFrameworksPath = bundlePath + "/Contents/Frameworks";
+    fprintf(stderr, "[FFI] App frameworks path: %s\n", sAppFrameworksPath.c_str());
+}
+
+const std::string& getAppFrameworksPath() {
+    return sAppFrameworksPath;
+}
+
+// Library search paths — checked in order when dlsym(RTLD_DEFAULT) fails.
+// App bundle Frameworks is checked first (bundled, re-signed libs).
+// Homebrew is tried as fallback for development (only works for non-sandboxed).
+static std::vector<std::string> getLibSearchPaths() {
+    std::vector<std::string> paths;
+    if (!sAppFrameworksPath.empty()) {
+        paths.push_back(sAppFrameworksPath);
+    }
+#if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
+    // Mac Catalyst / macOS: try Homebrew as fallback (won't work if
+    // code-signature team ID mismatch, but useful for ad-hoc builds)
+    paths.push_back("/opt/homebrew/lib");
+    paths.push_back("/usr/local/lib");
+#endif
+    return paths;
+}
+
+// Cache of dlopen handles so we don't re-open the same library repeatedly
+static std::unordered_map<std::string, void*> sModuleHandleCache;
+
+// Try to load a symbol by searching common library paths.
+// moduleName is a bare name like "libcairo.2.dylib" or "libgit2.dylib".
+static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::string& funcName) {
+    // Check if we already loaded this module
+    auto mit = sModuleHandleCache.find(moduleName);
+    if (mit != sModuleHandleCache.end()) {
+        if (mit->second) {
+            return dlsym(mit->second, funcName.c_str());
+        }
+        return nullptr;  // Previously failed to load
+    }
+
+    // Build candidate names: the name as-is, with lib prefix, with .dylib suffix
+    std::vector<std::string> candidates;
+    candidates.push_back(moduleName);
+    if (moduleName.compare(0, 3, "lib") != 0) {
+        candidates.push_back("lib" + moduleName);
+    }
+    if (moduleName.find(".dylib") == std::string::npos && moduleName.find(".so") == std::string::npos) {
+        candidates.push_back(moduleName + ".dylib");
+        if (moduleName.compare(0, 3, "lib") != 0) {
+            candidates.push_back("lib" + moduleName + ".dylib");
+        }
+    }
+
+    auto searchPaths = getLibSearchPaths();
+    for (const auto& dir : searchPaths) {
+        for (const auto& name : candidates) {
+            std::string fullPath = dir + "/" + name;
+            void* handle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            if (handle) {
+                fprintf(stderr, "[FFI-SEARCH] dlopen('%s') -> OK (%p)\n", fullPath.c_str(), handle);
+                sModuleHandleCache[moduleName] = handle;
+                void* sym = dlsym(handle, funcName.c_str());
+                if (sym) return sym;
+                // Module loaded but symbol not found — still cache the handle
+                return nullptr;
+            }
+        }
+    }
+
+    // All paths exhausted — log what we tried
+    fprintf(stderr, "[FFI-SEARCH] '%s' from '%s' -> not found, tried %zu paths:\n",
+            funcName.c_str(), moduleName.c_str(), searchPaths.size());
+    for (const auto& dir : searchPaths) {
+        fprintf(stderr, "[FFI-SEARCH]   dir: %s\n", dir.c_str());
+    }
+    for (const auto& name : candidates) {
+        fprintf(stderr, "[FFI-SEARCH]   candidate: %s\n", name.c_str());
+    }
+    sModuleHandleCache[moduleName] = nullptr;
+    return nullptr;
+}
+
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
     // Check cache first
     auto it = sFunctionCache.find(funcName);
@@ -201,51 +289,74 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // instead of falling through to dlsym (which finds force-loaded real SDL2
     // that crashes on our fake 0xDEADBEEF window handles).
     if (funcName.compare(0, 4, "SDL_") == 0) {
-        fprintf(stderr, "[SDL-STUB] MISSING stub for: %s (returning no-op)\n", funcName.c_str());
         static auto genericSDLNoOp = +[]() -> intptr_t { return 0; };
         void* func = reinterpret_cast<void*>(genericSDLNoOp);
         sFunctionCache[funcName] = func;
         return func;
     }
 
-    // For FT_ (FreeType) functions, return error stub
-    if (funcName.compare(0, 3, "FT_") == 0) {
-        static auto genericFTError = +[]() -> intptr_t { return 1; };  // FT_Err generic
-        void* func = reinterpret_cast<void*>(genericFTError);
-        sFunctionCache[funcName] = func;
-        return func;
-    }
-
-    // For git_ and giterr_ (libgit2) functions, return error stub
-    if (funcName.compare(0, 4, "git_") == 0 || funcName.compare(0, 7, "giterr_") == 0) {
-        // giterr_last returns a pointer (NULL = no error)
-        if (funcName == "giterr_last" || funcName == "git_error_last") {
-            static auto gitErrNull = +[]() -> intptr_t { return 0; };  // NULL pointer
-            void* func = reinterpret_cast<void*>(gitErrNull);
-            sFunctionCache[funcName] = func;
-            return func;
-        }
-        static auto genericGitError = +[]() -> intptr_t { return -1; };  // GIT_ERROR
-        void* func = reinterpret_cast<void*>(genericGitError);
-        sFunctionCache[funcName] = func;
-        return func;
-    }
-
-    // For cairo_ functions, return NULL (no surface/context available)
-    if (funcName.compare(0, 6, "cairo_") == 0) {
-        static auto genericCairoNull = +[]() -> intptr_t { return 0; };
-        void* func = reinterpret_cast<void*>(genericCairoNull);
-        sFunctionCache[funcName] = func;
-        return func;
-    }
-
-    // Look up the function via dlsym
+    // Try real library first via dlsym — this finds symbols from libraries
+    // already loaded by primitiveLoadModule (Homebrew, bundled, system).
     void* func = dlsym(RTLD_DEFAULT, funcName.c_str());
     if (func) {
         sFunctionCache[funcName] = func;
+        return func;
     }
 
-    return func;
+    // If the module name is a path, try dlopen + dlsym on it directly.
+    // The image often passes full paths like '/opt/homebrew/lib/libcairo.2.dylib'.
+    if (!moduleName.empty() && moduleName[0] == '/') {
+        void* handle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (handle) {
+            func = dlsym(handle, funcName.c_str());
+            if (func) {
+                fprintf(stderr, "[FFI-LOAD] '%s' from '%s' -> real lib (%p)\n", funcName.c_str(), moduleName.c_str(), func);
+                sFunctionCache[funcName] = func;
+                return func;
+            }
+        } else {
+            fprintf(stderr, "[FFI-LOAD] dlopen('%s') FAILED: %s\n", moduleName.c_str(), dlerror());
+        }
+    }
+
+    // If the module name is a bare library name, try common search paths.
+    if (!moduleName.empty() && moduleName[0] != '/' && moduleName.find("SDL") == std::string::npos) {
+        func = tryLoadFromSearchPaths(moduleName, funcName);
+        if (func) {
+            fprintf(stderr, "[FFI-LOAD] '%s' from '%s' -> search path (%p)\n", funcName.c_str(), moduleName.c_str(), func);
+            sFunctionCache[funcName] = func;
+            return func;
+        }
+    }
+
+    // Fallback stubs for when real libraries are not available (e.g., iOS).
+    // These return error codes so the image handles failure gracefully.
+    if (funcName.compare(0, 3, "FT_") == 0) {
+        fprintf(stderr, "[FFI-STUB] '%s' -> using FT stub (no real lib found)\n", funcName.c_str());
+        static auto genericFTError = +[]() -> intptr_t { return 1; };
+        func = reinterpret_cast<void*>(genericFTError);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+    if (funcName.compare(0, 4, "git_") == 0 || funcName.compare(0, 7, "giterr_") == 0) {
+        if (funcName == "giterr_last" || funcName == "git_error_last") {
+            static auto gitErrNull = +[]() -> intptr_t { return 0; };
+            func = reinterpret_cast<void*>(gitErrNull);
+        } else {
+            static auto genericGitError = +[]() -> intptr_t { return -1; };
+            func = reinterpret_cast<void*>(genericGitError);
+        }
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+    if (funcName.compare(0, 6, "cairo_") == 0) {
+        static auto genericCairoNull = +[]() -> intptr_t { return 0; };
+        func = reinterpret_cast<void*>(genericCairoNull);
+        sFunctionCache[funcName] = func;
+        return func;
+    }
+
+    return nullptr;
 }
 
 void registerFunction(const std::string& funcName, void* funcPtr) {

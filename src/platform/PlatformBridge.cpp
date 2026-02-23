@@ -8,6 +8,7 @@
 #include "../vm/ObjectMemory.hpp"
 #include "../vm/ImageLoader.hpp"
 #include "../vm/Interpreter.hpp"
+#include "../vm/FFI.hpp"
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -215,6 +216,21 @@ bool vm_loadImage(const char* imagePath) {
         if (traceFile) setbuf(traceFile, nullptr);
         stderrRedirected = true;
     }
+
+    // Set app bundle path so FFI can find bundled libraries in Contents/Frameworks
+#ifdef __APPLE__
+    CFBundleRef mainBundle = CFBundleGetMainBundle();
+    if (mainBundle) {
+        CFURLRef bundleURL = CFBundleCopyBundleURL(mainBundle);
+        if (bundleURL) {
+            char bundlePath[1024];
+            if (CFURLGetFileSystemRepresentation(bundleURL, true, (UInt8*)bundlePath, sizeof(bundlePath))) {
+                pharo::ffi::setAppBundlePath(bundlePath);
+            }
+            CFRelease(bundleURL);
+        }
+    }
+#endif
 
     if (!gMemory) {
         return false;

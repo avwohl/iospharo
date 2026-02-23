@@ -29,7 +29,11 @@
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
+#include <sys/socket.h>
 #include <sys/utsname.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 #include <vector>
 #include <set>
@@ -708,13 +712,83 @@ PrimitiveResult Interpreter::primitiveExecuteMethod(int argCount) {
 // are defined later in this file with full implementations
 
 PrimitiveResult Interpreter::primitiveFloatArrayAt(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // float array access - let Smalltalk handle
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop indexOop = stackTop();
+    Oop receiver = stackValue(1);
+
+    if (!indexOop.isSmallInteger() || !receiver.isObject())
+        return PrimitiveResult::Failure;
+
+    intptr_t index = indexOop.asSmallInteger();
+    size_t numSlots = memory_.byteSizeOf(receiver) / 4;
+    if (index < 1 || static_cast<size_t>(index) > numSlots)
+        return PrimitiveResult::Failure;
+
+    // Read 32-bit float from word slot
+    uint32_t rawBits = memory_.fetchWord32(static_cast<size_t>(index - 1), receiver);
+    float f32;
+    memcpy(&f32, &rawBits, 4);
+    double f64 = static_cast<double>(f32);
+
+    // Create Float object (tries SmallFloat first, then boxed Float)
+    Oop result;
+    if (Oop::tryFromSmallFloat(f64, result)) {
+        // SmallFloat - no allocation needed
+    } else {
+        // Allocate boxed Float
+        Oop floatClass = memory_.specialObject(SpecialObjectIndex::ClassFloat);
+        uint32_t classIndex = memory_.indexOfClass(floatClass);
+        result = memory_.allocateSlots(classIndex, 1, ObjectFormat::Indexable32);
+        if (result.isNil()) return PrimitiveResult::Failure;
+        uint64_t bits;
+        std::memcpy(&bits, &f64, sizeof(double));
+        memory_.storeWord64(0, result, bits);
+    }
+
+    popN(2);  // pop arg + receiver
+    push(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveFloatArrayAtPut(int argCount) {
-    (void)argCount;
-    return PrimitiveResult::Failure;  // float array access - let Smalltalk handle
+    if (argCount != 2) return PrimitiveResult::Failure;
+
+    Oop valueOop = stackTop();
+    Oop indexOop = stackValue(1);
+    Oop receiver = stackValue(2);
+
+    if (!indexOop.isSmallInteger() || !receiver.isObject())
+        return PrimitiveResult::Failure;
+
+    intptr_t index = indexOop.asSmallInteger();
+    size_t numSlots = memory_.byteSizeOf(receiver) / 4;
+    if (index < 1 || static_cast<size_t>(index) > numSlots)
+        return PrimitiveResult::Failure;
+
+    // Get float value - accept Float, SmallInteger, or SmallFloat
+    double f64;
+    if (valueOop.isSmallInteger()) {
+        f64 = static_cast<double>(valueOop.asSmallInteger());
+    } else if (valueOop.isSmallFloat()) {
+        f64 = valueOop.asSmallFloat();
+    } else if (valueOop.isObject()) {
+        ObjectHeader* hdr = valueOop.asObjectPtr();
+        if (hdr->format() != ObjectFormat::Indexable64) return PrimitiveResult::Failure;
+        f64 = *reinterpret_cast<double*>(hdr->bytes());
+    } else {
+        return PrimitiveResult::Failure;
+    }
+
+    float f32 = static_cast<float>(f64);
+    uint32_t rawBits;
+    memcpy(&rawBits, &f32, 4);
+
+    memory_.storeWord32(static_cast<size_t>(index - 1), receiver, rawBits);
+
+    popN(3);  // pop 2 args + receiver
+    push(valueOop);  // return the value
+    return PrimitiveResult::Success;
 }
 
 // ===== ARITHMETIC PRIMITIVES (1-17) =====
@@ -16765,6 +16839,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t srcHeight = bitBltField(memory_, sourceForm, FormHeight);
     intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
 
+    // Negative depth means "same depth but byte-swapped endianness within words"
+    // Used by Form>>swapEndianness (sets depth := 0 - depth) for copyFromByteArray:
+    bool srcNeedsByteSwap = (srcDepth < 0);
+    if (srcDepth < 0) srcDepth = -srcDepth;
+
     if (srcBits.isNil() || !srcBits.isObject() || srcBits.isSmallInteger() || srcBits.rawBits() < 0x10000) {
         return PrimitiveResult::Failure;
     }
@@ -16939,6 +17018,49 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 6: dstRow[x] ^= srcVal; break;
                     case 1: if (srcBit) dstRow[x] &= ~srcVal; break;
                     default: dstRow[x] = srcVal; break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        return PrimitiveResult::Success;
+    }
+
+    // Depth-8 source to depth-8 dest (used by Bitmap>>copyFromByteArray: via hackBits:)
+    // With srcNeedsByteSwap, this handles the Form>>swapEndianness case (depth=-8 → 8)
+    if (destDepth == 8 && srcDepth == 8) {
+        intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
+        intptr_t srcBytesPerRow = ((srcWidth + 3) / 4) * 4;   // word-aligned
+        uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+
+        size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
+        if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
+
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcBytesPerRow + sourceX + width);
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint8_t* srcRow = srcBytes + (sourceY + y) * srcBytesPerRow;
+            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                uint8_t srcVal;
+                if (srcNeedsByteSwap) {
+                    // Byte-swap within 32-bit words: reverse byte order
+                    // Word index = sx / 4, byte within word = sx % 4
+                    // Swapped byte position = word_start + (3 - byte_offset)
+                    intptr_t wordStart = (sx / 4) * 4;
+                    intptr_t byteOffset = sx % 4;
+                    srcVal = srcRow[wordStart + (3 - byteOffset)];
+                } else {
+                    srcVal = srcRow[sx];
+                }
+                intptr_t dx = destX + x;
+                switch (combinationRule) {
+                    case 3: case 34: dstRow[dx] = srcVal; break;
+                    case 0: dstRow[dx] &= srcVal; break;
+                    case 7: case 25: dstRow[dx] |= srcVal; break;
+                    case 6: dstRow[dx] ^= srcVal; break;
+                    default: dstRow[dx] = srcVal; break;
                 }
             }
         }
@@ -22975,33 +23097,61 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
             } else if (moduleHdr->isBytesObject()) {
                 moduleName = std::string((char*)moduleHdr->bytes(), moduleHdr->byteSize());
 
-                // For SDL2 or common libraries, use our FFI lookup
+                // For SDL2, use our built-in stubs
                 if (moduleName.find("SDL2") != std::string::npos ||
                     moduleName.find("SDL") != std::string::npos) {
                     moduleHandle = RTLD_DEFAULT;
                 } else {
+                    // Try dlopen with the name as given (handles absolute paths)
                     moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+
+                    // Try common name variations
                     if (!moduleHandle) {
-                        std::string libName = "lib" + moduleName + ".dylib";
-                        moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
-                    }
-                    if (!moduleHandle) {
-                        // Try Homebrew path (Mac Catalyst development)
-                        std::string brewPath;
-                        if (moduleName.find('/') != std::string::npos) {
-                            brewPath = moduleName;  // Already a full path
-                        } else {
-                            brewPath = "/opt/homebrew/lib/" + moduleName;
+                        std::vector<std::string> names;
+                        if (moduleName.compare(0, 3, "lib") != 0)
+                            names.push_back("lib" + moduleName);
+                        if (moduleName.find(".dylib") == std::string::npos) {
+                            names.push_back(moduleName + ".dylib");
+                            if (moduleName.compare(0, 3, "lib") != 0)
+                                names.push_back("lib" + moduleName + ".dylib");
                         }
-                        moduleHandle = dlopen(brewPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
-                        if (moduleHandle) {
-                            fprintf(stderr, "[LOAD-SYMBOL] dlopen('%s') -> OK\n", brewPath.c_str());
+                        for (const auto& n : names) {
+                            moduleHandle = dlopen(n.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                            if (moduleHandle) break;
                         }
                     }
+
+                    // Search app bundle Frameworks, then Homebrew / system paths
                     if (!moduleHandle) {
-                        // dlopen failed — string may be a Smalltalk object repr
-                        // (e.g., "a FFIMacLibraryFinder"), not a library path.
-                        // Fall back to RTLD_DEFAULT to search all loaded images.
+                        std::string baseName = moduleName;
+                        auto slash = moduleName.rfind('/');
+                        if (slash != std::string::npos) baseName = moduleName.substr(slash + 1);
+
+                        // App bundle Frameworks first (re-signed, team-ID matched)
+                        const auto& fwPath = ffi::getAppFrameworksPath();
+                        if (!fwPath.empty()) {
+                            std::string full = fwPath + "/" + baseName;
+                            moduleHandle = dlopen(full.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                        }
+
+#if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
+                        // Homebrew / system paths as fallback
+                        if (!moduleHandle) {
+                            static const char* fallbackPaths[] = {
+                                "/opt/homebrew/lib", "/usr/local/lib", nullptr
+                            };
+                            for (const char** p = fallbackPaths; *p != nullptr; p++) {
+                                std::string full = std::string(*p) + "/" + baseName;
+                                moduleHandle = dlopen(full.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                                if (moduleHandle) break;
+                            }
+                        }
+#endif
+                    }
+
+                    if (!moduleHandle) {
+                        // Fall back to RTLD_DEFAULT — lookupFunction will
+                        // try search paths and stubs as a last resort.
                         moduleHandle = RTLD_DEFAULT;
                     }
                 }
@@ -23012,12 +23162,23 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
         moduleHandle = RTLD_DEFAULT;
     }
 
-    // Look up the symbol - check our FFI function cache first (for SDL2 stubs),
-    // then fall back to dlsym. This ensures our stubs (e.g. stub_SDL_PollEvent)
-    // win over force-loaded real SDL2 symbols.
-    void* symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+    // Look up the symbol:
+    // 1. If we have a real module handle (from dlopen), use it directly
+    // 2. Otherwise use lookupFunction which searches paths and falls back to stubs
+    void* symbolAddr = nullptr;
+
+    if (moduleHandle && moduleHandle != RTLD_DEFAULT) {
+        // Real module handle — use it directly for the most accurate lookup
+        symbolAddr = dlsym(moduleHandle, symbolName.c_str());
+    }
 
     if (!symbolAddr) {
+        // Try our lookup chain: cache -> dlsym(RTLD_DEFAULT) -> search paths -> stubs
+        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+    }
+
+    if (!symbolAddr) {
+        // Last resort: dlsym on whatever handle we have
         symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
@@ -23101,18 +23262,55 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
         moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
         fprintf(stderr, "[LOAD-MODULE] '%s' -> SDL2 stub handle\n", moduleName.c_str());
     } else {
-        // Try to load the library
-        moduleHandle = dlopen(moduleName.c_str(), RTLD_NOW | RTLD_GLOBAL);
-        if (!moduleHandle) {
-            // Try with common prefixes/suffixes
-            std::string libName = "lib" + moduleName + ".dylib";
-            moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        // Try to load the library — search multiple paths like the reference VM.
+        // Build candidate names from the module string
+        std::vector<std::string> candidates;
+        candidates.push_back(moduleName);
+        if (moduleName.compare(0, 3, "lib") != 0) {
+            candidates.push_back("lib" + moduleName);
         }
-        if (!moduleHandle) {
-            // Try just .dylib suffix
-            std::string libName = moduleName + ".dylib";
-            moduleHandle = dlopen(libName.c_str(), RTLD_NOW | RTLD_GLOBAL);
+        if (moduleName.find(".dylib") == std::string::npos && moduleName.find(".so") == std::string::npos) {
+            candidates.push_back(moduleName + ".dylib");
+            if (moduleName.compare(0, 3, "lib") != 0) {
+                candidates.push_back("lib" + moduleName + ".dylib");
+            }
         }
+
+        // Try direct dlopen first (handles absolute paths and LD_LIBRARY_PATH)
+        for (const auto& name : candidates) {
+            moduleHandle = dlopen(name.c_str(), RTLD_NOW | RTLD_GLOBAL);
+            if (moduleHandle) break;
+        }
+
+        // App bundle Frameworks first (re-signed, team-ID matched)
+        if (!moduleHandle) {
+            const auto& fwPath = ffi::getAppFrameworksPath();
+            if (!fwPath.empty()) {
+                for (const auto& name : candidates) {
+                    std::string fullPath = fwPath + "/" + name;
+                    moduleHandle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                    if (moduleHandle) break;
+                }
+            }
+        }
+
+#if !(TARGET_OS_IPHONE && !TARGET_OS_MACCATALYST)
+        // Homebrew / system paths as fallback
+        if (!moduleHandle) {
+            static const char* fallbackPaths[] = {
+                "/opt/homebrew/lib", "/usr/local/lib", nullptr
+            };
+            for (const char** pathPtr = fallbackPaths; *pathPtr != nullptr; pathPtr++) {
+                for (const auto& name : candidates) {
+                    std::string fullPath = std::string(*pathPtr) + "/" + name;
+                    moduleHandle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
+                    if (moduleHandle) break;
+                }
+                if (moduleHandle) break;
+            }
+        }
+#endif
+
         if (moduleHandle) {
             fprintf(stderr, "[LOAD-MODULE] '%s' -> loaded OK (%p)\n", moduleName.c_str(), moduleHandle);
         } else {
@@ -24944,6 +25142,70 @@ PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
     memory_.storeByte(3, result, 1);
     popN(1);  // pop receiver
     push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverStartNameLookup
+// Stack: receiver, nameString -> receiver
+// NetNameResolver>>primStartLookupOfName: hostName
+// Starts an async DNS lookup. We do it synchronously (blocking) for simplicity
+// and immediately make the result available.
+PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+
+    Oop nameOop = stackTop();
+    if (!nameOop.isObject()) return PrimitiveResult::Failure;
+    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+    if (!nameHdr->isBytesObject()) return PrimitiveResult::Failure;
+
+    std::string hostname((char*)nameHdr->bytes(), nameHdr->byteSize());
+
+    // Do synchronous DNS lookup
+    struct addrinfo hints = {};
+    hints.ai_family = AF_INET;  // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* result = nullptr;
+
+    int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
+    if (err == 0 && result) {
+        struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
+        memcpy(resolverResult_, &addr->sin_addr.s_addr, 4);
+        resolverResultValid_ = true;
+        freeaddrinfo(result);
+    } else {
+        resolverResultValid_ = false;
+    }
+
+    popN(1);  // pop name arg, leave receiver
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverNameLookupResult
+// Stack: receiver -> ByteArray (4 bytes IPv4 address)
+// NetNameResolver>>primNameLookupResult
+PrimitiveResult Interpreter::primitiveResolverNameLookupResult(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    if (!resolverResultValid_) return PrimitiveResult::Failure;
+
+    Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+    if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
+    uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
+    Oop result = memory_.allocateBytes(classIndex, 4);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    for (int i = 0; i < 4; i++)
+        memory_.storeByte(i, result, resolverResult_[i]);
+
+    popN(1);  // pop receiver
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveResolverAbortLookup
+// Stack: receiver -> receiver
+PrimitiveResult Interpreter::primitiveResolverAbortLookup(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+    resolverResultValid_ = false;
     return PrimitiveResult::Success;
 }
 
