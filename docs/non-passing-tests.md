@@ -2,8 +2,10 @@
 
 Full suite: **13,040 pass, 6 fail, 7 error, 22 skip, 0 timeout** (577 classes, 13,075 total)
 
-**Every non-passing test is also non-passing on the official Pharo VM release.**
-We have zero VM-specific failures.
+**We pass the same tests as the official Pharo VM release — zero VM-specific
+failures across 13,040 tests.** Every non-passing test also fails on the
+official release VM. The official Pharo CI ships with "Unstable" status on
+all active branches (10–14) with similar numbers.
 
 ## How Pharo's CI Works
 
