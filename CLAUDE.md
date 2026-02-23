@@ -1,5 +1,49 @@
 # Claude Code Instructions
 
+## GUI Testing: MANDATORY Timeouts
+
+**Every GUI test MUST have a hard timeout that actually kills the process.**
+GUI testing repeatedly hangs/locks up Claude Code sessions. Never launch the
+Mac Catalyst app or interact with it without a kill mechanism.
+
+### Rules:
+1. **Always launch with `timeout`**: Use `timeout 60 <command>` (or similar)
+   for ANY process that runs the Mac Catalyst app. Adjust seconds as needed
+   but NEVER omit it.
+2. **Background launches need a kill timer**: If launching in background,
+   immediately set up a `sleep N && kill` safeguard.
+3. **AppleScript/UI automation**: Wrap ALL osascript and UI interaction
+   sequences in a timeout. Use `timeout 10 osascript -e '...'` for clicks.
+4. **Screenshot loops**: If taking screenshots in a loop waiting for state,
+   limit iterations (max 10) AND add `sleep` between them.
+5. **Never use `open -W`**: It waits forever. Use `open` (no -W) + sleep + screenshot.
+6. **Test one thing, then kill**: Don't leave the app running between tests.
+   Kill it, relaunch fresh for the next test.
+
+### Pattern for GUI testing:
+```bash
+# Launch app in background with hard kill after 90 seconds
+timeout 90 open /path/to/app &
+APP_PID=$!
+sleep 15  # wait for startup
+
+# Take screenshot with timeout
+timeout 5 screencapture -x /tmp/pharo-screenshot.png
+
+# Do UI interaction with timeout
+timeout 10 osascript -e 'tell application "System Events" to ...'
+
+# Kill app when done
+kill $APP_PID 2>/dev/null
+killall iospharo 2>/dev/null
+```
+
+### Why this matters:
+Previous sessions hung for 28+ minutes clicking menus in a loop with no
+timeout. The app locks up, osascript blocks forever, and the entire Claude
+Code session becomes unresponsive. **A 60-second timeout that kills a working
+test is infinitely better than no timeout that hangs forever.**
+
 ---
 ## ⛔️ STOP: NO WORKAROUNDS - FIX ROOT CAUSES ⛔️
 ---
