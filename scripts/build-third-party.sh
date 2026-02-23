@@ -66,11 +66,17 @@ setup_ios_simulator_arm64() {
     export CXX=$(xcrun --sdk iphonesimulator -f clang++)
     export AR=$(xcrun --sdk iphonesimulator -f ar)
     export RANLIB=$(xcrun --sdk iphonesimulator -f ranlib)
-    export CFLAGS="-arch arm64 -isysroot $SDKROOT -mios-simulator-version-min=15.0 -fembed-bitcode -O2"
+    export CFLAGS="-arch arm64 -isysroot $SDKROOT -mios-simulator-version-min=15.0 -O2"
     export CXXFLAGS="$CFLAGS"
     export LDFLAGS="-arch arm64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
     PLATFORM_NAME="ios-simulator-arm64"
-    HOST_TRIPLE="aarch64-apple-ios15.0-simulator"
+    # Autotools config.sub doesn't understand iOS triples.
+    # Use aarch64-apple-darwin and rely on CFLAGS for actual target.
+    HOST_TRIPLE="aarch64-apple-darwin"
+    # For CMake cross-compilation
+    CMAKE_SYSTEM_NAME="iOS"
+    CMAKE_OSX_SYSROOT="iphonesimulator"
+    MESON_CPU="aarch64"
 }
 
 setup_ios_simulator_x86_64() {
@@ -83,7 +89,10 @@ setup_ios_simulator_x86_64() {
     export CXXFLAGS="$CFLAGS"
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
     PLATFORM_NAME="ios-simulator-x86_64"
-    HOST_TRIPLE="x86_64-apple-ios15.0-simulator"
+    HOST_TRIPLE="x86_64-apple-darwin"
+    CMAKE_SYSTEM_NAME="iOS"
+    CMAKE_OSX_SYSROOT="iphonesimulator"
+    MESON_CPU="x86_64"
 }
 
 setup_maccatalyst_arm64() {
@@ -96,7 +105,10 @@ setup_maccatalyst_arm64() {
     export CXXFLAGS="$CFLAGS"
     export LDFLAGS="-arch arm64 -isysroot $SDKROOT -target arm64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-arm64"
-    HOST_TRIPLE="aarch64-apple-ios15.0-macabi"
+    HOST_TRIPLE="aarch64-apple-darwin"
+    CMAKE_SYSTEM_NAME="Darwin"
+    CMAKE_OSX_SYSROOT="macosx"
+    MESON_CPU="aarch64"
 }
 
 setup_maccatalyst_x86_64() {
@@ -109,7 +121,10 @@ setup_maccatalyst_x86_64() {
     export CXXFLAGS="$CFLAGS"
     export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -target x86_64-apple-ios15.0-macabi"
     PLATFORM_NAME="maccatalyst-x86_64"
-    HOST_TRIPLE="x86_64-apple-ios15.0-macabi"
+    HOST_TRIPLE="x86_64-apple-darwin"
+    CMAKE_SYSTEM_NAME="Darwin"
+    CMAKE_OSX_SYSROOT="macosx"
+    MESON_CPU="x86_64"
 }
 
 # =====================================================================
@@ -198,6 +213,10 @@ build_cmake() {
         -DCMAKE_INSTALL_PREFIX="$prefix" \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
+        -DCMAKE_CXX_COMPILER="$CXX" \
+        -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
+        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         "${cmake_args[@]}" \
@@ -214,9 +233,12 @@ build_libpng() {
     local srcdir="${SOURCES_DIR}/libpng-${LIBPNG_VERSION}"
     [ -d "$srcdir" ] || (cd "$SOURCES_DIR" && tar xf "libpng-${LIBPNG_VERSION}.tar.xz")
 
-    build_autotools "libpng" "$srcdir" \
-        --disable-tools \
-        --disable-tests
+    build_cmake "libpng" "$srcdir" \
+        -DPNG_TESTS=OFF \
+        -DPNG_TOOLS=OFF \
+        -DPNG_FRAMEWORK=OFF \
+        -DPNG_SHARED=OFF \
+        -DPNG_ARM_NEON=off
 }
 
 build_freetype() {
@@ -224,26 +246,94 @@ build_freetype() {
     [ -d "$srcdir" ] || (cd "$SOURCES_DIR" && tar xf "freetype-${FREETYPE_VERSION}.tar.xz")
 
     local prefix="${INSTALL_ROOT}/${PLATFORM_NAME}"
-    build_autotools "freetype" "$srcdir" \
-        --with-png=yes \
-        --with-harfbuzz=no \
-        --with-bzip2=no \
-        --with-brotli=no \
-        --with-zlib=yes \
-        "LIBPNG_CFLAGS=-I${prefix}/include/libpng16" \
-        "LIBPNG_LIBS=-L${prefix}/lib -lpng16"
+    local builddir="${BUILD_ROOT}/build-freetype-${PLATFORM_NAME}"
+    rm -rf "$builddir"
+    mkdir -p "$builddir"
+    cd "$builddir"
+
+    # FreeType uses CMake which handles cross-compilation better than autotools.
+    # The autotools build tries to run host tools (apinames) built for the target.
+    log "Configuring freetype (CMake) for $PLATFORM_NAME..."
+    cmake "$srcdir" \
+        -DCMAKE_INSTALL_PREFIX="$prefix" \
+        -DCMAKE_C_COMPILER="$CC" \
+        -DCMAKE_C_FLAGS="$CFLAGS" \
+        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
+        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_SHARED_LIBS=OFF \
+        -DFT_DISABLE_HARFBUZZ=ON \
+        -DFT_DISABLE_BZIP2=ON \
+        -DFT_DISABLE_BROTLI=ON \
+        -DFT_REQUIRE_PNG=ON \
+        -DPNG_PNG_INCLUDE_DIR="${prefix}/include" \
+        -DPNG_LIBRARY="${prefix}/lib/libpng16.a" \
+        -DZLIB_LIBRARY="" \
+        > configure.log 2>&1 || { err "CMake configure failed for freetype"; cat configure.log; return 1; }
+
+    log "Building freetype for $PLATFORM_NAME..."
+    cmake --build . -j$(sysctl -n hw.ncpu) > build.log 2>&1 || { err "Build failed for freetype"; tail -20 build.log; return 1; }
+    cmake --install . > install.log 2>&1
+
+    log "freetype built for $PLATFORM_NAME"
 }
 
 build_pixman() {
     local srcdir="${SOURCES_DIR}/pixman-${PIXMAN_VERSION}"
     [ -d "$srcdir" ] || (cd "$SOURCES_DIR" && tar xf "pixman-${PIXMAN_VERSION}.tar.gz")
 
-    build_autotools "pixman" "$srcdir" \
-        --disable-gtk \
-        --disable-libpng \
-        --disable-mmx \
-        --disable-sse2 \
-        --disable-ssse3
+    local prefix="${INSTALL_ROOT}/${PLATFORM_NAME}"
+    local builddir="${BUILD_ROOT}/build-pixman-${PLATFORM_NAME}"
+    rm -rf "$builddir"
+    mkdir -p "$builddir"
+
+    # Create meson cross file (same pattern as cairo)
+    local crossfile="${builddir}/cross.txt"
+    local meson_c_args=""
+    for flag in $CFLAGS; do
+        [ -n "$meson_c_args" ] && meson_c_args="$meson_c_args, "
+        meson_c_args="$meson_c_args'$flag'"
+    done
+    local meson_link_args=""
+    for flag in $LDFLAGS; do
+        [ -n "$meson_link_args" ] && meson_link_args="$meson_link_args, "
+        meson_link_args="$meson_link_args'$flag'"
+    done
+
+    cat > "$crossfile" <<CROSSEOF
+[binaries]
+c = '$CC'
+ar = '$AR'
+ranlib = '$RANLIB'
+
+[built-in options]
+c_args = [$meson_c_args]
+c_link_args = [$meson_link_args]
+
+[host_machine]
+system = 'darwin'
+cpu_family = '$MESON_CPU'
+cpu = '$MESON_CPU'
+endian = 'little'
+CROSSEOF
+
+    cd "$builddir"
+    log "Configuring pixman (meson) for $PLATFORM_NAME..."
+    meson setup builddir "$srcdir" \
+        --cross-file "$crossfile" \
+        --prefix="$prefix" \
+        --default-library=static \
+        -Dgtk=disabled \
+        -Dlibpng=disabled \
+        -Dtests=disabled \
+        -Ddemos=disabled \
+        > configure.log 2>&1 || { err "Meson configure failed for pixman"; cat configure.log; return 1; }
+
+    log "Building pixman for $PLATFORM_NAME..."
+    ninja -C builddir -j$(sysctl -n hw.ncpu) > build.log 2>&1 || { err "Build failed for pixman"; tail -20 build.log; return 1; }
+    ninja -C builddir install > install.log 2>&1
+
+    log "pixman built for $PLATFORM_NAME"
 }
 
 build_harfbuzz() {
@@ -264,6 +354,8 @@ build_harfbuzz() {
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+        -DCMAKE_SYSTEM_NAME="$CMAKE_SYSTEM_NAME" \
+        -DCMAKE_OSX_SYSROOT="$CMAKE_OSX_SYSROOT" \
         -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=OFF \
         -DHB_HAVE_FREETYPE=ON \
@@ -297,11 +389,26 @@ build_cairo() {
 
     # Create meson cross file
     local crossfile="${builddir}/cross.txt"
-    local cpu_family
-    case "$PLATFORM_NAME" in
-        *x86_64*) cpu_family="x86_64" ;;
-        *) cpu_family="aarch64" ;;
-    esac
+
+    # Build properly quoted c_args and c_link_args arrays for meson
+    local meson_c_args=""
+    for flag in $CFLAGS; do
+        [ -n "$meson_c_args" ] && meson_c_args="$meson_c_args, "
+        meson_c_args="$meson_c_args'$flag'"
+    done
+    local meson_link_args=""
+    for flag in $LDFLAGS; do
+        [ -n "$meson_link_args" ] && meson_link_args="$meson_link_args, "
+        meson_link_args="$meson_link_args'$flag'"
+    done
+
+    # Create a wrapper script for pkg-config that does NOT prepend sysroot
+    local pkg_config_wrapper="${builddir}/pkg-config-wrapper.sh"
+    cat > "$pkg_config_wrapper" <<'PKGEOF'
+#!/bin/sh
+exec pkg-config "$@"
+PKGEOF
+    chmod +x "$pkg_config_wrapper"
 
     cat > "$crossfile" <<CROSSEOF
 [binaries]
@@ -309,20 +416,17 @@ c = '$CC'
 cpp = '$CXX'
 ar = '$AR'
 ranlib = '$RANLIB'
-pkgconfig = 'pkg-config'
+pkgconfig = '$pkg_config_wrapper'
 
 [built-in options]
-c_args = [$(echo "$CFLAGS" | sed "s/ /', '/g" | sed "s/^/'/" | sed "s/$/'/" )]
-c_link_args = [$(echo "$LDFLAGS" | sed "s/ /', '/g" | sed "s/^/'/" | sed "s/$/'/" )]
+c_args = [$meson_c_args]
+c_link_args = [$meson_link_args]
 
 [host_machine]
 system = 'darwin'
-cpu_family = '$cpu_family'
-cpu = '$cpu_family'
+cpu_family = '$MESON_CPU'
+cpu = '$MESON_CPU'
 endian = 'little'
-
-[properties]
-sys_root = '$SDKROOT'
 CROSSEOF
 
     cd "$builddir"
