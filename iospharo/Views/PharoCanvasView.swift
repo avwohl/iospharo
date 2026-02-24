@@ -109,48 +109,94 @@ class PharoMTKView: MTKView {
     // MARK: - Keyboard Handling
 
     override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let bridge = bridge else {
+        guard bridge != nil else {
             super.pressesBegan(presses, with: event)
             return
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let charCode = key.characters.first.map { Int($0.asciiValue ?? 0) } ?? 0
-            if charCode > 0 {
-                bridge.sendKeyDown(Character(UnicodeScalar(charCode)!))
+            let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
+
+            // Try character from key first
+            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+                let charCode = Int32(scalar.value)
+                vm_postKeyEvent(0, charCode, 0, modifiers)  // down
+                vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
+            } else {
+                // Special key without printable character (arrows, function keys, etc.)
+                let charCode = specialKeyCharCode(key.keyCode)
+                if charCode > 0 {
+                    vm_postKeyEvent(0, charCode, 0, modifiers)  // down
+                    vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
+                }
             }
         }
     }
 
     override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
-        guard let bridge = bridge else {
+        guard bridge != nil else {
             super.pressesEnded(presses, with: event)
             return
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let charCode = key.characters.first.map { Int($0.asciiValue ?? 0) } ?? 0
-            if charCode > 0 {
-                bridge.sendKeyUp(Character(UnicodeScalar(charCode)!))
+            let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
+
+            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+                vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)  // up
+            } else {
+                let charCode = specialKeyCharCode(key.keyCode)
+                if charCode > 0 {
+                    vm_postKeyEvent(1, charCode, 0, modifiers)  // up
+                }
             }
+        }
+    }
+
+    /// Map UIKeyModifierFlags to Pharo modifier mask
+    private func modifierFlagsToPharo(_ flags: UIKeyModifierFlags) -> Int {
+        var mods = 0
+        if flags.contains(.shift) { mods |= IOS_SHIFT_KEY }
+        if flags.contains(.control) { mods |= IOS_CTRL_KEY }
+        if flags.contains(.alternate) { mods |= IOS_ALT_KEY }
+        if flags.contains(.command) { mods |= IOS_CMD_KEY }
+        return mods
+    }
+
+    /// Map UIKeyboardHIDUsage to Pharo charCode for special keys
+    private func specialKeyCharCode(_ keyCode: UIKeyboardHIDUsage) -> Int32 {
+        switch keyCode {
+        case .keyboardReturnOrEnter: return 13
+        case .keyboardEscape: return 27
+        case .keyboardDeleteOrBackspace: return 8
+        case .keyboardTab: return 9
+        case .keyboardDeleteForward: return 127
+        case .keyboardUpArrow: return 30
+        case .keyboardDownArrow: return 31
+        case .keyboardLeftArrow: return 28
+        case .keyboardRightArrow: return 29
+        case .keyboardHome: return 1
+        case .keyboardEnd: return 4
+        case .keyboardPageUp: return 11
+        case .keyboardPageDown: return 12
+        default: return 0
         }
     }
 
     // MARK: - Button Mapping
 
     func buttonMaskToPharo(_ event: UIEvent?) -> Int {
-        #if targetEnvironment(macCatalyst)
         guard let event = event else { return IOS_RED_BUTTON }
+        #if targetEnvironment(macCatalyst)
         if #available(macCatalyst 13.4, *) {
             let mask = event.buttonMask
             if mask.contains(.secondary) { return IOS_YELLOW_BUTTON }
             if mask.rawValue & 0x4 != 0 { return IOS_BLUE_BUTTON }
-            if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
         }
-        return IOS_RED_BUTTON
-        #else
-        return IOS_RED_BUTTON
         #endif
+        // Ctrl+click/tap = right-click on both Mac Catalyst and iPad with hardware keyboard
+        if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
+        return IOS_RED_BUTTON
     }
 }
 
