@@ -168,7 +168,7 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - Any testing with modified images is fine, but the goal is normal image compatibility
 - The display driver (OSiOSDriver) should work without requiring image-side changes
 - **Use fresh images only**: Always test with freshly downloaded Pharo images, not previously-saved ones
-- **Save is disabled**: Image saving (snapshot) is disabled for now to ensure consistent testing from fresh state
+- **Image saving works**: Primitive 97 (snapshot) saves the heap in standard Spur format via ImageWriter. Converts iOS immediate tags back to standard Spur encoding. Save-reload roundtrip verified (21278 classes preserved). Note: `Smalltalk snapshot:andQuit:` may not reach primitive 97 through SessionManager (`session stop:` errors); raw `<primitive: 97>` works directly.
 
 ## SDL2 and FFI
 - **SDL2 and FFI are working** — SDL2 stubs are registered, TFFI primitives implemented,
