@@ -41,29 +41,14 @@ You also need:
 
 ### Step 1: Build libffi and SDL2 xcframeworks
 
-libffi (for FFI/callbacks) and SDL2 (display driver) must be built as
-xcframeworks. These are gitignored due to size — you build them once.
-
-**libffi:**
 ```bash
-git clone https://github.com/nicklockwood/libffi-xcframework.git /tmp/libffi-build
-cd /tmp/libffi-build
-# Follow its README to build, then copy the result:
-cp -R build/libffi.xcframework /path/to/iospharo/
+scripts/build-libffi.sh
+scripts/build-sdl2.sh
 ```
 
-Or build from upstream libffi with `--host=aarch64-apple-ios` for each platform
-slice, then `xcodebuild -create-xcframework` to combine them.
-
-**SDL2:**
-Build SDL2 from source for iOS/Catalyst/Simulator (SDL2 2.x, not SDL3), or
-use the pre-built xcframework from the SDL releases page. Place it at the
-project root:
-```
-iospharo/
-  libffi.xcframework/
-  SDL2.xcframework/
-```
+This downloads, cross-compiles, and packages libffi (FFI/callbacks) and SDL2
+(display driver) as xcframeworks for iOS device, simulator, Mac Catalyst, and
+macOS. Takes about 10 minutes. The xcframeworks are gitignored due to size.
 
 ### Step 2: Build third-party libraries
 
