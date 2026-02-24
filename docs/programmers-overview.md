@@ -66,6 +66,7 @@ on Apple platforms where JIT compilation is forbidden.
 src/
   vm/                    # Clean C++ VM (the core)
     Interpreter.cpp/hpp  #   Bytecode interpreter, process scheduler
+    WorldRenderer.cpp/hpp#   Direct morph rendering (menu bar, dropdowns, world menu)
     ObjectMemory.cpp/hpp #   Spur heap, GC, allocation
     Primitives.cpp       #   577 numbered primitives
     Oop.hpp              #   Tagged pointer with iOS low-bit encoding
@@ -176,11 +177,13 @@ All 6 must-fix issues and all 9 should-fix issues have been addressed:
 
 ### Remaining (low priority)
 
-| # | Area | Issue |
-|---|------|-------|
-| 1 | Eden GC | Scavenge copies objects but never reclaims eden space — effectively no young-gen GC. (ObjectMemory.cpp:1149) |
-| 2 | `renderWorldMorphs` | 730-line C++ method doing pixel-level menu rendering — belongs in a separate file if kept. (Interpreter.cpp:581) |
-| 3 | x86\_64 slices | `build-xcframework.sh` only builds arm64 — no Intel Mac support. |
+All three items have been addressed:
+
+| # | Area | Issue | Status |
+|---|------|-------|--------|
+| 1 | Eden GC | Scavenge copies objects but never reclaims eden space — effectively no young-gen GC. | **Done** — Removed broken scavenge; `scavenge()` delegates to `fullGC()`. Dead code removed (`allocateInEden`, `promoteObject`, `copyObjectBytes`). Eden documented as scratch for compacting GC. |
+| 2 | `renderWorldMorphs` | 730-line C++ method doing pixel-level menu rendering — belongs in a separate file if kept. | **Done** — Extracted to `WorldRenderer.hpp`/`WorldRenderer.cpp`. Interpreter holds a `WorldRenderer` member and delegates rendering. |
+| 3 | x86\_64 slices | `build-xcframework.sh` only builds arm64 — no Intel Mac support. | **Done** — Script builds arm64 + x86\_64 for Mac Catalyst and Simulator, combines with lipo. `EXCLUDED_ARCHS` removed from Xcode project. Config headers use compile-time arch detection. |
 
 ### What's good
 
