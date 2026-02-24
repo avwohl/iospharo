@@ -227,7 +227,7 @@ PrimitiveResult Interpreter::primitiveLowSpaceSemaphore(int argCount) {
 
 PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
     (void)argCount;
-    return PrimitiveResult::Success;  // ignore display update deferral
+    return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
@@ -337,8 +337,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSetInterruptKey(int argCount) {
     (void)argCount;
-    // Set interrupt key - acknowledge but don't do anything
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 PrimitiveResult Interpreter::primitiveClone(int argCount) {
@@ -11414,10 +11413,7 @@ PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
 // Primitive 154: Get raw input word (for low-level input handling)
 // primitiveInputWord -> integer
 PrimitiveResult Interpreter::primitiveInputWord(int argCount) {
-    // Not implemented -- returns default
-    pop();
-    push(Oop::fromSmallInteger(0));
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 155: Compare two strings (case-sensitive byte comparison)
@@ -11836,13 +11832,8 @@ PrimitiveResult Interpreter::primitiveSetGCSemaphore(int argCount) {
 
     Oop semaphoreOop = stackTop();
 
-    // The semaphore can be nil (to disable) or a Semaphore object
-    // Store it for later use when GC signals finalization
-    // In a full implementation, this would be stored and signaled during GC
-    // For now, we just accept and acknowledge the setting
-
-    // Could store in: memory_.setSpecialObject(SpecialObjectIndex::TheFinalizationSemaphore, semaphoreOop);
-    // But we don't have that index defined, so just accept it
+    // Store the finalization semaphore so GC can signal it
+    memory_.setSpecialObject(SpecialObjectIndex::TheFinalizationSemaphore, semaphoreOop);
 
     pop();  // pop argument, leave receiver
     return PrimitiveResult::Success;
@@ -12478,17 +12469,10 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                     // Check for known internal FFI functions that we don't support
                     // Return appropriate values instead of failing (which raises exceptions)
                     if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                        // Return nil - no pending callbacks (we don't support FFI callbacks)
-                        // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
-                        popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                        push(memory_.nil());
-                        return PrimitiveResult::Success;
+                        return PrimitiveResult::Failure;
                     }
                     if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                        // Return 0 - no pending callbacks
-                        popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                        push(Oop::fromSmallInteger(0));
-                        return PrimitiveResult::Success;
+                        return PrimitiveResult::Failure;
                     }
                 }
             }
@@ -12789,17 +12773,10 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
             std::string str((char*)litHdr->bytes(), litHdr->byteSize());
             if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                // Return nil - no pending callbacks (we don't support FFI callbacks)
-                // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
-                popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                push(memory_.nil());
-                return PrimitiveResult::Success;
+                return PrimitiveResult::Failure;
             }
             if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                // Return 0 - no pending callbacks
-                popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                push(Oop::fromSmallInteger(0));
-                return PrimitiveResult::Success;
+                return PrimitiveResult::Failure;
             }
             // CRITICAL: isVMDisplayUsingSDL2 check - OSSDL2Driver uses this to decide event handling
             if (str == "isVMDisplayUsingSDL2") {
@@ -12881,17 +12858,10 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
                 // This prevents exception handling from consuming startup cycles
                 if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
-                    // Return nil - no pending callbacks (we don't support FFI callbacks)
-                    // IMPORTANT: Use memory_.nil() not Oop::nil() - the image's nil is at a real address
-                    popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                    push(memory_.nil());
-                    return PrimitiveResult::Success;
+                    return PrimitiveResult::Failure;
                 }
                 if (primName == "primNumberOfCallbacks" || primName == "numberOfCallbacks") {
-                    // Return 0 - no pending callbacks
-                    popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
-                    push(Oop::fromSmallInteger(0));
-                    return PrimitiveResult::Success;
+                    return PrimitiveResult::Failure;
                 }
 
                 auto it = namedPrimitives_.find(key);
@@ -14540,11 +14510,7 @@ PrimitiveResult Interpreter::primitiveClearVMProfile(int argCount) {
 
 // Primitive 251: Start/stop VM profiling
 PrimitiveResult Interpreter::primitiveControlVMProfiling(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-    // Profiling not supported in interpreter-only VM
-    // Just succeed silently
-    pop();  // Pop argument, leave receiver
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // primitiveVMProfileSamplesInto (252) is implemented below in PROFILING PRIMITIVES section
@@ -25064,8 +25030,8 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     try {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
-        // Zero the return value so Smalltalk gets 0/nil/NULL
-        memset(returnHolder, 0, returnSize);
+        fprintf(stderr, "[FFI] Exception during ffi_call — failing primitive\n");
+        return PrimitiveResult::Failure;
     }
 
 
