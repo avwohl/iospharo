@@ -82,6 +82,10 @@ open iospharo.xcodeproj
 
 Select your target (iOS device, Simulator, or My Mac - Catalyst) and build.
 
+**Code signing (optional):** To deploy to a physical device or the App Store,
+copy `Local.xcconfig.example` to `Local.xcconfig` and fill in your Apple
+Developer Team ID. `Local.xcconfig` is gitignored.
+
 ### Quick development build (Mac only)
 
 For faster iteration without xcframeworks:

@@ -1,3 +1,6 @@
+# Local configuration (team ID, signing)
+Local.xcconfig
+
 # Build outputs
 *.o
 *.a

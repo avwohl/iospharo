@@ -1,0 +1,4 @@
+// Shared build configuration for iospharo.
+// Local overrides (team ID, signing) go in Local.xcconfig (gitignored).
+
+#include? "Local.xcconfig"
