@@ -340,6 +340,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 PrimitiveResult Interpreter::primitiveSetInterruptKey(int argCount) {
     (void)argCount;
     // No-op: interrupt key not supported on iOS. Succeed so startup proceeds.
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveClone(int argCount) {
