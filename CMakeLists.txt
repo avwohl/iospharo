@@ -35,6 +35,7 @@ set(VM_SOURCES
     src/vm/ImageLoader.cpp
     src/vm/ImageWriter.cpp
     src/vm/Interpreter.cpp
+    src/vm/WorldRenderer.cpp
     src/vm/Primitives.cpp
     src/vm/FFI.cpp
     src/vm/InterpreterProxy.cpp

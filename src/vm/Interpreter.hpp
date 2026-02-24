@@ -53,6 +53,7 @@
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
+#include "WorldRenderer.hpp"
 #include <array>
 #include <atomic>
 #include <csetjmp>
@@ -243,7 +244,7 @@ public:
     Oop displayForm() const { return displayForm_; }
     void setDisplayForm(Oop form) { displayForm_ = form; }
     void initializeDisplayForm();  // Create and set up display Form
-    void renderWorldMorphs();      // Direct rendering of World's morphs
+    WorldRenderer& worldRenderer() { return worldRenderer_; }
     void processInputEvents();     // Process pending input events
     void dispatchMouseEventToMorph(int x, int y, int buttons, bool isMouseDown); // Direct mouse dispatch
     void handleMenuBarClick(Oop menuBar, int x, int y, int buttons); // Handle menu bar click
@@ -478,34 +479,8 @@ private:
     int pendingClickType_ = 0;
     bool hasPendingClick_ = false;
 
-    // Menu interaction state (for direct menu handling)
-    int selectedMenuIndex_ = -1;  // -1 = no menu selected
-    int prevSelectedMenuIndex_ = -1;  // Previous frame's menu state for dirty tracking
-    int64_t lastMenuClickTime_ = 0;  // Debounce duplicate clicks
-    int lastMenuClickX_ = -1000;     // Last click X coordinate
-    int lastMenuClickY_ = -1000;     // Last click Y coordinate
-    std::vector<std::pair<int, int>> menuItemBounds_;  // Stored menu item X bounds (start, end)
-    std::vector<Oop> menuBarItemMorphs_;  // The actual menu bar item morphs for dropdown access
-    int menuBarTop_ = 28;    // Top of menu bar in pixels (default for non-Retina)
-    int menuBarBottom_ = 72; // Bottom of menu bar in pixels (default for non-Retina)
-    int menuBarScale_ = 1;   // Scale factor (2 for Retina)
-
-    // Dropdown menu state for click handling
-    struct DropdownState {
-        int x = 0, y = 0, width = 0, height = 0;  // Dropdown bounds
-        int lineHeight = 0;
-        std::vector<Oop> itemMorphs;  // The actual menu item morphs for action invocation
-        bool valid = false;
-        int64_t openTimeMs = 0;  // When dropdown became valid (for debouncing)
-    };
-    DropdownState dropdownState_;
-
-    // World menu state (for right-click context menu)
-    struct WorldMenuBounds {
-        int x = 0, y = 0, width = 0, height = 0;
-    };
-    WorldMenuBounds pendingMenuBounds_;
-    bool hasVisibleMenu_ = false;
+    // World renderer (menu bar, morphs, dropdowns — extracted to WorldRenderer.cpp)
+    WorldRenderer worldRenderer_;
 
     // Pending menu item action (from dropdown click)
     Oop pendingMenuActionMorph_ = Oop::nil();  // Actually the target object
@@ -531,13 +506,6 @@ private:
     int debugClickX_ = -1;
     int debugClickY_ = -1;
     int debugClickFrame_ = 0;  // Frame counter for fade-out
-
-    // Dirty rectangle tracking for efficient redraws
-    struct DirtyRect {
-        int x1, y1, x2, y2;
-        bool valid = false;
-    };
-    DirtyRect dirtyMenuDropdown_;  // Track dropdown area changes
 
     // Pass-through events (events not handled by processInputEvents, passed to Pharo)
     std::vector<pharo::Event> passThroughEvents_;
@@ -1992,15 +1960,8 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(pendingDriverSetupMethod_);
     visitor(pendingDriverSetupReceiver_);
 
-    // Menu bar item morphs
-    for (auto& morph : menuBarItemMorphs_) {
-        visitor(morph);
-    }
-
-    // Dropdown item morphs
-    for (auto& morph : dropdownState_.itemMorphs) {
-        visitor(morph);
-    }
+    // World renderer roots (menu bar items, dropdown items)
+    worldRenderer_.forEachOopRoot(visitor);
 
     // Operand stack (only the live portion)
     // stackPointer_ points one past the last live value (post-increment push),
