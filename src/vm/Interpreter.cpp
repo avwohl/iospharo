@@ -211,13 +211,13 @@ bool Interpreter::initialize() {
     Oop context = memory_.fetchPointer(1, activeProcess);  // suspendedContext is slot 1 in modern Pharo
     // DEBUG_LOG("[DEBUG] Context: 0x" << std::hex << context.rawBits() << std::dec;
 
-    // Check for unrelocated pointer - if it points to the old image base area
-    // Old images use base address 0x10000000000 (1TB)
-    // Our loaded images are in a much lower address range
-    uint64_t contextAddr = context.rawBits() & ~7ULL;
-    if (contextAddr >= 0x10000000000ULL && contextAddr < 0x20000000000ULL) {
-        // Context appears unrelocated - use bootstrap startup
-        return bootstrapStartup();
+    // If context pointer is still at old image base, ImageLoader failed to relocate
+    {
+        uint64_t contextAddr = context.rawBits() & ~7ULL;
+        if (contextAddr >= 0x10000000000ULL && contextAddr < 0x20000000000ULL) {
+            stopVM("Unrelocated pointer in active process suspendedContext — ImageLoader bug");
+            return false;
+        }
     }
 
     // Check if context is nil (fresh image startup)
@@ -3751,14 +3751,13 @@ void Interpreter::returnValue(Oop value) {
                 // Sender is nil - this method is at the top of the context chain
                 // Fall through to terminate current process
             } else if (sender.isObject() && sender.rawBits() != nilObj.rawBits()) {
-                // Fix unrelocated sender pointer before dereferencing
+                // Verify sender is not an unrelocated pointer from old image base
                 {
                     const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
                     uint64_t sndAddr = sender.rawBits() & ~7ULL;
                     if (sndAddr >= OLD_IMAGE_BASE && sndAddr < OLD_IMAGE_BASE * 2) {
-                        uint64_t offset = sndAddr - OLD_IMAGE_BASE;
-                        uint64_t newAddr = reinterpret_cast<uint64_t>(memory_.oldSpaceStart()) + offset;
-                        sender = memory_.oopFromPointer(reinterpret_cast<ObjectHeader*>(newAddr));
+                        stopVM("Unrelocated sender pointer — ImageLoader bug");
+                        return;
                     }
                 }
                 if (!memory_.isValidPointer(sender)) {
@@ -5038,42 +5037,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    if (selBytes && selLen > 0) {
-        // relinquishProcessorForMicroseconds: (35 chars)
-        if (selLen == 35 && argCount == 1 &&
-            memcmp(selBytes, "relinquishProcessorForMicroseconds:", 35) == 0) {
-            static int idleCycles = 0;
-            if (++idleCycles == 10) autoLoadDriver();
-        }
-
-        // snapshot:andQuit: (17 chars) - SAVE IS DISABLED
-        if (selLen == 17 && argCount == 2 &&
-            memcmp(selBytes, "snapshot:andQuit:", 17) == 0) {
-            Oop saveArg = stackValue(1);
-            Oop quitArg = stackValue(0);
-            bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
-            bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
-            (void)shouldSave;
-            if (shouldQuit) {
-                stopVM("snapshot:andQuit: quit requested");
-                popN(argCount + 1);
-                push(memory_.nil());
-                return;
-            }
-            popN(argCount + 1);
-            push(memory_.nil());
-            return;
-        }
-    }
-
-    // Handle completely invalid receiver (raw 0) — treat as nil to avoid null deref.
-    // This indicates an uninitialized pointer bug; method lookup on nil will give
-    // proper DNU for messages nil doesn't understand.
+    // Raw 0 receiver means memory corruption — stop immediately
     if (rcvr.rawBits() == 0) {
-        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-        rcvr = nilObj;
-        // Fix receiver on the stack so 'self' is correct in dispatched method
-        *(stackPointer_ - 1 - argCount) = nilObj;
+        stopVM("Message send to corrupted receiver (raw 0)");
+        return;
     }
 
     Oop rcvrClass = memory_.classOf(rcvr);
@@ -6240,15 +6207,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     // The standard VM terminates the process in this case — there's no way to recover
     // because the receiver's class doesn't implement doesNotUnderstand: itself.
     {
-        bool isDnuSelector = false;
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() == 18 &&
-                memcmp(sh->bytes(), "doesNotUnderstand:", 18) == 0) {
-                isDnuSelector = true;
-            }
-        }
-        if (isDnuSelector || selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
+        if (selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
             dnuDepth--;
             // Standard VM behavior: terminate the active process, not the whole VM.
             // The process has an unrecoverable error (its receiver's class hierarchy
@@ -7139,12 +7098,19 @@ Oop Interpreter::materializeFrameStack() {
             // Total items on C++ stack above receiver
             int numItems = static_cast<int>(stackPointer_ - framePointer_) - 1;
             if (numItems < 0) numItems = 0;
-            if (numItems > 200) numItems = 200;  // Sanity limit
-            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
 
             static const int ContextFixedFields = 6;
             ObjectHeader* ctxHdr = activeContext_.asObjectPtr();
             size_t ctxSlots = ctxHdr->slotCount();
+
+            // Clamp to actual context capacity instead of arbitrary constant
+            int maxItems = static_cast<int>(ctxSlots) - ContextFixedFields;
+            if (maxItems < 0) maxItems = 0;
+            if (numItems > maxItems) {
+                fprintf(stderr, "[VM] Warning: stackp %d exceeds context capacity %d, clamping\n", numItems, maxItems);
+                numItems = maxItems;
+            }
+            memory_.storePointer(2, activeContext_, Oop::fromSmallInteger(numItems));
 
             // Sync ALL items (temps + expression stack): C++ → context.
             // The C++ stack is the canonical source: bytecodes modify temps
@@ -7918,9 +7884,7 @@ bool Interpreter::executePendingDriverInstall() {
     return result;
 }
 
-bool Interpreter::autoLoadDriver() {
-    return false;
-}
+// autoLoadDriver removed — was a dead no-op called from hardcoded selector matching
 
 bool Interpreter::bootstrapStartup() {
     static int bootstrapCallCount = 0;
@@ -8719,14 +8683,13 @@ bool Interpreter::executeFromContext(Oop context) {
         return false;
     }
 
-    // Fix unrelocated context pointer if needed (only for object pointers, not immediates)
+    // Verify context is not an unrelocated pointer from old image base
     {
         const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
         uint64_t ctxAddr = context.rawBits() & ~7ULL;
         if (context.isObject() && ctxAddr >= OLD_IMAGE_BASE && ctxAddr < OLD_IMAGE_BASE * 2) {
-            uint64_t offset = ctxAddr - OLD_IMAGE_BASE;
-            uint64_t newAddr = reinterpret_cast<uint64_t>(memory_.oldSpaceStart()) + offset;
-            context = memory_.oopFromPointer(reinterpret_cast<ObjectHeader*>(newAddr));
+            stopVM("Unrelocated context pointer in executeFromContext — ImageLoader bug");
+            return false;
         }
     }
 
@@ -8755,58 +8718,23 @@ bool Interpreter::executeFromContext(Oop context) {
     closure_ = memory_.fetchPointer(4, context);  // closureOrNil
     receiver_ = memory_.fetchPointer(5, context);
 
-    // Check for and fix unrelocated pointers (old image base 0x10000000000+)
-    // The old Spur 64-bit image base is 0x10000000000 (1TB)
-    const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
-    uint64_t newBase = reinterpret_cast<uint64_t>(memory_.oldSpaceStart());
-
-    uint64_t methodAddr = method_.rawBits() & ~7ULL;
-    uint64_t receiverAddr = receiver_.rawBits() & ~7ULL;
-
-    // CRITICAL: Only check object pointers (tag 000) for unrelocated addresses.
-    // SmallIntegers (tag 001) with large values can fall in the old image base range
-    // after masking off tag bits, causing them to be "fixed up" into corrupt pointers.
-    bool methodUnrelocated = method_.isObject() &&
-        (methodAddr >= OLD_IMAGE_BASE && methodAddr < OLD_IMAGE_BASE * 2);
-    bool receiverUnrelocated = receiver_.isObject() &&
-        (receiverAddr >= OLD_IMAGE_BASE && receiverAddr < OLD_IMAGE_BASE * 2);
-
-    if (methodUnrelocated || receiverUnrelocated) {
-        // Fix method pointer if needed
-        if (methodUnrelocated) {
-            uint64_t offset = methodAddr - OLD_IMAGE_BASE;
-            uint64_t newAddr = newBase + offset;
-            ObjectHeader* newMethodPtr = reinterpret_cast<ObjectHeader*>(newAddr);
-            method_ = memory_.oopFromPointer(newMethodPtr);
-
-            // Also fix the context slot
-            ObjectHeader* ctxHdr = context.asObjectPtr();
-            ctxHdr->slotAtPut(3, method_);
-        }
-
-        // Fix receiver pointer if needed
-        if (receiverUnrelocated) {
-            uint64_t offset = receiverAddr - OLD_IMAGE_BASE;
-            uint64_t newAddr = newBase + offset;
-            ObjectHeader* newRcvrPtr = reinterpret_cast<ObjectHeader*>(newAddr);
-            receiver_ = memory_.oopFromPointer(newRcvrPtr);
-
-            // Also fix the context slot
-            ObjectHeader* ctxHdr = context.asObjectPtr();
-            ctxHdr->slotAtPut(5, receiver_);
-        }
-    }
-
-    // Fix sender slot if unrelocated (only for object pointers, not immediates)
-    Oop sender = memory_.fetchPointer(0, context);
-    uint64_t senderAddr = sender.rawBits() & ~7ULL;
-    if (sender.isObject() && senderAddr >= OLD_IMAGE_BASE && senderAddr < OLD_IMAGE_BASE * 2) {
-        uint64_t offset = senderAddr - OLD_IMAGE_BASE;
-        uint64_t newAddr = newBase + offset;
-        ObjectHeader* newSenderPtr = reinterpret_cast<ObjectHeader*>(newAddr);
-        sender = memory_.oopFromPointer(newSenderPtr);
-        ObjectHeader* ctxHdr = context.asObjectPtr();
-        ctxHdr->slotAtPut(0, sender);
+    // Verify no unrelocated pointers from old image base remain
+    {
+        const uint64_t OLD_IMAGE_BASE = 0x10000000000ULL;
+        auto checkUnrelocated = [&](Oop o, const char* name) {
+            if (o.isObject()) {
+                uint64_t addr = o.rawBits() & ~7ULL;
+                if (addr >= OLD_IMAGE_BASE && addr < OLD_IMAGE_BASE * 2) {
+                    fprintf(stderr, "[VM] Unrelocated %s pointer 0x%llx — ImageLoader bug\n",
+                            name, (unsigned long long)o.rawBits());
+                    stopVM("Unrelocated pointer in context slots — ImageLoader bug");
+                }
+            }
+        };
+        checkUnrelocated(method_, "method");
+        checkUnrelocated(receiver_, "receiver");
+        Oop sender = memory_.fetchPointer(0, context);
+        checkUnrelocated(sender, "sender");
     }
 
     activeContext_ = context;  // Track for sender chain on return

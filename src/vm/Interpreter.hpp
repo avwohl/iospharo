@@ -1818,9 +1818,6 @@ private:
     /// Returns true if the install was executed.
     bool executePendingDriverInstall();
 
-    /// Auto-load OSiOSDriver.st by evaluating Smalltalk code
-    /// Called once at startup to enable the event system
-    bool autoLoadDriver();
 
     /// Try to reschedule to another runnable process.
     /// Returns true if a process was found and execution continues.
