@@ -1,102 +1,240 @@
 /*
  * ImageManager.swift
  *
- * Manages Pharo image files - downloading, extracting, and locating.
+ * Multi-image library manager. Downloads, extracts, imports, and catalogs
+ * Pharo images. Each image lives in its own subdirectory under Documents/Images/.
+ * The catalog is persisted to Documents/image-library.json.
  */
 
 import Foundation
 import Combine
 import ZIPFoundation
 
-/// Manages Pharo image download and storage
+/// A downloadable Pharo image template
+struct ImageTemplate: Identifiable {
+    let id: String          // e.g. "130"
+    let label: String       // e.g. "Pharo 13 (latest)"
+    let version: String     // e.g. "130"
+    let url: URL
+
+    static let builtIn: [ImageTemplate] = [
+        ImageTemplate(
+            id: "130",
+            label: "Pharo 13 (latest)",
+            version: "130",
+            url: URL(string: "https://files.pharo.org/get-files/130/pharoImage-arm64.zip")!
+        ),
+        ImageTemplate(
+            id: "120",
+            label: "Pharo 12 (stable)",
+            version: "120",
+            url: URL(string: "https://files.pharo.org/get-files/120/pharoImage-arm64.zip")!
+        ),
+        ImageTemplate(
+            id: "110",
+            label: "Pharo 11",
+            version: "110",
+            url: URL(string: "https://files.pharo.org/get-files/110/pharoImage-arm64.zip")!
+        ),
+    ]
+}
+
+/// Manages a library of Pharo images
 @MainActor
 class ImageManager: ObservableObject {
 
     // MARK: - Published Properties
 
+    @Published var images: [PharoImage] = []
+    @Published var selectedImageID: UUID?
+
     @Published var isDownloading = false
     @Published var downloadProgress: Double = 0
     @Published var statusMessage: String?
     @Published var errorMessage: String?
-    @Published var hasImage = false
-    @Published var imagePath: String?
-    @Published var imageName: String?
+
+    // MARK: - Backward-compat computed properties (used by ContentView/PharoBridge)
+
+    var hasImage: Bool { selectedImage != nil }
+
+    var imagePath: String? { selectedImage?.imagePath }
+
+    var imageName: String? { selectedImage?.imageFileName }
+
+    var selectedImage: PharoImage? {
+        if let id = selectedImageID {
+            return images.first { $0.id == id }
+        }
+        return images.first
+    }
 
     // MARK: - Private Properties
 
     private var downloadTask: URLSessionDownloadTask?
     private var progressObservation: NSKeyValueObservation?
-
     private let fileManager = FileManager.default
 
-    /// Documents directory for storing images
     private var documentsDirectory: URL {
         fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
     }
 
-    /// Default Pharo image URLs (arm64 for iOS/Apple Silicon)
-    private let imageURLs: [String: String] = [
-        "120": "https://files.pharo.org/get-files/120/pharoImage-arm64.zip",
-        "110": "https://files.pharo.org/get-files/110/pharoImage-arm64.zip",
-        "100": "https://files.pharo.org/get-files/100/pharoImage-arm64.zip"
-    ]
+    private var catalogURL: URL {
+        documentsDirectory.appendingPathComponent("image-library.json")
+    }
 
-    // MARK: - Public Methods
+    // MARK: - Load / Save
 
-    /// Check for existing image and prepare a fresh working copy
-    /// We always start from a pristine image to avoid corrupted state
-    func checkForExistingImage() {
-        fputs("[IMG] checkForExistingImage starting, docs=\(documentsDirectory.path)\n", stderr)
-        fflush(stderr)
-        // First check Documents directory for downloaded images
-        var imageFiles = findImageFiles()
-        fputs("[IMG] findImageFiles returned \(imageFiles.count) files\n", stderr)
+    /// Load the image catalog from disk, scan for uncatalogued images, migrate legacy files
+    func load() {
+        fputs("[LIB] load() starting\n", stderr)
         fflush(stderr)
 
-        // If no image in Documents, check app bundle for development
-        if imageFiles.isEmpty {
-            if let bundledImage = Bundle.main.url(forResource: "Pharo-iOS-Ready", withExtension: "image") {
-                imageFiles.append(bundledImage)
-            } else if let bundledImage = Bundle.main.url(forResource: "Pharo", withExtension: "image") {
-                imageFiles.append(bundledImage)
+        // Ensure Images/ directory exists
+        try? fileManager.createDirectory(at: PharoImage.imagesRoot, withIntermediateDirectories: true)
+
+        // Load catalog JSON
+        if let data = try? Data(contentsOf: catalogURL),
+           let saved = try? JSONDecoder().decode([PharoImage].self, from: data) {
+            images = saved
+            fputs("[LIB] loaded \(saved.count) images from catalog\n", stderr)
+        }
+
+        // Migrate legacy loose .image files from Documents root
+        migrateLegacyFiles()
+
+        // Scan for uncatalogued images in Images/ subdirectories
+        scanForUncatalogued()
+
+        // Remove catalog entries whose files no longer exist on disk
+        images.removeAll { access($0.imagePath, R_OK) != 0 }
+
+        save()
+
+        fputs("[LIB] load() done, \(images.count) images total\n", stderr)
+        fflush(stderr)
+    }
+
+    func save() {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        encoder.outputFormatting = .prettyPrinted
+        if let data = try? encoder.encode(images) {
+            try? data.write(to: catalogURL, options: .atomic)
+        }
+    }
+
+    // MARK: - Migration
+
+    /// Move loose .image files from Documents/ root into Images/<slug>/
+    private func migrateLegacyFiles() {
+        let docsPath = documentsDirectory.path
+        guard let dp = opendir(docsPath) else { return }
+        defer { closedir(dp) }
+
+        while let entry = readdir(dp) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) { ptr in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+            }
+            guard name.hasSuffix(".image") else { continue }
+            guard !name.hasPrefix(".") else { continue }
+
+            let imageURL = documentsDirectory.appendingPathComponent(name)
+            // Already catalogued?
+            if images.contains(where: { $0.imageURL == imageURL }) { continue }
+
+            let baseName = (name as NSString).deletingPathExtension
+            let slug = makeSlug(from: baseName)
+            let destDir = PharoImage.imagesRoot.appendingPathComponent(slug, isDirectory: true)
+            try? fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+            // Move the .image file and any companion files (.changes, .sources)
+            for ext in ["image", "changes", "sources"] {
+                let src = documentsDirectory.appendingPathComponent("\(baseName).\(ext)")
+                let dst = destDir.appendingPathComponent("\(baseName).\(ext)")
+                if fileManager.fileExists(atPath: src.path) {
+                    try? fileManager.moveItem(at: src, to: dst)
+                    fputs("[LIB] migrated \(baseName).\(ext) → Images/\(slug)/\n", stderr)
+                }
+            }
+
+            // Also move any WorkingImage marker
+            let workingMarker = documentsDirectory.appendingPathComponent("WorkingImage")
+            if fileManager.fileExists(atPath: workingMarker.path) {
+                try? fileManager.removeItem(at: workingMarker)
+            }
+
+            var entry = PharoImage.create(
+                name: baseName,
+                directoryName: slug,
+                imageFileName: name,
+                pharoVersion: guessPharoVersion(from: baseName)
+            )
+            entry.refreshSize()
+            images.append(entry)
+        }
+    }
+
+    /// Scan Images/ subdirectories for .image files not in the catalog
+    private func scanForUncatalogued() {
+        let rootPath = PharoImage.imagesRoot.path
+        guard let dp = opendir(rootPath) else { return }
+        defer { closedir(dp) }
+
+        while let entry = readdir(dp) {
+            let dirName = withUnsafePointer(to: entry.pointee.d_name) { ptr in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+            }
+            guard !dirName.hasPrefix(".") else { continue }
+            guard entry.pointee.d_type == DT_DIR else { continue }
+
+            // Already catalogued for this directory?
+            if images.contains(where: { $0.directoryName == dirName }) { continue }
+
+            // Look for a .image file inside
+            let subDirURL = PharoImage.imagesRoot.appendingPathComponent(dirName)
+            if let imageFileName = findFirstImageFile(in: subDirURL) {
+                var img = PharoImage.create(
+                    name: dirName,
+                    directoryName: dirName,
+                    imageFileName: imageFileName,
+                    pharoVersion: guessPharoVersion(from: imageFileName)
+                )
+                img.refreshSize()
+                images.append(img)
+                fputs("[LIB] found uncatalogued image: \(dirName)/\(imageFileName)\n", stderr)
             }
         }
-
-        if let firstImage = imageFiles.first {
-            fputs("[IMG] Found image: \(firstImage.path)\n", stderr)
-            fflush(stderr)
-            // Use original image directly to avoid iCloud file coordination hangs
-            // on macOS 26.3 when Documents is synced to iCloud.
-            imagePath = firstImage.path
-            imageName = firstImage.lastPathComponent
-            hasImage = true
-            fputs("[IMG] Using image: \(firstImage.path)\n", stderr)
-            fflush(stderr)
-        } else {
-            hasImage = false
-            imagePath = nil
-            imageName = nil
-        }
     }
 
-    /// Download the default (latest) Pharo image
+    // MARK: - Download
+
+    /// Download a template image
+    func downloadTemplate(_ template: ImageTemplate) {
+        downloadImage(from: template.url, version: template.version, label: template.label)
+    }
+
+    /// Download from a custom URL
+    func downloadCustomURL(_ url: URL) {
+        downloadImage(from: url, version: nil, label: url.lastPathComponent)
+    }
+
+    /// Legacy compatibility: download the default image
     func downloadDefaultImage() {
-        downloadImage(version: "120")
-    }
-
-    /// Download a specific Pharo version
-    func downloadImage(version: String) {
-        guard let urlString = imageURLs[version],
-              let url = URL(string: urlString) else {
-            errorMessage = "Unknown Pharo version: \(version)"
-            return
+        if let template = ImageTemplate.builtIn.first {
+            downloadTemplate(template)
         }
-
-        downloadImage(from: url)
     }
 
-    /// Download image from a custom URL
-    func downloadImage(from url: URL) {
+    /// Legacy compatibility: download by version key
+    func downloadImage(version: String) {
+        if let template = ImageTemplate.builtIn.first(where: { $0.version == version }) {
+            downloadTemplate(template)
+        } else {
+            errorMessage = "Unknown Pharo version: \(version)"
+        }
+    }
+
+    private func downloadImage(from url: URL, version: String?, label: String) {
         guard !isDownloading else {
             errorMessage = "Download already in progress"
             return
@@ -108,13 +246,13 @@ class ImageManager: ObservableObject {
         errorMessage = nil
 
         let session = URLSession(configuration: .default)
+        let capturedVersion = version
         downloadTask = session.downloadTask(with: url) { [weak self] tempURL, response, error in
             Task { @MainActor in
-                self?.handleDownloadComplete(tempURL: tempURL, response: response, error: error)
+                self?.handleDownloadComplete(tempURL: tempURL, response: response, error: error, version: capturedVersion, label: label)
             }
         }
 
-        // Observe progress
         progressObservation = downloadTask?.progress.observe(\.fractionCompleted) { [weak self] progress, _ in
             Task { @MainActor in
                 self?.downloadProgress = progress.fractionCompleted
@@ -125,7 +263,6 @@ class ImageManager: ObservableObject {
         downloadTask?.resume()
     }
 
-    /// Cancel ongoing download
     func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
@@ -134,9 +271,77 @@ class ImageManager: ObservableObject {
         statusMessage = nil
     }
 
-    // MARK: - Private Methods
+    // MARK: - Import
 
-    private func handleDownloadComplete(tempURL: URL?, response: URLResponse?, error: Error?) {
+    /// Import a .image file (and companions) from a security-scoped URL (Files app)
+    func importImage(from url: URL) {
+        let gotAccess = url.startAccessingSecurityScopedResource()
+        defer { if gotAccess { url.stopAccessingSecurityScopedResource() } }
+
+        let baseName = (url.lastPathComponent as NSString).deletingPathExtension
+        let slug = makeSlug(from: baseName) + "-" + UUID().uuidString.prefix(4).lowercased()
+        let destDir = PharoImage.imagesRoot.appendingPathComponent(slug, isDirectory: true)
+
+        do {
+            try fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+            // Copy the .image file
+            let destImage = destDir.appendingPathComponent(url.lastPathComponent)
+            try fileManager.copyItem(at: url, to: destImage)
+
+            // Copy companion files (.changes, .sources) from same directory
+            let sourceDir = url.deletingLastPathComponent()
+            for ext in ["changes", "sources"] {
+                let companion = sourceDir.appendingPathComponent("\(baseName).\(ext)")
+                if fileManager.fileExists(atPath: companion.path) {
+                    let dest = destDir.appendingPathComponent("\(baseName).\(ext)")
+                    try fileManager.copyItem(at: companion, to: dest)
+                }
+            }
+
+            var entry = PharoImage.create(
+                name: baseName,
+                directoryName: slug,
+                imageFileName: url.lastPathComponent,
+                pharoVersion: guessPharoVersion(from: baseName)
+            )
+            entry.refreshSize()
+            images.append(entry)
+            selectedImageID = entry.id
+            save()
+            fputs("[LIB] imported image: \(slug)/\(url.lastPathComponent)\n", stderr)
+        } catch {
+            errorMessage = "Import failed: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Delete
+
+    func deleteImage(_ image: PharoImage) {
+        // Remove from disk
+        try? fileManager.removeItem(at: image.directoryURL)
+
+        // Remove from catalog
+        images.removeAll { $0.id == image.id }
+        if selectedImageID == image.id {
+            selectedImageID = images.first?.id
+        }
+        save()
+        fputs("[LIB] deleted image: \(image.directoryName)\n", stderr)
+    }
+
+    // MARK: - Launch tracking
+
+    func markLaunched(_ image: PharoImage) {
+        guard let idx = images.firstIndex(where: { $0.id == image.id }) else { return }
+        images[idx].lastLaunchedAt = Date()
+        selectedImageID = image.id
+        save()
+    }
+
+    // MARK: - Download Completion
+
+    private func handleDownloadComplete(tempURL: URL?, response: URLResponse?, error: Error?, version: String?, label: String) {
         defer {
             isDownloading = false
             progressObservation = nil
@@ -160,130 +365,101 @@ class ImageManager: ObservableObject {
         statusMessage = "Extracting..."
 
         do {
-            try extractImage(from: tempURL)
-            checkForExistingImage()
-            statusMessage = nil
+            let slug = makeSlug(from: label) + "-" + UUID().uuidString.prefix(4).lowercased()
+            let destDir = PharoImage.imagesRoot.appendingPathComponent(slug, isDirectory: true)
+            try fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
+
+            try extractImage(from: tempURL, to: destDir)
+
+            // Find the extracted .image file
+            if let imageFileName = findFirstImageFile(in: destDir) {
+                var entry = PharoImage.create(
+                    name: imageFileName.replacingOccurrences(of: ".image", with: ""),
+                    directoryName: slug,
+                    imageFileName: imageFileName,
+                    pharoVersion: version ?? guessPharoVersion(from: imageFileName)
+                )
+                entry.refreshSize()
+                images.append(entry)
+                selectedImageID = entry.id
+                save()
+                statusMessage = nil
+                fputs("[LIB] downloaded and catalogued: \(slug)/\(imageFileName)\n", stderr)
+            } else {
+                errorMessage = "No .image file found in download"
+                try? fileManager.removeItem(at: destDir)
+            }
         } catch {
             errorMessage = "Extraction failed: \(error.localizedDescription)"
         }
     }
 
-    private func extractImage(from zipURL: URL) throws {
-        let destinationURL = documentsDirectory
+    // MARK: - Extraction
 
-        // Check if it's a zip file
+    private func extractImage(from zipURL: URL, to destination: URL) throws {
         let zipData = try Data(contentsOf: zipURL, options: .mappedIfSafe)
         let isZip = zipData.prefix(4) == Data([0x50, 0x4B, 0x03, 0x04])
 
         if isZip {
-            // Extract using ZIPFoundation if available, otherwise use Archive
-            try extractZip(from: zipURL, to: destinationURL)
+            try extractWithZIPFoundation(from: zipURL, to: destination)
         } else {
-            // Not a zip, assume it's the image directly
-            let imageName = "Pharo.image"
-            let destPath = destinationURL.appendingPathComponent(imageName)
+            // Not a zip — assume it's the image directly
+            let destPath = destination.appendingPathComponent("Pharo.image")
             try fileManager.copyItem(at: zipURL, to: destPath)
         }
     }
 
-    private func extractZip(from zipURL: URL, to destination: URL) throws {
-        // Try using built-in Archive class (iOS 16+)
-        if #available(iOS 16.0, *) {
-            try extractWithZIPFoundation(from: zipURL, to: destination)
-        } else {
-            // Fallback: manual extraction or use third-party library
-            try extractManually(from: zipURL, to: destination)
-        }
-    }
-
     private func extractWithZIPFoundation(from zipURL: URL, to destination: URL) throws {
-        // Use ZIPFoundation for extraction on iOS
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-
-        // Remove existing Pharo-related files to avoid "file exists" errors during extraction
-        let contents = try? fileManager.contentsOfDirectory(at: destination, includingPropertiesForKeys: nil)
-        for file in contents ?? [] {
-            let name = file.lastPathComponent.lowercased()
-            let ext = file.pathExtension.lowercased()
-            if ext == "image" || ext == "changes" || ext == "sources" ||
-               ext == "version" || name.hasPrefix("pharo") || name == "workingimage" {
-                try? fileManager.removeItem(at: file)
-                NSLog("[ImageManager] Removed existing file: %@", file.lastPathComponent)
-            }
-        }
-
         try fileManager.unzipItem(at: zipURL, to: destination)
     }
 
-    private func extractManually(from zipURL: URL, to destination: URL) throws {
-        // Read the zip file
-        let zipData = try Data(contentsOf: zipURL)
+    // MARK: - Helpers
 
-        // Simple ZIP extraction
-        // In production, use ZIPFoundation or similar library
-        // For now, we'll try to find and extract image files
+    /// Find the first .image file in a directory using POSIX opendir (no file coordination)
+    private func findFirstImageFile(in directory: URL) -> String? {
+        let dirPath = directory.path
+        guard let dp = opendir(dirPath) else { return nil }
+        defer { closedir(dp) }
 
-        // Check for common Pharo image patterns
-        let tempDir = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        try fileManager.createDirectory(at: tempDir, withIntermediateDirectories: true)
-
-        // Write zip to temp with proper extension
-        let tempZip = tempDir.appendingPathComponent("pharo.zip")
-        try zipData.write(to: tempZip)
-
-        // Use shell-free extraction (requires ZIPFoundation)
-        // For this implementation, we assume the downloaded file
-        // might already be uncompressed or we handle it via ZIPFoundation
-
-        // Move any .image files found to destination
-        let contents = try fileManager.contentsOfDirectory(at: tempDir, includingPropertiesForKeys: nil)
-        for file in contents {
-            if file.pathExtension == "image" ||
-               file.pathExtension == "changes" ||
-               file.pathExtension == "sources" {
-                let destFile = destination.appendingPathComponent(file.lastPathComponent)
-                if fileManager.fileExists(atPath: destFile.path) {
-                    try fileManager.removeItem(at: destFile)
+        while let entry = readdir(dp) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) { ptr in
+                String(cString: UnsafeRawPointer(ptr).assumingMemoryBound(to: CChar.self))
+            }
+            if name.hasSuffix(".image") && !name.hasPrefix(".") {
+                // Verify readable
+                let fullPath = directory.appendingPathComponent(name).path
+                if access(fullPath, R_OK) == 0 {
+                    return name
                 }
-                try fileManager.moveItem(at: file, to: destFile)
             }
         }
-
-        // Cleanup
-        try? fileManager.removeItem(at: tempDir)
+        return nil
     }
 
-    private func findImageFiles() -> [URL] {
-        fputs("[IMG] findImageFiles: checking known paths\n", stderr)
-        fflush(stderr)
+    /// Create a filesystem-safe slug from a name
+    private func makeSlug(from name: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        let slug = name.unicodeScalars.map { allowed.contains($0) ? String($0) : "-" }.joined()
+        // Collapse multiple hyphens and trim
+        return slug.components(separatedBy: "-").filter { !$0.isEmpty }.joined(separator: "-").prefix(60).lowercased()
+    }
 
-        // Check non-iCloud locations first (temp, then Documents).
-        // On macOS 26.3, FileManager operations on iCloud-synced Documents
-        // can block the main thread via file coordination.
-        let searchDirs = [
-            URL(fileURLWithPath: "/tmp/PharoImage"),
-            fileManager.temporaryDirectory.appendingPathComponent("PharoWorking"),
-            documentsDirectory
-        ]
-        let knownNames = ["Pharo.image", "Pharo-Working.image", "Pharo-iOS-Ready.image"]
-        var results: [URL] = []
-
-        for dir in searchDirs {
-            for name in knownNames {
-                let url = dir.appendingPathComponent(name)
-                // Use access() which is a simple POSIX syscall, no file coordination
-                if access(url.path, R_OK) == 0 {
-                    results.append(url)
-                    fputs("[IMG] findImageFiles: found \(url.path)\n", stderr)
-                    fflush(stderr)
-                    return results  // Return first found
-                }
-            }
+    /// Guess Pharo version from a filename like "Pharo12.0-SNAPSHOT-64bit-..."
+    private func guessPharoVersion(from name: String) -> String? {
+        guard let regex = try? NSRegularExpression(pattern: "[Pp]haro\\s*(\\d{1,2})", options: []),
+              let match = regex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)),
+              let range = Range(match.range(at: 1), in: name) else {
+            return nil
         }
+        let major = String(name[range])
+        return "\(major)0"  // e.g. "12" → "120"
+    }
 
-        fputs("[IMG] findImageFiles: no images found\n", stderr)
-        fflush(stderr)
-        return results
+    // MARK: - Legacy compat
+
+    /// Called by ContentView on appear — loads the catalog
+    func checkForExistingImage() {
+        load()
     }
 }
-

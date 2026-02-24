@@ -21,6 +21,12 @@
 		A1000B /* PharoVMCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000B /* PharoVMCore.xcframework */; };
 		A1000C /* libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* libffi.xcframework */; };
 		A10010 /* NSEventMonitor.m in Sources */ = {isa = PBXBuildFile; fileRef = A20010 /* NSEventMonitor.m */; };
+		A10012 /* PharoImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* PharoImage.swift */; };
+		A10013 /* ImageLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013 /* ImageLibraryView.swift */; };
+		A10014 /* ImageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014 /* ImageRow.swift */; };
+		A10015 /* NewImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20015 /* NewImageView.swift */; };
+		A10016 /* DownloadProgressRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20016 /* DownloadProgressRow.swift */; };
+		A10017 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20017 /* SettingsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,6 +47,12 @@
 		A2000F /* libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = libffi.xcframework; sourceTree = SOURCE_ROOT; };
 		A20010 /* NSEventMonitor.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NSEventMonitor.m; sourceTree = "<group>"; };
 		A20011 /* NSEventMonitor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSEventMonitor.h; sourceTree = "<group>"; };
+		A20012 /* PharoImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoImage.swift; sourceTree = "<group>"; };
+		A20013 /* ImageLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLibraryView.swift; sourceTree = "<group>"; };
+		A20014 /* ImageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageRow.swift; sourceTree = "<group>"; };
+		A20015 /* NewImageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewImageView.swift; sourceTree = "<group>"; };
+		A20016 /* DownloadProgressRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadProgressRow.swift; sourceTree = "<group>"; };
+		A20017 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -115,6 +127,11 @@
 			isa = PBXGroup;
 			children = (
 				A20006 /* PharoCanvasView.swift */,
+				A20013 /* ImageLibraryView.swift */,
+				A20014 /* ImageRow.swift */,
+				A20015 /* NewImageView.swift */,
+				A20016 /* DownloadProgressRow.swift */,
+				A20017 /* SettingsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -123,6 +140,7 @@
 			isa = PBXGroup;
 			children = (
 				A20007 /* ImageManager.swift */,
+				A20012 /* PharoImage.swift */,
 			);
 			path = Image;
 			sourceTree = "<group>";
@@ -263,6 +281,12 @@
 				A10006 /* PharoCanvasView.swift in Sources */,
 				A10007 /* ImageManager.swift in Sources */,
 				A10010 /* NSEventMonitor.m in Sources */,
+				A10012 /* PharoImage.swift in Sources */,
+				A10013 /* ImageLibraryView.swift in Sources */,
+				A10014 /* ImageRow.swift in Sources */,
+				A10015 /* NewImageView.swift in Sources */,
+				A10016 /* DownloadProgressRow.swift in Sources */,
+				A10017 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

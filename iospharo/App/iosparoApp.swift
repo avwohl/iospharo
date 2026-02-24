@@ -79,6 +79,12 @@ struct iosparoApp: App {
             ContentView()
                 .environmentObject(bridge)
                 .environmentObject(imageManager)
+                .onOpenURL { url in
+                    // Handle .image files opened from Files app or other apps
+                    if url.pathExtension == "image" {
+                        imageManager.importImage(from: url)
+                    }
+                }
         }
     }
 }

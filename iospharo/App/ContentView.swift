@@ -1,8 +1,7 @@
 /*
  * ContentView.swift
  *
- * Main content view for the iOS Pharo client.
- * Shows download progress, start button, or the Pharo canvas.
+ * Main content view — routes between the image library and the Pharo canvas.
  */
 
 import SwiftUI
@@ -14,46 +13,23 @@ struct ContentView: View {
     @EnvironmentObject var bridge: PharoBridge
     @EnvironmentObject var imageManager: ImageManager
 
-    @State private var showingSettings = false
-
     var body: some View {
         ZStack {
-            // Background - must not intercept touches
-            Color.black.edgesIgnoringSafeArea(.all)
-                .allowsHitTesting(false)
-
-            // Main content based on state
             if bridge.isRunning {
-                // Pharo is running - show canvas with gesture overlay
+                // Pharo is running — full-screen canvas
                 pharoCanvas
-
-            } else if imageManager.isDownloading {
-                // Downloading image
-                downloadingView
-            } else if imageManager.hasImage {
-                // Ready to start
-                readyView
             } else {
-                // No image - show download option
-                noImageView
+                // Image library (handles empty state, downloads, list)
+                ImageLibraryView()
             }
 
-            // Error overlay
-            if let error = bridge.errorMessage ?? imageManager.errorMessage {
+            // Error overlay for VM errors
+            if let error = bridge.errorMessage {
                 errorOverlay(message: error)
             }
-
         }
         .onAppear {
-            imageManager.checkForExistingImage()
-
-            // Auto-start when an image is available
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                if imageManager.hasImage && !bridge.isRunning {
-                    NSLog("[iospharo] Auto-starting with image: %@", imageManager.imagePath ?? "nil")
-                    startPharo()
-                }
-            }
+            imageManager.load()
         }
     }
 
@@ -65,112 +41,8 @@ struct ContentView: View {
                 .edgesIgnoringSafeArea(.all)
 
             #if !targetEnvironment(macCatalyst)
-            // Floating middle-click button (iOS only)
             MiddleClickButton(isActive: $bridge.middleClickActive)
             #endif
-        }
-    }
-
-    private var downloadingView: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "arrow.down.circle")
-                .font(.system(size: 60))
-                .foregroundColor(.blue)
-
-            Text("Downloading Pharo")
-                .font(.title2)
-                .foregroundColor(.white)
-
-            ProgressView(value: imageManager.downloadProgress)
-                .progressViewStyle(LinearProgressViewStyle(tint: .blue))
-                .frame(width: 250)
-
-            Text("\(Int(imageManager.downloadProgress * 100))%")
-                .font(.caption)
-                .foregroundColor(.gray)
-
-            if let status = imageManager.statusMessage {
-                Text(status)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-
-            Button("Cancel") {
-                imageManager.cancelDownload()
-            }
-            .foregroundColor(.red)
-            .padding(.top, 20)
-        }
-        .padding()
-    }
-
-    private var readyView: some View {
-        VStack(spacing: 30) {
-            Image(systemName: "play.circle.fill")
-                .font(.system(size: 80))
-                .foregroundColor(.green)
-
-            Text("Pharo Ready")
-                .font(.title)
-                .foregroundColor(.white)
-
-            if let imageName = imageManager.imageName {
-                Text(imageName)
-                    .font(.caption)
-                    .foregroundColor(.gray)
-            }
-
-            Button(action: startPharo) {
-                HStack {
-                    Image(systemName: "play.fill")
-                    Text("Start Pharo")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 40)
-                .padding(.vertical, 15)
-                .background(Color.green)
-                .cornerRadius(10)
-            }
-
-            Button("Download Different Image") {
-                showingSettings = true
-            }
-            .font(.caption)
-            .foregroundColor(.blue)
-            .padding(.top, 20)
-        }
-        .sheet(isPresented: $showingSettings) {
-            SettingsView()
-        }
-    }
-
-    private var noImageView: some View {
-        VStack(spacing: 30) {
-            Image(systemName: "photo.badge.arrow.down")
-                .font(.system(size: 60))
-                .foregroundColor(.gray)
-
-            Text("No Pharo Image")
-                .font(.title2)
-                .foregroundColor(.white)
-
-            Text("Download a Pharo image to get started")
-                .font(.body)
-                .foregroundColor(.gray)
-
-            Button(action: { imageManager.downloadDefaultImage() }) {
-                HStack {
-                    Image(systemName: "arrow.down.circle.fill")
-                    Text("Download Pharo 12")
-                }
-                .font(.headline)
-                .foregroundColor(.white)
-                .padding(.horizontal, 40)
-                .padding(.vertical, 15)
-                .background(Color.blue)
-                .cornerRadius(10)
-            }
         }
     }
 
@@ -188,100 +60,6 @@ struct ContentView: View {
             .background(Color.red.opacity(0.8))
             .cornerRadius(10)
             .padding()
-        }
-    }
-
-    // MARK: - Actions
-
-    private func startPharo() {
-        guard let imagePath = imageManager.imagePath else { return }
-
-        if bridge.loadImage(at: imagePath) {
-            bridge.start()
-        }
-    }
-
-    private func sendSpecialKey(_ key: String) {
-        switch key {
-        case "Esc":
-            bridge.sendKeyTyped(Character(UnicodeScalar(27)!))
-        case "Tab":
-            bridge.sendKeyTyped(Character(UnicodeScalar(9)!))
-        case "Ctrl":
-            // Toggle ctrl modifier (simplified)
-            break
-        case "Alt":
-            break
-        case "Cmd":
-            break
-        default:
-            break
-        }
-    }
-}
-
-// MARK: - Settings View
-
-struct SettingsView: View {
-
-    @EnvironmentObject var imageManager: ImageManager
-    @Environment(\.dismiss) var dismiss
-    @State private var showingDiagnostics = false
-
-    var body: some View {
-        NavigationView {
-            List {
-                Section("Image Management") {
-                    Button("Download Pharo 12") {
-                        imageManager.downloadDefaultImage()
-                        dismiss()
-                    }
-
-                    Button("Download Pharo 11") {
-                        imageManager.downloadImage(version: "110")
-                        dismiss()
-                    }
-                }
-
-                Section("Developer Tools") {
-                    Button("VM Diagnostics") {
-                        showingDiagnostics = true
-                    }
-                }
-
-                Section("About") {
-                    HStack {
-                        Text("Device")
-                        Spacer()
-                        Text(PharoBridge.shared.deviceModel)
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("iOS Version")
-                        Spacer()
-                        Text(PharoBridge.shared.systemVersion)
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("VM Version")
-                        Spacer()
-                        Text("1.0.0")
-                            .foregroundColor(.gray)
-                    }
-                }
-            }
-            .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                }
-            }
-            .sheet(isPresented: $showingDiagnostics) {
-                DiagnosticsView()
-            }
         }
     }
 }
@@ -373,7 +151,7 @@ struct DiagnosticsView: View {
 
     private func testSpaceEncoding() -> (Bool, String) {
         let addr: UInt64 = 0x100000008
-        let encoded = addr | (1 << 1)  // old space
+        let encoded = addr | (1 << 1)
         let space = (encoded >> 1) & 0x3
         return (space == 1, "Old space encoding correct")
     }
