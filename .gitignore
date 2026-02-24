@@ -19,6 +19,9 @@ test-images/
 test_images/
 images/
 
+# Reference VM (download separately)
+pharo-vm/
+
 # Pharo runtime data
 pharo-local/
 

@@ -1,98 +1,68 @@
 # iospharo
 
-iOS client for the Pharo Smalltalk VM.
+A Pharo Smalltalk VM for iOS and macOS, written as a clean C++ interpreter.
 
 ## Overview
 
-iospharo is an iOS/macOS application that runs the Pharo Smalltalk virtual machine, providing an interactive development environment on Apple mobile devices.
+iospharo runs standard Pharo 13 images on iOS devices and Mac (via Catalyst).
+It is a from-scratch interpreter implementation — not a port of the Cog JIT VM —
+with full support for the Sista V1 bytecode set, FFI, and the standard Pharo
+test suite.
+
+## Status
+
+- **99.90% test pass rate** on Mac Catalyst (13,040 pass / 13,053 run)
+- **99.55% test pass rate** on iOS Simulator
+- Full GUI: Pharo desktop, menus, windows, keyboard and mouse input
+- FFI with callbacks (sigsetjmp/siglongjmp)
+- All standard VM plugins built-in (B2D, JPEG, DSA, SSL, etc.)
+- Third-party libraries: cairo, freetype, harfbuzz, pixman, libpng, OpenSSL, libssh2, libgit2
 
 ## Features
 
-- **SwiftUI Interface**: Modern, native iOS UI
-- **Metal Rendering**: GPU-accelerated display of the Pharo world
+- **Metal Rendering**: GPU-accelerated display via SDL2 FFI stubs bridged to Metal
 - **Touch Support**: Full gesture mapping for Pharo mouse events
   - Tap = Left click
   - Long press = Right click
   - Two-finger tap = Middle click
   - Drag = Mouse move with button down
-- **Image Management**: Download and manage Pharo images
-- **Mac Catalyst**: Runs on macOS via Catalyst
+- **Mac Catalyst**: Runs natively on macOS
+- **Standard Images**: Works with unmodified Pharo 13 images
 
 ## Requirements
 
-- iOS 13.0+ / macOS 10.15+ (Catalyst)
-- Xcode 14.0+
+- iOS 15.0+ / macOS (Catalyst)
+- Xcode 15.0+
 - CMake 3.20+
-- pharo-vm source (sibling directory)
-
-## Project Structure
-
-```
-iospharo/
-├── CMakeLists.txt          # Build configuration
-├── cmake/
-│   └── iOS.cmake           # iOS platform config
-├── src/
-│   └── ios/
-│       ├── iosDisplay.m    # Display backend
-│       ├── iosEvents.m     # Event handling
-│       ├── iosParameters.m # Bundle config
-│       └── iosUtils.mm     # Utilities
-├── iospharo/               # Swift app
-│   ├── App/
-│   │   ├── iosparoApp.swift
-│   │   └── ContentView.swift
-│   ├── Bridge/
-│   │   ├── PharoBridge.swift
-│   │   └── iospharo-Bridging-Header.h
-│   ├── Metal/
-│   │   ├── MetalRenderer.swift
-│   │   └── Shaders.metal
-│   ├── Views/
-│   │   └── PharoCanvasView.swift
-│   └── Image/
-│       └── ImageManager.swift
-└── resources/
-    └── ios/
-        └── Info.plist.in
-```
+- pharo-vm source (sibling directory, for headers)
 
 ## Building
 
-### Prerequisites
-
-1. Clone pharo-vm as a sibling directory:
-   ```bash
-   cd /path/to/pharo
-   git clone https://github.com/pharo-project/pharo-vm.git
-   ```
-
-2. Generate VM sources (if not already done):
-   ```bash
-   cd pharo-vm
-   cmake -B build -DGENERATE_SOURCES=ON
-   cmake --build build
-   ```
-
-### Build VM Library
+### Quick Start (Mac Catalyst for development)
 
 ```bash
-cd iospharo
-mkdir build && cd build
-cmake .. -G Xcode \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0
-cmake --build . --config Release
+# Build the VM library
+cmake -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+
+# Run tests with a Pharo image
+./build/test_load_image /path/to/Pharo.image
 ```
 
-### Build iOS App
+### XCFramework (for iOS + Mac Catalyst)
 
-1. Open `iospharo/iospharo.xcodeproj` in Xcode
-2. Add the built `libPharoVMCore.a` to the project
-3. Configure signing
-4. Build and run
+```bash
+# Build third-party libraries (cairo, freetype, OpenSSL, etc.)
+scripts/build-third-party.sh
 
-## Architecture
+# Build PharoVMCore.xcframework (device + simulator + catalyst)
+./build-xcframework.sh
+
+# Open in Xcode and build
+open iospharo.xcodeproj
+```
+
+### Architecture
 
 ```
 ┌─────────────────────────────┐
@@ -103,44 +73,35 @@ cmake --build . --config Release
 ├─────────────────────────────┤
 │   MetalRenderer.swift       │  GPU display rendering
 ├─────────────────────────────┤
-│   iosDisplay.m              │  VM display interface
-│   iosEvents.m               │  Event queue
-├─────────────────────────────┤
-│   libPharoVMCore.a          │  Pharo VM (static library)
+│   C++ Interpreter           │  Sista V1 bytecodes, GC,
+│   (libPharoVMCore.a)        │  FFI, primitives, plugins
 └─────────────────────────────┘
 ```
 
-## Touch Gestures
-
-| Gesture | Pharo Event |
-|---------|-------------|
-| Single tap | Red button click |
-| Double tap | Double click |
-| Long press | Blue button (right click) |
-| Two-finger tap | Yellow button (middle click) |
-| Drag | Mouse move with red button |
-| Pinch | Zoom (Cmd+scroll) |
+Key directories:
+- `src/vm/` — Clean C++ VM (Interpreter, ObjectMemory, Primitives, ImageLoader)
+- `src/ios/` — iOS platform layer and generated interpreter reference
+- `iospharo/` — Swift/SwiftUI app (Metal renderer, bridge, views)
+- `scripts/` — Build scripts for third-party libraries
+- `docs/` — Technical reference documentation
 
 ## Configuration
 
-Edit `Info.plist` to configure:
+Edit `Info.plist` to configure VM parameters:
 
-- `PharoImageFile`: Default image filename
-- `PharoMaxOldSpaceSize`: Max heap size (bytes)
-- `PharoEdenSize`: Young generation size
-- `PharoCodeSize`: JIT code space size
-- `PharoHeadless`: Run without display
-
-## Known Limitations
-
-- JIT compilation may have restrictions on iOS due to code signing
-- File access is limited to the app's sandbox
-- Background execution is limited by iOS
+| Key | Default | Description |
+|-----|---------|-------------|
+| `PharoImageFile` | `Pharo.image` | Default image filename |
+| `PharoMaxOldSpaceSize` | 536870912 (512 MB) | Max heap size |
+| `PharoEdenSize` | 10485760 (10 MB) | Young generation size |
+| `PharoCodeSize` | 67108864 (64 MB) | Code space size |
+| `PharoHeadless` | false | Run without display |
 
 ## License
 
-GPL v3 (matching Pharo VM license)
+MIT License — see [LICENSE](LICENSE).
 
 ## Credits
 
-Built on the [Pharo VM](https://github.com/pharo-project/pharo-vm) project.
+Built on the [Pharo](https://pharo.org) project. Uses [libffi](https://github.com/libffi/libffi),
+[SDL2](https://www.libsdl.org), and other open source libraries.
