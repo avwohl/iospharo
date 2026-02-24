@@ -150,11 +150,13 @@ download_sources() {
         "cairo-${CAIRO_VERSION}.tar.xz:https://cairographics.org/releases/cairo-${CAIRO_VERSION}.tar.xz"
     )
 
+    # libgit2 is always built (works without crypto for local repos)
+    downloads+=("libgit2-${LIBGIT2_VERSION}.tar.gz:https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz")
+
     if [ "$WITH_CRYPTO" = "1" ]; then
         downloads+=(
             "openssl-${OPENSSL_VERSION}.tar.gz:https://www.openssl.org/source/openssl-${OPENSSL_VERSION}.tar.gz"
             "libssh2-${LIBSSH2_VERSION}.tar.xz:https://www.libssh2.org/download/libssh2-${LIBSSH2_VERSION}.tar.xz"
-            "libgit2-${LIBGIT2_VERSION}.tar.gz:https://github.com/libgit2/libgit2/archive/refs/tags/v${LIBGIT2_VERSION}.tar.gz"
         )
     fi
 
@@ -407,10 +409,17 @@ build_cairo() {
     local srcdir="${SOURCES_DIR}/cairo-${CAIRO_VERSION}"
     [ -d "$srcdir" ] || (cd "$SOURCES_DIR" && tar xf "cairo-${CAIRO_VERSION}.tar.xz")
 
+    # Patch: cairo's meson.build uses run_command('version.py') which spawns
+    # a subprocess. On macOS, process spawning can hang in sandboxed/CI
+    # environments. Replace with hard-coded version string.
+    if grep -q "run_command(find_program('version.py')" "$srcdir/meson.build" 2>/dev/null; then
+        sed -i '' "s|version: run_command(find_program('version.py'), check: true).stdout().strip()|version: '${CAIRO_VERSION}'|" "$srcdir/meson.build"
+        log "Patched cairo meson.build to use hard-coded version"
+    fi
+
     local prefix="${INSTALL_ROOT}/${PLATFORM_NAME}"
 
-    # Cairo 1.18+ uses meson. We'll try autotools if available, otherwise meson.
-    # For cross-compilation, meson with a cross file is more reliable.
+    # Cairo 1.18+ uses meson with a cross file for cross-compilation.
     local builddir="${BUILD_ROOT}/build-cairo-${PLATFORM_NAME}"
     rm -rf "$builddir"
     mkdir -p "$builddir"
