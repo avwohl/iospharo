@@ -9,6 +9,7 @@
 #include "../platform/DisplaySurface.hpp"
 #include <cstring>
 #include <ctime>
+#include <string>
 #include <sys/time.h>
 
 using namespace pharo;
@@ -366,12 +367,40 @@ static sqInt proxy_storePointerofObjectwithValue(sqInt fieldIndex, sqInt oop, sq
 // =====================================================================
 // Testing
 // =====================================================================
+// Helper: get class name as C string from a class Oop. Returns empty string on failure.
+static std::string proxyClassName(Oop cls) {
+    if (!cls.isObject()) return "";
+    ObjectHeader* hdr = cls.asObjectPtr();
+    if (hdr->slotCount() < 7) return "";
+    Oop nameOop = hdr->slotAt(6);  // slot 6 = name
+    if (!nameOop.isObject()) return "";
+    ObjectHeader* nameHdr = nameOop.asObjectPtr();
+    if (!nameHdr->isBytesObject() || nameHdr->byteSize() > 100) return "";
+    return std::string(reinterpret_cast<const char*>(nameHdr->bytes()), nameHdr->byteSize());
+}
+
 static sqInt proxy_isKindOf(sqInt oop, char* aString) {
-    return 0; // Not critical for B2DPlugin
+    if (!aString) return 0;
+    Oop obj = sqIntToOop(oop);
+    Oop cls = gMem->classOf(obj);
+    Oop prev = Oop::nil();
+    while (cls.isObject() && cls.rawBits() != prev.rawBits()) {
+        std::string name = proxyClassName(cls);
+        if (!name.empty() && name == aString) return 1;
+        prev = cls;
+        ObjectHeader* hdr = cls.asObjectPtr();
+        if (hdr->slotCount() < 1) break;
+        cls = hdr->slotAt(0);  // superclass
+    }
+    return 0;
 }
 
 static sqInt proxy_isMemberOf(sqInt oop, char* aString) {
-    return 0; // Not critical for B2DPlugin
+    if (!aString) return 0;
+    Oop obj = sqIntToOop(oop);
+    Oop cls = gMem->classOf(obj);
+    std::string name = proxyClassName(cls);
+    return (!name.empty() && name == aString) ? 1 : 0;
 }
 
 static sqInt proxy_isBytes(sqInt oop) {
@@ -441,7 +470,10 @@ static sqInt proxy_booleanValueOf(sqInt obj) {
 }
 
 static sqInt proxy_checkedIntegerValueOf(sqInt intOop) {
-    return proxy_stackIntegerValue(0); // Simplified
+    Oop oop = sqIntToOop(intOop);
+    if (oop.isSmallInteger()) return static_cast<sqInt>(oop.asSmallInteger());
+    gFailed = true;
+    return 0;
 }
 
 static sqInt proxy_floatObjectOf(double aFloat) {
@@ -481,10 +513,7 @@ static sqInt proxy_integerValueOf(sqInt oop) {
 }
 
 static sqInt proxy_positive32BitIntegerFor(unsigned int integerValue) {
-    if (integerValue <= 0x0FFFFFFFFFFFFFULL) {
-        return oopToSqInt(Oop::fromSmallInteger(static_cast<int64_t>(integerValue)));
-    }
-    // Need to create a LargePositiveInteger - for now use SmallInteger range
+    // All 32-bit unsigned values fit in 64-bit SmallInteger range
     return oopToSqInt(Oop::fromSmallInteger(static_cast<int64_t>(integerValue)));
 }
 
@@ -635,7 +664,11 @@ static sqInt proxy_primitiveFail() {
 }
 
 static sqInt proxy_showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt t, sqInt r, sqInt b) {
-    return 0; // Display update - handled by our rendering pipeline
+    if (pharo::gDisplaySurface) {
+        pharo::gDisplaySurface->invalidateRect(static_cast<int>(l), static_cast<int>(t),
+                                                static_cast<int>(r - l), static_cast<int>(b - t));
+    }
+    return 0;
 }
 
 static sqInt proxy_signalSemaphoreWithIndex(sqInt semaIndex) {
@@ -657,7 +690,12 @@ static sqInt proxy_superclassOf(sqInt classPointer) {
 }
 
 static sqInt proxy_statNumGCs() { return 0; }
-static sqInt proxy_stringForCString(const char* s) { return proxy_nilObject(); }
+static sqInt proxy_stringForCString(const char* s) {
+    if (!s) return proxy_nilObject();
+    Oop result = gMem->createString(std::string(s));
+    if (result.isNil()) { gFailed = true; return proxy_nilObject(); }
+    return oopToSqInt(result);
+}
 
 // =====================================================================
 // BitBlt support for B2DPlugin
@@ -736,10 +774,6 @@ static uint32_t* resolveFormPixels(Oop form, int& width, int& height, int& depth
     if (bits.isObject() && !bits.isNil()) {
         ObjectHeader* hdr = bits.asObjectPtr();
         if (hdr->byteSize() >= static_cast<size_t>(width * height * (depth / 8))) {
-            return reinterpret_cast<uint32_t*>(hdr->bytes());
-        }
-        // Bitmap might be smaller if depth < 32; allow if it has any bytes
-        if (hdr->byteSize() > 0) {
             return reinterpret_cast<uint32_t*>(hdr->bytes());
         }
     }
@@ -915,8 +949,11 @@ static int proxy_signed32BitValueOf(sqInt oop) {
 static sqInt proxy_includesBehaviorThatOf(sqInt aClass, sqInt aSuperClass) {
     Oop cls = sqIntToOop(aClass);
     Oop super = sqIntToOop(aSuperClass);
-    for (int i = 0; i < 100 && cls.isObject(); i++) {
+    Oop prev = Oop::nil();
+    while (cls.isObject()) {
         if (cls.rawBits() == super.rawBits()) return 1;
+        if (cls.rawBits() == prev.rawBits()) break;  // cycle guard
+        prev = cls;
         ObjectHeader* hdr = cls.asObjectPtr();
         if (hdr->slotCount() < 1) break;
         cls = hdr->slotAt(0);
@@ -1038,7 +1075,13 @@ static sqInt proxy_methodReturnInteger(sqInt v) {
     gInterp->push(Oop::fromSmallInteger(v));
     return 0;
 }
-static sqInt proxy_methodReturnString(char* s) { return 0; }
+static sqInt proxy_methodReturnString(char* s) {
+    sqInt strOop = proxy_stringForCString(s);
+    if (gFailed) return 0;
+    gInterp->popN(gInterp->argumentCount() + 1);
+    gInterp->push(sqIntToOop(strOop));
+    return 0;
+}
 static sqInt proxy_methodReturnValue(sqInt oop) {
     gInterp->popN(gInterp->argumentCount() + 1);
     gInterp->push(sqIntToOop(oop));
