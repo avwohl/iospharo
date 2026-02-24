@@ -88,8 +88,20 @@ build_slice() {
     fi
 
     cd "$build_dir"
-    "$LIBFFI_SRC/configure" \
+
+    # Force cross-compilation mode for ALL builds. Autoconf tries to
+    # compile and run test programs (conftest) which can hang when the
+    # compiled binary can't execute (sandboxed CI, wrong SDK, etc).
+    # Using --build different from --host makes autoconf skip run tests.
+    local build_triple
+    case "$host" in
+        x86_64-*)  build_triple="--build=aarch64-apple-darwin" ;;
+        *)         build_triple="--build=x86_64-apple-darwin" ;;
+    esac
+
+    /bin/sh "$LIBFFI_SRC/configure" \
         --host="$host" \
+        $build_triple \
         --prefix="$install_dir" \
         --enable-static \
         --disable-shared \

@@ -90,6 +90,17 @@ build_slice() {
         -DSDL_TESTS=OFF
         -DSDL2_DISABLE_SDL2MAIN=ON
         -DSDL_OPENGL=OFF
+        -DSDL_OPENGLES=OFF
+        -DSDL_VIDEO=OFF
+        -DSDL_AUDIO=OFF
+        -DSDL_RENDER=OFF
+        -DSDL_HAPTIC=OFF
+        -DSDL_HIDAPI=OFF
+        -DSDL_POWER=OFF
+        -DSDL_SENSOR=OFF
+        -DSDL_JOYSTICK=OFF
+        -DSDL_MISC=OFF
+        -DSDL_LOCALE=OFF
     )
 
     if [ "$system_name" = "iOS" ]; then
@@ -139,8 +150,8 @@ build_slice x86_64 iphonesimulator iOS "" "-mios-simulator-version-min=15.0" ios
 make_universal ios-sim-universal ios-sim-arm64 ios-sim-x86_64
 
 log "Building Mac Catalyst..."
-build_slice arm64 macosx Darwin "-target arm64-apple-ios15.0-macabi" "" catalyst-arm64
-build_slice x86_64 macosx Darwin "-target x86_64-apple-ios15.0-macabi" "" catalyst-x86_64
+build_slice arm64 macosx Catalyst "-target arm64-apple-ios15.0-macabi" "" catalyst-arm64
+build_slice x86_64 macosx Catalyst "-target x86_64-apple-ios15.0-macabi" "" catalyst-x86_64
 make_universal catalyst-universal catalyst-arm64 catalyst-x86_64
 
 log "Building macOS..."

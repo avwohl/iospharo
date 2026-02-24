@@ -187,8 +187,17 @@ build_autotools() {
     cd "$builddir"
 
     log "Configuring $name for $PLATFORM_NAME..."
-    "$srcdir/configure" \
+    # Use /bin/sh to avoid sandbox blocking direct script execution.
+    # Force cross-compilation with --build different from --host.
+    local build_triple
+    case "$HOST_TRIPLE" in
+        x86_64-*)  build_triple="--build=aarch64-apple-darwin" ;;
+        *)         build_triple="--build=x86_64-apple-darwin" ;;
+    esac
+
+    /bin/sh "$srcdir/configure" \
         --host="$HOST_TRIPLE" \
+        $build_triple \
         --prefix="$prefix" \
         --enable-static \
         --disable-shared \
