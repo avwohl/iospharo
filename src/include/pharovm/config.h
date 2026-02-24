@@ -29,11 +29,21 @@
 #endif
 
 #define VM_HOST "iOS"
-#define VM_HOST_CPU "arm64"
 #define VM_HOST_OS "iOS"
 #define VM_TARGET "iOS"
-#define VM_TARGET_CPU "arm64"
 #define VM_TARGET_OS "iOS"
+
+/* Compile-time CPU detection */
+#if defined(__arm64__) || defined(__aarch64__)
+#define VM_HOST_CPU "arm64"
+#define VM_TARGET_CPU "arm64"
+#elif defined(__x86_64__)
+#define VM_HOST_CPU "x86_64"
+#define VM_TARGET_CPU "x86_64"
+#else
+#define VM_HOST_CPU "unknown"
+#define VM_TARGET_CPU "unknown"
+#endif
 
 /* widths of primitive types (64-bit) */
 #define SIZEOF_INT 4

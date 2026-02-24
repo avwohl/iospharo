@@ -1,6 +1,9 @@
 #!/bin/bash
 # Build PharoVMCore.xcframework for iOS Device, Mac Catalyst, and iOS Simulator
 #
+# Builds arm64 and x86_64 slices for Mac Catalyst and iOS Simulator,
+# then combines them with lipo into universal binaries.
+#
 # Uses cmake with Ninja generator (not Xcode) because cmake -G Xcode spawns
 # xcodebuild for compiler identification which hangs in sandboxed environments.
 # Cross-compilation is controlled via CFLAGS/sysroot, not CMAKE_SYSTEM_NAME=iOS,
@@ -66,23 +69,56 @@ build_slice() {
     echo "$slice_name: $(lipo -info "$lib" 2>&1)"
 }
 
-# --- Build all three slices ---
-build_slice "maccatalyst" "ios-arm64_x86_64-maccatalyst" "macosx" "arm64" \
-    "-target arm64-apple-ios15.0-macabi"
+# Helper: create a universal (fat) library from two single-arch libraries
+make_universal() {
+    local output_dir="$1"
+    local lib1="$2"
+    local lib2="$3"
 
+    mkdir -p "$output_dir"
+    lipo -create "$lib1" "$lib2" -output "$output_dir/libPharoVMCore.a"
+    echo "Universal: $(lipo -info "$output_dir/libPharoVMCore.a" 2>&1)"
+}
+
+# --- Build all slices ---
+
+# iOS Device (arm64 only)
 build_slice "iphoneos" "ios-arm64" "iphoneos" "arm64" \
     "-mios-version-min=15.0"
 
-build_slice "simulator" "ios-arm64_x86_64-simulator" "iphonesimulator" "arm64" \
+# Mac Catalyst (arm64 + x86_64)
+build_slice "maccatalyst-arm64" "ios-arm64_x86_64-maccatalyst" "macosx" "arm64" \
+    "-target arm64-apple-ios15.0-macabi"
+
+build_slice "maccatalyst-x86_64" "ios-arm64_x86_64-maccatalyst" "macosx" "x86_64" \
+    "-target x86_64-apple-ios15.0-macabi"
+
+# iOS Simulator (arm64 + x86_64)
+build_slice "simulator-arm64" "ios-arm64_x86_64-simulator" "iphonesimulator" "arm64" \
     "-mios-simulator-version-min=15.0"
+
+build_slice "simulator-x86_64" "ios-arm64_x86_64-simulator" "iphonesimulator" "x86_64" \
+    "-mios-simulator-version-min=15.0"
+
+# --- Create universal binaries with lipo ---
+echo ""
+echo "=== Creating universal binaries ==="
+
+make_universal "$BUILD_BASE/maccatalyst-universal" \
+    "$BUILD_BASE/maccatalyst-arm64/libPharoVMCore.a" \
+    "$BUILD_BASE/maccatalyst-x86_64/libPharoVMCore.a"
+
+make_universal "$BUILD_BASE/simulator-universal" \
+    "$BUILD_BASE/simulator-arm64/libPharoVMCore.a" \
+    "$BUILD_BASE/simulator-x86_64/libPharoVMCore.a"
 
 # --- Create XCFramework ---
 echo ""
 echo "=== Creating XCFramework ==="
 xcodebuild -create-xcframework \
     -library "$BUILD_BASE/iphoneos/libPharoVMCore.a" \
-    -library "$BUILD_BASE/maccatalyst/libPharoVMCore.a" \
-    -library "$BUILD_BASE/simulator/libPharoVMCore.a" \
+    -library "$BUILD_BASE/maccatalyst-universal/libPharoVMCore.a" \
+    -library "$BUILD_BASE/simulator-universal/libPharoVMCore.a" \
     -output "$XCFRAMEWORK_OUTPUT"
 
 # Touch Info.plist so Xcode freshness check passes
