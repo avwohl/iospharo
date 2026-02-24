@@ -117,25 +117,20 @@ Checklist before claiming a GUI fix works:
 **Do NOT rely on log output, test pass rates, or code analysis alone.**
 Two weeks of "verified working" claims were wrong because nobody looked at the screen.
 
-### Current Priority: GUI Display and Interaction
+### GUI Display and Interaction — VERIFIED WORKING (2026-02-24)
 
-The ONLY current project is getting the Mac Catalyst app to:
-1. **Display properly** — Pharo desktop renders correctly, no red X
-2. **Top menu works** — menu bar visible AND clickable, dropdowns open
-3. **World menu works** — right-click on desktop opens the world menu
+All three requirements visually verified via screencapture:
+1. **Display properly** — Pharo 13 desktop renders correctly with dark theme, lighthouse logo, no red X
+2. **Top menu works** — menu bar visible AND clickable, world menu opens, submenus expand (Browse → System Browser works)
+3. **World menu works** — left-click on desktop opens the world menu, hover expands submenus, clicking opens tools (System Browser confirmed)
 
-Do NOT wander off into test suite improvements, skipped test classes, or other
-side projects until ALL THREE of these work and are visually verified.
+Right-click context menus also work (text context menu on Welcome window, "World contents" on desktop).
 
 ### FFI/Display Status
 
 SDL2 stubs in FFI.cpp bridge between the Pharo image's OSSDL2Driver and our
 Metal rendering pipeline. The image calls SDL2 functions via FFI, our stubs
 translate to gDisplaySurface/gEventQueue.
-
-**Known issue**: `GrafPort(Object)>>error:` renders a red X over the desktop.
-Caused by SpStyleEnvironmentColorProxy (ProtoObject subclass) forwarding DNU
-to `Smalltalk ui theme` before UITheme is initialized during session startup.
 
 ---
 
