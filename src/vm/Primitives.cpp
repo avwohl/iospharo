@@ -10750,6 +10750,14 @@ PrimitiveResult Interpreter::primitiveFileAtEnd(int argCount) {
     }
 
     FILE* file = it->second;
+
+    // stdout/stderr are output-only — atEnd is meaningless, never block on them
+    if (file == stdout || file == stderr) {
+        pop();
+        push(memory_.falseObject());
+        return PrimitiveResult::Success;
+    }
+
     bool atEnd = (feof(file) != 0);
 
     // If not at EOF, check if next read would hit EOF
@@ -10886,6 +10894,14 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // Can't read from output-only streams
+    FILE* file = it->second;
+    if (file == stdout || file == stderr) {
+        popN(argCount);
+        push(Oop::fromSmallInteger(0));
+        return PrimitiveResult::Success;
+    }
+
     // Buffer must be a byte object
     if (!bufferOop.isObject()) {
         return PrimitiveResult::Failure;
@@ -10898,7 +10914,7 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
 
     // Read into a temporary buffer
     std::vector<uint8_t> tempBuffer(count);
-    size_t bytesRead = fread(tempBuffer.data(), 1, count, it->second);
+    size_t bytesRead = fread(tempBuffer.data(), 1, count, file);
 
     // Copy to the Smalltalk buffer
     for (size_t i = 0; i < bytesRead; i++) {
