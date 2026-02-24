@@ -339,6 +339,9 @@ pkg-config = 'pkg-config'
 c_args = [$meson_c_args]
 c_link_args = [$meson_link_args]
 
+[properties]
+needs_exe_wrapper = true
+
 [host_machine]
 system = 'darwin'
 cpu_family = '$MESON_CPU'
@@ -454,6 +457,9 @@ pkg-config = 'pkg-config'
 [built-in options]
 c_args = [$meson_c_args]
 c_link_args = [$meson_link_args]
+
+[properties]
+needs_exe_wrapper = true
 
 [host_machine]
 system = 'darwin'
