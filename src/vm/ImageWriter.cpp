@@ -37,51 +37,14 @@ uint64_t ImageWriter::iosToSpurTag(uint64_t bits) {
 // ===== HEADER WRITING =====
 
 bool ImageWriter::writeHeader(std::ofstream& file, const SpurImageHeader& header) {
-    // Write a 128-byte header (standard padded size)
+    // Write the struct directly — its binary layout matches the Spur image format
+    // (same struct used by ImageLoader::readHeader for reading).
+    // Then pad to 128 bytes (the standard padded header size).
+    static_assert(sizeof(SpurImageHeader) <= 128, "Header struct exceeds 128 bytes");
+
     uint8_t buf[128];
     memset(buf, 0, sizeof(buf));
-
-    // Write fields at their standard Spur 64-bit offsets
-    // The Spur 64-bit image header layout:
-    //   0: imageFormat (4 bytes, but we write 8 for alignment)
-    //   8: headerSize
-    //  16: imageBytes (data size)
-    //  24: startOfMemory (base address when saved)
-    //  32: specialObjectsOop
-    //  40: lastHash
-    //  48: screenSize (width << 16 | height)
-    //  56: imageHeaderFlags
-    //  64: extraVMMemory (4 bytes) | numStackPages (2 bytes) | cogCodeSize (2 bytes)
-    //  72: edenBytes (4 bytes) | maxExtSemTabSize (2 bytes) | unused (2 bytes)
-    //  80: firstSegmentBytes
-    //  88: freeOldSpaceInImage
-
-    auto write64 = [&](size_t offset, uint64_t value) {
-        memcpy(buf + offset, &value, 8);
-    };
-    auto write32 = [&](size_t offset, uint32_t value) {
-        memcpy(buf + offset, &value, 4);
-    };
-    auto write16 = [&](size_t offset, uint16_t value) {
-        memcpy(buf + offset, &value, 2);
-    };
-
-    write64(0, header.imageFormat);
-    write64(8, header.headerSize);
-    write64(16, header.imageBytes);
-    write64(24, header.startOfMemory);
-    write64(32, header.specialObjectsOop);
-    write64(40, header.lastHash);
-    write64(48, header.screenSize);
-    write64(56, header.imageHeaderFlags);
-    write32(64, header.extraVMMemory);
-    write16(68, header.numStackPages);
-    write16(70, header.cogCodeSize);
-    write32(72, header.edenBytes);
-    write16(76, header.maxExtSemTabSize);
-    write16(78, header.unused1);
-    write64(80, header.firstSegmentBytes);
-    write64(88, header.freeOldSpaceInImage);
+    memcpy(buf, &header, sizeof(SpurImageHeader));
 
     file.write(reinterpret_cast<const char*>(buf), 128);
     return file.good();

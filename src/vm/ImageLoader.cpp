@@ -318,16 +318,27 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         return next;
     };
 
-    // Find hiddenRootsObj: 5th object from start of old space
+    // Find freeListsObj (4th) and hiddenRootsObj (5th) from start of old space
     // Objects: nil(1), false(2), true(3), freeListsObj(4), hiddenRootsObj(5)
-    uint8_t* obj = heapStart;  // nil
+    uint8_t* obj = heapStart;  // starts at nil
+    uint8_t* freeListsPtr = nullptr;
     for (int i = 0; i < 4; i++) {
         obj = objectAfter(obj);
         if (obj >= heapStart + loadedSize_) {
             result.error = "Ran off end of heap walking to object " + std::to_string(i + 2);
             return false;
         }
+        if (i == 2) freeListsPtr = obj;  // After 3 advances = 4th object = freeListsObj
     }
+    // After 4 advances: obj = 5th object = hiddenRootsObj
+
+    // Store freeListsObj and hiddenRootsObj as GC roots for image saving
+    if (freeListsPtr) {
+        memory.setFreeListsObj(memory.oopFromPointer(
+            reinterpret_cast<ObjectHeader*>(freeListsPtr)));
+    }
+    memory.setHiddenRootsObj(memory.oopFromPointer(
+        reinterpret_cast<ObjectHeader*>(obj)));
 
     ObjectHeader* hiddenRoots = reinterpret_cast<ObjectHeader*>(obj);
     size_t hrSlots = hiddenRoots->slotCount();

@@ -575,6 +575,18 @@ private:
     Oop trueObject_;
     Oop falseObject_;
 
+    // Hidden heap roots: freeListsObj and hiddenRootsObj live at the start of
+    // old space (objects 4 and 5). They must survive GC so the image can be
+    // saved in valid Spur format.  Set during image loading.
+    Oop freeListsObj_;
+    Oop hiddenRootsObj_;
+public:
+    void setFreeListsObj(Oop obj) { freeListsObj_ = obj; }
+    void setHiddenRootsObj(Oop obj) { hiddenRootsObj_ = obj; }
+    Oop freeListsObj() const { return freeListsObj_; }
+    Oop hiddenRootsObj() const { return hiddenRootsObj_; }
+private:
+
     // Identity hash counter (must be non-zero for LCG to work)
     uint32_t lastHash_ = 2166136261;
 public:
@@ -731,6 +743,10 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
     visitor(nilObject_);
     visitor(trueObject_);
     visitor(falseObject_);
+
+    // Hidden heap roots needed for image saving
+    if (freeListsObj_.isObject()) visitor(freeListsObj_);
+    if (hiddenRootsObj_.isObject()) visitor(hiddenRootsObj_);
 
     // Class table entries (skip index 0 which is reserved for free chunks)
     for (size_t i = 1; i < classTable_.size(); ++i) {
