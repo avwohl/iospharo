@@ -71,6 +71,7 @@ setup_ios_device_arm64() {
     HOST_TRIPLE="aarch64-apple-darwin"
     CMAKE_ARCH="arm64"
     MESON_CPU="aarch64"
+    MESON_SYSTEM="ios"
 }
 
 setup_ios_simulator_arm64() {
@@ -88,6 +89,7 @@ setup_ios_simulator_arm64() {
     HOST_TRIPLE="aarch64-apple-darwin"
     CMAKE_ARCH="arm64"
     MESON_CPU="aarch64"
+    MESON_SYSTEM="ios"
 }
 
 setup_ios_simulator_x86_64() {
@@ -103,6 +105,7 @@ setup_ios_simulator_x86_64() {
     HOST_TRIPLE="x86_64-apple-darwin"
     CMAKE_ARCH="x86_64"
     MESON_CPU="x86_64"
+    MESON_SYSTEM="ios"
 }
 
 setup_maccatalyst_arm64() {
@@ -118,6 +121,7 @@ setup_maccatalyst_arm64() {
     HOST_TRIPLE="aarch64-apple-darwin"
     CMAKE_ARCH="arm64"
     MESON_CPU="aarch64"
+    MESON_SYSTEM="ios"
 }
 
 setup_maccatalyst_x86_64() {
@@ -133,6 +137,7 @@ setup_maccatalyst_x86_64() {
     HOST_TRIPLE="x86_64-apple-darwin"
     CMAKE_ARCH="x86_64"
     MESON_CPU="x86_64"
+    MESON_SYSTEM="ios"
 }
 
 # =====================================================================
@@ -334,6 +339,7 @@ c = '$CC'
 ar = '$AR'
 ranlib = '$RANLIB'
 pkg-config = 'pkg-config'
+exe_wrapper = '/usr/bin/true'
 
 [built-in options]
 c_args = [$meson_c_args]
@@ -341,9 +347,10 @@ c_link_args = [$meson_link_args]
 
 [properties]
 needs_exe_wrapper = true
+skip_sanity_check = true
 
 [host_machine]
-system = 'darwin'
+system = '$MESON_SYSTEM'
 cpu_family = '$MESON_CPU'
 cpu = '$MESON_CPU'
 endian = 'little'
@@ -351,6 +358,11 @@ CROSSEOF
 
     cd "$builddir"
     log "Configuring pixman (meson) for $PLATFORM_NAME..."
+    # Unset cross-compilation env vars — meson reads the cross file for
+    # cross-compiler settings and auto-detects the native compiler. If CC/
+    # CFLAGS are exported, meson uses them for BOTH compilers, producing
+    # native sanity-check binaries that can't run on the build machine.
+    env -u CC -u CXX -u CFLAGS -u CXXFLAGS -u LDFLAGS \
     meson setup builddir "$srcdir" \
         --cross-file "$crossfile" \
         --prefix="$prefix" \
@@ -453,6 +465,7 @@ cpp = '$CXX'
 ar = '$AR'
 ranlib = '$RANLIB'
 pkg-config = 'pkg-config'
+exe_wrapper = '/usr/bin/true'
 
 [built-in options]
 c_args = [$meson_c_args]
@@ -460,9 +473,10 @@ c_link_args = [$meson_link_args]
 
 [properties]
 needs_exe_wrapper = true
+skip_sanity_check = true
 
 [host_machine]
-system = 'darwin'
+system = '$MESON_SYSTEM'
 cpu_family = '$MESON_CPU'
 cpu = '$MESON_CPU'
 endian = 'little'
@@ -476,6 +490,7 @@ CROSSEOF
     export PKG_CONFIG_PATH="${prefix}/lib/pkgconfig:${prefix}/share/pkgconfig"
     export PKG_CONFIG_LIBDIR="${prefix}/lib/pkgconfig:${prefix}/share/pkgconfig"
 
+    env -u CC -u CXX -u CFLAGS -u CXXFLAGS -u LDFLAGS \
     meson setup builddir "$srcdir" \
         --cross-file "$crossfile" \
         --prefix="$prefix" \
