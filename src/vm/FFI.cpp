@@ -15,7 +15,6 @@
 #include <ffi.h>
 #include <unistd.h>
 #include <vector>
-#include <sys/mman.h>
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
@@ -378,15 +377,8 @@ static void* sMainRenderer = nullptr;  // First renderer is the "main" one (rend
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
-static bool g_firstExposedDelivered = false;
-
-// Pending synthetic window events (SDL2 sends these when window is created/shown)
+// Pending window events to deliver (standard SDL2 window lifecycle events)
 static std::queue<uint8_t> sPendingWindowEvents;
-
-// Time-based EXPOSED event tracking (replaces poll-count-based approach)
-static bool sWindowCreated = false;
-static std::chrono::steady_clock::time_point sWindowCreatedTime;
-static int sNextExposedSecond = 3;  // First EXPOSED at 3 seconds after window creation
 
 // Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
 static int sMouseX = 0;
@@ -409,7 +401,7 @@ bool ffi_isSDLEventPollingActive() {
 }
 
 bool ffi_isFirstExposedDelivered() {
-    return g_firstExposedDelivered;
+    return true;  // Events delivered immediately at CreateWindow
 }
 
 // Called from vm_setDisplaySize when the Metal view resizes.
@@ -469,16 +461,11 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     sWindows[handle] = state;
     if (!sMainWindow) sMainWindow = handle;
 
-    // Do NOT queue initial window events during CreateWindow.
-    // The SpStyleEnvironmentColorProxy DNU error causes Emergency Debugger
-    // windows to open if rendering is triggered before UITheme is initialized.
-    // Instead, time-based EXPOSED events (starting 3s after window creation)
-    // trigger the first render after startup completes.
-    if (!sWindowCreated) {
-        sWindowCreated = true;
-        sWindowCreatedTime = std::chrono::steady_clock::now();
-        sNextExposedSecond = 3;
-    }
+    // Queue standard window events immediately — this is what real SDL2 does
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
     return handle;
 }
 
@@ -783,9 +770,6 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
 // Forwards events from gEventQueue to SDL event structures for OSSDL2Driver.
 int stub_SDL_PollEvent(void* event) {
     static bool flagSet = false;
-    static unsigned int totalPollCalls = 0;
-    totalPollCalls++;
-
     if (!flagSet) {
         flagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
@@ -795,21 +779,6 @@ int stub_SDL_PollEvent(void* event) {
     if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
-
-#ifdef __APPLE__
-    // Verify the event pointer's page is mapped -- GC compaction can leave
-    // stale ByteArray data pointers if forwarding isn't followed properly.
-    {
-        char vec;
-        caddr_t pageAddr = reinterpret_cast<caddr_t>(reinterpret_cast<uintptr_t>(event) & ~0xFFFUL);
-        if (mincore(pageAddr, 4096, &vec) != 0) {
-            pharo::Event discard;
-            pharo::gEventQueue.pop(discard);
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
-            return 0;
-        }
-    }
-#endif
 
     // Deliver pending synthetic window events one at a time
     if (!sPendingWindowEvents.empty()) {
@@ -846,31 +815,7 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->window.data1 = w;
             sdlEvent->window.data2 = h;
         }
-        if (windowEventType == SDL_WINDOWEVENT_EXPOSED && totalPollCalls > 1000) {
-            g_firstExposedDelivered = true;
-        }
         return 1;
-    }
-
-    // Time-based EXPOSED events: trigger full repaints during startup using
-    // wall-clock time instead of poll counts. Poll counts don't correspond to
-    // real time — a fast Mac may hit thousands of polls quickly while a slower
-    // iPad takes much longer. Wall-clock timing gives UITheme a consistent
-    // 3 seconds to initialize regardless of CPU speed.
-    if (sMainWindow && sWindowCreated && !g_firstExposedDelivered && sNextExposedSecond <= 30) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - sWindowCreatedTime
-        ).count();
-        if (elapsed >= sNextExposedSecond) {
-            bool isFirst = (sNextExposedSecond == 3);
-            if (isFirst) {
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
-            }
-            sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-            sNextExposedSecond += 5;  // Next EXPOSED 5 seconds later
-        }
     }
 
     // Pop event from our queue. Return 0 quickly when empty so the event loop
