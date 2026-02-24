@@ -168,6 +168,7 @@ if(APPLE)
             "-framework CoreHaptics"
             "-framework ForceFeedback"
             "-framework Carbon"
+            "-liconv"
         )
         # SqueakSSL uses Apple Security.framework
         if(PHARO_WITH_CRYPTO)
