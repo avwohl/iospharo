@@ -6,6 +6,7 @@
 
 #include "InterpreterProxy.h"
 #include "Interpreter.hpp"
+#include "../platform/DisplaySurface.hpp"
 #include <cstring>
 #include <ctime>
 #include <sys/time.h>
@@ -659,24 +660,234 @@ static sqInt proxy_statNumGCs() { return 0; }
 static sqInt proxy_stringForCString(const char* s) { return proxy_nilObject(); }
 
 // =====================================================================
-// BitBlt support
+// BitBlt support for B2DPlugin
 // =====================================================================
+
+// BitBlt field indices (must match Squeak/Pharo BitBlt layout)
+enum {
+    ProxyBBDestForm = 0,
+    ProxyBBSourceForm = 1,
+    ProxyBBHalftoneForm = 2,
+    ProxyBBCombinationRule = 3,
+    ProxyBBDestX = 4,
+    ProxyBBDestY = 5,
+    ProxyBBWidth = 6,
+    ProxyBBHeight = 7,
+    ProxyBBSourceX = 8,
+    ProxyBBSourceY = 9,
+    ProxyBBClipX = 10,
+    ProxyBBClipY = 11,
+    ProxyBBClipWidth = 12,
+    ProxyBBClipHeight = 13,
+};
+
+// Form field indices
+enum {
+    ProxyFormBits = 0,
+    ProxyFormWidth = 1,
+    ProxyFormHeight = 2,
+    ProxyFormDepth = 3,
+};
+
+// Stored BitBlt state from loadBitBltFrom
+static struct {
+    bool loaded;
+    uint32_t* destPixels;
+    int destWidth;
+    int destHeight;
+    int destDepth;
+    int destPitch;  // in pixels (32-bit words)
+    uint32_t* srcPixels;
+    int srcWidth;
+    int srcHeight;
+    int srcDepth;
+    int combinationRule;
+    int clipX, clipY, clipW, clipH;
+} gBBState = {};
+
+// Helper to read an integer field from a Smalltalk object
+static int proxyIntField(Oop obj, int idx) {
+    Oop field = gMem->fetchPointer(idx, obj);
+    if (field.isSmallInteger()) return static_cast<int>(field.asSmallInteger());
+    return 0;
+}
+
+// Helper to resolve a Form's pixel pointer and dimensions
+static uint32_t* resolveFormPixels(Oop form, int& width, int& height, int& depth, int& pitch) {
+    if (!form.isObject()) return nullptr;
+
+    width = proxyIntField(form, ProxyFormWidth);
+    height = proxyIntField(form, ProxyFormHeight);
+    depth = proxyIntField(form, ProxyFormDepth);
+    if (width <= 0 || height <= 0 || depth <= 0) return nullptr;
+
+    Oop bits = gMem->fetchPointer(ProxyFormBits, form);
+    pitch = width;  // default: pitch = width in 32-bit words
+
+    if (bits.isSmallInteger()) {
+        // Surface handle — use global display surface
+        if (pharo::gDisplaySurface) {
+            pitch = static_cast<int>(pharo::gDisplaySurface->pitch() / 4);
+            return pharo::gDisplaySurface->pixels();
+        }
+        return nullptr;
+    }
+
+    if (bits.isObject() && !bits.isNil()) {
+        ObjectHeader* hdr = bits.asObjectPtr();
+        if (hdr->byteSize() >= static_cast<size_t>(width * height * (depth / 8))) {
+            return reinterpret_cast<uint32_t*>(hdr->bytes());
+        }
+        // Bitmap might be smaller if depth < 32; allow if it has any bytes
+        if (hdr->byteSize() > 0) {
+            return reinterpret_cast<uint32_t*>(hdr->bytes());
+        }
+    }
+
+    return nullptr;
+}
+
 static sqInt proxy_loadBitBltFrom(sqInt bbOop) {
-    // B2DPlugin calls this to set up BitBlt for rendering
-    // We need to load BitBlt fields from the Smalltalk BitBlt object
-    // Our primitiveCopyBits handles this internally
-    return 1; // Success
+    gBBState.loaded = false;
+
+    Oop bb = sqIntToOop(bbOop);
+    if (!bb.isObject()) return 0;
+
+    // Parse destination form
+    Oop destForm = gMem->fetchPointer(ProxyBBDestForm, bb);
+    int dw = 0, dh = 0, dd = 0, dp = 0;
+    uint32_t* dstPx = resolveFormPixels(destForm, dw, dh, dd, dp);
+    if (!dstPx || dd != 32) return 0;  // Only handle 32-bit dest
+
+    gBBState.destPixels = dstPx;
+    gBBState.destWidth = dw;
+    gBBState.destHeight = dh;
+    gBBState.destDepth = dd;
+    gBBState.destPitch = dp;
+
+    // Parse source form (span buffer — always a Bitmap object)
+    Oop srcForm = gMem->fetchPointer(ProxyBBSourceForm, bb);
+    if (!srcForm.isNil() && srcForm.isObject()) {
+        int sw = 0, sh = 0, sd = 0, sp = 0;
+        uint32_t* srcPx = resolveFormPixels(srcForm, sw, sh, sd, sp);
+        gBBState.srcPixels = srcPx;
+        gBBState.srcWidth = sw;
+        gBBState.srcHeight = sh;
+        gBBState.srcDepth = sd;
+    } else {
+        gBBState.srcPixels = nullptr;
+        gBBState.srcWidth = 0;
+        gBBState.srcHeight = 0;
+        gBBState.srcDepth = 0;
+    }
+
+    gBBState.combinationRule = proxyIntField(bb, ProxyBBCombinationRule);
+    gBBState.clipX = proxyIntField(bb, ProxyBBClipX);
+    gBBState.clipY = proxyIntField(bb, ProxyBBClipY);
+    gBBState.clipW = proxyIntField(bb, ProxyBBClipWidth);
+    gBBState.clipH = proxyIntField(bb, ProxyBBClipHeight);
+
+    gBBState.loaded = true;
+    return 1;
 }
 
 static sqInt proxy_copyBits() {
-    // Execute the loaded BitBlt operation
-    // This is called by B2DPlugin after loadBitBltFrom
+    // Full copyBits — not used by B2DPlugin (it uses copyBitsFromtoat)
     return 0;
 }
 
 static sqInt proxy_copyBitsFromtoat(sqInt leftX, sqInt rightX, sqInt yValue) {
-    // Copy a horizontal span using the loaded BitBlt
-    return 0;
+    if (!gBBState.loaded || !gBBState.destPixels) return 0;
+    if (!gBBState.srcPixels) return 0;
+
+    // Clip to destination bounds
+    int x0 = static_cast<int>(leftX);
+    int x1 = static_cast<int>(rightX);
+    int y = static_cast<int>(yValue);
+
+    if (y < 0 || y >= gBBState.destHeight) return 0;
+    if (x0 < 0) x0 = 0;
+    if (x1 > gBBState.destWidth) x1 = gBBState.destWidth;
+    if (x0 >= x1) return 0;
+
+    // Clip to clip rect
+    if (y < gBBState.clipY || y >= gBBState.clipY + gBBState.clipH) return 0;
+    if (x0 < gBBState.clipX) x0 = gBBState.clipX;
+    if (x1 > gBBState.clipX + gBBState.clipW) x1 = gBBState.clipX + gBBState.clipW;
+    if (x0 >= x1) return 0;
+
+    int width = x1 - x0;
+    uint32_t* dst = gBBState.destPixels + y * gBBState.destPitch + x0;
+
+    // Source: span buffer pixel data starting at x0
+    // The span buffer is indexed from 0, so source offset = x0
+    uint32_t* src = gBBState.srcPixels + x0;
+
+    // Bounds check source
+    if (x1 > gBBState.srcWidth) return 0;
+
+    int rule = gBBState.combinationRule;
+    switch (rule) {
+        case 3:  // store (replace)
+        case 34: // sourceWord
+            memcpy(dst, src, width * 4);
+            break;
+
+        case 25: // paint (OR)
+        case 7:  // OR
+            for (int i = 0; i < width; i++) {
+                dst[i] |= src[i];
+            }
+            break;
+
+        case 24: { // alpha blend (source-over)
+            for (int i = 0; i < width; i++) {
+                uint32_t s = src[i];
+                uint32_t sa = (s >> 24) & 0xFF;
+                if (sa == 255) {
+                    dst[i] = s;
+                } else if (sa > 0) {
+                    uint32_t invSa = 255 - sa;
+                    uint32_t d = dst[i];
+                    uint32_t rb = ((s & 0xFF00FF) * sa + (d & 0xFF00FF) * invSa + 0x800080);
+                    rb = ((rb + ((rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                    uint32_t g = ((s & 0x00FF00) * sa + (d & 0x00FF00) * invSa + 0x008000);
+                    g = ((g + ((g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                    uint32_t da = (d >> 24) & 0xFF;
+                    uint32_t oa = sa + ((da * invSa + 127) / 255);
+                    dst[i] = rb | g | (oa << 24);
+                }
+            }
+            break;
+        }
+
+        case 20: { // rgbAdd (additive blend)
+            for (int i = 0; i < width; i++) {
+                uint32_t s = src[i];
+                uint32_t d = dst[i];
+                uint32_t r = ((s >> 16) & 0xFF) + ((d >> 16) & 0xFF);
+                uint32_t g = ((s >> 8) & 0xFF) + ((d >> 8) & 0xFF);
+                uint32_t b = (s & 0xFF) + (d & 0xFF);
+                if (r > 255) r = 255;
+                if (g > 255) g = 255;
+                if (b > 255) b = 255;
+                dst[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+            }
+            break;
+        }
+
+        default:
+            // Fallback: just store (covers most rendering cases)
+            memcpy(dst, src, width * 4);
+            break;
+    }
+
+    // Notify display surface of the changed area
+    if (pharo::gDisplaySurface) {
+        pharo::gDisplaySurface->invalidateRect(x0, y, x1 - x0, 1);
+    }
+
+    return 1;
 }
 
 // =====================================================================

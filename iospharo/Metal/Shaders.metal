@@ -51,8 +51,12 @@ fragment float4 fragmentShader(VertexOut in [[stage_in]],
     // Sample the display texture
     float4 color = displayTexture.sample(textureSampler, in.texCoord);
 
-    // The Pharo framebuffer is BGRA, Metal expects RGBA
-    // Swizzle if necessary (depends on texture format)
+    // Force opaque output. Pharo's display Form is rendered opaquely by
+    // standard VMs (SDL2 creates an opaque window). BalloonEngine writes
+    // sub-1.0 alpha for anti-aliased shapes and translucent fills (e.g.
+    // tooltip backgrounds at alpha 0.95), but this alpha is composited
+    // WITHIN the Form, not meant for window-level transparency.
+    color.a = 1.0;
     return color;
 }
 
