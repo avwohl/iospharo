@@ -66,13 +66,19 @@ class PharoBridge: ObservableObject {
                 free(gClipboardBuffer)
                 gClipboardBuffer = nil
 
+                // Read clipboard — always on main thread since UIPasteboard requires it.
+                // Use DispatchQueue.main.async + semaphore instead of .sync to avoid
+                // deadlocking if the main thread is waiting on the VM.
                 var text: String?
                 if Thread.isMainThread {
                     text = UIPasteboard.general.string
                 } else {
-                    DispatchQueue.main.sync {
+                    let sema = DispatchSemaphore(value: 0)
+                    DispatchQueue.main.async {
                         text = UIPasteboard.general.string
+                        sema.signal()
                     }
+                    sema.wait()
                 }
 
                 guard let str = text, !str.isEmpty else { return nil }

@@ -306,7 +306,7 @@ public:
     void signalExternalSemaphore(int index);
 
     /// Check if there are pending external semaphores to signal
-    bool hasPendingSignals() const { return pendingSignalIndex_ > 0; }
+    bool hasPendingSignals() const { return pendingSignalHead_.load(std::memory_order_acquire) != pendingSignalTail_.load(std::memory_order_acquire); }
 
     /// Process any pending external semaphore signals (called during interpret loop)
     void processPendingSignals();
@@ -543,8 +543,11 @@ private:
     std::vector<pharo::Event> passThroughEvents_;
 
     // External semaphore signaling (for I/O events)
-    // Simple approach: store one pending signal index, process in interpret loop
-    std::atomic<int> pendingSignalIndex_{0};
+    // Ring buffer: stores up to 64 pending signal indices, lock-free producer/consumer
+    static constexpr int kPendingSignalCapacity = 64;
+    std::array<std::atomic<int>, 64> pendingSignals_{};
+    std::atomic<int> pendingSignalHead_{0};  // producer writes here (mod capacity)
+    std::atomic<int> pendingSignalTail_{0};  // consumer reads here (mod capacity)
 
     // Force yield flag - set by heartbeat to preempt long-running processes
     std::atomic<bool> forceYield_{false};
@@ -583,6 +586,15 @@ private:
     // File handles (maps Smalltalk file IDs to FILE pointers)
     std::map<int, FILE*> openFiles_;
     int nextFileId_ = 3;  // 0,1,2 reserved for stdin/stdout/stderr
+
+    // ===== CLASS INDEX CACHE =====
+    // These are looked up dynamically from the class table at init time.
+    // Do NOT hardcode values — they vary between images.
+    uint32_t compiledMethodClassIndex_ = 0;
+    uint32_t compiledBlockClassIndex_ = 0;
+    uint32_t fullBlockClosureClassIndex_ = 0;
+    uint32_t lookupClassIndexByName(const char* name);
+    void initializeClassIndexCache();
 
     // ===== CACHES =====
 

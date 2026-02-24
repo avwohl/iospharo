@@ -21,7 +21,4 @@
 
 ## VMMaker / Reference
 - `launch-vmmaker.sh` — Launch VMMaker simulation environment
-- `explore-vmmaker.st` — VMMaker exploration helpers
-- `ios-simulator-setup.st` — iOS simulator configuration
-- `debug-unrelocated-pointers.st` — Debugging instrumentation for ASLR pointer relocation
 - `debug_startup.st` — Debug startup sequence

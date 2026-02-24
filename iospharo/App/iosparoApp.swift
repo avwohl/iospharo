@@ -63,10 +63,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         #if DEBUG
         NSLog("[APP] applicationWillTerminate - stopping VM")
         #endif
-        Task { @MainActor in
+        // Call stop() synchronously — we're already on the main thread.
+        // The previous Task + Thread.sleep approach deadlocked because
+        // sleeping the main thread prevented the Task from executing.
+        MainActor.assumeIsolated {
             PharoBridge.shared.stop()
         }
-        Thread.sleep(forTimeInterval: 0.1)
     }
 }
 

@@ -147,6 +147,9 @@ bool Interpreter::initialize() {
         }
     }
 
+    // Look up class indices dynamically (must happen after image load, before execution)
+    initializeClassIndexCache();
+
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     // DEBUG_LOG("[DEBUG] Scheduler: 0x" << std::hex << scheduler.rawBits() << std::dec;
     if (scheduler.isNil()) {
@@ -1795,7 +1798,7 @@ void Interpreter::startHeartbeat() {
                 // pendingDisplaySync_ flag in the main interpreter loop.)
                 int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
                 if (inputSemaIdx > 0) {
-                    pendingSignalIndex_.store(inputSemaIdx, std::memory_order_release);
+                    signalExternalSemaphore(inputSemaIdx);
                 }
             }
 
@@ -1844,34 +1847,45 @@ void Interpreter::stopHeartbeat() {
 // ===== EXTERNAL SEMAPHORE SIGNALING =====
 
 void Interpreter::signalExternalSemaphore(int index) {
-    // Store the index to be processed in the interpret loop
-    // This is thread-safe due to atomic
-    pendingSignalIndex_.store(index, std::memory_order_release);
+    // Lock-free ring buffer: producer appends index, consumer drains in processPendingSignals.
+    // If the buffer is full, the signal is dropped (better than blocking the signaling thread).
+    int head = pendingSignalHead_.load(std::memory_order_relaxed);
+    int next = (head + 1) % kPendingSignalCapacity;
+    if (next == pendingSignalTail_.load(std::memory_order_acquire)) {
+        return;  // buffer full — drop signal
+    }
+    pendingSignals_[head].store(index, std::memory_order_relaxed);
+    pendingSignalHead_.store(next, std::memory_order_release);
 }
 
 void Interpreter::processPendingSignals() {
-    int index = pendingSignalIndex_.exchange(0, std::memory_order_acquire);
-    if (index <= 0) return;
+    int tail = pendingSignalTail_.load(std::memory_order_relaxed);
+    int head = pendingSignalHead_.load(std::memory_order_acquire);
+    if (tail == head) return;  // empty
 
-    // Get the external semaphore table from special objects
+    // Get the external semaphore table once for the whole batch
     Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
     if (semTable.isNil() || !semTable.isObject()) {
+        // Drain the queue even if we can't signal
+        pendingSignalTail_.store(head, std::memory_order_release);
         return;
     }
-
-    // Index is 1-based, convert to 0-based array index
-    size_t tableIndex = static_cast<size_t>(index - 1);
     size_t tableSize = memory_.slotCountOf(semTable);
-    if (tableIndex >= tableSize) {
-        return;
-    }
 
-    Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
-    if (semaphore.isNil() || !semaphore.isObject()) {
-        return;
-    }
+    while (tail != head) {
+        int index = pendingSignals_[tail].load(std::memory_order_relaxed);
+        tail = (tail + 1) % kPendingSignalCapacity;
 
-    synchronousSignal(semaphore);
+        if (index <= 0) continue;
+        size_t tableIndex = static_cast<size_t>(index - 1);
+        if (tableIndex >= tableSize) continue;
+
+        Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
+        if (semaphore.isNil() || !semaphore.isObject()) continue;
+
+        synchronousSignal(semaphore);
+    }
+    pendingSignalTail_.store(tail, std::memory_order_release);
 }
 
 void Interpreter::signalSemaphoreDirectly(int externalIndex) {
@@ -2582,7 +2596,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         // If we're in a full block (CompiledBlock), return nil from the block frame.
                         // If we're in an inlined block within a CompiledMethod, push nil and continue.
                         bool inFullBlock5D = (method_.isObject() && method_.rawBits() > 0x10000 &&
-                                              method_.asObjectPtr()->classIndex() == 3117);
+                                              method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
                         if (inFullBlock5D) {
                             returnValue(memory_.nil());
                         } else {
@@ -2611,7 +2625,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         } else {
                             // Check if we're in a full block (CompiledBlock) or inlined block
                             bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
-                                                method_.asObjectPtr()->classIndex() == 3117);
+                                                method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
                             if (inFullBlock) {
                                 // Full block return - pop TOS and return from block frame
                                 Oop value = pop();
@@ -2695,7 +2709,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 Oop rcvr = stackValue(numArgs);
                 if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                     ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    if (rcvrHdr->classIndex() == 38) {  // ClassFullBlockClosureCompactIndex
+                    if (rcvrHdr->classIndex() == fullBlockClosureClassIndex_) {
                         argCount_ = numArgs;
                         primitiveFailed_ = false;
                         primFailCode_ = 0;
@@ -5289,13 +5303,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // findInterned: trace detection (disabled — too verbose)
 
     // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
-    // CompiledMethod (class index 3101): homeMethod_ = method
-    // CompiledBlock (class index 3117): homeMethod_ = slot 0 (the home method)
+    // CompiledMethod: homeMethod_ = method
+    // CompiledBlock: homeMethod_ = slot 0 (the home method)
     if (method.isObject()) {
         ObjectHeader* methodHdr = method.asObjectPtr();
         uint32_t classIdx = methodHdr->classIndex();
 
-        if (classIdx == 3117) {
+        if (classIdx == compiledBlockClassIndex_) {
             // CompiledBlock - get home method from slot 2 (Pharo 11+ FullBlockClosure model)
             // Layout: slot 0 = header, slot 1 = selector, slot 2 = home method
             homeMethod_ = method;  // Default in case chain traversal fails
@@ -5304,7 +5318,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             Oop slot2 = memory_.fetchPointer(2, method);
             if (slot2.isObject()) {
                 ObjectHeader* slot2Hdr = slot2.asObjectPtr();
-                if (slot2Hdr->classIndex() == 3101) {
+                if (slot2Hdr->classIndex() == compiledMethodClassIndex_) {
                     homeMethod_ = slot2;
                 }
             }
@@ -5316,10 +5330,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 while (homeCandidate.isObject() && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
                     uint32_t candidateCls = candidateHdr->classIndex();
-                    if (candidateCls == 3101) {
+                    if (candidateCls == compiledMethodClassIndex_) {
                         homeMethod_ = homeCandidate;
                         break;
-                    } else if (candidateCls == 3117) {
+                    } else if (candidateCls == compiledBlockClassIndex_) {
                         homeCandidate = memory_.fetchPointer(0, homeCandidate);
                     } else {
                         break;
@@ -6524,50 +6538,8 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
         blockClass = memory_.specialObject(SpecialObjectIndex::ClassBlockClosure);
     }
 
-    // The class index for instances is the index in the class table where this class is stored
-    // NOT the classIndex of the class object itself (which is the metaclass index)
-    // Cache the class index once found to avoid repeated searches
-    static uint32_t cachedFullBlockClosureIdx = 0;
-    uint32_t classIdx = cachedFullBlockClosureIdx;
-
-    if (classIdx == 0 && blockClass.isObject()) {
-        // First time: search for this class object in the class table
-        for (uint32_t i = 1; i < 10000; i++) {
-            Oop cls = memory_.classAtIndex(i);
-            if (cls.rawBits() == blockClass.rawBits()) {
-                classIdx = i;
-                break;
-            }
-        }
-
-        // If not found by pointer, try by name
-        if (classIdx == 0) {
-            for (uint32_t i = 1; i < 10000; i++) {
-                Oop cls = memory_.classAtIndex(i);
-                if (!cls.isNil() && cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject()) {
-                        ObjectHeader* nameHdr = clsName.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() == 16) {
-                            std::string name((char*)nameHdr->bytes(), 16);
-                            if (name == "FullBlockClosure") {
-                                classIdx = i;
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Last resort fallback
-        if (classIdx == 0) {
-            classIdx = 38;  // BlockClosure in many images
-        }
-
-        // Cache for future calls
-        cachedFullBlockClosureIdx = classIdx;
-    }
+    // Use the class index cached at initialization time
+    uint32_t classIdx = fullBlockClosureClassIndex_;
 
     // FullBlockClosure layout:
     // slot 0: outerContext
@@ -6672,6 +6644,31 @@ void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize)
     instructionPointer_ += blockSize;
 
     push(block);
+}
+
+uint32_t Interpreter::lookupClassIndexByName(const char* name) {
+    size_t nameLen = strlen(name);
+    for (uint32_t i = 1; i < 10000; i++) {
+        Oop cls = memory_.classAtIndex(i);
+        if (cls.isNil() || !cls.isObject()) continue;
+        // Class layout: slot 6 = name (a Symbol/String)
+        Oop clsName = memory_.fetchPointer(6, cls);
+        if (!clsName.isObject()) continue;
+        ObjectHeader* nameHdr = clsName.asObjectPtr();
+        if (!nameHdr->isBytesObject()) continue;
+        size_t bytes = nameHdr->byteSize();
+        if (bytes != nameLen) continue;
+        if (memcmp(nameHdr->bytes(), name, nameLen) == 0) {
+            return i;
+        }
+    }
+    return 0;
+}
+
+void Interpreter::initializeClassIndexCache() {
+    compiledMethodClassIndex_ = lookupClassIndexByName("CompiledMethod");
+    compiledBlockClassIndex_ = lookupClassIndexByName("CompiledBlock");
+    fullBlockClosureClassIndex_ = lookupClassIndexByName("FullBlockClosure");
 }
 
 void Interpreter::initializeSelectors() {
@@ -8748,10 +8745,10 @@ bool Interpreter::executeFromContext(Oop context) {
         ObjectHeader* methodHdr = method_.asObjectPtr();
         uint32_t methodClsIdx = methodHdr->classIndex();
 
-        if (methodClsIdx == 3101) {
+        if (methodClsIdx == compiledMethodClassIndex_) {
             // CompiledMethod - this is the home method
             homeMethod_ = method_;
-        } else if (methodClsIdx == 3117) {
+        } else if (methodClsIdx == compiledBlockClassIndex_) {
             // CompiledBlock - get home method
             // In FullBlockClosure model (Pharo 11+), CompiledBlock layout:
             // slot 0: block header (SmallInteger with numArgs, etc.)
@@ -8768,7 +8765,7 @@ bool Interpreter::executeFromContext(Oop context) {
                 uintptr_t oldEnd = reinterpret_cast<uintptr_t>(memory_.oldSpaceEnd());
                 if (slot2Addr >= oldStart && slot2Addr < oldEnd) {
                     ObjectHeader* slot2Hdr = slot2.asObjectPtr();
-                    if (slot2Hdr->classIndex() == 3101) {
+                    if (slot2Hdr->classIndex() == compiledMethodClassIndex_) {
                         homeMethod_ = slot2;
                     }
                 }
@@ -8781,10 +8778,10 @@ bool Interpreter::executeFromContext(Oop context) {
                 while (homeCandidate.isObject() && memory_.isValidPointer(homeCandidate) && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
                     uint32_t candidateCls = candidateHdr->classIndex();
-                    if (candidateCls == 3101) {
+                    if (candidateCls == compiledMethodClassIndex_) {
                         homeMethod_ = homeCandidate;
                         break;
-                    } else if (candidateCls == 3117) {
+                    } else if (candidateCls == compiledBlockClassIndex_) {
                         homeCandidate = memory_.fetchPointer(0, homeCandidate);
                     } else {
                         break;
@@ -8831,12 +8828,12 @@ bool Interpreter::executeFromContext(Oop context) {
                         ObjectHeader* outerMethodHdr = outerMethod.asObjectPtr();
                         uint32_t outerMethodCls = outerMethodHdr->classIndex();
 
-                        if (outerMethodCls == 3101) {
+                        if (outerMethodCls == compiledMethodClassIndex_) {
                             // Found home CompiledMethod
                             homeMethod_ = outerMethod;
                             // DEBUG: "[DEBUG] executeFromContext: Found homeMethod via closure chain"
                             break;
-                        } else if (outerMethodCls == 3117) {
+                        } else if (outerMethodCls == compiledBlockClassIndex_) {
                             // Still a block - get closure from outer context
                             closure = memory_.fetchPointer(4, outerContext);
                         } else {
@@ -8858,7 +8855,7 @@ bool Interpreter::executeFromContext(Oop context) {
     // In modern Pharo, BlockContext/FullBlockClosure contexts may need special handling
     if (method_.isObject() && memory_.isValidPointer(method_)) {
         ObjectHeader* methodHdr = method_.asObjectPtr();
-        if (methodHdr->classIndex() == 3117) {
+        if (methodHdr->classIndex() == compiledBlockClassIndex_) {
             Oop closure = memory_.fetchPointer(4, context);  // closureOrNil
             if (closure.isObject() && memory_.isValidPointer(closure)) {
                 ObjectHeader* closureHdr = closure.asObjectPtr();

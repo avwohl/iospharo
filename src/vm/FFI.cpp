@@ -1003,6 +1003,10 @@ int stub_SDL_HasClipboardText() {
     return (text && text[0] != '\0') ? 1 : 0;
 }
 
+void stub_SDL_free(void* mem) {
+    free(mem);
+}
+
 // Text input — delegates to platform bridge for iOS keyboard show/hide
 extern "C" void vm_startTextInput(void);
 extern "C" void vm_stopTextInput(void);
@@ -1198,6 +1202,7 @@ SDL_EXPORT int SDL_PushEvent(void* e) { return stub_SDL_PushEvent(e); }
 SDL_EXPORT char* SDL_GetClipboardText() { return stub_SDL_GetClipboardText(); }
 SDL_EXPORT int SDL_SetClipboardText(const char* t) { return stub_SDL_SetClipboardText(t); }
 SDL_EXPORT int SDL_HasClipboardText() { return stub_SDL_HasClipboardText(); }
+SDL_EXPORT void SDL_free(void* mem) { stub_SDL_free(mem); }
 SDL_EXPORT void SDL_StartTextInput() { stub_SDL_StartTextInput(); }
 SDL_EXPORT void SDL_StopTextInput() { stub_SDL_StopTextInput(); }
 SDL_EXPORT int SDL_IsTextInputActive() { return stub_SDL_IsTextInputActive(); }
@@ -1294,6 +1299,7 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetClipboardText", reinterpret_cast<void*>(stub_SDL_GetClipboardText));
     registerFunction("SDL_SetClipboardText", reinterpret_cast<void*>(stub_SDL_SetClipboardText));
     registerFunction("SDL_HasClipboardText", reinterpret_cast<void*>(stub_SDL_HasClipboardText));
+    registerFunction("SDL_free", reinterpret_cast<void*>(stub_SDL_free));
 
     // Text input
     registerFunction("SDL_StartTextInput", reinterpret_cast<void*>(stub_SDL_StartTextInput));

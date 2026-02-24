@@ -79,7 +79,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         metalView.delegate = self
 
         if let metalLayer = metalView.layer as? CAMetalLayer {
-            metalLayer.framebufferOnly = false
+            metalLayer.framebufferOnly = true
         }
     }
 

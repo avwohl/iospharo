@@ -95,3 +95,6 @@ build-catalyst/
 Pharo.image
 test_vm
 PharoDebug.log
+
+# Crash dumps
+*.dmp

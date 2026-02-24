@@ -67,7 +67,7 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         std::aligned_alloc(8, config.newSpaceSize));
     if (!newSpaceStart_) {
         std::free(permSpaceStart_);
-        std::free(oldSpaceStart_);
+        munmap(oldSpaceStart_, config.oldSpaceSize);
         permSpaceStart_ = nullptr;
         oldSpaceStart_ = nullptr;
         return false;
