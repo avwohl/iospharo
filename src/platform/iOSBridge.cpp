@@ -173,72 +173,30 @@ void ios_queueKeyEvent(int charCode, int pressCode, int modifiers) {
 }
 
 // ===== iOS Utility Functions =====
+// The app target links iosUtils.mm which provides real UIKit implementations.
+// These weak stubs serve as fallbacks for test_load_image (plain macOS)
+// and are overridden at link time when iosUtils.mm is present.
 
-#if TARGET_OS_IPHONE || TARGET_IPHONE_SIMULATOR
-
-// These need to be implemented in Objective-C for actual iOS device queries
-// For now, provide stub implementations that work for testing
-
-int iosIsIPad(void) {
-#if TARGET_OS_IPHONE
-    // Check UI idiom at runtime
-    // This is a simplified check - actual implementation should use UIDevice
-    return 0;  // Assume iPhone by default
-#else
-    return 0;
-#endif
-}
-
-// Default values; updated at runtime by Objective-C layer if available
-static char gDeviceModel[64] = "iPhone Simulator";
-const char* iosGetDeviceModel(void) {
-    return gDeviceModel;
-}
-
-// Default value; updated at runtime by Objective-C layer if available
-static char gSystemVersion[32] = "15.0";
-const char* iosGetSystemVersion(void) {
-    return gSystemVersion;
-}
-
-int iosOpenURL(const char* urlString) {
-    // Not implemented - would need UIApplication
+__attribute__((weak)) int iosIsIPad(void) {
     return 0;
 }
 
-void iosShowAlert(const char* title, const char* message) {
-    // Not implemented - would need UIAlertController
-}
-
-void iosHapticFeedback(int style) {
-    // Not implemented - would need UIFeedbackGenerator
-}
-
-#else
-// Non-iOS stubs
-
-int iosIsIPad(void) {
-    return 0;
-}
-
-const char* iosGetDeviceModel(void) {
+__attribute__((weak)) const char* iosGetDeviceModel(void) {
     return "macOS";
 }
 
-const char* iosGetSystemVersion(void) {
-    return "10.0";
+__attribute__((weak)) const char* iosGetSystemVersion(void) {
+    return "macOS";
 }
 
-int iosOpenURL(const char* urlString) {
+__attribute__((weak)) int iosOpenURL(const char* urlString) {
     return 0;
 }
 
-void iosShowAlert(const char* title, const char* message) {
+__attribute__((weak)) void iosShowAlert(const char* title, const char* message) {
 }
 
-void iosHapticFeedback(int style) {
+__attribute__((weak)) void iosHapticFeedback(int style) {
 }
-
-#endif
 
 } // extern "C"

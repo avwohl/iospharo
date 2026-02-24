@@ -23,20 +23,6 @@ struct SettingsView: View {
 
                 Section("About") {
                     HStack {
-                        Text("Device")
-                        Spacer()
-                        Text(PharoBridge.shared.deviceModel)
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
-                        Text("iOS Version")
-                        Spacer()
-                        Text(PharoBridge.shared.systemVersion)
-                            .foregroundColor(.gray)
-                    }
-
-                    HStack {
                         Text("VM Version")
                         Spacer()
                         Text("1.0.0")
