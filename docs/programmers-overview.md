@@ -153,46 +153,35 @@ See `docs/non-passing-tests.md` for details.
 
 ## Code review findings (2026-02-24)
 
-A full code review was performed across all languages. The findings below are
-prioritized for community readiness.
+A full code review was performed across all languages. All critical and most
+quality issues have been addressed. Remaining items are cosmetic or deferred.
 
-### Must fix before wider adoption
+### Resolved
 
-| # | Area | Issue |
-|---|------|-------|
-| 1 | **VM stop on app exit** | `applicationWillTerminate` schedules a `Task` then sleeps the main thread — `vm_stop()` likely never executes. Call `stop()` synchronously instead. (iosparoApp.swift:62) |
-| 2 | **Clipboard deadlock** | `DispatchQueue.main.sync` in clipboard-get callback can deadlock if the main thread is waiting on the VM. (PharoBridge.swift:72) |
-| 3 | **SDL\_free stub missing** | `SDL_GetClipboardText` returns `strdup`'d memory; without an `SDL_free` stub mapped to `free()`, every paste leaks. (FFI.cpp) |
-| 4 | **mmap/free mismatch** | ObjectMemory error path calls `std::free()` on an mmap'd region. (ObjectMemory.cpp:68) |
-| 5 | **Semaphore signal loss** | `signalExternalSemaphore` stores a single index — rapid signals from different sources lose all but the last. (Interpreter.cpp:1846) |
-| 6 | **Hardcoded class indices** | Magic numbers `3117` (CompiledBlock) and `38` (FullBlockClosure) will silently break on different images. (Interpreter.cpp:2585) |
+All 6 must-fix issues and all 9 should-fix issues have been addressed:
+- VM stop on app exit: synchronous call via `MainActor.assumeIsolated`
+- Clipboard deadlock: async+semaphore pattern replaces `DispatchQueue.main.sync`
+- SDL\_free stub: added to prevent paste memory leak
+- mmap/free mismatch: `munmap()` on error path
+- Semaphore signal loss: 64-entry lock-free ring buffer replaces single-slot atomic
+- Hardcoded class indices: dynamic lookup from class table at init time
+- Dead code: ~1,500 lines removed from src/ios/, dead Swift code removed
+- Debug leftovers: unused static counters removed
+- Stale project.yml deleted, scripts/README.md fixed
+- XCFramework freshness check extended to all source files including src/platform/
+- Stale header search paths removed from Xcode project
+- VMParameters struct deduplicated into shared header
+- `framebufferOnly = true` (Metal optimization)
+- Version string reads from bundle, deprecated APIs updated
+- `*.dmp` added to .gitignore, obsolete scripts deleted
 
-### Should fix (quality / maintenance)
-
-| # | Area | Issue |
-|---|------|-------|
-| 7 | **Dead code** | ~1,500 lines in `src/ios/` (iosDisplay.m, iosEvents.m, etc.) are not compiled by any build target. Remove or move to a `reference/` directory. |
-| 8 | **Dead Swift code** | `displayNeedsUpdate` is never set to true; `handleSingleTap`/`handleDoubleTap`/`handlePan` gesture handlers are never connected; `getDisplayBits()`/`getDisplaySize()`/`getDisplayDepth()` are never called; `NSEventMonitorHelper` is imported but unused. |
-| 9 | **Debug leftovers** | 50+ commented-out `cerr`/debug lines and 40+ `static int` debug counters in Interpreter.cpp. |
-| 10 | **Stale project.yml** | References nonexistent `app/macOS` and `app/Shared` directories. Delete it. |
-| 11 | **scripts/README.md** | References 3 deleted files (`explore-vmmaker.st`, `ios-simulator-setup.st`, `debug-unrelocated-pointers.st`). |
-| 12 | **Incomplete xcframework freshness check** | Xcode build phase only monitors 9 source files; changes to FFI.cpp, InterpreterProxy.cpp, plugins, or platform/ sources won't trigger a rebuild. |
-| 13 | **Stale header search paths** | Xcode project references `$(PROJECT_DIR)/../pharo-vm/` which doesn't exist. |
-| 14 | **Duplicate VMParameters struct** | Defined separately in iOSBridge.cpp and test\_ios\_bridge.cpp — could diverge. |
-| 15 | **`framebufferOnly = false`** | Disables a Metal performance optimization for no benefit (no drawable readback is done). (MetalRenderer.swift:81) |
-
-### Nice to have
+### Remaining (low priority)
 
 | # | Area | Issue |
 |---|------|-------|
-| 16 | Logging | Mix of `NSLog`, `fputs(stderr)`, `fprintf` — pick one approach (ideally `os_log`). |
-| 17 | Hardcoded version | Settings view shows "1.0.0" instead of reading from bundle. (SettingsView.swift:28) |
-| 18 | Eden GC | Scavenge copies objects but never reclaims eden space — effectively no young-gen GC. (ObjectMemory.cpp:1149) |
-| 19 | docs/WIP.md | Referenced in CLAUDE.md but doesn't exist. |
-| 20 | Deprecated API | `UI_USER_INTERFACE_IDIOM()` and `.autocapitalization(.none)` are deprecated. |
-| 21 | `renderWorldMorphs` | 730-line C++ method doing pixel-level menu rendering — belongs in a separate file if kept. (Interpreter.cpp:581) |
-| 22 | x86\_64 slices | `build-xcframework.sh` only builds arm64 — no Intel Mac support. |
-| 23 | `crash.dmp` | Untracked file not in `.gitignore`. Add `*.dmp` pattern. |
+| 1 | Eden GC | Scavenge copies objects but never reclaims eden space — effectively no young-gen GC. (ObjectMemory.cpp:1149) |
+| 2 | `renderWorldMorphs` | 730-line C++ method doing pixel-level menu rendering — belongs in a separate file if kept. (Interpreter.cpp:581) |
+| 3 | x86\_64 slices | `build-xcframework.sh` only builds arm64 — no Intel Mac support. |
 
 ### What's good
 
