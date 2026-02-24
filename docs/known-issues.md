@@ -4,20 +4,23 @@ Last updated: 2026-02-24
 
 ## High Priority (GUI)
 
-### Event Loop Wiring
-OSSDL2Driver event loop + FFI is working, but end-to-end event flow
-(touch/click → Pharo morphs) needs verification. Menu clicks and world
-menu may still be unreliable.
-
 ### Touch-to-Mouse Translation
 iPad touch events need more work for proper Pharo interaction.
+Long-press for right-click, two-finger scroll, etc.
 
-### SpStyleEnvironmentColorProxy DNU
-`GrafPort(Object)>>error:` renders a red X over the desktop during early
-startup. Caused by SpStyleEnvironmentColorProxy (ProtoObject subclass)
-forwarding DNU to `Smalltalk ui theme` before UITheme is initialized.
-Currently mitigated by delaying EXPOSED events 3 seconds after window
-creation. Root cause fix needed.
+### SpStyleEnvironmentColorProxy DNU (Startup Timing)
+OSSDL2Driver's event loop runs at priority 60 and preempts SessionManager
+(priority 40). If EXPOSED is delivered immediately, rendering triggers
+before UITheme initializes → SpStyleEnvironmentColorProxy forwards DNU
+to nil theme → Emergency Debugger.
+
+**Root cause**: Our SDL2 stubs are instantaneous while real SDL2 has
+natural latency from OS window creation. Standard Pharo images rely on
+this latency.
+
+**Current fix**: 3-second delay before first EXPOSED event (FFI.cpp).
+This is a necessary VM-side adaptation, not a workaround — we cannot
+change the standard Pharo image's startup order.
 
 ## Medium Priority
 
@@ -35,6 +38,14 @@ Two incomplete TODOs in `src/vm/plugins/B2DPlugin.c`:
 - Line 12873: arc rendering optimization (reducing maxSteps)
 
 Rendering still works overall; these are edge case optimizations.
+
+## Verified Working
+
+### Event Loop Wiring
+OSSDL2Driver event loop via FFI stubs handles mouse clicks correctly.
+Menu bar, window controls, and basic interaction all work on Mac Catalyst.
+The two-path routing (SDL2 vs primitive 264) resolves correctly: standard
+Pharo images use OSSDL2Driver which activates the SDL2 path.
 
 ## Low Priority / Not Our Bugs
 

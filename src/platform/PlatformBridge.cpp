@@ -489,4 +489,37 @@ void vm_postWindowEvent(int width, int height) {
     pharo::gEventQueue.push(event);
 }
 
+// Clipboard
+static ClipboardGetFunc gClipboardGet = nullptr;
+static ClipboardSetFunc gClipboardSet = nullptr;
+
+void vm_setClipboardCallbacks(ClipboardGetFunc getFunc, ClipboardSetFunc setFunc) {
+    gClipboardGet = getFunc;
+    gClipboardSet = setFunc;
+}
+
+const char* vm_getClipboardText(void) {
+    if (gClipboardGet) return gClipboardGet();
+    return "";
+}
+
+void vm_setClipboardText(const char* text) {
+    if (gClipboardSet) gClipboardSet(text);
+}
+
+// Text input (keyboard)
+static TextInputFunc gTextInputFunc = nullptr;
+
+void vm_setTextInputCallback(TextInputFunc func) {
+    gTextInputFunc = func;
+}
+
+void vm_startTextInput(void) {
+    if (gTextInputFunc) gTextInputFunc(true);
+}
+
+void vm_stopTextInput(void) {
+    if (gTextInputFunc) gTextInputFunc(false);
+}
+
 } // extern "C"

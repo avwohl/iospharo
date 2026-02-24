@@ -109,6 +109,19 @@ void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 #define IOS_ALT_KEY     4
 #define IOS_CMD_KEY     8
 
+/* Clipboard bridge */
+typedef const char* (*ClipboardGetFunc)(void);
+typedef void (*ClipboardSetFunc)(const char* text);
+void vm_setClipboardCallbacks(ClipboardGetFunc getFunc, ClipboardSetFunc setFunc);
+const char* vm_getClipboardText(void);
+void vm_setClipboardText(const char* text);
+
+/* Text input (keyboard) bridge */
+typedef void (*TextInputFunc)(bool active);
+void vm_setTextInputCallback(TextInputFunc func);
+void vm_startTextInput(void);
+void vm_stopTextInput(void);
+
 /* SDL2 readiness flags */
 bool ffi_isSDLEventPollingActive(void);  // True when OSSDL2Driver event loop is running
 bool ffi_isFirstExposedDelivered(void);  // True when first EXPOSED event was delivered to image

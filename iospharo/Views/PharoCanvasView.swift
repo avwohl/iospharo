@@ -21,6 +21,9 @@
 import SwiftUI
 import MetalKit
 
+/// Global weak reference to the PharoMTKView for text input control from C callbacks
+weak var gPharoMTKView: PharoMTKView?
+
 // MARK: - Custom MTKView with Direct Touch Handling
 
 /// Custom MTKView subclass that handles touch and mouse events directly
@@ -168,6 +171,7 @@ class PharoCanvasViewController: UIViewController {
 
         mtkView = PharoMTKView()
         mtkView.bridge = bridge
+        gPharoMTKView = mtkView
         mtkView.translatesAutoresizingMaskIntoConstraints = false
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
@@ -440,6 +444,33 @@ extension PharoCanvasViewController: UIContextMenuInteractionDelegate {
             }
         }
         return nil  // Suppress system context menu
+    }
+}
+#endif
+
+// MARK: - UIKeyInput (iOS soft keyboard)
+
+#if !targetEnvironment(macCatalyst)
+extension PharoMTKView: UIKeyInput {
+    var hasText: Bool {
+        return true
+    }
+
+    func insertText(_ text: String) {
+        for char in text {
+            guard let scalar = char.unicodeScalars.first else { continue }
+            // Map LF (10) to CR (13) — Pharo uses CR for return key
+            let charCode = scalar.value == 10 ? Int32(13) : Int32(scalar.value)
+            vm_postKeyEvent(0, charCode, 0, 0)  // down
+            vm_postKeyEvent(2, charCode, 0, 0)  // stroke
+            vm_postKeyEvent(1, charCode, 0, 0)  // up
+        }
+    }
+
+    func deleteBackward() {
+        vm_postKeyEvent(0, 8, 8, 0)  // down (backspace)
+        vm_postKeyEvent(2, 8, 8, 0)  // stroke
+        vm_postKeyEvent(1, 8, 8, 0)  // up
     }
 }
 #endif

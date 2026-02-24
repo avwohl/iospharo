@@ -984,17 +984,42 @@ int stub_SDL_PushEvent(void* event) {
     return 1;  // Success
 }
 
-// Clipboard stubs
+// Clipboard — delegates to platform bridge (which calls Swift/ObjC)
+extern "C" const char* vm_getClipboardText(void);
+extern "C" void vm_setClipboardText(const char* text);
+
 char* stub_SDL_GetClipboardText() {
-    return strdup("");
+    const char* text = vm_getClipboardText();
+    return strdup(text ? text : "");
 }
 
 int stub_SDL_SetClipboardText(const char* text) {
+    if (text) vm_setClipboardText(text);
     return 0;
 }
 
 int stub_SDL_HasClipboardText() {
-    return 0;
+    const char* text = vm_getClipboardText();
+    return (text && text[0] != '\0') ? 1 : 0;
+}
+
+// Text input — delegates to platform bridge for iOS keyboard show/hide
+extern "C" void vm_startTextInput(void);
+extern "C" void vm_stopTextInput(void);
+static bool sTextInputActive = false;
+
+void stub_SDL_StartTextInput() {
+    sTextInputActive = true;
+    vm_startTextInput();
+}
+
+void stub_SDL_StopTextInput() {
+    sTextInputActive = false;
+    vm_stopTextInput();
+}
+
+int stub_SDL_IsTextInputActive() {
+    return sTextInputActive ? 1 : 0;
 }
 
 // Cursor stubs
@@ -1173,6 +1198,9 @@ SDL_EXPORT int SDL_PushEvent(void* e) { return stub_SDL_PushEvent(e); }
 SDL_EXPORT char* SDL_GetClipboardText() { return stub_SDL_GetClipboardText(); }
 SDL_EXPORT int SDL_SetClipboardText(const char* t) { return stub_SDL_SetClipboardText(t); }
 SDL_EXPORT int SDL_HasClipboardText() { return stub_SDL_HasClipboardText(); }
+SDL_EXPORT void SDL_StartTextInput() { stub_SDL_StartTextInput(); }
+SDL_EXPORT void SDL_StopTextInput() { stub_SDL_StopTextInput(); }
+SDL_EXPORT int SDL_IsTextInputActive() { return stub_SDL_IsTextInputActive(); }
 SDL_EXPORT void* SDL_CreateSystemCursor(int id) { return stub_SDL_CreateSystemCursor(id); }
 SDL_EXPORT void* SDL_CreateCursor(void* data, void* mask, int w, int h, int hx, int hy) { return stub_SDL_CreateCursor(data, mask, w, h, hx, hy); }
 SDL_EXPORT void SDL_SetCursor(void* c) { stub_SDL_SetCursor(c); }
@@ -1266,6 +1294,11 @@ void registerSDL2Stubs() {
     registerFunction("SDL_GetClipboardText", reinterpret_cast<void*>(stub_SDL_GetClipboardText));
     registerFunction("SDL_SetClipboardText", reinterpret_cast<void*>(stub_SDL_SetClipboardText));
     registerFunction("SDL_HasClipboardText", reinterpret_cast<void*>(stub_SDL_HasClipboardText));
+
+    // Text input
+    registerFunction("SDL_StartTextInput", reinterpret_cast<void*>(stub_SDL_StartTextInput));
+    registerFunction("SDL_StopTextInput", reinterpret_cast<void*>(stub_SDL_StopTextInput));
+    registerFunction("SDL_IsTextInputActive", reinterpret_cast<void*>(stub_SDL_IsTextInputActive));
 
     // Cursor
     registerFunction("SDL_CreateSystemCursor", reinterpret_cast<void*>(stub_SDL_CreateSystemCursor));

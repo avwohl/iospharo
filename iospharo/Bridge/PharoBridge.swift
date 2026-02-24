@@ -9,6 +9,9 @@ import Foundation
 import Combine
 import UIKit
 
+/// Buffer for clipboard text returned to C (freed on next call)
+private var gClipboardBuffer: UnsafeMutablePointer<CChar>?
+
 /// Main bridge between Swift and the Pharo VM
 @MainActor
 class PharoBridge: ObservableObject {
@@ -35,6 +38,8 @@ class PharoBridge: ObservableObject {
 
     private init() {
         setupDisplayCallback()
+        setupClipboardCallbacks()
+        setupTextInputCallback()
     }
 
     // MARK: - Display Callback
@@ -50,6 +55,58 @@ class PharoBridge: ObservableObject {
 
         self.displayCallback = callback
         ios_registerDisplayUpdateCallback(callback)
+    }
+
+    // MARK: - Clipboard Callbacks
+
+    private func setupClipboardCallbacks() {
+        vm_setClipboardCallbacks(
+            // ClipboardGetFunc: return pasteboard text as C string
+            {
+                free(gClipboardBuffer)
+                gClipboardBuffer = nil
+
+                var text: String?
+                if Thread.isMainThread {
+                    text = UIPasteboard.general.string
+                } else {
+                    DispatchQueue.main.sync {
+                        text = UIPasteboard.general.string
+                    }
+                }
+
+                guard let str = text, !str.isEmpty else { return nil }
+                gClipboardBuffer = strdup(str)
+                return UnsafePointer(gClipboardBuffer!)
+            },
+            // ClipboardSetFunc: set pasteboard text from C string
+            { cString in
+                guard let cString = cString else { return }
+                let string = String(cString: cString)
+                if Thread.isMainThread {
+                    UIPasteboard.general.string = string
+                } else {
+                    DispatchQueue.main.async {
+                        UIPasteboard.general.string = string
+                    }
+                }
+            }
+        )
+    }
+
+    // MARK: - Text Input Callbacks
+
+    private func setupTextInputCallback() {
+        vm_setTextInputCallback { active in
+            DispatchQueue.main.async {
+                guard let view = gPharoMTKView else { return }
+                if active {
+                    view.becomeFirstResponder()
+                } else {
+                    view.resignFirstResponder()
+                }
+            }
+        }
     }
 
     // MARK: - VM Lifecycle

@@ -51,6 +51,19 @@ void vm_postKeyEvent(int type, int charCode, int keyCode, int modifiers);
 void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 void vm_postWindowEvent(int width, int height);
 
+// Clipboard (callbacks registered by Swift)
+typedef const char* (*ClipboardGetFunc)(void);
+typedef void (*ClipboardSetFunc)(const char* text);
+void vm_setClipboardCallbacks(ClipboardGetFunc getFunc, ClipboardSetFunc setFunc);
+const char* vm_getClipboardText(void);
+void vm_setClipboardText(const char* text);
+
+// Text input (keyboard show/hide callbacks registered by Swift)
+typedef void (*TextInputFunc)(bool active);
+void vm_setTextInputCallback(TextInputFunc func);
+void vm_startTextInput(void);
+void vm_stopTextInput(void);
+
 #ifdef __cplusplus
 }
 #endif
