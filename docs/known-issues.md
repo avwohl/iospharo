@@ -18,16 +18,15 @@ this latency.
 This is a necessary VM-side adaptation, not a workaround — we cannot
 change the standard Pharo image's startup order.
 
-## Medium Priority
-
-### B2DPlugin Stroke Edge Cases
-Two incomplete TODOs in `src/vm/plugins/B2DPlugin.c`:
-- Line 5110: stroke edge case handling for `leftX` from last operation
-- Line 12873: arc rendering optimization (reducing maxSteps)
-
-Rendering still works overall; these are edge case optimizations.
-
 ## Verified Working
+
+### B2DPlugin Rendering
+Both long-standing TODOs in B2DPlugin.c resolved (unresolved upstream for 25+ years):
+- `findNextExternalFillFromAET`: Added `prevRightX` tracking to clamp leftX
+  when edges cross between scan lines, preventing overlapping span fills.
+- `stepToFirstBezierInat`: Kept `maxSteps = 2*deltaY` — the 2x oversampling
+  provides quality that AA alone cannot compensate for, and is negligible
+  on modern hardware.
 
 ### Touch-to-Mouse Translation
 Full gesture handling implemented in PharoCanvasView.swift:

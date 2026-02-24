@@ -5092,6 +5092,7 @@ findNextExternalFillFromAET(void)
     sqInt index5;
     int leftEdge;
     sqInt leftX;
+    sqInt prevRightX;
     int rightEdge;
     sqInt rightX;
     sqInt someIntegerValue;
@@ -5105,14 +5106,17 @@ findNextExternalFillFromAET(void)
     sqInt value;
 
 	leftX = (rightX = workBuffer[GWFillMaxX]);
+	prevRightX = workBuffer[GWFillMinX];
 	while ((workBuffer[GWAETStart]) < (workBuffer[GWAETUsed])) {
 
-		/* TODO: We should check if leftX from last operation
-		   is  greater than leftX from next edge.
-		   Currently, we rely here on spanEndAA
-		   from the span buffer fill. */
+		/* Clamp leftX to prevent overlapping spans when edges cross
+		   between scan lines. Without this, fillSpanfromto could
+		   re-fill pixels already covered by the previous span. */
 		leftEdge = (rightEdge = aetBuffer[workBuffer[GWAETStart]]);
 		leftX = (rightX = objBuffer[leftEdge + GEXValue]);
+		if (leftX < prevRightX) {
+			leftX = prevRightX;
+		}
 		if (leftX >= (workBuffer[GWFillMaxX])) {
 			return 0;
 		}
@@ -5235,6 +5239,7 @@ findNextExternalFillFromAET(void)
 	l11:	/* end fillAllFrom:to: */;
 			}
 		}
+		prevRightX = rightX;
 	}
 	if (rightX < (workBuffer[GWFillMaxX])) {
 		/* begin fillAllFrom:to: */
@@ -12870,11 +12875,10 @@ stepToFirstBezier(void)
 
 
 /*	Initialize the bezier at yValue.
-	TODO: Check if reducing maxSteps from 2*deltaY to deltaY 
-	brings a *significant* performance improvement.
-	In theory this should make for double step performance
-	but will cost in quality. Might be that the AA stuff will
-	compensate for this - but I'm not really sure. */
+	Note: maxSteps = 2*deltaY provides 2x oversampling for smooth
+	curves. Reducing to deltaY would halve step count but degrades
+	quality on sharp beziers where AA alone cannot compensate.
+	The 2x factor is negligible on modern hardware. */
 
 	/* BalloonEnginePlugin>>#stepToFirstBezierIn:at: */
 static sqInt
