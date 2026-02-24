@@ -99,4 +99,9 @@ FFIResult callFromSpec(
 } // namespace ffi
 } // namespace pharo
 
+// C-linkage functions called from PlatformBridge.cpp
+extern "C" {
+    void ffi_notifyDisplayResize(int width, int height);
+}
+
 #endif // PHARO_FFI_HPP

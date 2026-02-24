@@ -231,43 +231,16 @@ class PharoCanvasViewController: UIViewController {
         targetView.addGestureRecognizer(scrollGesture)
 
         #else
-        // iOS gesture recognizers
-
-        let singleTapGesture = UITapGestureRecognizer(
-            target: self,
-            action: #selector(handleSingleTap(_:))
-        )
-        singleTapGesture.numberOfTapsRequired = 1
-        targetView.addGestureRecognizer(singleTapGesture)
-
-        let doubleTapGesture = UITapGestureRecognizer(
-            target: self,
-            action: #selector(handleDoubleTap(_:))
-        )
-        doubleTapGesture.numberOfTapsRequired = 2
-        targetView.addGestureRecognizer(doubleTapGesture)
-
-        let panGesture = UIPanGestureRecognizer(
-            target: self,
-            action: #selector(handlePan(_:))
-        )
-        panGesture.minimumNumberOfTouches = 1
-        panGesture.maximumNumberOfTouches = 1
-        targetView.addGestureRecognizer(panGesture)
-
-        let twoFingerPanGesture = UIPanGestureRecognizer(
-            target: self,
-            action: #selector(handleTwoFingerPan(_:))
-        )
-        twoFingerPanGesture.minimumNumberOfTouches = 2
-        twoFingerPanGesture.maximumNumberOfTouches = 2
-        targetView.addGestureRecognizer(twoFingerPanGesture)
+        // iOS: single taps, double taps, and drags are handled by
+        // touchesBegan/Moved/Ended on PharoMTKView (same as Mac Catalyst).
+        // Only use gesture recognizers for multi-touch and long press.
 
         let longPressGesture = UILongPressGestureRecognizer(
             target: self,
             action: #selector(handleLongPress(_:))
         )
         longPressGesture.minimumPressDuration = 0.5
+        longPressGesture.cancelsTouchesInView = false
         targetView.addGestureRecognizer(longPressGesture)
 
         let twoFingerTapGesture = UITapGestureRecognizer(
@@ -277,10 +250,20 @@ class PharoCanvasViewController: UIViewController {
         twoFingerTapGesture.numberOfTouchesRequired = 2
         targetView.addGestureRecognizer(twoFingerTapGesture)
 
+        let twoFingerPanGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleTwoFingerPan(_:))
+        )
+        twoFingerPanGesture.minimumNumberOfTouches = 2
+        twoFingerPanGesture.maximumNumberOfTouches = 2
+        twoFingerPanGesture.cancelsTouchesInView = false
+        targetView.addGestureRecognizer(twoFingerPanGesture)
+
         let pinchGesture = UIPinchGestureRecognizer(
             target: self,
             action: #selector(handlePinch(_:))
         )
+        pinchGesture.cancelsTouchesInView = false
         targetView.addGestureRecognizer(pinchGesture)
         #endif
     }
@@ -370,6 +353,9 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         switch gesture.state {
         case .began:
+            // Suppress the direct touch handler's button-up so it doesn't
+            // send a competing RED button-up after our YELLOW button-down.
+            mtkView.suppressNextTouchEnd = true
             bridge.sendMouseMoved(to: point, modifiers: 0)
             bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
             bridge.hapticFeedback(style: .medium)

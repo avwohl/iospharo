@@ -370,6 +370,10 @@ void vm_setDisplaySize(int width, int height, int depth) {
         gInterpreter->setScreenSize(width, height);
         gInterpreter->setScreenDepth(depth);
     }
+
+    // Notify the SDL stub layer so it pushes SIZE_CHANGED + EXPOSED events.
+    // This ensures Pharo re-layouts when the Metal view size changes.
+    ffi_notifyDisplayResize(width, height);
 }
 
 uint32_t* vm_getDisplayPixels(void) {

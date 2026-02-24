@@ -383,6 +383,11 @@ static bool g_firstExposedDelivered = false;
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
 
+// Time-based EXPOSED event tracking (replaces poll-count-based approach)
+static bool sWindowCreated = false;
+static std::chrono::steady_clock::time_point sWindowCreatedTime;
+static int sNextExposedSecond = 3;  // First EXPOSED at 3 seconds after window creation
+
 // Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
 static int sMouseX = 0;
 static int sMouseY = 0;
@@ -405,6 +410,23 @@ bool ffi_isSDLEventPollingActive() {
 
 bool ffi_isFirstExposedDelivered() {
     return g_firstExposedDelivered;
+}
+
+// Called from vm_setDisplaySize when the Metal view resizes.
+// Pushes SIZE_CHANGED + EXPOSED into the SDL event queue so Pharo re-layouts
+// its Forms to match the new display dimensions.
+void ffi_notifyDisplayResize(int width, int height) {
+    if (!sMainWindow) return;
+
+    // Update the SDL window state to match
+    auto wit = sWindows.find(sMainWindow);
+    if (wit != sWindows.end()) {
+        wit->second.width = width;
+        wit->second.height = height;
+    }
+
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
+    sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
 }
 
 int stub_SDL_Init(uint32_t flags) {
@@ -450,9 +472,13 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     // Do NOT queue initial window events during CreateWindow.
     // The SpStyleEnvironmentColorProxy DNU error causes Emergency Debugger
     // windows to open if rendering is triggered before UITheme is initialized.
-    // Instead, the periodic EXPOSED mechanism (starting at poll#5000) triggers
-    // the first render after startup completes. SIZE_CHANGED is sent along
-    // with the first periodic EXPOSED to set up correct form dimensions.
+    // Instead, time-based EXPOSED events (starting 3s after window creation)
+    // trigger the first render after startup completes.
+    if (!sWindowCreated) {
+        sWindowCreated = true;
+        sWindowCreatedTime = std::chrono::steady_clock::now();
+        sNextExposedSecond = 3;
+    }
     return handle;
 }
 
@@ -656,8 +682,13 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     // Pharo stores this pointer via setPointer: and writes to it continuously via BitBlt,
     // bypassing LockTexture/UnlockTexture after the first call. By returning the display
     // surface buffer, Pharo writes directly where the Metal renderer reads.
+    //
+    // Always re-check dimensions on every call — the display surface may have been
+    // resized (e.g. iPad rotation or initial size mismatch). If dimensions don't match,
+    // fall back to the texture's private buffer so Pharo doesn't write out-of-bounds.
     uint32_t* returnPixels = it->second.pixels;
     int returnPitch = it->second.pitch;
+    bool useDS = false;
 
     if (pharo::gDisplaySurface) {
         int dsW = pharo::gDisplaySurface->width();
@@ -665,10 +696,11 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
         if (dsW == it->second.width && dsH == it->second.height) {
             returnPixels = pharo::gDisplaySurface->pixels();
             returnPitch = dsW * 4;
-            it->second.usesDisplaySurface = true;
+            useDS = true;
         }
     }
 
+    it->second.usesDisplaySurface = useDS;
     if (pixels) *pixels = returnPixels;
     if (pitch) *pitch = returnPitch;
     return 0;
@@ -820,20 +852,24 @@ int stub_SDL_PollEvent(void* event) {
         return 1;
     }
 
-    // Periodically send EXPOSED events to trigger full repaints during startup.
-    // The first EXPOSED at poll#2000 (with SHOWN + SIZE_CHANGED) gives UITheme
-    // time to initialize, preventing SpStyleEnvironmentColorProxy DNU.
-    // Subsequent EXPOSED every 5000 polls up to poll#60000.
-    if (sMainWindow && totalPollCalls >= 2000 && totalPollCalls <= 60000) {
-        bool isFirst = (totalPollCalls == 2000);
-        bool isPeriodic = (totalPollCalls > 2000 && totalPollCalls % 5000 == 0);
-        if (isFirst || isPeriodic) {
+    // Time-based EXPOSED events: trigger full repaints during startup using
+    // wall-clock time instead of poll counts. Poll counts don't correspond to
+    // real time — a fast Mac may hit thousands of polls quickly while a slower
+    // iPad takes much longer. Wall-clock timing gives UITheme a consistent
+    // 3 seconds to initialize regardless of CPU speed.
+    if (sMainWindow && sWindowCreated && !g_firstExposedDelivered && sNextExposedSecond <= 30) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - sWindowCreatedTime
+        ).count();
+        if (elapsed >= sNextExposedSecond) {
+            bool isFirst = (sNextExposedSecond == 3);
             if (isFirst) {
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
             }
             sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+            sNextExposedSecond += 5;  // Next EXPOSED 5 seconds later
         }
     }
 
