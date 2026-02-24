@@ -223,6 +223,7 @@ build_cmake() {
     log "Configuring $name (CMake) for $PLATFORM_NAME..."
     cmake "$srcdir" \
         -DCMAKE_INSTALL_PREFIX="$prefix" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_CXX_COMPILER="$CXX" \
@@ -267,6 +268,7 @@ build_freetype() {
     log "Configuring freetype (CMake) for $PLATFORM_NAME..."
     cmake "$srcdir" \
         -DCMAKE_INSTALL_PREFIX="$prefix" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_C_FLAGS="$CFLAGS" \
         -DCMAKE_OSX_ARCHITECTURES="$CMAKE_ARCH" \
@@ -366,6 +368,7 @@ build_harfbuzz() {
     log "Configuring harfbuzz (CMake) for $PLATFORM_NAME..."
     cmake "$srcdir" \
         -DCMAKE_INSTALL_PREFIX="$prefix" \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
         -DCMAKE_C_COMPILER="$CC" \
         -DCMAKE_CXX_COMPILER="$CXX" \
         -DCMAKE_C_FLAGS="$CFLAGS" \

@@ -3,7 +3,6 @@
  */
 
 #include "EventQueue.hpp"
-#include <iostream>
 
 namespace pharo {
 
@@ -56,14 +55,6 @@ void EventQueue::setEventCallback(EventCallback callback, void* context) {
 
 void EventQueue::setInputSemaphoreIndex(int index) {
     std::lock_guard<std::mutex> lock(mutex_);
-    static FILE* semaLog = fopen("/tmp/input_sema_trace.log", "w");
-    static int setCount = 0;
-    setCount++;
-    if (semaLog && setCount <= 50) {
-        fprintf(semaLog, "[INPUT-SEMA #%d] setInputSemaphoreIndex(%d) from old=%d\n",
-                setCount, index, inputSemaphoreIndex_);
-        fflush(semaLog);
-    }
     inputSemaphoreIndex_ = index;
 }
 

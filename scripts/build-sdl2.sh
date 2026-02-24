@@ -79,6 +79,7 @@ build_slice() {
     local cmake_args=(
         -DCMAKE_INSTALL_PREFIX="$install_dir"
         -DCMAKE_BUILD_TYPE=Release
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5
         -DCMAKE_OSX_ARCHITECTURES="$arch"
         -DCMAKE_OSX_SYSROOT="$sdkpath"
         -DCMAKE_C_FLAGS="$extra_c_flags"
@@ -88,6 +89,7 @@ build_slice() {
         -DSDL_TEST=OFF
         -DSDL_TESTS=OFF
         -DSDL2_DISABLE_SDL2MAIN=ON
+        -DSDL_OPENGL=OFF
     )
 
     if [ "$system_name" = "iOS" ]; then

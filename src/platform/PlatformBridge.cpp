@@ -29,11 +29,9 @@ class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d)
         : width_(w), height_(h), depth_(d),
-          frontWidth_(w), frontHeight_(h),
           pendingWidth_(0), pendingHeight_(0), pendingDepth_(0),
           pendingResize_(false) {
         backBuffer_.resize(w * h);
-        frontBuffer_.resize(w * h);
     }
 
     int width() const override {
@@ -86,21 +84,13 @@ public:
             cb = updateCallback_;
             ctx = context_;
         }
-        static int invalidateCount = 0;
-        if (++invalidateCount <= 5) {
-            fprintf(stderr, "[DISPLAY-SURFACE] invalidateRect(%d,%d,%d,%d) cb=%p\n",
-                    x, y, w, h, (void*)cb);
-        }
         if (cb) {
             cb(x, y, w, h, ctx);
         }
     }
 
     void update() override {
-        static int updateCount = 0;
-        updateCount++;
         int newWidth, newHeight;
-        uint32_t centerPx = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
@@ -111,13 +101,6 @@ public:
 
             newWidth = width_;
             newHeight = height_;
-            // Sample center pixel
-            if (newHeight > 384 && newWidth > 512 && backBuffer_.size() > (size_t)(384 * newWidth + 512)) {
-                centerPx = backBuffer_[384 * newWidth + 512];
-            }
-        }
-        if (updateCount <= 10 || updateCount % 200 == 0) {
-            fprintf(stderr, "[DISPLAY-UPDATE] #%d center=%08x\n", updateCount, centerPx);
         }
         invalidateRect(0, 0, newWidth, newHeight);
     }
@@ -132,10 +115,6 @@ public:
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (w == width_ && h == height_ && d == depth_ && !pendingResize_) return;
-
-        fprintf(stderr, "[DISPLAY-RESIZE] %dx%dx%d -> %dx%dx%d (buf %zu -> %d)\n",
-                width_, height_, depth_, w, h, d,
-                backBuffer_.size(), w * h);
 
         // Resize back buffer immediately (VM renders here)
         width_ = w;
@@ -156,10 +135,6 @@ private:
     // Back buffer dimensions (current rendering target)
     int width_, height_, depth_;
     std::vector<uint32_t> backBuffer_;
-
-    // Front buffer dimensions (current display)
-    int frontWidth_, frontHeight_;
-    std::vector<uint32_t> frontBuffer_;
 
     // Pending resize (applied during swap)
     int pendingWidth_, pendingHeight_, pendingDepth_;
@@ -209,14 +184,6 @@ bool vm_initialize(size_t heapSize) {
 }
 
 bool vm_loadImage(const char* imagePath) {
-    // Redirect stderr to file for Mac Catalyst trace capture
-    static bool stderrRedirected = false;
-    if (!stderrRedirected) {
-        FILE* traceFile = freopen("/tmp/iospharo-stderr.log", "w", stderr);
-        if (traceFile) setbuf(traceFile, nullptr);
-        stderrRedirected = true;
-    }
-
     // Set app bundle path so FFI can find bundled libraries in Contents/Frameworks
 #ifdef __APPLE__
     CFBundleRef mainBundle = CFBundleGetMainBundle();
@@ -393,8 +360,6 @@ void vm_setDisplaySize(int width, int height, int depth) {
         // Create new display
         gDisplay = new SimpleDisplaySurface(width, height, depth);
         pharo::gDisplaySurface = gDisplay;
-        fprintf(stderr, "[DISPLAY-SURFACE] Created %dx%dx%d, pendingCallback=%p\n",
-                width, height, depth, (void*)gPendingCallback);
 
         // Apply pending callback if one was registered before display existed
         if (gPendingCallback) {
@@ -444,13 +409,6 @@ void vm_getDisplayBufferInfo(DisplayBufferInfo* info) {
     }
 }
 
-bool vm_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight) {
-    // Not used anymore but kept for API compatibility
-    if (outWidth) *outWidth = 0;
-    if (outHeight) *outHeight = 0;
-    return false;
-}
-
 bool vm_isDisplayResizing(void) {
     return gDisplay ? gDisplay->isResizing() : false;
 }
@@ -481,8 +439,6 @@ void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers) {
     // Pharo event format: 1=mouseDown, 2=mouseUp, 3=mouseMove
     // Swift sends: 0=move, 1=down, 2=up - convert move from 0 to 3
     event.arg5 = (type == 0) ? 3 : type;
-    fprintf(stderr, "[POST-EVT] type=%d x=%d y=%d buttons=%d mods=%d queueSize=%zu\n",
-            type, x, y, buttons, modifiers, pharo::gEventQueue.size());
     pharo::gEventQueue.push(event);
 }
 

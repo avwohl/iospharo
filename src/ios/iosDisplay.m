@@ -20,14 +20,6 @@ static int currentHeight = 768;
 static int currentDepth = 32;
 static double currentScaleFactor = 1.0;
 
-/* Debug: constructor to verify this file is linked */
-__attribute__((constructor))
-static void iosDisplayInit(void) {
-    fprintf(stderr, "iOS: [DISPLAY INIT] iosDisplay.m loaded, default size %dx%d\n",
-            currentWidth, currentHeight);
-    fflush(stderr);
-}
-
 /* Callback to Swift layer */
 static IOSDisplayUpdateCallback displayUpdateCallback = NULL;
 
@@ -78,15 +70,6 @@ void ios_setDisplaySize(int width, int height) {
 
 sqInt ioShowDisplay(sqInt dispBitsIndex, sqInt width, sqInt height, sqInt depth,
                     sqInt affectedL, sqInt affectedR, sqInt affectedT, sqInt affectedB) {
-    static int showCount = 0;
-    showCount++;
-    if (showCount <= 10) {
-        fprintf(stderr, "iOS: [DISPLAY] ioShowDisplay #%d: bits=%p, %ldx%ld@%ld, rect=(%ld,%ld)-(%ld,%ld)\n",
-                showCount, (void*)dispBitsIndex, (long)width, (long)height, (long)depth,
-                (long)affectedL, (long)affectedT, (long)affectedR, (long)affectedB);
-        fflush(stderr);
-    }
-
     /* Store reference to display bits from VM */
     displayBitsBuffer = (void*)dispBitsIndex;
     currentWidth = width;
@@ -117,49 +100,20 @@ sqInt ioForceDisplayUpdate(void) {
 }
 
 sqInt ioScreenSize(void) {
-    static int sizeCount = 0;
-    sizeCount++;
-    /* Always log first 20 calls to ensure we see display queries */
-    if (sizeCount <= 20) {
-        fprintf(stderr, "iOS: [DISPLAY] ioScreenSize #%d: returning %dx%d (packed=0x%x)\n",
-                sizeCount, currentWidth, currentHeight,
-                (currentWidth << 16) | (currentHeight & 0xFFFF));
-        fflush(stderr);
-    }
     /* Return packed width/height: (width << 16) | height */
     return (currentWidth << 16) | (currentHeight & 0xFFFF);
 }
 
 sqInt ioScreenDepth(void) {
-    static int depthCount = 0;
-    depthCount++;
-    if (depthCount <= 5) {
-        fprintf(stderr, "iOS: [DISPLAY] ioScreenDepth #%d: returning %d\n", depthCount, currentDepth);
-        fflush(stderr);
-    }
     return currentDepth;
 }
 
 double ioScreenScaleFactor(void) {
-    static int scaleCount = 0;
-    scaleCount++;
-    if (scaleCount <= 5) {
-        fprintf(stderr, "iOS: [DISPLAY] ioScreenScaleFactor #%d: returning %f\n", scaleCount, currentScaleFactor);
-        fflush(stderr);
-    }
     return currentScaleFactor;
 }
 
 sqInt ioHasDisplayDepth(sqInt depth) {
-    static int hasDepthCount = 0;
-    hasDepthCount++;
-    int result = (depth == 32 || depth == 16 || depth == 8);
-    if (hasDepthCount <= 10) {
-        fprintf(stderr, "iOS: [DISPLAY] ioHasDisplayDepth #%d: depth=%ld, returning %d\n",
-                hasDepthCount, (long)depth, result);
-        fflush(stderr);
-    }
-    return result;
+    return (depth == 32 || depth == 16 || depth == 8);
 }
 
 sqInt ioSetDisplayMode(sqInt width, sqInt height, sqInt depth, sqInt fullscreenFlag) {

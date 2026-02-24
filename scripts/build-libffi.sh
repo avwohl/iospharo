@@ -23,7 +23,7 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BUILD_ROOT="${PROJECT_DIR}/third-party-build"
 SOURCES_DIR="${BUILD_ROOT}/sources"
 
-LIBFFI_VERSION="3.4.6"
+LIBFFI_VERSION="3.5.2"
 LIBFFI_URL="https://github.com/libffi/libffi/releases/download/v${LIBFFI_VERSION}/libffi-${LIBFFI_VERSION}.tar.gz"
 LIBFFI_SRC="${SOURCES_DIR}/libffi-${LIBFFI_VERSION}"
 

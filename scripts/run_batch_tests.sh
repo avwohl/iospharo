@@ -5,7 +5,8 @@
 
 BATCH_SIZE=25
 TOTAL_CLASSES=600  # approximate
-PROJ_DIR="/Users/wohl/src/iospharo"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJ_DIR="$(dirname "$SCRIPT_DIR")"
 VM="$PROJ_DIR/build/test_load_image"
 SCRIPT="$PROJ_DIR/scripts/run_sunit_tests.st"
 COMBINED="/tmp/sunit_test_combined.txt"
@@ -28,8 +29,8 @@ while [ $start -le $TOTAL_CLASSES ]; do
         exit 1
     fi
 
-    # Inject test runner
-    /Users/wohl/Downloads/pharo /tmp/Pharo.image eval --save \
+    # Inject test runner (PHARO_REF_VM can override the reference VM path)
+    ${PHARO_REF_VM:-pharo} /tmp/Pharo.image eval --save \
         "'$SCRIPT' asFileReference fileIn" 2>/dev/null || true
 
     # Write batch range

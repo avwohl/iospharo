@@ -49,7 +49,7 @@ struct ContentView: View {
         .onAppear {
             imageManager.checkForExistingImage()
 
-            // Auto-start (development convenience)
+            // Auto-start when an image is available
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                 if imageManager.hasImage && !bridge.isRunning {
                     NSLog("[iospharo] Auto-starting with image: %@", imageManager.imagePath ?? "nil")
@@ -318,7 +318,7 @@ struct SettingsView: View {
                     HStack {
                         Text("VM Version")
                         Spacer()
-                        Text("12.0.0-ios")
+                        Text("1.0.0")
                             .foregroundColor(.gray)
                     }
                 }

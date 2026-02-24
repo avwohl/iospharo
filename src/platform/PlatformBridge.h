@@ -38,11 +38,6 @@ typedef struct {
 // Get all display info atomically - use this instead of separate calls
 void vm_getDisplayBufferInfo(DisplayBufferInfo* info);
 
-// SAFE: Copy display buffer to destination (holds lock during copy)
-// Returns true if successful, false if dest too small
-// This prevents tearing by not letting pointers escape
-bool vm_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight);
-
 // Check if display is being resized (Metal should skip updates during resize)
 bool vm_isDisplayResizing(void);
 

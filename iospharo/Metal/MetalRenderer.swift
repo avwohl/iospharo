@@ -30,15 +30,14 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     // Reference to bridge
     private weak var bridge: PharoBridge?
 
-    /// Initialize the renderer
     init?(metalView: MTKView, bridge: PharoBridge) {
         guard let device = MTLCreateSystemDefaultDevice() else {
-            print("MetalRenderer: Failed to create Metal device")
+            NSLog("MetalRenderer: Failed to create Metal device")
             return nil
         }
 
         guard let commandQueue = device.makeCommandQueue() else {
-            print("MetalRenderer: Failed to create command queue")
+            NSLog("MetalRenderer: Failed to create command queue")
             return nil
         }
 
@@ -53,13 +52,13 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
         // Create the render pipeline
         guard let library = device.makeDefaultLibrary() else {
-            print("MetalRenderer: Failed to create shader library")
+            NSLog("MetalRenderer: Failed to create shader library")
             return nil
         }
 
         guard let vertexFunction = library.makeFunction(name: "vertexShader"),
               let fragmentFunction = library.makeFunction(name: "fragmentShader") else {
-            print("MetalRenderer: Failed to load shader functions")
+            NSLog("MetalRenderer: Failed to load shader functions")
             return nil
         }
 
@@ -71,7 +70,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         do {
             self.pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
-            print("MetalRenderer: Failed to create pipeline state: \(error)")
+            NSLog("MetalRenderer: Failed to create pipeline state: %@", error.localizedDescription)
             return nil
         }
 

@@ -21,11 +21,6 @@
 import SwiftUI
 import MetalKit
 
-// Event logging — writes to stderr (already redirected to /tmp/iospharo-stderr.log by C++)
-func pharoEventLog(_ msg: String) {
-    fputs("[SWIFT-EVENT] \(msg)\n", stderr)
-}
-
 // MARK: - Custom MTKView with Direct Touch Handling
 
 /// Custom MTKView subclass that handles touch and mouse events directly
@@ -47,8 +42,6 @@ class PharoMTKView: MTKView {
         isMultipleTouchEnabled = true
     }
 
-    // File-based logging that works with redirected stderr
-    func eventLog(_ msg: String) { pharoEventLog(msg) }
 
     override var canBecomeFirstResponder: Bool {
         return true
@@ -70,12 +63,10 @@ class PharoMTKView: MTKView {
     var suppressNextTouchEnd = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        eventLog("[TOUCH] touchesBegan count=\(touches.count) bridge=\(bridge != nil)")
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
         let buttons = buttonMaskToPharo(event)
         currentButton = buttons
-        eventLog("[TOUCH] down at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -96,7 +87,6 @@ class PharoMTKView: MTKView {
         }
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-        NSLog("[TOUCH] up at (%d,%d) buttons=%d", Int(point.x), Int(point.y), currentButton)
         bridge.sendTouchUp(at: point, buttons: currentButton)
     }
 
@@ -203,13 +193,6 @@ class PharoCanvasViewController: UIViewController {
         super.viewDidAppear(animated)
         mtkView.becomeFirstResponder()
 
-        // Automated menu test — enable for testing, disable for normal use
-        // #if targetEnvironment(macCatalyst)
-        // waitForThemeReady {
-        //     NSLog("[TEST] Theme ready, injecting test events")
-        //     self.injectAllMenusTest()
-        // }
-        // #endif
     }
 
     #if targetEnvironment(macCatalyst)
@@ -614,15 +597,11 @@ class PharoCanvasViewController: UIViewController {
 
     #if targetEnvironment(macCatalyst)
     @objc func handleHover(_ gesture: UIHoverGestureRecognizer) {
-        guard let bridge = bridge else {
-            pharoEventLog("[HOVER] handleHover bridge=NIL")
-            return
-        }
+        guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
 
         switch gesture.state {
         case .began:
-            pharoEventLog("[HOVER] began at (\(Int(point.x)),\(Int(point.y)))")
             bridge.sendMouseMoved(to: point, modifiers: 0)
         case .changed:
             bridge.sendMouseMoved(to: point, modifiers: 0)
@@ -770,7 +749,6 @@ extension PharoCanvasViewController: UIContextMenuInteractionDelegate {
         // Since Mac Catalyst right-click is a single event (not hold), we send
         // both down and up with enough delay for the menu to build and render.
         // The menu then stays open in "click" mode for the user to interact with.
-        pharoEventLog("[RIGHT-CLICK] at (\(Int(location.x)),\(Int(location.y)))")
         mtkView.suppressNextTouchCancel = true
         mtkView.suppressNextTouchEnd = true
         if let bridge = bridge {

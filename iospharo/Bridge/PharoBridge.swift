@@ -31,15 +31,10 @@ class PharoBridge: ObservableObject {
 
     private var imagePath: String?
 
-    /// Display update callback (stored to prevent deallocation)
     private var displayCallback: IOSDisplayUpdateCallback?
 
     private init() {
-        fputs("[BRIDGE] PharoBridge.init() starting\n", stderr)
-        fflush(stderr)
         setupDisplayCallback()
-        fputs("[BRIDGE] PharoBridge.init() completed\n", stderr)
-        fflush(stderr)
     }
 
     // MARK: - Display Callback
@@ -167,55 +162,29 @@ class PharoBridge: ObservableObject {
     // MARK: - Touch Events
     // Mouse event types for vm_postMouseEvent: 0=move, 1=down, 2=up
 
-    private static var bridgeLogFile: UnsafeMutablePointer<FILE>? = {
-        fopen("/tmp/bridge_events.log", "w")
-    }()
-
-    private func logBridgeEvent(_ msg: String) {
-        if let file = PharoBridge.bridgeLogFile {
-            fputs("[BRIDGE] \(msg)\n", file)
-            fflush(file)
-        }
-    }
-
-    /// Send touch down event
     func sendTouchDown(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        logBridgeEvent("sendTouchDown BEFORE vm_postMouseEvent at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
-        vm_postMouseEvent(1, // type: down
-                          Int32(point.x), Int32(point.y),
+        vm_postMouseEvent(1, Int32(point.x), Int32(point.y),
                           Int32(buttons), Int32(modifiers))
-        logBridgeEvent("sendTouchDown AFTER vm_postMouseEvent")
     }
 
-    /// Send touch moved event
     func sendTouchMoved(to point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        logBridgeEvent("sendTouchMoved at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
-        vm_postMouseEvent(0, // type: move
-                          Int32(point.x), Int32(point.y),
+        vm_postMouseEvent(0, Int32(point.x), Int32(point.y),
                           Int32(buttons), Int32(modifiers))
     }
 
-    /// Send touch up event
     func sendTouchUp(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
-        logBridgeEvent("sendTouchUp at (\(Int(point.x)),\(Int(point.y))) buttons=\(buttons)")
-        vm_postMouseEvent(2, // type: up
-                          Int32(point.x), Int32(point.y),
+        vm_postMouseEvent(2, Int32(point.x), Int32(point.y),
                           Int32(buttons), Int32(modifiers))
     }
 
-    /// Send touch cancelled event
     func sendTouchCancelled(at point: CGPoint, buttons: Int = IOS_RED_BUTTON) {
-        vm_postMouseEvent(2, // type: up (treat cancelled as up)
-                          Int32(point.x), Int32(point.y),
+        vm_postMouseEvent(2, Int32(point.x), Int32(point.y),
                           Int32(buttons), 0)
     }
 
-    /// Send mouse moved event (no buttons pressed) - Mac Catalyst hover
     func sendMouseMoved(to point: CGPoint, modifiers: Int = 0) {
-        logBridgeEvent("sendMouseMoved at (\(Int(point.x)),\(Int(point.y)))")
-        vm_postMouseEvent(0, // type: move
-                          Int32(point.x), Int32(point.y),
-                          0, Int32(modifiers))  // buttons = 0 for hover
+        vm_postMouseEvent(0, Int32(point.x), Int32(point.y),
+                          0, Int32(modifiers))
     }
 
     // MARK: - Keyboard Events

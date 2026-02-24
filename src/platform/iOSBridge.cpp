@@ -160,10 +160,6 @@ void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info) {
     info->size = vmInfo.size;
 }
 
-bool ios_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight) {
-    return vm_copyDisplayBuffer(dest, destSize, outWidth, outHeight);
-}
-
 bool ios_isDisplayResizing(void) {
     return vm_isDisplayResizing();
 }

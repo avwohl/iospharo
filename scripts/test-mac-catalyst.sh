@@ -14,7 +14,14 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-APP_PATH="/Users/wohl/Library/Developer/Xcode/DerivedData/iospharo-buxermqmwwmdxjbbgetrozfkwrod/Build/Products/Debug-maccatalyst/iospharo.app"
+# Find the app in DerivedData (or override with APP_PATH env var)
+if [ -z "${APP_PATH:-}" ]; then
+    APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/iospharo-*/Build/Products/Debug-maccatalyst -name "iospharo.app" -maxdepth 1 2>/dev/null | head -1)
+    if [ -z "$APP_PATH" ]; then
+        echo "Error: Could not find iospharo.app in DerivedData. Build first or set APP_PATH."
+        exit 1
+    fi
+fi
 APP_NAME="iospharo"
 LOG_FILE="/tmp/iospharo-test.log"
 

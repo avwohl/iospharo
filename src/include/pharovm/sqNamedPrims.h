@@ -5,9 +5,6 @@
  * All plugins compiled with SQUEAK_BUILTIN_PLUGIN are registered here.
  */
 
-/* Debug marker to verify this file is being used */
-#pragma message("Using iOS sqNamedPrims.h with BitBltPlugin")
-
 /* Core VM exports */
 extern sqExport vm_exports[];
 extern sqExport os_exports[];
