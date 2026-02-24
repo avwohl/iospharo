@@ -18616,16 +18616,14 @@ PrimitiveResult Interpreter::primitiveUUIDGenerate(int argCount) {
     size_t size = memory_.byteSizeOf(bufferOop);
     if (size < 16) return PrimitiveResult::Failure;
 
-    // Generate 16 random bytes for UUID
+    // Generate 16 random bytes for UUID using secure RNG
+    uint8_t uuid[16];
+    arc4random_buf(uuid, sizeof(uuid));
+    uuid[6] = (uuid[6] & 0x0F) | 0x40;  // Version 4
+    uuid[8] = (uuid[8] & 0x3F) | 0x80;  // Variant 1
     for (size_t i = 0; i < 16; i++) {
-        memory_.storeByte(i, bufferOop, static_cast<uint8_t>(rand() & 0xFF));
+        memory_.storeByte(i, bufferOop, uuid[i]);
     }
-
-    // Set version (4) and variant bits
-    uint8_t byte6 = memory_.fetchByte(6, bufferOop);
-    memory_.storeByte(6, bufferOop, (byte6 & 0x0F) | 0x40);  // Version 4
-    uint8_t byte8 = memory_.fetchByte(8, bufferOop);
-    memory_.storeByte(8, bufferOop, (byte8 & 0x3F) | 0x80);  // Variant 1
 
     popN(1);
     return PrimitiveResult::Success;
@@ -19993,9 +19991,13 @@ PrimitiveResult Interpreter::primitiveCryptoRandomBytes(int argCount) {
         static_cast<size_t>(count));
     if (bytes.isNil()) return PrimitiveResult::Failure;
 
-    // Fill with random bytes (would use SecRandomCopyBytes on iOS)
-    for (size_t i = 0; i < static_cast<size_t>(count); i++) {
-        memory_.storeByte(i, bytes, static_cast<uint8_t>(rand() & 0xFF));
+    // Fill with random bytes using secure RNG
+    {
+        std::vector<uint8_t> buf(static_cast<size_t>(count));
+        arc4random_buf(buf.data(), buf.size());
+        for (size_t i = 0; i < buf.size(); i++) {
+            memory_.storeByte(i, bytes, buf[i]);
+        }
     }
 
     popN(1);
@@ -20004,47 +20006,15 @@ PrimitiveResult Interpreter::primitiveCryptoRandomBytes(int argCount) {
 }
 
 // Primitive 487: Compute hash (SHA-256)
-// data primitiveHashCrypto -> byteArray
+// Not implemented — fall back to Smalltalk
 PrimitiveResult Interpreter::primitiveCryptoHash(int argCount) {
-    if (argCount != 1) return PrimitiveResult::Failure;
-
-    Oop dataOop = stackTop();
-    if (dataOop.isImmediate()) return PrimitiveResult::Failure;
-
-    // Would use CC_SHA256 from CommonCrypto
-    // Return a dummy 32-byte hash
-    Oop hash = memory_.allocateBytes(
-        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassByteArray)),
-        32);
-    if (hash.isNil()) return PrimitiveResult::Failure;
-
-    for (size_t i = 0; i < 32; i++) {
-        memory_.storeByte(i, hash, 0);
-    }
-
-    popN(1);
-    push(hash);
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 488: Compute HMAC
-// key data primitiveCryptoHMAC -> byteArray
+// Not implemented — fall back to Smalltalk
 PrimitiveResult Interpreter::primitiveCryptoHMAC(int argCount) {
-    if (argCount != 2) return PrimitiveResult::Failure;
-
-    // Would use CCHmac from CommonCrypto
-    Oop hmac = memory_.allocateBytes(
-        memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassByteArray)),
-        32);
-    if (hmac.isNil()) return PrimitiveResult::Failure;
-
-    for (size_t i = 0; i < 32; i++) {
-        memory_.storeByte(i, hmac, 0);
-    }
-
-    popN(2);
-    push(hmac);
-    return PrimitiveResult::Success;
+    return PrimitiveResult::Failure;
 }
 
 // Primitive 489: Encrypt/decrypt data (AES)
@@ -24648,16 +24618,14 @@ PrimitiveResult Interpreter::primitiveMakeUUID(int argCount) {
     size_t size = memory_.byteSizeOf(rcvr);
     if (size < 16) return PrimitiveResult::Failure;
 
-    // Generate 16 random bytes
+    // Generate UUID v4 using secure RNG
+    uint8_t uuid[16];
+    arc4random_buf(uuid, sizeof(uuid));
+    uuid[6] = (uuid[6] & 0x0F) | 0x40;  // Version 4
+    uuid[8] = (uuid[8] & 0x3F) | 0x80;  // Variant 1
     for (size_t i = 0; i < 16; i++) {
-        memory_.storeByte(i, rcvr, static_cast<uint8_t>(rand() & 0xFF));
+        memory_.storeByte(i, rcvr, uuid[i]);
     }
-
-    // Set UUID version 4 and variant bits
-    uint8_t byte6 = memory_.fetchByte(6, rcvr);
-    memory_.storeByte(6, rcvr, (byte6 & 0x0F) | 0x40);  // Version 4
-    uint8_t byte8 = memory_.fetchByte(8, rcvr);
-    memory_.storeByte(8, rcvr, (byte8 & 0x3F) | 0x80);  // Variant 1
 
     // Leave receiver on stack
     return PrimitiveResult::Success;
@@ -25255,7 +25223,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
         // Zero the return value so Smalltalk gets 0/nil/NULL
-        memset(returnHolder, 0, 64);
+        memset(returnHolder, 0, returnSize);
     }
 
 

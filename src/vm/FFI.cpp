@@ -578,35 +578,6 @@ void stub_SDL_RenderPresent(void* renderer) {
         // When texture writes directly to display surface, skip the copy --
         // Pharo already wrote there via BitBlt.
         if (tit->second.usesDisplaySurface) {
-            // PPM dump for visual verification.
-            // Triggered by /tmp/pharo-dump-request file existence.
-            {
-                static int dumpSeq = 0;
-                FILE* req = fopen("/tmp/pharo-dump-request", "r");
-                if (req) {
-                    fclose(req);
-                    remove("/tmp/pharo-dump-request");
-                    uint32_t* px = pharo::gDisplaySurface->pixels();
-                    int w = pharo::gDisplaySurface->width();
-                    int h = pharo::gDisplaySurface->height();
-                    char path[128];
-                    snprintf(path, sizeof(path), "/tmp/pharo-display-%d.ppm", dumpSeq++);
-                    FILE* f = fopen(path, "wb");
-                    if (f && px) {
-                        fprintf(f, "P6\n%d %d\n255\n", w, h);
-                        for (int i = 0; i < w * h; i++) {
-                            uint32_t p = px[i];
-                            uint8_t rgb[3] = {
-                                (uint8_t)((p >> 16) & 0xFF),
-                                (uint8_t)((p >> 8) & 0xFF),
-                                (uint8_t)(p & 0xFF)
-                            };
-                            fwrite(rgb, 1, 3, f);
-                        }
-                        fclose(f);
-                    }
-                }
-            }
             pharo::gDisplaySurface->update();
             return;
         }
@@ -865,29 +836,6 @@ int stub_SDL_PollEvent(void* event) {
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
             }
             sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-        }
-    }
-
-    // File-based event injection: /tmp/pharo-inject-events
-    // Format: one line per event: "click <x> <y> <button>" or "dump"
-    // button: 4=left(Red), 2=right(Yellow), 1=middle(Blue)
-    if (totalPollCalls % 500 == 0) {
-        FILE* injectFile = fopen("/tmp/pharo-inject-events", "r");
-        if (injectFile) {
-            char line[256];
-            while (fgets(line, sizeof(line), injectFile)) {
-                int x, y, button;
-                if (sscanf(line, "click %d %d %d", &x, &y, &button) == 3) {
-                    vm_postMouseEvent(0, x, y, 0, 0);
-                    vm_postMouseEvent(1, x, y, button, 0);
-                    vm_postMouseEvent(2, x, y, 0, 0);
-                } else if (strncmp(line, "dump", 4) == 0) {
-                    FILE* req = fopen("/tmp/pharo-dump-request", "w");
-                    if (req) fclose(req);
-                }
-            }
-            fclose(injectFile);
-            remove("/tmp/pharo-inject-events");
         }
     }
 
