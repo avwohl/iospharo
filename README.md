@@ -18,12 +18,12 @@ standard Pharo test suite.
 - All standard VM plugins built-in (B2D, JPEG, DSA, SSL, etc.)
 - Third-party libraries: cairo, freetype, harfbuzz, pixman, libpng, OpenSSL, libssh2, libgit2
 
-**GUI (work in progress):**
-- Metal rendering pipeline works — display buffer renders to screen
-- Desktop partially renders but theme initialization fails on startup (red X)
-- Menu bar sometimes appears but click/tap handling is unreliable
-- Touch-to-mouse event translation needs work on iPad
-- Event loop between OSSDL2Driver and the VM is not fully wired up
+**GUI (working):**
+- Metal rendering pipeline — Pharo desktop renders correctly
+- Menu bar, world menu, and context menus all functional
+- Touch-to-mouse event translation (tap, long-press, two-finger, pinch, drag)
+- Hardware keyboard support with modifier keys
+- Image library with download, import, and catalog management
 
 ## Prerequisites
 

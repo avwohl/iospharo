@@ -117,20 +117,10 @@ Checklist before claiming a GUI fix works:
 **Do NOT rely on log output, test pass rates, or code analysis alone.**
 Two weeks of "verified working" claims were wrong because nobody looked at the screen.
 
-### GUI Display and Interaction — VERIFIED WORKING (2026-02-24)
+### GUI — Verified Working (2026-02-24)
 
-All three requirements visually verified via screencapture:
-1. **Display properly** — Pharo 13 desktop renders correctly with dark theme, lighthouse logo, no red X
-2. **Top menu works** — menu bar visible AND clickable, world menu opens, submenus expand (Browse → System Browser works)
-3. **World menu works** — left-click on desktop opens the world menu, hover expands submenus, clicking opens tools (System Browser confirmed)
-
-Right-click context menus also work (text context menu on Welcome window, "World contents" on desktop).
-
-### FFI/Display Status
-
-SDL2 stubs in FFI.cpp bridge between the Pharo image's OSSDL2Driver and our
-Metal rendering pipeline. The image calls SDL2 functions via FFI, our stubs
-translate to gDisplaySurface/gEventQueue.
+Display, menus, and interaction all visually verified. SDL2 stubs in FFI.cpp
+bridge between the Pharo image's OSSDL2Driver and the Metal rendering pipeline.
 
 ---
 
@@ -251,25 +241,3 @@ To avoid context pollution from large files (Interpreter.cpp: 8K lines, Primitiv
 ### Why This Matters
 With 577 manual primitive table entries, even 1% error rate = 5-6 wrong primitives. The repeated "fix 40+ incorrect mappings" commits show this is a real problem. Agents can do systematic verification without context limits causing drift.
 
----
-## Investigation Log
-
-### FFI — Verified Working (2026-02-17)
-- All TFFI primitives implemented and registered
-- Type auto-fill in `tffi_getHandler` bootstraps TFBasicType initialization
-- `primitiveExternalCall` properly falls through to `primitiveCalloutToFFI`
-- SDL2 stubs found via FFI cache (checked before dlsym, per commit a10016a)
-- FFI tests: 23/23 pass (FFICalloutAPITest 18/18, FFICompilerPluginTest 5/5)
-- Batch-run FFI errors (17+3) are test-runner forking artifacts, not FFI bugs
-
-### SDL2 Symbols — Verified Working (2025-01-25)
-- `__attribute__((used, visibility("default")))` on FFI.cpp stubs
-- Symbols available at runtime, registered in namedPrimitives_
-
-### Event Loop — Open Issue (2025-01-28)
-- OSiOSDriver in image is a stub — missing setupEventLoop, eventLoop
-- OSSDL2Driver's setupEventLoop needs FFI (which now works)
-- Priority values: `lowIOPriority` = 60 in Pharo 13
-- VM event collection works: passThroughEvents_, input semaphore, prim 264
-- **Remaining question**: Does OSSDL2Driver event loop now start successfully
-  given FFI is working? Needs re-investigation.

@@ -82,7 +82,6 @@ src/
   ios/                   # Reference / generated files (not compiled by current build)
     cointerp-cpp.c       #   VMMaker-generated interpreter (94K lines, used as reference)
     primitives.json      #   Authoritative primitive table from VMMaker
-  include/               # Shared C headers for the bridging layer
 
 iospharo/                # Swift app (Mac Catalyst + iOS)
   App/                   #   iosparoApp.swift, ContentView.swift
