@@ -1,5 +1,10 @@
 #!/bin/bash
 # Build PharoVMCore.xcframework for iOS Device, Mac Catalyst, and iOS Simulator
+#
+# Uses cmake with Ninja generator (not Xcode) because cmake -G Xcode spawns
+# xcodebuild for compiler identification which hangs in sandboxed environments.
+# Cross-compilation is controlled via CFLAGS/sysroot, not CMAKE_SYSTEM_NAME=iOS,
+# following the same pattern as scripts/build-third-party.sh.
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,116 +20,69 @@ rm -rf "$BUILD_BASE"
 rm -rf "$XCFRAMEWORK_OUTPUT"
 mkdir -p "$BUILD_BASE"
 
-# --- Mac Catalyst (arm64) ---
-echo ""
-echo "=== Building for Mac Catalyst (arm64) ==="
-mkdir -p "$BUILD_BASE/maccatalyst"
+# Helper: configure, build, and find the output library
+build_slice() {
+    local slice_name="$1"
+    local xcfw_platform="$2"
+    local sdk="$3"
+    local arch="$4"
+    local extra_cflags="$5"
 
-cmake -G Xcode \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-    -DFORCE_XCFRAMEWORK_PLATFORM=ios-arm64_x86_64-maccatalyst \
-    -B "$BUILD_BASE/maccatalyst" \
-    -S .
+    echo ""
+    echo "=== Building for $slice_name ($arch) ==="
 
-cd "$BUILD_BASE/maccatalyst"
+    local sdkpath
+    sdkpath=$(xcrun --sdk "$sdk" --show-sdk-path)
+    local cc
+    cc=$(xcrun --sdk "$sdk" -f clang)
+    local cxx
+    cxx=$(xcrun --sdk "$sdk" -f clang++)
+    local builddir="$BUILD_BASE/$slice_name"
 
-xcodebuild -project PharoVM.xcodeproj \
-    -scheme PharoVMCore \
-    -configuration Release \
-    -destination 'platform=macOS,variant=Mac Catalyst,arch=arm64' \
-    SUPPORTS_MACCATALYST=YES \
-    ARCHS=arm64 \
-    ONLY_ACTIVE_ARCH=NO \
-    -quiet
+    local cflags="-arch $arch -isysroot $sdkpath $extra_cflags -O2"
 
-cd "$SCRIPT_DIR"
+    mkdir -p "$builddir"
 
-CATALYST_LIB="$BUILD_BASE/maccatalyst/Release-maccatalyst/libPharoVMCore.a"
+    cmake -G Ninja \
+        -DCMAKE_C_COMPILER="$cc" \
+        -DCMAKE_CXX_COMPILER="$cxx" \
+        -DCMAKE_C_FLAGS="$cflags" \
+        -DCMAKE_CXX_FLAGS="$cflags" \
+        -DCMAKE_OSX_ARCHITECTURES="$arch" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_SYSTEM_NAME=iOS \
+        -DCMAKE_OSX_SYSROOT="$sdkpath" \
+        -DFORCE_XCFRAMEWORK_PLATFORM="$xcfw_platform" \
+        -B "$builddir" \
+        -S .
 
-if [ ! -f "$CATALYST_LIB" ]; then
-    echo "ERROR: Mac Catalyst build failed — library not found at $CATALYST_LIB"
-    echo "Searching for libPharoVMCore.a..."
-    find "$BUILD_BASE/maccatalyst" -name "libPharoVMCore.a" 2>/dev/null
-    exit 1
-fi
+    cmake --build "$builddir" -- -j$(sysctl -n hw.ncpu)
 
-# --- iOS Device (arm64) ---
-echo ""
-echo "=== Building for iOS Device (arm64) ==="
-mkdir -p "$BUILD_BASE/iphoneos"
+    local lib="$builddir/libPharoVMCore.a"
+    if [ ! -f "$lib" ]; then
+        echo "ERROR: $slice_name build failed — library not found at $lib"
+        exit 1
+    fi
+    echo "$slice_name: $(lipo -info "$lib" 2>&1)"
+}
 
-cmake -G Xcode \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-    -DFORCE_XCFRAMEWORK_PLATFORM=ios-arm64 \
-    -B "$BUILD_BASE/iphoneos" \
-    -S .
+# --- Build all three slices ---
+build_slice "maccatalyst" "ios-arm64_x86_64-maccatalyst" "macosx" "arm64" \
+    "-target arm64-apple-ios15.0-macabi"
 
-cd "$BUILD_BASE/iphoneos"
+build_slice "iphoneos" "ios-arm64" "iphoneos" "arm64" \
+    "-mios-version-min=15.0"
 
-xcodebuild -project PharoVM.xcodeproj \
-    -scheme PharoVMCore \
-    -configuration Release \
-    -destination 'generic/platform=iOS' \
-    ARCHS=arm64 \
-    ONLY_ACTIVE_ARCH=NO \
-    -quiet
+build_slice "simulator" "ios-arm64_x86_64-simulator" "iphonesimulator" "arm64" \
+    "-mios-simulator-version-min=15.0"
 
-cd "$SCRIPT_DIR"
-
-DEVICE_LIB="$BUILD_BASE/iphoneos/Release-iphoneos/libPharoVMCore.a"
-
-if [ ! -f "$DEVICE_LIB" ]; then
-    echo "ERROR: iOS Device build failed — library not found at $DEVICE_LIB"
-    echo "Searching for libPharoVMCore.a..."
-    find "$BUILD_BASE/iphoneos" -name "libPharoVMCore.a" 2>/dev/null
-    exit 1
-fi
-
-# --- iOS Simulator (arm64) ---
-echo ""
-echo "=== Building for iOS Simulator (arm64) ==="
-mkdir -p "$BUILD_BASE/simulator"
-
-cmake -G Xcode \
-    -DCMAKE_SYSTEM_NAME=iOS \
-    -DCMAKE_OSX_ARCHITECTURES=arm64 \
-    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
-    -DFORCE_XCFRAMEWORK_PLATFORM=ios-arm64_x86_64-simulator \
-    -B "$BUILD_BASE/simulator" \
-    -S .
-
-cd "$BUILD_BASE/simulator"
-
-xcodebuild -project PharoVM.xcodeproj \
-    -scheme PharoVMCore \
-    -configuration Release \
-    -destination 'generic/platform=iOS Simulator' \
-    ARCHS=arm64 \
-    ONLY_ACTIVE_ARCH=NO \
-    -quiet
-
-cd "$SCRIPT_DIR"
-
-SIMULATOR_LIB="$BUILD_BASE/simulator/Release-iphonesimulator/libPharoVMCore.a"
-
-if [ ! -f "$SIMULATOR_LIB" ]; then
-    echo "ERROR: iOS Simulator build failed — library not found at $SIMULATOR_LIB"
-    echo "Searching for libPharoVMCore.a..."
-    find "$BUILD_BASE/simulator" -name "libPharoVMCore.a" 2>/dev/null
-    exit 1
-fi
-
-# --- Create XCFramework with both slices ---
+# --- Create XCFramework ---
 echo ""
 echo "=== Creating XCFramework ==="
 xcodebuild -create-xcframework \
-    -library "$DEVICE_LIB" \
-    -library "$CATALYST_LIB" \
-    -library "$SIMULATOR_LIB" \
+    -library "$BUILD_BASE/iphoneos/libPharoVMCore.a" \
+    -library "$BUILD_BASE/maccatalyst/libPharoVMCore.a" \
+    -library "$BUILD_BASE/simulator/libPharoVMCore.a" \
     -output "$XCFRAMEWORK_OUTPUT"
 
 # Touch Info.plist so Xcode freshness check passes
