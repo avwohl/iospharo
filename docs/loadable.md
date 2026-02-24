@@ -78,10 +78,9 @@ These are compiled statically into PharoVMCore:
 ## Third-Party Libraries
 
 ### Mac Catalyst
-All third-party libraries are bundled via `scripts/bundle-libs.sh`, which copies
-Homebrew dylibs into the app bundle at build time. This includes cairo, freetype,
-fontconfig, harfbuzz, pixman, libpng, libgit2, libssh2, libssl, libcrypto, and
-their transitive dependencies (X11, glib, graphite2, etc.).
+Third-party libraries are built as xcframeworks via `scripts/build-third-party.sh`
+and linked into the app at build time. This includes cairo, freetype, fontconfig,
+harfbuzz, pixman, libpng, and their transitive dependencies.
 
 ### iOS
 Third-party libraries must be cross-compiled as static libraries and packaged as
@@ -109,7 +108,7 @@ The `PHARO_WITH_CRYPTO` CMake option controls inclusion of cryptographic compone
 **When ON (default)**:
 - DSAPrims plugin compiled and registered
 - SqueakSSL plugin compiled and registered (uses Apple Security.framework)
-- `bundle-libs.sh` includes libssl, libcrypto (Mac Catalyst)
+- `build-third-party.sh` includes libssl, libcrypto
 - Third-party xcframeworks include OpenSSL (iOS)
 
 **When OFF (export-safe)**:

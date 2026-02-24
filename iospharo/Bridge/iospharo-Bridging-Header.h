@@ -15,31 +15,8 @@
 #import "../App/NSEventMonitor.h"
 #endif
 
-/* VM Parameters structure (simplified for Swift) */
-typedef struct VMParameterVector_ {
-    uint32_t count;
-    const char** parameters;
-} VMParameterVector;
-
-typedef struct VMParameters_ {
-    char* imageFileName;
-    bool isDefaultImage;
-    bool defaultImageFound;
-    bool isInteractiveSession;
-    bool isWorker;
-    int maxStackFramesToPrint;
-    long long maxOldSpaceSize;
-    long long maxCodeSize;
-    long long edenSize;
-    long long minPermSpaceSize;
-    long long maxSlotsForNewSpaceAlloc;
-    int processArgc;
-    const char** processArgv;
-    const char** environmentVector;
-    bool avoidSearchingSegmentsWithPinnedObjects;
-    VMParameterVector vmParameters;
-    VMParameterVector imageParameters;
-} VMParameters;
+/* VM Parameters (shared definition) */
+#include "../../src/platform/VMParameters.h"
 
 /* VM lifecycle functions */
 int vm_init(VMParameters* parameters);

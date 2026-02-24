@@ -15,31 +15,7 @@
 #include <TargetConditionals.h>
 #endif
 
-// The iOS app expects these types
-typedef struct VMParameterVector_ {
-    uint32_t count;
-    const char** parameters;
-} VMParameterVector;
-
-typedef struct VMParameters_ {
-    char* imageFileName;
-    bool isDefaultImage;
-    bool defaultImageFound;
-    bool isInteractiveSession;
-    bool isWorker;
-    int maxStackFramesToPrint;
-    long long maxOldSpaceSize;
-    long long maxCodeSize;
-    long long edenSize;
-    long long minPermSpaceSize;
-    long long maxSlotsForNewSpaceAlloc;
-    int processArgc;
-    const char** processArgv;
-    const char** environmentVector;
-    bool avoidSearchingSegmentsWithPinnedObjects;
-    VMParameterVector vmParameters;
-    VMParameterVector imageParameters;
-} VMParameters;
+#include "VMParameters.h"
 
 // Callback storage
 static void (*gIOSDisplayCallback)(int, int, int, int) = nullptr;

@@ -57,7 +57,6 @@ volatile int g_watchdogProcessPriority = 0;  // Current process priority (update
 static pharo::Oop g_lastDispatchSelector;
 static pharo::Oop g_lastDispatchRcvrClass;
 static pharo::Oop g_lastDispatchMethod;
-static int g_lastDispatchArgCount = 0;
 static int g_lastDispatchPrimIndex = 0;
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
@@ -2543,9 +2542,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                         }
 
                         // Push thisContext - must materialize inline frames first!
-                        static int thisCtxCount = 0;
-                        thisCtxCount++;
-
                         Oop contextToPush = activeContext_;
 
                         if (frameDepth_ > 0) {
@@ -5062,7 +5058,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // Record last dispatch for MUSTBEBOOL diagnostics
     g_lastDispatchSelector = selector;
     g_lastDispatchRcvrClass = rcvrClass;
-    g_lastDispatchArgCount = argCount;
 
     // Check method cache
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
@@ -5517,12 +5512,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Set bytecode end
     size_t totalBytes = methodObj->byteSize();
     bytecodeEnd_ = methodBytes + totalBytes;
-
-    // DEBUG: Dump bytecodes for signal method
-    static int activationCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-    }
-    activationCount++;
 
     // DEBUG_LOG("[ACTIVATE] clsIdx=" << (method.isObject() ? method.asObjectPtr()->classIndex() : 0)
               // << " rawHdr=0x" << std::hex << methodHeader.rawBits()
@@ -7884,9 +7873,7 @@ bool Interpreter::executePendingDriverInstall() {
 // autoLoadDriver removed — was a dead no-op called from hardcoded selector matching
 
 bool Interpreter::bootstrapStartup() {
-    static int bootstrapCallCount = 0;
     static bool imageBooted = false;  // true once we've ever found a runnable process
-    bootstrapCallCount++;
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);

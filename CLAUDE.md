@@ -143,9 +143,9 @@ This is an iOS Pharo VM that moves oop encoding from high address bits to low bi
 
 Key directories:
 - `src/vm/` - Clean C++ VM implementation (ImageLoader, Interpreter, ObjectMemory, Primitives)
-- `src/ios/` - iOS-specific VM code and generated interpreter
+- `src/ios/` - Reference files (cointerp-cpp.c, primitives.json, generated_primitives.inc, oop.hpp)
 - `scripts/` - Build and transformation scripts
-- `docs/` - Documentation and WIP notes
+- `docs/` - Documentation
 
 ## Bytecode Reference
 The Sista V1 bytecode spec (used by Pharo 10+) is notoriously hard to find online.
@@ -211,7 +211,7 @@ cat /tmp/sunit_test_results.txt
 ### Files
 - `scripts/run_sunit_tests.st` - Test runner (chunk format .st file)
 - `/tmp/sunit_test_results.txt` - Output file
-- `docs/WIP.md` - Last known test results and status
+- `docs/non-passing-tests.md` - Test compatibility analysis
 
 ## Primitive Table Reference
 The **one true source** for the primitive table is in VMMaker:
