@@ -8876,51 +8876,6 @@ bool Interpreter::executeFromContext(Oop context) {
     ObjectHeader* methodObj = method_.asObjectPtr();
     // DEBUG_LOG("[DEBUG] executeFromContext: Method has " << methodObj->slotCount() << " slots, cls=" << methodObj->classIndex() << ", fmt=" << (int)methodObj->format();
 
-    // Check if method has a primitive or if we're in snapshotPrimitive method
-    int primIdx = primitiveIndexOf(method_);
-    bool isSnapshotResume = false;
-
-    // Track if this is our first snapshot resume (for logging)
-    static bool firstSnapshotResume = true;
-
-    // Log snapshot resume detection
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-    }
-
-    // Check for snapshot primitive (131) by primitive number
-    if (primIdx == 131) {
-        isSnapshotResume = true;
-    }
-
-    // Also check by method selector name (for methods that call primitives differently)
-    if (!isSnapshotResume && receiver_.isObject()) {
-        // Get receiver's class name
-        Oop rcvrClass = memory_.classOf(receiver_);
-        if (rcvrClass.isObject()) {
-            ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
-            if (clsHdr->slotCount() > 6) {
-                Oop nameOop = memory_.fetchPointer(6, rcvrClass);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 100) {
-                        std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        if (className == "SnapshotOperation" || className == "SessionManager") {
-                            // We're resuming in snapshot-related context
-                            // SnapshotOperation is used in Pharo <= 12
-                            // SessionManager is used in Pharo 13+
-                            isSnapshotResume = true;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Mark that we've detected snapshot resume
-    if (isSnapshotResume) {
-        firstSnapshotResume = false;
-    }
-
     Oop methodHeader = memory_.fetchPointer(0, method_);
     // std::cerr; // DEBUG
 
@@ -9067,58 +9022,6 @@ bool Interpreter::executeFromContext(Oop context) {
 
     argCount_ = 0;  // We're resuming a context, not calling a method
 
-    // If resuming from snapshot, we need to configure the return value correctly.
-    // Pharo SnapshotOperation checks:
-    //   result not ifTrue: [ self quitPrimitive ]
-    //
-    // So if result = true:  true not = false -> ifTrue skips -> continues to startup
-    //    if result = false: false not = true -> ifTrue runs -> QUIT!
-    //
-    // We want to SKIP quit, so set TOS to TRUE.
-    //
-    // Also clear SnapshotOperation's 'isQuit' slot to prevent quit:
-    //   slot 0: save (Boolean)
-    //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after resume
-    if (isSnapshotResume) {
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-        }
-
-        // Set TOS to true ONLY for the actual snapshot primitive (131) context.
-        // This allows the image to proceed with startup instead of quitting.
-        // Do NOT set TOS for other snapshot-related contexts (like SessionManager methods)
-        // as that would corrupt return values.
-        if (primIdx == 131) {
-            if (stackPointer_ > stackBase_) {
-                *(stackPointer_ - 1) = memory_.trueObject();
-            } else {
-                push(memory_.trueObject());
-            }
-        }
-
-        // For SessionManager (Pharo 13+), the 'quit' parameter might be stored
-        // differently than SnapshotOperation. Try to find and clear it.
-        // In snapshot:andQuit:, the second argument (quit) might be at slot 7
-        // (since slot 6 = first arg/temp 'save', slot 7 = second arg 'quit')
-        ObjectHeader* ctxHdrForQuit = context.asObjectPtr();
-        if (ctxHdrForQuit->slotCount() > 7) {
-            Oop quitSlot = ctxHdrForQuit->slotAt(7);  // 'quit' parameter
-            if (quitSlot.rawBits() == memory_.trueObject().rawBits()) {
-                ctxHdrForQuit->slotAtPut(7, memory_.falseObject());
-            }
-        }
-
-        // Also clear isQuit slot in SnapshotOperation (for older Pharo) to be safe
-        if (receiver_.isObject()) {
-            ObjectHeader* rcvr = receiver_.asObjectPtr();
-            if (rcvr->slotCount() >= 3) {
-                Oop slot2 = rcvr->slotAt(2);
-                if (slot2 == memory_.trueObject()) {
-                    rcvr->slotAtPut(2, memory_.falseObject());
-                }
-            }
-        }
-    }
-
     // Only initialize selectors once (not on every executeFromContext call)
     static bool selectorsInitialized = false;
     if (!selectorsInitialized) {
@@ -9152,6 +9055,9 @@ void Interpreter::initializePrimitives() {
     // Load primitive table from VMMaker-generated source
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
+
+    // Temporary debug print primitive (slot 255, normally unused)
+    primitiveTable_[255] = &Interpreter::primitiveDebugPrint;
 
     // Primitives 256-519: In Sista V1 / Spur, the callPrimitive bytecode encodes
     // "quick primitives" that return constants (256-263) or instance variables (264+).

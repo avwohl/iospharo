@@ -740,6 +740,7 @@ private:
     // Stub primitives (always fail or succeed with no-op)
     PrimitiveResult primitiveFailure(int argCount);
     PrimitiveResult primitiveNoop(int argCount);
+    PrimitiveResult primitiveDebugPrint(int argCount);
     PrimitiveResult primitiveLowSpaceSemaphore(int argCount);
     PrimitiveResult primitiveDeferDisplayUpdates(int argCount);
     PrimitiveResult primitiveArrayBecome(int argCount);

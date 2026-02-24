@@ -566,8 +566,12 @@ int main(int argc, char* argv[]) {
     // OSWorldRenderer >> isApplicableFor: requires BOTH:
     //   1. Smalltalk isHeadless → true (checks VM params for --headless)
     //   2. CommandLineArguments new hasOption: 'interactive' → true (image arg --interactive)
-    // The --interactive default is already set in primitiveGetAttribute when imageArgs is empty.
+    // Without --interactive, the CommandLineHandler sees no args + headless mode,
+    // prints help and calls Smalltalk exit: 0, killing any forked processes.
     interpreter.setVMParameters({"--headless"});
+    if (imageArgs.empty()) {
+        interpreter.setImageArguments({"--interactive"});
+    }
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;

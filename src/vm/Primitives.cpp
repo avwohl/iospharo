@@ -194,6 +194,26 @@ PrimitiveResult Interpreter::primitiveNoop(int argCount) {
     return PrimitiveResult::Success;  // noop succeeds by doing nothing
 }
 
+PrimitiveResult Interpreter::primitiveDebugPrint(int argCount) {
+    // Temporary debug primitive (slot 255): prints arg string to stderr
+    if (argCount >= 1) {
+        Oop strOop = stackValue(0);
+        if (strOop.isObject()) {
+            ObjectHeader* hdr = strOop.asObjectPtr();
+            size_t len = hdr->byteSize();
+            if (len > 0 && len < 4096) {
+                uint8_t* bytes = hdr->bytes();
+                fwrite(bytes, 1, len, stderr);
+                fputc('\n', stderr);
+                fflush(stderr);
+            }
+        }
+    }
+    // Pop args, return receiver
+    popN(argCount);
+    return PrimitiveResult::Success;
+}
+
 PrimitiveResult Interpreter::primitiveLowSpaceSemaphore(int argCount) {
     // Primitive 124: Register the low space semaphore
     // Args: receiver (ignored), arg = semaphore (or nil to clear)
