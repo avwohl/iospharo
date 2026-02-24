@@ -329,8 +329,6 @@ void vm_runOnMainThread(void) {
     }
 #endif
 
-    fprintf(stderr, "[VM] Running interpreter on main thread\n");
-
     // Run interpreter on the current (main) thread
     // This blocks until the interpreter exits
     gInterpreter->interpret();

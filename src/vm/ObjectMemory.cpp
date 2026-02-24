@@ -8,7 +8,6 @@
 #include <cstring>
 #include <algorithm>
 #include <chrono>
-#include <iostream>
 #include <unordered_map>
 #include <unordered_set>
 #include <functional>
@@ -75,12 +74,6 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     }
     newSpaceEnd_ = newSpaceStart_ + config.newSpaceSize;
 
-    fprintf(stderr, "[HEAP] permSpace: %p - %p\n", permSpaceStart_, permSpaceEnd_);
-    fprintf(stderr, "[HEAP] oldSpace: %p - %p (%.1f GB)\n",
-            oldSpaceStart_, oldSpaceEnd_, config.oldSpaceSize / (1024.0*1024.0*1024.0));
-    fprintf(stderr, "[HEAP] newSpace: %p - %p (%zu MB)\n", newSpaceStart_, newSpaceEnd_,
-            config.newSpaceSize / (1024*1024));
-
     // Split new space into eden and survivor
     size_t edenSize = (config.newSpaceSize * config.edenRatio) / 100;
     edenStart_ = newSpaceStart_;
@@ -102,14 +95,6 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
 
 Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
                                  ObjectFormat format) {
-    if (classIndex == 0) {
-        static int zeroClassCount = 0;
-        if (++zeroClassCount <= 10) {
-            std::cerr << "[ALLOC-WARNING] allocateSlots called with classIndex=0! slots="
-                      << slotCount << " format=" << static_cast<int>(format) << "\n";
-        }
-    }
-
     size_t headerSize = sizeof(ObjectHeader);
     bool hasOverflow = slotCount >= 255;
     if (hasOverflow) {
@@ -120,20 +105,10 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     size_t totalSize = headerSize + bodySize;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // TEMPORARY FIX: Allocate directly in old space to bypass broken scavenge
-    // The scavenge doesn't reset eden (to avoid corruption from missing pointer forwarding)
-    // which causes eden to fill up. Until proper GC is implemented, allocate in old space.
+    // Allocate in old space (eden/scavenge not yet implemented)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) {
-        static int allocFailCount = 0;
-        allocFailCount++;
-        if (allocFailCount <= 10) {
-            fprintf(stderr, "[ALLOC-FAIL #%d] allocateSlots: old space OOM! classIdx=%u slots=%zu totalSize=%zu used=%zuMB\n",
-                    allocFailCount, classIndex, slotCount, totalSize,
-                    (size_t)(oldSpaceFree_ - oldSpaceStart_) / (1024*1024));
-            fflush(stderr);
-        }
         return nilObject_;
     }
 
@@ -151,12 +126,9 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     Oop* slots = obj->slots();
     // During image load nilObject_ may not be set yet; raw 0 is fine since
     // image loading will overwrite these slots.
+    // During image load nilObject_ may not be set yet; raw 0 is fine since
+    // image loading will overwrite these slots.
     Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
-    static bool warnedNilNotSet = false;
-    if (nilObject_.rawBits() == 0 && slotCount > 0 && !warnedNilNotSet) {
-        std::cerr << "[ALLOC-WARNING] nilObject_ not set during allocation, using raw 0\n";
-        warnedNilNotSet = true;
-    }
     for (size_t i = 0; i < slotCount; ++i) {
         slots[i] = nilValue;
     }
@@ -181,7 +153,7 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    // Allocate in old space (eden/scavenge not yet implemented)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) return nilObject_;
@@ -237,7 +209,7 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    // Allocate in old space (eden/scavenge not yet implemented)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) return nilObject_;
@@ -305,7 +277,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     size_t size = src->totalSize();
     bool hasOverflow = src->hasOverflowSlots();
 
-    // TEMPORARY FIX: Allocate directly in old space (see allocateSlots comment)
+    // Allocate in old space (eden/scavenge not yet implemented)
     ObjectHeader* copy = allocateRaw(size, Space::Old);
     if (!copy) return nilObject_;
 
@@ -366,27 +338,12 @@ Oop ObjectMemory::classOf(Oop obj) const {
     }
 
     if (!isValidPointer(obj)) {
-        static int corruptCount = 0;
-        if (++corruptCount <= 5) {
-            std::cerr << "[CLASSOF] invalid pointer 0x" << std::hex
-                      << obj.rawBits() << std::dec << "\n";
-        }
         return nilObject_;
     }
 
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t classIdx = header->classIndex();
-    Oop cls = classAtIndex(classIdx);
-
-    if (cls.isNil() || cls.rawBits() == 0) {
-        static int nilClassCount = 0;
-        if (++nilClassCount <= 5) {
-            std::cerr << "[CLASSOF] classIdx=" << classIdx
-                      << " not in class table for obj 0x" << std::hex
-                      << obj.rawBits() << std::dec << "\n";
-        }
-    }
-    return cls;
+    return classAtIndex(classIdx);
 }
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
@@ -502,7 +459,6 @@ void ObjectMemory::cacheGCClassIndices() {
             classTable_[contextClassIndex_] = contextClass;
         }
     }
-    std::cerr << "[CACHE] Context classIndex=" << contextClassIndex_ << "\n";
 }
 
 // ===== SYMBOL AND GLOBAL LOOKUP =====
@@ -1255,9 +1211,6 @@ void ObjectMemory::forEachObjectInOldSpace(std::function<void(ObjectHeader*)> ca
 void ObjectMemory::sweepGC() {
     // Non-compacting mark-sweep GC. Safe to call from within allocations
     // because no objects are moved — only dead objects become free chunks.
-    static int sweepCount = 0;
-    sweepCount++;
-
     auto start = std::chrono::steady_clock::now();
 
     // 1. Clear all marks
@@ -1334,25 +1287,12 @@ void ObjectMemory::sweepGC() {
     auto end = std::chrono::steady_clock::now();
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
 
-    size_t usedAfter = oldSpaceFree_ - oldSpaceStart_;
     size_t freeAfter = oldSpaceEnd_ - oldSpaceFree_;
-
-    if (sweepCount <= 10) {
-        fprintf(stderr, "[SWEEP-GC #%d] marked=%zu dead=%zu (%zuKB) time=%lldms used=%zuMB free=%zuMB\n",
-                sweepCount, markedCount, deadCount, deadBytes / 1024,
-                (long long)ms, usedAfter / (1024*1024), freeAfter / (1024*1024));
-        fflush(stderr);
-    }
 
     // If less than 25% free after sweep, request compacting GC at next safe point
     size_t totalSpace = oldSpaceEnd_ - oldSpaceStart_;
     if (freeAfter < totalSpace / 4) {
         needsCompactGC_ = true;
-        if (sweepCount <= 5) {
-            fprintf(stderr, "[SWEEP-GC] Set needsCompactGC_ (free=%zuMB < %zuMB threshold)\n",
-                    freeAfter / (1024*1024), totalSpace / 4 / (1024*1024));
-            fflush(stderr);
-        }
     }
 
     gcCount_++;
@@ -1362,9 +1302,6 @@ void ObjectMemory::sweepGC() {
 GCResult ObjectMemory::fullGC() {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
-
-    static int gcCallCount = 0;
-    gcCallCount++;
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
 
@@ -1420,14 +1357,6 @@ GCResult ObjectMemory::fullGC() {
     auto end = std::chrono::steady_clock::now();
     result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
         end - start).count();
-
-    if (gcCallCount <= 10) {
-        fprintf(stderr, "[FULL-GC #%d] step=%llu marked=%zu reclaimed=%zuKB time=%lldms used=%zuMB\n",
-                gcCallCount, (unsigned long long)g_stepNum, markedCount,
-                result.bytesReclaimed / 1024, (long long)result.milliseconds,
-                usedAfter / (1024*1024));
-        fflush(stderr);
-    }
 
     // Record compacted size for threshold-based GC triggering
     lastCompactedSize_ = oldSpaceFree_ - oldSpaceStart_;
@@ -1789,11 +1718,6 @@ void ObjectMemory::copyObjectBytes(ObjectHeader* from, ObjectHeader* to) {
     std::memcpy(to, from, from->totalSize());
 }
 
-void ObjectMemory::updatePointer(Oop& ptr) {
-    // Used during GC to update forwarded pointers
-    // TODO: Implement with forwarding pointers
-}
-
 // ===== OBJECT ENUMERATION =====
 
 Oop ObjectMemory::firstInstanceOf(uint32_t targetClassIndex) {
@@ -2122,21 +2046,6 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // the data there as headers would read garbage and corrupt mark state.
     auto p = reinterpret_cast<uint8_t*>(obj);
     if (p < oldSpaceStart_ || p >= oldSpaceFree_) {
-        static int badPtrCount = 0;
-        if (badPtrCount++ < 20) {
-            std::cerr << "[GC-MARK] BAD pointer 0x" << std::hex
-                      << oop.rawBits() << " at obj " << (uintptr_t)obj
-                      << " (outside used old space 0x" << (uintptr_t)oldSpaceStart_
-                      << "-0x" << (uintptr_t)oldSpaceFree_ << ")" << std::dec;
-            if (currentScanParent_) {
-                std::cerr << " parent=0x" << std::hex << (uintptr_t)currentScanParent_
-                          << " cls=" << std::dec << currentScanParent_->classIndex()
-                          << " fmt=" << (int)currentScanParent_->format()
-                          << " slots=" << currentScanParent_->slotCount()
-                          << " slot#=" << currentScanSlot_;
-            }
-            std::cerr << "\n";
-        }
         return;
     }
 
@@ -2152,18 +2061,6 @@ void ObjectMemory::markAndTrace(Oop oop) {
     uint32_t classIdx = obj->classIndex();
     if (classIdx == 0 || classIdx >= classTable_.size() ||
         !classTable_[classIdx].isObject()) {
-        static int interiorPtrCount = 0;
-        if (interiorPtrCount++ < 20) {
-            std::cerr << "[GC-MARK] INTERIOR pointer 0x" << std::hex
-                      << oop.rawBits() << " at obj " << (uintptr_t)obj
-                      << " classIdx=" << std::dec << classIdx;
-            if (currentScanParent_) {
-                std::cerr << " parent=0x" << std::hex << (uintptr_t)currentScanParent_
-                          << " cls=" << std::dec << currentScanParent_->classIndex()
-                          << " slot#=" << currentScanSlot_;
-            }
-            std::cerr << "\n";
-        }
         return;
     }
 
@@ -2415,11 +2312,6 @@ size_t ObjectMemory::markPhase() {
             fired = ephemeronList_.size();
             fireAllEphemerons();
         }
-        if constexpr (false) {
-            fprintf(stderr, "[EPHEMERON] encountered=%zu aliveKey=%zu deadKey=%zu fired=%zu mourners=%zu pending=%d\n",
-                    ephemeronEncounterCount_, ephemeronInactiveCount_, ephemeronActiveCount_,
-                    fired, mournQueue_.size(), pendingFinalizationSignals_);
-        }
     }
 
     // 5. Process weak objects (nil dead references, queue mourners)
@@ -2624,8 +2516,6 @@ void ObjectMemory::updatePointersAfterCompact() {
     // Without this, young objects holding old space pointers become stale
     // after compaction moves old space objects.
     {
-        static int newSpaceScanCallCount = 0;
-        newSpaceScanCallCount++;
         int newSpaceUpdated = 0;
         auto scanNewSpaceRegion = [&](uint8_t* start, uint8_t* end, const char* label) {
             int objCount = 0;
@@ -2738,158 +2628,6 @@ void ObjectMemory::rebuildFreeListAfterCompact() {
     // We don't need to create a free list entry for the trailing gap —
     // the bump pointer allocator already handles this via oldSpaceFree_.
     // Free lists will be populated when we switch to free-list-based allocation.
-}
-
-// ===== HEAP POINTER VERIFICATION =====
-
-size_t ObjectMemory::verifyHeapPointers() {
-    FILE* log = fopen("/tmp/iospharo-verify.log", "w");
-    if (!log) return 0;
-
-    // Pass 1: Build set of all valid object start addresses (both old space and perm space)
-    std::unordered_set<uintptr_t> validAddrs;
-    validAddrs.reserve(800000);
-    ObjectScanner pass1(oldSpaceStart_, oldSpaceFree_);
-    while (ObjectHeader* obj = pass1.next()) {
-        validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-    }
-    if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_) {
-        ObjectScanner permScan(permSpaceStart_, permSpaceEnd_);
-        while (ObjectHeader* obj = permScan.next()) {
-            validAddrs.insert(reinterpret_cast<uintptr_t>(obj));
-        }
-    }
-    fprintf(log, "[VERIFY] %zu valid objects in heap\n", validAddrs.size());
-
-    // Identify classIndex 36: print the class name
-    if (classTable_.size() > 36 && classTable_[36].isObject()) {
-        Oop cls36 = classTable_[36];
-        // Class name is typically in slot 5 or 6 (Symbol)
-        ObjectHeader* clsHdr = cls36.asObjectPtr();
-        if (clsHdr->slotCount() > 6) {
-            Oop name = clsHdr->slotAt(5);  // Name slot in standard Pharo class layout
-            if (name.isObject() && name.rawBits() > 0x10000) {
-                ObjectHeader* nameHdr = name.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                    std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    fprintf(log, "[VERIFY] classIndex 36 = '%s'\n", className.c_str());
-                } else {
-                    // Try slot 6
-                    name = clsHdr->slotAt(6);
-                    if (name.isObject() && name.rawBits() > 0x10000) {
-                        nameHdr = name.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                            std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            fprintf(log, "[VERIFY] classIndex 36 = '%s' (slot 6)\n", className.c_str());
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Pass 2: Check every pointer slot in every pointer-format object
-    size_t badPtrs = 0;
-    size_t checkedPtrs = 0;
-    ObjectScanner pass2(oldSpaceStart_, oldSpaceFree_);
-    while (ObjectHeader* obj = pass2.next()) {
-        uint8_t fmt = static_cast<uint8_t>(obj->format());
-        size_t nSlots = obj->slotCount();
-
-        // Determine which slots contain pointers
-        size_t ptrSlots = 0;
-        if (fmt <= 5) {
-            ptrSlots = nSlots;
-        } else if (fmt >= 24 && fmt <= 31) {
-            if (nSlots > 0) {
-                Oop hdr0 = obj->slotAt(0);
-                if (hdr0.isSmallInteger()) {
-                    size_t numLits = hdr0.asSmallInteger() & 0x7FFF;
-                    ptrSlots = std::min(numLits + 1, nSlots);
-                }
-            }
-        }
-
-        for (size_t i = 0; i < ptrSlots; ++i) {
-            Oop val = obj->slotAt(i);
-            if (!val.isObject()) continue;
-            if (val.rawBits() < 0x10000) continue;
-            if (val.isNil()) continue;
-
-            checkedPtrs++;
-            uintptr_t addr = val.rawBits();
-
-            if (validAddrs.find(addr) == validAddrs.end()) {
-                badPtrs++;
-                uintptr_t objAddr = reinterpret_cast<uintptr_t>(obj);
-
-                // Check if the target address is past the heap boundary
-                bool pastHeap = (addr >= reinterpret_cast<uintptr_t>(oldSpaceFree_));
-
-                // Look for nearby valid object
-                bool foundNear = false;
-                for (int delta = -8; delta <= 8; delta++) {
-                    if (delta == 0) continue;
-                    uintptr_t nearAddr = addr + delta * 8;
-                    if (validAddrs.find(nearAddr) != validAddrs.end()) {
-                        int offsetBytes = (int)(addr - nearAddr);
-                        ObjectHeader* nearObj = reinterpret_cast<ObjectHeader*>(nearAddr);
-                        fprintf(log, "[BAD-PTR #%zu] obj@0x%llx cls=%u fmt=%d slot[%zu]=0x%llx "
-                                "-> nearest valid @0x%llx (off by %+d) nearCls=%u nearFmt=%d nearSlots=%zu%s\n",
-                                badPtrs, (unsigned long long)objAddr, obj->classIndex(),
-                                fmt, i, (unsigned long long)addr,
-                                (unsigned long long)nearAddr, offsetBytes,
-                                nearObj->classIndex(), (int)nearObj->format(), nearObj->slotCount(),
-                                pastHeap ? " [PAST-HEAP]" : "");
-                        foundNear = true;
-                        break;
-                    }
-                }
-                if (!foundNear && badPtrs <= 100) {
-                    // Read what's at the target address for diagnostic
-                    uint64_t targetWord = 0;
-                    if (addr >= reinterpret_cast<uintptr_t>(oldSpaceStart_) &&
-                        addr + 8 <= reinterpret_cast<uintptr_t>(oldSpaceEnd_)) {
-                        targetWord = *reinterpret_cast<uint64_t*>(addr);
-                    }
-                    fprintf(log, "[BAD-PTR #%zu] obj@0x%llx cls=%u fmt=%d slot[%zu]=0x%llx "
-                            "-> NO nearby valid object targetWord=0x%llx%s\n",
-                            badPtrs, (unsigned long long)objAddr, obj->classIndex(),
-                            fmt, i, (unsigned long long)addr,
-                            (unsigned long long)targetWord,
-                            pastHeap ? " [PAST-HEAP]" : "");
-                }
-                // For the first 5 bad pointers, dump the containing object's context
-                if (badPtrs <= 5) {
-                    fprintf(log, "  container: cls=%u fmt=%d slots=%zu\n",
-                            obj->classIndex(), fmt, nSlots);
-                    // Dump first 6 slots (fixed fields for Context/MethodDict)
-                    for (size_t s = 0; s < std::min(nSlots, (size_t)8); s++) {
-                        Oop sv = obj->slotAt(s);
-                        const char* desc = "";
-                        if (sv.isSmallInteger()) desc = " (SmallInt)";
-                        else if (sv.isNil()) desc = " (nil)";
-                        else if (sv.isObject() && sv.rawBits() > 0x10000) {
-                            ObjectHeader* svh = sv.asObjectPtr();
-                            static char buf[128];
-                            snprintf(buf, sizeof(buf), " (obj cls=%u fmt=%d slots=%zu)",
-                                     svh->classIndex(), (int)svh->format(), svh->slotCount());
-                            desc = buf;
-                        }
-                        fprintf(log, "  slot[%zu]=0x%llx%s\n", s,
-                                (unsigned long long)sv.rawBits(), desc);
-                    }
-                }
-            }
-        }
-    }
-
-    fprintf(log, "[VERIFY] checked=%zu bad=%zu\n", checkedPtrs, badPtrs);
-    fflush(log);
-    fclose(log);
-
-    fprintf(stderr, "[VERIFY] checked=%zu pointers, bad=%zu\n", checkedPtrs, badPtrs);
-    return badPtrs;
 }
 
 } // namespace pharo

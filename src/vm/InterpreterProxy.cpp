@@ -1158,16 +1158,6 @@ bool proxyFailed() {
 // Wrapper type for B2DPlugin primitives called from our Interpreter
 typedef sqInt (*B2DPrimFn)(void);
 
-// B2DPlugin primitive wrapper - called from our named primitive dispatch
-static PrimitiveResult b2dPrimitiveWrapper(Interpreter* interp, int argCount, B2DPrimFn primFn) {
-    resetProxyFailure();
-    primFn();
-    if (gFailed) {
-        return PrimitiveResult::Failure;
-    }
-    return PrimitiveResult::Success;
-}
-
 void initializeB2DPlugin(Interpreter* interp) {
     // Set up the interpreter proxy
     initializeInterpreterProxy(interp);
@@ -1227,7 +1217,6 @@ void initializeB2DPlugin(Interpreter* interp) {
         interp->registerNamedPrimitive("B2DPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
     }
 
-    fprintf(stderr, "[B2D] B2DPlugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
 
 // =====================================================================
@@ -1261,7 +1250,6 @@ void initializeDSAPrims(Interpreter* interp) {
         interp->registerNamedPrimitive("DSAPrims", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
     }
 
-    fprintf(stderr, "[DSA] DSAPrims initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
 #endif // PHARO_WITH_CRYPTO
 
@@ -1291,7 +1279,6 @@ void initializeJPEGReaderPlugin(Interpreter* interp) {
         interp->registerNamedPrimitive("JPEGReaderPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
     }
 
-    fprintf(stderr, "[JPEG] JPEGReaderPlugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
 
 // =====================================================================
@@ -1334,7 +1321,6 @@ void initializeJPEGReadWriter2Plugin(Interpreter* interp) {
         interp->registerNamedPrimitive("JPEGReadWriter2Plugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
     }
 
-    fprintf(stderr, "[JPEG2] JPEGReadWriter2Plugin initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
 
 // =====================================================================
@@ -1376,6 +1362,5 @@ void initializeSqueakSSL(Interpreter* interp) {
         interp->registerNamedPrimitive("SqueakSSL", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
     }
 
-    fprintf(stderr, "[SSL] SqueakSSL initialized with %zu primitives\n", sizeof(prims) / sizeof(prims[0]));
 }
 #endif // PHARO_WITH_CRYPTO

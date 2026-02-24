@@ -133,8 +133,6 @@ union SDL_Event {
 };
 
 namespace pharo {
-
-int g_traceEventSends = 0;
 namespace ffi {
 
 // Forward declarations
@@ -753,7 +751,7 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
 // Forwards events from gEventQueue to SDL event structures for OSSDL2Driver.
 int stub_SDL_PollEvent(void* event) {
     static bool flagSet = false;
-    static int totalPollCalls = 0;
+    static unsigned int totalPollCalls = 0;
     totalPollCalls++;
 
     if (!flagSet) {

@@ -41,7 +41,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
-#include <execinfo.h>
 
 namespace pharo {
 

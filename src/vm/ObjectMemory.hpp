@@ -128,10 +128,11 @@ enum class SpecialObjectIndex : size_t {
     SmalltalkDictionary = 8,       // May be unused in modern images but we try it
     ClassFloat = 9,
     ClassMethodContext = 10,
-    SuspendedProcessInCallout = 11, // NOT ClassBlockClosure (that's unused by VM)
-    // ClassBlockClosure is NOT in special objects array in Spur/Pharo 12+
-    // Use ClassFullBlockClosure (index 59) or look up by name
-    ClassBlockClosure = 11,         // WARNING: Returns SuspendedProcessInCallout, not a class!
+    SuspendedProcessInCallout = 11, // Used by FFI callbacks (not a class)
+    // Alias: legacy code references ClassBlockClosure at index 11, but in
+    // modern Pharo (12+) this slot holds SuspendedProcessInCallout.
+    // Use ClassFullBlockClosure (index 59) for the actual closure class.
+    ClassBlockClosure = 11,
     ClassProcess = 27,              // WARNING: May be unused/nil in modern images
     ClassPoint = 12,
     ClassLargePositiveInteger = 13,
@@ -467,11 +468,6 @@ public:
     int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }
     void clearPendingFinalizationSignals() { pendingFinalizationSignals_ = 0; }
 
-    /// Verify that all pointer slots in the heap point to valid object headers.
-    /// Builds a set of all valid object start addresses, then checks every pointer slot.
-    /// Returns number of bad pointers found. Writes diagnostic to /tmp/iospharo-verify.log.
-    size_t verifyHeapPointers();
-
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);
     void removeRoot(Oop* root);
@@ -648,9 +644,6 @@ private:
 
     /// Copy an object's bytes to new location
     void copyObjectBytes(ObjectHeader* from, ObjectHeader* to);
-
-    /// Update a pointer during GC
-    void updatePointer(Oop& ptr);
 
     /// Mark an object as remembered
     void rememberObject(Oop obj);

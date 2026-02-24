@@ -252,7 +252,6 @@ public:
     Oop lookupMethodByName(Oop classObj, const char* selectorName); // Find method by name
     void processPendingWorldMenu(); // Execute queued world menu invocation
     void drawClickIndicator(int x, int y, int buttons); // Draw visible click feedback
-    // NOTE: updateActiveHandPosition() REMOVED - was a workaround for missing InputEventSensor process
     void syncDisplayToSurface();   // Copy Display Form to platform surface
     void ensureDisplayForm(int width, int height, int depth);  // Create Form and bind to Display global
     int screenDepth() const { return screenDepth_; }
@@ -521,9 +520,6 @@ private:
     bool enableDirectInputSignaling_ = false;  // True when VM should signal input semaphore directly
     bool relinquishSlept_ = false;       // Set by primitiveRelinquishProcessor when it sleeps
     RelinquishCallback relinquishCallback_;  // Platform callback for sleep (CFRunLoop etc.)
-
-    // NOTE: Event injection workaround member variables REMOVED
-    // Events must go through proper Smalltalk InputEventSensor process, not C++ workarounds
 
     // Debug: visual click indicator
     int debugClickX_ = -1;
@@ -1450,7 +1446,6 @@ private:
 
     // Become primitives
     PrimitiveResult primitiveBecome(int argCount);           // 72
-    PrimitiveResult primitiveBecomeForward(int argCount);    // 128
     void scanStackReplace(Oop oldOop, Oop newOop);          // Helper for become
 
     // Bit operation primitives

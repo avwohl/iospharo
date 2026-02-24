@@ -1,8 +1,8 @@
 /*
  * Primitives.cpp - Essential Primitive Implementations
  *
- * This file implements the ~30 essential primitives needed for bootstrap.
- * Other primitives can fail and fall back to Smalltalk code.
+ * This file implements ~795 VM primitives covering arithmetic, memory,
+ * I/O, process scheduling, FFI, and platform-specific operations.
  */
 
 #include "Interpreter.hpp"
@@ -141,11 +141,6 @@ static Oop makeLargeInteger(ObjectMemory& memory, const std::vector<uint8_t>& ma
 static bool isLargeInteger(ObjectMemory& memory, Oop oop, bool& isNegative);
 static std::vector<uint8_t> extractMagnitude(ObjectMemory& memory, Oop largeInt);
 static int compareIntegers(ObjectMemory& memory, Oop a, Oop b);
-
-// External step counter from Interpreter.cpp for debugging
-extern uint64_t g_stepNum;
-
-extern const char* g_xferReason;
 
 // Forward declaration for large integer helper (defined later with other large int primitives)
 static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
@@ -562,7 +557,6 @@ PrimitiveResult Interpreter::primitiveExitCriticalSection(int argCount) {
         if (newPriority >= activePriority) {
             // Put active process to sleep and switch
             putToSleep(activeProcess);
-            g_xferReason = "critSectEnter";
             transferTo(wakeHighestPriority());
         }
 
@@ -619,7 +613,6 @@ PrimitiveResult Interpreter::primitiveEnterCriticalSection(int argCount) {
     addLastLinkToList(activeProc, criticalSection);
 
     // Switch to highest priority runnable process
-    g_xferReason = "critSectWait";
     transferTo(wakeHighestPriority());
 
     return PrimitiveResult::Success;
@@ -3329,7 +3322,6 @@ PrimitiveResult Interpreter::primitiveSuspend(int argCount) {
             // No other process to run - this shouldn't happen
             return PrimitiveResult::Failure;
         }
-        g_xferReason = "primSuspend";
         transferTo(nextProcess);
         return PrimitiveResult::Success;
     }
@@ -3405,7 +3397,6 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
         // Put current process to sleep
         putToSleep(activeProcess);
         // Switch to resumed process (don't put it to sleep, just run it)
-        g_xferReason = "primResume";
         transferTo(process);
     } else {
         // Same or lower priority - just add to ready queue
@@ -3491,7 +3482,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    g_xferReason = "primWait";
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -3509,32 +3499,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         Oop arg = stackTop();
         if (arg.isSmallInteger()) {
             exitCode = static_cast<int>(arg.asSmallInteger());
-        }
-    }
-
-    std::cerr << "[VM] primitiveQuit: exit code " << exitCode << "\n";
-
-    // On error exit, dump the context sender chain for debugging
-    if (exitCode != 0) {
-        std::cerr << "[VM] Context chain at exit:\n";
-        Oop ctx = activeContext_;
-        for (int i = 0; i < 30 && ctx.isObject() && !ctx.isNil(); i++) {
-            Oop method = memory_.fetchPointer(3, ctx);
-            std::string selStr = "<unknown>";
-            if (method.isObject() && !method.isNil()) {
-                ObjectHeader* mhdr = method.asObjectPtr();
-                if (mhdr->isCompiledMethod() && mhdr->slotCount() >= 2) {
-                    Oop sel = memory_.fetchPointer(1, method);
-                    if (sel.isObject() && !sel.isNil()) {
-                        ObjectHeader* shdr = sel.asObjectPtr();
-                        if (shdr->isBytesObject() && shdr->byteSize() <= 100) {
-                            selStr = std::string((char*)shdr->bytes(), shdr->byteSize());
-                        }
-                    }
-                }
-            }
-            std::cerr << "  [" << i << "] #" << selStr << "\n";
-            ctx = memory_.fetchPointer(0, ctx); // sender
         }
     }
 
@@ -3875,24 +3839,6 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
             pharo::gDisplaySurface->update();
             return PrimitiveResult::Success;
         }
-    }
-
-    // No Form set - show a test pattern to verify display pipeline works
-    static bool patternShown = false;
-    if (!patternShown) {
-        patternShown = true;
-
-        // Fill with a gradient pattern
-        for (int y = 0; y < dstHeight; y++) {
-            for (int x = 0; x < dstWidth; x++) {
-                // Create a blue-to-white gradient pattern
-                uint8_t r = static_cast<uint8_t>(128 + (x * 127 / dstWidth));
-                uint8_t g = static_cast<uint8_t>(128 + (y * 127 / dstHeight));
-                uint8_t b = 255;
-                dstPixels[y * dstWidth + x] = (255 << 24) | (r << 16) | (g << 8) | b;  // ARGB
-            }
-        }
-        pharo::gDisplaySurface->update();
     }
 
     return PrimitiveResult::Success;
@@ -7382,7 +7328,6 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    g_xferReason = "primYield";
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -7982,39 +7927,6 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// primitiveBecomeForward: Forward all references from rcvr to arg (one-way become)
-// Note: Not wired to a primitive number. In Pharo, becomeForward: is implemented
-// via Object>>becomeForward: which wraps in arrays and calls elementsForwardIdentityTo:
-// (primitive 72). This code is kept for reference but is not called.
-PrimitiveResult Interpreter::primitiveBecomeForward(int argCount) {
-    // Can take 1 arg (simple forward) or 2 args (with copyHash flag)
-    Oop arg = stackValue(0);
-    Oop rcvr = stackValue(argCount);
-
-    if (!rcvr.isObject() || !arg.isObject()) {
-        return PrimitiveResult::Failure;
-    }
-
-    if (rcvr.rawBits() == arg.rawBits()) {
-        popN(argCount + 1);
-        push(rcvr);
-        return PrimitiveResult::Success;
-    }
-
-    // Perform one-way become: replace all references to rcvr with arg in heap
-    memory_.becomeForward(rcvr, arg);
-
-    // Also scan C++ execution stack
-    scanStackReplace(rcvr, arg);
-
-    // Flush method cache (critical after become)
-    flushMethodCache();
-
-    popN(argCount + 1);
-    push(arg);  // After become, rcvr's identity IS arg
-    return PrimitiveResult::Success;
-}
-
 // ===== BIT OPERATION PRIMITIVES =====
 
 // Primitive 575: Return the index of the high bit (1-based, 0 if no bits set)
@@ -8514,7 +8426,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1002:
             pop();
-            push(memory_.createString("iospharo VM 0.1"));
+            push(memory_.createString("iospharo 1.0"));
             return PrimitiveResult::Success;
         case 1003:
             pop();
@@ -9154,7 +9066,6 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
     }
 
     // Read current 64-bit value, modify the requested 32-bit word, write back
-    uint64_t doubleBits;
     uint32_t* dataPtr = nullptr;
 
     if (format == ObjectFormat::Indexable64) {
@@ -9335,8 +9246,6 @@ PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
     // This primitive marks the current context as an unwind-protect context.
     // These are contexts that must be run even when unwinding the stack.
 
-    Oop rcvr = stackTop();
-
     // Marker primitives MUST FAIL so the method body executes.
     // The primitive index (198) in the method header is what matters —
     // it tells the VM to suppress context switching during this activation.
@@ -9360,10 +9269,8 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     // Walk from self (the Smalltalk fallback does: context := self)
     Oop ctx = startContext;
     int limit = 10000;  // safety limit
-    int walked = 0;
 
     while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
-        walked++;
         // Check if this context's method has primitive 199 (handler/signaling marker)
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
@@ -10452,7 +10359,7 @@ PrimitiveResult Interpreter::primitiveVMInformation(int argCount) {
 
     switch (index) {
         case 1:  // VM version string
-            result = createStringObject(memory_, "iOS Pharo VM 1.0");
+            result = createStringObject(memory_, "iospharo 1.0");
             break;
         case 2:  // Build timestamp
             result = createStringObject(memory_, __DATE__ " " __TIME__);
@@ -11509,8 +11416,7 @@ PrimitiveResult Interpreter::primitiveInputSemaphore(int argCount) {
 // Primitive 154: Get raw input word (for low-level input handling)
 // primitiveInputWord -> integer
 PrimitiveResult Interpreter::primitiveInputWord(int argCount) {
-    // In headless mode, return 0 (no input)
-    // A full implementation would return encoded keyboard/mouse state
+    // Not implemented -- returns default
     pop();
     push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
@@ -12002,7 +11908,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     checkTimerSemaphore();
 
     // Try to yield to higher priority ready processes
-    // This is the key part that makes process switching work!
     Oop activeProcess = getActiveProcess();
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = activePriorityOop.isSmallInteger() ?
@@ -12038,7 +11943,6 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                             // Put current process back in its queue
                             putToSleep(activeProcess);
                             // Switch to the new process
-                            g_xferReason = "primRelinquish";
                             transferTo(nextProcess);
                             return PrimitiveResult::Success;  // Don't pop again below
                         }
@@ -12100,12 +12004,7 @@ PrimitiveResult Interpreter::primitiveBeCursor(int argCount) {
 // string startIndex stopIndex stops destX charMap destX lastIndex
 // Returns: stopIndex reached, or last index scanned
 PrimitiveResult Interpreter::primitiveScanCharacters(int argCount) {
-    // CharacterScanner uses this for efficient text scanning
-    // In a minimal implementation, we fail to let Smalltalk handle it
-    // A full implementation would scan characters and compute stop positions
-
-    // The primitive is performance-critical but not essential for correctness
-    // Failing causes fallback to Smalltalk code which is slower but works
+    // Not implemented -- falls back to Smalltalk
     return PrimitiveResult::Failure;
 }
 
@@ -12113,17 +12012,7 @@ PrimitiveResult Interpreter::primitiveScanCharacters(int argCount) {
 // This primitive performs the actual BitBlt copy/combine operations
 // In headless mode or without BitBlt plugin, fail to Smalltalk fallback
 PrimitiveResult Interpreter::primitiveDrawLoop(int argCount) {
-    // BitBlt drawLoop is used for efficient graphics operations
-    // A full implementation would:
-    // 1. Extract BitBlt parameters from receiver
-    // 2. Perform the specified combination rule
-    // 3. Copy pixels from source to destination
-
-    // In headless mode, we can either:
-    // a) Fail to let Smalltalk simulate it (slow but correct)
-    // b) Succeed as no-op if no display
-
-    // For now, fail to ensure correctness through Smalltalk simulation
+    // Not implemented -- falls back to Smalltalk
     return PrimitiveResult::Failure;
 }
 
@@ -13113,25 +13002,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
 // the first argument which specifies the socket function to perform
 // socketOp args... primitiveSocket -> result
 PrimitiveResult Interpreter::primitiveSocket(int argCount) {
-    // Socket primitive is typically used as a gateway to multiple socket operations:
-    // - Create socket
-    // - Connect
-    // - Bind
-    // - Listen
-    // - Accept
-    // - Send/Receive
-    // - Close
-    // etc.
-
-    // The first argument usually specifies which operation to perform
-    // Without full socket support, fail to Smalltalk fallback
-    // Smalltalk networking code may use alternative mechanisms or report unavailable
-
-    // A full implementation would:
-    // 1. Check operation code in first argument
-    // 2. Dispatch to appropriate socket operation
-    // 3. Handle platform-specific socket API
-
+    // Not implemented -- falls back to Smalltalk
     return PrimitiveResult::Failure;
 }
 
@@ -14563,8 +14434,9 @@ PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
 
     // Get timezone offset
     time_t nowTime = time(nullptr);
-    struct tm* local = localtime(&nowTime);
-    int64_t offsetSeconds = local->tm_gmtoff;
+    struct tm local;
+    localtime_r(&nowTime, &local);
+    int64_t offsetSeconds = local.tm_gmtoff;
 
     // Store results
     memory_.storePointer(0, resultArray, Oop::fromSmallInteger(smalltalkUs));
@@ -14581,8 +14453,6 @@ PrimitiveResult Interpreter::primitiveUtcAndTimezoneOffset(int argCount) {
 PrimitiveResult Interpreter::primitiveCoarseUTCMicrosecondClock(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // For simplicity, we just return the current time.
-    // A full implementation would cache this in the heartbeat for speed.
     auto now = std::chrono::system_clock::now();
     auto unixUs = std::chrono::duration_cast<std::chrono::microseconds>(
         now.time_since_epoch()).count();
@@ -14644,8 +14514,9 @@ PrimitiveResult Interpreter::primitiveUtcWithOffset(int argCount) {
 
     // Get timezone offset in seconds
     time_t nowTime = time(nullptr);
-    struct tm* local = localtime(&nowTime);
-    int64_t offsetSeconds = local->tm_gmtoff;
+    struct tm local;
+    localtime_r(&nowTime, &local);
+    int64_t offsetSeconds = local.tm_gmtoff;
 
     // Store UTC microseconds since Posix epoch (NOT Smalltalk epoch)
     // The image expects Posix epoch microseconds here
@@ -17481,14 +17352,12 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
 // ===== SOUND PRIMITIVES (300-329) =====
 // Sound primitives require platform-specific audio APIs (CoreAudio on iOS).
 // Most fail to Smalltalk fallback which provides software synthesis.
-// A full implementation would integrate with AVFoundation/AudioToolbox.
+// Not implemented -- stubs return defaults or fail to Smalltalk.
 
 // Sound system state (minimal stub)
 static bool soundOutputRunning = false;
-static bool soundInputRunning = false;
 static int soundSampleRate = 44100;
 static int soundVolume = 100;  // 0-100
-static int soundBalance = 50;  // 0=left, 50=center, 100=right
 
 // Primitive 300: Start sound output
 // sampleRate stereo semaIndex primitiveSoundStart -> success
@@ -17528,7 +17397,7 @@ PrimitiveResult Interpreter::primitiveSoundStartWithSemaphore(int argCount) {
     soundSampleRate = static_cast<int>(sampleRateOop.asSmallInteger());
     soundOutputRunning = true;
 
-    // Would register semaphore for buffer-ready notifications
+    // Not implemented
     popN(3);
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -17549,7 +17418,6 @@ PrimitiveResult Interpreter::primitiveSoundAvailableSpace(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Return a reasonable buffer size (8KB worth of samples)
-    // In a real implementation, this would query the audio buffer
     intptr_t availableBytes = soundOutputRunning ? 8192 : 0;
 
     pop();
@@ -17575,8 +17443,7 @@ PrimitiveResult Interpreter::primitiveSoundPlaySamples(int argCount) {
 
     intptr_t count = countOop.asSmallInteger();
 
-    // In a real implementation, samples would be queued to audio output
-    // For now, pretend we played them all
+    // Stub: pretend we played them all
     popN(3);
     pop();
     push(Oop::fromSmallInteger(soundOutputRunning ? count : 0));
@@ -17635,16 +17502,7 @@ PrimitiveResult Interpreter::primitiveSoundSetVolume(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundSetStereoBalance(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    Oop balanceOop = stackTop();
-    if (!balanceOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    intptr_t bal = balanceOop.asSmallInteger();
-    if (bal < 0) bal = 0;
-    if (bal > 100) bal = 100;
-    soundBalance = static_cast<int>(bal);
-
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -17684,10 +17542,7 @@ PrimitiveResult Interpreter::primitiveSoundSetSampleRate(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundRecordStart(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    // Recording requires microphone permission on iOS
-    // For now, indicate recording started (but no actual recording)
-    soundInputRunning = true;
-
+    // Not implemented
     popN(3);
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -17698,7 +17553,7 @@ PrimitiveResult Interpreter::primitiveSoundRecordStart(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundRecordStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    soundInputRunning = false;
+    // Not implemented
     return PrimitiveResult::Success;
 }
 
@@ -17895,8 +17750,6 @@ PrimitiveResult Interpreter::primitiveSoundSupportsAEC(int argCount) {
 
 // ===== MIDI PRIMITIVES (330-349) =====
 
-// MIDI state
-static bool midiInitialized = false;
 static int midiPortCount = 0;
 
 // Primitive 330: Get MIDI port count
@@ -17904,8 +17757,7 @@ static int midiPortCount = 0;
 PrimitiveResult Interpreter::primitiveMIDIGetPortCount(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // On iOS, would use CoreMIDI to enumerate ports
-    // For now, return 0 (no MIDI ports available)
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(midiPortCount));
     return PrimitiveResult::Success;
@@ -18193,7 +18045,7 @@ PrimitiveResult Interpreter::primitiveSerialPortCount(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // iOS doesn't expose traditional serial ports
-    // Would use External Accessory framework for MFi devices
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(serialPortCount));
     return PrimitiveResult::Success;
@@ -18707,7 +18559,7 @@ PrimitiveResult Interpreter::primitiveUUIDToString(int argCount) {
 PrimitiveResult Interpreter::primitiveSSLCreate(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use Security framework on iOS
+    // Not implemented
     return PrimitiveResult::Failure;
 }
 
@@ -18870,7 +18722,7 @@ PrimitiveResult Interpreter::primitiveSSLClose(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleLanguage(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use NSLocale on iOS
+    // Not implemented
     Oop lang = createStringObject(memory_, "en");
     if (lang.isNil()) return PrimitiveResult::Failure;
 
@@ -18976,8 +18828,9 @@ PrimitiveResult Interpreter::primitiveLocaleTimezoneOffset(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     time_t now = time(nullptr);
-    struct tm* local = localtime(&now);
-    int64_t offsetMinutes = local->tm_gmtoff / 60;
+    struct tm local;
+    localtime_r(&now, &local);
+    int64_t offsetMinutes = local.tm_gmtoff / 60;
 
     pop();
     push(Oop::fromSmallInteger(offsetMinutes));
@@ -19072,7 +18925,7 @@ PrimitiveResult Interpreter::primitiveImageColorConvert(int argCount) {
 PrimitiveResult Interpreter::primitiveImageFilter(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    // Would use Core Image filters
+    // Not implemented
     return PrimitiveResult::Failure;
 }
 
@@ -19091,7 +18944,7 @@ PrimitiveResult Interpreter::primitiveImageGetMetadata(int argCount) {
 PrimitiveResult Interpreter::primitiveSystemBatteryLevel(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use UIDevice.current.batteryLevel on iOS
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(100));  // Fully charged
     return PrimitiveResult::Success;
@@ -19112,7 +18965,7 @@ PrimitiveResult Interpreter::primitiveSystemBatteryState(int argCount) {
 PrimitiveResult Interpreter::primitiveSystemScreenBrightness(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use UIScreen.main.brightness
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(80));
     return PrimitiveResult::Success;
@@ -19145,7 +18998,7 @@ PrimitiveResult Interpreter::primitiveSystemDeviceModel(int argCount) {
 PrimitiveResult Interpreter::primitiveSystemDeviceUUID(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use UIDevice.current.identifierForVendor
+    // Not implemented
     Oop uuid = createStringObject(memory_, "00000000-0000-0000-0000-000000000000");
     if (uuid.isNil()) return PrimitiveResult::Failure;
 
@@ -19218,7 +19071,7 @@ static bool magnetometerRunning = false;
 PrimitiveResult Interpreter::primitiveAccelerometerStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use CMMotionManager on iOS
+    // Not implemented
     accelerometerRunning = true;
     popN(1);
     return PrimitiveResult::Success;
@@ -19355,7 +19208,7 @@ PrimitiveResult Interpreter::primitiveMagnetometerRead(int argCount) {
 PrimitiveResult Interpreter::primitiveDeviceMotionRead(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would return combined sensor data
+    // Not implemented
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -19371,7 +19224,7 @@ static bool headingRunning = false;
 PrimitiveResult Interpreter::primitiveLocationStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use CLLocationManager on iOS
+    // Not implemented
     locationRunning = true;
     popN(1);
     return PrimitiveResult::Success;
@@ -19428,7 +19281,7 @@ PrimitiveResult Interpreter::primitiveLocationAccuracy(int argCount) {
 PrimitiveResult Interpreter::primitiveLocationDistance(int argCount) {
     if (argCount != 4) return PrimitiveResult::Failure;
 
-    // Would calculate haversine distance
+    // Not implemented
     popN(4);
     push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
@@ -19475,7 +19328,7 @@ PrimitiveResult Interpreter::primitiveHeadingRead(int argCount) {
 PrimitiveResult Interpreter::primitiveGeocode(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use CLGeocoder
+    // Not implemented
     popN(1);
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -19486,7 +19339,7 @@ PrimitiveResult Interpreter::primitiveGeocode(int argCount) {
 PrimitiveResult Interpreter::primitiveReverseGeocode(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
-    // Would use CLGeocoder
+    // Not implemented
     popN(2);
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -19501,7 +19354,7 @@ static int cameraCount = 0;  // Would be 2 on most iOS devices
 PrimitiveResult Interpreter::primitiveCameraCount(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use AVCaptureDevice.devices on iOS
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(cameraCount));
     return PrimitiveResult::Success;
@@ -19596,7 +19449,7 @@ static int badgeCount = 0;
 PrimitiveResult Interpreter::primitiveNotificationSchedule(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    // Would use UNUserNotificationCenter on iOS
+    // Not implemented
     popN(3);
     push(Oop::fromSmallInteger(0));  // notification ID
     return PrimitiveResult::Success;
@@ -19640,7 +19493,7 @@ PrimitiveResult Interpreter::primitiveNotificationGetPending(int argCount) {
 PrimitiveResult Interpreter::primitiveNotificationRequestPermission(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would show permission dialog
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -19684,7 +19537,7 @@ PrimitiveResult Interpreter::primitiveNotificationGetBadge(int argCount) {
 PrimitiveResult Interpreter::primitiveNotificationRegisterPush(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would register with APNs
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -19694,7 +19547,7 @@ PrimitiveResult Interpreter::primitiveNotificationRegisterPush(int argCount) {
 PrimitiveResult Interpreter::primitiveNotificationGetToken(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would return device token if registered
+    // Not implemented
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -19707,7 +19560,7 @@ PrimitiveResult Interpreter::primitiveNotificationGetToken(int argCount) {
 PrimitiveResult Interpreter::primitiveIAPCanMakePayments(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use SKPaymentQueue.canMakePayments()
+    // Not implemented
     pop();
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -19718,7 +19571,7 @@ PrimitiveResult Interpreter::primitiveIAPCanMakePayments(int argCount) {
 PrimitiveResult Interpreter::primitiveIAPRequestProducts(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use SKProductsRequest
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19743,7 +19596,7 @@ PrimitiveResult Interpreter::primitiveIAPGetProducts(int argCount) {
 PrimitiveResult Interpreter::primitiveIAPPurchase(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would add payment to queue
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19753,7 +19606,7 @@ PrimitiveResult Interpreter::primitiveIAPPurchase(int argCount) {
 PrimitiveResult Interpreter::primitiveIAPRestore(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would call restoreCompletedTransactions
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -19818,7 +19671,7 @@ PrimitiveResult Interpreter::primitiveIAPGetSubscriptionStatus(int argCount) {
 PrimitiveResult Interpreter::primitiveShareText(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use UIActivityViewController
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19855,7 +19708,7 @@ PrimitiveResult Interpreter::primitiveShareFile(int argCount) {
 PrimitiveResult Interpreter::primitiveOpenURL(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use UIApplication.shared.open()
+    // Not implemented
     popN(1);
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -19876,7 +19729,7 @@ PrimitiveResult Interpreter::primitiveCanOpenURL(int argCount) {
 PrimitiveResult Interpreter::primitiveMailCompose(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    // Would use MFMailComposeViewController
+    // Not implemented
     popN(3);
     return PrimitiveResult::Success;
 }
@@ -19886,7 +19739,7 @@ PrimitiveResult Interpreter::primitiveMailCompose(int argCount) {
 PrimitiveResult Interpreter::primitiveMessageCompose(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
-    // Would use MFMessageComposeViewController
+    // Not implemented
     popN(2);
     return PrimitiveResult::Success;
 }
@@ -19905,7 +19758,7 @@ PrimitiveResult Interpreter::primitiveSocialPost(int argCount) {
 PrimitiveResult Interpreter::primitivePrint(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use UIPrintInteractionController
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19917,7 +19770,7 @@ PrimitiveResult Interpreter::primitivePrint(int argCount) {
 PrimitiveResult Interpreter::primitiveKeychainSet(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
 
-    // Would use Security framework
+    // Not implemented
     popN(2);
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -19958,7 +19811,7 @@ PrimitiveResult Interpreter::primitiveKeychainHas(int argCount) {
 PrimitiveResult Interpreter::primitiveBiometricAvailable(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use LAContext.canEvaluatePolicy
+    // Not implemented
     pop();
     push(Oop::fromSmallInteger(0));  // None available
     return PrimitiveResult::Success;
@@ -19969,7 +19822,7 @@ PrimitiveResult Interpreter::primitiveBiometricAvailable(int argCount) {
 PrimitiveResult Interpreter::primitiveBiometricAuthenticate(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use LAContext.evaluatePolicy
+    // Not implemented
     popN(1);
     push(memory_.falseObject());
     return PrimitiveResult::Success;
@@ -20022,7 +19875,7 @@ PrimitiveResult Interpreter::primitiveCryptoHMAC(int argCount) {
 PrimitiveResult Interpreter::primitiveCryptoEncrypt(int argCount) {
     if (argCount != 3) return PrimitiveResult::Failure;
 
-    // Would use CCCrypt from CommonCrypto
+    // Not implemented
     return PrimitiveResult::Failure;
 }
 
@@ -20033,7 +19886,7 @@ PrimitiveResult Interpreter::primitiveCryptoEncrypt(int argCount) {
 PrimitiveResult Interpreter::primitiveHapticFeedback(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use UIFeedbackGenerator
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -20043,7 +19896,7 @@ PrimitiveResult Interpreter::primitiveHapticFeedback(int argCount) {
 PrimitiveResult Interpreter::primitiveVibrate(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use AudioServicesPlaySystemSound
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -20053,7 +19906,7 @@ PrimitiveResult Interpreter::primitiveVibrate(int argCount) {
 PrimitiveResult Interpreter::primitiveFlashlight(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would use AVCaptureDevice.torchMode
+    // Not implemented
     popN(1);
     push(memory_.trueObject());
     return PrimitiveResult::Success;
@@ -20064,7 +19917,7 @@ PrimitiveResult Interpreter::primitiveFlashlight(int argCount) {
 PrimitiveResult Interpreter::primitiveIdleTimerDisable(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Would set UIApplication.shared.isIdleTimerDisabled
+    // Not implemented
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -20112,7 +19965,7 @@ PrimitiveResult Interpreter::primitiveOrientationGet(int argCount) {
 PrimitiveResult Interpreter::primitiveAppReview(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would use SKStoreReviewController.requestReview()
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -20122,7 +19975,7 @@ PrimitiveResult Interpreter::primitiveAppReview(int argCount) {
 PrimitiveResult Interpreter::primitiveAppSettings(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Would open UIApplication.openSettingsURLString
+    // Not implemented
     pop();
     return PrimitiveResult::Success;
 }
@@ -20209,14 +20062,7 @@ PrimitiveResult Interpreter::primitiveVMProfileStart(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // A full implementation would:
-    // 1. Set up a timer signal handler
-    // 2. Configure sampling interval
-    // 3. Allocate sample buffer
-    // 4. Start collecting PC samples
-
-    // For now, just acknowledge the request
-    // Profiling requires platform-specific timer support
+    // Not implemented -- returns success
     pop();  // pop interval argument
     pop();  // pop receiver
     push(memory_.trueObject());  // return true (accepted)
@@ -20229,12 +20075,7 @@ PrimitiveResult Interpreter::primitiveVMProfileStart(int argCount) {
 PrimitiveResult Interpreter::primitiveVMProfileStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // A full implementation would:
-    // 1. Stop the sampling timer
-    // 2. Return the number of samples collected
-    // 3. Keep samples available for retrieval
-
-    // For now, return 0 samples
+    // Not implemented -- returns 0 samples
     pop();  // pop receiver
     push(Oop::fromSmallInteger(0));
     return PrimitiveResult::Success;
@@ -20507,7 +20348,7 @@ PrimitiveResult Interpreter::primitiveGetVMVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Return our VM version string
-    const char* version = "iOS Pharo VM 1.0 (Clean C++ Implementation)";
+    const char* version = "iospharo 1.0";
 
     Oop result = createStringObject(memory_, version);
     if (result.isNil()) {
@@ -22416,6 +22257,11 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoExternalAddress(int argCou
 // These are named primitives called via primitive 117 (primitiveExternalCall)
 // They are used by UFFI to load symbols from dynamic libraries
 
+// Sentinel handle returned by primitiveLoadModule for built-in SDL2 stubs.
+// Any non-null, non-RTLD_DEFAULT value works; primitiveLoadSymbolFromModule
+// recognizes it and maps to RTLD_DEFAULT for the actual dlsym lookup.
+static void* const kBuiltinModuleHandle = reinterpret_cast<void*>(1);
+
 // primitiveLoadSymbolFromModule
 // Stack: receiver, symbolString, moduleStringOrNil
 // Returns: ExternalAddress containing the symbol address, or fails
@@ -22427,7 +22273,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // Get arguments
     Oop moduleOop = stackTop();        // Module name (string or nil)
     Oop symbolOop = stackValue(1);     // Symbol name (string)
-    Oop receiver = stackValue(2);      // Receiver (ignored)
 
     // Symbol must be a string
     if (!symbolOop.isObject()) {
@@ -22463,7 +22308,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                 moduleHandle = tffi_readAddress(moduleOop);
                 moduleName = "<ExternalAddress>";
                 // Our fake SDL2 handle maps to RTLD_DEFAULT
-                if (moduleHandle == reinterpret_cast<void*>(0xDEADBEEF)) {
+                if (moduleHandle == kBuiltinModuleHandle) {
                     moduleHandle = RTLD_DEFAULT;
                     moduleName = "<SDL2-builtin>";
                 }
@@ -22622,7 +22467,7 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     if (moduleName.find("SDL2") != std::string::npos ||
         moduleName.find("SDL") != std::string::npos) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
-        moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
+        moduleHandle = kBuiltinModuleHandle;
     } else {
         // Try to load the library — search multiple paths like the reference VM.
         // Build candidate names from the module string
@@ -25580,16 +25425,11 @@ PrimitiveResult Interpreter::primitiveRegisterCallback(int argCount) {
     Oop callbackDataOop = memory_.fetchPointer(1, receiver);  // slot 1: callbackData (ExternalAddress)
     Oop paramArrayOop   = memory_.fetchPointer(2, receiver);  // slot 2: parameterHandlers (Array)
     Oop returnTypeOop   = memory_.fetchPointer(3, receiver);  // slot 3: returnTypeHandler (TFBasicType)
-    Oop runnerOop       = memory_.fetchPointer(4, receiver);  // slot 4: runner
-
     // Get the return ffi_type*
     ffi_type* returnType = static_cast<ffi_type*>(tffi_getHandler(returnTypeOop));
     if (!returnType) {
         return PrimitiveResult::Failure;
     }
-
-    // Runner is available but not needed for callback registration
-    // (it's used for FFI callout dispatch, not callback thunk creation)
 
     // Get parameter types from the array
     if (!paramArrayOop.isObject()) return PrimitiveResult::Failure;

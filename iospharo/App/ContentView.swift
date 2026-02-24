@@ -15,8 +15,6 @@ struct ContentView: View {
     @EnvironmentObject var imageManager: ImageManager
 
     @State private var showingSettings = false
-    @State private var showingKeyboard = false
-    @State private var dragActive = false
 
     var body: some View {
         ZStack {
@@ -174,55 +172,6 @@ struct ContentView: View {
                 .cornerRadius(10)
             }
         }
-    }
-
-    private var toolbarOverlay: some View {
-        HStack(spacing: 15) {
-            // Keyboard toggle
-            Button(action: { showingKeyboard.toggle() }) {
-                Image(systemName: showingKeyboard ? "keyboard.fill" : "keyboard")
-                    .foregroundColor(.white)
-                    .padding(8)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(Circle())
-            }
-
-            // Settings
-            Button(action: { showingSettings = true }) {
-                Image(systemName: "gear")
-                    .foregroundColor(.white)
-                    .padding(8)
-                    .background(Color.black.opacity(0.5))
-                    .clipShape(Circle())
-            }
-        }
-        .padding()
-    }
-
-    private var keyboardBar: some View {
-        HStack {
-            // Common keys
-            ForEach(["Esc", "Tab", "Ctrl", "Alt", "Cmd"], id: \.self) { key in
-                Button(key) {
-                    sendSpecialKey(key)
-                }
-                .font(.caption)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(Color.gray.opacity(0.3))
-                .foregroundColor(.white)
-                .cornerRadius(5)
-            }
-
-            Spacer()
-
-            // Text input field
-            TextField("Type here", text: .constant(""))
-                .textFieldStyle(RoundedBorderTextFieldStyle())
-                .frame(width: 150)
-        }
-        .padding()
-        .background(Color.black.opacity(0.8))
     }
 
     private func errorOverlay(message: String) -> some View {

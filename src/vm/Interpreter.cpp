@@ -143,8 +143,7 @@ bool Interpreter::initialize() {
                     }
                 }
             });
-            std::cerr << "[INIT] Invalidated " << invalidated
-                      << " stale ExternalAddress objects\n";
+            (void)invalidated;
         }
     }
 
@@ -313,7 +312,6 @@ bool Interpreter::initialize() {
     //   non-nil = resuming from save -> run startup handlers
     // We need to modify the context to indicate "resuming" by ensuring the
     // snapshot primitive returns a non-nil value (true).
-    std::cerr << "[INIT] inSnapshotCode=" << inSnapshotCode << " snapshotEndDepth=" << snapshotEndDepth << "\n";
     if (inSnapshotCode) {
         // Patch the snapshot context's stack top to true so Smalltalk
         // interprets this as "resuming from saved image" instead of
@@ -332,9 +330,7 @@ bool Interpreter::initialize() {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
                     memory_.storePointer(stackTopSlot, context, trueObj);
-                    std::cerr << "[INIT] Patched snapshot context stack top (slot " << stackTopSlot
-                              << "): 0x" << std::hex << oldVal.rawBits()
-                              << " -> true (0x" << trueObj.rawBits() << ")" << std::dec << "\n";
+                    (void)oldVal;
                 }
             }
         }
@@ -379,54 +375,30 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
             existingWidth.asSmallInteger() > 0 && existingHeight.asSmallInteger() > 0) {
             // Valid existing display - just use it
             displayForm_ = existingDisplay;
-            std::cerr << "[DISPLAY] Using existing Display " << existingWidth.asSmallInteger()
-                      << "x" << existingHeight.asSmallInteger() << "\n";
             return;
         }
-        // Existing Display has invalid dimensions - we'll need to reinitialize it
-        std::cerr << "[DISPLAY] Existing Display has invalid dimensions, reinitializing...\n";
     }
 
     // Find Form and Bitmap classes
     Oop formClass = memory_.findGlobal("Form");
     Oop bitmapClass = memory_.findGlobal("Bitmap");
 
-    if (formClass.isNil() || !formClass.isObject()) {
-        std::cerr << "[DISPLAY] FAILED: Form class not found (nil=" << formClass.isNil() << ")\n";
-        return;
-    }
-    if (bitmapClass.isNil() || !bitmapClass.isObject()) {
-        std::cerr << "[DISPLAY] FAILED: Bitmap class not found (nil=" << bitmapClass.isNil() << ")\n";
-        return;
-    }
+    if (formClass.isNil() || !formClass.isObject()) return;
+    if (bitmapClass.isNil() || !bitmapClass.isObject()) return;
 
     uint32_t formClassIdx = memory_.indexOfClass(formClass);
     uint32_t bitmapClassIdx = memory_.indexOfClass(bitmapClass);
 
     // If class not in table, register it
-    if (formClassIdx == 0) {
-        formClassIdx = memory_.registerClass(formClass);
-        std::cerr << "[DISPLAY] Registered Form class at index " << formClassIdx << "\n";
-    }
-    if (bitmapClassIdx == 0) {
-        bitmapClassIdx = memory_.registerClass(bitmapClass);
-        std::cerr << "[DISPLAY] Registered Bitmap class at index " << bitmapClassIdx << "\n";
-    }
-
-    if (formClassIdx == 0 || bitmapClassIdx == 0) {
-        std::cerr << "[DISPLAY] FAILED: Class index 0 after registration (Form=" << formClassIdx << ", Bitmap=" << bitmapClassIdx << ")\n";
-        return;
-    }
+    if (formClassIdx == 0) formClassIdx = memory_.registerClass(formClass);
+    if (bitmapClassIdx == 0) bitmapClassIdx = memory_.registerClass(bitmapClass);
+    if (formClassIdx == 0 || bitmapClassIdx == 0) return;
 
     // Allocate bitmap for pixels (32-bit pixels = 1 word each for 32-bit depth)
     size_t pixelCount = static_cast<size_t>(width) * height;
-    std::cerr << "[DISPLAY] Allocating Bitmap: " << pixelCount << " pixels (" << (pixelCount * 4) << " bytes)\n";
     Oop bitmapObj = memory_.allocateWords(bitmapClassIdx, pixelCount);
 
-    if (bitmapObj.isNil()) {
-        std::cerr << "[DISPLAY] FAILED: Bitmap allocation returned nil\n";
-        return;
-    }
+    if (bitmapObj.isNil()) return;
 
     // Fill bitmap with a distinctive color to show it's our bitmap
     {
@@ -442,16 +414,12 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
     push(bitmapObj);
 
     // Allocate Form with 5 slots: bits, width, height, depth, offset
-    std::cerr << "[DISPLAY] Allocating Form with 5 slots...\n";
     Oop formObj = memory_.allocateSlots(formClassIdx, 5);
 
     // Pop GC-safe bitmapObj
     bitmapObj = pop();
 
-    if (formObj.isNil()) {
-        std::cerr << "[DISPLAY] FAILED: Form allocation returned nil\n";
-        return;
-    }
+    if (formObj.isNil()) return;
 
     // Set Form slots
     memory_.storePointer(0, formObj, bitmapObj);                    // bits
@@ -467,209 +435,7 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
 
     // Bind to 'Display' global so Morphic can find it
     memory_.setGlobal("Display", formObj);
-    std::cerr << "[DISPLAY] SUCCESS: Created " << width << "x" << height << "x" << depth
-              << " Form @0x" << std::hex << formObj.rawBits() << std::dec << "\n";
 }
-
-// ===== BITMAP FONT FOR TEXT RENDERING =====
-// Simple 5x7 bitmap font for menu bar text
-
-static const uint8_t font5x7[96][7] = {
-    // ASCII 32-127 (space through tilde)
-    // Each character is 5 pixels wide, 7 pixels tall
-    // Space (32)
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-    // ! (33)
-    {0x04, 0x04, 0x04, 0x04, 0x00, 0x04, 0x00},
-    // " (34)
-    {0x0A, 0x0A, 0x00, 0x00, 0x00, 0x00, 0x00},
-    // # (35)
-    {0x0A, 0x1F, 0x0A, 0x0A, 0x1F, 0x0A, 0x00},
-    // $ (36)
-    {0x04, 0x0F, 0x14, 0x0E, 0x05, 0x1E, 0x04},
-    // % (37)
-    {0x19, 0x19, 0x02, 0x04, 0x08, 0x13, 0x13},
-    // & (38)
-    {0x08, 0x14, 0x14, 0x08, 0x15, 0x12, 0x0D},
-    // ' (39)
-    {0x04, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
-    // ( (40)
-    {0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02},
-    // ) (41)
-    {0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08},
-    // * (42)
-    {0x00, 0x04, 0x15, 0x0E, 0x15, 0x04, 0x00},
-    // + (43)
-    {0x00, 0x04, 0x04, 0x1F, 0x04, 0x04, 0x00},
-    // , (44)
-    {0x00, 0x00, 0x00, 0x00, 0x04, 0x04, 0x08},
-    // - (45)
-    {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00},
-    // . (46)
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x04, 0x00},
-    // / (47)
-    {0x01, 0x01, 0x02, 0x04, 0x08, 0x10, 0x10},
-    // 0 (48)
-    {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E},
-    // 1 (49)
-    {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E},
-    // 2 (50)
-    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F},
-    // 3 (51)
-    {0x0E, 0x11, 0x01, 0x06, 0x01, 0x11, 0x0E},
-    // 4 (52)
-    {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02},
-    // 5 (53)
-    {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E},
-    // 6 (54)
-    {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E},
-    // 7 (55)
-    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08},
-    // 8 (56)
-    {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E},
-    // 9 (57)
-    {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C},
-    // : (58)
-    {0x00, 0x04, 0x00, 0x00, 0x04, 0x00, 0x00},
-    // ; (59)
-    {0x00, 0x04, 0x00, 0x00, 0x04, 0x04, 0x08},
-    // < (60)
-    {0x02, 0x04, 0x08, 0x10, 0x08, 0x04, 0x02},
-    // = (61)
-    {0x00, 0x00, 0x1F, 0x00, 0x1F, 0x00, 0x00},
-    // > (62)
-    {0x08, 0x04, 0x02, 0x01, 0x02, 0x04, 0x08},
-    // ? (63)
-    {0x0E, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04},
-    // @ (64)
-    {0x0E, 0x11, 0x17, 0x15, 0x17, 0x10, 0x0E},
-    // A (65)
-    {0x0E, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11},
-    // B (66)
-    {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E},
-    // C (67)
-    {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E},
-    // D (68)
-    {0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C},
-    // E (69)
-    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F},
-    // F (70)
-    {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10},
-    // G (71)
-    {0x0E, 0x11, 0x10, 0x17, 0x11, 0x11, 0x0F},
-    // H (72)
-    {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11},
-    // I (73)
-    {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E},
-    // J (74)
-    {0x07, 0x02, 0x02, 0x02, 0x02, 0x12, 0x0C},
-    // K (75)
-    {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11},
-    // L (76)
-    {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F},
-    // M (77)
-    {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11},
-    // N (78)
-    {0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11},
-    // O (79)
-    {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E},
-    // P (80)
-    {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10},
-    // Q (81)
-    {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D},
-    // R (82)
-    {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11},
-    // S (83)
-    {0x0E, 0x11, 0x10, 0x0E, 0x01, 0x11, 0x0E},
-    // T (84)
-    {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},
-    // U (85)
-    {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E},
-    // V (86)
-    {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04},
-    // W (87)
-    {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11},
-    // X (88)
-    {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11},
-    // Y (89)
-    {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04},
-    // Z (90)
-    {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F},
-    // [ (91)
-    {0x0E, 0x08, 0x08, 0x08, 0x08, 0x08, 0x0E},
-    // \ (92)
-    {0x10, 0x10, 0x08, 0x04, 0x02, 0x01, 0x01},
-    // ] (93)
-    {0x0E, 0x02, 0x02, 0x02, 0x02, 0x02, 0x0E},
-    // ^ (94)
-    {0x04, 0x0A, 0x11, 0x00, 0x00, 0x00, 0x00},
-    // _ (95)
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x1F},
-    // ` (96)
-    {0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00},
-    // a (97)
-    {0x00, 0x00, 0x0E, 0x01, 0x0F, 0x11, 0x0F},
-    // b (98)
-    {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x1E},
-    // c (99)
-    {0x00, 0x00, 0x0E, 0x10, 0x10, 0x10, 0x0E},
-    // d (100)
-    {0x01, 0x01, 0x0F, 0x11, 0x11, 0x11, 0x0F},
-    // e (101)
-    {0x00, 0x00, 0x0E, 0x11, 0x1F, 0x10, 0x0E},
-    // f (102)
-    {0x06, 0x08, 0x1E, 0x08, 0x08, 0x08, 0x08},
-    // g (103)
-    {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x0E},
-    // h (104)
-    {0x10, 0x10, 0x1E, 0x11, 0x11, 0x11, 0x11},
-    // i (105)
-    {0x04, 0x00, 0x0C, 0x04, 0x04, 0x04, 0x0E},
-    // j (106)
-    {0x02, 0x00, 0x02, 0x02, 0x02, 0x12, 0x0C},
-    // k (107)
-    {0x10, 0x10, 0x12, 0x14, 0x18, 0x14, 0x12},
-    // l (108)
-    {0x0C, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E},
-    // m (109)
-    {0x00, 0x00, 0x1A, 0x15, 0x15, 0x15, 0x15},
-    // n (110)
-    {0x00, 0x00, 0x1E, 0x11, 0x11, 0x11, 0x11},
-    // o (111)
-    {0x00, 0x00, 0x0E, 0x11, 0x11, 0x11, 0x0E},
-    // p (112)
-    {0x00, 0x00, 0x1E, 0x11, 0x1E, 0x10, 0x10},
-    // q (113)
-    {0x00, 0x00, 0x0F, 0x11, 0x0F, 0x01, 0x01},
-    // r (114)
-    {0x00, 0x00, 0x16, 0x19, 0x10, 0x10, 0x10},
-    // s (115)
-    {0x00, 0x00, 0x0E, 0x10, 0x0E, 0x01, 0x1E},
-    // t (116)
-    {0x08, 0x08, 0x1E, 0x08, 0x08, 0x09, 0x06},
-    // u (117)
-    {0x00, 0x00, 0x11, 0x11, 0x11, 0x11, 0x0E},
-    // v (118)
-    {0x00, 0x00, 0x11, 0x11, 0x11, 0x0A, 0x04},
-    // w (119)
-    {0x00, 0x00, 0x11, 0x15, 0x15, 0x15, 0x0A},
-    // x (120)
-    {0x00, 0x00, 0x11, 0x0A, 0x04, 0x0A, 0x11},
-    // y (121)
-    {0x00, 0x00, 0x11, 0x11, 0x0F, 0x01, 0x0E},
-    // z (122)
-    {0x00, 0x00, 0x1F, 0x02, 0x04, 0x08, 0x1F},
-    // { (123)
-    {0x02, 0x04, 0x04, 0x08, 0x04, 0x04, 0x02},
-    // | (124)
-    {0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04},
-    // } (125)
-    {0x08, 0x04, 0x04, 0x02, 0x04, 0x04, 0x08},
-    // ~ (126)
-    {0x00, 0x08, 0x15, 0x02, 0x00, 0x00, 0x00},
-    // DEL (127) - blank
-    {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
-};
 
 // Draw text using Core Graphics for proper anti-aliased font rendering
 static void drawText(uint32_t* pixels, int dispWidth, int dispHeight,
@@ -1082,8 +848,7 @@ void Interpreter::renderWorldMorphs() {
 
             if (!label.empty()) {
                 labels.push_back(label);
-                menuBarItemMorphs_.push_back(item);  // Store morph for dropdown access
-            } else {
+                menuBarItemMorphs_.push_back(item);
             }
         }
 
@@ -1467,7 +1232,6 @@ void Interpreter::renderWorldMorphs() {
         if (!menubarMorph.isNil()) {
             renderMorph(menubarMorph, 0, 0);
         }
-    } else {
     }
 
     // Debug test - write to doOneCycle_debug.log from renderWorldMorphs
@@ -1585,25 +1349,8 @@ void Interpreter::processInputEvents() {
             signalExternalSemaphore(inputSemaIdx);
         }
 
-        // Events are now in passThroughEvents_ and the input semaphore has been signaled.
-        // The Smalltalk InputEventSensor process should wake up and process events via primitive 264.
-        // NO WORKAROUNDS: Do not manipulate HandMorph slots directly from C++.
-        // If events aren't being processed, debug why InputEventSensor isn't running.
     }
 }
-
-// NO WORKAROUNDS: The following C++ event dispatch functions were removed:
-// - dispatchMouseEventToMorph (C++ hit testing bypassed InputEventSensor)
-// - handleMenuBarClick (C++ menu bar click handling)
-// - handleWorldMenuClick (C++ world menu invocation)
-// - executeMenuItemAction (C++ menu action execution)
-// - processPendingMenuAction (C++ pending action processing)
-// - processPendingWorldMenu (C++ world menu processing)
-// - drawClickIndicator (C++ visual click feedback)
-// - lookupMethodByName (helper for C++ method lookup)
-//
-// Events must be handled by Smalltalk's InputEventSensor and Morphic.
-// If events aren't working, fix InputEventSensor startup - don't add C++ workarounds.
 
 // ===== DISPLAY SYNCHRONIZATION =====
 // Until BitBlt primitives are fully working, bypass Display Form and
@@ -1670,7 +1417,7 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::stopVM(const char* reason) {
-    fprintf(stderr, "[VM-STOP step=%llu] %s\n", (unsigned long long)g_stepNum, reason);
+    (void)reason;
     running_ = false;
 }
 
@@ -2060,31 +1807,14 @@ void Interpreter::startHeartbeat() {
                 forceYield_.store(true, std::memory_order_release);
             }
 
-            // Watchdog: report step count every 5 seconds
+            // Watchdog: check for stuck VM every 5 seconds
             if (tickCount % 5000 == 0) {
                 long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
-                int phase = g_watchdogPhase.load(std::memory_order_relaxed);
                 static long long lastSteps = -1;
-                const char* phaseName[] = {"idle", "step()", "GC", "events", "syncDisplay"};
-                int subphase = g_watchdogSubphase;
-                uint8_t lastBC = g_watchdogLastBytecode;
                 bool stuck = (steps == lastSteps);
                 if (stuck) {
-                    fprintf(stderr, "[WATCHDOG] tick=%d steps=%lldM phase=%s sub=%d bc=0x%02x pri=%d STUCK!\n",
-                            tickCount, steps / 1000000,
-                            (phase >= 0 && phase <= 4) ? phaseName[phase] : "?",
-                            subphase, lastBC, g_watchdogProcessPriority);
-                }
-                if (stuck && subphase == 15) {
-                    fprintf(stderr, "[WATCHDOG] STUCK in send: %s >> %s (prim=%d)\n",
-                            g_watchdogReceiverClass, g_watchdogSelector, g_watchdogPrimIndex);
-                }
-                if (stuck) {
                     int ticks = stuckTicks_.fetch_add(1, std::memory_order_relaxed) + 1;
-                    // After 15s (3 ticks × 5s) of no progress, terminate the process
                     if (ticks >= 3) {
-                        fprintf(stderr, "[WATCHDOG] Requesting process termination after %ds stuck\n",
-                                ticks * 5);
                         terminateStuck_.store(true, std::memory_order_release);
                         stuckTicks_.store(0, std::memory_order_relaxed);
                     }
@@ -2092,7 +1822,6 @@ void Interpreter::startHeartbeat() {
                     stuckTicks_.store(0, std::memory_order_relaxed);
                 }
                 lastSteps = steps;
-                fflush(stderr);
             }
         }
 
@@ -2151,10 +1880,7 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
     size_t idx = static_cast<size_t>(externalIndex - 1);
     if (idx >= memory_.slotCountOf(semTable)) return;
     Oop semaphore = memory_.fetchPointer(idx, semTable);
-    if (semaphore.isNil() || !semaphore.isObject()) {
-        fprintf(stderr, "[CALLBACK] signalSemaphoreDirectly: semaphore at idx=%zu is nil/non-object\n", idx);
-        return;
-    }
+    if (semaphore.isNil() || !semaphore.isObject()) return;
     synchronousSignal(semaphore);
 }
 
@@ -2186,8 +1912,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 4. Push vmcc onto callback context stack
     if (callbackDepth_ < MaxCallbackDepth) {
         callbackContextStack_[callbackDepth_++] = vmcc;
-    } else {
-        fprintf(stderr, "[CALLBACK] Max callback depth (%d) exceeded!\n", MaxCallbackDepth);
     }
 
     // 5. Signal callback semaphore to wake handler process
@@ -2223,18 +1947,10 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             nestedStepCount++;
         }
 
-        if (nestedStepCount % 1000000 == 0 && nestedStepCount > 0) {
-            fprintf(stderr, "[CALLBACK] nested loop: %ld steps, pending=%s\n",
-                    nestedStepCount, pendingCallbackReturn_ ? "YES" : "no");
-        }
-
         // Timeout: if the callback handler never calls primitiveCallbackReturn
         // (e.g., because an error killed the handler process), abandon the
         // callback to prevent infinite spinning.
         if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
-            fprintf(stderr, "[CALLBACK] TIMEOUT after %ld steps — abandoning callback\n",
-                    nestedStepCount);
-
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
@@ -2301,10 +2017,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
-            fprintf(stderr, "[CB] deferred: suspended=0x%llx nil=%d obj=%d\n",
-                    (unsigned long long)suspendedProcess.rawBits(),
-                    suspendedProcess.isNil() ? 1 : 0,
-                    suspendedProcess.isObject() ? 1 : 0);
             if (!suspendedProcess.isNil() && suspendedProcess.isObject()) {
                 Oop nextInChain = memory_.fetchPointer(
                     ProcessNextLinkIndex, suspendedProcess);
@@ -2340,8 +2052,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             checkTimerSemaphore();
         }
     }
-    // If we reach here, the VM was stopped (running_ = false).
-    fprintf(stderr, "[CALLBACK] Warning: nested interpret loop exited without callback return\n");
 }
 
 bool Interpreter::step() {
@@ -2490,52 +2200,8 @@ bool Interpreter::step() {
         checkForPreemption();
     }
 
-    // Check if we've run past the end of bytecodes
+    // If IP has run past the end of bytecodes, force a return
     if (instructionPointer_ >= bytecodeEnd_) {
-        static int ipPastEndCount = 0;
-        ipPastEndCount++;
-        if (ipPastEndCount <= 50) {
-            ObjectHeader* mObj = method_.asObjectPtr();
-            uint8_t* mBytes = mObj->bytes();
-            ptrdiff_t ipOffset = instructionPointer_ - mBytes;
-            ptrdiff_t endOffset = bytecodeEnd_ - mBytes;
-            fprintf(stderr, "[IP-PAST-END #%d] rcvr=0x%llx ip=%td end=%td fd=%zu step=%llu lastBC=0x%02x extA=%d extB=%d inExt=%d\n",
-                    ipPastEndCount, (unsigned long long)receiver_.rawBits(),
-                    ipOffset, endOffset,
-                    frameDepth_, (unsigned long long)g_stepNum,
-                    lastBytecode_, extA_, extB_, (int)inExtension_);
-            // Extract method selector
-            if (mObj->slotCount() > 0) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    // Selector is at slot numLits (last literal) or numLits-1
-                    for (size_t s = (numLits > 0 ? numLits - 1 : 0); s <= numLits && s < mObj->slotCount(); s++) {
-                        Oop sel = memory_.fetchPointer(s, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidObject(sel)) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                                fprintf(stderr, "  selector (slot %zu): %.*s\n",
-                                        s, (int)selHdr->byteSize(), (char*)selHdr->bytes());
-                            }
-                        }
-                    }
-                    fprintf(stderr, "  numLiterals=%zu methodSlots=%u\n", numLits, mObj->slotCount());
-                }
-            }
-            // Dump last 16 bytecodes before the end and 16 after
-            ptrdiff_t dumpStart = endOffset - 16;
-            if (dumpStart < 0) dumpStart = 0;
-            ptrdiff_t dumpEnd = endOffset + 16;
-            size_t totalBytes = mObj->byteSize();
-            if ((size_t)dumpEnd > totalBytes) dumpEnd = totalBytes;
-            fprintf(stderr, "  bytecodes [%td..%td] (end=%td): ", dumpStart, dumpEnd, endOffset);
-            for (ptrdiff_t i = dumpStart; i < dumpEnd; i++) {
-                fprintf(stderr, "%02x%s", mBytes[i], (i == endOffset - 1) ? "|" : " ");
-            }
-            fprintf(stderr, "\n");
-            fflush(stderr);
-        }
         returnValue(receiver_);
         return running_;
     }
@@ -2561,16 +2227,6 @@ bool Interpreter::step() {
     if (cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_ && !inExtension_) {
         Oop currentProcess = getActiveProcess();
         if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
-            // Log which process is being terminated by cannotReturn: deadline
-            {
-                intptr_t priority = 0;
-                if (currentProcess.isObject()) {
-                    Oop priOop = memory_.fetchPointer(2, currentProcess); // priority field
-                    if (priOop.isSmallInteger()) priority = priOop.asSmallInteger();
-                }
-                fprintf(stderr, "[CANNOT-RETURN-TERMINATE] step=%lld P%ld\n",
-                        (long long)g_stepNum, (long)priority);
-            }
             cannotReturnCount_ = 0;
             cannotReturnDeadline_ = 0;
             lastCannotReturnProcess_ = Oop::nil();
@@ -2718,10 +2374,6 @@ skip_yield:
     // VM safety: terminate a process that the watchdog flagged as stuck
     if (terminateStuck_.load(std::memory_order_acquire)) {
         terminateStuck_.store(false, std::memory_order_relaxed);
-        static int termCount = 0;
-        termCount++;
-        fprintf(stderr, "[WATCHDOG-TERM #%d] Terminating stuck process at step=%llu fd=%zu\n",
-                termCount, (unsigned long long)g_stepNum, frameDepth_);
         terminateAndSwitchProcess();
         return running_;
     }
@@ -3559,84 +3211,10 @@ void Interpreter::push(Oop value) {
     {
         size_t sd = static_cast<size_t>(stackPointer_ - stackBase_);
         if (sd > 500) {
-            static FILE* stackGrowLog = nullptr;
-            static int stackGrowLogCount = 0;
-            if (!stackGrowLog) stackGrowLog = nullptr;
-            if (stackGrowLog && stackGrowLogCount < 500) {
-                stackGrowLogCount++;
-                // Get method name
-                std::string mname = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2 && nl < 100) {
-                            Oop sel = memory_.fetchPointer(nl - 1, method_);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* sh = sel.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 50)
-                                    mname = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(stackGrowLog, "[PUSH sd=%zu fd=%zu bc=0x%02x step=%llu] method=#%s val=0x%llx\n",
-                        sd, frameDepth_, lastBytecode_, (unsigned long long)g_stepNum,
-                        mname.c_str(), (unsigned long long)value.rawBits());
-                if (stackGrowLogCount % 50 == 0) fflush(stackGrowLog);
-            }
         }
     }
 
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
-        static int overflowCount = 0;
-        overflowCount++;
-        std::cerr << "[VM-STOP] Stack overflow #" << overflowCount << " in push() at step " << g_stepNum
-                  << " frameDepth=" << frameDepth_ << " method=0x" << std::hex << method_.rawBits() << std::dec << "\n";
-        // Log receiver class
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000 && memory_.isValidObject(receiver_)) {
-            Oop cls = memory_.classOf(receiver_);
-            if (cls.isObject() && memory_.isValidObject(cls)) {
-                ObjectHeader* clsHdr = cls.asObjectPtr();
-                if (clsHdr->slotCount() >= 7) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && memory_.isValidObject(clsName)) {
-                        ObjectHeader* nameHdr = clsName.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                            std::cerr << "  receiver class: " << std::string((char*)nameHdr->bytes(), nameHdr->byteSize()) << "\n";
-                        }
-                    }
-                }
-            }
-        } else if (receiver_.isSmallInteger()) {
-            std::cerr << "  receiver: SmallInteger(" << receiver_.asSmallInteger() << ")\n";
-        }
-        // Log the current method selector
-        if (method_.isObject() && method_.rawBits() > 0x10000 && memory_.isValidObject(method_)) {
-            ObjectHeader* mHdr = method_.asObjectPtr();
-            std::cerr << "  method classIdx=" << mHdr->classIndex() << " slotCount=" << mHdr->slotCount() << "\n";
-            // CompiledMethod: header is slot 0, selector is at (numLiterals)
-            if (mHdr->slotCount() > 0) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                std::cerr << "  hdr=0x" << std::hex << hdr.rawBits() << std::dec << " isSmallInt=" << hdr.isSmallInteger() << "\n";
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    std::cerr << "  numLits=" << numLits << "\n";
-                    // Try both slot numLits and numLits-1 for selector
-                    for (size_t trySlot = (numLits > 0 ? numLits - 1 : 0); trySlot <= numLits && trySlot < mHdr->slotCount(); trySlot++) {
-                        Oop sel = memory_.fetchPointer(trySlot, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000 && memory_.isValidObject(sel)) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                                std::cerr << "  selector (slot " << trySlot << "): "
-                                          << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
         stopVM("Stack overflow in push()");
         return;
     }
@@ -3680,37 +3258,6 @@ void Interpreter::popN(size_t n) {
 uint8_t Interpreter::fetchByte() {
     // Bounds check: detect when IP is past bytecodeEnd_
     if (instructionPointer_ >= bytecodeEnd_) {
-        static int ipOobCount = 0;
-        static FILE* ipOobLog = nullptr;
-        if (!ipOobLog) ipOobLog = nullptr;
-        ipOobCount++;
-        if (ipOobLog && ipOobCount <= 20) {
-            fprintf(ipOobLog, "[IP-OOB #%d step=%llu] IP=%p bytecodeEnd_=%p method_=0x%llx\n",
-                    ipOobCount, g_stepNum, (void*)instructionPointer_, (void*)bytecodeEnd_,
-                    (unsigned long long)method_.rawBits());
-            // Log method info
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mh = method_.asObjectPtr();
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    fprintf(ipOobLog, "  method: format=%d byteSize=%zu numLits=%zu\n",
-                            (int)mh->format(), mh->byteSize(), numLits);
-                    // Get selector
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sh = sel.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                std::string selStr((char*)sh->bytes(), sh->byteSize());
-                                fprintf(ipOobLog, "  selector: #%s\n", selStr.c_str());
-                            }
-                        }
-                    }
-                }
-            }
-            fflush(ipOobLog);
-        }
         // Return 0x5C (returnTop) to try to recover gracefully
         return 0x5C;
     }
@@ -3724,75 +3271,6 @@ uint16_t Interpreter::fetchTwoBytes() {
 }
 
 void Interpreter::pushReceiverVariable(int index) {
-    // TRACE: When accessing slot 1 on FullBlockClosure (compiledBlock slot)
-    // This is the critical path for understanding why compiledBlock returns wrong value
-    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrCls = memory_.classOf(receiver_);
-        std::string rcvrClassName;
-        if (rcvrCls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, rcvrCls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                    rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                }
-            }
-        }
-        if (rcvrClassName.find("FullBlockClosure") != std::string::npos ||
-            rcvrClassName.find("BlockClosure") != std::string::npos) {
-            static FILE* slot1Log = nullptr;
-            static int slot1Count = 0;
-            slot1Count++;
-            if (slot1Count <= 30) {
-                if (!slot1Log) slot1Log = nullptr;
-                if (slot1Log) {
-                    Oop slot1Val = memory_.fetchPointer(1, receiver_);
-                    std::string slot1Method = "?";
-                    if (slot1Val.isObject() && slot1Val.rawBits() > 0x10000) {
-                        Oop hdr = memory_.fetchPointer(0, slot1Val);
-                        if (hdr.isSmallInteger()) {
-                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                            if (numLits >= 2) {
-                                Oop sel = memory_.fetchPointer(numLits - 1, slot1Val);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* selHdr = sel.asObjectPtr();
-                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                        slot1Method = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    } else if (slot1Val.isSmallInteger()) {
-                        slot1Method = "<SmallInteger startPC>";
-                    }
-                    // Also show what method we're currently executing
-                    std::string currentMethod = "?";
-                    if (method_.isObject() && method_.rawBits() > 0x10000) {
-                        Oop hdr = memory_.fetchPointer(0, method_);
-                        if (hdr.isSmallInteger()) {
-                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                            if (numLits >= 2) {
-                                Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* selHdr = sel.asObjectPtr();
-                                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                        currentMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(slot1Log, "[BLOCK-SLOT1 #%d] %s[1] = 0x%llx method=#%s (in %s)\n",
-                            slot1Count, rcvrClassName.c_str(),
-                            (unsigned long long)slot1Val.rawBits(),
-                            slot1Method.c_str(), currentMethod.c_str());
-                    // Show receiver (block) address for correlation
-                    fprintf(slot1Log, "  block=0x%llx\n", (unsigned long long)receiver_.rawBits());
-                    fflush(slot1Log);
-                }
-            }
-        }
-    }
 
     // Trace ALL instance variable reads to debug SessionManager default
     if constexpr (ENABLE_DEBUG_LOGGING) {
@@ -3810,47 +3288,6 @@ void Interpreter::pushReceiverVariable(int index) {
                     if (cnHdr->isBytesObject() && cnHdr->byteSize() == 14) {
                         std::string n((char*)cnHdr->bytes(), 14);
                         if (n == "SessionManager") {
-                            static FILE* smLog = nullptr;
-                            static int smCount = 0;
-                            if (!smLog) smLog = nullptr;
-                            if (smLog && smCount < 20) {
-                                smCount++;
-                                // Show current method
-                                std::string methodSel = "<unknown>";
-                                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                                    ObjectHeader* mHdr = method_.asObjectPtr();
-                                    if (mHdr->isCompiledMethod()) {
-                                        Oop hdr = memory_.fetchPointer(0, method_);
-                                        if (hdr.isSmallInteger()) {
-                                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                            if (numLits >= 2) {
-                                                Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                                if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                                    ObjectHeader* slHdr = selLit.asObjectPtr();
-                                                    if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                                        methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                                    } else if (slHdr->format() == ObjectFormat::FixedSize && slHdr->slotCount() >= 1) {
-                                                        Oop inner = memory_.fetchPointer(0, selLit);
-                                                        if (inner.isObject() && inner.rawBits() > 0x10000) {
-                                                            ObjectHeader* iHdr = inner.asObjectPtr();
-                                                            if (iHdr->isBytesObject() && iHdr->byteSize() < 50) {
-                                                                methodSel = std::string((char*)iHdr->bytes(), iHdr->byteSize());
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                Oop val = memory_.fetchPointer(index, receiver_);
-                                fprintf(smLog, "[SM-READ #%d] SessionManager >> %s reads slot[%d] = 0x%llx (ip=%zu method=0x%llx)\n",
-                                        smCount, methodSel.c_str(), index,
-                                        (unsigned long long)val.rawBits(),
-                                        instructionPointer_ - method_.asObjectPtr()->bytes(),
-                                        (unsigned long long)method_.rawBits());
-                                fflush(smLog);
-                            }
                         }
                     }
                 }
@@ -4366,84 +3803,12 @@ void Interpreter::returnValue(Oop value) {
                         }
                         return;
                     }
-                } else {
                 }
             }
         }
 
 terminate_process:
-        // Diagnostic: log when terminating a high-priority process (P60+)
-        {
-            Oop proc = getActiveProcess();
-            Oop prioOop = memory_.fetchPointer(2, proc); // priority
-            int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
-            if (prio >= 60) {
-                // Get method selector from activeContext_
-                std::string msel = "?";
-                if (activeContext_.isObject() && !activeContext_.isNil()) {
-                    Oop m = memory_.fetchPointer(3, activeContext_);
-                    if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
-                        Oop hdr = memory_.fetchPointer(0, m);
-                        if (hdr.isSmallInteger()) {
-                            int nl = hdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2) {
-                                Oop s = memory_.fetchPointer(nl - 1, m);
-                                if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
-                                    ObjectHeader* sh = s.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80)
-                                        msel = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                // Get sender status
-                std::string reason = "unknown";
-                if (activeContext_.isObject() && !activeContext_.isNil()) {
-                    Oop sender = memory_.fetchPointer(0, activeContext_);
-                    if (sender.rawBits() == 0 || sender.rawBits() < 0x10000) reason = "corrupted-sender";
-                    else if (sender.isNil() || sender.rawBits() == memory_.nil().rawBits()) reason = "nil-sender";
-                    else if (!memory_.isValidPointer(sender)) reason = "invalid-sender";
-                    else {
-                        ObjectHeader* sh = sender.asObjectPtr();
-                        if (sh->slotCount() < 6) reason = "sender-too-small";
-                        else if (sh->format() != ObjectFormat::IndexableWithFixed) reason = "sender-bad-format";
-                        else reason = "executeFromContext-failed";
-                    }
-                } else reason = "no-activeContext";
-                // Walk context chain (up to 10 frames) to see the stack
-                std::string chain;
-                Oop ctx = activeContext_;
-                for (int i = 0; i < 10 && ctx.isObject() && !ctx.isNil(); i++) {
-                    if (!memory_.isValidPointer(ctx)) break;
-                    Oop cm = memory_.fetchPointer(3, ctx);
-                    if (cm.isObject() && !cm.isNil() && memory_.isValidPointer(cm)) {
-                        Oop ch = memory_.fetchPointer(0, cm);
-                        if (ch.isSmallInteger()) {
-                            int cnl = ch.asSmallInteger() & 0x7FFF;
-                            if (cnl >= 2) {
-                                Oop cs = memory_.fetchPointer(cnl - 1, cm);
-                                if (cs.isObject() && cs.rawBits() > 0x10000 && memory_.isValidPointer(cs)) {
-                                    ObjectHeader* csh = cs.asObjectPtr();
-                                    if (csh->isBytesObject() && csh->byteSize() < 80) {
-                                        if (!chain.empty()) chain += " <- ";
-                                        chain += std::string((char*)csh->bytes(), csh->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Oop snd = memory_.fetchPointer(0, ctx);
-                    if (snd.rawBits() == memory_.nil().rawBits()) break;
-                    ctx = snd;
-                }
-                fprintf(stderr, "[TERM-P%d] reason=%s method=#%s step=%llu chain=[%s]\n",
-                        prio, reason.c_str(), msel.c_str(),
-                        (unsigned long long)g_stepNum, chain.c_str());
-                fflush(stderr);
-            }
-        }
-        // Per reference VM spec: send cannotReturn: instead of silently terminating.
+                // Per reference VM spec: send cannotReturn: instead of silently terminating.
         // This gives Smalltalk's exception handling a chance to handle the situation.
         // Guard: limit cannotReturn: events per process. The error handler from
         // cannotReturn: may itself try to return through nil sender, creating new
@@ -5355,23 +4720,6 @@ void Interpreter::arithmeticSend(int which) {
 
         // TRACE: Log all <= sends to understand loop iteration
         if (which == 4) {  // <=
-            static FILE* arithLog = nullptr;
-            static int arithCount = 0;
-            if (!arithLog) arithLog = nullptr;
-            if (arithLog && arithCount < 500) {
-                arithCount++;
-                Oop rcvr = stackValue(1);
-                Oop arg = stackValue(0);
-                if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
-                    fprintf(arithLog, "[<= #%d] %lld <= %lld fd=%d\n",
-                            arithCount, rcvr.asSmallInteger(), arg.asSmallInteger(), (int)frameDepth_);
-                } else {
-                    fprintf(arithLog, "[<= #%d] rcvr=0x%llx arg=0x%llx (non-int) fd=%d\n",
-                            arithCount, (unsigned long long)rcvr.rawBits(),
-                            (unsigned long long)arg.rawBits(), (int)frameDepth_);
-                }
-                fflush(arithLog);
-            }
         }
     }
 
@@ -5585,11 +4933,6 @@ void Interpreter::commonSend(int which) {
     // Get special selectors array
     Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
     if (!specialSelectors.isObject() || specialSelectors.rawBits() < 0x10000) {
-        static int ssErrCount = 0;
-        if (++ssErrCount <= 5) {
-            std::cerr << "[SPECIAL-SEND] ERROR: Special selectors array not found (which=" << which << ")\n";
-        }
-        // Cannot proceed without special selectors - return receiver as no-op
         push(receiver_);
         return;
     }
@@ -5626,36 +4969,6 @@ void Interpreter::commonSend(int which) {
         }
     }
 
-    // Debug selector string construction removed for performance
-    // (was constructing std::string on every common send)
-
-    // Fallback for stream operations during startup to avoid DNU
-    // Special selector 20 is 'nextPut:' which is commonly used in logging
-    if (selectorIndex == 20 && argCount == 1) {  // nextPut:
-        Oop rcvr = stackValue(1);  // Receiver is under the argument
-
-        // If receiver doesn't look like a stream (not an object or is a special object),
-        // just pop args and return the argument (stream operations return the argument)
-        if (!rcvr.isObject() || rcvr.rawBits() == 0) {
-            // std::cerr << "[COMMON] Fallback for nextPut: on non-stream - returning argument"; // DEBUG
-            Oop arg = pop();  // Pop the argument
-            pop();  // Pop the receiver
-            push(arg);  // Return the argument (standard stream behavior)
-            return;
-        }
-    }
-
-    // Fallback for selector 21 (next) during startup
-    if (selectorIndex == 21 && argCount == 0) {  // next
-        Oop rcvr = stackValue(0);
-        if (!rcvr.isObject() || rcvr.rawBits() == 0) {
-            // std::cerr << "[COMMON] Fallback for next on non-stream - returning nil"; // DEBUG
-            pop();  // Pop receiver
-            push(memory_.nil());  // Return nil
-            return;
-        }
-    }
-
     sendSelector(selector, argCount);
 }
 
@@ -5668,248 +4981,8 @@ void Interpreter::sendArithmetic(int which) {
 void Interpreter::sendSpecial(int which) {
     // Sista V1: Send special message (special selectors 0-15 map to selectors 16-31)
 
-    // Trace value: (which=10) sends with nil arguments
     if constexpr (ENABLE_DEBUG_LOGGING) {
-    if (which == 10) {  // value:
-        Oop arg = stackValue(0);
-        Oop rcvr = stackValue(1);
-        Oop nilObj = memory_.nil();
-        static FILE* valueSendLog = nullptr;
-        static int valueSendCount = 0;
-        if (!valueSendLog) valueSendLog = nullptr;
-        if (valueSendLog && valueSendCount < 200 && arg.rawBits() == nilObj.rawBits()) {
-            valueSendCount++;
-            std::string rcvrClass = "<unknown>";
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(valueSendLog, "[VALUE: #%d] arg=nil rcvr=%s (0x%llx) depth=%zu\n",
-                    valueSendCount, rcvrClass.c_str(), (unsigned long long)rcvr.rawBits(), frameDepth_);
-            // Show recent bytecodes and method context
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    size_t bcStart = (1 + numLits) * 8;
-                    size_t ip = instructionPointer_ - mHdr->bytes();
-                    // Get method selector
-                    std::string methodSel = "<unknown>";
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                    fprintf(valueSendLog, "  in method: %s ip=%zu bcStart=%zu\n", methodSel.c_str(), ip, bcStart);
-                    // Show bytecodes leading up to value:
-                    fprintf(valueSendLog, "  bytecodes before value:: ");
-                    for (int i = -10; i <= 0; i++) {
-                        if ((int)ip + i >= (int)bcStart) {
-                            uint8_t bc = mHdr->bytes()[(int)ip + i];
-                            fprintf(valueSendLog, "%02x ", bc);
-                        }
-                    }
-                    fprintf(valueSendLog, "\n");
-                }
-            }
-            // Show stack around the nil
-            fprintf(valueSendLog, "  stack: ");
-            for (int i = 0; i < 5; i++) {
-                Oop sv = stackValue(i);
-                fprintf(valueSendLog, "[%d]=0x%llx ", i, (unsigned long long)sv.rawBits());
-            }
-            fprintf(valueSendLog, "\n");
-            // Show the BLOCK's bytecodes to understand if it has ifNotNil: check
-            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                ObjectHeader* blockHdr = rcvr.asObjectPtr();
-                // FullBlockClosure slot 1 = compiledBlock
-                if (blockHdr->slotCount() > 1) {
-                    Oop compiledBlock = blockHdr->slotAt(1);
-                    if (compiledBlock.isObject() && compiledBlock.rawBits() > 0x10000) {
-                        ObjectHeader* cbHdr = compiledBlock.asObjectPtr();
-                        Oop cbMethHdr = memory_.fetchPointer(0, compiledBlock);
-                        if (cbMethHdr.isSmallInteger()) {
-                            size_t numLits = cbMethHdr.asSmallInteger() & 0x7FFF;
-                            size_t bcStart = (1 + numLits) * 8;
-                            size_t totalBytes = cbHdr->byteSize();
-                            fprintf(valueSendLog, "  Block's bytecodes (%zu lits, bc start @%zu, total %zu): ",
-                                    numLits, bcStart, totalBytes);
-                            for (size_t i = bcStart; i < totalBytes && i < bcStart + 30; i++) {
-                                fprintf(valueSendLog, "%02x ", cbHdr->bytes()[i]);
-                            }
-                            fprintf(valueSendLog, "\n");
-                        }
-                    }
-                }
-            }
-            // Dump call stack to see full context
-            fprintf(valueSendLog, "  Call stack:\n");
-            for (size_t d = 0; d < frameDepth_ && d < 10; d++) {
-                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
-                std::string frameSel = "<unknown>";
-                if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                    ObjectHeader* mHdr = sf.savedMethod.asObjectPtr();
-                    Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop sel = memory_.fetchPointer(numLits - 1, sf.savedMethod);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* selHdr = sel.asObjectPtr();
-                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                    frameSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-                fprintf(valueSendLog, "    [%zu] %s\n", d, frameSel.c_str());
-            }
-            fflush(valueSendLog);
-        }
-    }
-
-    // Trace #do: (which=11) to see what collection is being iterated
-    if (which == 11) {  // #do:
-        Oop block = stackValue(0);
-        Oop collection = stackValue(1);
-        static FILE* doSendLog = nullptr;
-        static int doSendCount = 0;
-        if (!doSendLog) doSendLog = nullptr;
-        if (doSendLog && doSendCount < 50) {
-            doSendCount++;
-            std::string collClass = "<unknown>";
-            int collSlots = -1;
-            if (collection.isObject() && collection.rawBits() > 0x10000) {
-                ObjectHeader* collHdr = collection.asObjectPtr();
-                collSlots = collHdr->slotCount();
-                Oop cls = memory_.classOf(collection);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            collClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            // Get caller method selector
-            std::string callerSel = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                callerSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(doSendLog, "[DO: #%d] collection=%s (0x%llx, %d slots) caller=#%s\n",
-                    doSendCount, collClass.c_str(), (unsigned long long)collection.rawBits(), collSlots, callerSel.c_str());
-            // For Arrays with nil elements, show more details
-            bool hasNil = false;
-            if (collClass == "Array" && collection.isObject()) {
-                ObjectHeader* collHdr = collection.asObjectPtr();
-                Oop nilObj = memory_.nil();
-                for (size_t i = 0; i < collHdr->slotCount(); i++) {
-                    if (collHdr->slotAt(i).rawBits() == nilObj.rawBits()) {
-                        hasNil = true;
-                        break;
-                    }
-                }
-            }
-            if (hasNil) {
-                ObjectHeader* collHdr = collection.asObjectPtr();
-                fprintf(doSendLog, "  *** Array with NIL elements! Elements: ");
-                Oop nilObj = memory_.nil();
-                int nilCount = 0;
-                for (size_t i = 0; i < collHdr->slotCount() && i < 15; i++) {
-                    Oop elem = collHdr->slotAt(i);
-                    if (elem.rawBits() == nilObj.rawBits()) {
-                        fprintf(doSendLog, "[nil] ");
-                        nilCount++;
-                    } else if (elem.isObject()) {
-                        Oop elemCls = memory_.classOf(elem);
-                        if (elemCls.isObject()) {
-                            Oop elemClsName = memory_.fetchPointer(6, elemCls);
-                            if (elemClsName.isObject() && elemClsName.rawBits() > 0x10000) {
-                                ObjectHeader* ecnHdr = elemClsName.asObjectPtr();
-                                if (ecnHdr->isBytesObject() && ecnHdr->byteSize() < 30) {
-                                    std::string ecn((char*)ecnHdr->bytes(), ecnHdr->byteSize());
-                                    fprintf(doSendLog, "[%s] ", ecn.c_str());
-                                } else {
-                                    fprintf(doSendLog, "[obj] ");
-                                }
-                            } else {
-                                fprintf(doSendLog, "[obj] ");
-                            }
-                        } else {
-                            fprintf(doSendLog, "[obj?] ");
-                        }
-                    } else {
-                        fprintf(doSendLog, "[0x%llx] ", (unsigned long long)elem.rawBits());
-                    }
-                }
-                fprintf(doSendLog, " (total %d, nilCount=%d)\n", collSlots, nilCount);
-                // Show call stack
-                fprintf(doSendLog, "  Call stack:\n");
-                for (size_t d = 0; d < frameDepth_ && d < 8; d++) {
-                    SavedFrame& sf = savedFrames_[frameDepth_ - 1 - d];
-                    std::string frameSel = "<unknown>";
-                    std::string frameRcvr = "<unknown>";
-                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                        Oop fhdr = memory_.fetchPointer(0, sf.savedMethod);
-                        if (fhdr.isSmallInteger()) {
-                            size_t fnLits = fhdr.asSmallInteger() & 0x7FFF;
-                            if (fnLits >= 2) {
-                                Oop fsel = memory_.fetchPointer(fnLits - 1, sf.savedMethod);
-                                if (fsel.isObject()) {
-                                    ObjectHeader* fselHdr = fsel.asObjectPtr();
-                                    if (fselHdr->isBytesObject() && fselHdr->byteSize() < 50) {
-                                        frameSel = std::string((char*)fselHdr->bytes(), fselHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if (sf.savedReceiver.isObject()) {
-                        Oop frc = memory_.classOf(sf.savedReceiver);
-                        if (frc.isObject()) {
-                            Oop frcName = memory_.fetchPointer(6, frc);
-                            if (frcName.isObject() && frcName.rawBits() > 0x10000) {
-                                ObjectHeader* frnH = frcName.asObjectPtr();
-                                if (frnH->isBytesObject() && frnH->byteSize() < 50) {
-                                    frameRcvr = std::string((char*)frnH->bytes(), frnH->byteSize());
-                                }
-                            }
-                        }
-                    }
-                    fprintf(doSendLog, "    [%zu] %s >> #%s\n", d, frameRcvr.c_str(), frameSel.c_str());
-                }
-            }
-            fflush(doSendLog);
-        }
-    }
+        // Debug logging for value: and do: sends (disabled)
     }
     // Delegates to existing commonSend implementation which handles selectors 16-31
     commonSend(which);
@@ -5980,9 +5053,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             Oop quitArg = stackValue(0);
             bool shouldQuit = quitArg.rawBits() == memory_.trueObject().rawBits();
             bool shouldSave = saveArg.rawBits() == memory_.trueObject().rawBits();
-            if (shouldSave) {
-                std::cerr << "[VM] Save disabled - ignoring save request\n";
-            }
+            (void)shouldSave;
             if (shouldQuit) {
                 stopVM("snapshot:andQuit: quit requested");
                 popN(argCount + 1);
@@ -6227,13 +5298,6 @@ void Interpreter::handleStackOverflow(int argCount) {
     // Stack overflow — terminate this process and switch to the next one.
     // This is correct VM behavior: a runaway process should not kill the
     // entire VM. The scheduler continues with other processes.
-    static int soCount = 0;
-    soCount++;
-    if (soCount <= 20 || soCount % 100 == 0) {
-        std::cerr << "[STACK-OVERFLOW #" << soCount << "] frameDepth=" << frameDepth_
-                  << " step=" << g_stepNum << " sel=" << g_lastSelName << "\n";
-    }
-
     // Pop args+receiver that the send bytecode already pushed
     for (int i = 0; i < argCount + 1; i++) pop();
 
@@ -6307,60 +5371,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Check for corrupt receiver (object pointer outside heap)
-    if ((receiver_.rawBits() & 7) == 0 && receiver_.rawBits() != 0 && !memory_.isValidPointer(receiver_)) {
-        static int corruptRcvrCount = 0;
-        if (++corruptRcvrCount <= 3) {
-            // Get selector of the method being activated
-            std::string sel = "?";
-            if (method.isObject() && method.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, method);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop selOop = memory_.fetchPointer(nl - 1, method);
-                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                            ObjectHeader* sh = selOop.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 100)
-                                sel = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "[CORRUPT-RCVR #%d] rcvr=0x%llx activating=#%s step=%llu fd=%zu\n",
-                    corruptRcvrCount, (unsigned long long)receiver_.rawBits(),
-                    sel.c_str(), (unsigned long long)g_stepNum, frameDepth_);
-            // Dump the CALLER's state (before pushFrame changed things)
-            fprintf(stderr, "  caller: sel=#");
-            if (savedFrames_[frameDepth_ - 1].savedMethod.isObject()) {
-                Oop callerMeth = savedFrames_[frameDepth_ - 1].savedMethod;
-                Oop chdr = memory_.fetchPointer(0, callerMeth);
-                if (chdr.isSmallInteger()) {
-                    int cnl = chdr.asSmallInteger() & 0x7FFF;
-                    if (cnl >= 2 && cnl < 100) {
-                        Oop csel = memory_.fetchPointer(cnl - 1, callerMeth);
-                        if (csel.isObject() && csel.rawBits() > 0x10000) {
-                            ObjectHeader* csh = csel.asObjectPtr();
-                            if (csh->isBytesObject() && csh->byteSize() < 100)
-                                fprintf(stderr, "%.*s", (int)csh->byteSize(), (char*)csh->bytes());
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, " rcvr=0x%llx\n", (unsigned long long)savedFrames_[frameDepth_ - 1].savedReceiver.rawBits());
-            // Show stack around FP
-            int depth = static_cast<int>(stackPointer_ - stackBase_);
-            int fpIdx = static_cast<int>(framePointer_ - stackBase_);
-            fprintf(stderr, "  stackDepth=%d fpIdx=%d argCount=%d\n", depth, fpIdx, argCount);
-            for (int i = std::max(0, fpIdx - 2); i < std::min(depth, fpIdx + argCount + 3); i++) {
-                Oop v = stackBase_[i];
-                const char* marker = (v.rawBits() == receiver_.rawBits()) ? " <<<CORRUPT" : "";
-                const char* fpMark = (i == fpIdx) ? " <=FP" : "";
-                fprintf(stderr, "    [%d] 0x%llx%s%s\n", i, (unsigned long long)v.rawBits(), fpMark, marker);
-            }
-            std::cerr.flush();
-        }
-    }
 
 
     // Trace fullCheck activation specifically (disabled for performance)
@@ -6386,45 +5396,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
         }
         if (methodSelector == "fullCheck") {
-            static FILE* fcActivateLog = nullptr;
-            static int fcActivateCount = 0;
             if constexpr (ENABLE_DEBUG_LOGGING) {
-                if (!fcActivateLog) fcActivateLog = nullptr;
-            }
-            if (fcActivateLog && fcActivateCount < 10) {
-                fcActivateCount++;
-                fprintf(fcActivateLog, "[FC-ACTIVATE #%d] fullCheck activated\n", fcActivateCount);
-                fprintf(fcActivateLog, "  receiver_ = 0x%llx\n", (unsigned long long)receiver_.rawBits());
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-                    fprintf(fcActivateLog, "  rawHdr = 0x%llx slots=%d classIdx=%d\n",
-                            (unsigned long long)rcvrHdr->rawHeader(),
-                            rcvrHdr->slotCount(), rcvrHdr->classIndex());
-                    Oop cls = memory_.classOf(receiver_);
-                    if (cls.isObject()) {
-                        Oop clsName = memory_.fetchPointer(6, cls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* cnHdr = clsName.asObjectPtr();
-                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                std::string cn((char*)cnHdr->bytes(), cnHdr->byteSize());
-                                fprintf(fcActivateLog, "  class = %s\n", cn.c_str());
-                            }
-                        }
-                    }
-                } else {
-                    fprintf(fcActivateLog, "  receiver is nil or SmallInteger!\n");
-                }
-                fflush(fcActivateLog);
             }
         }
         // TRACE: After fullCheck section
     }
 
-    // Trace method activation to debug SessionManager default (disabled for performance)
-    [[maybe_unused]] static FILE* actLog = nullptr;
-    [[maybe_unused]] static int actCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-    // TRACE: Enter SessionManager section
+    static FILE* actLog = nullptr;
+    static int actCount = 0;
     if (!actLog) actLog = nullptr;
     if (actLog && actCount < 200) {
         // TRACE: Inside actLog && actCount condition
@@ -6516,28 +5496,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     if (__builtin_expect(!methodHeader.isSmallInteger(), 0)) {
         // Method header must be a SmallInteger. If it's not, the method object
         // is corrupted (possibly by GC or by activating a non-method object).
-        fprintf(stderr, "[FATAL] activateMethod: method header is not SmallInteger!\n"
-                "  method_=0x%llx cls=%u fmt=%d slots=%zu\n"
-                "  header=0x%llx tag=%d isObj=%d\n"
-                "  newMethod_=0x%llx receiver_=0x%llx\n"
-                "  step=%llu frameDepth=%zu\n",
-                (unsigned long long)method_.rawBits(),
-                methodObj->classIndex(), (int)methodObj->format(),
-                methodObj->slotCount(),
-                (unsigned long long)methodHeader.rawBits(),
-                (int)(methodHeader.rawBits() & 7),
-                methodHeader.isObject(),
-                (unsigned long long)newMethod_.rawBits(),
-                (unsigned long long)receiver_.rawBits(),
-                (unsigned long long)g_stepNum, frameDepth_);
-        // Print the first 4 slots of the method object for diagnosis
-        fprintf(stderr, "  slots:");
-        for (size_t i = 0; i < std::min(methodObj->slotCount(), (size_t)4); ++i) {
-            Oop s = methodObj->slotAt(i);
-            fprintf(stderr, " [%zu]=0x%llx", i, (unsigned long long)s.rawBits());
-        }
-        fprintf(stderr, "\n");
-        fflush(stderr);
         abort();
     }
     int64_t headerBits = methodHeader.asSmallInteger();
@@ -6580,33 +5538,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     bytecodeEnd_ = methodBytes + totalBytes;
 
     // DEBUG: Dump bytecodes for signal method
-    static FILE* bcLog = nullptr;
     static int activationCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!bcLog) bcLog = nullptr;
     }
     activationCount++;
-    if (bcLog && methodObj->slotCount() > 1 && activationCount < 100) {
-        std::string sel = "";
-        Oop lit1 = methodObj->slotAt(1);
-        if (lit1.isObject()) {
-            ObjectHeader* litHdr = lit1.asObjectPtr();
-            if (litHdr->isBytesObject() && litHdr->byteSize() < 50) {
-                sel = std::string((char*)litHdr->bytes(), litHdr->byteSize());
-            }
-        }
-        if (activationCount >= 10 && activationCount <= 15) {
-            fprintf(bcLog, "[BC#%d] Activating '%s' sistaV1=%d rcvr=0x%llx clsIdx=%u, first 20 bytes: ",
-                    activationCount, sel.c_str(), usesSistaV1_ ? 1 : 0,
-                    (unsigned long long)receiver_.rawBits(),
-                    receiver_.isObject() ? receiver_.asObjectPtr()->classIndex() : 0);
-            for (int i = 0; i < 20 && instructionPointer_ + i < bytecodeEnd_; i++) {
-                fprintf(bcLog, "%02X ", instructionPointer_[i]);
-            }
-            fprintf(bcLog, "\n");
-            fflush(bcLog);
-        }
-    }
 
     // DEBUG_LOG("[ACTIVATE] clsIdx=" << (method.isObject() ? method.asObjectPtr()->classIndex() : 0)
               // << " rawHdr=0x" << std::hex << methodHeader.rawBits()
@@ -6756,25 +5691,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // 1. Getting the home method from the CompiledBlock (the last literal is the enclosing method)
     // 2. Walking up the frame stack to find a frame executing that home method
     {
-        static FILE* abLog = nullptr;
-        static int abLogCount = 0;
-        if (!abLog) abLog = nullptr;
-        if (abLog && abLogCount++ < 200) {
-            fprintf(abLog, "[AB #%d] fd=%zu homeMethodForNLR=0x%llx isObj=%d isNil=%d\n",
-                    abLogCount, frameDepth_,
-                    (unsigned long long)homeMethodForNLR.rawBits(),
-                    homeMethodForNLR.isObject(), homeMethodForNLR.isNil());
-            if (frameDepth_ > 1) {
-                // Show method_ (current active method)
-                fprintf(abLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
-                // Show saved methods on stack
-                for (size_t i = 0; i < frameDepth_ && i < 10; i++) {
-                    fprintf(abLog, "  savedFrames_[%zu].savedMethod=0x%llx\n",
-                            i, (unsigned long long)savedFrames_[i].savedMethod.rawBits());
-                }
-            }
-            fflush(abLog);
-        }
     }
     if (frameDepth_ >= 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         size_t homeFrame = SIZE_MAX;  // Default: not found
@@ -6936,7 +5852,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 bool Interpreter::pushFrame(Oop method, int argCount) {
     // Save current execution state before switching to new method
     if (frameDepth_ >= MaxFrameDepth) {
-        std::cerr << "[VM-STOP] Frame depth overflow in pushFrame(): " << frameDepth_ << " >= " << MaxFrameDepth << "\n";
         stopVM("Frame depth overflow in pushFrame()");
         return false;
     }
@@ -6946,12 +5861,6 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // pushing nil as a return value). This allows the Smalltalk code to unwind
     // naturally as each method returns nil to its caller.
     if (frameDepth_ >= StackOverflowLimit) {
-        static int soCount = 0;
-        if (++soCount <= 5) {
-            std::cerr << "[STACK-OVERFLOW] frameDepth=" << frameDepth_
-                      << " at limit " << StackOverflowLimit
-                      << " step=" << g_stepNum << "\n";
-        }
         return false;
     }
 
@@ -7093,16 +6002,6 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
 
     // New frame pointer is at current position minus args (receiver is first "arg")
     Oop* newFP = stackPointer_ - argCount - 1;  // -1 for receiver position
-    if (newFP < stackBase_) {
-        static int fpBelowBaseCount = 0;
-        if (++fpBelowBaseCount <= 10) {
-            std::cerr << "[FP-BELOW-BASE #" << fpBelowBaseCount
-                      << "] newFP=" << (void*)newFP << " stackBase_=" << (void*)stackBase_
-                      << " SP=" << (void*)stackPointer_ << " argCount=" << argCount
-                      << " fd=" << frameDepth_ << " step=" << g_stepNum
-                      << "\n";
-        }
-    }
     framePointer_ = newFP;
 
     // Initialize temporaries to nil (numTemps includes args, which are already on stack)
@@ -7155,7 +6054,6 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 void Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
-        std::cerr << "[VM-STOP] popFrame at frameDepth 0\n";
         stopVM("popFrame at frameDepth 0");
         return;
     }
@@ -7178,20 +6076,9 @@ void Interpreter::popFrame() {
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 
-    if (framePointer_ < stackBase_) {
-        static int popFpBelowCount = 0;
-        if (++popFpBelowCount <= 10) {
-            std::cerr << "[POP-FP-BELOW #" << popFpBelowCount
-                      << "] restored FP=" << (void*)framePointer_
-                      << " stackBase_=" << (void*)stackBase_
-                      << " fd=" << frameDepth_
-                      << " step=" << g_stepNum << "\n";
-        }
-    }
 
     // If this was the last frame, we're done
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
-        std::cerr << "[VM-STOP] Last frame popped in popFrame()\n";
         stopVM("Last frame popped in popFrame()");
     }
 }
@@ -7309,17 +6196,7 @@ Oop Interpreter::receiverInstVar(size_t index) const {
     Oop result = memory_.fetchPointer(index, receiver_);
 
     // Log slot 0 (superclass) accesses to debug infinite inheritsFrom loop
-    static FILE* instVarLog = nullptr;
-    static int instVarCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!instVarLog) instVarLog = nullptr;
-    }
-    if (instVarLog && index == 0 && instVarCount < 100) {
-        instVarCount++;
-        fprintf(instVarLog, "[INSTVAR #%d] slot0 receiver=0x%llx result=0x%llx\n",
-                instVarCount, (unsigned long long)receiver_.rawBits(),
-                (unsigned long long)result.rawBits());
-        fflush(instVarLog);
     }
 
     return result;
@@ -7340,307 +6217,11 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
         }
     }
 
-    // TRACE: Log OSSDL2Driver slot writes (especially inputSemaphore = slot 0)
-    if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcls = memory_.classOf(receiver_);
-        if (rcls.isObject()) {
-            Oop cn = memory_.fetchPointer(6, rcls);
-            if (cn.isObject() && cn.rawBits() > 0x10000) {
-                ObjectHeader* cnh = cn.asObjectPtr();
-                if (cnh->isBytesObject() && cnh->byteSize() == 12 &&
-                    memcmp(cnh->bytes(), "OSSDL2Driver", 12) == 0) {
-                    static FILE* sdlStoreLog = nullptr;
-                    static int sdlStoreCount = 0;
-                    if (!sdlStoreLog) sdlStoreLog = nullptr;
-                    if (sdlStoreLog && sdlStoreCount++ < 50) {
-                        bool isNil = (value.rawBits() == memory_.nil().rawBits());
-                        fprintf(sdlStoreLog, "[SDL2-STORE #%d step=%llu] slot[%zu] := 0x%llx%s\n",
-                                sdlStoreCount, (unsigned long long)g_stepNum, index,
-                                (unsigned long long)value.rawBits(), isNil ? " (NIL!)" : "");
-                        // Get method name
-                        std::string msel = "?";
-                        if (method_.isObject() && method_.rawBits() > 0x10000) {
-                            Oop mh = memory_.fetchPointer(0, method_);
-                            if (mh.isSmallInteger()) {
-                                int nl = mh.asSmallInteger() & 0x7FFF;
-                                if (nl >= 2) {
-                                    Oop s = memory_.fetchPointer(nl - 1, method_);
-                                    if (s.isObject() && s.rawBits() > 0x10000) {
-                                        ObjectHeader* sh = s.asObjectPtr();
-                                        if (sh->isBytesObject() && sh->byteSize() < 50)
-                                            msel = std::string((char*)sh->bytes(), sh->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(sdlStoreLog, "  from method: #%s\n", msel.c_str());
-                        fflush(sdlStoreLog);
-                    }
-                }
-            }
-        }
-    }
-
-    // TRACE: Log when Context sender (slot 0) is written during setupEventLoop
-    if (index == 0 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrCls = memory_.classOf(receiver_);
-        if (rcvrCls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, rcvrCls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject()) {
-                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
-                    if (name == "Context") {
-                        static FILE* ctxSenderLog = nullptr;
-                        static int ctxSenderCount = 0;
-                        ctxSenderCount++;
-                        // Only log during driver install timeframe (expanded range)
-                        if (g_stepNum >= 400000 && g_stepNum <= 450000 && ctxSenderCount <= 100) {
-                            if (!ctxSenderLog) ctxSenderLog = nullptr;
-                            if (ctxSenderLog) {
-                                Oop nilObj = memory_.nil();
-                                bool senderIsNil = (value.rawBits() == nilObj.rawBits());
-                                fprintf(ctxSenderLog, "[CTX-SENDER #%d step=%llu] Context 0x%llx sender := 0x%llx (nil=%d)\n",
-                                        ctxSenderCount, g_stepNum,
-                                        (unsigned long long)receiver_.rawBits(),
-                                        (unsigned long long)value.rawBits(),
-                                        senderIsNil ? 1 : 0);
-                                // Show what method this context is for
-                                Oop ctxMethod = memory_.fetchPointer(3, receiver_);
-                                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
-                                    if (mhdr.isSmallInteger()) {
-                                        int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                                        if (nLits >= 2 && nLits < 100) {
-                                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
-                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                ObjectHeader* selH = sel.asObjectPtr();
-                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                    fprintf(ctxSenderLog, "  context method: #%s\n",
-                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                // Show what method is setting this sender
-                                std::string methodSel = "<unknown>";
-                                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                                    ObjectHeader* mHdr = method_.asObjectPtr();
-                                    if (mHdr->isCompiledMethod()) {
-                                        Oop mh = memory_.fetchPointer(0, method_);
-                                        if (mh.isSmallInteger()) {
-                                            int nLits = mh.asSmallInteger() & 0x7FFF;
-                                            if (nLits >= 2 && nLits < 100) {
-                                                Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                    ObjectHeader* selH = sel.asObjectPtr();
-                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                        methodSel = std::string((char*)selH->bytes(), selH->byteSize());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                fprintf(ctxSenderLog, "  in method: #%s\n", methodSel.c_str());
-                                fflush(ctxSenderLog);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // TRACE: Log when Context PC (slot 1) is written - key for understanding wrong PC bug
-    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrCls = memory_.classOf(receiver_);
-        if (rcvrCls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, rcvrCls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject()) {
-                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
-                    if (name == "Context") {
-                        static FILE* ctxPcLog = nullptr;
-                        static int ctxPcCount = 0;
-                        ctxPcCount++;
-                        if (ctxPcCount <= 30) {
-                            if (!ctxPcLog) ctxPcLog = nullptr;
-                            if (ctxPcLog) {
-                                fprintf(ctxPcLog, "[CTX-PC #%d] Context 0x%llx pc := %lld\n",
-                                        ctxPcCount, (unsigned long long)receiver_.rawBits(),
-                                        value.isSmallInteger() ? value.asSmallInteger() : -999);
-                                // Also show what method this context is for
-                                Oop ctxMethod = memory_.fetchPointer(3, receiver_);  // Might be nil if not yet set
-                                if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                                    Oop mhdr = memory_.fetchPointer(0, ctxMethod);
-                                    if (mhdr.isSmallInteger()) {
-                                        int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                                        if (nLits >= 2 && nLits < 100) {
-                                            Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
-                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                ObjectHeader* selH = sel.asObjectPtr();
-                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                    fprintf(ctxPcLog, "  context method: #%s\n",
-                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                // Show call stack (what setter is running)
-                                if (method_.isObject()) {
-                                    Oop hdr = memory_.fetchPointer(0, method_);
-                                    if (hdr.isSmallInteger()) {
-                                        int nLits = hdr.asSmallInteger() & 0x7FFF;
-                                        if (nLits >= 2) {
-                                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                ObjectHeader* selH = sel.asObjectPtr();
-                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                    fprintf(ctxPcLog, "  set by method: #%s\n",
-                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                fflush(ctxPcLog);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // TRACE: Log when Process suspendedContext (slot 1) is written
-    // This is the KEY tracing point for understanding why forked processes have wrong context
-    if (index == 1 && receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop rcvrCls = memory_.classOf(receiver_);
-        if (rcvrCls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, rcvrCls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 7) {
-                    std::string name((char*)cnHdr->bytes(), 7);
-                    if (name == "Process") {
-                        static FILE* procCtxLog = nullptr;
-                        static int procCtxCount = 0;
-                        procCtxCount++;
-                        if (procCtxCount <= 30) {
-                            if (!procCtxLog) procCtxLog = nullptr;
-                            if (procCtxLog) {
-                                fprintf(procCtxLog, "[PROC-SLOT1 #%d] Process 0x%llx suspendedContext := 0x%llx\n",
-                                        procCtxCount, (unsigned long long)receiver_.rawBits(),
-                                        (unsigned long long)value.rawBits());
-                                // Show context details
-                                if (value.isObject() && value.rawBits() > 0x10000) {
-                                    Oop ctxMethod = memory_.fetchPointer(3, value);  // Method slot
-                                    std::string methName = "?";
-                                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                                        Oop mhdr = memory_.fetchPointer(0, ctxMethod);
-                                        if (mhdr.isSmallInteger()) {
-                                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                                            if (nLits >= 2 && nLits < 100) {
-                                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
-                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                    ObjectHeader* selH = sel.asObjectPtr();
-                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                        methName = std::string((char*)selH->bytes(), selH->byteSize());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    fprintf(procCtxLog, "  context method: #%s (0x%llx)\n",
-                                            methName.c_str(), (unsigned long long)ctxMethod.rawBits());
-                                    Oop sender = memory_.fetchPointer(0, value);
-                                    fprintf(procCtxLog, "  context sender: 0x%llx\n",
-                                            (unsigned long long)sender.rawBits());
-                                }
-                                // Show call stack
-                                fprintf(procCtxLog, "  Call stack (current method: ");
-                                if (method_.isObject()) {
-                                    Oop hdr = memory_.fetchPointer(0, method_);
-                                    if (hdr.isSmallInteger()) {
-                                        int nLits = hdr.asSmallInteger() & 0x7FFF;
-                                        if (nLits >= 2) {
-                                            Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                ObjectHeader* selH = sel.asObjectPtr();
-                                                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                    fprintf(procCtxLog, "#%s",
-                                                            std::string((char*)selH->bytes(), selH->byteSize()).c_str());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                fprintf(procCtxLog, ")\n");
-                                fflush(procCtxLog);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     // Check if receiver is a byte object - can't store to byte objects
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
         if (hdr->isBytesObject() || hdr->isCompiledMethod()) {
-            // std::cerr << "[WARN] Attempting to write instVar " << index
-                      // << " to byte object - ignored";
             return;
-        }
-    }
-
-    // Trace stores to SessionManager
-    static FILE* storeLog = nullptr;
-    static int storeCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!storeLog) storeLog = nullptr;
-    }
-    if (storeLog && storeCount < 100) {
-        std::string rcvrName = "<unknown>";
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            Oop cls = memory_.classOf(receiver_);
-            if (cls.isObject()) {
-                Oop clsName = memory_.fetchPointer(6, cls);
-                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                    ObjectHeader* cnHdr = clsName.asObjectPtr();
-                    if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                        rcvrName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                    }
-                }
-            }
-        }
-        if (rcvrName.find("Session") != std::string::npos || storeCount < 30) {
-            storeCount++;
-            std::string valueName = "<unknown>";
-            if (value.isObject() && value.rawBits() > 0x10000) {
-                Oop vCls = memory_.classOf(value);
-                if (vCls.isObject()) {
-                    Oop vClsName = memory_.fetchPointer(6, vCls);
-                    if (vClsName.isObject() && vClsName.rawBits() > 0x10000) {
-                        ObjectHeader* vCnHdr = vClsName.asObjectPtr();
-                        if (vCnHdr->isBytesObject() && vCnHdr->byteSize() < 50) {
-                            valueName = std::string((char*)vCnHdr->bytes(), vCnHdr->byteSize());
-                        }
-                    }
-                }
-            } else if (value.isSmallInteger()) {
-                valueName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
-            }
-            fprintf(storeLog, "[STORE #%d] %s slot[%zu] := 0x%llx (%s) (receiver=0x%llx)\n",
-                    storeCount, rcvrName.c_str(), index,
-                    (unsigned long long)value.rawBits(), valueName.c_str(),
-                    (unsigned long long)receiver_.rawBits());
-            fflush(storeLog);
         }
     }
 
@@ -7653,84 +6234,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
 
-    // General DNU tracing: log first 5 DNUs for debugging
-    static int generalDnuCount = 0;
-    if (generalDnuCount < 50) {
-        generalDnuCount++;
-        std::string selName = "?";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() < 100)
-                selName = std::string((char*)sh->bytes(), sh->byteSize());
-        }
-        std::string rcvClass = "?";
-        Oop rcv = stackValue(argCount);
-        if (rcv.isSmallInteger()) rcvClass = "SmallInteger";
-        else if (rcv.isNil()) rcvClass = "nil";
-        else if (rcv.rawBits() == memory_.trueObject().rawBits()) rcvClass = "true";
-        else if (rcv.rawBits() == memory_.falseObject().rawBits()) rcvClass = "false";
-        else if (rcv.isSmallFloat()) rcvClass = "SmallFloat64";
-        else if (rcv.isCharacter()) rcvClass = "Character";
-        else if (rcv.isObject() && rcv.rawBits() > 0x10000) {
-            Oop cls = memory_.classOf(rcv);
-            if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
-                Oop nameOop = memory_.fetchPointer(6, cls);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nh = nameOop.asObjectPtr();
-                    if (nh->isBytesObject() && nh->byteSize() < 100)
-                        rcvClass = std::string((char*)nh->bytes(), nh->byteSize());
-                }
-                // If name not found, receiver might BE a class (metaclass instance)
-                // Try reading receiver's slot 6 (class name) directly
-                if (rcvClass == "?" && memory_.slotCountOf(rcv) > 6) {
-                    Oop nameOop = memory_.fetchPointer(6, rcv);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nh = nameOop.asObjectPtr();
-                        if (nh->isBytesObject() && nh->byteSize() < 100)
-                            rcvClass = std::string((char*)nh->bytes(), nh->byteSize()) + " class";
-                    }
-                }
-                // Still unknown? Show class index for debugging
-                if (rcvClass == "?") {
-                    rcvClass = "?(classIdx=" + std::to_string(rcv.asObjectPtr()->classIndex()) + ")";
-                }
-            }
-        }
-        // Also show the calling method
-        std::string callerSel = "?";
-        if (frameDepth_ > 0) {
-            auto& sf = savedFrames_[frameDepth_ - 1];
-            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, sf.savedMethod);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2) {
-                        Oop s = memory_.fetchPointer(nl - 1, sf.savedMethod);
-                        if (s.isObject() && s.rawBits() > 0x10000) {
-                            ObjectHeader* sh2 = s.asObjectPtr();
-                            if (sh2->isBytesObject() && sh2->byteSize() < 100)
-                                callerSel = std::string((char*)sh2->bytes(), sh2->byteSize());
-                        }
-                    }
-                }
-            }
-        }
-        fprintf(stderr, "[DNU #%d] %s >> #%s (args=%d) caller=%s fd=%zu step=%llu rcv=0x%llx",
-                generalDnuCount, rcvClass.c_str(), selName.c_str(), argCount,
-                callerSel.c_str(), frameDepth_, (unsigned long long)g_stepNum,
-                (unsigned long long)rcv.rawBits());
-        if (rcv.isObject() && rcv.rawBits() > 0x10000) {
-            fprintf(stderr, " classIdx=%d", rcv.asObjectPtr()->classIndex());
-            Oop cls = memory_.classOf(rcv);
-            if (cls.isObject() && cls.rawBits() > 0x10000)
-                fprintf(stderr, " clsAddr=0x%llx", (unsigned long long)cls.rawBits());
-        }
-        fprintf(stderr, "\n");
-
-        fflush(stderr);
-    }
-
-    dnuDepth++;
+        dnuDepth++;
 
     // If the selector IS doesNotUnderstand:, we're in a recursive DNU cascade.
     // The standard VM terminates the process in this case — there's no way to recover
@@ -7739,13 +6243,12 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         bool isDnuSelector = false;
         if (selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() == 21 &&
+            if (sh->isBytesObject() && sh->byteSize() == 18 &&
                 memcmp(sh->bytes(), "doesNotUnderstand:", 18) == 0) {
                 isDnuSelector = true;
             }
         }
         if (isDnuSelector || selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
-            std::cerr << "[DNU-CASCADE] doesNotUnderstand: itself not found on receiver — terminating active process\n";
             dnuDepth--;
             // Standard VM behavior: terminate the active process, not the whole VM.
             // The process has an unrecoverable error (its receiver's class hierarchy
@@ -7763,7 +6266,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     // Depth limit — stop VM if stuck in DNU recursion
     if (dnuDepth > MAX_DNU_DEPTH) {
-        std::cerr << "[DNU-DEPTH] DNU depth " << dnuDepth << " exceeded limit\n";
         dnuDepth--;
         stopVM("DNU recursion depth exceeded — infinite doesNotUnderstand: loop");
         return;
@@ -7783,7 +6285,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     Oop message = memory_.allocateSlots(messageClassIdx, 3, ObjectFormat::FixedSize);
 
     if (message.rawBits() == memory_.nil().rawBits()) {
-        std::cerr << "[DNU-FATAL] Failed to allocate Message object\n";
         pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
         dnuDepth--;
@@ -7803,7 +6304,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     Oop args = memory_.allocateSlots(arrayClassIdx, argCount, ObjectFormat::Indexable);
 
     if (args.rawBits() == memory_.nil().rawBits() && argCount > 0) {
-        std::cerr << "[DNU-FATAL] Failed to allocate Array for DNU args\n";
         pop();  // message
         pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
@@ -7890,201 +6390,7 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
-    // If this causes infinite recursion, the DNU depth limit will stopVM().
-    static int mbCount = 0;
-    mbCount++;
-    if (mbCount <= 30) {
-        std::string clsName = "?";
-        if (value.isSmallInteger()) {
-            clsName = "SmallInteger(" + std::to_string(value.asSmallInteger()) + ")";
-        } else if (value.isObject()) {
-            Oop cls = memory_.classOf(value);
-            if (cls.isObject() && cls.asObjectPtr()->slotCount() > 6) {
-                Oop name = memory_.fetchPointer(6, cls);
-                if (name.isObject() && name.asObjectPtr()->isBytesObject() && name.asObjectPtr()->byteSize() < 100)
-                    clsName = std::string((char*)name.asObjectPtr()->bytes(), name.asObjectPtr()->byteSize());
-            }
-        }
-        std::string mSel = "?";
-        if (method_.isObject()) {
-            Oop mh = memory_.fetchPointer(0, method_);
-            if (mh.isSmallInteger()) {
-                int nL = mh.asSmallInteger() & 0x7FFF;
-                if (nL >= 2 && nL < 100) {
-                    Oop sel = memory_.fetchPointer(nL - 1, method_);
-                    if (sel.isObject() && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
-                        mSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
-                }
-            }
-        }
-        // Check if value is a forwarding pointer (format=0 with non-zero classIndex used as forwarding address)
-        bool isForwarder = false;
-        if (value.isObject()) {
-            ObjectHeader* hdr = value.asObjectPtr();
-            isForwarder = (hdr->format() == ObjectFormat::ZeroSized && hdr->classIndex() == 0 &&
-                          hdr->slotCount() == 0);  // Heuristic for freed/forwarded object
-        }
-        // Also dump the stack context: what receiver, what IP offset
-        std::string rcvrCls = "?";
-        if (receiver_.isObject()) {
-            Oop rc = memory_.classOf(receiver_);
-            if (rc.isObject() && rc.asObjectPtr()->slotCount() > 6) {
-                Oop rn = memory_.fetchPointer(6, rc);
-                if (rn.isObject() && rn.asObjectPtr()->isBytesObject() && rn.asObjectPtr()->byteSize() < 100)
-                    rcvrCls = std::string((char*)rn.asObjectPtr()->bytes(), rn.asObjectPtr()->byteSize());
-            }
-        }
-        int ipOff = -1;
-        if (method_.isObject() && instructionPointer_) {
-            ipOff = static_cast<int>(instructionPointer_ - method_.asObjectPtr()->bytes());
-        }
-        fprintf(stderr, "[MUSTBEBOOL #%d] value=0x%llx class=%s method=%s rcvr=%s ipOff=%d fd=%zu fwd=%d gcCount=%d",
-                mbCount, (unsigned long long)value.rawBits(), clsName.c_str(), mSel.c_str(),
-                rcvrCls.c_str(), ipOff, frameDepth_, isForwarder,
-                memory_.statistics().gcCount);
-        // Print diagnostic: is this actually true/false at a different address?
-        fprintf(stderr, " true=0x%llx false=0x%llx",
-                (unsigned long long)memory_.trueObject().rawBits(),
-                (unsigned long long)memory_.falseObject().rawBits());
-        // If value is an object, print raw header bytes and check if it's inside another object
-        if (value.isObject()) {
-            auto* hdr = value.asObjectPtr();
-            uint64_t rawHdr = *reinterpret_cast<uint64_t*>(hdr);
-            fprintf(stderr, " hdr=0x%llx fmt=%d ci=%d slots=%zu",
-                    (unsigned long long)rawHdr, (int)hdr->format(),
-                    (int)hdr->classIndex(), hdr->slotCount());
-            // Check if value is between heap start and first regular object
-            auto* heapStart = memory_.oldSpaceStart();
-            ptrdiff_t heapOffset = reinterpret_cast<uint8_t*>(hdr) - heapStart;
-            fprintf(stderr, " heapOff=0x%llx", (unsigned long long)heapOffset);
-        }
-        fprintf(stderr, "\n");
-        // Enhanced: dump method header, bytecodes around IP, and stack
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mhdr = memory_.fetchPointer(0, method_);
-            int64_t hdrVal = mhdr.isSmallInteger() ? mhdr.asSmallInteger() : 0;
-            int nLits = hdrVal & 0x7FFF;
-            int nTemps = (hdrVal >> 18) & 0x3F;
-            int nArgs = (hdrVal >> 24) & 0xF;
-            int primIdx = primitiveIndexOf(method_);
-            fprintf(stderr, "  method hdr=0x%llx nLits=%d nTemps=%d nArgs=%d prim=%d\n",
-                    (unsigned long long)hdrVal, nLits, nTemps, nArgs, primIdx);
-            // Dump bytecodes around IP
-            if (instructionPointer_ && ipOff > 0) {
-                uint8_t* mBytes = method_.asObjectPtr()->bytes();
-                size_t mSize = method_.asObjectPtr()->byteSize();
-                int bcStart = ipOff - 10;
-                if (bcStart < (1+nLits)*8) bcStart = (1+nLits)*8;
-                int bcEnd = ipOff + 10;
-                if (bcEnd > (int)mSize) bcEnd = (int)mSize;
-                fprintf(stderr, "  bytecodes[%d..%d] (IP at %d): ", bcStart, bcEnd-1, ipOff);
-                for (int b = bcStart; b < bcEnd; b++) {
-                    if (b == ipOff) fprintf(stderr, "[");
-                    fprintf(stderr, "%02x", mBytes[b]);
-                    if (b == ipOff) fprintf(stderr, "]");
-                    fprintf(stderr, " ");
-                }
-                fprintf(stderr, "\n");
-            }
-            // Dump the selector from all possible positions
-            for (int li = nLits; li >= std::max(1, nLits-2); li--) {
-                Oop lit = memory_.fetchPointer(li, method_);
-                if (lit.isObject() && lit.rawBits() > 0x10000) {
-                    ObjectHeader* lh = lit.asObjectPtr();
-                    if (lh->isBytesObject() && lh->byteSize() < 100) {
-                        fprintf(stderr, "  literal[%d]='%.*s'\n", li, (int)lh->byteSize(), (char*)lh->bytes());
-                    } else {
-                        fprintf(stderr, "  literal[%d]=obj(cls=%u slots=%zu)\n", li, lh->classIndex(), lh->slotCount());
-                    }
-                }
-            }
-        }
-        // Dump recent bytecodes from circular buffer (last 40, newest first)
-        fprintf(stderr, "  recentBytecodes (newest→oldest): ");
-        for (int rb = 0; rb < 40; rb++) {
-            uint8_t b = recentBytecodes_[(recentBytecodeIdx_ - 1 - rb + 256) % 256];
-            fprintf(stderr, "%02x ", b);
-        }
-        fprintf(stderr, "\n");
-        // Also dump saved frames info
-        fprintf(stderr, "  savedFrames (fd=%zu): ", frameDepth_);
-        for (size_t sf = 0; sf < frameDepth_ && sf < 5; sf++) {
-            auto& f = savedFrames_[sf];
-            std::string sfSel = "?";
-            if (f.savedMethod.isObject() && f.savedMethod.rawBits() > 0x10000) {
-                Oop mh = memory_.fetchPointer(0, f.savedMethod);
-                if (mh.isSmallInteger()) {
-                    int nL = mh.asSmallInteger() & 0x7FFF;
-                    if (nL >= 2 && nL < 100) {
-                        Oop sel = memory_.fetchPointer(nL - 1, f.savedMethod);
-                        if (sel.isObject() && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
-                            sfSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
-                    }
-                }
-            }
-            int sfIpOff = -1;
-            if (f.savedMethod.isObject() && f.savedIP)
-                sfIpOff = static_cast<int>(f.savedIP - f.savedMethod.asObjectPtr()->bytes());
-            fprintf(stderr, "[%zu]%s@%d ", sf, sfSel.c_str(), sfIpOff);
-        }
-        fprintf(stderr, "\n");
-        // Dump inline stack
-        {
-            int stackDepth = static_cast<int>(stackPointer_ - stackBase_);
-            int fpOff = static_cast<int>(framePointer_ - stackBase_);
-            fprintf(stderr, "  stack: depth=%d fpOff=%d\n", stackDepth, fpOff);
-            int dumpStart = std::max(0, fpOff - 2);
-            int dumpEnd = std::min(stackDepth, fpOff + 20);
-            for (int s = dumpStart; s < dumpEnd; s++) {
-                Oop v = stackBase_[s];
-                const char* marker = (s == fpOff) ? " <=FP" : "";
-                if (v.rawBits() == memory_.trueObject().rawBits())
-                    fprintf(stderr, "    [%d] TRUE%s\n", s, marker);
-                else if (v.rawBits() == memory_.falseObject().rawBits())
-                    fprintf(stderr, "    [%d] FALSE%s\n", s, marker);
-                else if (v.rawBits() == memory_.nil().rawBits())
-                    fprintf(stderr, "    [%d] nil%s\n", s, marker);
-                else if (v.isSmallInteger())
-                    fprintf(stderr, "    [%d] SMI(%lld)%s\n", s, (long long)v.asSmallInteger(), marker);
-                else
-                    fprintf(stderr, "    [%d] 0x%llx%s\n", s, (unsigned long long)v.rawBits(), marker);
-            }
-        }
-        // DIAGNOSTIC: Dump the last dispatched send info
-        // This tells us what method returned the non-boolean value
-        {
-            std::string lastSel = "?";
-            if (g_lastDispatchSelector.isObject() && g_lastDispatchSelector.rawBits() > 0x10000) {
-                ObjectHeader* sh = g_lastDispatchSelector.asObjectPtr();
-                if (sh->isBytesObject() && sh->byteSize() < 100)
-                    lastSel = std::string((char*)sh->bytes(), sh->byteSize());
-            }
-            std::string lastRcvrCls = "?";
-            if (g_lastDispatchRcvrClass.isObject() && g_lastDispatchRcvrClass.rawBits() > 0x10000) {
-                if (g_lastDispatchRcvrClass.asObjectPtr()->slotCount() > 6) {
-                    Oop nm = memory_.fetchPointer(6, g_lastDispatchRcvrClass);
-                    if (nm.isObject() && nm.rawBits() > 0x10000 && nm.asObjectPtr()->isBytesObject() && nm.asObjectPtr()->byteSize() < 100)
-                        lastRcvrCls = std::string((char*)nm.asObjectPtr()->bytes(), nm.asObjectPtr()->byteSize());
-                }
-            }
-            std::string lastMethodSel = "?";
-            if (g_lastDispatchMethod.isObject() && g_lastDispatchMethod.rawBits() > 0x10000) {
-                Oop mhdr = memory_.fetchPointer(0, g_lastDispatchMethod);
-                if (mhdr.isSmallInteger()) {
-                    int nl = mhdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop sel = memory_.fetchPointer(nl - 1, g_lastDispatchMethod);
-                        if (sel.isObject() && sel.rawBits() > 0x10000 && sel.asObjectPtr()->isBytesObject() && sel.asObjectPtr()->byteSize() < 100)
-                            lastMethodSel = std::string((char*)sel.asObjectPtr()->bytes(), sel.asObjectPtr()->byteSize());
-                    }
-                }
-            }
-            fprintf(stderr, "  LAST-DISPATCH: %s >> #%s → method=#%s prim=%d args=%d method=0x%llx\n",
-                    lastRcvrCls.c_str(), lastSel.c_str(), lastMethodSel.c_str(),
-                    g_lastDispatchPrimIndex, g_lastDispatchArgCount,
-                    (unsigned long long)g_lastDispatchMethod.rawBits());
-        }
-    }
+    (void)value;
     sendSelector(selectors_.mustBeBoolean, 0);
 }
 
@@ -8183,15 +6489,6 @@ int Interpreter::primitiveIndexOf(Oop method) const {
         static int noCallPrimCount = 0;
         noCallPrimCount++;
         if (noCallPrimCount <= 20) {
-            static FILE* ncLog = nullptr;
-            if (ncLog) {
-                ObjectHeader* mo = method.asObjectPtr();
-                int nl = bits & 0x7FFF;
-                uint8_t* bc = mo->bytes() + (1 + nl) * 8;
-                fprintf(ncLog, "[NO-CALLPRIM #%d] bits=0x%llx numLits=%d bc[0]=%d bc[1]=%d bc[2]=%d\n",
-                        noCallPrimCount, (long long)bits, nl, bc[0], bc[1], bc[2]);
-                fflush(ncLog);
-            }
         }
     }
     return 0;
@@ -8371,115 +6668,9 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     memory_.storePointer(3, block, blockReceiver);
 
     // Copy values from stack - these go into slot 4+ (after the 4 fixed slots)
-    // TRACE: Log copied values
-    static FILE* copiedLog = nullptr;
-    static int copiedCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!copiedLog) copiedLog = nullptr;
-    }
-
-    // Log block creation params
-    if (copiedLog && copiedCount < 200 && numCopied > 0) {
-        fprintf(copiedLog, "[BLOCK-PARAMS] numArgs=%d numCopied=%d receiverOnStack=%d\n",
-                numArgs, numCopied, receiverOnStack ? 1 : 0);
-        fflush(copiedLog);
-    }
-
     for (int i = numCopied - 1; i >= 0; --i) {
         Oop copiedValue = pop();
         memory_.storePointer(4 + i, block, copiedValue);
-
-        bool isNilValue = (copiedValue.rawBits() == memory_.nil().rawBits());
-        if (copiedLog && copiedCount < 200 && (numCopied > 0 || isNilValue)) {
-            std::string valInfo = "";
-            if (copiedValue.isSmallInteger()) {
-                valInfo = "SmallInt " + std::to_string(copiedValue.asSmallInteger());
-            } else if (copiedValue.isObject() && copiedValue.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(copiedValue);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            valInfo = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            } else if (isNilValue) {
-                valInfo = "nil";
-            } else if (copiedValue.rawBits() == memory_.trueObject().rawBits()) {
-                valInfo = "true";
-            } else if (copiedValue.rawBits() == memory_.falseObject().rawBits()) {
-                valInfo = "false";
-            }
-            fprintf(copiedLog, "[COPIED #%d] block slot %d = 0x%llx %s (numCopied=%d)\n",
-                    ++copiedCount, 4 + i, (unsigned long long)copiedValue.rawBits(),
-                    valInfo.c_str(), numCopied);
-
-            // If copying nil, show method context, temps, and recent bytecodes
-            if (isNilValue) {
-                // Show recent bytecodes (stored in a ring buffer) - 20 most recent
-                fprintf(copiedLog, "  -> Recent bytecodes (before 0xF9, newest->oldest): ");
-                for (int bc = 0; bc < 20 && bc < (int)recentBytecodes_.size(); bc++) {
-                    uint8_t b = recentBytecodes_[(recentBytecodeIdx_ - 1 - bc + 256) % 256];
-                    fprintf(copiedLog, "0x%02X ", b);
-                    // Mark conditional jumps
-                    if ((b >= 0xB8 && b <= 0xBF) || (b >= 0xC0 && b <= 0xC7)) {
-                        fprintf(copiedLog, "<-COND ");
-                    }
-                }
-                fprintf(copiedLog, "\n");
-
-                std::string methodSel = "<unknown>";
-                std::string rcvrClass = "<unknown>";
-                if (method_.isObject()) {
-                    ObjectHeader* mHdr = method_.asObjectPtr();
-                    if (mHdr->isCompiledMethod()) {
-                        Oop hdr = memory_.fetchPointer(0, method_);
-                        if (hdr.isSmallInteger()) {
-                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                            if (numLits >= 2) {
-                                Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                    ObjectHeader* slHdr = selLit.asObjectPtr();
-                                    if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                        methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    Oop cls = memory_.classOf(receiver_);
-                    if (cls.isObject()) {
-                        Oop clsName = memory_.fetchPointer(6, cls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* cnHdr = clsName.asObjectPtr();
-                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                rcvrClass = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(copiedLog, "  -> Created in %s >> #%s\n", rcvrClass.c_str(), methodSel.c_str());
-
-                // Show current temps (0-3) to understand where nil came from
-                fprintf(copiedLog, "  -> Current temps: ");
-                for (int t = 0; t < 4; t++) {
-                    Oop tv = temporary(t);
-                    if (tv.rawBits() == memory_.nil().rawBits()) {
-                        fprintf(copiedLog, "[%d]=nil ", t);
-                    } else if (tv.isSmallInteger()) {
-                        fprintf(copiedLog, "[%d]=%lld ", t, tv.asSmallInteger());
-                    } else {
-                        fprintf(copiedLog, "[%d]=0x%llx ", t, (unsigned long long)tv.rawBits());
-                    }
-                }
-                fprintf(copiedLog, "\n");
-            }
-            fflush(copiedLog);
-        }
     }
 
     push(block);
@@ -8533,21 +6724,6 @@ void Interpreter::initializeSelectors() {
     selectors_.cannotReturn = memory_.specialObject(SpecialObjectIndex::SelectorCannotReturn);
     selectors_.aboutToReturn = memory_.specialObject(SpecialObjectIndex::SelectorAboutToReturn);
 
-    // Debug: show what we got for doesNotUnderstand
-    {
-        Oop dnu = selectors_.doesNotUnderstand;
-        std::cerr << "[INIT-SELECTORS] doesNotUnderstand=0x" << std::hex << dnu.rawBits() << std::dec;
-        if (dnu.isObject() && dnu.rawBits() > 0x10000) {
-            ObjectHeader* hdr = dnu.asObjectPtr();
-            if (hdr->isBytesObject() && hdr->byteSize() < 50) {
-                std::cerr << " (#" << std::string((char*)hdr->bytes(), hdr->byteSize()) << ")";
-            }
-        } else if (dnu.isNil() || dnu.rawBits() == 0) {
-            std::cerr << " (NIL!)";
-        }
-        std::cerr << "\n";
-    }
-    // DEBUG: "[DEBUG] initializeSelectors: Got special selectors"
 
     // For arithmetic selectors, search SmallInteger's method dictionary
     Oop smallIntClass = memory_.specialObject(SpecialObjectIndex::ClassSmallInteger);
@@ -8653,102 +6829,11 @@ void Interpreter::initializeSelectors() {
     selectors_.value_ = Oop::nil();
     selectors_.valueValue = Oop::nil();
 
-    // Log resolved selectors
-    auto logSel = [this](const char* label, Oop sel) {
-        std::cerr << "[SELECTORS] " << label << ": 0x" << std::hex << sel.rawBits() << std::dec;
-        if (sel.isNil() || sel.rawBits() == 0) {
-            std::cerr << " (NIL)";
-        } else if (sel.isSmallInteger()) {
-            std::cerr << " (SmallInt=" << sel.asSmallInteger() << ")";
-        } else if (sel.isObject() && sel.rawBits() > 0x10000) {
-            ObjectHeader* h = sel.asObjectPtr();
-            if (h->isBytesObject() && h->byteSize() < 50) {
-                std::cerr << " (#" << std::string((char*)h->bytes(), h->byteSize()) << ")";
-            } else {
-                std::cerr << " (fmt=" << (int)h->format() << " slots=" << h->slotCount() << ")";
-            }
-        }
-        std::cerr << "\n";
-    };
-    logSel("+", selectors_.add);
-    logSel("-", selectors_.subtract);
-    logSel("<", selectors_.lessThan);
-    logSel(">", selectors_.greaterThan);
-    logSel("<=", selectors_.lessEqual);
-    logSel(">=", selectors_.greaterEqual);
-    logSel("=", selectors_.equal);
-    logSel("~=", selectors_.notEqual);
-    logSel("*", selectors_.multiply);
-    logSel("/", selectors_.divide);
-
-    // Dump the special selectors array to verify mapping
-    Oop specialSelectors2 = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
-    if (specialSelectors2.isObject() && specialSelectors2.rawBits() > 0x10000) {
-        ObjectHeader* ssHdr2 = specialSelectors2.asObjectPtr();
-        size_t ssSlots = ssHdr2->slotCount();
-        std::cerr << "[SPECIAL-SELECTORS] array has " << ssSlots << " slots:\n";
-        for (size_t i = 0; i < std::min(ssSlots, (size_t)64); i += 2) {
-            Oop sel = ssHdr2->slotAt(i);
-            Oop argc = (i+1 < ssSlots) ? ssHdr2->slotAt(i+1) : Oop::nil();
-            std::cerr << "  [" << i << "] ";
-            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                ObjectHeader* sh = sel.asObjectPtr();
-                if (sh->isBytesObject() && sh->byteSize() < 50) {
-                    std::cerr << "#" << std::string((char*)sh->bytes(), sh->byteSize());
-                } else {
-                    std::cerr << "obj(fmt=" << (int)sh->format() << ")";
-                }
-            } else if (sel.isSmallInteger()) {
-                std::cerr << "SI(" << sel.asSmallInteger() << ")";
-            } else {
-                std::cerr << "0x" << std::hex << sel.rawBits() << std::dec;
-            }
-            if (argc.isSmallInteger()) {
-                std::cerr << " argc=" << argc.asSmallInteger();
-            }
-            std::cerr << "\n";
-        }
-    }
 }
 
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
-    // Log high-priority process terminations to diagnose Delay scheduler death
-    {
-        Oop proc = getActiveProcess();
-        if (proc.isObject()) {
-            Oop priOop = memory_.fetchPointer(2, proc);
-            if (priOop.isSmallInteger()) {
-                int prio = (int)priOop.asSmallInteger();
-                if (prio >= 60) {
-                    // Get method selector from activeContext_
-                    std::string msel = "?";
-                    if (activeContext_.isObject() && !activeContext_.isNil() && memory_.isValidPointer(activeContext_)) {
-                        Oop m = memory_.fetchPointer(3, activeContext_);
-                        if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
-                            Oop hdr = memory_.fetchPointer(0, m);
-                            if (hdr.isSmallInteger()) {
-                                int nl = hdr.asSmallInteger() & 0x7FFF;
-                                if (nl >= 2) {
-                                    Oop s = memory_.fetchPointer(nl - 1, m);
-                                    if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
-                                        ObjectHeader* sh = s.asObjectPtr();
-                                        if (sh->isBytesObject() && sh->byteSize() < 80)
-                                            msel = std::string((char*)sh->bytes(), sh->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[TERMINATE-P%d] step=%lld method=%s\n",
-                            prio, (long long)g_stepNum, msel.c_str());
-                    fflush(stderr);
-                }
-            }
-        }
-    }
-
     // Clear any pending NLR state
     nlrTargetCtx_ = Oop::nil();
     nlrEnsureCtx_ = Oop::nil();
@@ -8913,15 +6998,6 @@ bool Interpreter::removeProcessFromList(Oop process, Oop list) {
 }
 
 Oop Interpreter::wakeHighestPriority() {
-    static int wakeCallCount = 0;
-    static FILE* wakeLog = nullptr;
-    wakeCallCount++;
-
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!wakeLog) {
-            wakeLog = nullptr;
-        }
-    }
 
     Oop nilObj = memory_.nil();
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -8931,18 +7007,6 @@ Oop Interpreter::wakeHighestPriority() {
     ObjectHeader* listsHeader = schedLists.asObjectPtr();
     size_t numPriorities = listsHeader->slotCount();
 
-    if (wakeLog && wakeCallCount <= 50) {
-        fprintf(wakeLog, "[WAKE #%d] Scanning %zu priority levels\n", wakeCallCount, numPriorities);
-        // Dump all ready queues
-        for (int p = static_cast<int>(numPriorities) - 1; p >= 0; p--) {
-            Oop processList = memory_.fetchPointer(p, schedLists);
-            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
-            if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
-                fprintf(wakeLog, "  Priority %d: first=0x%llx\n", p + 1, (unsigned long long)first.rawBits());
-            }
-        }
-        fflush(wakeLog);
-    }
 
     // Search from highest to lowest priority
     for (int p = static_cast<int>(numPriorities) - 1; p >= 0; p--) {
@@ -8952,35 +7016,17 @@ Oop Interpreter::wakeHighestPriority() {
         if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
             // Found a runnable process - remove and return it
             Oop result = removeFirstLinkOfList(processList);
-            if (wakeLog && wakeCallCount <= 50) {
-                fprintf(wakeLog, "[WAKE #%d] -> Selected process 0x%llx at priority %d\n",
-                        wakeCallCount, (unsigned long long)result.rawBits(), p + 1);
-                fflush(wakeLog);
-            }
             return result;
         }
     }
 
     // No runnable process found - this should not happen in a working system
-    if (wakeLog && wakeCallCount <= 50) {
-        fprintf(wakeLog, "[WAKE #%d] -> No runnable process found!\n", wakeCallCount);
-        fflush(wakeLog);
-    }
     return nilObj;
 }
 
 Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
     // Similar to wakeHighestPriority but only considers processes at LOWER priorities
     // This is used for force-yield to give lower priority processes CPU time
-    static int wakeLowerCount = 0;
-    static FILE* wakeLowerLog = nullptr;
-    wakeLowerCount++;
-
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!wakeLowerLog) {
-            wakeLowerLog = nullptr;
-        }
-    }
 
     Oop nilObj = memory_.nil();
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -8993,25 +7039,16 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
     // Current priority is 1-based, array index is 0-based
     int maxPriorityIndex = currentPriority - 2;  // One below current priority
 
-    if (wakeLowerLog && wakeLowerCount <= 50) {
-        fprintf(wakeLowerLog, "[WAKE-LOWER #%d] Current priority %d, scanning up to index %d\n",
-                wakeLowerCount, currentPriority, maxPriorityIndex);
-        fflush(wakeLowerLog);
-    }
-
     // Every 5th call, specifically try lowIOPriority (10) first to prevent starvation
     // lowIOPriority is where the event loop runs
+    static int wakeLowerCount = 0;
+    wakeLowerCount++;
     if (wakeLowerCount % 5 == 0 && maxPriorityIndex >= 9) {
         int lowIOIndex = 9;  // Priority 10 = index 9
         Oop processList = memory_.fetchPointer(lowIOIndex, schedLists);
         Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
         if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
             Oop result = removeFirstLinkOfList(processList);
-            if (wakeLowerLog && wakeLowerCount <= 50) {
-                fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> PRIORITY BOOST: Selected lowIOPriority process 0x%llx\n",
-                        wakeLowerCount, (unsigned long long)result.rawBits());
-                fflush(wakeLowerLog);
-            }
             return result;
         }
     }
@@ -9024,20 +7061,11 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
         if (!first.isNil() && first.rawBits() != nilObj.rawBits()) {
             // Found a runnable process at lower priority - remove and return it
             Oop result = removeFirstLinkOfList(processList);
-            if (wakeLowerLog && wakeLowerCount <= 50) {
-                fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> Selected process 0x%llx at priority %d\n",
-                        wakeLowerCount, (unsigned long long)result.rawBits(), p + 1);
-                fflush(wakeLowerLog);
-            }
             return result;
         }
     }
 
     // No lower priority process found
-    if (wakeLowerLog && wakeLowerCount <= 50) {
-        fprintf(wakeLowerLog, "[WAKE-LOWER #%d] -> No lower priority process found\n", wakeLowerCount);
-        fflush(wakeLowerLog);
-    }
     return nilObj;
 }
 
@@ -9058,16 +7086,6 @@ int Interpreter::safeProcessPriority(Oop process) {
 }
 
 void Interpreter::putToSleep(Oop process) {
-    static int sleepCallCount = 0;
-    static FILE* sleepLog = nullptr;
-    sleepCallCount++;
-
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!sleepLog) {
-            sleepLog = nullptr;
-        }
-    }
-
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
@@ -9079,11 +7097,6 @@ void Interpreter::putToSleep(Oop process) {
     // Get the appropriate priority list (0-indexed in array)
     Oop processList = memory_.fetchPointer(priority - 1, schedLists);
 
-    if (sleepLog && sleepCallCount <= 50) {
-        fprintf(sleepLog, "[SLEEP #%d] Adding process 0x%llx to priority %d queue\n",
-                sleepCallCount, (unsigned long long)process.rawBits(), priority);
-        fflush(sleepLog);
-    }
 
     addLastLinkToList(process, processList);
 }
@@ -9151,7 +7164,6 @@ Oop Interpreter::materializeFrameStack() {
         return activeContext_;
     }
 
-    static FILE* matLog = nullptr;
 
     // Build contexts from bottom to top (oldest to newest)
     // CRITICAL: frame[0] represents the same activation as activeContext_ when
@@ -9244,21 +7256,6 @@ Oop Interpreter::materializeFrameStack() {
     for (size_t i = startFrame; i < frameDepth_; i++) {
         auto& frame = savedFrames_[i];  // non-const: may update materializedContext
 
-        if (matLog) {
-            // Calculate PC for logging
-            int logPc = 1;
-            if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = frame.savedMethod.asObjectPtr();
-                uint8_t* mBytes = mHdr->bytes();
-                if (frame.savedIP >= mBytes && frame.savedIP < mBytes + mHdr->byteSize()) {
-                    logPc = static_cast<int>(frame.savedIP - mBytes) + 1;
-                }
-            }
-            fprintf(matLog, "[MATERIALIZE] Frame %zu: method=0x%llx receiver=0x%llx pc=%d\n",
-                    i, (unsigned long long)frame.savedMethod.rawBits(),
-                    (unsigned long long)frame.savedReceiver.rawBits(), logPc);
-            fflush(matLog);
-        }
 
         // Get method info
         if (!frame.savedMethod.isObject()) {
@@ -9311,10 +7308,6 @@ Oop Interpreter::materializeFrameStack() {
             // plus indexed temps/stack area
             context = memory_.allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
             if (context.isNil()) {
-                if (matLog) {
-                    fprintf(matLog, "[MATERIALIZE] Failed to allocate context!\n");
-                    fflush(matLog);
-                }
                 return activeContext_;  // Fall back to old behavior
             }
             // Cache this context for future materializations of the same frame
@@ -9352,84 +7345,28 @@ Oop Interpreter::materializeFrameStack() {
         // Expression stack items sit above the temps, ending just before the
         // next frame's receiver (or the current frame's FP for the last saved frame).
         int savedCount = 0;
-        // Check if this is doDrawCycleWith: for debugging
-        bool isDrawCycle = false;
-        if (numLiterals >= 3) {
-            Oop sel = memory_.fetchPointer(numLiterals - 1, frame.savedMethod);
-            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                ObjectHeader* selH = sel.asObjectPtr();
-                if (selH->isBytesObject() && selH->byteSize() == 18) {
-                    std::string sn((char*)selH->bytes(), 18);
-                    if (sn == "doDrawCycleWith:") isDrawCycle = true;
-                }
-            }
-        }
         if (frame.savedFP != nullptr) {
             // Save temps
             for (int t = 0; t < numTemps && t < 32; t++) {
                 Oop temp = *(frame.savedFP + 1 + t);
-                if (isDrawCycle && matLog) {
-                    fprintf(matLog, "[MAT-DRAW] Frame %zu temp[%d] = 0x%llx%s\n",
-                            i, t, (unsigned long long)temp.rawBits(),
-                            temp.rawBits() == memory_.nil().rawBits() ? " (NIL!)" : "");
-                    fflush(matLog);
-                }
                 memory_.storePointer(6 + t, context, temp);
                 savedCount++;
             }
 
-            // TRACE: Log ensure: context materialization (prim 198)
-            {
-                int matPrimIdx = primitiveIndexOf(frame.savedMethod);
-                if (matPrimIdx == 198) {
-                    static int matEnsureCount = 0;
-                    matEnsureCount++;
-                }
-            }
-
             // Save expression stack items above the temps.
-            // The expression stack ends where the next frame's receiver starts.
-            // For frame i, the next frame's FP (savedFrames[i+1].savedFP for i < frameDepth_-1,
-            // or the current framePointer_ for the last saved frame) points to the next frame's
-            // receiver. But the receiver and args of the next call were pushed BY this frame,
-            // so they should NOT be saved (they're consumed by the send).
-            // The next frame has numArgs_next arguments, so the receiver+args occupy
-            // (numArgs_next + 1) slots. Expression items = everything between our temps
-            // and those receiver+args.
             Oop* exprStart = frame.savedFP + 1 + numTemps;
             Oop* nextFrameStart;
             int nextArgCount;
             if (i + 1 < frameDepth_) {
                 nextFrameStart = savedFrames_[i + 1].savedFP;
-                // The next frame's argCount is savedFrames[i+1].savedArgCount?
-                // No, savedArgCount stores the CALLER's argCount. We need the callee's argCount.
-                // The callee's argCount is encoded in the next frame's method header.
                 Oop nextMethodHdr = memory_.fetchPointer(0, savedFrames_[i + 1].savedMethod);
                 nextArgCount = nextMethodHdr.isSmallInteger()
                     ? static_cast<int>((nextMethodHdr.asSmallInteger() >> 24) & 0xF) : 0;
             } else {
-                // Last saved frame: the "next frame" is the current executing frame
                 nextFrameStart = framePointer_;
                 nextArgCount = argCount_;
             }
-            // The callee's receiver + args occupy (nextArgCount + 1) slots ending at nextFrameStart
-            // Expression items are from exprStart to (nextFrameStart - nextArgCount - 1)
-            Oop* exprEnd = nextFrameStart - nextArgCount - 1;  // -1 for receiver
-            // Actually, nextFrameStart IS the receiver position, so items from
-            // nextFrameStart-nextArgCount to nextFrameStart are the args.
-            // Wait: receiver is at nextFrameStart[0], args at nextFrameStart[1..argCount].
-            // No — the stack grows UP: receiver is pushed first, then args.
-            // So receiver is at the LOWEST address, args above.
-            // nextFrameStart = receiver position = stackPointer_old - argCount - 1
-            // The receiver+args start at nextFrameStart and span (argCount+1) slots.
-            // Expression items are BELOW the receiver: from exprStart to nextFrameStart.
             Oop* exprEndPtr = nextFrameStart;  // expression ends before callee receiver
-            if (isDrawCycle && matLog) {
-                fprintf(matLog, "[MAT-DRAW] Frame %zu: savedFP=%p numTemps=%d exprStart=%p exprEnd=%p count=%ld\n",
-                        i, (void*)frame.savedFP, numTemps, (void*)exprStart, (void*)exprEndPtr,
-                        (long)(exprEndPtr - exprStart));
-                fflush(matLog);
-            }
             if (exprEndPtr > exprStart && (exprEndPtr - exprStart) < 100) {
                 ptrdiff_t exprCount = exprEndPtr - exprStart;
                 for (ptrdiff_t e = 0; e < exprCount; e++) {
@@ -9455,27 +7392,6 @@ Oop Interpreter::materializeFrameStack() {
     // Also create a context for the CURRENT frame (the one we're executing)
     // This uses the current method_, receiver_, instructionPointer_, etc.
     if (method_.isObject()) {
-        // Log what method_ actually is
-        if (matLog) {
-            std::string curMethod = "?";
-            Oop mhdr = memory_.fetchPointer(0, method_);
-            if (mhdr.isSmallInteger()) {
-                int64_t hv = mhdr.asSmallInteger();
-                int nLits = hv & 0x7FFF;
-                if (nLits >= 2 && nLits < 100) {
-                    Oop sel = memory_.fetchPointer(nLits - 1, method_);
-                    if (sel.isObject()) {
-                        ObjectHeader* selH = sel.asObjectPtr();
-                        if (selH->isBytesObject() && selH->byteSize() < 100) {
-                            curMethod = std::string((char*)selH->bytes(), selH->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(matLog, "[MATERIALIZE] Current method_ is #%s\n", curMethod.c_str());
-            fflush(matLog);
-        }
-
         ObjectHeader* methodHdr = method_.asObjectPtr();
         Oop methodHeader = memory_.fetchPointer(0, method_);
         if (methodHeader.isSmallInteger()) {
@@ -9718,12 +7634,8 @@ void Interpreter::transferTo(Oop newProcess) {
 
 bool Interpreter::tryReschedule() {
     // Debug: dump scheduler queues periodically
-    static FILE* schedLog = nullptr;
-    static int schedDump = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!schedLog) schedLog = nullptr;
     }
-    schedDump++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -9742,32 +7654,6 @@ bool Interpreter::tryReschedule() {
     Oop activeProcess = memory_.fetchPointer(1, scheduler);
     Oop queues = memory_.fetchPointer(0, scheduler);
 
-    if (schedLog && schedDump == 1) {
-        // Get active process priority
-        Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        int activePriority = activePriorityOop.isSmallInteger() ?
-                             static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
-        fprintf(schedLog, "[SCHED] activeProcess=0x%llx priority=%d queues=0x%llx\n",
-                (unsigned long long)activeProcess.rawBits(),
-                activePriority,
-                (unsigned long long)queues.rawBits());
-        if (queues.isObject()) {
-            ObjectHeader* qH = queues.asObjectPtr();
-            fprintf(schedLog, "[SCHED] queues has %zu slots\n", qH->slotCount());
-            // Show queues around the active priority and low priorities
-            for (size_t qi = 0; qi < qH->slotCount(); qi++) {
-                Oop q = qH->slotAt(qi);
-                if (q.isObject() && q.rawBits() != nilObj.rawBits()) {
-                    Oop first = memory_.fetchPointer(0, q);
-                    if (first.rawBits() != nilObj.rawBits()) {  // Only show non-empty queues
-                        fprintf(schedLog, "[SCHED] queue[%zu] firstLink=0x%llx\n",
-                                qi, (unsigned long long)first.rawBits());
-                    }
-                }
-            }
-        }
-        fflush(schedLog);
-    }
 
     if (!queues.isObject()) {
         return false;
@@ -9802,14 +7688,6 @@ bool Interpreter::tryReschedule() {
         }
 
         // Log the process we're about to schedule
-        if (schedLog && schedDump <= 50) {
-            Oop prioOop = memory_.fetchPointer(2, process);
-            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            fprintf(schedLog, "[RESCHED #%d] Selecting process=0x%llx priority=%d context=0x%llx from queue[%d]\n",
-                    schedDump, (unsigned long long)process.rawBits(), prio,
-                    (unsigned long long)context.rawBits(), i);
-            fflush(schedLog);
-        }
 
         // Remove process from ready queue BEFORE making it active.
         // Without this, the process stays in the queue AND runs as activeProcess,
@@ -9835,12 +7713,8 @@ bool Interpreter::tryReschedule() {
 void Interpreter::checkForPreemption() {
     // Periodic preemption check - allow other runnable processes to run
     // This simulates the timer-based preemption of CogVM
-    static FILE* preemptLog = nullptr;
-    static int preemptCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!preemptLog) preemptLog = nullptr;
     }
-    preemptCount++;
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
@@ -9871,22 +7745,6 @@ void Interpreter::checkForPreemption() {
     size_t numQueues = queuesHeader->slotCount();
 
     // Log periodically
-    if (preemptLog && (preemptCount % 1000 == 1)) {
-        fprintf(preemptLog, "[PREEMPT #%d] activePriority=%d checking queues...\n",
-                preemptCount, activePriority);
-        // Show what's in the queues
-        for (size_t qi = 0; qi < numQueues; qi++) {
-            Oop q = queuesHeader->slotAt(qi);
-            if (q.isObject() && q.rawBits() != nilObj.rawBits()) {
-                Oop first = memory_.fetchPointer(0, q);
-                if (first.rawBits() != nilObj.rawBits()) {
-                    fprintf(preemptLog, "[PREEMPT]   queue[%zu] has process 0x%llx\n",
-                            qi, (unsigned long long)first.rawBits());
-                }
-            }
-        }
-        fflush(preemptLog);
-    }
 
     // Check for runnable processes at SAME or higher priority (round-robin).
     // Priorities are 1-based, queue indices are 0-based: queue[p-1] = priority p.
@@ -9902,11 +7760,6 @@ void Interpreter::checkForPreemption() {
         if (firstProcess.rawBits() == activeProcess.rawBits()) continue;
 
         // Found a runnable process - preempt!
-        if (preemptLog && preemptCount <= 100) {
-            fprintf(preemptLog, "[PREEMPT #%d] Switching from priority %d to process at priority %zu\n",
-                    preemptCount, activePriority, i);
-            fflush(preemptLog);
-        }
 
         // Remove process from ready queue using the proper helper
         // (removeFirstLinkOfList clears both nextLink and myList)
@@ -9925,878 +7778,18 @@ void Interpreter::checkForPreemption() {
 // ===== STARTUP SUPPORT =====
 
 void Interpreter::installOSiOSDriver() {
-    // Try to install OSiOSDriver to start the event loop
-    // This is called from step() after the image has had time to initialize
-
-    static FILE* driverLog = nullptr;
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] installOSiOSDriver called (step 100K)\n");
-        fflush(driverLog);
-    }
-
-    // Test if dlsym can find SDL2 functions at runtime
-    if (driverLog) {
-        void* sdlInit = dlsym(RTLD_DEFAULT, "SDL_Init");
-        void* sdlPoll = dlsym(RTLD_DEFAULT, "SDL_PollEvent");
-        void* sdlQuit = dlsym(RTLD_DEFAULT, "SDL_Quit");
-        fprintf(driverLog, "[DRIVER] dlsym SDL_Init=%p SDL_PollEvent=%p SDL_Quit=%p\n",
-                sdlInit, sdlPoll, sdlQuit);
-        if (sdlInit) {
-            fprintf(driverLog, "[DRIVER] SUCCESS: SDL2 functions are accessible via dlsym!\n");
-        } else {
-            fprintf(driverLog, "[DRIVER] FAILED: SDL2 functions NOT found via dlsym\n");
-        }
-        fflush(driverLog);
-    }
+    // Try to install OSiOSDriver to start the event loop.
+    // Called from step() after the image has had time to initialize.
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop osDriverClass = memory_.findGlobal("OSiOSDriver");
 
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] nilObj: 0x%llx\n", (unsigned long long)nilObj.rawBits());
-        fprintf(driverLog, "[DRIVER] OSiOSDriver class: 0x%llx isNil=%d isObj=%d sameAsNil=%d\n",
-                (unsigned long long)osDriverClass.rawBits(), osDriverClass.isNil() ? 1 : 0,
-                osDriverClass.isObject() ? 1 : 0,
-                osDriverClass.rawBits() == nilObj.rawBits() ? 1 : 0);
-        fflush(driverLog);
-    }
-
-    // Check if OSiOSDriver was actually found (compare against nilObj, not just isNil())
+    // If OSiOSDriver not found, nothing to do
     if (osDriverClass.rawBits() == nilObj.rawBits()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] OSiOSDriver not found in image - trying InputEventSensor\n");
-            fflush(driverLog);
-        }
-
-        // Try InputEventSensor instead
-        Oop sensor = memory_.findGlobal("Sensor");
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] Sensor global: 0x%llx sameAsNil=%d\n",
-                    (unsigned long long)sensor.rawBits(),
-                    sensor.rawBits() == nilObj.rawBits() ? 1 : 0);
-            fflush(driverLog);
-        }
-        if (sensor.isObject() && sensor.rawBits() != nilObj.rawBits()) {
-            Oop sensorClass = memory_.classOf(sensor);
-            if (driverLog) {
-                Oop className = memory_.fetchPointer(6, sensorClass);
-                std::string name = "<unknown>";
-                if (className.isObject()) {
-                    ObjectHeader* hdr = className.asObjectPtr();
-                    if (hdr->isBytesObject() && hdr->byteSize() < 50) {
-                        name = std::string((char*)hdr->bytes(), hdr->byteSize());
-                    }
-                }
-                fprintf(driverLog, "[DRIVER] Sensor class: %s (0x%llx)\n", name.c_str(),
-                        (unsigned long long)sensorClass.rawBits());
-                fflush(driverLog);
-            }
-            if (sensorClass.isObject() && sensorClass.rawBits() != nilObj.rawBits()) {
-                fprintf(driverLog, "[DRIVER] InputEventSensor found - checking if event loop is running\n");
-                fflush(driverLog);
-
-                // The event loop should already be running from session startup.
-                // Let's verify by checking if primitive 264 is being called.
-                // If events aren't being consumed, we might need to start the loop.
-            }
-        } else {
-            if (driverLog) {
-                fprintf(driverLog, "[DRIVER] Sensor global not found\n");
-
-                // Check if InputEventSensor class exists
-                Oop ieClass = memory_.findGlobal("InputEventSensor");
-                fprintf(driverLog, "[DRIVER] InputEventSensor class: 0x%llx sameAsNil=%d\n",
-                        (unsigned long long)ieClass.rawBits(),
-                        ieClass.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                // Check OSWindow infrastructure
-                Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
-                fprintf(driverLog, "[DRIVER] OSWindowDriver class: 0x%llx sameAsNil=%d\n",
-                        (unsigned long long)osWindowDriverClass.rawBits(),
-                        osWindowDriverClass.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                Oop osWindow = memory_.findGlobal("OSWindow");
-                fprintf(driverLog, "[DRIVER] OSWindow class: 0x%llx sameAsNil=%d\n",
-                        (unsigned long long)osWindow.rawBits(),
-                        osWindow.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                // If OSWindowDriver exists, try to get the current driver and check its class
-                if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj.rawBits()) {
-                    // OSWindowDriver has a 'Current' class variable at slot 12 (after standard class slots)
-                    // Class layout: superclass[0], methodDict[1], format[2], layout[3],
-                    // instanceVariables[4], organization[5], name[6], classPool[7], sharedPools[8],
-                    // environment[9], category[10], then class inst vars start at 11+
-                    ObjectHeader* driverHdr = osWindowDriverClass.asObjectPtr();
-                    fprintf(driverLog, "[DRIVER] OSWindowDriver class has %zu slots\n", driverHdr->slotCount());
-
-                    // The Current class variable is in classPool (slot 7)
-                    Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
-                    fprintf(driverLog, "[DRIVER] OSWindowDriver classPool: 0x%llx isObj=%d\n",
-                            (unsigned long long)classPool.rawBits(), classPool.isObject() ? 1 : 0);
-
-                    // Check if there's a Current key in the classPool (which is a Dictionary)
-                    // Dictionary layout: slot[0]=tally, slot[1]=array of associations
-                    if (classPool.isObject() && classPool.rawBits() != nilObj.rawBits()) {
-                        ObjectHeader* poolHdr = classPool.asObjectPtr();
-                        fprintf(driverLog, "[DRIVER] ClassPool has %zu slots, format=%d\n", poolHdr->slotCount(), poolHdr->format());
-
-                        // Get the associations array from slot 1
-                        if (poolHdr->slotCount() >= 2) {
-                            Oop assocArray = memory_.fetchPointer(1, classPool);
-                            if (assocArray.isObject() && assocArray.rawBits() != nilObj.rawBits()) {
-                                ObjectHeader* arrayHdr = assocArray.asObjectPtr();
-                                fprintf(driverLog, "[DRIVER] ClassPool associations array has %zu slots\n", arrayHdr->slotCount());
-
-                                // Look for "Current" in the associations
-                                for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
-                                    Oop assoc = memory_.fetchPointer(i, assocArray);
-                                    if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
-                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                        if (assocHdr->slotCount() >= 2) {
-                                            Oop key = memory_.fetchPointer(0, assoc);
-                                            Oop val = memory_.fetchPointer(1, assoc);
-                                            std::string keyName = "<notBytes>";
-                                            if (key.isObject()) {
-                                                ObjectHeader* keyHdr = key.asObjectPtr();
-                                                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
-                                                    keyName = std::string((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                                }
-                                            }
-                                            fprintf(driverLog, "[DRIVER]   assoc[%zu]: key='%s' val=0x%llx",
-                                                    i, keyName.c_str(), (unsigned long long)val.rawBits());
-                                            if (val.rawBits() == nilObj.rawBits()) {
-                                                fprintf(driverLog, " (nil)");
-                                            } else if (val.isObject()) {
-                                                Oop valClass = memory_.classOf(val);
-                                                std::string valClassName = "<unknown>";
-                                                if (valClass.isObject()) {
-                                                    // Get class name
-                                                    Oop nameOop = memory_.fetchPointer(6, valClass);
-                                                    if (nameOop.isObject()) {
-                                                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                                            valClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                                        }
-                                                    }
-                                                }
-                                                fprintf(driverLog, " (class=%s)", valClassName.c_str());
-                                                // If this is a class (metaclass), get the actual class name
-                                                if (valClassName.find("class") != std::string::npos || valClassName == "Class" || valClassName == "<unknown>") {
-                                                    // Try to get name slot directly from val (if it's a class)
-                                                    ObjectHeader* valHdr = val.asObjectPtr();
-                                                    if (valHdr->slotCount() >= 7) {
-                                                        Oop valName = memory_.fetchPointer(6, val);
-                                                        if (valName.isObject()) {
-                                                            ObjectHeader* vnHdr = valName.asObjectPtr();
-                                                            if (vnHdr->isBytesObject() && vnHdr->byteSize() < 100) {
-                                                                std::string name((char*)vnHdr->bytes(), vnHdr->byteSize());
-                                                                fprintf(driverLog, " actualName='%s'", name.c_str());
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            fprintf(driverLog, "\n");
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fflush(driverLog);
-
-                    // Check for World global
-                    Oop world = memory_.findGlobal("World");
-                    fprintf(driverLog, "[DRIVER] World global: 0x%llx sameAsNil=%d\n",
-                            (unsigned long long)world.rawBits(),
-                            world.rawBits() == nilObj.rawBits() ? 1 : 0);
-                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
-                        Oop worldClass = memory_.classOf(world);
-                        std::string className = "<unknown>";
-                        if (worldClass.isObject()) {
-                            Oop nameOop = memory_.fetchPointer(6, worldClass);
-                            if (nameOop.isObject()) {
-                                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                }
-                            }
-                        }
-                        fprintf(driverLog, "[DRIVER] World class: %s\n", className.c_str());
-                    }
-
-                    // Check for InputEventFetcher
-                    Oop eventFetcher = memory_.findGlobal("InputEventFetcher");
-                    fprintf(driverLog, "[DRIVER] InputEventFetcher class: 0x%llx sameAsNil=%d\n",
-                            (unsigned long long)eventFetcher.rawBits(),
-                            eventFetcher.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                    // Look for the Hand morph through World
-                    // WorldMorph has: submorphs, owner, bounds, fullBounds, color, extension, eventHandler, hands
-                    // hands is typically at slot 7 or similar
-                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
-                        ObjectHeader* worldHdr = world.asObjectPtr();
-                        fprintf(driverLog, "[DRIVER] World has %zu slots\n", worldHdr->slotCount());
-                        // Find hands - search for an OrderedCollection or Array containing HandMorph
-                        for (size_t i = 0; i < worldHdr->slotCount() && i < 20; i++) {
-                            Oop slot = memory_.fetchPointer(i, world);
-                            if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
-                                Oop slotClass = memory_.classOf(slot);
-                                std::string className = "<unknown>";
-                                if (slotClass.isObject()) {
-                                    Oop nameOop = memory_.fetchPointer(6, slotClass);
-                                    if (nameOop.isObject()) {
-                                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                            className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                        }
-                                    }
-                                }
-                                ObjectHeader* slotHdr = slot.asObjectPtr();
-                                fprintf(driverLog, "[DRIVER] World slot[%zu]: class=%s slots=%zu\n",
-                                        i, className.c_str(), slotHdr->slotCount());
-                                // If it's WorldState, examine its slots
-                                if (className == "WorldState") {
-                                    fprintf(driverLog, "[DRIVER] Found WorldState - examining slots:\n");
-                                    for (size_t j = 0; j < slotHdr->slotCount() && j < 15; j++) {
-                                        Oop wsSlot = memory_.fetchPointer(j, slot);
-                                        std::string wsClassName = "nil";
-                                        size_t wsSlotCount = 0;
-                                        if (wsSlot.isObject() && wsSlot.rawBits() != nilObj.rawBits()) {
-                                            Oop wsSlotClass = memory_.classOf(wsSlot);
-                                            if (wsSlotClass.isObject()) {
-                                                Oop wsNameOop = memory_.fetchPointer(6, wsSlotClass);
-                                                if (wsNameOop.isObject()) {
-                                                    ObjectHeader* wsNameHdr = wsNameOop.asObjectPtr();
-                                                    if (wsNameHdr->isBytesObject() && wsNameHdr->byteSize() < 100) {
-                                                        wsClassName = std::string((char*)wsNameHdr->bytes(), wsNameHdr->byteSize());
-                                                    }
-                                                }
-                                            }
-                                            wsSlotCount = wsSlot.asObjectPtr()->slotCount();
-                                        } else if (wsSlot.isSmallInteger()) {
-                                            wsClassName = "SmallInt";
-                                        }
-                                        fprintf(driverLog, "[DRIVER]   WorldState slot[%zu]: class=%s slots=%zu\n",
-                                                j, wsClassName.c_str(), wsSlotCount);
-                                        // Look for Array or OrderedCollection containing HandMorph
-                                        if (wsClassName == "Array" && wsSlotCount > 0) {
-                                            for (size_t k = 0; k < wsSlotCount && k < 3; k++) {
-                                                Oop elem = memory_.fetchPointer(k, wsSlot);
-                                                if (elem.isObject() && elem.rawBits() != nilObj.rawBits()) {
-                                                    Oop elemClass = memory_.classOf(elem);
-                                                    std::string elemClassName = "<unknown>";
-                                                    if (elemClass.isObject()) {
-                                                        Oop elemName = memory_.fetchPointer(6, elemClass);
-                                                        if (elemName.isObject()) {
-                                                            ObjectHeader* enHdr = elemName.asObjectPtr();
-                                                            if (enHdr->isBytesObject() && enHdr->byteSize() < 100) {
-                                                                elemClassName = std::string((char*)enHdr->bytes(), enHdr->byteSize());
-                                                            }
-                                                        }
-                                                    }
-                                                    fprintf(driverLog, "[DRIVER]     Array[%zu]: class=%s\n", k, elemClassName.c_str());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Check for MorphicUIManager
-                    Oop uiManager = memory_.findGlobal("MorphicUIManager");
-                    fprintf(driverLog, "[DRIVER] MorphicUIManager class: 0x%llx sameAsNil=%d\n",
-                            (unsigned long long)uiManager.rawBits(),
-                            uiManager.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                    // Check for event-related classes
-                    const char* eventClasses[] = {
-                        "MouseEvent", "MouseButtonEvent", "MouseMoveEvent",
-                        "MouseButtonPressedEvent", "MouseButtonReleasedEvent",
-                        "KeyboardEvent", "MorphicEvent", "UserInputEvent",
-                        "OSMouseButtonPressEvent", "OSMouseMoveEvent",
-                        nullptr
-                    };
-                    for (int i = 0; eventClasses[i]; i++) {
-                        Oop evtClass = memory_.findGlobal(eventClasses[i]);
-                        if (evtClass.isObject() && evtClass.rawBits() != nilObj.rawBits()) {
-                            fprintf(driverLog, "[DRIVER] Found event class: %s at 0x%llx\n",
-                                    eventClasses[i], (unsigned long long)evtClass.rawBits());
-                        }
-                    }
-
-                    // Check for driver-related classes
-                    const char* driverClasses[] = {
-                        "OSNullDriver", "OSNullWindowDriver", "OSHeadlessDriver",
-                        "NullWindowDriver", "HeadlessDriver",
-                        "OSHeadlessWorldRenderer", "OSNullWorldRenderer",
-                        "OSWindowMorphicEventHandler",
-                        "OSAbstractRenderer", "OSWorldRenderer",
-                        nullptr
-                    };
-                    for (int i = 0; driverClasses[i]; i++) {
-                        Oop driverClass = memory_.findGlobal(driverClasses[i]);
-                        if (driverClass.isObject() && driverClass.rawBits() != nilObj.rawBits()) {
-                            fprintf(driverLog, "[DRIVER] Found driver class: %s at 0x%llx\n",
-                                    driverClasses[i], (unsigned long long)driverClass.rawBits());
-                        }
-                    }
-
-                    // Check for UIManager (the singleton, not the class)
-                    Oop uiManagerSingleton = memory_.findGlobal("UIManager");
-                    fprintf(driverLog, "[DRIVER] UIManager global: 0x%llx sameAsNil=%d\n",
-                            (unsigned long long)uiManagerSingleton.rawBits(),
-                            uiManagerSingleton.rawBits() == nilObj.rawBits() ? 1 : 0);
-
-                    // Check process list to see what's running
-                    // Processor activeProcess gives us the current process
-                    Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                    if (scheduler.isObject()) {
-                        Oop processScheduler = memory_.fetchPointer(1, scheduler);  // value
-                        if (processScheduler.isObject()) {
-                            // ProcessScheduler>>activeProcess is inst var 0
-                            Oop activeProcess = memory_.fetchPointer(0, processScheduler);
-                            fprintf(driverLog, "[DRIVER] Active process: 0x%llx\n", (unsigned long long)activeProcess.rawBits());
-                            if (activeProcess.isObject() && activeProcess.rawBits() != nilObj.rawBits()) {
-                                // Process has: suspendedContext, priority, myList, name, env
-                                // name is at slot 3
-                                ObjectHeader* procHdr = activeProcess.asObjectPtr();
-                                if (procHdr->slotCount() >= 4) {
-                                    Oop procName = memory_.fetchPointer(3, activeProcess);
-                                    if (procName.isObject()) {
-                                        ObjectHeader* nameHdr = procName.asObjectPtr();
-                                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                            std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
-                                            fprintf(driverLog, "[DRIVER] Active process name: '%s'\n", name.c_str());
-                                        }
-                                    }
-                                }
-                            }
-                            // List all processes in all priority queues
-                            // quiescentProcessLists is inst var 1
-                            Oop processLists = memory_.fetchPointer(1, processScheduler);
-                            if (processLists.isObject()) {
-                                ObjectHeader* listsHdr = processLists.asObjectPtr();
-                                fprintf(driverLog, "[DRIVER] Process priority levels: %zu\n", listsHdr->slotCount());
-                            }
-                        }
-                    }
-                    fflush(driverLog);
-
-                    // Try to install OSSDL2Driver as Current (we have SDL2 stubs that will handle events)
-                    // Get DriverClass which should be OSSDL2Driver
-                    Oop sdl2DriverClass = memory_.findGlobal("OSSDL2Driver");
-                    if (sdl2DriverClass.rawBits() == nilObj.rawBits()) {
-                        fprintf(driverLog, "[DRIVER] OSSDL2Driver not found, falling back to OSNullWindowDriver\n");
-                        sdl2DriverClass = memory_.findGlobal("OSNullWindowDriver");
-                    }
-
-                    if (sdl2DriverClass.isObject() && sdl2DriverClass.rawBits() != nilObj.rawBits()) {
-                        fprintf(driverLog, "[DRIVER] Attempting to install OSSDL2Driver as Current\n");
-                        fflush(driverLog);
-
-                        // Check the class format to see how many instance vars it has
-                        Oop formatOop = memory_.fetchPointer(2, sdl2DriverClass);  // format at slot 2
-                        fprintf(driverLog, "[DRIVER] OSSDL2Driver format: 0x%llx\n",
-                                (unsigned long long)formatOop.rawBits());
-
-                        // Get instance spec to determine number of instance variables
-                        int64_t format = 0;
-                        if (formatOop.isSmallInteger()) {
-                            format = formatOop.asSmallInteger();
-                            fprintf(driverLog, "[DRIVER] Format value: %lld\n", format);
-                        }
-
-                        // Find the Current association in OSWindowDriver's classPool
-                        if (osWindowDriverClass.isObject()) {
-                            Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
-                            if (classPool.isObject()) {
-                                ObjectHeader* poolHdr = classPool.asObjectPtr();
-                                if (poolHdr->slotCount() >= 2) {
-                                    Oop assocArray = memory_.fetchPointer(1, classPool);
-                                    if (assocArray.isObject()) {
-                                        ObjectHeader* arrayHdr = assocArray.asObjectPtr();
-                                        // Find Current association and set its value
-                                        for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
-                                            Oop assoc = memory_.fetchPointer(i, assocArray);
-                                            if (assoc.isObject() && assoc.rawBits() != nilObj.rawBits()) {
-                                                ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                                if (assocHdr->slotCount() >= 2) {
-                                                    Oop key = memory_.fetchPointer(0, assoc);
-                                                    if (key.isObject()) {
-                                                        ObjectHeader* keyHdr = key.asObjectPtr();
-                                                        if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
-                                                            std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                                            if (keyName == "Current") {
-                                                                // Create an instance of OSSDL2Driver (we have SDL2 stubs that will handle events)
-                                                                // Need to find out how many inst vars it has
-
-                                                                // First, let me try creating a minimal instance
-                                                                // OSWindowDriver has inst vars, let's check format
-                                                                ObjectHeader* ndcHdr = sdl2DriverClass.asObjectPtr();
-                                                                fprintf(driverLog, "[DRIVER] OSSDL2Driver class has %zu slots\n", ndcHdr->slotCount());
-
-                                                                // Get class index from identity hash (this is how Pharo stores class refs)
-                                                                uint32_t classIdx = ndcHdr->identityHash();
-                                                                fprintf(driverLog, "[DRIVER] OSSDL2Driver class index: %u\n", classIdx);
-
-                                                                // Get instance format and size from the class
-                                                                // format is at slot 2, contains encoding of inst var count
-                                                                Oop formatOop2 = memory_.fetchPointer(2, sdl2DriverClass);
-                                                                size_t instVarCount = 0;
-                                                                if (formatOop2.isSmallInteger()) {
-                                                                    int64_t fmt = formatOop2.asSmallInteger();
-                                                                    fprintf(driverLog, "[DRIVER] Format raw value: %lld\n", fmt);
-                                                                    // Extract inst var count from format (bits 0-15)
-                                                                    instVarCount = fmt & 0xFFFF;
-                                                                    fprintf(driverLog, "[DRIVER] Extracted instVarCount: %zu\n", instVarCount);
-                                                                }
-
-                                                                // Allocate the instance using allocateSlots
-                                                                Oop driverInstance = memory_.allocateSlots(classIdx, instVarCount, ObjectFormat::FixedSize);
-                                                                if (driverInstance.isObject() && driverInstance.rawBits() != nilObj.rawBits()) {
-                                                                    // Set the Current value
-                                                                    memory_.storePointer(1, assoc, driverInstance);
-                                                                    fprintf(driverLog, "[DRIVER] Successfully set OSSDL2Driver instance as Current: 0x%llx\n",
-                                                                            (unsigned long long)driverInstance.rawBits());
-
-                                                                    // Verify it was set
-                                                                    Oop verifyVal = memory_.fetchPointer(1, assoc);
-                                                                    fprintf(driverLog, "[DRIVER] Verified Current value: 0x%llx\n",
-                                                                            (unsigned long long)verifyVal.rawBits());
-
-                                                                    // CRITICAL: Start the event loop by calling ensureEventLoop on the driver
-                                                                    // Inline method lookup since lookupMethodInClass is in another function
-                                                                    auto findMethodInClass = [&](Oop classObj, const char* selectorName, bool dumpAll = false) -> Oop {
-                                                                        if (!classObj.isObject()) return Oop::nil();
-                                                                        Oop methodDict = memory_.fetchPointer(1, classObj);
-                                                                        if (!methodDict.isObject()) return Oop::nil();
-                                                                        ObjectHeader* mdHeader = methodDict.asObjectPtr();
-                                                                        size_t mdSlots = mdHeader->slotCount();
-                                                                        if (dumpAll) {
-                                                                            fprintf(driverLog, "[DRIVER] MethodDict slots=%zu format=%u\n", mdSlots, mdHeader->format());
-                                                                        }
-                                                                        for (size_t mi = 2; mi < mdSlots; mi++) {
-                                                                            Oop key = mdHeader->slotAt(mi);
-                                                                            if (!key.isObject() || key.isNil()) continue;
-                                                                            ObjectHeader* keyHdr = key.asObjectPtr();
-                                                                            if (!keyHdr->isBytesObject()) {
-                                                                                if (dumpAll) {
-                                                                                    fprintf(driverLog, "[DRIVER]   slot[%zu]: not bytes (fmt=%u)\n", mi, keyHdr->format());
-                                                                                }
-                                                                                continue;
-                                                                            }
-                                                                            size_t keyLen = keyHdr->byteSize();
-                                                                            if (dumpAll && keyLen < 50) {
-                                                                                std::string methodName((char*)keyHdr->bytes(), keyLen);
-                                                                                fprintf(driverLog, "[DRIVER]   slot[%zu]: '%s'\n", mi, methodName.c_str());
-                                                                            }
-                                                                            if (keyLen == strlen(selectorName) &&
-                                                                                memcmp(keyHdr->bytes(), selectorName, keyLen) == 0) {
-                                                                                Oop values = memory_.fetchPointer(1, methodDict);
-                                                                                if (values.isObject()) {
-                                                                                    ObjectHeader* valHdr = values.asObjectPtr();
-                                                                                    size_t valueIdx = mi - 2;
-                                                                                    if (valueIdx < valHdr->slotCount()) {
-                                                                                        return valHdr->slotAt(valueIdx);
-                                                                                    }
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        return Oop::nil();
-                                                                    };
-
-                                                                    // First try instance method ensureEventLoop
-                                                                    fprintf(driverLog, "[DRIVER] Looking for ensureEventLoop in OSSDL2Driver, dumping methods:\n");
-                                                                    Oop ensureMethod = findMethodInClass(sdl2DriverClass, "ensureEventLoop", true);
-                                                                    if (ensureMethod.isObject() && ensureMethod.rawBits() != nilObj.rawBits()) {
-                                                                        fprintf(driverLog, "[DRIVER] Found instance ensureEventLoop method, queuing for execution\n");
-                                                                        pendingDriverInstallMethod_ = ensureMethod;
-                                                                        pendingDriverInstallReceiver_ = driverInstance;
-                                                                        hasPendingDriverInstall_ = true;
-                                                                        pendingDriverMethodNeedsArg_ = false;
-                                                                    } else {
-                                                                        fprintf(driverLog, "[DRIVER] ensureEventLoop NOT found, trying setupEventLoop\n");
-                                                                        // Try setupEventLoop (older Pharo images don't have ensureEventLoop)
-                                                                        Oop setupMethod = findMethodInClass(sdl2DriverClass, "setupEventLoop");
-                                                                        if (setupMethod.isObject() && setupMethod.rawBits() != nilObj.rawBits()) {
-                                                                            fprintf(driverLog, "[DRIVER] Found setupEventLoop, queuing for execution\n");
-
-                                                                            // Dump method details to understand what it does
-                                                                            ObjectHeader* methHdr = setupMethod.asObjectPtr();
-                                                                            Oop methHeader = memory_.fetchPointer(0, setupMethod);
-                                                                            if (methHeader.isSmallInteger()) {
-                                                                                int64_t hBits = methHeader.asSmallInteger();
-                                                                                int numLits = hBits & 0x7FFF;
-                                                                                int numTemps = (hBits >> 18) & 0x3F;
-                                                                                int numArgs = (hBits >> 24) & 0xF;
-                                                                                int primIdx = (hBits >> 28) & 0x3FF;
-                                                                                fprintf(driverLog, "[DRIVER] setupEventLoop method: lits=%d temps=%d args=%d prim=%d\n",
-                                                                                        numLits, numTemps, numArgs, primIdx);
-
-                                                                                // Dump literals (selectors being called)
-                                                                                for (int li = 1; li <= numLits && li <= 10; li++) {
-                                                                                    Oop lit = memory_.fetchPointer(li, setupMethod);
-                                                                                    if (lit.isObject() && lit.rawBits() > 0x10000) {
-                                                                                        ObjectHeader* litH = lit.asObjectPtr();
-                                                                                        if (litH->isBytesObject() && litH->byteSize() < 100) {
-                                                                                            std::string s((char*)litH->bytes(), litH->byteSize());
-                                                                                            fprintf(driverLog, "[DRIVER]   lit[%d]='%s'\n", li, s.c_str());
-                                                                                        } else {
-                                                                                            fprintf(driverLog, "[DRIVER]   lit[%d] fmt=%d cls=%u slots=%zu\n",
-                                                                                                    li, (int)litH->format(), litH->classIndex(), litH->slotCount());
-                                                                                        }
-                                                                                    }
-                                                                                }
-
-                                                                                // Dump first 20 bytecodes
-                                                                                size_t bcStart = (1 + numLits) * 8;
-                                                                                uint8_t* bytes = methHdr->bytes();
-                                                                                size_t totalBytes = methHdr->byteSize();
-                                                                                fprintf(driverLog, "[DRIVER]   bytecodes (offset %zu):", bcStart);
-                                                                                for (size_t bi = bcStart; bi < totalBytes && bi < bcStart + 20; bi++) {
-                                                                                    fprintf(driverLog, " %02x", bytes[bi]);
-                                                                                }
-                                                                                fprintf(driverLog, "\n");
-                                                                            }
-                                                                            fflush(driverLog);
-
-                                                                            pendingDriverInstallMethod_ = setupMethod;
-                                                                            pendingDriverInstallReceiver_ = driverInstance;
-                                                                            hasPendingDriverInstall_ = true;
-                                                                            pendingDriverMethodNeedsArg_ = false;
-                                                                        } else {
-                                                                            fprintf(driverLog, "[DRIVER] setupEventLoop NOT found either, trying startUp:\n");
-                                                                            // Try CLASS-SIDE startUp: - this is in the metaclass!
-                                                                            // The metaclass is classOf(sdl2DriverClass)
-                                                                            Oop metaclass = memory_.classOf(sdl2DriverClass);
-                                                                            fprintf(driverLog, "[DRIVER] OSSDL2Driver metaclass: 0x%llx\n", (unsigned long long)metaclass.rawBits());
-                                                                            Oop classStartUpMethod = findMethodInClass(metaclass, "startUp:");
-                                                                            if (classStartUpMethod.isObject() && classStartUpMethod.rawBits() != nilObj.rawBits()) {
-                                                                                fprintf(driverLog, "[DRIVER] Found CLASS-SIDE startUp: in metaclass, calling on class\n");
-                                                                                pendingDriverInstallMethod_ = classStartUpMethod;
-                                                                                pendingDriverInstallReceiver_ = sdl2DriverClass;  // Call on CLASS, not instance
-                                                                                hasPendingDriverInstall_ = true;
-                                                                                pendingDriverMethodNeedsArg_ = true;  // startUp: needs true as argument
-                                                                            } else {
-                                                                                fprintf(driverLog, "[DRIVER] CLASS-SIDE startUp: not found in metaclass\n");
-                                                                                // Fall back to instance-side startUp:
-                                                                                Oop instanceStartUpMethod = findMethodInClass(sdl2DriverClass, "startUp:");
-                                                                                if (instanceStartUpMethod.isObject() && instanceStartUpMethod.rawBits() != nilObj.rawBits()) {
-                                                                                    fprintf(driverLog, "[DRIVER] Found instance-side startUp: as fallback\n");
-                                                                                    pendingDriverInstallMethod_ = instanceStartUpMethod;
-                                                                                    pendingDriverInstallReceiver_ = driverInstance;
-                                                                                    hasPendingDriverInstall_ = true;
-                                                                                    pendingDriverMethodNeedsArg_ = true;
-                                                                                } else {
-                                                                                    fprintf(driverLog, "[DRIVER] No startUp: method found anywhere!\n");
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-
-                                                                    // Now let's examine the HandMorph structure
-                                                                    // HandMorph was found at WorldState slot 7
-                                                                    if (world.isObject() && world.rawBits() != nilObj.rawBits()) {
-                                                                        Oop worldState = memory_.fetchPointer(9, world);  // slot 9 is WorldState
-                                                                        if (worldState.isObject() && worldState.rawBits() != nilObj.rawBits()) {
-                                                                            Oop handMorph = memory_.fetchPointer(7, worldState);  // slot 7 is HandMorph
-                                                                            if (handMorph.isObject() && handMorph.rawBits() != nilObj.rawBits()) {
-                                                                                ObjectHeader* handHdr = handMorph.asObjectPtr();
-                                                                                fprintf(driverLog, "[DRIVER] HandMorph has %zu slots\n", handHdr->slotCount());
-
-                                                                                // Examine HandMorph slots to understand structure
-                                                                                for (size_t j = 0; j < handHdr->slotCount() && j < 30; j++) {
-                                                                                    Oop slot = memory_.fetchPointer(j, handMorph);
-                                                                                    std::string slotClass = "nil/int";
-                                                                                    size_t slotSlots = 0;
-                                                                                    if (slot.isSmallInteger()) {
-                                                                                        slotClass = "SmallInt";
-                                                                                    } else if (slot.isObject() && slot.rawBits() != nilObj.rawBits()) {
-                                                                                        Oop sc = memory_.classOf(slot);
-                                                                                        if (sc.isObject()) {
-                                                                                            Oop scName = memory_.fetchPointer(6, sc);
-                                                                                            if (scName.isObject()) {
-                                                                                                ObjectHeader* scnHdr = scName.asObjectPtr();
-                                                                                                if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
-                                                                                                    slotClass = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                        slotSlots = slot.asObjectPtr()->slotCount();
-                                                                                    }
-                                                                                    fprintf(driverLog, "[DRIVER] HandMorph slot[%zu]: class=%s slots=%zu\n",
-                                                                                            j, slotClass.c_str(), slotSlots);
-                                                                                }
-
-                                                                                // Examine the WaitfreeQueue at slot 25
-                                                                                Oop eventQueue = memory_.fetchPointer(25, handMorph);
-                                                                                fprintf(driverLog, "[DRIVER] HandMorph eventQueue (slot 25): 0x%llx\n",
-                                                                                        (unsigned long long)eventQueue.rawBits());
-                                                                                if (eventQueue.isObject() && eventQueue.rawBits() != nilObj.rawBits()) {
-                                                                                    ObjectHeader* eqHdr = eventQueue.asObjectPtr();
-                                                                                    fprintf(driverLog, "[DRIVER] WaitfreeQueue has %zu slots, classIdx=%u\n",
-                                                                                            eqHdr->slotCount(), eqHdr->classIndex());
-
-                                                                                    // Examine the AtomicQueueItem structures
-                                                                                    for (size_t k = 0; k < eqHdr->slotCount() && k < 5; k++) {
-                                                                                        Oop eqs = memory_.fetchPointer(k, eventQueue);
-                                                                                        fprintf(driverLog, "[DRIVER]   WaitfreeQueue slot[%zu]: 0x%llx\n",
-                                                                                                k, (unsigned long long)eqs.rawBits());
-                                                                                        if (eqs.isObject() && eqs.rawBits() != nilObj.rawBits()) {
-                                                                                            ObjectHeader* eqsHdr = eqs.asObjectPtr();
-                                                                                            fprintf(driverLog, "[DRIVER]     AtomicQueueItem has %zu slots, classIdx=%u\n",
-                                                                                                    eqsHdr->slotCount(), eqsHdr->classIndex());
-                                                                                            // AtomicQueueItem typically has: value, next
-                                                                                            for (size_t m = 0; m < eqsHdr->slotCount() && m < 5; m++) {
-                                                                                                Oop aqis = memory_.fetchPointer(m, eqs);
-                                                                                                std::string aqisInfo = "";
-                                                                                                if (aqis.rawBits() == nilObj.rawBits()) {
-                                                                                                    aqisInfo = "nil";
-                                                                                                } else if (aqis.isObject()) {
-                                                                                                    Oop sc = memory_.classOf(aqis);
-                                                                                                    if (sc.isObject()) {
-                                                                                                        Oop scName = memory_.fetchPointer(6, sc);
-                                                                                                        if (scName.isObject()) {
-                                                                                                            ObjectHeader* scnHdr = scName.asObjectPtr();
-                                                                                                            if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
-                                                                                                                aqisInfo = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
-                                                                                                            }
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                                fprintf(driverLog, "[DRIVER]       AQI slot[%zu]: 0x%llx (%s)\n",
-                                                                                                        m, (unsigned long long)aqis.rawBits(), aqisInfo.c_str());
-                                                                                            }
-                                                                                        }
-                                                                                    }
-
-                                                                                }
-
-                                                                                fprintf(driverLog, "[DRIVER] HandMorph found at 0x%llx\n",
-                                                                                        (unsigned long long)handMorph.rawBits());
-
-                                                                                // Examine the existing MouseEvent in slot 12 to understand structure
-                                                                                Oop lastMouseEvent = memory_.fetchPointer(12, handMorph);
-                                                                                fprintf(driverLog, "[DRIVER] lastMouseEvent (slot 12): 0x%llx\n",
-                                                                                        (unsigned long long)lastMouseEvent.rawBits());
-                                                                                if (lastMouseEvent.isObject() && lastMouseEvent.rawBits() != nilObj.rawBits()) {
-                                                                                    ObjectHeader* meHdr = lastMouseEvent.asObjectPtr();
-                                                                                    fprintf(driverLog, "[DRIVER] MouseEvent has %zu slots, format=%d, classIdx=%u\n",
-                                                                                            meHdr->slotCount(), meHdr->format(), meHdr->classIndex());
-
-                                                                                    // Dump all slots of the MouseEvent
-                                                                                    for (size_t l = 0; l < meHdr->slotCount() && l < 15; l++) {
-                                                                                        Oop mes = memory_.fetchPointer(l, lastMouseEvent);
-                                                                                        std::string mesInfo = "";
-                                                                                        if (mes.isSmallInteger()) {
-                                                                                            mesInfo = "SmallInt=" + std::to_string(mes.asSmallInteger());
-                                                                                        } else if (mes.rawBits() == nilObj.rawBits()) {
-                                                                                            mesInfo = "nil";
-                                                                                        } else if (mes.isObject()) {
-                                                                                            ObjectHeader* mesHdr = mes.asObjectPtr();
-                                                                                            // Check if it's a symbol (ByteSymbol)
-                                                                                            if (mesHdr->isBytesObject() && mesHdr->byteSize() < 50) {
-                                                                                                mesInfo = "Symbol=#" + std::string((char*)mesHdr->bytes(), mesHdr->byteSize());
-                                                                                            } else {
-                                                                                                Oop sc = memory_.classOf(mes);
-                                                                                                if (sc.isObject()) {
-                                                                                                    Oop scName = memory_.fetchPointer(6, sc);
-                                                                                                    if (scName.isObject()) {
-                                                                                                        ObjectHeader* scnHdr = scName.asObjectPtr();
-                                                                                                        if (scnHdr->isBytesObject() && scnHdr->byteSize() < 100) {
-                                                                                                            mesInfo = std::string((char*)scnHdr->bytes(), scnHdr->byteSize());
-                                                                                                        }
-                                                                                                    }
-                                                                                                }
-                                                                                            }
-                                                                                        }
-                                                                                        fprintf(driverLog, "[DRIVER]   MouseEvent slot[%zu]: 0x%llx (%s)\n",
-                                                                                                l, (unsigned long long)mes.rawBits(), mesInfo.c_str());
-                                                                                    }
-
-                                                                                    fprintf(driverLog, "[DRIVER] Found MouseEvent classIdx=%u\n",
-                                                                                            meHdr->classIndex());
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                } else {
-                                                                    fprintf(driverLog, "[DRIVER] Failed to instantiate OSSDL2Driver\n");
-                                                                }
-                                                                break;
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        fflush(driverLog);
-                    }
-
-                    // NOTE: Input semaphore index should be set by primitive 153/265 when
-                    // InputEventSensor registers. Don't use a fallback - if no semaphore is
-                    // registered, events won't be signaled but that's better than signaling
-                    // the wrong semaphore (like TFCallbackQueue's).
-                    if (pharo::gEventQueue.getInputSemaphoreIndex() == 0) {
-                        fprintf(driverLog, "[DRIVER] No input semaphore registered yet (index=0)\n");
-                        fprintf(driverLog, "[DRIVER] InputEventSensor should register via primitive 153/265\n");
-                    } else {
-                        fprintf(driverLog, "[DRIVER] Input semaphore index already set to %d\n",
-                                pharo::gEventQueue.getInputSemaphoreIndex());
-                    }
-                }
-
-                fflush(driverLog);
-            }
-        }
         return;
     }
 
-    if (!osDriverClass.isObject()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] OSiOSDriver class not found\n");
-            fflush(driverLog);
-        }
-        return;
-    }
-
-    // Get the metaclass (class of the class) for class-side method lookup
-    Oop metaclass = memory_.classOf(osDriverClass);
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] Metaclass: 0x%llx isObj=%d\n",
-                (unsigned long long)metaclass.rawBits(), metaclass.isObject() ? 1 : 0);
-        fflush(driverLog);
-    }
-
-    if (metaclass.isNil() || !metaclass.isObject()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] Metaclass not found\n");
-            fflush(driverLog);
-        }
-        return;
-    }
-
-    // Debug: Get metaclass name
-    if (driverLog) {
-        // Class has name at slot 6
-        Oop nameOop = memory_.fetchPointer(6, osDriverClass);
-        if (nameOop.isObject()) {
-            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
-                fprintf(driverLog, "[DRIVER] Class name: '%s'\n", name.c_str());
-            }
-        }
-        fflush(driverLog);
-    }
-
-    // Look up the "install" method in the metaclass's methodDict
-    Oop methodDict = memory_.fetchPointer(1, metaclass);
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] Metaclass methodDict: 0x%llx isObj=%d\n",
-                (unsigned long long)methodDict.rawBits(), methodDict.isObject() ? 1 : 0);
-        if (methodDict.isObject()) {
-            ObjectHeader* mdHdr = methodDict.asObjectPtr();
-            fprintf(driverLog, "[DRIVER] MethodDict slots: %zu\n", mdHdr->slotCount());
-        }
-        fflush(driverLog);
-    }
-    if (!methodDict.isObject()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] Metaclass has no methodDict\n");
-            fflush(driverLog);
-        }
-        return;
-    }
-
-    ObjectHeader* mdHeader = methodDict.asObjectPtr();
-    size_t mdSlots = mdHeader->slotCount();
-    Oop installMethod = Oop::nil();
-
-    // Debug: dump first 10 selectors
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] Scanning selectors in methodDict (slots 2-%zu):\n", mdSlots);
-        int selectorCount = 0;
-        for (size_t i = 2; i < mdSlots && selectorCount < 15; i++) {
-            Oop key = mdHeader->slotAt(i);
-            if (!key.isObject() || key.rawBits() == nilObj.rawBits()) continue;
-            ObjectHeader* keyHdr = key.asObjectPtr();
-            if (!keyHdr->isBytesObject()) continue;
-            size_t keyLen = keyHdr->byteSize();
-            if (keyLen > 0 && keyLen < 50) {
-                std::string sel((char*)keyHdr->bytes(), keyLen);
-                fprintf(driverLog, "[DRIVER]   slot[%zu] = '%s' (len=%zu)\n", i, sel.c_str(), keyLen);
-                selectorCount++;
-            }
-        }
-        fflush(driverLog);
-    }
-
-    for (size_t i = 2; i < mdSlots; i++) {
-        Oop key = mdHeader->slotAt(i);
-        if (!key.isObject() || key.rawBits() == nilObj.rawBits()) continue;
-
-        ObjectHeader* keyHdr = key.asObjectPtr();
-        if (!keyHdr->isBytesObject()) continue;
-
-        size_t keyLen = keyHdr->byteSize();
-        const char* keyBytes = (const char*)keyHdr->bytes();
-
-        if (keyLen == 7 && memcmp(keyBytes, "install", 7) == 0) {
-            // Found "install" selector - get the method from values array
-            Oop values = memory_.fetchPointer(1, methodDict);
-            if (values.isObject()) {
-                ObjectHeader* valHdr = values.asObjectPtr();
-                size_t valueIdx = i - 2;
-                if (valueIdx < valHdr->slotCount()) {
-                    installMethod = valHdr->slotAt(valueIdx);
-                    if (driverLog) {
-                        fprintf(driverLog, "[DRIVER] Found 'install' method at idx %zu\n", valueIdx);
-                        fflush(driverLog);
-                    }
-                }
-            }
-            break;
-        }
-    }
-
-    if (installMethod.isNil() || !installMethod.isObject()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] 'install' method not found\n");
-            fflush(driverLog);
-        }
-        return;
-    }
-
-    // Create a process to run OSiOSDriver install
-    // We can't interrupt the current process, so we schedule it for later
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] Found install method 0x%llx - scheduling execution\n",
-                (unsigned long long)installMethod.rawBits());
-        fflush(driverLog);
-    }
-
-    // Store the method for deferred execution in the run loop
-    // We'll execute it when the current process yields
-    pendingDriverInstallMethod_ = installMethod;
-    pendingDriverInstallReceiver_ = osDriverClass;
-    hasPendingDriverInstall_ = true;
-
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] Scheduled OSiOSDriver install for deferred execution\n");
-        fflush(driverLog);
-    }
-
-    // Also find setupEventLoop method to call AFTER install completes
-    // This is an INSTANCE method in OSSDL2Driver (superclass of OSiOSDriver)
-    // We look it up now but will call it on the Current instance after install runs
+    // Lambda to find a method by name in a class's method dictionary
     auto findMethodInClass = [&](Oop classObj, const char* selectorName) -> Oop {
         if (!classObj.isObject()) return Oop::nil();
         Oop methodDict = memory_.fetchPointer(1, classObj);
@@ -10824,65 +7817,22 @@ void Interpreter::installOSiOSDriver() {
         return Oop::nil();
     };
 
-    // Look for setupEventLoop - FIRST in OSiOSDriver (uses primitive 264),
-    // then fall back to OSSDL2Driver (uses FFI which may fail)
+    // Walk the class hierarchy looking for setupEventLoop
     Oop setupMethod = Oop::nil();
-
-    // First try OSiOSDriver's hierarchy (priority: uses primitive 264 instead of FFI)
     {
         Oop currentClass = osDriverClass;
         int depth = 0;
         while (currentClass.isObject() && !currentClass.isNil() && depth < 10) {
-            std::string className = "<unknown>";
-            Oop nameOop = memory_.fetchPointer(6, currentClass);
-            if (nameOop.isObject()) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
-            }
-            if (driverLog) {
-                fprintf(driverLog, "[DRIVER] Looking for setupEventLoop in %s (depth %d)\n",
-                        className.c_str(), depth);
-                // Dump instance methods at depth 0 to see what's available
-                if (depth == 0) {
-                    Oop methodDict = memory_.fetchPointer(1, currentClass);
-                    if (methodDict.isObject()) {
-                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
-                        fprintf(driverLog, "[DRIVER] Instance methodDict has %zu slots:\n", mdHdr->slotCount());
-                        for (size_t mi = 2; mi < mdHdr->slotCount() && mi < 50; mi++) {
-                            Oop key = mdHdr->slotAt(mi);
-                            if (key.isObject() && !key.isNil()) {
-                                ObjectHeader* keyHdr = key.asObjectPtr();
-                                if (keyHdr->isBytesObject() && keyHdr->byteSize() < 50) {
-                                    std::string name((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                    fprintf(driverLog, "[DRIVER]   [%zu] '%s'\n", mi, name.c_str());
-                                }
-                            }
-                        }
-                    }
-                }
-                fflush(driverLog);
-            }
-
             setupMethod = findMethodInClass(currentClass, "setupEventLoop");
             if (setupMethod.isObject() && !setupMethod.isNil()) {
-                if (driverLog) {
-                    fprintf(driverLog, "[DRIVER] FOUND setupEventLoop in %s!\n", className.c_str());
-                    fflush(driverLog);
-                }
                 break;
             }
-
-            currentClass = memory_.fetchPointer(0, currentClass);
+            currentClass = memory_.fetchPointer(0, currentClass);  // superclass
             depth++;
         }
     }
 
-    // If not found in OSiOSDriver hierarchy, check if we should use OSSDL2Driver fallback
-    // NOTE: For OSiOSDriver, the install method calls ensureEventLoop which triggers our
-    // DNU fallback that enables native event polling. We DON'T want OSSDL2Driver's
-    // FFI-based event loop in that case.
+    // Check if we're using OSiOSDriver (vs. some other driver class)
     bool usingOSiOSDriver = false;
     {
         Oop nameOop = memory_.fetchPointer(6, osDriverClass);
@@ -10897,38 +7847,16 @@ void Interpreter::installOSiOSDriver() {
     }
 
     if (setupMethod.isNil() || !setupMethod.isObject()) {
-        // setupEventLoop not found in OSiOSDriver
-        // DO NOT use OSSDL2Driver's FFI-based setupEventLoop - FFI type resolution is broken
-        // Instead, enable VM-based event processing which directly injects events
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] No setupEventLoop found - enabling VM native event processing\n");
-            fprintf(driverLog, "[DRIVER] Events will be handled via VM's processInputEvents and signalInputSemaphore\n");
-            fflush(driverLog);
-        }
-        // Keep SDL2EventPollingActive=false so processInputEvents handles events
-        // Enable direct InputEventSensor signaling mode
+        // setupEventLoop not found - enable VM-based event processing
         enableDirectInputSignaling_ = true;
     }
 
     if (setupMethod.isObject() && !setupMethod.isNil()) {
         pendingDriverSetupMethod_ = setupMethod;
-        // NOTE: receiver will be set to Current value after install completes
-        pendingDriverSetupReceiver_ = Oop::nil();  // Placeholder - will be filled in later
+        pendingDriverSetupReceiver_ = Oop::nil();  // Will be filled in later
         hasPendingDriverSetup_ = true;
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] Scheduled setupEventLoop for execution after install\n");
-            fflush(driverLog);
-        }
-    } else if (!enableDirectInputSignaling_) {
-        // Only warn if we didn't enable native event processing
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] WARNING: setupEventLoop not found - event loop won't start!\n");
-            fflush(driverLog);
-        }
     }
-    // If enableDirectInputSignaling_ is true, VM will handle events natively
 }
-
 bool Interpreter::executePendingDriverInstall() {
     if (!hasPendingDriverInstall_) {
         return false;
@@ -10936,17 +7864,8 @@ bool Interpreter::executePendingDriverInstall() {
 
     hasPendingDriverInstall_ = false;  // Clear flag before executing
 
-    static FILE* driverLog = nullptr;
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Creating context for install\n");
-        fflush(driverLog);
-    }
 
     if (pendingDriverInstallMethod_.isNil() || !pendingDriverInstallMethod_.isObject()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Invalid method\n");
-            fflush(driverLog);
-        }
         return false;
     }
 
@@ -10955,27 +7874,15 @@ bool Interpreter::executePendingDriverInstall() {
     if (pendingDriverMethodNeedsArg_) {
         // startUp: needs a boolean argument (resuming = true)
         context = memory_.createStartupContextWithArg(pendingDriverInstallMethod_, pendingDriverInstallReceiver_, memory_.trueObject());
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Created context with arg=true for startUp:\n");
-            fflush(driverLog);
-        }
     } else {
         context = memory_.createStartupContext(pendingDriverInstallMethod_, pendingDriverInstallReceiver_);
     }
     pendingDriverMethodNeedsArg_ = false;  // Reset flag
 
     if (context.isNil()) {
-        if (driverLog) {
-            fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Failed to create context\n");
-            fflush(driverLog);
-        }
         return false;
     }
 
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Setting up install method context\n");
-        fflush(driverLog);
-    }
 
     // DON'T restore state after executeFromContext - we want the method to actually run!
     // The method will run in subsequent step() calls. When it returns (to nil sender),
@@ -11003,11 +7910,6 @@ bool Interpreter::executePendingDriverInstall() {
 
     bool result = executeFromContext(context);
 
-    if (driverLog) {
-        fprintf(driverLog, "[DRIVER] executePendingDriverInstall: Context setup %s\n",
-                result ? "succeeded - method will run in subsequent steps" : "failed");
-        fflush(driverLog);
-    }
 
     // Clear the pending install (method is now set up to run)
     pendingDriverInstallMethod_ = Oop::nil();
@@ -11017,8 +7919,6 @@ bool Interpreter::executePendingDriverInstall() {
 }
 
 bool Interpreter::autoLoadDriver() {
-    // Auto-load disabled - OSiOSDriver must be loaded from Pharo image side
-    // (Pending action dispatch mechanism has been removed)
     return false;
 }
 
@@ -11026,7 +7926,6 @@ bool Interpreter::bootstrapStartup() {
     static int bootstrapCallCount = 0;
     static bool imageBooted = false;  // true once we've ever found a runnable process
     bootstrapCallCount++;
-    // Startup logging removed — bootstrap is stable
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -11055,7 +7954,7 @@ bool Interpreter::bootstrapStartup() {
 
                     // LinkedList layout: slot 0 = firstLink, slot 1 = lastLink
                     Oop firstProcess = memory_.fetchPointer(0, queue);
-                    // first process logging removed
+
                     if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
 
                     ObjectHeader* procHeader = firstProcess.asObjectPtr();
@@ -11081,10 +7980,10 @@ bool Interpreter::bootstrapStartup() {
                     //   slot 1 = suspendedContext
                     //   slot 2 = priority
                     Oop context = memory_.fetchPointer(1, firstProcess);  // suspendedContext is at slot 1
-                    // process context logging removed
+
                     if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
                         ObjectHeader* ctxHeader = context.asObjectPtr();
-                        // context details logging removed
+
 
                         // Only try to execute if it looks like a Context (not a Process)
                         // Context format is usually 3 (indexable with fixed), Process format is 1
@@ -11103,7 +8002,7 @@ bool Interpreter::bootstrapStartup() {
 
     // Approach 2: Try to resume from where the image was saved
     // The saved active process might have a context embedded deeper
-    // Approach 2 logging removed
+
     Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (schedulerAssoc2.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc2);  // Get scheduler
@@ -11116,7 +8015,7 @@ bool Interpreter::bootstrapStartup() {
                 // Check suspendedContext (slot 1) of active process
                 if (procHeader->slotCount() > 1) {
                     Oop suspendedCtx = procHeader->slotAt(1);
-                    // suspended context logging removed
+
                     if (suspendedCtx.isNil()) {
                         // nil - no context
                     } else if (suspendedCtx.isObject()) {
@@ -11127,8 +8026,6 @@ bool Interpreter::bootstrapStartup() {
                             imageBooted = true;
                             return executeFromContext(suspendedCtx);
                         }
-                    } else {
-                        std::cerr << " (not object)\n";
                     }
                 }
             }
@@ -11300,56 +8197,9 @@ bool Interpreter::bootstrapStartup() {
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
 
         // Debug logging
-        static FILE* startupDebugLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!startupDebugLog) startupDebugLog = nullptr;
         }
         Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-        if (startupDebugLog) {
-            fprintf(startupDebugLog, "[STARTUP-1] nil object: 0x%llx\n", (unsigned long long)nilObj.rawBits());
-            fprintf(startupDebugLog, "[STARTUP-1] Smalltalk global: 0x%llx isNil=%d isObj=%d\n",
-                    (unsigned long long)smalltalk.rawBits(), smalltalk.isNil() ? 1 : 0, smalltalk.isObject() ? 1 : 0);
-            fprintf(startupDebugLog, "[STARTUP-1] SmalltalkImage class: 0x%llx isNil=%d isObj=%d\n",
-                    (unsigned long long)smalltalkImageClass.rawBits(), smalltalkImageClass.isNil() ? 1 : 0, smalltalkImageClass.isObject() ? 1 : 0);
-
-            // Check SessionManager - why is it nil in our VM but not in others?
-            Oop sessionMgrClass = memory_.findGlobal("SessionManager");
-            fprintf(startupDebugLog, "[STARTUP-1] SessionManager class: 0x%llx isNil=%d isObj=%d\n",
-                    (unsigned long long)sessionMgrClass.rawBits(), sessionMgrClass.isNil() ? 1 : 0, sessionMgrClass.isObject() ? 1 : 0);
-
-            // SessionManager class has a 'default' class variable that holds the singleton
-            // In Pharo, class instance variables are stored after the class's own slots
-            // The metaclass (SessionManager class) has the 'default' inst var
-            if (sessionMgrClass.isObject()) {
-                ObjectHeader* smHdr = sessionMgrClass.asObjectPtr();
-                fprintf(startupDebugLog, "[STARTUP-1] SessionManager classIdx=%u slots=%zu\n",
-                        smHdr->classIndex(), smHdr->slotCount());
-
-                // Get the metaclass (class of SessionManager)
-                Oop metaclass = memory_.classOf(sessionMgrClass);
-                fprintf(startupDebugLog, "[STARTUP-1] SessionManager's metaclass: 0x%llx\n",
-                        (unsigned long long)metaclass.rawBits());
-
-                // The 'default' class instance variable is stored in the class object itself
-                // Class layout: superclass, methodDict, format, layout, instanceVariables, organization,
-                //               subclasses, name, environment, classVars, pool, <class inst vars start here>
-                // Class inst vars are after slot 11 in modern Pharo
-                fprintf(startupDebugLog, "[STARTUP-1] SessionManager slots (looking for 'default'):\n");
-                for (size_t i = 0; i < std::min(smHdr->slotCount(), (size_t)15); i++) {
-                    Oop slot = memory_.fetchPointer(i, sessionMgrClass);
-                    const char* slotName = "";
-                    if (i == 0) slotName = " (superclass)";
-                    else if (i == 1) slotName = " (methodDict)";
-                    else if (i == 6) slotName = " (name)";
-                    else if (i >= 12) slotName = " <-- class inst var?";
-                    fprintf(startupDebugLog, "[STARTUP-1]   slot[%zu] = 0x%llx%s%s\n",
-                            i, (unsigned long long)slot.rawBits(),
-                            slot.rawBits() == nilObj.rawBits() ? " (NIL)" : "",
-                            slotName);
-                }
-            }
-            fflush(startupDebugLog);
-        }
 
         // Use Smalltalk instance if available, otherwise try to get instance from class
         Oop receiver = smalltalk;
@@ -11364,11 +8214,6 @@ bool Interpreter::bootstrapStartup() {
         if (!receiver.isNil() && receiver.isObject() && classForLookup.isObject()) {
             // recordStartupStamp is an instance method, look it up in the instance's class
             Oop method = lookupMethodInClass(classForLookup, "recordStartupStamp");
-            if (startupDebugLog) {
-                fprintf(startupDebugLog, "[STARTUP-1] recordStartupStamp method: 0x%llx isNil=%d\n",
-                        (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
-                fflush(startupDebugLog);
-            }
             if (!method.isNil() && method.isObject()) {
                 // Use the actual instance as receiver
                 Oop context = memory_.createStartupContext(method, receiver);
@@ -11389,13 +8234,7 @@ bool Interpreter::bootstrapStartup() {
         Oop smalltalk = memory_.findGlobal("Smalltalk");
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
 
-        static FILE* startupDebugLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!startupDebugLog) startupDebugLog = nullptr;
-            if (startupDebugLog) {
-                fprintf(startupDebugLog, "[STARTUP-2] Looking for restartMethods\n");
-                fflush(startupDebugLog);
-            }
         }
 
         Oop receiver = smalltalk.isObject() ? smalltalk : smalltalkImageClass;
@@ -11422,48 +8261,26 @@ bool Interpreter::bootstrapStartup() {
     // in some Pharo images, preventing the Morphic event loop from starting.
     if (startupAttempt == 3) {
         static bool uiManagerStarted = false;
-        static FILE* uiLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!uiLog) uiLog = nullptr;
         }
 
         if (!uiManagerStarted) {
             uiManagerStarted = true;
 
-            if (uiLog) {
-                fprintf(uiLog, "[UI] Attempting to initialize UIManager\n");
-                fflush(uiLog);
-            }
 
             // Find UIManager class
             Oop uiManagerClass = memory_.findGlobal("UIManager");
             Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
-            if (uiLog) {
-                fprintf(uiLog, "[UI] UIManager class: 0x%llx sameAsNil=%d\n",
-                        (unsigned long long)uiManagerClass.rawBits(),
-                        uiManagerClass.rawBits() == nilObj.rawBits() ? 1 : 0);
-                fflush(uiLog);
-            }
 
             if (uiManagerClass.isObject() && uiManagerClass.rawBits() != nilObj.rawBits()) {
                 // Get the metaclass (UIManager class) for class-side method lookup
                 Oop metaclass = memory_.classOf(uiManagerClass);
 
-                if (uiLog) {
-                    fprintf(uiLog, "[UI] UIManager metaclass: 0x%llx\n",
-                            (unsigned long long)metaclass.rawBits());
-                    fflush(uiLog);
-                }
 
                 // Look up startUp: method on the class side
                 Oop method = lookupMethodInClass(metaclass, "startUp:");
 
-                if (uiLog) {
-                    fprintf(uiLog, "[UI] UIManager class>>startUp: method: 0x%llx isNil=%d\n",
-                            (unsigned long long)method.rawBits(), method.isNil() ? 1 : 0);
-                    fflush(uiLog);
-                }
 
                 if (!method.isNil() && method.isObject()) {
                     // Create context for UIManager class>>startUp: true
@@ -11473,24 +8290,10 @@ bool Interpreter::bootstrapStartup() {
                     if (!context.isNil()) {
                         stackPointer_ = stackBase_;
                         frameDepth_ = 0;
-                        if (uiLog) {
-                            fprintf(uiLog, "[UI] Executing UIManager class>>startUp: true\n");
-                            fflush(uiLog);
-                        }
                         if (executeFromContext(context)) {
-                            if (uiLog) {
-                                fprintf(uiLog, "[UI] UIManager startUp: returned successfully\n");
-                                fflush(uiLog);
-                            }
                             return true;
                         }
-                    } else if (uiLog) {
-                        fprintf(uiLog, "[UI] Failed to create context for UIManager startUp:\n");
-                        fflush(uiLog);
                     }
-                } else if (uiLog) {
-                    fprintf(uiLog, "[UI] startUp: method not found on UIManager class\n");
-                    fflush(uiLog);
                 }
             }
         }
@@ -11500,34 +8303,14 @@ bool Interpreter::bootstrapStartup() {
     if (startupAttempt >= 4 && startupAttempt <= 100) {
         // One-time: Try to start InputEventSensor's event loop
         static bool sensorStartAttempted = false;
-        static FILE* sensorLog = nullptr;
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!sensorLog) {
-                sensorLog = nullptr;
-            }
-        }
         if (!sensorStartAttempted) {
             sensorStartAttempted = true;
 
-            if (sensorLog) {
-                fprintf(sensorLog, "[SENSOR] Starting InputEventSensor lookup (attempt #%d)\n", startupAttempt);
-                fflush(sensorLog);
-            }
 
             // Find the Sensor global (InputEventSensor instance)
             Oop sensor = memory_.findGlobal("Sensor");
-            if (sensorLog) {
-                fprintf(sensorLog, "[SENSOR] Sensor global: 0x%llx isNil=%d isObj=%d\n",
-                        (unsigned long long)sensor.rawBits(), sensor.isNil() ? 1 : 0, sensor.isObject() ? 1 : 0);
-                fflush(sensorLog);
-            }
             if (!sensor.isNil() && sensor.isObject()) {
                 Oop sensorClass = memory_.classOf(sensor);
-                if (sensorLog) {
-                    fprintf(sensorLog, "[SENSOR] Sensor class: 0x%llx isNil=%d isObj=%d\n",
-                            (unsigned long long)sensorClass.rawBits(), sensorClass.isNil() ? 1 : 0, sensorClass.isObject() ? 1 : 0);
-                    fflush(sensorLog);
-                }
                 if (!sensorClass.isNil() && sensorClass.isObject()) {
                     // Try several possible method names for starting the event loop
                     const char* methodNames[] = {
@@ -11538,25 +8321,12 @@ bool Interpreter::bootstrapStartup() {
                     const char* foundMethodName = nullptr;
                     for (int i = 0; methodNames[i] != nullptr; i++) {
                         startUpMethod = lookupMethodInClass(sensorClass, methodNames[i]);
-                        if (sensorLog) {
-                            fprintf(sensorLog, "[SENSOR] Trying '%s': 0x%llx isNil=%d\n",
-                                    methodNames[i], (unsigned long long)startUpMethod.rawBits(), startUpMethod.isNil() ? 1 : 0);
-                            fflush(sensorLog);
-                        }
                         if (!startUpMethod.isNil() && startUpMethod.isObject()) {
                             foundMethodName = methodNames[i];
                             break;
                         }
                     }
                     if (!startUpMethod.isNil() && startUpMethod.isObject()) {
-                        if (sensorLog) {
-                            fprintf(sensorLog, "[SENSOR] Found method: %s\n", foundMethodName);
-                            fflush(sensorLog);
-                        }
-                        if (sensorLog) {
-                            fprintf(sensorLog, "[SENSOR] Attempting to call Sensor>>startUp\n");
-                            fflush(sensorLog);
-                        }
                         Oop context = memory_.createStartupContext(startUpMethod, sensor);
                         if (!context.isNil()) {
                             // Execute startUp in the current context
@@ -11564,18 +8334,10 @@ bool Interpreter::bootstrapStartup() {
                             stackPointer_ = stackBase_;
                             frameDepth_ = 0;
                             if (executeFromContext(context)) {
-                                if (sensorLog) {
-                                    fprintf(sensorLog, "[SENSOR] Started Sensor>>startUp execution\n");
-                                    fflush(sensorLog);
-                                }
                                 return true;  // Let startUp complete before doing doOneCycle
                             }
                         }
                     } else {
-                        if (sensorLog) {
-                            fprintf(sensorLog, "[SENSOR] No event loop method found in Sensor class\n");
-                            fflush(sensorLog);
-                        }
                     }
                 }
             }
@@ -12194,22 +8956,12 @@ bool Interpreter::executeFromContext(Oop context) {
     static bool firstSnapshotResume = true;
 
     // Log snapshot resume detection
-    static FILE* snapLog = nullptr;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!snapLog) snapLog = nullptr;
-        if (snapLog && firstSnapshotResume) {
-            fprintf(snapLog, "[SNAP] Checking for snapshot resume, primIdx=%d\n", primIdx);
-            fflush(snapLog);
-        }
     }
 
     // Check for snapshot primitive (131) by primitive number
     if (primIdx == 131) {
         isSnapshotResume = true;
-        if (snapLog) {
-            fprintf(snapLog, "[SNAP] Detected by primitive 131\n");
-            fflush(snapLog);
-        }
     }
 
     // Also check by method selector name (for methods that call primitives differently)
@@ -12224,19 +8976,11 @@ bool Interpreter::executeFromContext(Oop context) {
                     ObjectHeader* nameHdr = nameOop.asObjectPtr();
                     if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 100) {
                         std::string className((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        if (snapLog && firstSnapshotResume) {
-                            fprintf(snapLog, "[SNAP] Receiver class name: '%s'\n", className.c_str());
-                            fflush(snapLog);
-                        }
                         if (className == "SnapshotOperation" || className == "SessionManager") {
                             // We're resuming in snapshot-related context
                             // SnapshotOperation is used in Pharo <= 12
                             // SessionManager is used in Pharo 13+
                             isSnapshotResume = true;
-                            if (snapLog) {
-                                fprintf(snapLog, "[SNAP] Detected snapshot class: %s!\n", className.c_str());
-                                fflush(snapLog);
-                            }
                         }
                     }
                 }
@@ -12244,26 +8988,12 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
-    // Mark that we've detected snapshot resume (used to suppress further logging)
+    // Mark that we've detected snapshot resume
     if (isSnapshotResume) {
         firstSnapshotResume = false;
-        if (snapLog) {
-            fprintf(snapLog, "[SNAP] Will set TOS to TRUE for resume\n");
-            fflush(snapLog);
-        }
-    } else if (firstSnapshotResume && snapLog) {
-        fprintf(snapLog, "[SNAP] Not a snapshot resume\n");
-        fflush(snapLog);
-        firstSnapshotResume = false;  // Only log once
     }
 
     Oop methodHeader = memory_.fetchPointer(0, method_);
-    // DEBUG_LOG("[DEBUG] executeFromContext: Method slot 0 = 0x" << std::hex << methodHeader.rawBits() << std::dec;
-    // if (methodHeader.isSmallInteger()) std::cerr << " (SmallInt: " << methodHeader.asSmallInteger() << ")";
-    // else if (methodHeader.isObject()) {
-    //     ObjectHeader* h = methodHeader.asObjectPtr();
-    //     std::cerr << " (obj: " << h->slotCount() << " slots, cls=" << h->classIndex() << ")";
-    // }
     // std::cerr; // DEBUG
 
     if (!methodHeader.isSmallInteger()) {
@@ -12292,78 +9022,7 @@ bool Interpreter::executeFromContext(Oop context) {
     Oop savedPC = memory_.fetchPointer(1, context);
 
     // Log context restoration details
-    static FILE* ctxRestoreLog = nullptr;
-    static int ctxRestoreCount = 0;
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!ctxRestoreLog) ctxRestoreLog = nullptr;
-    }
-    ctxRestoreCount++;
-    if (ctxRestoreLog && ctxRestoreCount <= 50) {
-        // Get active process
-        Oop activeProc = getActiveProcess();
-        Oop prioOop = memory_.fetchPointer(2, activeProc);
-        int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-
-        // Get method selector
-        std::string selName = "?";
-        if (numLiterals >= 2 && numLiterals < 100) {
-            Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
-            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                ObjectHeader* selH = sel.asObjectPtr();
-                if (selH->isBytesObject() && selH->byteSize() < 50) {
-                    selName = std::string((char*)selH->bytes(), selH->byteSize());
-                }
-            }
-        }
-        // Get sender context
-        Oop sender = memory_.fetchPointer(0, context);
-        // Get receiver class name
-        std::string rcvrClsName = "?";
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            Oop rcvrCls = memory_.classOf(receiver_);
-            if (rcvrCls.isObject()) {
-                Oop clsName = memory_.fetchPointer(6, rcvrCls);
-                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                    ObjectHeader* cnH = clsName.asObjectPtr();
-                    if (cnH->isBytesObject() && cnH->byteSize() < 50) {
-                        rcvrClsName = std::string((char*)cnH->bytes(), cnH->byteSize());
-                    }
-                }
-            }
-        }
-        fprintf(ctxRestoreLog, "[RESTORE #%d] proc=0x%llx(p%d) context=0x%llx method=#%s rcvr=%s sender=0x%llx pc=%lld bcStart=%zu\n",
-                ctxRestoreCount, (unsigned long long)activeProc.rawBits(), prio,
-                (unsigned long long)context.rawBits(), selName.c_str(), rcvrClsName.c_str(),
-                (unsigned long long)sender.rawBits(),
-                savedPC.isSmallInteger() ? savedPC.asSmallInteger() : -1,
-                bytecodeStart);
-
-        // Dump first few bytecodes at PC position for debugging
-        int64_t pcVal = savedPC.isSmallInteger() ? savedPC.asSmallInteger() : 0;
-        if (pcVal > 0 && pcVal <= static_cast<int64_t>(totalBytes)) {
-            size_t startOff = static_cast<size_t>(pcVal - 1);
-            fprintf(ctxRestoreLog, "  bytecodes at PC %lld:", pcVal);
-            for (size_t j = startOff; j < std::min(startOff + 20, totalBytes); j++) {
-                fprintf(ctxRestoreLog, " %02x", methodBytes[j]);
-            }
-            fprintf(ctxRestoreLog, "\n");
-        }
-
-        // Show the method object's class to distinguish CompiledMethod vs CompiledBlock
-        Oop methodClass = memory_.classOf(method_);
-        std::string methodClassName = "?";
-        if (methodClass.isObject()) {
-            Oop mcn = memory_.fetchPointer(6, methodClass);
-            if (mcn.isObject() && mcn.rawBits() > 0x10000) {
-                ObjectHeader* mcnH = mcn.asObjectPtr();
-                if (mcnH->isBytesObject() && mcnH->byteSize() < 50) {
-                    methodClassName = std::string((char*)mcnH->bytes(), mcnH->byteSize());
-                }
-            }
-        }
-        fprintf(ctxRestoreLog, "  method class: %s, numLiterals=%d\n", methodClassName.c_str(), numLiterals);
-
-        fflush(ctxRestoreLog);
     }
     int64_t pcOffset = 0;
     if (savedPC.isSmallInteger()) {
@@ -12493,24 +9152,7 @@ bool Interpreter::executeFromContext(Oop context) {
     //   slot 0: save (Boolean)
     //   slot 2: isQuit (Boolean) - if true, quitPrimitive is called after resume
     if (isSnapshotResume) {
-        static FILE* snapStackLog = nullptr;
         if constexpr (ENABLE_DEBUG_LOGGING) {
-            if (!snapStackLog) snapStackLog = nullptr;
-        }
-        if (snapStackLog) {
-            // Log the context's stack/temp area
-            fprintf(snapStackLog, "[SNAP-STACK] stackp=%d Context slots 6+:\n", stackp);
-            ObjectHeader* ctxHdr = context.asObjectPtr();
-            for (int i = 0; i < std::min(stackp + 2, 10); i++) {
-                Oop item = ctxHdr->slotAt(ContextFixedFields + i);
-                bool isTrueObj = (item.rawBits() == memory_.trueObject().rawBits());
-                bool isFalseObj = (item.rawBits() == memory_.falseObject().rawBits());
-                fprintf(snapStackLog, "  slot[%d]: 0x%llx %s%s\n", 6 + i,
-                        (unsigned long long)item.rawBits(),
-                        isTrueObj ? "(TRUE)" : "",
-                        isFalseObj ? "(FALSE)" : "");
-            }
-            fflush(snapStackLog);
         }
 
         // Set TOS to true ONLY for the actual snapshot primitive (131) context.
@@ -12534,10 +9176,6 @@ bool Interpreter::executeFromContext(Oop context) {
             Oop quitSlot = ctxHdrForQuit->slotAt(7);  // 'quit' parameter
             if (quitSlot.rawBits() == memory_.trueObject().rawBits()) {
                 ctxHdrForQuit->slotAtPut(7, memory_.falseObject());
-                if (snapStackLog) {
-                    fprintf(snapStackLog, "[SNAP-STACK] Cleared quit parameter at slot 7\n");
-                    fflush(snapStackLog);
-                }
             }
         }
 
@@ -12954,15 +9592,6 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
 
     // No primitive function and not a quick primitive
     // Log interesting unimplemented primitives
-    static FILE* unimplPrimLog = nullptr;
-    static int unimplCount = 0;
-    if (!unimplPrimLog) unimplPrimLog = nullptr;
-    if (unimplPrimLog && unimplCount < 200) {
-        unimplCount++;
-        fprintf(unimplPrimLog, "[UNIMPL-PRIM #%d step=%llu] primitive=%d argCount=%d\n",
-                unimplCount, (unsigned long long)g_stepNum, primitiveIndex, argCount);
-        fflush(unimplPrimLog);
-    }
     return PrimitiveResult::Failure;
 }
 

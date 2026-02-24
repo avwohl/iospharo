@@ -520,15 +520,6 @@ int main(int argc, char* argv[]) {
 
     std::cout << "Image loaded successfully!" << std::endl;
 
-    // Verify heap pointer integrity right after loading
-    std::cout << "\n=== Post-Load Heap Verification ===" << std::endl;
-    size_t badPtrs = memory.verifyHeapPointers();
-    if (badPtrs > 0) {
-        std::cout << "WARNING: " << badPtrs << " bad pointers found! See /tmp/iospharo-verify.log" << std::endl;
-    } else {
-        std::cout << "All heap pointers valid." << std::endl;
-    }
-
     // Print information
     printHeader(loader.header());
     printSpecialObjects(memory);
@@ -832,15 +823,6 @@ int main(int argc, char* argv[]) {
         delete gTestSurface;
         gTestSurface = nullptr;
         gDisplaySurface = nullptr;
-    }
-
-    // Post-execution heap verification
-    std::cout << "\n=== Post-Execution Heap Verification ===" << std::endl;
-    badPtrs = memory.verifyHeapPointers();
-    if (badPtrs > 0) {
-        std::cout << "WARNING: " << badPtrs << " bad pointers found after execution! See /tmp/iospharo-verify.log" << std::endl;
-    } else {
-        std::cout << "All heap pointers still valid after execution." << std::endl;
     }
 
     std::cout << "\n=== Test Complete ===" << std::endl;

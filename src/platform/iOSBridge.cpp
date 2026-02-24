@@ -67,14 +67,12 @@ void vm_parameters_destroy(VMParameters* parameters) {
 }
 
 int vm_init(VMParameters* parameters) {
-    // Force unbuffered stderr for diagnostic output
-    setvbuf(stderr, NULL, _IONBF, 0);
     if (!parameters) return 0;
 
     // Initialize VM memory
     size_t heapSize = parameters->maxOldSpaceSize > 0
                       ? (size_t)parameters->maxOldSpaceSize
-                      : 2ULL * 1024 * 1024 * 1024;  // 2 GB default until scavenge/GC is fixed
+                      : 2ULL * 1024 * 1024 * 1024;  // 2 GB default
 
     if (!vm_initialize(heapSize)) {
         return 0;
@@ -191,11 +189,13 @@ int iosIsIPad(void) {
 #endif
 }
 
+// Default values; updated at runtime by Objective-C layer if available
 static char gDeviceModel[64] = "iPhone Simulator";
 const char* iosGetDeviceModel(void) {
     return gDeviceModel;
 }
 
+// Default value; updated at runtime by Objective-C layer if available
 static char gSystemVersion[32] = "15.0";
 const char* iosGetSystemVersion(void) {
     return gSystemVersion;

@@ -79,53 +79,6 @@ class ImageManager: ObservableObject {
         }
     }
 
-    /// Create a fresh working copy of the image, deleting any previous working copy
-    private func prepareFreshWorkingCopy(from originalImage: URL) -> URL? {
-        // Use temp directory instead of Documents to avoid iCloud coordination hangs
-        let workingDir = fileManager.temporaryDirectory.appendingPathComponent("PharoWorking")
-        let workingImage = workingDir.appendingPathComponent("Pharo-Working.image")
-        let workingChanges = workingDir.appendingPathComponent("Pharo-Working.changes")
-
-        fputs("[IMG] prepareFreshWorkingCopy: workingDir=\(workingDir.path)\n", stderr)
-        fflush(stderr)
-
-        // Clean up any existing working copy
-        try? fileManager.removeItem(at: workingDir)
-        fputs("[IMG] prepareFreshWorkingCopy: removed old working dir\n", stderr)
-        fflush(stderr)
-
-        // Create working directory
-        do {
-            try fileManager.createDirectory(at: workingDir, withIntermediateDirectories: true)
-        } catch {
-            NSLog("[ImageManager] Failed to create working directory: %@", error.localizedDescription)
-            return nil
-        }
-
-        // Copy the image file
-        do {
-            try fileManager.copyItem(at: originalImage, to: workingImage)
-        } catch {
-            NSLog("[ImageManager] Failed to copy image: %@", error.localizedDescription)
-            return nil
-        }
-
-        // Copy the changes file if it exists
-        let originalChanges = originalImage.deletingPathExtension().appendingPathExtension("changes")
-        if fileManager.fileExists(atPath: originalChanges.path) {
-            try? fileManager.copyItem(at: originalChanges, to: workingChanges)
-        }
-
-        // Copy sources file if it exists
-        let originalSources = originalImage.deletingLastPathComponent().appendingPathComponent("Pharo12.0-SNAPSHOT.sources")
-        let workingSources = workingDir.appendingPathComponent("Pharo12.0-SNAPSHOT.sources")
-        if fileManager.fileExists(atPath: originalSources.path) {
-            try? fileManager.copyItem(at: originalSources, to: workingSources)
-        }
-
-        return workingImage
-    }
-
     /// Download the default (latest) Pharo image
     func downloadDefaultImage() {
         downloadImage(version: "120")
