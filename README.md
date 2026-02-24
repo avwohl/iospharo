@@ -11,12 +11,19 @@ standard Pharo test suite.
 
 ## Status
 
+**VM core (solid):**
 - **99.90% test pass rate** on Mac Catalyst (13,040 / 13,053)
 - **99.55% test pass rate** on iOS Simulator
-- Full GUI: Pharo desktop, menus, windows, keyboard and mouse input
 - FFI with callbacks (sigsetjmp/siglongjmp)
 - All standard VM plugins built-in (B2D, JPEG, DSA, SSL, etc.)
 - Third-party libraries: cairo, freetype, harfbuzz, pixman, libpng, OpenSSL, libssh2, libgit2
+
+**GUI (work in progress):**
+- Metal rendering pipeline works — display buffer renders to screen
+- Desktop partially renders but theme initialization fails on startup (red X)
+- Menu bar sometimes appears but click/tap handling is unreliable
+- Touch-to-mouse event translation needs work on iPad
+- Event loop between OSSDL2Driver and the VM is not fully wired up
 
 ## Prerequisites
 
