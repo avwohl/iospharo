@@ -38,14 +38,10 @@
 #include <arpa/inet.h>
 #include <unistd.h>
 #include <vector>
-#include <set>
-#include <unordered_map>
 
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 
-// Global symbol name map for TFFI call logging
-static std::unordered_map<uintptr_t, std::string> g_symbolNames;
 #include <ffi.h>
 
 // ===== SurfacePlugin: Surface Management =====
@@ -112,9 +108,6 @@ static void resolveCairoFunctions() {
     g_cairo_image_surface_get_height = (cairo_get_int_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_height");
     g_cairo_image_surface_get_stride = (cairo_get_int_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_stride");
     g_cairo_image_surface_get_data = (cairo_get_data_fn)dlsym(RTLD_DEFAULT, "cairo_image_surface_get_data");
-    if (g_cairo_image_surface_get_width) {
-        fprintf(stderr, "[SURFACE] Native Cairo functions resolved for direct surface access\n");
-    }
 }
 
 // Try to get surface info directly from Cairo when dispatch callbacks fail
@@ -153,9 +146,6 @@ static int compareIntegers(ObjectMemory& memory, Oop a, Oop b);
 extern uint64_t g_stepNum;
 
 extern const char* g_xferReason;
-
-// External variable from Interpreter.cpp for tracing sends after prim 264
-extern int g_traceSendsAfterPrim264;
 
 // Forward declaration for large integer helper (defined later with other large int primitives)
 static bool trySigned64BitValueOf(ObjectMemory& memory, Oop oop, int64_t& value);
@@ -1425,41 +1415,17 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
 
 PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
     // Primitive 18: Number @ aNumber - create a Point
-    static int callCount = 0;
-    static FILE* pointLog = nullptr;
-    callCount++;
-
-    if (!pointLog) {
-        pointLog = nullptr;
-    }
-
     Oop yArg = stackValue(0);
     Oop xRcvr = stackValue(1);
-
-    if (pointLog && callCount <= 20) {
-        fprintf(pointLog, "[POINT %d] primitiveMakePoint: x=0x%llx y=0x%llx\n",
-                callCount, (unsigned long long)xRcvr.rawBits(), (unsigned long long)yArg.rawBits());
-        fprintf(pointLog, "[POINT %d]   xRcvr.isSmallInt=%d yArg.isSmallInt=%d\n",
-                callCount, xRcvr.isSmallInteger() ? 1 : 0, yArg.isSmallInteger() ? 1 : 0);
-        fflush(pointLog);
-    }
 
     // Both arguments should be numbers (SmallInteger or Float)
     // For simplicity, we accept SmallIntegers, SmallFloats, or boxed Floats
     if (!xRcvr.isSmallInteger() && !xRcvr.isSmallFloat() &&
         !(xRcvr.isObject() && memory_.classOf(xRcvr) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
-        if (pointLog && callCount <= 20) {
-            fprintf(pointLog, "[POINT %d]   FAIL: xRcvr not a number\n", callCount);
-            fflush(pointLog);
-        }
         return PrimitiveResult::Failure;
     }
     if (!yArg.isSmallInteger() && !yArg.isSmallFloat() &&
         !(yArg.isObject() && memory_.classOf(yArg) == memory_.specialObject(SpecialObjectIndex::ClassFloat))) {
-        if (pointLog && callCount <= 20) {
-            fprintf(pointLog, "[POINT %d]   FAIL: yArg not a number\n", callCount);
-            fflush(pointLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -1467,30 +1433,15 @@ PrimitiveResult Interpreter::primitiveMakePoint(int argCount) {
     Oop pointClass = memory_.specialObject(SpecialObjectIndex::ClassPoint);
     uint32_t classIndex = memory_.indexOfClass(pointClass);
 
-    if (pointLog && callCount <= 20) {
-        fprintf(pointLog, "[POINT %d]   pointClass=0x%llx classIndex=%u\n",
-                callCount, (unsigned long long)pointClass.rawBits(), classIndex);
-        fflush(pointLog);
-    }
-
     // Allocate Point with 2 slots (x, y)
     Oop point = memory_.allocateSlots(classIndex, 2);
     if (point.isNil()) {
-        if (pointLog && callCount <= 20) {
-            fprintf(pointLog, "[POINT %d]   FAIL: allocation failed\n", callCount);
-            fflush(pointLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     // Store x and y
     memory_.storePointer(0, point, xRcvr);  // x
     memory_.storePointer(1, point, yArg);   // y
-
-    if (pointLog && callCount <= 20) {
-        fprintf(pointLog, "[POINT %d]   SUCCESS: point=0x%llx\n", callCount, (unsigned long long)point.rawBits());
-        fflush(pointLog);
-    }
 
     primitiveSuccess(point);
     return PrimitiveResult::Success;
@@ -1738,45 +1689,6 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
-        // Diagnostic: log when at: is sent to a SmallInteger
-        if (rcvr.isSmallInteger()) {
-            static int smiAtCount = 0;
-            smiAtCount++;
-            if (smiAtCount <= 20) {
-                // Get calling method selector for context
-                std::string sel = "?", cls = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop methodHeader = memory_.fetchPointer(0, method_);
-                    if (methodHeader.isSmallInteger()) {
-                        int numLits = methodHeader.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2 && numLits < 500) {
-                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);
-                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                                ObjectHeader* sh = selOop.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 100)
-                                    sel = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                }
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    Oop rcvrCls = memory_.classOf(receiver_);
-                    if (rcvrCls.isObject()) {
-                        Oop n = memory_.fetchPointer(6, rcvrCls);
-                        if (n.isObject() && n.rawBits() > 0x10000) {
-                            ObjectHeader* nh = n.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 100)
-                                cls = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "[AT-SMI #%d] at: on SmallInteger %lld, index=0x%llx, method=%s>>%s, receiver_=0x%llx(%s)\n",
-                        smiAtCount, (long long)rcvr.asSmallInteger(),
-                        (unsigned long long)index.rawBits(),
-                        cls.c_str(), sel.c_str(),
-                        (unsigned long long)receiver_.rawBits(), cls.c_str());
-            }
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -1948,42 +1860,6 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     Oop rcvr = stackValue(2);
 
     if (!index.isSmallInteger() || !rcvr.isObject()) {
-        // Diagnostic: log when at:put: is sent to a SmallInteger
-        if (rcvr.isSmallInteger()) {
-            static int smiAtPutCount = 0;
-            smiAtPutCount++;
-            if (smiAtPutCount <= 20) {
-                std::string sel = "?", cls = "?";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    Oop methodHeader = memory_.fetchPointer(0, method_);
-                    if (methodHeader.isSmallInteger()) {
-                        int numLits = methodHeader.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2 && numLits < 500) {
-                            Oop selOop = memory_.fetchPointer(numLits - 1, method_);
-                            if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                                ObjectHeader* sh = selOop.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 100)
-                                    sel = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                }
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    Oop rcvrCls = memory_.classOf(receiver_);
-                    if (rcvrCls.isObject()) {
-                        Oop n = memory_.fetchPointer(6, rcvrCls);
-                        if (n.isObject() && n.rawBits() > 0x10000) {
-                            ObjectHeader* nh = n.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 100)
-                                cls = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "[ATPUT-SMI #%d] at:put: on SmallInteger %lld, method=%s>>%s\n",
-                        smiAtPutCount, (long long)rcvr.asSmallInteger(),
-                        cls.c_str(), sel.c_str());
-            }
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -2284,87 +2160,6 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     Oop index = stackValue(1);
     Oop rcvr = stackValue(2);
 
-    // TRACE: Log ALL instVarAtPut calls with Process receiver
-    static FILE* allInstVarLog = nullptr;
-    static int allInstVarCount = 0;
-    if (!allInstVarLog) allInstVarLog = nullptr;
-    if (allInstVarLog && rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-        Oop cls = memory_.classOf(rcvr);
-        if (cls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, cls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                    std::string name((char*)cnHdr->bytes(), cnHdr->byteSize());
-                    if (name == "Process" && allInstVarCount < 30) {
-                        allInstVarCount++;
-                        fprintf(allInstVarLog, "[INSTVAR #%d] Process 0x%llx instVarAt:%lld put:0x%llx\n",
-                                allInstVarCount, (unsigned long long)rcvr.rawBits(),
-                                index.isSmallInteger() ? index.asSmallInteger() : -1,
-                                (unsigned long long)value.rawBits());
-                        fflush(allInstVarLog);
-                    }
-                }
-            }
-        }
-    }
-
-    // TRACE: Log when Process suspendedContext (instVar 2) is written
-    if (index.isSmallInteger() && index.asSmallInteger() == 2 && rcvr.isObject()) {
-        Oop cls = memory_.classOf(rcvr);
-        if (cls.isObject()) {
-            Oop clsName = memory_.fetchPointer(6, cls);
-            if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                ObjectHeader* cnHdr = clsName.asObjectPtr();
-                if (cnHdr->isBytesObject() && cnHdr->byteSize() == 7) {
-                    std::string name((char*)cnHdr->bytes(), 7);
-                    if (name == "Process") {
-                        static FILE* procCtxLog = nullptr;
-                        static int procCtxCount = 0;
-                        procCtxCount++;
-                        if (procCtxCount <= 20) {
-                            if (!procCtxLog) procCtxLog = nullptr;
-                            if (procCtxLog) {
-                                fprintf(procCtxLog, "[PROC-INSTVAR #%d] Process 0x%llx suspendedContext := 0x%llx\n",
-                                        procCtxCount, (unsigned long long)rcvr.rawBits(),
-                                        (unsigned long long)value.rawBits());
-                                // Show what method the context will run
-                                if (value.isObject() && value.rawBits() > 0x10000) {
-                                    Oop ctxMethod = memory_.fetchPointer(3, value);  // Method slot
-                                    std::string methName = "?";
-                                    if (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000) {
-                                        Oop mhdr = memory_.fetchPointer(0, ctxMethod);
-                                        if (mhdr.isSmallInteger()) {
-                                            int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                                            if (nLits >= 2 && nLits < 100) {
-                                                Oop sel = memory_.fetchPointer(nLits - 1, ctxMethod);
-                                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                                    ObjectHeader* selH = sel.asObjectPtr();
-                                                    if (selH->isBytesObject() && selH->byteSize() < 100) {
-                                                        methName = std::string((char*)selH->bytes(), selH->byteSize());
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                    fprintf(procCtxLog, "  context method: #%s\n", methName.c_str());
-                                    // Also show context's sender
-                                    Oop sender = memory_.fetchPointer(0, value);
-                                    fprintf(procCtxLog, "  context sender: 0x%llx (isNil=%d)\n",
-                                            (unsigned long long)sender.rawBits(),
-                                            sender.rawBits() == memory_.nil().rawBits() ? 1 : 0);
-                                } else {
-                                    fprintf(procCtxLog, "  value is nil or invalid\n");
-                                }
-                                fflush(procCtxLog);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     if (!index.isSmallInteger() || !rcvr.isObject()) {
         return PrimitiveResult::Failure;
     }
@@ -2449,15 +2244,6 @@ PrimitiveResult Interpreter::primitiveObjectAt(int argCount) {
     // Get literal count from method header (slot 0)
     Oop methodHeaderOop = header->slotAt(0);
     if (!methodHeaderOop.isSmallInteger()) {
-        // In Cog VMs, slot 0 can be a CogMethod pointer when JIT-compiled.
-        // For saved images, this should always be a SmallInteger. Log failures.
-        static int objAtFailCount = 0;
-        if (objAtFailCount++ < 5) {
-            std::cerr << "[PRIM68-FAIL] objectAt: slot 0 of CompiledMethod 0x" << std::hex
-                      << rcvr.rawBits() << " is not SmallInteger: raw=0x"
-                      << methodHeaderOop.rawBits() << " isObj=" << methodHeaderOop.isObject()
-                      << " tag=" << (methodHeaderOop.rawBits() & 7) << std::dec << "\n";
-        }
         return PrimitiveResult::Failure;
     }
     int64_t headerBits = methodHeaderOop.asSmallInteger();
@@ -2585,23 +2371,6 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
         classIndex = memory_.registerClass(rcvr);
     }
 
-    // TRACE: Log OSSDL2Driver creation
-    {
-        Oop clsName = memory_.fetchPointer(6, rcvr);
-        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-            ObjectHeader* cnH = clsName.asObjectPtr();
-            if (cnH->isBytesObject() && cnH->byteSize() == 12 &&
-                memcmp(cnH->bytes(), "OSSDL2Driver", 12) == 0) {
-                static FILE* sdlNewLog = nullptr;
-                if (sdlNewLog) {
-                    fprintf(sdlNewLog, "[SDL2-NEW] Creating OSSDL2Driver instance! classIdx=%u instSize=%zu step=%llu\n",
-                            classIndex, instSize, (unsigned long long)g_stepNum);
-                    fflush(sdlNewLog);
-                }
-            }
-        }
-    }
-
     // Choose correct object format based on instSpec
     ObjectFormat objFormat;
     switch (instFormat) {
@@ -2642,121 +2411,7 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         rcvr = stackValue(1);  // Class
     }
 
-
-    // Debug: trace all calls during startup
-    static int newArgCallCount = 0;
-    newArgCallCount++;
-    auto logNewArgFail = [&](const char* reason) {
-        if (newArgCallCount <= 10) {
-            FILE* f = nullptr;
-            if (f) {
-                std::string className = "?";
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    ObjectHeader* ch = rcvr.asObjectPtr();
-                    if (ch->slotCount() >= 7) {
-                        Oop nm = memory_.fetchPointer(6, rcvr);
-                        if (nm.isObject() && nm.rawBits() > 0x10000) {
-                            ObjectHeader* nh = nm.asObjectPtr();
-                            if (nh->isBytesObject() && nh->byteSize() < 50)
-                                className = std::string((char*)nh->bytes(), nh->byteSize());
-                        }
-                    }
-                }
-                // Get class name of size arg
-                std::string sizeClassName = "?";
-                if (sizeOop.isNil()) { sizeClassName = "nil"; }
-                else if (sizeOop.isSmallInteger()) { sizeClassName = "SmallInt(" + std::to_string(sizeOop.asSmallInteger()) + ")"; }
-                else if (sizeOop.isObject() && sizeOop.rawBits() > 0x10000) {
-                    Oop scls = memory_.classOf(sizeOop);
-                    if (scls.isObject() && scls.rawBits() > 0x10000) {
-                        Oop snm = memory_.fetchPointer(6, scls);
-                        if (snm.isObject() && snm.rawBits() > 0x10000) {
-                            ObjectHeader* snH = snm.asObjectPtr();
-                            if (snH->isBytesObject() && snH->byteSize() < 80)
-                                sizeClassName = std::string((char*)snH->bytes(), snH->byteSize());
-                        }
-                    }
-                }
-                fprintf(f, "[basicNew: #%d] FAIL %s class=%s sizeArg=%s(0x%llx) sizeIsSmallInt=%d sizeIsObj=%d argCount=%d step=%llu\n",
-                        newArgCallCount, reason, className.c_str(), sizeClassName.c_str(),
-                        (unsigned long long)sizeOop.rawBits(), sizeOop.isSmallInteger() ? 1 : 0,
-                        sizeOop.isObject() ? 1 : 0, argCount, (unsigned long long)g_stepNum);
-                // Dump current method selector
-                {
-                    std::string curSel = "?";
-                    if (method_.isObject() && memory_.isValidPointer(method_)) {
-                        Oop hdrOop = memory_.fetchPointer(0, method_);
-                        if (hdrOop.isSmallInteger()) {
-                            int64_t hbits = hdrOop.asSmallInteger();
-                            int nLit = hbits & 0x7FFF;
-                            // Try penultimate literal (selector in some layouts)
-                            for (int li = nLit; li >= std::max(1, nLit-1); li--) {
-                                Oop lit = memory_.fetchPointer(li, method_);
-                                if (lit.isObject() && memory_.isValidPointer(lit)) {
-                                    ObjectHeader* lh = lit.asObjectPtr();
-                                    if (lh->isBytesObject() && lh->byteSize() < 100 && lh->byteSize() > 0) {
-                                        curSel = std::string((char*)lh->bytes(), lh->byteSize());
-                                        break;
-                                    }
-                                    // Association: slot 0 = key (Symbol), slot 1 = value
-                                    if (lh->slotCount() >= 2) {
-                                        Oop key = memory_.fetchPointer(0, lit);
-                                        if (key.isObject() && memory_.isValidPointer(key)) {
-                                            ObjectHeader* kh = key.asObjectPtr();
-                                            if (kh->isBytesObject() && kh->byteSize() < 100) {
-                                                curSel = std::string((char*)kh->bytes(), kh->byteSize());
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(f, "[basicNew: #%d] current method selector: #%s frameDepth=%zu\n",
-                            newArgCallCount, curSel.c_str(), frameDepth_);
-                }
-                // Dump call stack from savedFrames
-                fprintf(f, "[basicNew: #%d] Call stack:\n", newArgCallCount);
-                for (size_t fi = 0; fi < frameDepth_ && fi < 25; fi++) {
-                    size_t idx = frameDepth_ - 1 - fi;
-                    const auto& sf = savedFrames_[idx];
-                    std::string frameSel = "?";
-                    if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                        Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
-                        if (sfHdr.isSmallInteger()) {
-                            int64_t hv = sfHdr.asSmallInteger();
-                            int nl = hv & 0x7FFF;
-                            if (nl >= 2 && nl < 100) {
-                                Oop sel = memory_.fetchPointer(nl - 1, sf.savedMethod);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = sel.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 80) {
-                                        frameSel = std::string((char*)sh->bytes(), sh->byteSize());
-                                    }
-                                    // Check if it's an Association (slot 0 = key)
-                                    else if (sh->slotCount() >= 2) {
-                                        Oop key = memory_.fetchPointer(0, sel);
-                                        if (key.isObject() && key.rawBits() > 0x10000) {
-                                            ObjectHeader* kh = key.asObjectPtr();
-                                            if (kh->isBytesObject() && kh->byteSize() < 80) {
-                                                frameSel = std::string((char*)kh->bytes(), kh->byteSize());
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(f, "  [%zu] #%s\n", fi, frameSel.c_str());
-                }
-                fclose(f);
-            }
-        }
-    };
-
     if (!rcvr.isObject()) {
-        logNewArgFail("rcvr-not-object");
         return PrimitiveResult::Failure;
     }
 
@@ -2774,80 +2429,18 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
                 indexableSize |= ((int64_t)bytes[i]) << (i * 8);
             }
         } else {
-            // Log details about the non-integer argument object
-            if (newArgCallCount <= 10) {
-                FILE* f = nullptr;
-                if (f) {
-                    fprintf(f, "[basicNew:] arg byteSize=%zu isBytesObj=%d fmt=%d classIdx=%u slots=%zu\n",
-                            hdr->byteSize(), hdr->isBytesObject() ? 1 : 0,
-                            (int)hdr->format(), hdr->classIndex(), hdr->slotCount());
-                    // Resolve class name of the argument
-                    Oop argClass = memory_.classOf(sizeOop);
-                    if (argClass.isObject() && argClass.rawBits() > 0x10000) {
-                        ObjectHeader* acHdr = argClass.asObjectPtr();
-                        if (acHdr->slotCount() >= 7) {
-                            Oop acName = memory_.fetchPointer(6, argClass);
-                            if (acName.isObject() && acName.rawBits() > 0x10000) {
-                                ObjectHeader* anHdr = acName.asObjectPtr();
-                                if (anHdr->isBytesObject() && anHdr->byteSize() < 100) {
-                                    fprintf(f, "[basicNew:] arg class name: %.*s\n",
-                                            (int)anHdr->byteSize(), (char*)anHdr->bytes());
-                                }
-                            }
-                        }
-                    }
-                    // Dump slot values
-                    for (size_t s = 0; s < std::min(hdr->slotCount(), (size_t)4); s++) {
-                        Oop slotVal = memory_.fetchPointer(s, sizeOop);
-                        fprintf(f, "[basicNew:] arg slot[%zu] = 0x%llx isSmallInt=%d",
-                                s, (unsigned long long)slotVal.rawBits(), slotVal.isSmallInteger() ? 1 : 0);
-                        if (slotVal.isSmallInteger()) {
-                            fprintf(f, " value=%lld", (long long)slotVal.asSmallInteger());
-                        } else if (slotVal.isObject() && slotVal.rawBits() > 0x10000) {
-                            // Try to get class name of slot value
-                            Oop slotClass = memory_.classOf(slotVal);
-                            if (slotClass.isObject() && slotClass.rawBits() > 0x10000) {
-                                ObjectHeader* scHdr = slotClass.asObjectPtr();
-                                if (scHdr->slotCount() >= 7) {
-                                    Oop scName = memory_.fetchPointer(6, slotClass);
-                                    if (scName.isObject() && scName.rawBits() > 0x10000) {
-                                        ObjectHeader* snHdr = scName.asObjectPtr();
-                                        if (snHdr->isBytesObject() && snHdr->byteSize() < 100) {
-                                            fprintf(f, " class=%.*s", (int)snHdr->byteSize(), (char*)snHdr->bytes());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(f, "\n");
-                    }
-                    // Dump stack context: show several stack values around the failure
-                    fprintf(f, "[basicNew:] stack dump (argCount=%d frameDepth=%zu):\n", argCount, frameDepth_);
-                    for (int sv = 0; sv < 6; sv++) {
-                        Oop val = stackValue(sv);
-                        fprintf(f, "  stackValue(%d) = 0x%llx isSmallInt=%d isObj=%d\n",
-                                sv, (unsigned long long)val.rawBits(),
-                                val.isSmallInteger() ? 1 : 0, val.isObject() ? 1 : 0);
-                    }
-                    fclose(f);
-                }
-            }
-            logNewArgFail("non-integer-arg");
             return PrimitiveResult::Failure;
         }
     } else {
-        logNewArgFail("size-not-int-or-obj");
         return PrimitiveResult::Failure;
     }
     if (indexableSize < 0) {
-        logNewArgFail("size-negative");
         return PrimitiveResult::Failure;
     }
 
     // Get class format to determine if bytes or pointers
     Oop formatObj = memory_.fetchPointer(2, rcvr);
     if (!formatObj.isSmallInteger()) {
-        logNewArgFail("format-not-smallint");
         return PrimitiveResult::Failure;
     }
 
@@ -2858,7 +2451,6 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     // Per official VM: validate this is a variable-sized class (format >= 2)
     // Format 0-1 are fixed-size, format 2+ are variable (Array, String, etc.)
     if (instSpec < 2) {
-        logNewArgFail("not-variable");
         return PrimitiveResult::Failure;
     }
 
@@ -2947,7 +2539,6 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     }
 
     if (newObj.isNil()) {
-        logNewArgFail("alloc-returned-nil");
         return PrimitiveResult::Failure;
     }
 
@@ -3317,32 +2908,7 @@ PrimitiveResult Interpreter::primitivePerformWithArgs(int argCount) {
     Oop argsArray = stackValue(0);
     Oop selector = stackValue(1);
 
-    // Debug: detect bad selectors
     if (!selector.isObject() || selector.rawBits() < 0x10000) {
-        static int badPerformArgsCount = 0;
-        if (badPerformArgsCount++ < 5) {
-            std::cerr << "[PERFORM-ARGS-DEBUG] Bad selector in primitivePerformWithArgs!"
-                      << " selector=0x" << std::hex << selector.rawBits() << std::dec
-                      << " isSmallFloat=" << selector.isSmallFloat()
-                      << " receiver=0x" << std::hex << stackValue(2).rawBits() << std::dec
-                      << "\n";
-            // Show method context
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                Oop mHdr = memory_.fetchPointer(0, method_);
-                if (mHdr.isSmallInteger()) {
-                    int numLits = mHdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                std::cerr << "  in method: #" << std::string((char*)selHdr->bytes(), selHdr->byteSize()) << "\n";
-                            }
-                        }
-                    }
-                }
-            }
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -3637,112 +3203,18 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
     if (!closure.isObject()) {
-        static int f1 = 0; if (f1++ < 5) std::cerr << "[P207-FAIL] not object\n";
         return PrimitiveResult::Failure;
     }
 
     // Get numArgs from the closure (slot 2)
     Oop numArgsOop = memory_.fetchPointer(2, closure);
     if (!numArgsOop.isSmallInteger()) {
-        static int f2 = 0; if (f2++ < 5) std::cerr << "[P207-FAIL] numArgs not SmallInt: 0x" << std::hex << numArgsOop.rawBits() << std::dec << "\n";
         return PrimitiveResult::Failure;
     }
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
     if (closureNumArgs != argCount) {
-        static int f3 = 0; if (f3++ < 5) std::cerr << "[P207-FAIL] argMismatch closureArgs=" << closureNumArgs << " argCount=" << argCount << "\n";
         return PrimitiveResult::Failure;
-    }
-
-    // TRACE: Log block activation with args - focus on nil args
-    static FILE* blockArgLog = nullptr;
-    static int blockArgCount = 0;
-    static int nilArgCount = 0;
-    if (!blockArgLog) blockArgLog = nullptr;
-
-    // Check if any arg is nil
-    bool hasNilArg = false;
-    for (int i = 0; i < argCount; i++) {
-        Oop arg = stackValue(static_cast<size_t>(i));
-        // Check if arg is nil (nil is typically at old space base or has specific format)
-        if (arg.isObject() && arg.asObjectPtr()->format() == ObjectFormat::ZeroSized
-            && arg.asObjectPtr()->slotCount() == 0) {
-            hasNilArg = true;
-            break;
-        }
-    }
-
-    if (blockArgLog && (blockArgCount < 100 || (hasNilArg && nilArgCount < 50))) {
-        blockArgCount++;
-        if (hasNilArg) nilArgCount++;
-
-        fprintf(blockArgLog, "[BLOCK-ARG #%d] primitiveFullClosureValue argCount=%d%s\n",
-                blockArgCount, argCount, hasNilArg ? " [HAS NIL ARG!]" : "");
-        for (int i = 0; i < argCount; i++) {
-            Oop arg = stackValue(static_cast<size_t>(i));
-            std::string argInfo = "";
-            if (arg.isObject() && arg.rawBits() > 0x10000) {
-                ObjectHeader* hdr = arg.asObjectPtr();
-                if (hdr->format() == ObjectFormat::ZeroSized && hdr->slotCount() == 0) {
-                    argInfo = " [NIL]";
-                } else {
-                    Oop cls = memory_.classOf(arg);
-                    if (cls.isObject()) {
-                        Oop clsName = memory_.fetchPointer(6, cls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* cnHdr = clsName.asObjectPtr();
-                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                argInfo = " [" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + "]";
-                            }
-                        }
-                    }
-                }
-            } else if (arg.isSmallInteger()) {
-                argInfo = " [SmallInt " + std::to_string(arg.asSmallInteger()) + "]";
-            }
-            fprintf(blockArgLog, "  arg[%d] = 0x%llx%s\n",
-                    i, (unsigned long long)arg.rawBits(), argInfo.c_str());
-        }
-
-        // Show closure info and calling context
-        if (hasNilArg) {
-            fprintf(blockArgLog, "  closure = 0x%llx\n", (unsigned long long)closure.rawBits());
-
-            // Show receiver_ class (the class of the object whose method we're in)
-            std::string rcvrClassName = "?";
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrClassName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-            fprintf(blockArgLog, "  receiver_ class: %s\n", rcvrClassName.c_str());
-
-            // Show current method selector
-            if (method_.isObject()) {
-                Oop hdr = memory_.fetchPointer(0, method_);
-                if (hdr.isSmallInteger()) {
-                    int numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                fprintf(blockArgLog, "  in method: %s >> #%s\n", rcvrClassName.c_str(),
-                                        std::string((char*)selHdr->bytes(), selHdr->byteSize()).c_str());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        fflush(blockArgLog);
     }
 
     // Activate the closure - same as regular block activation
@@ -3927,39 +3399,6 @@ PrimitiveResult Interpreter::primitiveResume(int argCount) {
     Oop activeProcess = getActiveProcess();
     int activePriority = safeProcessPriority(activeProcess);
     if (activePriority < 0) return PrimitiveResult::Failure;
-
-    // Diagnostic: log P80+ process resumes
-    if (processPriority >= 80) {
-        static int p80ResumeCount = 0;
-        if (++p80ResumeCount <= 50) {
-            // Get process's suspended context method
-            std::string msel = "?";
-            Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, process);
-            if (ctx.isObject() && !ctx.isNil()) {
-                Oop m = memory_.fetchPointer(3, ctx);
-                if (m.isObject() && !m.isNil() && memory_.isValidPointer(m)) {
-                    Oop hdr = memory_.fetchPointer(0, m);
-                    if (hdr.isSmallInteger()) {
-                        int nl = hdr.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2) {
-                            Oop s = memory_.fetchPointer(nl - 1, m);
-                            if (s.isObject() && s.rawBits() > 0x10000 && memory_.isValidPointer(s)) {
-                                ObjectHeader* sh = s.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 80)
-                                    msel = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "[RESUME-P%d #%d] proc=0x%llx activePri=%d method=#%s step=%llu\n",
-                    processPriority, p80ResumeCount,
-                    (unsigned long long)process.rawBits(),
-                    activePriority, msel.c_str(),
-                    (unsigned long long)g_stepNum);
-            fflush(stderr);
-        }
-    }
 
     if (processPriority > activePriority) {
         // Resumed process has higher priority - preempt current process
@@ -4163,8 +3602,6 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             case 48: // VM flags
                 return Oop::fromSmallInteger(0);
             case 49: { // Max external semaphores table size
-                static int param49Count = 0;
-                param49Count++;
                 Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
                 size_t size = 0;
                 if (!semTable.isNil() && semTable.isObject()) {
@@ -4182,21 +3619,6 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                         }
                         memory_.setSpecialObject(SpecialObjectIndex::ExternalObjectsArray, newTable);
                         size = AUTO_EXT_OBJ_SIZE;
-                        FILE* logFile = nullptr;
-                        if (logFile) {
-                            fprintf(logFile, "[PARAM49 #%d step=%llu] AUTO-CREATED %zu slots\n",
-                                    param49Count, (unsigned long long)g_stepNum, AUTO_EXT_OBJ_SIZE);
-                            fclose(logFile);
-                        }
-                    }
-                }
-                if (param49Count <= 20) {
-                    FILE* logFile = nullptr;
-                    if (logFile) {
-                        fprintf(logFile, "[PARAM49 #%d step=%llu] semTable=0x%llx size=%zu\n",
-                                param49Count, (unsigned long long)g_stepNum,
-                                (unsigned long long)semTable.rawBits(), size);
-                        fclose(logFile);
                     }
                 }
                 return Oop::fromSmallInteger(size);
@@ -4261,17 +3683,7 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
         if (index == 49 && newValueOop.isSmallInteger()) {
             // Resize external semaphore table
             int64_t newSize = newValueOop.asSmallInteger();
-            static int resize49Count = 0;
-            resize49Count++;
-            FILE* logFile = nullptr;
-            if (logFile) {
-                fprintf(logFile, "[RESIZE49 #%d step=%llu] requested newSize=%lld\n",
-                        resize49Count, (unsigned long long)g_stepNum, (long long)newSize);
-                fclose(logFile);
-            }
             if (newSize < 0 || newSize > 65535) {
-                logFile = nullptr;
-                if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: size out of range\n", resize49Count); fclose(logFile); }
                 return PrimitiveResult::Failure;
             }
             Oop oldTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
@@ -4279,20 +3691,12 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
             if (!oldTable.isNil() && oldTable.isObject()) {
                 oldSize = memory_.slotCountOf(oldTable);
             }
-            logFile = nullptr;
-            if (logFile) {
-                fprintf(logFile, "[RESIZE49 #%d] oldTable=0x%llx oldSize=%zu\n",
-                        resize49Count, (unsigned long long)oldTable.rawBits(), oldSize);
-                fclose(logFile);
-            }
             if ((size_t)newSize > oldSize) {
                 // Allocate new larger array
                 Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
                 uint32_t classIndex = memory_.indexOfClass(arrayClass);
                 Oop newTable = memory_.allocateSlots(classIndex, (size_t)newSize, ObjectFormat::Indexable);
                 if (newTable.isNil()) {
-                    logFile = nullptr;
-                    if (logFile) { fprintf(logFile, "[RESIZE49 #%d] FAIL: allocation failed\n", resize49Count); fclose(logFile); }
                     return PrimitiveResult::Failure;
                 }
                 // Initialize with nil
@@ -4339,23 +3743,6 @@ static std::string extractString(ObjectMemory& memory, Oop stringOop) {
     return result;
 }
 
-// Helper: Translate runtime Oop to image format (for saving)
-static uint64_t oopToImageFormat(Oop oop, uint8_t* runtimeBase, uint64_t imageBase) {
-    if (oop.isImmediate() || oop.isNil()) {
-        // Immediates and nil don't need translation
-        return oop.rawBits();
-    }
-
-    // Get the object address and translate to image space
-    ObjectHeader* ptr = oop.asObjectPtr();
-    uint64_t runtimeAddr = reinterpret_cast<uint64_t>(ptr);
-    uint64_t baseAddr = reinterpret_cast<uint64_t>(runtimeBase);
-
-    // Calculate offset from runtime base and add to image base
-    uint64_t offset = runtimeAddr - baseAddr;
-    return imageBase + offset;
-}
-
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // Image saving is disabled, but we must return true to indicate
     // "resuming from saved image" — this is how the active process
@@ -4363,156 +3750,12 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // SnapshotOperation to set isImageStarting=true, which calls
     // SessionManager>>installNewSession to initialize currentSession.
     // Failing the primitive breaks the entire startup sequence.
-    { FILE* f = nullptr; if (f) { fprintf(f, "[VM] primitiveSnapshot CALLED! argCount=%d\n", argCount); fclose(f); } }
     if (argCount > 0) {
         popN(argCount);  // pop arguments
     }
     // Pop receiver, push true (isImageStarting = true)
     stackTop() = memory_.specialObject(SpecialObjectIndex::TrueObject);
     return PrimitiveResult::Success;
-
-    // === ORIGINAL IMPLEMENTATION DISABLED ===
-    // The code below is kept for reference but never executes due to early return above
-#if 0
-    // primitiveSnapshot / primitiveSnapshotEmbedded
-    // Argument: optional filename (String)
-    // Returns: true if save succeeded, false if resuming from load
-
-    std::string filename;
-
-    if (argCount >= 1) {
-        Oop arg = stackValue(0);
-        filename = extractString(memory_, arg);
-    }
-
-    if (filename.empty()) {
-        // No filename provided - fail
-        return PrimitiveResult::Failure;
-    }
-
-    // Open output file
-    std::ofstream file(filename, std::ios::binary);
-    if (!file) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Standard Spur 64-bit image base address
-    const uint64_t imageBase = 0x10000000000ULL;
-
-    // Calculate heap size (old space used)
-    uint8_t* heapStart = memory_.oldSpaceStart();
-    uint8_t* heapEnd = memory_.oldSpaceEnd();
-    size_t heapSize = heapEnd - heapStart;
-
-    // Build image header
-    SpurImageHeader header = {};
-    header.imageFormat = 68021;  // Spur 64-bit
-    header.headerSize = 128;     // Standard header size
-    header.imageBytes = heapSize;
-    header.startOfMemory = imageBase;
-
-    // Translate special objects array pointer
-    header.specialObjectsOop = oopToImageFormat(
-        memory_.specialObjectsArray(), heapStart, imageBase);
-
-    header.lastHash = 0;  // Will be updated on next allocation
-    header.screenSize = 0;
-    header.imageHeaderFlags = 0x2;  // Preemption yields
-    header.extraVMMemory = 0;
-    header.numStackPages = 0;
-    header.cogCodeSize = 0;
-    header.edenBytes = 22003584;  // Default eden size
-    header.maxExtSemTabSize = 0;
-    header.unused1 = 0;
-    header.firstSegmentBytes = heapSize;
-    header.freeOldSpaceInImage = 0;
-
-    // Write header (128 bytes, padded)
-    file.write(reinterpret_cast<const char*>(&header.imageFormat), 4);
-    file.write(reinterpret_cast<const char*>(&header.headerSize), 4);
-    file.write(reinterpret_cast<const char*>(&header.imageBytes), 8);
-    file.write(reinterpret_cast<const char*>(&header.startOfMemory), 8);
-    file.write(reinterpret_cast<const char*>(&header.specialObjectsOop), 8);
-    file.write(reinterpret_cast<const char*>(&header.lastHash), 8);
-    file.write(reinterpret_cast<const char*>(&header.screenSize), 8);
-    file.write(reinterpret_cast<const char*>(&header.imageHeaderFlags), 8);
-    file.write(reinterpret_cast<const char*>(&header.extraVMMemory), 4);
-    file.write(reinterpret_cast<const char*>(&header.numStackPages), 2);
-    file.write(reinterpret_cast<const char*>(&header.cogCodeSize), 2);
-    file.write(reinterpret_cast<const char*>(&header.edenBytes), 4);
-    file.write(reinterpret_cast<const char*>(&header.maxExtSemTabSize), 2);
-    file.write(reinterpret_cast<const char*>(&header.unused1), 2);
-    file.write(reinterpret_cast<const char*>(&header.firstSegmentBytes), 8);
-    file.write(reinterpret_cast<const char*>(&header.freeOldSpaceInImage), 8);
-
-    // Pad to 128 bytes
-    size_t written = 4 + 4 + 8 + 8 + 8 + 8 + 8 + 8 + 4 + 2 + 2 + 4 + 2 + 2 + 8 + 8;
-    std::vector<char> padding(128 - written, 0);
-    file.write(padding.data(), padding.size());
-
-    // Now write the heap data with pointer translation
-    // We need to iterate through all objects and translate pointers
-
-    // Make a copy of heap for translation
-    std::vector<uint8_t> heapCopy(heapStart, heapEnd);
-
-    // Iterate through objects and translate pointers
-    uint8_t* pos = heapCopy.data();
-    uint8_t* end = pos + heapSize;
-
-    while (pos < end) {
-        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(pos);
-        uint64_t rawHeader = obj->rawHeader();
-
-        // Check for overflow header (numSlots == 255)
-        size_t numSlots = (rawHeader >> 56) & 0xFF;
-        size_t actualSlots = numSlots;
-
-        if (numSlots == 255) {
-            // Overflow: previous 8 bytes contain actual slot count
-            if (pos >= heapCopy.data() + 8) {
-                uint64_t* overflowSlot = reinterpret_cast<uint64_t*>(pos - 8);
-                actualSlots = *overflowSlot;
-            }
-        }
-
-        // Get format to determine if this is a pointer object
-        uint8_t format = (rawHeader >> 24) & 0x1F;
-
-        // Pointer objects: format 0-5
-        if (format <= 5 && actualSlots > 0) {
-            // Translate each slot
-            Oop* slots = reinterpret_cast<Oop*>(pos + 8);
-            for (size_t i = 0; i < actualSlots; i++) {
-                Oop oldOop = slots[i];
-                uint64_t translated = oopToImageFormat(oldOop, heapStart, imageBase);
-                *reinterpret_cast<uint64_t*>(&slots[i]) = translated;
-            }
-        }
-
-        // Move to next object
-        size_t objectSize = 8 + actualSlots * 8;  // Header + slots
-        if (objectSize < 16) objectSize = 16;     // Minimum object size
-
-        // Align to 8 bytes
-        objectSize = (objectSize + 7) & ~7ULL;
-
-        pos += objectSize;
-    }
-
-    // Write the translated heap
-    file.write(reinterpret_cast<const char*>(heapCopy.data()), heapSize);
-
-    file.close();
-
-    if (!file) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Return true to indicate successful save
-    primitiveSuccess(memory_.trueObject());
-    return PrimitiveResult::Success;
-#endif  // Disabled save implementation
 }
 
 // ===== I/O PRIMITIVES (stubs - iOS implementation elsewhere) =====
@@ -4530,11 +3773,6 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 10) {
-        fprintf(stderr, "[PRIM102] beDisplay #%d argCount=%d\n", callCount, argCount);
-    }
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Get the receiver (a Form object)
@@ -4545,17 +3783,6 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 
     // Store as the display form
     setDisplayForm(form);
-    if (callCount <= 10) {
-        Oop w = memory_.fetchPointer(1, form);
-        Oop h = memory_.fetchPointer(2, form);
-        Oop bits = memory_.fetchPointer(0, form);
-        uint32_t classIdx = form.asObjectPtr()->classIndex();
-        fprintf(stderr, "[PRIM102] setDisplayForm=%llx classIdx=%u width=%lld height=%lld bits=%llx\n",
-                (unsigned long long)form.rawBits(), classIdx,
-                w.isSmallInteger() ? (long long)w.asSmallInteger() : -1LL,
-                h.isSmallInteger() ? (long long)h.asSmallInteger() : -1LL,
-                (unsigned long long)bits.rawBits());
-    }
 
     // Extract form dimensions to update screen size
     // Form slots: 0=bits, 1=width, 2=height, 3=depth
@@ -4773,15 +4000,6 @@ PrimitiveResult Interpreter::primitiveVMPath(int argCount) {
 // Primitive 106: Get the screen size as a Point
 // Returns Point with x = width, y = height
 PrimitiveResult Interpreter::primitiveScreenSize(int argCount) {
-    static int callCount = 0;
-    callCount++;
-    static FILE* log = nullptr;
-    if (log && callCount <= 20) {
-        fprintf(log, "[PRIM106] primitiveScreenSize called #%d -> %dx%d\n",
-                callCount, screenWidth_, screenHeight_);
-        fflush(log);
-    }
-
     // Create a Point object with screen dimensions
     // Point is stored as: x @ y where x and y are SmallIntegers
 
@@ -4835,60 +4053,28 @@ PrimitiveResult Interpreter::primitiveIsVMDisplayUsingSDL2(int argCount) {
 // Sets the semaphore index to signal when SDL2 events are available.
 // This enables SDL2 event handling by the image's OSSDL2Driver.
 PrimitiveResult Interpreter::primitiveSetVMSDL2Input(int argCount) {
-    static FILE* sdlLog = nullptr;
-    static int callCount = 0;
-    callCount++;
-
-    if (!sdlLog) {
-        sdlLog = nullptr;
-    }
-
-    if (sdlLog && callCount <= 20) {
-        fprintf(sdlLog, "[SDL2-INPUT] primitiveSetVMSDL2Input called #%d, argCount=%d\n",
-                callCount, argCount);
-        fflush(sdlLog);
-    }
-
     // Expect 1 argument: the semaphore index
     if (argCount != 1) {
-        if (sdlLog) {
-            fprintf(sdlLog, "[SDL2-INPUT] Wrong argCount=%d (expected 1), failing\n", argCount);
-            fflush(sdlLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     Oop semIndexOop = stackTop();
 
     if (!semIndexOop.isSmallInteger()) {
-        if (sdlLog) {
-            fprintf(sdlLog, "[SDL2-INPUT] Semaphore index is not SmallInteger, failing\n");
-            fflush(sdlLog);
-        }
         return PrimitiveResult::Failure;
     }
 
     int64_t semIndex = semIndexOop.asSmallInteger();
-
-    if (sdlLog) {
-        fprintf(sdlLog, "[SDL2-INPUT] Setting SDL2 input semaphore index to %lld\n", (long long)semIndex);
-        fflush(sdlLog);
-    }
 
     // Store the semaphore index for SDL2 event signaling
     gEventQueue.setSDL2InputSemaphoreIndex(static_cast<int>(semIndex));
 
     // Note: do NOT set isSDL2EventPollingActive here. That flag should only
     // be set when stub_SDL_PollEvent is actually called. Setting it here
-    // blocks the Display Form → gDisplaySurface copy in syncDisplayToSurface(),
+    // blocks the Display Form -> gDisplaySurface copy in syncDisplayToSurface(),
     // but if OSSDL2Driver never reaches its event loop (e.g., SDL_Init fails
     // or FFI type resolution fails), no SDL2 rendering happens and the display
     // goes blank.
-
-    if (sdlLog) {
-        fprintf(sdlLog, "[SDL2-INPUT] SDL2 event polling NOW ACTIVE\n");
-        fflush(sdlLog);
-    }
 
     // Pop argument and return receiver
     pop();  // Pop semaphore index argument
@@ -5080,23 +4266,9 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Detect conflict: usec timer also armed?
-    if (nextWakeupUsec_ != INT64_MAX) {
-        fprintf(stderr, "[TIMER-CONFLICT] prim136 arming while usec timer also armed! usecTarget=%lld\n",
-                (long long)nextWakeupUsec_);
-    }
-
     // Store the timer info (in ioMSecs units, 30-bit wrapping)
     timerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
-
-    static int timerMs136Count = 0;
-    timerMs136Count++;
-    if (timerMs136Count <= 20 || timerMs136Count % 200 == 0) {
-        fprintf(stderr, "[TIMER-SET136 #%d] targetMs=%lld sema=0x%llx step=%llu\n",
-                timerMs136Count, (long long)targetMs, (unsigned long long)semaphore.rawBits(),
-                (unsigned long long)g_stepNum);
-    }
 
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
@@ -5224,17 +4396,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     // replaceFrom:to:with:startingAt:
     // rcvr[start..stop] := replacement[repStart..]
 
-    static int replaceCallCount = 0;
-    replaceCallCount++;
-    {
-        static FILE* replCallLog = nullptr;
-        if (!replCallLog) replCallLog = nullptr;
-        if (replCallLog && replaceCallCount <= 50) {
-            fprintf(replCallLog, "[REPLACE-CALL #%d step=%llu]\n", replaceCallCount, g_stepNum);
-            fflush(replCallLog);
-        }
-    }
-
     Oop repStart = stackValue(0);
     Oop replacement = stackValue(1);
     Oop stop = stackValue(2);
@@ -5262,32 +4423,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     ObjectHeader* replHeader = replacement.asObjectPtr();
 
     if (rcvrHeader->isImmutable()) {
-        static FILE* replLog = nullptr;
-        static int immFailCount = 0;
-        if (!replLog) replLog = nullptr;
-        if (replLog && immFailCount++ < 50) {
-            fprintf(replLog, "[REPLACE-IMMUTABLE #%d step=%llu] rcvr=0x%llx fmt=%d classIdx=%u byteSize=%zu\n",
-                    immFailCount, g_stepNum, (unsigned long long)rcvr.rawBits(),
-                    (int)rcvrHeader->format(), rcvrHeader->classIndex(), rcvrHeader->byteSize());
-            fprintf(replLog, "  start=%lld stop=%lld repStart=%lld\n",
-                    (long long)startIdx, (long long)stopIdx, (long long)repStartIdx);
-            // Get class name
-            Oop cls = memory_.classOf(rcvr);
-            if (cls.isObject()) {
-                Oop cn = memory_.fetchPointer(6, cls);
-                if (cn.isObject() && cn.rawBits() > 0x10000) {
-                    ObjectHeader* cnH = cn.asObjectPtr();
-                    if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                        fprintf(replLog, "  rcvr class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
-                }
-            }
-            // Show rcvr content (first 50 bytes)
-            if (rcvrHeader->isBytesObject() && rcvrHeader->byteSize() <= 200) {
-                size_t len = std::min(rcvrHeader->byteSize(), (size_t)50);
-                fprintf(replLog, "  rcvr bytes: '%.*s'\n", (int)len, (char*)rcvrHeader->bytes());
-            }
-            fflush(replLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -5303,32 +4438,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
         size_t replSize = replHeader->byteSize();
         if (static_cast<size_t>(stopIdx) > rcvrSize ||
             static_cast<size_t>(repStartIdx + count - 1) > replSize) {
-            static FILE* bndLog = nullptr;
-            static int bndCount = 0;
-            if (!bndLog) bndLog = nullptr;
-            if (bndLog && bndCount++ < 50) {
-                fprintf(bndLog, "[REPLACE-BOUNDS #%d step=%llu] rcvrSize=%zu replSize=%zu start=%lld stop=%lld repStart=%lld count=%lld\n",
-                        bndCount, g_stepNum, rcvrSize, replSize, (long long)startIdx, (long long)stopIdx, (long long)repStartIdx, (long long)count);
-                // Class names
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject()) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnH = cn.asObjectPtr();
-                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                            fprintf(bndLog, "  rcvr class: %.*s\n", (int)cnH->byteSize(), (char*)cnH->bytes());
-                    }
-                }
-                if (rcvrHeader->byteSize() <= 200) {
-                    size_t len = std::min(rcvrHeader->byteSize(), (size_t)80);
-                    fprintf(bndLog, "  rcvr bytes: '%.*s'\n", (int)len, (char*)rcvrHeader->bytes());
-                }
-                if (replHeader->byteSize() <= 200) {
-                    size_t len = std::min(replHeader->byteSize(), (size_t)80);
-                    fprintf(bndLog, "  repl bytes: '%.*s'\n", (int)len, (char*)replHeader->bytes());
-                }
-                fflush(bndLog);
-            }
             return PrimitiveResult::Failure;
         }
 
@@ -5408,37 +4517,6 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
 
             primitiveSuccess(rcvr);
             return PrimitiveResult::Success;
-        }
-    }
-
-    // Log format mismatch failures
-    if (!rcvrHeader->isPointersObject() || !replHeader->isPointersObject()) {
-        // If we got here, bytes path didn't match - log why
-        static FILE* replFmtLog = nullptr;
-        static int fmtFailCount = 0;
-        if (!replFmtLog) replFmtLog = nullptr;
-        if (replFmtLog && fmtFailCount++ < 50) {
-            fprintf(replFmtLog, "[REPLACE-FMT #%d step=%llu] rcvr: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu | repl: fmt=%d isByte=%d isPtr=%d cls=%u sz=%zu\n",
-                    fmtFailCount, g_stepNum,
-                    (int)rcvrHeader->format(), rcvrHeader->isBytesObject(), rcvrHeader->isPointersObject(), rcvrHeader->classIndex(), rcvrHeader->byteSize(),
-                    (int)replHeader->format(), replHeader->isBytesObject(), replHeader->isPointersObject(), replHeader->classIndex(), replHeader->byteSize());
-            fprintf(replFmtLog, "  start=%lld stop=%lld repStart=%lld\n",
-                    (long long)startIdx, (long long)stopIdx, (long long)repStartIdx);
-            // Class names
-            auto logClassName = [&](const char* label, Oop obj) {
-                Oop cls = memory_.classOf(obj);
-                if (cls.isObject()) {
-                    Oop cn = memory_.fetchPointer(6, cls);
-                    if (cn.isObject() && cn.rawBits() > 0x10000) {
-                        ObjectHeader* cnH = cn.asObjectPtr();
-                        if (cnH->isBytesObject() && cnH->byteSize() < 100)
-                            fprintf(replFmtLog, "  %s class: %.*s\n", label, (int)cnH->byteSize(), (char*)cnH->bytes());
-                    }
-                }
-            };
-            logClassName("rcvr", rcvr);
-            logClassName("repl", replacement);
-            fflush(replFmtLog);
         }
     }
 
@@ -10300,29 +9378,6 @@ PrimitiveResult Interpreter::primitiveFindHandlerContext(int argCount) {
     }
 
     // Not found - return nil
-    {
-        static int missCount = 0;
-        if (missCount++ < 20) {
-            static FILE* fhLog = nullptr;
-            if (!fhLog) fhLog = nullptr;
-            if (fhLog) {
-                fprintf(fhLog, "[FIND step=%llu] MISS from 0x%llx walked %d\n",
-                        (unsigned long long)g_stepNum,
-                        (unsigned long long)startContext.rawBits(), walked);
-                // Dump sender chain methods
-                Oop ch = startContext;
-                for (int i = 0; i < 10 && ch.isObject() && !ch.isNil(); i++) {
-                    Oop m = memory_.fetchPointer(3, ch);
-                    int pi = (m.isObject() && !m.isNil()) ? primitiveIndexOf(m) : -1;
-                    fprintf(fhLog, "  [%d] ctx=0x%llx method=0x%llx prim=%d\n",
-                            i, (unsigned long long)ch.rawBits(),
-                            (unsigned long long)m.rawBits(), pi);
-                    ch = memory_.fetchPointer(0, ch);
-                }
-                fflush(fhLog);
-            }
-        }
-    }
     pop();
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -10347,23 +9402,9 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Log calls to help debug unwind mechanism
-    static int unwindSearchCount = 0;
-    static FILE* unwindLog = nullptr;
-    unwindSearchCount++;
-    if (!unwindLog) unwindLog = nullptr;
-
-    if (unwindLog && unwindSearchCount <= 200) {
-        fprintf(unwindLog, "[UNWIND-SEARCH #%d step=%llu] from=0x%llx stop=0x%llx\n",
-                unwindSearchCount, (unsigned long long)g_stepNum,
-                (unsigned long long)calleeContext.rawBits(),
-                (unsigned long long)stopContext.rawBits());
-    }
-
     // Walk from callee's sender
     Oop ctx = memory_.fetchPointer(0, calleeContext);  // sender = slot 0
     int limit = 10000;  // safety limit
-    int depth = 0;
 
     while (ctx.isObject() && !ctx.isNil() && limit-- > 0) {
         // If we reached the stop context, not found
@@ -10374,48 +9415,17 @@ PrimitiveResult Interpreter::primitiveFindNextUnwindContext(int argCount) {
         Oop method = memory_.fetchPointer(3, ctx);  // method = slot 3
         if (method.isObject() && !method.isNil()) {
             int primIdx = primitiveIndexOf(method);
-
-            if (unwindLog && unwindSearchCount <= 200 && depth < 20) {
-                // Get method selector for logging
-                std::string sel = "?";
-                Oop mhdr = memory_.fetchPointer(0, method);
-                if (mhdr.isSmallInteger()) {
-                    int nLits = mhdr.asSmallInteger() & 0x7FFF;
-                    if (nLits >= 2 && nLits < 100) {
-                        Oop selOop = memory_.fetchPointer(nLits - 1, method);
-                        if (selOop.isObject() && selOop.rawBits() > 0x10000) {
-                            ObjectHeader* selH = selOop.asObjectPtr();
-                            if (selH->isBytesObject() && selH->byteSize() < 80) {
-                                sel = std::string((char*)selH->bytes(), selH->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(unwindLog, "  [%d] ctx=0x%llx method=#%s prim=%d%s\n",
-                        depth, (unsigned long long)ctx.rawBits(), sel.c_str(), primIdx,
-                        primIdx == 198 ? " *** UNWIND ***" : "");
-            }
-
             if (primIdx == 198) {
                 // Found an unwind context
-                if (unwindLog && unwindSearchCount <= 200) {
-                    fprintf(unwindLog, "  -> FOUND unwind at depth %d\n", depth);
-                    fflush(unwindLog);
-                }
                 popN(2);
                 push(ctx);
                 return PrimitiveResult::Success;
             }
         }
         ctx = memory_.fetchPointer(0, ctx);  // sender = slot 0
-        depth++;
     }
 
     // Not found - return nil
-    if (unwindLog && unwindSearchCount <= 200) {
-        fprintf(unwindLog, "  -> NOT FOUND (depth=%d)\n", depth);
-        fflush(unwindLog);
-    }
     popN(2);
     push(memory_.nil());
     return PrimitiveResult::Success;
@@ -11312,21 +10322,7 @@ PrimitiveResult Interpreter::primitiveStringHash(int argCount) {
 // Computes hash of a string with an initial hash value
 // Arguments: receiver (String class), aString, initialHash
 PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
-    static FILE* prim146Log = nullptr;
-    static int callCount = 0;
-    if (!prim146Log) prim146Log = nullptr;
-
-    callCount++;
-    if (prim146Log && callCount <= 20) {
-        fprintf(prim146Log, "[PRIM146 #%d] called with argCount=%d\n", callCount, argCount);
-        fflush(prim146Log);
-    }
-
     if (argCount != 2) {
-        if (prim146Log && callCount <= 20) {
-            fprintf(prim146Log, "[PRIM146 #%d] FAIL: argCount != 2\n", callCount);
-            fflush(prim146Log);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -11334,47 +10330,22 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
     Oop initialHashOop = stackValue(0);  // top
     Oop stringOop = stackValue(1);
 
-    if (prim146Log && callCount <= 20) {
-        fprintf(prim146Log, "[PRIM146 #%d] initialHash=0x%llx isSmallInt=%d, string=0x%llx isObj=%d\n",
-                callCount,
-                (unsigned long long)initialHashOop.rawBits(), initialHashOop.isSmallInteger() ? 1 : 0,
-                (unsigned long long)stringOop.rawBits(), stringOop.isObject() ? 1 : 0);
-        fflush(prim146Log);
-    }
-
     // Initial hash must be a SmallInteger
     if (!initialHashOop.isSmallInteger()) {
-        if (prim146Log && callCount <= 20) {
-            fprintf(prim146Log, "[PRIM146 #%d] FAIL: initialHash not SmallInteger\n", callCount);
-            fflush(prim146Log);
-        }
         return PrimitiveResult::Failure;
     }
     int64_t speciesHash = initialHashOop.asSmallInteger();
 
     // String must be a byte object
     if (!stringOop.isObject()) {
-        if (prim146Log && callCount <= 20) {
-            fprintf(prim146Log, "[PRIM146 #%d] FAIL: string not object\n", callCount);
-            fflush(prim146Log);
-        }
         return PrimitiveResult::Failure;
     }
 
     ObjectHeader* header = stringOop.asObjectPtr();
     ObjectFormat fmt = header->format();
 
-    if (prim146Log && callCount <= 20) {
-        fprintf(prim146Log, "[PRIM146 #%d] string format=%d (need 16-23)\n", callCount, (int)fmt);
-        fflush(prim146Log);
-    }
-
     // Must be a byte object (format 16-23)
     if (fmt < ObjectFormat::Indexable8 || fmt > ObjectFormat::Indexable8_7) {
-        if (prim146Log && callCount <= 20) {
-            fprintf(prim146Log, "[PRIM146 #%d] FAIL: not byte object (format=%d)\n", callCount, (int)fmt);
-            fflush(prim146Log);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -11389,11 +10360,6 @@ PrimitiveResult Interpreter::primitiveStringHashInitialHash(int argCount) {
         hash = (hash + bytes[i]) * 1664525;
     }
     hash = hash & 0x0FFFFFFF;
-
-    if (prim146Log && callCount <= 20) {
-        fprintf(prim146Log, "[PRIM146 #%d] SUCCESS: hash=%u\n", callCount, hash);
-        fflush(prim146Log);
-    }
 
     // Pop arguments and receiver (3 items), push result
     popN(3);
@@ -13240,11 +12206,6 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
 // Called after every successful BitBlt to mirror the reference VM's behavior
 // (BitBltPlugin calls showDisplayBitsLeftTopRightBottom after copyBits).
 void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, int bottom) {
-    static int callCount = 0;
-    static int bailSdl = 0, bailNotObj = 0, bailSmallInt = 0, bailNil = 0;
-    static int bailFmt = 0, bailSize = 0, bailEmpty = 0, successCount = 0;
-    callCount++;
-
     if (!pharo::gDisplaySurface) return;
 
     // When SDL2 rendering is active, skip Display Form copies to avoid
@@ -13256,7 +12217,6 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     // Match by form dimensions instead of identity (OSSDL2Driver creates a new form
     // that doesn't match the Display global, and GC can move objects).
     if (!destForm.isObject()) {
-        if (++bailNotObj <= 3) fprintf(stderr, "[SDB] #%d bail: destForm not object\n", callCount);
         return;
     }
     Oop bits = memory_.fetchPointer(0, destForm);  // FormBits
@@ -13264,11 +12224,9 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     // bits can be: Bitmap object (regular Form), SmallInteger (ManualSurface handle),
     // or ExternalAddress (ExternalForm pointer). We can only copy from Bitmap objects.
     if (bits.isSmallInteger()) {
-        if (++bailSmallInt <= 3) fprintf(stderr, "[SDB] #%d bail: bits is SmallInt=%lld\n", callCount, (long long)bits.asSmallInteger());
         return;
     }
     if (!bits.isObject() || bits.isNil()) {
-        if (++bailNil <= 3) fprintf(stderr, "[SDB] #%d bail: bits nil/not-obj\n", callCount);
         return;
     }
 
@@ -13276,7 +12234,6 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     ObjectHeader* bitsHdr = bits.asObjectPtr();
     auto fmt = bitsHdr->format();
     if (fmt != ObjectFormat::Indexable32) {
-        if (++bailFmt <= 3) fprintf(stderr, "[SDB] #%d bail: bits format=%d (expected Indexable32)\n", callCount, static_cast<int>(fmt));
         return;
     }
 
@@ -13288,7 +12245,6 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
     int surfWidth = pharo::gDisplaySurface->width();
     int surfHeight = pharo::gDisplaySurface->height();
     if (srcWidth != surfWidth || srcHeight != surfHeight) {
-        if (++bailSize <= 3) fprintf(stderr, "[SDB] #%d bail: size mismatch src=%dx%d surf=%dx%d\n", callCount, srcWidth, srcHeight, surfWidth, surfHeight);
         return;
     }
 
@@ -13311,13 +12267,6 @@ void Interpreter::showDisplayBits(Oop destForm, int left, int top, int right, in
         memcpy(dstPixels + y * dstWidth + left,
                srcPixels + y * srcWidth + left,
                (right - left) * sizeof(uint32_t));
-    }
-
-    successCount++;
-    if (successCount <= 5 || successCount % 500 == 0) {
-        fprintf(stderr, "[SDB] #%d SUCCESS copy (%d,%d)-(%d,%d) total=%d bails: sdl=%d si=%d fmt=%d size=%d\n",
-                callCount, left, top, right, bottom, successCount,
-                bailSdl, bailSmallInt, bailFmt, bailSize);
     }
 
     pharo::gDisplaySurface->update();
@@ -14151,50 +13100,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         PrimitiveResult ffiResult = primitiveCalloutToFFI(argCount);
         if (ffiResult == PrimitiveResult::Success) {
             return ffiResult;
-        }
-    }
-
-    // Log unresolved external primitive calls
-    {
-        static int unresCount = 0;
-        if (unresCount++ < 30) {
-            Oop method = newMethod_.isObject() ? newMethod_ : method_;
-            fprintf(stderr, "[EXT-PRIM-FAIL] #%d argCount=%d literalStrings:", unresCount, argCount);
-            if (method.isObject()) {
-                Oop methodHeader = memory_.fetchPointer(0, method);
-                if (methodHeader.isSmallInteger()) {
-                    size_t nl = methodHeader.asSmallInteger() & 0x7FFF;
-                    for (size_t i = 1; i <= nl && i < 10; i++) {
-                        Oop lit = memory_.fetchPointer(i, method);
-                        if (!lit.isObject() || !memory_.isValidPointer(lit)) continue;
-                        ObjectHeader* lh = lit.asObjectPtr();
-                        if (lh->isBytesObject() && lh->byteSize() < 100) {
-                            fprintf(stderr, " \"%.*s\"", (int)lh->byteSize(), (char*)lh->bytes());
-                        } else if (!lh->isBytesObject() && lh->slotCount() >= 1 && lh->slotCount() <= 10) {
-                            fprintf(stderr, " [");
-                            for (size_t j = 0; j < lh->slotCount(); j++) {
-                                Oop sub = memory_.fetchPointer(j, lit);
-                                if (sub.isObject() && memory_.isValidPointer(sub)) {
-                                    ObjectHeader* sh = sub.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 100) {
-                                        fprintf(stderr, "%s\"%.*s\"", j ? "," : "", (int)sh->byteSize(), (char*)sh->bytes());
-                                    } else {
-                                        fprintf(stderr, "%s<%s:%zu>", j ? "," : "",
-                                                sh->isBytesObject() ? "bytes" : "ptrs", sh->slotCount());
-                                    }
-                                } else if (sub.isSmallInteger()) {
-                                    fprintf(stderr, "%s%lld", j ? "," : "", (long long)sub.asSmallInteger());
-                                } else {
-                                    fprintf(stderr, "%s?", j ? "," : "");
-                                }
-                            }
-                            fprintf(stderr, "]");
-                        }
-                    }
-                }
-            }
-            fprintf(stderr, "\n");
-            fflush(stderr);
         }
     }
 
@@ -16412,43 +15317,6 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         }
         ObjectHeader* rcvrHdr = actualReceiver.asObjectPtr();
 
-        // Debug: Log all slots to find the event buffer
-        static FILE* slotLog = nullptr;
-        static int slotLogCount = 0;
-        if (!slotLog) slotLog = nullptr;
-        if (slotLog && slotLogCount < 5) {
-            slotLogCount++;
-            fprintf(slotLog, "[SCAN #%d] Receiver has %zu slots:\n", slotLogCount, rcvrHdr->slotCount());
-            for (size_t i = 0; i < rcvrHdr->slotCount() && i < 15; i++) {
-                Oop slot = memory_.fetchPointer(i, actualReceiver);
-                if (slot.isObject() && !slot.isImmediate()) {
-                    ObjectHeader* slotHdr = slot.asObjectPtr();
-                    Oop slotClass = memory_.classOf(slot);
-                    std::string className = "<unknown>";
-                    if (slotClass.isObject()) {
-                        Oop nameOop = memory_.fetchPointer(6, slotClass);
-                        if (nameOop.isObject()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-                    fprintf(slotLog, "  slot[%zu]: raw=0x%llx format=%d slotCount=%zu class='%s'\n",
-                            i, (unsigned long long)slot.rawBits(), slotHdr->format(),
-                            slotHdr->slotCount(), className.c_str());
-                } else if (slot.isSmallInteger()) {
-                    fprintf(slotLog, "  slot[%zu]: SmallInteger %lld\n", i, slot.asSmallInteger());
-                } else if (slot.isNil()) {
-                    fprintf(slotLog, "  slot[%zu]: nil\n", i);
-                } else {
-                    fprintf(slotLog, "  slot[%zu]: raw=0x%llx (immediate or special)\n",
-                            i, (unsigned long long)slot.rawBits());
-                }
-            }
-            fflush(slotLog);
-        }
-
         // Search for the event buffer: look for an Array or WordArray (format 2-4)
         eventBuffer = Oop::nil();
         for (size_t i = 0; i < rcvrHdr->slotCount() && i < 15; i++) {
@@ -16480,86 +15348,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Debug: Log buffer validation
-    static FILE* bufLog = nullptr;
-    static int bufCount = 0;
-    bufCount++;
-    if (bufCount <= 10 || bufCount % 5000 == 0) {
-        fprintf(stderr, "[P264] #%d called, passthrough=%zu argCount=%d\n",
-                bufCount, passThroughEvents_.size(), argCount);
-    }
-
-    // Debug: Log what eventBuffer is AND what receiver is
-    if (bufLog && bufCount <= 20) {
-        // First log receiver details
-        if (actualReceiver.isObject()) {
-            ObjectHeader* rcvrHdr = actualReceiver.asObjectPtr();
-            // Try to get class name of receiver - check if receiver IS a class
-            Oop rcvrClass = memory_.classOf(actualReceiver);
-            std::string rcvrClassName = "<unknown>";
-            std::string isMetaclass = "no";
-            if (rcvrClass.isObject()) {
-                // Get class name
-                Oop nameOop = memory_.fetchPointer(6, rcvrClass);  // class name at slot 6
-                if (nameOop.isObject()) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-                // Check if receiver is a class (its class would be a Metaclass)
-                if (rcvrClassName.find("class") != std::string::npos ||
-                    rcvrClassName == "Metaclass" || rcvrClassName == "Class") {
-                    isMetaclass = "yes";
-                    // For classes, try to get the class's own name from slot 6
-                    Oop selfName = memory_.fetchPointer(6, actualReceiver);
-                    if (selfName.isObject()) {
-                        ObjectHeader* selfNameHdr = selfName.asObjectPtr();
-                        if (selfNameHdr->isBytesObject() && selfNameHdr->byteSize() < 100) {
-                            rcvrClassName = std::string((char*)selfNameHdr->bytes(), selfNameHdr->byteSize()) + " (class obj)";
-                        }
-                    }
-                }
-            }
-            fprintf(bufLog, "[BUF] #%d RECEIVER raw=0x%llx classIdx=%d className='%s' isClass=%s slotCount=%zu\n",
-                    bufCount, (unsigned long long)actualReceiver.rawBits(),
-                    rcvrHdr->classIndex(), rcvrClassName.c_str(), isMetaclass.c_str(), rcvrHdr->slotCount());
-        }
-
-        // Then log eventBuffer details
-        fprintf(bufLog, "[BUF] #%d eventBuffer raw=0x%llx isObj=%d isImm=%d isNil=%d argCount=%d sameAsReceiver=%d\n",
-                bufCount, (unsigned long long)eventBuffer.rawBits(),
-                eventBuffer.isObject() ? 1 : 0,
-                eventBuffer.isImmediate() ? 1 : 0,
-                eventBuffer.isNil() ? 1 : 0,
-                argCount,
-                (eventBuffer.rawBits() == actualReceiver.rawBits()) ? 1 : 0);
-        if (eventBuffer.isObject()) {
-            ObjectHeader* hdr = eventBuffer.asObjectPtr();
-            // Get eventBuffer class name
-            Oop bufClass = memory_.classOf(eventBuffer);
-            std::string bufClassName = "<unknown>";
-            if (bufClass.isObject()) {
-                Oop nameOop = memory_.fetchPointer(6, bufClass);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                        bufClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-            fprintf(bufLog, "[BUF] #%d obj classIdx=%d format=%d slotCount=%zu className='%s'\n",
-                    bufCount, hdr->classIndex(), hdr->format(), hdr->slotCount(), bufClassName.c_str());
-        }
-        fflush(bufLog);
-    }
-
     if (eventBuffer.isImmediate()) {
-        if (bufLog && bufCount <= 20) {
-            fprintf(bufLog, "[BUF] #%d FAIL: eventBuffer is immediate (raw=0x%llx)\n",
-                    bufCount, (unsigned long long)eventBuffer.rawBits());
-            fflush(bufLog);
-        }
         return PrimitiveResult::Failure;
     }
 
@@ -16574,34 +15363,12 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // We need at least 4 slots for basic event data (type, timestamp, x, y)
     size_t slotCount = memory_.slotCountOf(eventBuffer);
     if (slotCount < 4) {
-        if (bufLog && bufCount <= 20) {
-            fprintf(bufLog, "[BUF] #%d FAIL: slotCount=%zu < 4\n", bufCount, slotCount);
-            fflush(bufLog);
-        }
         return PrimitiveResult::Failure;
-    }
-
-    if (bufLog && bufCount <= 100) {  // Log more calls
-        fprintf(bufLog, "[BUF] #%d OK: slotCount=%zu, passthrough=%zu\n",
-                bufCount, slotCount, passThroughEvents_.size());
-        fflush(bufLog);
     }
 
     // Try to get next event - first from pass-through buffer, then from queue
     Event event;
     bool hasEvent = false;
-
-    // Debug: track calls - always log to stderr for first 50 calls
-    static int callCount = 0;
-    callCount++;
-
-    // Always log when passthrough has events or when buttons=2 (world menu)
-    static FILE* prim264Log = nullptr;
-    if (prim264Log && (callCount <= 200 || !passThroughEvents_.empty())) {
-        fprintf(prim264Log, "[PRIM264] #%d passthrough=%zu queueEmpty=%d\n",
-                callCount, passThroughEvents_.size(), gEventQueue.isEmpty() ? 1 : 0);
-        fflush(prim264Log);
-    }
 
     // IMPORTANT: Only read from passThroughEvents_, which is populated by processInputEvents().
     // processInputEvents() filters menu-related events and passes non-menu events through.
@@ -16610,12 +15377,6 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
-        // Always log mouse events with buttons (especially buttons=2 for world menu)
-        if (prim264Log && (callCount <= 200 || event.arg3 != 0)) {
-            fprintf(prim264Log, "[PRIM264] #%d Got event: eventType=%d subtype=%d x=%d y=%d buttons=%d\n",
-                    callCount, event.type, event.arg5, event.arg1, event.arg2, event.arg3);
-            fflush(prim264Log);
-        }
     }
     // Note: We intentionally do NOT fall back to gEventQueue.pop() here.
     // All events must go through processInputEvents() first for menu handling.
@@ -16633,32 +15394,9 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
             memory_.storePointer(7, eventBuffer, Oop::fromSmallInteger(event.windowIndex));
         }
 
-        // Log mouse events returned to Pharo
-        if (event.type == 1) {
-            static FILE* mouseLog = nullptr;
-            if (mouseLog) {
-                const char* subtype = (event.arg5 == 1) ? "down" : (event.arg5 == 2) ? "up" : "move";
-                fprintf(mouseLog, "[TO-PHARO] Mouse %s at (%d,%d) buttons=%d mods=%d\n",
-                        subtype, event.arg1, event.arg2, event.arg3, event.arg4);
-                fflush(mouseLog);
-            }
-        }
     } else {
         // No event available
         memory_.storePointer(0, eventBuffer, Oop::fromSmallInteger(0));
-    }
-
-    // Debug: Verify what we stored in slot 0
-    static FILE* slot0Log = nullptr;
-    static int slot0Count = 0;
-    if (!slot0Log) slot0Log = nullptr;
-    if (slot0Log && slot0Count < 100) {
-        Oop storedType = memory_.fetchPointer(0, eventBuffer);
-        slot0Count++;
-        fprintf(slot0Log, "[SLOT0 #%d] stored=%lld isSmallInt=%d hasEvent=%d eventBuffer=0x%llx\n",
-                slot0Count, storedType.asSmallInteger(), storedType.isSmallInteger() ? 1 : 0,
-                hasEvent ? 1 : 0, (unsigned long long)eventBuffer.rawBits());
-        fflush(slot0Log);
     }
 
     if (argCount == 1) {
@@ -16669,66 +15407,6 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // Pharo code will then access the eventBuffer through the receiver.
     // We do NOT modify the stack for argCount=0 - receiver stays as return value.
 
-    // Debug: Log completion and what's on stack
-    static FILE* compLog = nullptr;
-    static int compCount = 0;
-    compCount++;
-    if (compLog && compCount <= 50) {
-        Oop tos = stackTop();
-        fprintf(compLog, "[COMPLETE] #%d hasEvent=%d stackTop=0x%llx receiver=0x%llx\n",
-                compCount, hasEvent ? 1 : 0,
-                (unsigned long long)tos.rawBits(),
-                (unsigned long long)receiver_.rawBits());
-        fflush(compLog);
-    }
-
-    // Debug: Check class hierarchy of receiver for circularity
-    static FILE* hierLog = nullptr;
-    static int hierCount = 0;
-    if (!hierLog) hierLog = nullptr;
-    if (hierLog && hierCount < 3) {
-        hierCount++;
-        fprintf(hierLog, "[HIER #%d] Receiver class hierarchy:\n", hierCount);
-
-        Oop currentClass = memory_.classOf(actualReceiver);
-        std::set<uint64_t> seenClasses;
-        int depth = 0;
-        while (currentClass.isObject() && !currentClass.isNil() && depth < 50) {
-            uint64_t clsBits = currentClass.rawBits();
-            if (seenClasses.count(clsBits)) {
-                fprintf(hierLog, "  [CIRCULAR at depth %d! class=0x%llx]\n",
-                        depth, (unsigned long long)clsBits);
-                break;
-            }
-            seenClasses.insert(clsBits);
-
-            // Get class name
-            std::string className = "<unknown>";
-            ObjectHeader* clsHdr = currentClass.asObjectPtr();
-            Oop nameOop = memory_.fetchPointer(6, currentClass);
-            if (nameOop.isObject()) {
-                ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                    className = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
-            }
-            fprintf(hierLog, "  [%d] 0x%llx classIdx=%d '%s'\n",
-                    depth, (unsigned long long)clsBits, clsHdr->classIndex(), className.c_str());
-
-            // Get superclass (slot 0 of class)
-            currentClass = memory_.fetchPointer(0, currentClass);
-            depth++;
-        }
-        if (currentClass.isNil() || !currentClass.isObject()) {
-            fprintf(hierLog, "  [END] nil/non-object at depth %d\n", depth);
-        }
-        fflush(hierLog);
-    }
-
-    // Flag to enable detailed send tracing after prim 264
-    // Variable defined in Interpreter.cpp
-    g_traceSendsAfterPrim264 = 50;  // Trace next 50 user sends (internal lookup filtered)
-
     return PrimitiveResult::Success;
 }
 
@@ -16737,15 +15415,6 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
 // Sets the semaphore to signal when input is available
 // NOTE: In some images, this is a unary message where the receiver is the semaphore index
 PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
-    // Debug: Log calls to this primitive
-    static FILE* semLog = nullptr;
-    static int semCallCount = 0;
-    semCallCount++;
-    if (semLog && semCallCount <= 20) {
-        fprintf(semLog, "[INPUT-SEM] Call #%d argCount=%d\n", semCallCount, argCount);
-        fflush(semLog);
-    }
-
     Oop semIndexOop;
     if (argCount == 0) {
         semIndexOop = stackTop();  // receiver
@@ -16777,12 +15446,6 @@ PrimitiveResult Interpreter::primitiveInputSemaphore2(int argCount) {
 
     int64_t semIndex = semIndexOop.asSmallInteger();
     gEventQueue.setInputSemaphoreIndex(static_cast<int>(semIndex));
-
-    // Debug: Log the semaphore index being set
-    if (semLog && semCallCount <= 20) {
-        fprintf(semLog, "[INPUT-SEM] Set semaphore index to %lld\n", semIndex);
-        fflush(semLog);
-    }
 
     if (argCount == 1) {
         pop();  // pop argument, leave receiver
@@ -16969,14 +15632,6 @@ static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
                         }
                     }
                 }
-            }
-        }
-        // Log unrecognized object types for debugging
-        {
-            static int unknownFieldCount = 0;
-            if (unknownFieldCount++ < 10) {
-                fprintf(stderr, "[BITBLT-FIELD] Unknown field type at index %zu: fmt=%d slots=%zu\n",
-                        index, static_cast<int>(fmt), hdr->slotCount());
             }
         }
     }
@@ -17377,17 +16032,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         // Source is a surface handle
         int srcSurfID = static_cast<int>(srcBits.asSmallInteger());
         ManualSurface* ss = lookupSurface(srcSurfID);
-        {
-            static int srcSurfLog = 0;
-            if (srcSurfLog++ < 10) {
-                fprintf(stderr, "[BITBLT-SRC-SURF] srcSurfID=%d lookup=%s dispatch=%s bits=%p w=%d h=%d d=%d rule=%ld\n",
-                        srcSurfID, ss ? "OK" : "FAIL",
-                        (ss && ss->dispatch) ? "YES" : "NO",
-                        ss ? ss->bits : nullptr,
-                        ss ? ss->width : 0, ss ? ss->height : 0, ss ? ss->depth : 0,
-                        combinationRule);
-            }
-        }
         if (!ss) return PrimitiveResult::Failure;
 
         if (ss->dispatch) {
@@ -17424,9 +16068,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
 
             if (!gotData || !gotFormat) {
-                static int failLog = 0;
-                if (failLog++ < 5)
-                    fprintf(stderr, "[BITBLT-SRC-SURF] Cannot access surface: format=%d data=%d\n", gotFormat, gotData);
                 return PrimitiveResult::Failure;
             }
 
@@ -17472,12 +16113,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (isByteArray && srcDepth == 32) {
             size_t expectedBytes = static_cast<size_t>(srcWidth) * srcHeight * 4;
             if (srcBitsSize < expectedBytes) {
-                static int compressedCount = 0;
-                if (compressedCount++ < 5) {
-                    fprintf(stderr, "[BITBLT] Compressed source form detected: %zux%ld d=%ld bits=%zu (need %zu). "
-                            "Returning Failure to trigger unhibernate.\n",
-                            (size_t)srcWidth, srcHeight, srcDepth, srcBitsSize, expectedBytes);
-                }
                 return PrimitiveResult::Failure;
             }
         }
@@ -17707,11 +16342,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Unsupported depth combinations
     if (destDepth != 32) {
-        static int nonD32Count = 0;
-        if (nonD32Count++ < 5) {
-            fprintf(stderr, "[BITBLT-FAIL] destDepth=%ld srcDepth=%ld rule=%ld src=%ldx%ld dst=%ldx%ld\n",
-                    destDepth, srcDepth, combinationRule, srcWidth, srcHeight, destWidth, destHeight);
-        }
         return PrimitiveResult::Failure;
     }
     size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
@@ -17895,14 +16525,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 default: {
-                    static int def32Count = 0;
-                    if (def32Count++ < 20) {
-                        fprintf(stderr, "[BITBLT-32to32-FAIL] rule=%ld src=%ldx%ld dst=%ldx%ld "
-                                "dXY=(%ld,%ld) WH=(%ld,%ld) ht=%s\n",
-                                combinationRule, srcWidth, srcHeight, destWidth, destHeight,
-                                destX, destY, width, height,
-                                halftoneWords ? "present" : "nil");
-                    }
                     return PrimitiveResult::Failure;
                 }
             }
@@ -18123,23 +16745,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Unsupported source depth / destination depth
-    {
-        static int unsupCount = 0;
-        if (unsupCount++ < 20) {
-            Oop dBits = memory_.fetchPointer(FormBits, destForm);
-            Oop sBits = sourceForm.isObject() && !sourceForm.isNil()
-                ? memory_.fetchPointer(FormBits, sourceForm) : Oop::nil();
-            fprintf(stderr, "[BITBLT-UNSUP] srcDepth=%ld destDepth=%ld rule=%ld "
-                    "src=%ldx%ld dst=%ldx%ld dXY=(%ld,%ld) WH=(%ld,%ld) "
-                    "dBits=%s sBits=%s\n",
-                    srcDepth, destDepth, combinationRule,
-                    srcWidth, srcHeight, destWidth, destHeight,
-                    destX, destY, width, height,
-                    dBits.isSmallInteger() ? "SurfID" : "Obj",
-                    sBits.isSmallInteger() ? "SurfID" : "Obj");
-        }
-    }
     return PrimitiveResult::Failure;
 }
 
@@ -18240,22 +16845,6 @@ PrimitiveResult Interpreter::primitiveSetManualSurfacePointer(int argCount) {
 
     s->bits = ptr;
 
-    static int setPointerCount = 0;
-    setPointerCount++;
-    if (setPointerCount <= 20 || setPointerCount % 100 == 0) {
-        const char* type = "unknown";
-        if (ptrOop.isNil()) type = "nil";
-        else if (ptrOop.isSmallInteger()) type = "SmallInt";
-        else if (ptrOop.isObject()) {
-            ObjectHeader* h = ptrOop.asObjectPtr();
-            if (h->isBytesObject()) type = "BytesObj";
-            else type = "PointerObj";
-        }
-        fprintf(stderr, "[SURFACE] setPointer: #%d surfID=%d ptr=%p type=%s oop=0x%llx (w=%d h=%d pitch=%d depth=%d)\n",
-                setPointerCount, surfaceID, ptr, type, (unsigned long long)ptrOop.rawBits(),
-                s->width, s->height, s->rowPitch, s->depth);
-    }
-
     // Pop args, leave receiver
     popN(argCount);
     return PrimitiveResult::Success;
@@ -18339,11 +16928,6 @@ PrimitiveResult Interpreter::primitiveRegisterSurface(int argCount) {
     int32_t id32 = static_cast<int32_t>(surfaceID);
     std::memcpy(idBytes, &id32, 4);
 
-    fprintf(stderr, "[SURFACE] registerSurface: id=%d handle=%p dispatch=%p (w=%d h=%d d=%d)\n",
-            surfaceID, (void*)handlePtr, (void*)dispatchPtr,
-            g_surfaces[surfaceID].width, g_surfaces[surfaceID].height,
-            g_surfaces[surfaceID].depth);
-
     // Pop args + receiver, push true
     popN(argCount + 1);
     push(memory_.trueObject());
@@ -18363,8 +16947,6 @@ PrimitiveResult Interpreter::primitiveUnregisterSurface(int argCount) {
     int surfaceID = static_cast<int>(idOop.asSmallInteger());
     ManualSurface* s = lookupSurface(surfaceID);
     if (!s) return PrimitiveResult::Failure;
-
-    fprintf(stderr, "[SURFACE] unregisterSurface: id=%d\n", surfaceID);
 
     s->active = false;
     s->bits = nullptr;
@@ -24013,23 +22595,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     }
 
     if (!symbolAddr) {
-        if (!moduleName.empty()) {
-            static int failLogCount = 0;
-            if (failLogCount < 100) {
-                fprintf(stderr, "[LOAD-SYMBOL] '%s' from '%s' -> FAILED\n", symbolName.c_str(), moduleName.c_str());
-                failLogCount++;
-            }
-        }
         return PrimitiveResult::Failure;
-    }
-
-    // Log successful non-SDL symbol loads
-    if (!moduleName.empty() && moduleName != "<SDL2-builtin>") {
-        static int symLogCount = 0;
-        if (symLogCount < 100) {
-            fprintf(stderr, "[LOAD-SYMBOL] '%s' from '%s' -> OK (%p)\n", symbolName.c_str(), moduleName.c_str(), symbolAddr);
-            symLogCount++;
-        }
     }
 
     // Create an ExternalAddress containing the symbol address
@@ -24049,9 +22615,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     // Store the address in the object's bytes
     ObjectHeader* resultHdr = result.asObjectPtr();
     memcpy(resultHdr->bytes(), &symbolAddr, sizeof(void*));
-
-    // Track symbol name for TFFI call logging
-    g_symbolNames[reinterpret_cast<uintptr_t>(symbolAddr)] = symbolName;
 
     // Pop args and push result
     popN(static_cast<size_t>(argCount + 1));  // Pop args and receiver
@@ -24090,7 +22653,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
         moduleName.find("SDL") != std::string::npos) {
         // SDL2 is "built-in" via our stubs - return a non-null handle
         moduleHandle = reinterpret_cast<void*>(0xDEADBEEF);
-        fprintf(stderr, "[LOAD-MODULE] '%s' -> SDL2 stub handle\n", moduleName.c_str());
     } else {
         // Try to load the library — search multiple paths like the reference VM.
         // Build candidate names from the module string
@@ -24141,11 +22703,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
         }
 #endif
 
-        if (moduleHandle) {
-            fprintf(stderr, "[LOAD-MODULE] '%s' -> loaded OK (%p)\n", moduleName.c_str(), moduleHandle);
-        } else {
-            fprintf(stderr, "[LOAD-MODULE] '%s' -> FAILED: %s\n", moduleName.c_str(), dlerror());
-        }
     }
 
     if (!moduleHandle) {
@@ -25734,7 +24291,6 @@ PrimitiveResult Interpreter::primitiveSymlinkChangeOwner(int argCount) {
 // Returns 2-element Array: { statArray(12 elements) | nil . accessArray(3 bools) | nil }
 PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     if (argCount != 2) {
-        fprintf(stderr, "[FILE-ATTR] FAIL: argCount=%d (expected 2)\n", argCount); fflush(stderr);
         return PrimitiveResult::Failure;
     }
 
@@ -25742,25 +24298,19 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     Oop pathOop = stackValue(1);
 
     if (!maskOop.isSmallInteger()) {
-        fprintf(stderr, "[FILE-ATTR] FAIL: mask not SmallInteger\n"); fflush(stderr);
         return PrimitiveResult::Failure;
     }
     int mask = static_cast<int>(maskOop.asSmallInteger());
 
     if (!pathOop.isObject()) {
-        fprintf(stderr, "[FILE-ATTR] FAIL: path not object (mask=%d)\n", mask); fflush(stderr);
         return PrimitiveResult::Failure;
     }
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
     if (!pathHdr->isBytesObject()) {
-        fprintf(stderr, "[FILE-ATTR] FAIL: path not bytes (mask=%d, fmt=%d)\n", mask, (int)pathHdr->format()); fflush(stderr);
         return PrimitiveResult::Failure;
     }
     size_t len = memory_.byteSizeOf(pathOop);
     std::string path(reinterpret_cast<const char*>(pathHdr->bytes()), len);
-
-    static int faCallCount = 0;
-    int faCall = ++faCallCount;
 
     struct stat st;
     bool useLstat = (mask & 4) != 0;
@@ -25770,19 +24320,10 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         if (isBuiltInLibrary(path)) {
             fillSyntheticStat(&st);
         } else {
-            if (faCall <= 30) {
-                fprintf(stderr, "[FILE-ATTR] #%d STAT-FAIL '%s' errno=%d(%s) mask=%d\n",
-                        faCall, path.c_str(), errno, strerror(errno), mask);
-                fflush(stderr);
-            }
             osErrorCode_ = -3;  // FA_CANT_STAT_PATH
             primFailCode_ = PrimErrOSError;
             return PrimitiveResult::Failure;
         }
-    }
-    if (faCall <= 10) {
-        fprintf(stderr, "[FILE-ATTR] #%d OK '%s' mask=%d\n", faCall, path.c_str(), mask);
-        fflush(stderr);
     }
 
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
@@ -26192,12 +24733,6 @@ void* Interpreter::tffi_getHandler(Oop obj) {
             if (ffiType) {
                 tffi_setHandler(obj, ffiType);
                 result = ffiType;
-                static int autoFillCount = 0;
-                autoFillCount++;
-                if (autoFillCount <= 30) {
-                    fprintf(stderr, "[TFFI-AUTOFILL] Auto-filled typeCode=%lld -> ffi_type @%p\n",
-                            typeCode, ffiType);
-                }
             }
         }
     }
@@ -26258,14 +24793,6 @@ PrimitiveResult Interpreter::primitiveFillBasicType(int argCount) {
     Oop typeCodeOop = memory_.fetchPointer(2, receiver);
     if (!typeCodeOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t typeCode = typeCodeOop.asSmallInteger();
-
-    static int fillCount = 0;
-    fillCount++;
-    if (fillCount <= 30) {
-        std::cerr << "[TFFI] primitiveFillBasicType #" << fillCount
-                  << " typeCode=" << typeCode << " receiver=0x"
-                  << std::hex << receiver.rawBits() << std::dec << "\n";
-    }
 
     // Map typeCode to ffi_type* (Pharo's numbering, NOT libffi's FFI_TYPE_*)
     ffi_type* ffiType = nullptr;
@@ -26716,9 +25243,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    static int ffiCallCount = 0;
-    ffiCallCount++;
-
     // Perform the FFI call.
     // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
     // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst where certain
@@ -26730,9 +25254,6 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     try {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
-        fprintf(stderr, "[FFI-CALL #%d] ObjC exception caught — returning zero/nil result\n",
-                ffiCallCount);
-        fflush(stderr);
         // Zero the return value so Smalltalk gets 0/nil/NULL
         memset(returnHolder, 0, 64);
     }
@@ -26999,12 +25520,8 @@ static pharo::Interpreter* g_interpreter = nullptr;
 // callback, then returns to C with the computed result.
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
-    static int callbackCount = 0;
-    callbackCount++;
-    fprintf(stderr, "[CB#%d] handler cbInfo=%p nargs=%u\n", callbackCount, cbInfo, cif->nargs);
 
     if (!g_interpreter) {
-        fprintf(stderr, "[CALLBACK] g_interpreter not set!\n");
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         return;
     }
@@ -27012,7 +25529,6 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
     // Allocate VMCallbackContext on C heap (survives GC and longjmp)
     VMCallbackContext* vmcc = (VMCallbackContext*)calloc(1, sizeof(VMCallbackContext));
     if (!vmcc) {
-        fprintf(stderr, "[CALLBACK] Failed to allocate VMCallbackContext!\n");
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         return;
     }
@@ -27034,7 +25550,6 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         g_interpreter->enterInterpreterFromCallback(vmcc);
 
         // Should never reach here
-        fprintf(stderr, "[CALLBACK] Warning: enterInterpreterFromCallback returned!\n");
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         free(vmcc);
         return;
@@ -27070,12 +25585,10 @@ PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
 
     if (callbackDepth_ > 0) {
         VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
-        fprintf(stderr, "[CB] readNext depth=%d vmcc=%p\n", callbackDepth_, vmcc);
         Oop result = tffi_newExternalAddress(vmcc);
         if (result.isNil()) return PrimitiveResult::Failure;
         primitiveSuccess(result);
     } else {
-        fprintf(stderr, "[CALLBACK] primitiveReadNextCallback depth=0, returning nil\n");
         primitiveSuccess(memory_.nil());
     }
     return PrimitiveResult::Success;
@@ -27225,17 +25738,13 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // we can unwind. Instead, we set a deferred return flag. The nested interpret
     // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
     // code finishes its cleanup, then does the process restore and siglongjmp.
-    fprintf(stderr, "[CB] return depth=%d\n", callbackDepth_);
-
     if (callbackDepth_ <= 0) {
-        fprintf(stderr, "[CALLBACK-RETURN] No active callback (depth=0)\n");
         return PrimitiveResult::Failure;
     }
 
     // Get VMCallbackContext from our stack
     VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
     if (!vmcc) {
-        fprintf(stderr, "[CALLBACK-RETURN] Null VMCallbackContext at depth %d\n", callbackDepth_);
         return PrimitiveResult::Failure;
     }
 

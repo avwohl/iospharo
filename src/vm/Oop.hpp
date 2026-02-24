@@ -124,32 +124,10 @@ public:
     /// Extract SmallInteger value. Caller must verify isSmallInteger() first.
     int64_t asSmallInteger() const {
         if (__builtin_expect(!isSmallInteger(), 0)) {
-            // Write to both stderr and a file (Mac Catalyst stderr is lost)
-            FILE* crashLog = fopen("/tmp/iospharo-crash.log", "a");
-            FILE* targets[2] = { stderr, crashLog };
-            int numTargets = crashLog ? 2 : 1;
-            for (int t = 0; t < numTargets; ++t) {
-                FILE* f = targets[t];
-                fprintf(f, "[FATAL] asSmallInteger on non-SmallInt: bits=0x%llx tag=%d "
-                        "isObj=%d isChar=%d isFloat=%d caller=%p\n",
-                        (unsigned long long)bits_, (int)(bits_ & 7),
-                        isObject(), isCharacter(), isSmallFloat(),
-                        __builtin_return_address(0));
-                void* bt[20];
-                int btSize = backtrace(bt, 20);
-                char** btSyms = backtrace_symbols(bt, btSize);
-                if (btSyms) {
-                    for (int i = 0; i < btSize; ++i) {
-                        fprintf(f, "  [%d] %s\n", i, btSyms[i]);
-                    }
-                    free(btSyms);
-                }
-                fflush(f);
-            }
-            if (crashLog) fclose(crashLog);
+            fprintf(stderr, "[FATAL] asSmallInteger on non-SmallInt: bits=0x%llx tag=%d\n",
+                    (unsigned long long)bits_, (int)(bits_ & 7));
             abort();
         }
-        // Arithmetic right shift preserves sign bit for negative numbers
         return static_cast<int64_t>(bits_) >> 3;
     }
 

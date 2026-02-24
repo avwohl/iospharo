@@ -8,7 +8,6 @@
 #include "../platform/EventQueue.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/PlatformBridge.h"
-#include <iostream>
 #include <algorithm>
 #include <cstring>
 #include <chrono>
@@ -27,9 +26,6 @@
 
 // Flag set when Emergency Debugger window is created — checked by interpreter to dump stack
 std::atomic<bool> g_emergencyDebuggerTriggered{false};
-
-// Trace sends after SDL_PollEvent returns a mouse event (read by Interpreter.cpp)
-extern std::atomic<int> g_traceAfterMouseSDLEvent;
 
 // SDL2 event types
 #define SDL_QUIT            0x100
@@ -138,7 +134,6 @@ union SDL_Event {
 
 namespace pharo {
 
-// Global trace flag: when set, interpreter logs method sends
 int g_traceEventSends = 0;
 namespace ffi {
 
@@ -147,10 +142,7 @@ void registerSDL2Stubs();
 void registerFreeTypeStubs();
 void registerLibgit2Stubs();
 
-// Module handles
 static bool sInitialized = false;
-
-// Function pointer cache
 static std::unordered_map<std::string, void*> sFunctionCache;
 
 bool initializeFFI() {
@@ -175,21 +167,17 @@ void shutdownFFI() {
 }
 
 bool isModuleLoaded(const std::string& moduleName) {
-    // We support SDL2 and general dlsym lookup
     if (moduleName == "SDL2" || moduleName == "libSDL2" ||
         moduleName.find("SDL2") != std::string::npos) {
-        // Check both real SDL2 and our stubs
         void* sdlInit = dlsym(RTLD_DEFAULT, "SDL_Init");
         if (sdlInit != nullptr) {
             return true;
         }
-        // Check if our stubs are registered
         auto it = sFunctionCache.find("SDL_Init");
         return it != sFunctionCache.end();
     }
 
-    // For other modules, check if any function from that module is available
-    return true;  // Assume available, will fail on lookup if not
+    return true;  // Assume available; will fail on individual symbol lookup if not
 }
 
 // App bundle Frameworks path — set at init from main bundle.
@@ -198,7 +186,6 @@ static std::string sAppFrameworksPath;
 
 void setAppBundlePath(const std::string& bundlePath) {
     sAppFrameworksPath = bundlePath + "/Contents/Frameworks";
-    fprintf(stderr, "[FFI] App frameworks path: %s\n", sAppFrameworksPath.c_str());
 }
 
 const std::string& getAppFrameworksPath() {
@@ -228,7 +215,6 @@ static std::unordered_map<std::string, void*> sModuleHandleCache;
 // Try to load a symbol by searching common library paths.
 // moduleName is a bare name like "libcairo.2.dylib" or "libgit2.dylib".
 static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::string& funcName) {
-    // Check if we already loaded this module
     auto mit = sModuleHandleCache.find(moduleName);
     if (mit != sModuleHandleCache.end()) {
         if (mit->second) {
@@ -237,7 +223,6 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
         return nullptr;  // Previously failed to load
     }
 
-    // Build candidate names: the name as-is, with lib prefix, with .dylib suffix
     std::vector<std::string> candidates;
     candidates.push_back(moduleName);
     if (moduleName.compare(0, 3, "lib") != 0) {
@@ -256,7 +241,6 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
             std::string fullPath = dir + "/" + name;
             void* handle = dlopen(fullPath.c_str(), RTLD_NOW | RTLD_GLOBAL);
             if (handle) {
-                fprintf(stderr, "[FFI-SEARCH] dlopen('%s') -> OK (%p)\n", fullPath.c_str(), handle);
                 sModuleHandleCache[moduleName] = handle;
                 void* sym = dlsym(handle, funcName.c_str());
                 if (sym) return sym;
@@ -266,21 +250,11 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
         }
     }
 
-    // All paths exhausted — log what we tried
-    fprintf(stderr, "[FFI-SEARCH] '%s' from '%s' -> not found, tried %zu paths:\n",
-            funcName.c_str(), moduleName.c_str(), searchPaths.size());
-    for (const auto& dir : searchPaths) {
-        fprintf(stderr, "[FFI-SEARCH]   dir: %s\n", dir.c_str());
-    }
-    for (const auto& name : candidates) {
-        fprintf(stderr, "[FFI-SEARCH]   candidate: %s\n", name.c_str());
-    }
     sModuleHandleCache[moduleName] = nullptr;
     return nullptr;
 }
 
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
-    // Check cache first
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
         return it->second;
@@ -322,12 +296,9 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         if (handle) {
             func = dlsym(handle, funcName.c_str());
             if (func) {
-                fprintf(stderr, "[FFI-LOAD] '%s' from '%s' -> real lib (%p)\n", funcName.c_str(), moduleName.c_str(), func);
                 sFunctionCache[funcName] = func;
                 return func;
             }
-        } else {
-            fprintf(stderr, "[FFI-LOAD] dlopen('%s') FAILED: %s\n", moduleName.c_str(), dlerror());
         }
     }
 
@@ -335,7 +306,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     if (!moduleName.empty() && moduleName[0] != '/' && moduleName.find("SDL") == std::string::npos) {
         func = tryLoadFromSearchPaths(moduleName, funcName);
         if (func) {
-            fprintf(stderr, "[FFI-LOAD] '%s' from '%s' -> search path (%p)\n", funcName.c_str(), moduleName.c_str(), func);
             sFunctionCache[funcName] = func;
             return func;
         }
@@ -344,7 +314,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
     // Fallback stubs for when real libraries are not available (e.g., iOS).
     // These return error codes so the image handles failure gracefully.
     if (funcName.compare(0, 3, "FT_") == 0) {
-        fprintf(stderr, "[FFI-STUB] '%s' -> using FT stub (no real lib found)\n", funcName.c_str());
         static auto genericFTError = +[]() -> intptr_t { return 1; };
         func = reinterpret_cast<void*>(genericFTError);
         sFunctionCache[funcName] = func;
@@ -375,9 +344,8 @@ void registerFunction(const std::string& funcName, void* funcPtr) {
     sFunctionCache[funcName] = funcPtr;
 }
 
-// SDL2 stub functions for iOS
-// These make OSWindow think SDL2 is available
-// Support multiple windows/textures (Emergency Debugger creates separate windows)
+// SDL2 stub functions -- make OSWindow think SDL2 is available.
+// Supports multiple windows/textures (Emergency Debugger creates separate ones).
 
 static bool sSDL2Initialized = false;
 
@@ -412,16 +380,6 @@ static void* sMainRenderer = nullptr;  // First renderer is the "main" one (rend
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
-// Global rendering pipeline counters - logged from PollEvent every 5000 polls
-static int g_lockTextureCount = 0;
-static int g_updateTextureCount = 0;
-static int g_renderCopyCount = 0;
-static int g_renderPresentCount = 0;
-static int g_renderClearCount = 0;
-
-// Post-EXPOSE tracking: set when periodic EXPOSED event is delivered, cleared after 10k polls
-static bool g_postExposeTracking = false;
-static int g_postExposePollCount = 0;
 static bool g_firstExposedDelivered = false;
 
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
@@ -451,9 +409,7 @@ bool ffi_isFirstExposedDelivered() {
     return g_firstExposedDelivered;
 }
 
-// SDL_Init returns 0 on success
 int stub_SDL_Init(uint32_t flags) {
-    fprintf(stderr, "[SDL-STUB] SDL_Init(0x%x)\n", flags);
     sSDL2Initialized = true;
     return 0;
 }
@@ -462,7 +418,6 @@ void stub_SDL_Quit() {
     sSDL2Initialized = false;
 }
 
-// Returns version info - version 2.0.20
 void stub_SDL_GetVersion(void* ver) {
     if (ver) {
         uint8_t* v = static_cast<uint8_t*>(ver);
@@ -483,11 +438,8 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
         w = pharo::gDisplaySurface->width();
         h = pharo::gDisplaySurface->height();
     }
-    fprintf(stderr, "[SDL-STUB] SDL_CreateWindow('%s', %dx%d, flags=0x%x)\n",
-            title ? title : "(null)", w, h, flags);
     if (title && strstr(title, "Emergency") != nullptr) {
         g_emergencyDebuggerTriggered.store(true, std::memory_order_release);
-        fprintf(stderr, "[ED-TRIGGER] Emergency Debugger window created!\n");
     }
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLWindowState state;
@@ -503,8 +455,6 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     // Instead, the periodic EXPOSED mechanism (starting at poll#5000) triggers
     // the first render after startup completes. SIZE_CHANGED is sent along
     // with the first periodic EXPOSED to set up correct form dimensions.
-    fprintf(stderr, "[SDL-STUB] Created window %p (no initial events — deferred to periodic EXPOSED)\n", handle);
-
     return handle;
 }
 
@@ -518,12 +468,6 @@ void stub_SDL_GetWindowSize(void* window, int* w, int* h) {
     if (window == sMainWindow && pharo::gDisplaySurface) {
         if (w) *w = pharo::gDisplaySurface->width();
         if (h) *h = pharo::gDisplaySurface->height();
-        static int winSizeCount = 0;
-        winSizeCount++;
-        if (winSizeCount <= 5 || winSizeCount % 500 == 0) {
-            fprintf(stderr, "[SDL-STUB] SDL_GetWindowSize #%d (main) -> %dx%d\n",
-                    winSizeCount, w ? *w : -1, h ? *h : -1);
-        }
         return;
     }
     auto it = sWindows.find(window);
@@ -560,29 +504,15 @@ void stub_SDL_RaiseWindow(void* window) {
 }
 
 uint32_t stub_SDL_GetWindowID(void* window) {
-    static int callCount = 0;
-    callCount++;
-    uint32_t id = static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
-    if (callCount <= 10) {
-        fprintf(stderr, "[SDL-GWID] #%d SDL_GetWindowID(window=%p) -> %u (0x%x)\n",
-                callCount, window, id, id);
-    }
-    return id;
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(window) & 0xFFFFFFFF);
 }
 
 void* stub_SDL_GetWindowFromID(uint32_t id) {
-    static int callCount = 0;
-    callCount++;
-    // Find window by ID (lower 32 bits of handle)
     for (auto& kv : sWindows) {
         if ((reinterpret_cast<uintptr_t>(kv.first) & 0xFFFFFFFF) == id) {
-            if (callCount <= 10)
-                fprintf(stderr, "[SDL-GWFID] #%d GetWindowFromID(%u) -> %p\n", callCount, id, kv.first);
             return kv.first;
         }
     }
-    if (callCount <= 10)
-        fprintf(stderr, "[SDL-GWFID] #%d GetWindowFromID(%u) -> NULL (not found!)\n", callCount, id);
     return nullptr;
 }
 
@@ -609,121 +539,53 @@ int stub_SDL_GetWindowWMInfo(void* window, void* info) {
     return 0;  // SDL_FALSE
 }
 
-// Renderer stubs
 void* stub_SDL_CreateRenderer(void* window, int index, uint32_t flags) {
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLRendererState state;
     state.window = window;
     state.currentTexture = nullptr;
     sRenderers[handle] = state;
-    // Track main renderer: prefer the renderer for the main window
     if (window == sMainWindow || !sMainRenderer) {
         sMainRenderer = handle;
     }
-    fprintf(stderr, "[SDL-STUB] SDL_CreateRenderer(win=%p) -> %p (main=%p)\n",
-            window, handle, sMainRenderer);
     return handle;
 }
 
 void stub_SDL_DestroyRenderer(void* renderer) {
-    // Don't clear sMainRenderer if this is a secondary renderer
     if (renderer != sMainRenderer) {
         sRenderers.erase(renderer);
     }
 }
 
 int stub_SDL_RenderClear(void* renderer) {
-    static int clearCount = 0;
-    clearCount++;
-    g_renderClearCount = clearCount;
-    if (clearCount <= 5 || clearCount % 200 == 0) {
-        fprintf(stderr, "[SDL-RC] RenderClear #%d renderer=%p\n", clearCount, renderer);
-    }
     return 0;
 }
 
 void stub_SDL_RenderPresent(void* renderer) {
-    static int totalCalls = 0;
-    totalCalls++;
-    g_renderPresentCount = totalCalls;
-    if (g_postExposeTracking) {
-        fprintf(stderr, "[POST-EXPOSE] SDL_RenderPresent called! present#%d (expose poll+%d)\n",
-                totalCalls, g_postExposePollCount);
-    }
-
-    // Log first call
     if (!sSDLRenderingActive) {
         sSDLRenderingActive = true;
-        fprintf(stderr, "[SDL-RP] first call renderer=%p main=%p (rendering active)\n",
-                renderer, sMainRenderer);
     }
 
-    // Detect long gaps between RenderPresent calls (startup completing)
-    {
-        static auto lastTime = std::chrono::steady_clock::now();
-        auto now = std::chrono::steady_clock::now();
-        auto gapMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTime).count();
-        if (gapMs > 5000 || totalCalls <= 5) {
-            fprintf(stderr, "[SDL-RP] #%d RESUMED after %lld ms gap\n", totalCalls, (long long)gapMs);
-        }
-        lastTime = now;
-    }
-
-    // Log calls periodically
-    if (totalCalls <= 20 || totalCalls % 100 == 0) {
-        fprintf(stderr, "[SDL-RP] #%d renderer=%p main=%p\n", totalCalls, renderer, sMainRenderer);
-    }
-
-    // Only copy to gDisplaySurface from the main renderer.
-    // Secondary renderers (Emergency Debugger, etc.) have their own windows
-    // and should not overwrite the main display.
+    // Only the main renderer writes to gDisplaySurface
     auto rit = sRenderers.find(renderer);
-    if (rit == sRenderers.end() || !rit->second.currentTexture) {
-        if (totalCalls <= 5)
-            fprintf(stderr, "[SDL-RP] #%d SKIP: renderer %p not found or no texture\n", totalCalls, renderer);
-        return;
-    }
-
-    // Skip secondary renderers (Emergency Debugger, etc.) — only main renderer
-    // should write to the display surface.
-    if (renderer != sMainRenderer) {
-        if (totalCalls <= 5) {
-            fprintf(stderr, "[SDL-RP] #%d SKIP secondary renderer %p (main=%p)\n",
-                    totalCalls, renderer, sMainRenderer);
-        }
-        return;
-    }
+    if (rit == sRenderers.end() || !rit->second.currentTexture) return;
+    if (renderer != sMainRenderer) return;
 
     auto tit = sTextures.find(rit->second.currentTexture);
-    if (tit == sTextures.end() || !tit->second.pixels) {
-        if (totalCalls <= 5)
-            fprintf(stderr, "[SDL-RP] #%d SKIP: texture not found or no pixels\n", totalCalls);
-        return;
-    }
+    if (tit == sTextures.end() || !tit->second.pixels) return;
 
     if (pharo::gDisplaySurface) {
-        // When texture writes directly to display surface, skip the copy —
-        // Pharo already wrote there via BitBlt. Just log and call update().
+        // When texture writes directly to display surface, skip the copy --
+        // Pharo already wrote there via BitBlt.
         if (tit->second.usesDisplaySurface) {
-            if (totalCalls <= 20 || totalCalls % 200 == 0) {
-                uint32_t* dst = pharo::gDisplaySurface->pixels();
-                int dstW = pharo::gDisplaySurface->width();
-                int dstH = pharo::gDisplaySurface->height();
-                uint32_t center = (dstH > 384 && dstW > 512) ? dst[384 * dstW + 512] : 0;
-                fprintf(stderr, "[SDL-RP] #%d direct-display %dx%d center=%08x\n",
-                        totalCalls, dstW, dstH, center);
-            }
-            // Dump display surface to PPM for visual verification.
+            // PPM dump for visual verification.
             // Triggered by /tmp/pharo-dump-request file existence.
-            // Write empty file to trigger: touch /tmp/pharo-dump-request
             {
                 static int dumpSeq = 0;
-                bool shouldDump = (totalCalls == 10);
-                if (!shouldDump) {
-                    FILE* req = fopen("/tmp/pharo-dump-request", "r");
-                    if (req) { fclose(req); shouldDump = true; remove("/tmp/pharo-dump-request"); }
-                }
-                if (shouldDump) {
+                FILE* req = fopen("/tmp/pharo-dump-request", "r");
+                if (req) {
+                    fclose(req);
+                    remove("/tmp/pharo-dump-request");
                     uint32_t* px = pharo::gDisplaySurface->pixels();
                     int w = pharo::gDisplaySurface->width();
                     int h = pharo::gDisplaySurface->height();
@@ -742,7 +604,6 @@ void stub_SDL_RenderPresent(void* renderer) {
                             fwrite(rgb, 1, 3, f);
                         }
                         fclose(f);
-                        fprintf(stderr, "[SDL-RP] Dumped display %dx%d to %s\n", w, h, path);
                     }
                 }
             }
@@ -760,34 +621,6 @@ void stub_SDL_RenderPresent(void* renderer) {
         int copyW = std::min(srcW, dstW);
         int copyH = std::min(srcH, dstH);
 
-        if (totalCalls <= 20 || totalCalls % 200 == 0) {
-            uint32_t srcCenter = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
-            fprintf(stderr, "[SDL-RP] #%d copy %dx%d -> %dx%d srcCenter=%08x\n",
-                    totalCalls, srcW, srcH, dstW, dstH, srcCenter);
-        }
-        // Track content changes at key positions:
-        // menu(30,5), center(512,384), rightClick(900,680), submenu(30,30)
-        {
-            static uint32_t lastMenuPixel = 0;
-            static uint32_t lastCenter = 0;
-            static uint32_t lastRClick = 0;
-            static uint32_t lastSubmenu = 0;
-            uint32_t menuPixel = (srcH > 5 && srcW > 30) ? src[5 * srcW + 30] : 0;
-            uint32_t center = (srcH > 384 && srcW > 512) ? src[384 * srcW + 512] : 0;
-            uint32_t rclick = (srcH > 680 && srcW > 900) ? src[680 * srcW + 900] : 0;
-            uint32_t submenu = (srcH > 30 && srcW > 30) ? src[30 * srcW + 30] : 0;
-            if (menuPixel != lastMenuPixel || center != lastCenter ||
-                rclick != lastRClick || submenu != lastSubmenu) {
-                fprintf(stderr, "[SDL-CONTENT] #%d CHANGED: menu(30,5)=%08x->%08x center=%08x->%08x rclick(900,680)=%08x->%08x submenu(30,30)=%08x->%08x\n",
-                        totalCalls, lastMenuPixel, menuPixel, lastCenter, center,
-                        lastRClick, rclick, lastSubmenu, submenu);
-                lastMenuPixel = menuPixel;
-                lastCenter = center;
-                lastRClick = rclick;
-                lastSubmenu = submenu;
-            }
-        }
-
         for (int y = 0; y < copyH; y++) {
             memcpy(dst + y * dstW, src + y * srcW, copyW * sizeof(uint32_t));
         }
@@ -797,7 +630,6 @@ void stub_SDL_RenderPresent(void* renderer) {
 }
 
 int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
-    // Return display surface dimensions so Pharo creates Forms at the right size
     int rw = 1024, rh = 768;
     if (pharo::gDisplaySurface) {
         rw = pharo::gDisplaySurface->width();
@@ -805,12 +637,6 @@ int stub_SDL_GetRendererOutputSize(void* renderer, int* w, int* h) {
     }
     if (w) *w = rw;
     if (h) *h = rh;
-    static int outputSizeCount = 0;
-    outputSizeCount++;
-    if (outputSizeCount <= 5 || outputSizeCount % 500 == 0) {
-        fprintf(stderr, "[SDL-STUB] SDL_GetRendererOutputSize #%d (renderer=%p) -> %dx%d\n",
-                outputSizeCount, renderer, rw, rh);
-    }
     return 0;
 }
 
@@ -818,13 +644,9 @@ int stub_SDL_SetRenderDrawColor(void* renderer, uint8_t r, uint8_t g, uint8_t b,
     return 0;
 }
 
-// Texture stubs
 void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w, int h) {
-    // DO NOT override dimensions! Pharo's Form uses the same extent for BitBlt stride.
-    // If we change the texture size without Pharo knowing, the stride mismatches and
-    // rendering appears as diagonal garbage.
-    fprintf(stderr, "[SDL-STUB] SDL_CreateTexture(%dx%d, fmt=0x%x, access=%d, renderer=%p)\n",
-            w, h, format, access, renderer);
+    // DO NOT override dimensions -- Pharo's Form uses the same extent for BitBlt stride.
+    // Changing the texture size without Pharo knowing causes stride mismatch (diagonal garbage).
     void* handle = reinterpret_cast<void*>(sNextHandle++);
     SDLTextureState state;
     state.pixels = static_cast<uint32_t*>(calloc(w * h, 4));
@@ -834,7 +656,6 @@ void* stub_SDL_CreateTexture(void* renderer, uint32_t format, int access, int w,
     state.renderer = renderer;
     state.usesDisplaySurface = false;
     sTextures[handle] = state;
-    // Track as current texture for this renderer
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
         rit->second.currentTexture = handle;
@@ -848,7 +669,6 @@ void stub_SDL_DestroyTexture(void* texture) {
         if (it->second.pixels) {
             free(it->second.pixels);
         }
-        // Clear currentTexture reference from the renderer
         auto rit = sRenderers.find(it->second.renderer);
         if (rit != sRenderers.end() && rit->second.currentTexture == texture) {
             rit->second.currentTexture = nullptr;
@@ -862,20 +682,11 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
     if (it == sTextures.end() || !it->second.pixels) {
         return -1;
     }
-    static int lockCount = 0;
-    lockCount++;
-    g_lockTextureCount = lockCount;
-    if (g_postExposeTracking) {
-        fprintf(stderr, "[POST-EXPOSE] SDL_LockTexture called! lock#%d (expose poll+%d)\n",
-                lockCount, g_postExposePollCount);
-    }
 
     // Return the display surface buffer directly instead of the texture's private buffer.
     // Pharo stores this pointer via setPointer: and writes to it continuously via BitBlt,
-    // bypassing SDL_LockTexture/UnlockTexture after the first call. If we return the
-    // texture's private buffer, the Metal renderer (which reads from the display surface)
-    // never sees the updates. By returning the display surface buffer, Pharo writes
-    // directly where the Metal renderer reads, giving us live 30fps display updates.
+    // bypassing LockTexture/UnlockTexture after the first call. By returning the display
+    // surface buffer, Pharo writes directly where the Metal renderer reads.
     uint32_t* returnPixels = it->second.pixels;
     int returnPitch = it->second.pitch;
 
@@ -889,19 +700,8 @@ int stub_SDL_LockTexture(void* texture, void* rect, void** pixels, int* pitch) {
         }
     }
 
-    if (lockCount <= 10 || lockCount % 200 == 0) {
-        fprintf(stderr, "[SDL-LOCK] #%d texture=%p pixels=%p (display_surface=%d) pitch=%d (%dx%d)\n",
-                lockCount, texture, returnPixels,
-                (returnPixels != it->second.pixels), returnPitch,
-                it->second.width, it->second.height);
-    }
-    if (pixels) {
-        *pixels = returnPixels;
-    }
-    if (pitch) {
-        *pitch = returnPitch;
-    }
-
+    if (pixels) *pixels = returnPixels;
+    if (pitch) *pitch = returnPitch;
     return 0;
 }
 
@@ -935,46 +735,23 @@ void stub_SDL_UnlockTexture(void* texture) {
 }
 
 int stub_SDL_RenderCopy(void* renderer, void* texture, void* srcrect, void* dstrect) {
-    static int copyCount = 0;
-    copyCount++;
-    g_renderCopyCount = copyCount;
-    // Track which texture was last rendered
     auto rit = sRenderers.find(renderer);
     if (rit != sRenderers.end()) {
         rit->second.currentTexture = texture;
-    }
-    if (copyCount <= 5 || copyCount % 200 == 0) {
-        fprintf(stderr, "[SDL-RCOPY] #%d renderer=%p texture=%p\n", copyCount, renderer, texture);
     }
     return 0;
 }
 
 int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
-    static int utCount = 0;
-    utCount++;
-    if (utCount <= 10 || utCount % 100 == 0) {
-        fprintf(stderr, "[SDL-UT] #%d texture=%p rect=%p pixels=%p pitch=%d\n",
-                utCount, texture, rect, pixels, pitch);
-    }
     auto it = sTextures.find(texture);
     if (it == sTextures.end() || !it->second.pixels || !pixels) {
-        fprintf(stderr, "[SDL-UT] #%d FAILED: tex_found=%d has_pixels=%d src_pixels=%d\n",
-                utCount, (int)(it != sTextures.end()),
-                it != sTextures.end() ? (it->second.pixels != nullptr) : 0,
-                pixels != nullptr);
         return -1;
     }
 
-    static int updateCount = 0;
-    updateCount++;
-    g_updateTextureCount = updateCount;
-
-    int texW = it->second.width;
     int texH = it->second.height;
-    int texPitch = it->second.pitch;  // bytes per row
+    int texPitch = it->second.pitch;
 
     if (!rect) {
-        // Full texture update
         int srcBytesPerRow = pitch;
         int dstBytesPerRow = texPitch;
         int copyBytes = std::min(srcBytesPerRow, dstBytesPerRow);
@@ -984,15 +761,7 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
         for (int y = 0; y < texH; y++) {
             memcpy(dst + y * dstBytesPerRow, src + y * srcBytesPerRow, copyBytes);
         }
-
-        if (updateCount <= 5 || updateCount % 200 == 0) {
-            uint32_t* srcPx = static_cast<uint32_t*>(pixels);
-            uint32_t center = (texH > 384 && texW > 512) ? srcPx[384 * (pitch/4) + 512] : 0;
-            fprintf(stderr, "[SDL-UT] #%d full update: %dx%d pitch=%d center=%08x\n",
-                    updateCount, texW, texH, pitch, center);
-        }
     } else {
-        // Partial rect update (SDL_Rect = {x, y, w, h})
         int* r = static_cast<int*>(rect);
         int rx = r[0], ry = r[1], rw = r[2], rh = r[3];
         int srcBytesPerRow = pitch;
@@ -1006,97 +775,36 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
                    src + y * srcBytesPerRow,
                    copyBytes);
         }
-
-        if (updateCount <= 5 || updateCount % 200 == 0) {
-            fprintf(stderr, "[SDL-UT] #%d rect update: (%d,%d,%d,%d) pitch=%d\n",
-                    updateCount, rx, ry, rw, rh, pitch);
-        }
     }
     return 0;
 }
 
-// Event stubs - critical for InputEventSensor
-// Forward events from our queue to SDL event structure
+// Forwards events from gEventQueue to SDL event structures for OSSDL2Driver.
 int stub_SDL_PollEvent(void* event) {
     static bool flagSet = false;
-
-    // Mark SDL2 event polling as active - this prevents processInputEvents
-    // from draining gEventQueue (we handle it here instead)
     static int totalPollCalls = 0;
     totalPollCalls++;
 
     if (!flagSet) {
         flagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
-        fprintf(stderr, "[SDL-STUB] SDL_PollEvent: first call, event ptr=%p\n", event);
     }
 
-    // Track unique event pointers to detect multiple event loop callers
-    static void* knownPtrs[4] = {nullptr, nullptr, nullptr, nullptr};
-    static int knownCount = 0;
-    {
-        bool found = false;
-        for (int i = 0; i < knownCount; i++) {
-            if (knownPtrs[i] == event) { found = true; break; }
-        }
-        if (!found && knownCount < 4) {
-            knownPtrs[knownCount++] = event;
-            fprintf(stderr, "[SDL-POLL-CALLER] New event ptr #%d: %p (total callers: %d) at poll#%d\n",
-                    knownCount, event, knownCount, totalPollCalls);
-        }
-    }
-
-    // Log calls — first 10 and every 50000th for long runs
-    if (totalPollCalls <= 10 || totalPollCalls % 50000 == 0) {
-        fprintf(stderr, "[SDL-POLL] #%d event ptr=%p queueSize=%zu pending=%zu\n",
-                totalPollCalls, event, pharo::gEventQueue.size(),
-                sPendingWindowEvents.size());
-    }
-
-    // Monitor gDisplaySurface for unexpected content changes
-    if (pharo::gDisplaySurface && (totalPollCalls % 50000 == 0)) {
-        uint32_t* px = pharo::gDisplaySurface->pixels();
-        int w = pharo::gDisplaySurface->width();
-        int h = pharo::gDisplaySurface->height();
-        uint32_t center = (h > 384 && w > 512) ? px[384 * w + 512] : px[0];
-        static uint32_t lastCenter = 0;
-        if (center != lastCenter) {
-            fprintf(stderr, "[SURF-MON] poll#%d surface center changed: %08x -> %08x\n",
-                    totalPollCalls, lastCenter, center);
-            lastCenter = center;
-        }
-    }
-
-    // Validate event pointer - FFI may pass stale heap address after GC compaction
+    // Reject null/low event pointers (stale heap address after GC compaction)
     if (!event || reinterpret_cast<uintptr_t>(event) < 0x10000) {
-        static int badPtrCount = 0;
-        badPtrCount++;
-        if (badPtrCount <= 5) {
-            fprintf(stderr, "[SDL-STUB] SDL_PollEvent: bad event ptr=%p (count=%d)\n", event, badPtrCount);
-        }
         return !pharo::gEventQueue.isEmpty() ? 1 : 0;
     }
 
 #ifdef __APPLE__
-    // Check if the event pointer's page is actually mapped in memory.
-    // After GC compaction, ByteArray data pointers can become stale if the
-    // FFI argument resolution doesn't properly follow forwarding pointers.
+    // Verify the event pointer's page is mapped -- GC compaction can leave
+    // stale ByteArray data pointers if forwarding isn't followed properly.
     {
         char vec;
         caddr_t pageAddr = reinterpret_cast<caddr_t>(reinterpret_cast<uintptr_t>(event) & ~0xFFFUL);
         if (mincore(pageAddr, 4096, &vec) != 0) {
-            static int unmappedCount = 0;
-            unmappedCount++;
-            if (unmappedCount <= 10) {
-                fprintf(stderr, "[SDL-STUB] SDL_PollEvent: UNMAPPED event ptr=%p page=%p (count=%d)\n",
-                        event, pageAddr, unmappedCount);
-            }
-            // Don't write to unmapped memory - just drain queue and return 0
             pharo::Event discard;
-            pharo::gEventQueue.pop(discard);  // discard one event if available
-#ifdef __APPLE__
+            pharo::gEventQueue.pop(discard);
             CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.001, true);
-#endif
             return 0;
         }
     }
@@ -1110,9 +818,8 @@ int stub_SDL_PollEvent(void* event) {
         memset(sdlEvent, 0, sizeof(SDL_Event));
         uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
         sdlEvent->window.type = SDL_WINDOWEVENT;
-        // Use a real, incrementing timestamp. OSWindowRenderer >> exposed:
-        // discards events with timestamps <= lastExposeTime, so timestamp=0
-        // causes all but the first EXPOSED event to be silently dropped.
+        // Incrementing timestamps required: OSWindowRenderer >> exposed:
+        // discards events with timestamps <= lastExposeTime.
         {
             static auto start = std::chrono::steady_clock::now();
             auto now = std::chrono::steady_clock::now();
@@ -1122,8 +829,7 @@ int stub_SDL_PollEvent(void* event) {
         }
         sdlEvent->window.windowID = windowID;
         sdlEvent->window.event = windowEventType;
-        // SIZE_CHANGED needs actual window dimensions in data1/data2
-        // Otherwise Pharo tries to resize to 0x0 which kills the event loop
+        // SIZE_CHANGED needs actual dimensions or Pharo resizes to 0x0
         if (windowEventType == SDL_WINDOWEVENT_SIZE_CHANGED) {
             int w = 1024, h = 768;
             if (pharo::gDisplaySurface) {
@@ -1139,162 +845,93 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->window.data1 = w;
             sdlEvent->window.data2 = h;
         }
-        fprintf(stderr, "[SDL-PE] Delivering synthetic window event type=%d ts=%u wid=0x%x data1=%d data2=%d at poll#%d\n",
-                windowEventType, sdlEvent->window.timestamp, sdlEvent->window.windowID,
-                sdlEvent->window.data1, sdlEvent->window.data2, totalPollCalls);
-        // Start post-EXPOSE tracking for periodic events (not startup ones)
         if (windowEventType == SDL_WINDOWEVENT_EXPOSED && totalPollCalls > 1000) {
-            g_postExposeTracking = true;
-            g_postExposePollCount = 0;
             g_firstExposedDelivered = true;
-            fprintf(stderr, "[POST-EXPOSE] Tracking started at poll#%d (first EXPOSED delivered)\n", totalPollCalls);
         }
         return 1;
     }
 
-    // Track post-EXPOSE polls
-    if (g_postExposeTracking) {
-        g_postExposePollCount++;
-        if (g_postExposePollCount == 100 || g_postExposePollCount == 500 ||
-            g_postExposePollCount == 2000) {
-            fprintf(stderr, "[POST-EXPOSE] poll+%d: lock=%d copy=%d present=%d (no rendering yet)\n",
-                    g_postExposePollCount, g_lockTextureCount, g_renderCopyCount, g_renderPresentCount);
-        }
-        if (g_postExposePollCount >= 5000) {
-            fprintf(stderr, "[POST-EXPOSE] Tracking timeout after 5000 polls — NO rendering triggered\n");
-            g_postExposeTracking = false;
-        }
-    }
-
-    // Periodically send EXPOSED events to trigger full repaints.
-    // During startup, the Pharo world transitions from splash screen to desktop,
-    // and we need to catch these transitions. Real SDL2 sends EXPOSED when the
-    // window needs repainting (becomes visible, is uncovered, etc.).
-    //
-    // The first EXPOSED is sent at poll#2000 (with SHOWN + SIZE_CHANGED to
-    // initialize window state). This gives UITheme time to initialize,
-    // preventing SpStyleEnvironmentColorProxy DNU → Emergency Debugger.
-    // Subsequent EXPOSED events every 5000 polls up to poll#60000.
+    // Periodically send EXPOSED events to trigger full repaints during startup.
+    // The first EXPOSED at poll#2000 (with SHOWN + SIZE_CHANGED) gives UITheme
+    // time to initialize, preventing SpStyleEnvironmentColorProxy DNU.
+    // Subsequent EXPOSED every 5000 polls up to poll#60000.
     if (sMainWindow && totalPollCalls >= 2000 && totalPollCalls <= 60000) {
         bool isFirst = (totalPollCalls == 2000);
         bool isPeriodic = (totalPollCalls > 2000 && totalPollCalls % 5000 == 0);
         if (isFirst || isPeriodic) {
             if (isFirst) {
-                // First time: send SHOWN + SIZE_CHANGED + EXPOSED to fully
-                // initialize the window state before the first render.
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
                 sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
             }
             sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-            fprintf(stderr, "[SDL-PE] Queuing %sEXPOSED at poll#%d\n",
-                    isFirst ? "SHOWN+SIZE_CHANGED+" : "periodic ", totalPollCalls);
         }
     }
 
     // File-based event injection: /tmp/pharo-inject-events
     // Format: one line per event: "click <x> <y> <button>" or "dump"
     // button: 4=left(Red), 2=right(Yellow), 1=middle(Blue)
-    // Events are injected into the queue and the file is deleted.
     if (totalPollCalls % 500 == 0) {
         FILE* injectFile = fopen("/tmp/pharo-inject-events", "r");
         if (injectFile) {
             char line[256];
-            int injected = 0;
             while (fgets(line, sizeof(line), injectFile)) {
                 int x, y, button;
                 if (sscanf(line, "click %d %d %d", &x, &y, &button) == 3) {
-                    // Inject move + down + up sequence
                     vm_postMouseEvent(0, x, y, 0, 0);
                     vm_postMouseEvent(1, x, y, button, 0);
                     vm_postMouseEvent(2, x, y, 0, 0);
-                    fprintf(stderr, "[INJECT] click at (%d,%d) button=%d\n", x, y, button);
-                    injected++;
                 } else if (strncmp(line, "dump", 4) == 0) {
-                    // Create dump request file
                     FILE* req = fopen("/tmp/pharo-dump-request", "w");
                     if (req) fclose(req);
-                    fprintf(stderr, "[INJECT] dump requested\n");
                 }
             }
             fclose(injectFile);
             remove("/tmp/pharo-inject-events");
-            if (injected > 0)
-                fprintf(stderr, "[INJECT] Injected %d events from file\n", injected);
         }
     }
 
-    // Pop event from our queue
+    // Pop event from our queue. Return 0 quickly when empty so the event loop
+    // process yields via Processor yield, which pumps CFRunLoop via the
+    // relinquish callback. Do NOT block here -- the event loop tight-loops
+    // at priority 60 and blocking starves all lower-priority processes.
     pharo::Event pharoEvent;
     if (!pharo::gEventQueue.pop(pharoEvent)) {
-        // No events available. Return 0 quickly so the event loop process
-        // yields via Processor yield → relinquishProcessor, which pumps
-        // CFRunLoop via the relinquish callback. DO NOT call
-        // CFRunLoopRunInMode here — the event loop process tight-loops on
-        // PollEvent at priority 60, and blocking 1ms per call starves the
-        // interpreter and all lower-priority processes.
         return 0;
-    }
-
-    // Log every event pop (first 5 + periodic)
-    static int popCount = 0;
-    popCount++;
-    if (popCount <= 5 || popCount % 500 == 0) {
-        fprintf(stderr, "[SDL-POP] #%d event type=%d arg1=%d arg2=%d arg3=%d arg5=%d\n",
-                popCount, pharoEvent.type, pharoEvent.arg1, pharoEvent.arg2,
-                pharoEvent.arg3, pharoEvent.arg5);
     }
 
     SDL_Event* sdlEvent = reinterpret_cast<SDL_Event*>(event);
     memset(sdlEvent, 0, sizeof(SDL_Event));
-
-    // Use the main window's ID so OSSDL2BackendWindow accepts the event
     uint32_t windowID = sMainWindow ? stub_SDL_GetWindowID(sMainWindow) : 1;
 
     // Convert Pharo event to SDL event
     if (pharoEvent.type == static_cast<int>(pharo::EventType::Mouse)) {
-        // pharoEvent.arg5 is the mouse event subtype:
-        // 0 = move, 1 = down, 2 = up, 3 = drag (move with button held)
+        // arg5 subtypes: 0=move, 1=down, 2=up, 3=drag
         int subtype = pharoEvent.arg5;
-        fprintf(stderr, "[SDL-EVT] Mouse event: subtype=%d x=%d y=%d buttons=%d\n",
-                subtype, pharoEvent.arg1, pharoEvent.arg2, pharoEvent.arg3);
-
-        // Track previous position for computing relative motion (xrel/yrel)
         int prevX = sMouseX;
         int prevY = sMouseY;
-        // Update tracked mouse position
         sMouseX = pharoEvent.arg1;
         sMouseY = pharoEvent.arg2;
 
-        // Convert Pharo button mask to SDL button mask for state tracking
-        // Pharo: Red=4 Yellow=2 Blue=1  SDL: Left=1 Middle=2 Right=3
-        // OSSDL2 convertButtonFromEvent: SDL 1→Red(4), SDL 2→Blue(1), SDL 3→Yellow(2)
-        // So: Pharo Yellow(2)→SDL Right(3), Pharo Blue(1)→SDL Middle(2)
+        // Pharo: Red=4 Yellow=2 Blue=1 -> SDL: Left=bit0 Middle=bit1 Right=bit2
+        // OSSDL2 convertButtonFromEvent: SDL 1->Red(4), SDL 2->Blue(1), SDL 3->Yellow(2)
         uint32_t sdlButtonMask = 0;
-        if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Red(4) → SDL_BUTTON_LMASK
-        if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Blue(1) → SDL_BUTTON_MMASK
-        if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Yellow(2) → SDL_BUTTON_RMASK
+        if (pharoEvent.arg3 & 4) sdlButtonMask |= (1 << 0);  // Red -> SDL_BUTTON_LMASK
+        if (pharoEvent.arg3 & 1) sdlButtonMask |= (1 << 1);  // Blue -> SDL_BUTTON_MMASK
+        if (pharoEvent.arg3 & 2) sdlButtonMask |= (1 << 2);  // Yellow -> SDL_BUTTON_RMASK
 
         if (subtype == 0 || subtype == 3) {
-            // Mouse motion (move or drag)
             sdlEvent->motion.type = SDL_MOUSEMOTION;
             sdlEvent->motion.timestamp = pharoEvent.timeStamp;
             sdlEvent->motion.windowID = windowID;
-            sdlEvent->motion.which = 0;  // Touch or mouse
+            sdlEvent->motion.which = 0;
             sdlEvent->motion.x = pharoEvent.arg1;
             sdlEvent->motion.y = pharoEvent.arg2;
             sdlEvent->motion.xrel = pharoEvent.arg1 - prevX;
             sdlEvent->motion.yrel = pharoEvent.arg2 - prevY;
             sdlEvent->motion.state = sdlButtonMask;
         } else if (subtype == 1) {
-            // Mouse button down — update tracked state
             sMouseButtons |= sdlButtonMask;
-
-            // SEND-TRACE disabled — was adding massive overhead during menu building
-            // g_traceEventSends = 20000;
-            // fprintf(stderr, "[TRACE-START] Button-down at (%d,%d) buttons=%d — tracing next 20000 sends\n",
-            //         pharoEvent.arg1, pharoEvent.arg2, pharoEvent.arg3);
-
             sdlEvent->button.type = SDL_MOUSEBUTTONDOWN;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -1303,22 +940,12 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->button.y = pharoEvent.arg2;
             sdlEvent->button.state = 1;  // SDL_PRESSED
             sdlEvent->button.clicks = 1;
-            // Convert Pharo button to SDL button
-            // OSSDL2 convertButtonFromEvent: SDL 2→Blue(1), SDL 3→Yellow(2)
-            // Yellow(2)→SDL Right(3)→OSSDL2 Yellow  Blue(1)→SDL Middle(2)→OSSDL2 Blue
-            if (pharoEvent.arg3 & 4) {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Red → select
-            } else if (pharoEvent.arg3 & 2) {
-                sdlEvent->button.button = SDL_BUTTON_RIGHT;   // Yellow → world menu
-            } else if (pharoEvent.arg3 & 1) {
-                sdlEvent->button.button = SDL_BUTTON_MIDDLE;  // Blue → halos
-            } else {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
-            }
+            if (pharoEvent.arg3 & 4)      sdlEvent->button.button = SDL_BUTTON_LEFT;
+            else if (pharoEvent.arg3 & 2) sdlEvent->button.button = SDL_BUTTON_RIGHT;
+            else if (pharoEvent.arg3 & 1) sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+            else                          sdlEvent->button.button = SDL_BUTTON_LEFT;
         } else if (subtype == 2) {
-            // Mouse button up — update tracked state
             sMouseButtons &= ~sdlButtonMask;
-
             sdlEvent->button.type = SDL_MOUSEBUTTONUP;
             sdlEvent->button.timestamp = pharoEvent.timeStamp;
             sdlEvent->button.windowID = windowID;
@@ -1327,60 +954,37 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->button.y = pharoEvent.arg2;
             sdlEvent->button.state = 0;  // SDL_RELEASED
             sdlEvent->button.clicks = 1;
-            // Convert Pharo button to SDL button
-            // OSSDL2 convertButtonFromEvent: SDL 2→Blue(1), SDL 3→Yellow(2)
-            // Yellow(2)→SDL Right(3)→OSSDL2 Yellow  Blue(1)→SDL Middle(2)→OSSDL2 Blue
-            if (pharoEvent.arg3 & 4) {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Red → select
-            } else if (pharoEvent.arg3 & 2) {
-                sdlEvent->button.button = SDL_BUTTON_RIGHT;   // Yellow → world menu
-            } else if (pharoEvent.arg3 & 1) {
-                sdlEvent->button.button = SDL_BUTTON_MIDDLE;  // Blue → halos
-            } else {
-                sdlEvent->button.button = SDL_BUTTON_LEFT;    // Default
-            }
+            if (pharoEvent.arg3 & 4)      sdlEvent->button.button = SDL_BUTTON_LEFT;
+            else if (pharoEvent.arg3 & 2) sdlEvent->button.button = SDL_BUTTON_RIGHT;
+            else if (pharoEvent.arg3 & 1) sdlEvent->button.button = SDL_BUTTON_MIDDLE;
+            else                          sdlEvent->button.button = SDL_BUTTON_LEFT;
         }
-        // Log mouse events (first 30 + periodic)
-        {
-            static int mouseLogCount = 0;
-            mouseLogCount++;
-            if (mouseLogCount <= 30 || mouseLogCount % 200 == 0) {
-                fprintf(stderr, "[SDL-MOUSE] #%d type=0x%x button=%d state=%d x=%d y=%d\n",
-                        mouseLogCount, sdlEvent->button.type,
-                        sdlEvent->button.button, sdlEvent->button.state,
-                        sdlEvent->button.x, sdlEvent->button.y);
-            }
-        }
-        return 1;  // Event available
+        return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
-        // Mouse wheel
         sdlEvent->wheel.type = SDL_MOUSEWHEEL;
         sdlEvent->wheel.timestamp = pharoEvent.timeStamp;
         sdlEvent->wheel.windowID = windowID;
         sdlEvent->wheel.which = 0;
-        sdlEvent->wheel.x = pharoEvent.arg3;  // Horizontal scroll (deltaX)
-        sdlEvent->wheel.y = pharoEvent.arg4;  // Vertical scroll (deltaY)
-        sdlEvent->wheel.direction = 0;  // Normal
+        sdlEvent->wheel.x = pharoEvent.arg3;
+        sdlEvent->wheel.y = pharoEvent.arg4;
+        sdlEvent->wheel.direction = 0;
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::Keyboard)) {
-        // Keyboard event
-        // Pharo keyboard event layout:
-        //   arg1 = charCode, arg2 = subtype (0=down, 1=up, 2=keystroke)
-        //   arg3 = modifiers, arg4 = keyCode (scancode)
+        // arg1=charCode, arg2=subtype (0=down, 1=up, 2=keystroke),
+        // arg3=modifiers, arg4=keyCode (scancode)
         int subtype = pharoEvent.arg2;
         if (subtype == 0 || subtype == 2) {
             sdlEvent->key.type = SDL_KEYDOWN;
-            sdlEvent->key.state = 1;  // SDL_PRESSED
+            sdlEvent->key.state = 1;
         } else {
             sdlEvent->key.type = SDL_KEYUP;
-            sdlEvent->key.state = 0;  // SDL_RELEASED
+            sdlEvent->key.state = 0;
         }
         sdlEvent->key.timestamp = pharoEvent.timeStamp;
         sdlEvent->key.windowID = windowID;
         sdlEvent->key.repeat = 0;
-        sdlEvent->key.keysym.scancode = pharoEvent.arg4;  // keyCode
-        sdlEvent->key.keysym.sym = pharoEvent.arg1;       // charCode
-        // Convert Pharo modifiers to SDL modifiers
+        sdlEvent->key.keysym.scancode = pharoEvent.arg4;
+        sdlEvent->key.keysym.sym = pharoEvent.arg1;
         uint16_t sdlMod = 0;
         if (pharoEvent.arg3 & 1) sdlMod |= 0x0001;  // KMOD_LSHIFT
         if (pharoEvent.arg3 & 2) sdlMod |= 0x0040;  // KMOD_LCTRL
@@ -1389,44 +993,31 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->key.keysym.mod = sdlMod;
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
-        // Convert to SDL_WINDOWEVENT so OSSDL2Driver can handle resize
         sdlEvent->window.type = SDL_WINDOWEVENT;
         sdlEvent->window.timestamp = pharoEvent.timeStamp;
         sdlEvent->window.windowID = windowID;
         sdlEvent->window.event = SDL_WINDOWEVENT_SIZE_CHANGED;
-        sdlEvent->window.data1 = pharoEvent.arg1;  // width
-        sdlEvent->window.data2 = pharoEvent.arg2;  // height
+        sdlEvent->window.data1 = pharoEvent.arg1;
+        sdlEvent->window.data2 = pharoEvent.arg2;
         return 1;
     }
 
-    // Unknown event type - skip
     return 0;
 }
 
 int stub_SDL_WaitEvent(void* event) {
-    // SDL_WaitEvent blocks until an event is available, then returns it.
-    // This is used by modal event loops (e.g., menu dropdown grab loops).
+    // Used by modal event loops (menu dropdown grab loops).
     // Without this, menu dropdowns open and close immediately.
-    static int waitCount = 0;
-    waitCount++;
-    if (waitCount <= 5) {
-        fprintf(stderr, "[SDL-WAIT] #%d WaitEvent called, delegating to PollEvent\n", waitCount);
-    }
-
-    // Try polling first
     int result = stub_SDL_PollEvent(event);
     if (result != 0) return result;
 
-    // No event available - sleep briefly and try again (up to ~100ms)
-    // This prevents busy-waiting while still being responsive
+    // Sleep briefly and retry (up to ~100ms) to avoid busy-waiting
     for (int i = 0; i < 10; i++) {
         usleep(10000);  // 10ms
         result = stub_SDL_PollEvent(event);
         if (result != 0) return result;
     }
 
-    // Still no event after waiting - return 0
-    // (SDL_WaitEvent should block forever, but we don't want to deadlock)
     return 0;
 }
 
@@ -1453,31 +1044,17 @@ void* stub_SDL_CreateSystemCursor(int id) {
 }
 
 void* stub_SDL_CreateCursor(void* data, void* mask, int w, int h, int hot_x, int hot_y) {
-    // Return a unique handle for each custom cursor
     static uintptr_t nextCursorHandle = 0x30000;
-    void* handle = reinterpret_cast<void*>(nextCursorHandle++);
-    fprintf(stderr, "[SDL-STUB] SDL_CreateCursor(%dx%d, hot=%d,%d) -> %p\n",
-            w, h, hot_x, hot_y, handle);
-    return handle;
+    return reinterpret_cast<void*>(nextCursorHandle++);
 }
 
 void stub_SDL_SetCursor(void* cursor) {
-    static int setCursorCount = 0;
-    setCursorCount++;
-    if (setCursorCount <= 20 || setCursorCount % 100 == 0) {
-        fprintf(stderr, "[SDL-CURSOR] SetCursor #%d cursor=%p\n", setCursorCount, cursor);
-    }
 }
 
 void stub_SDL_FreeCursor(void* cursor) {
 }
 
 int stub_SDL_ShowCursor(int toggle) {
-    static int showCursorCount = 0;
-    showCursorCount++;
-    if (showCursorCount <= 20 || showCursorCount % 100 == 0) {
-        fprintf(stderr, "[SDL-CURSOR] ShowCursor #%d toggle=%d\n", showCursorCount, toggle);
-    }
     return toggle;
 }
 
@@ -1489,24 +1066,14 @@ uint32_t stub_SDL_GetWindowFlags(void* window) {
 void* stub_SDL_CreateRGBSurfaceFrom(void* pixels, int width, int height, int depth,
                                       int pitch, uint32_t Rmask, uint32_t Gmask,
                                       uint32_t Bmask, uint32_t Amask) {
-    // Return a handle - surfaces are mainly used for cursor and icon creation
     static uintptr_t nextSurfHandle = 0x40000;
-    void* handle = reinterpret_cast<void*>(nextSurfHandle++);
-    fprintf(stderr, "[SDL-STUB] SDL_CreateRGBSurfaceFrom(%dx%d depth=%d) -> %p\n",
-            width, height, depth, handle);
-    return handle;
+    return reinterpret_cast<void*>(nextSurfHandle++);
 }
 
 void stub_SDL_FreeSurface(void* surface) {
 }
 
 uint32_t stub_SDL_GetMouseState(int* x, int* y) {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 10 || callCount % 5000 == 0) {
-        fprintf(stderr, "[SDL-STATE] GetMouseState #%d: x=%d y=%d buttons=0x%x\n",
-                callCount, sMouseX, sMouseY, sMouseButtons);
-    }
     if (x) *x = sMouseX;
     if (y) *y = sMouseY;
     return sMouseButtons;
@@ -1519,13 +1086,6 @@ uint32_t stub_SDL_GetGlobalMouseState(int* x, int* y) {
 }
 
 uint32_t stub_SDL_GetModState() {
-    static int callCount = 0;
-    callCount++;
-    if (callCount <= 10 || callCount % 5000 == 0) {
-        fprintf(stderr, "[SDL-STATE] GetModState #%d: modState=0x%x\n",
-                callCount, sKeyModState);
-    }
-    // GetModState trace trigger disabled — trace now triggers from HandMorph >> handleEvent:
     return sKeyModState;
 }
 
@@ -1611,14 +1171,9 @@ int stub_SDL_GL_MakeCurrent(void* window, void* context) {
 }
 
 void stub_SDL_GL_SwapWindow(void* window) {
-    // No-op
 }
 
-// Real SDL function names as aliases to stubs
-// These are what dlsym will find when Pharo's FFI looks for SDL2 functions
-// Using weak symbols so we don't conflict if real SDL2 is ever linked
-// Using 'used' attribute to prevent linker from stripping them
-// Using 'visibility("default")' to ensure they're exported to dynamic symbol table
+// Exported SDL2 symbols (weak so they don't conflict with real SDL2 if linked)
 
 #define SDL_EXPORT __attribute__((weak, used, visibility("default")))
 
@@ -1688,24 +1243,15 @@ SDL_EXPORT void SDL_GL_DeleteContext(void* c) { stub_SDL_GL_DeleteContext(c); }
 SDL_EXPORT int SDL_GL_MakeCurrent(void* w, void* c) { return stub_SDL_GL_MakeCurrent(w, c); }
 SDL_EXPORT void SDL_GL_SwapWindow(void* w) { stub_SDL_GL_SwapWindow(w); }
 
-// ==== VM FFI Primitives Export ====
-// These are exported so TFFIBackend can detect FFI availability via dlsym
-// TFFIBackend checks: loadSymbol: #primitiveLoadSymbolFromModule module: nil
-// The actual primitive implementations are in Primitives.cpp
-
-// Stub functions that TFFIBackend can find to confirm FFI is available
-// The actual functionality goes through the VM's primitive dispatch
+// Marker symbols exported so TFFIBackend can detect FFI availability via dlsym
 __attribute__((used, visibility("default")))
 void* primitiveLoadSymbolFromModule(void* symbol, void* module) {
-    // This is just a marker function so TFFIBackend can detect FFI support
-    // Actual primitive is implemented in Interpreter::primitiveLoadSymbolFromModule
-    return nullptr;
+    return nullptr;  // Marker for TFFIBackend; actual primitive in Interpreter
 }
 
 __attribute__((used, visibility("default")))
 void* primitiveLoadModule(void* moduleName) {
-    // Marker function for TFFIBackend
-    return nullptr;
+    return nullptr;  // Marker for TFFIBackend; actual primitive in Interpreter
 }
 
 #undef SDL_EXPORT
@@ -1812,7 +1358,6 @@ void registerSDL2Stubs() {
 // error codes so the image falls back to bitmap fonts.
 
 static int stub_FT_Init_FreeType(void** alibrary) {
-    fprintf(stderr, "[FT-STUB] FT_Init_FreeType -> error (FreeType not available)\n");
     if (alibrary) *alibrary = nullptr;
     return 1;  // FT_Err_Cannot_Open_Resource
 }
@@ -1822,7 +1367,6 @@ static int stub_FT_Done_FreeType(void* library) {
 }
 
 static int stub_FT_New_Face(void* library, const char* path, long index, void** face) {
-    fprintf(stderr, "[FT-STUB] FT_New_Face('%s') -> error\n", path ? path : "null");
     if (face) *face = nullptr;
     return 1;
 }
@@ -1851,8 +1395,6 @@ static void* stub_FT_Library_Version(void* lib, int* maj, int* min, int* pat) {
 // Register stubs that return error codes so Iceberg/LGit falls back gracefully.
 
 static int stub_git_libgit2_init() {
-    static int logged = 0;
-    if (!logged++) fprintf(stderr, "[GIT-STUB] git_libgit2_init -> error (libgit2 not available)\n");
     return -1;  // GIT_ERROR
 }
 
@@ -1976,13 +1518,11 @@ FFIResult callFunction(
         return result;
     }
 
-    // Prepare libffi types
     ffi_cif cif;
     std::vector<ffi_type*> ffiArgTypes(argc);
     std::vector<void*> ffiArgValues(argc);
 
-    // Storage for argument values (need stable addresses)
-    std::vector<uint64_t> argStorage = argValues;  // Copy to ensure stable addresses
+    std::vector<uint64_t> argStorage = argValues;
     std::vector<void*> ptrStorage(argc);  // For pointer conversions
     std::vector<float> floatStorage(argc);  // For float conversions
     std::vector<double> doubleStorage(argc);  // For double conversions
@@ -1990,7 +1530,6 @@ FFIResult callFunction(
     for (size_t i = 0; i < argc; i++) {
         ffiArgTypes[i] = toFFIType(argTypes[i]);
 
-        // Set up argument value pointers based on type
         switch (argTypes[i]) {
             case FFIType::Float:
                 floatStorage[i] = static_cast<float>(argStorage[i]);
@@ -2011,7 +1550,6 @@ FFIResult callFunction(
         }
     }
 
-    // Prepare the call interface
     ffi_type* ffiRetType = toFFIType(returnType);
     ffi_status status = ffi_prep_cif(&cif, FFI_DEFAULT_ABI,
                                       static_cast<unsigned int>(argc),
@@ -2023,7 +1561,6 @@ FFIResult callFunction(
         return result;
     }
 
-    // Prepare return value storage
     union {
         uint64_t u64;
         int64_t s64;
@@ -2039,11 +1576,9 @@ FFIResult callFunction(
     } retValue;
     retValue.u64 = 0;
 
-    // Make the call
     ffi_call(&cif, FFI_FN(funcPtr), &retValue,
              argc > 0 ? ffiArgValues.data() : nullptr);
 
-    // Extract return value
     result.success = true;
     switch (returnType) {
         case FFIType::Void:

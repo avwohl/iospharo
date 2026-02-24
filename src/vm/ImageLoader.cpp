@@ -6,24 +6,12 @@
 #include <cstring>
 #include <algorithm>
 #include <iostream>
-#include <iomanip>
 
 namespace pharo {
 
-// ===== SPUR 64-BIT HEADER FIELD EXTRACTION =====
-// These must match the layout in ObjectHeader.hpp
-// classIndex: bits 0-21, format: bits 24-28, hash: bits 32-53, numSlots: bits 56-63
-
-inline uint32_t extractClassIndex(uint64_t header) {
-    return static_cast<uint32_t>(header & 0x3FFFFF);
-}
-
+// Spur 64-bit header field extraction
 inline uint8_t extractFormat(uint64_t header) {
     return static_cast<uint8_t>((header >> 24) & 0x1F);
-}
-
-inline uint32_t extractHash(uint64_t header) {
-    return static_cast<uint32_t>((header >> 32) & 0x3FFFFF);
 }
 
 inline uint8_t extractNumSlots(uint64_t header) {
@@ -154,23 +142,6 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
     // Read the heap data directly into old space
     file.read(reinterpret_cast<char*>(loadedData_), loadedSize_);
 
-    // DEBUG: Check specific method header at known offset
-    // File offset 0x29760 = heap offset 0x296e0 (after 128-byte header)
-    size_t testOff = 0x296e0;
-    if (testOff + 8 <= loadedSize_) {
-        uint64_t val = *reinterpret_cast<uint64_t*>(loadedData_ + testOff);
-        // std::cerr << "[DEBUG] After file.read: offset 0x" << std::hex << testOff
-                  // << " value=0x" << val << std::dec << std::endl;
-        // Also print the raw bytes
-        uint8_t* bytes = loadedData_ + testOff;
-        // std::cerr << "[DEBUG] Raw bytes: ";
-        for (int i = 0; i < 8; i++) {
-            // if (bytes[i] < 16) std::cerr << "0";
-            // std::cerr << std::hex << (int)bytes[i] << " ";
-        }
-        // std::cerr << std::dec << std::endl;
-    }
-
     if (!file.good() && !file.eof()) {
         result.error = "Failed to read heap data";
         return false;
@@ -179,9 +150,6 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
     // Calculate relocation offset
     oldBase_ = header_.startOfMemory;
     newBase_ = reinterpret_cast<uint64_t>(loadedData_);
-    fprintf(stderr, "[RELOC] oldBase=0x%llx newBase=0x%llx delta=%lld\n",
-            (unsigned long long)oldBase_, (unsigned long long)newBase_,
-            (long long)(newBase_ - oldBase_));
 
     // Update the free pointer
     memory.setOldSpaceFreePointer(loadEnd);
@@ -192,179 +160,7 @@ bool ImageLoader::loadHeapData(std::ifstream& file, ObjectMemory& memory,
 // ===== POINTER RELOCATION =====
 
 bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
-    // We need to adjust every object pointer in the heap.
-    // An object pointer has bit 0 = 0 and points within the heap.
-
-    size_t objectCount = 0;
-    size_t pointerCount = 0;
-    size_t relocatedCount = 0;
-
-    // First, verify the special objects array structure directly
-    // Special objects array header should be at specArrayOffset
-    size_t specArrayOff = header_.specialObjectsOop - header_.startOfMemory;
-    // std::cerr << "[DEBUG] Verifying special objects at raw offset 0x" << std::hex << specArrayOff << std::dec << std::endl;
-    uint64_t* specRaw = reinterpret_cast<uint64_t*>(loadedData_ + specArrayOff);
-    uint64_t specHdr = specRaw[0];
-    // std::cerr << "  Header: 0x" << std::hex << specHdr << std::dec << std::endl;
-    // std::cerr << "  slot count = " << (int)extractNumSlots(specHdr) << std::endl;
-    // std::cerr << "  format = " << (int)extractFormat(specHdr) << std::endl;
-    // std::cerr << "  classIndex = " << extractClassIndex(specHdr) << std::endl;
-
-    // Dump scheduler association location
-    uint64_t schedAssocOop = specRaw[4];  // slot 3 = index 4 (after header at [0])
-    size_t schedAssocOff = (schedAssocOop & ~7ULL) - header_.startOfMemory;
-    // std::cerr << "  Slot 3 (scheduler): 0x" << std::hex << schedAssocOop
-              // << " -> raw offset 0x" << schedAssocOff << std::dec << std::endl;
-
-    // Now dump the scheduler association object directly
-    uint64_t* schedRaw = reinterpret_cast<uint64_t*>(loadedData_ + schedAssocOff);
-    // std::cerr << "[DEBUG] Scheduler association at offset 0x" << std::hex << schedAssocOff << std::dec << ":" << std::endl;
-    for (int i = 0; i < 5; i++) {
-        uint64_t val = schedRaw[i];
-        // std::cerr << "  [" << i << "]: 0x" << std::hex << val;
-        if (i == 0) {
-            // std::cerr << " (header: slots=" << std::dec << (int)extractNumSlots(val)
-                      // << " fmt=" << (int)extractFormat(val)
-                      // << " cls=" << extractClassIndex(val) << ")";
-        }
-        // std::cerr << std::dec << std::endl;
-    }
-
-    // Also check what's at the ProcessScheduler location (slot 1 of association = slot 2 after header)
-    uint64_t psOop = schedRaw[2];  // header at [0], key at [1], value at [2]
-    // std::cerr << "[DEBUG] ProcessScheduler oop from association: 0x" << std::hex << psOop << std::endl;
-    if ((psOop & 1) == 0 && psOop != 0) {
-        size_t psOff = (psOop & ~7ULL) - header_.startOfMemory;
-        // std::cerr << "  -> raw offset 0x" << psOff << std::dec << std::endl;
-        uint64_t* psRaw = reinterpret_cast<uint64_t*>(loadedData_ + psOff);
-        // std::cerr << "  Header: 0x" << std::hex << psRaw[0] << std::dec << std::endl;
-        // std::cerr << "  (slots=" << (int)extractNumSlots(psRaw[0])
-                  // << " fmt=" << (int)extractFormat(psRaw[0])
-                  // << " cls=" << extractClassIndex(psRaw[0]) << ")" << std::endl;
-    }
-
-    // Also dump where forEachObject lands on bad header
-    // std::cerr << "[DEBUG] Raw bytes at 0x6da80-0x6db20 (where bad object starts):" << std::endl;
-    uint64_t* rawPtr = reinterpret_cast<uint64_t*>(loadedData_ + 0x6da80);
-    for (int i = 0; i < 20; i++) {
-        uint64_t val = rawPtr[i];
-        size_t off = 0x6da80 + i*8;
-        // std::cerr << "  [0x" << std::hex << off << "]: 0x" << val;
-        // Try to print as ASCII if it looks like text
-        char buf[9] = {0};
-        for (int j = 0; j < 8; j++) buf[j] = ((val >> (j*8)) & 0xFF);
-        bool isAscii = true;
-        for (int j = 0; j < 8; j++) {
-            if (buf[j] != 0 && (buf[j] < 32 || buf[j] > 126)) isAscii = false;
-        }
-        // if (isAscii && buf[0] != 0) std::cerr << " \"" << buf << "\"";
-        // if (looksLikeValidHeader(val)) std::cerr << " [HEADER?]";
-        // std::cerr << std::dec << std::endl;
-    }
-
-    // Debug: dump bytes at scheduler association key/value locations
-    // Key (Symbol #Processor) should be at 0x82760, value (ProcessScheduler) at 0x82778
-    // std::cerr << "[DEBUG] Scheduler association key area (0x82750-0x82790):" << std::endl;
-    rawPtr = reinterpret_cast<uint64_t*>(loadedData_ + 0x82750);
-    for (int i = 0; i < 8; i++) {
-        uint64_t val = rawPtr[i];
-        size_t off = 0x82750 + i*8;
-        // std::cerr << "  [0x" << std::hex << off << "]: 0x" << val;
-        // Check if it looks like a pointer to old space
-        if ((val & ~7ULL) >= header_.startOfMemory &&
-            (val & ~7ULL) < header_.startOfMemory + loadedSize_ &&
-            (val & 1) == 0) {
-            // std::cerr << " (oop off=" << ((val & ~7ULL) - header_.startOfMemory) << ")";
-        }
-        // Try to print as ASCII if it looks like text
-        char buf[9] = {0};
-        for (int j = 0; j < 8; j++) buf[j] = ((val >> (j*8)) & 0xFF);
-        bool isAscii = true;
-        for (int j = 0; j < 8; j++) {
-            if (buf[j] != 0 && (buf[j] < 32 || buf[j] > 126)) isAscii = false;
-        }
-        // if (isAscii && buf[0] != 0) std::cerr << " \"" << buf << "\"";
-        // std::cerr << std::dec << std::endl;
-    }
-
-    // Scheduler association calculation
-    // Note: In this image, oops point to header, slots are 8 bytes after
-    size_t specialArrayOffset = header_.specialObjectsOop - header_.startOfMemory;
-    uint64_t* specObjArray = reinterpret_cast<uint64_t*>(loadedData_ + specialArrayOffset);
-    uint64_t schedulerAssocPtr = specObjArray[4];  // Slot 3 (oop points to header)
-    size_t schedulerAssocOffset = schedulerAssocPtr - header_.startOfMemory;
-    // std::cerr << "[DEBUG] Scheduler header at offset 0x" << std::hex << schedulerAssocOffset << std::dec << std::endl;
-
-    // Track if we visit the scheduler association
-    bool visitedSchedulerAssoc = false;
-    size_t schedulerOffset = schedulerAssocOffset;  // forEachObject visits by header offset
-
-    // Track if we visit the Float values array (at offset 0x30971e8)
-    static bool visitedFloatValuesArray = false;
-    static size_t maxOffsetSeen = 0;
-
-    static bool visitedBadObject = false;
-
-    forEachObject([this, &objectCount, &pointerCount, &relocatedCount, &visitedSchedulerAssoc, schedulerOffset](uint64_t* headerPtr, size_t size) {
-        objectCount++;
-        size_t offset = reinterpret_cast<uint8_t*>(headerPtr) - loadedData_;
-
-        // Track maximum offset reached
-        if (offset > maxOffsetSeen) maxOffsetSeen = offset;
-
-        // Diagnostic: check if we visit the object with classIdx=8462 near offset 0x3824000
-        uint64_t hdr = *headerPtr;
-        uint32_t cls = hdr & 0x3FFFFF;
-        if (cls == 8462 && offset >= 0x3820000 && offset <= 0x3830000) {
-            fprintf(stderr, "[RELOC-DIAG] Found cls=8462 at offset 0x%zx (expected ~0x3824488) size=%zu\n",
-                    offset, size);
-            visitedBadObject = true;
-            // Check first few slots for unrelocated values
-            uint64_t* firstSlot = headerPtr + 1;
-            size_t slots = (hdr >> 56) & 0xFF;
-            for (size_t i = 0; i < std::min(slots, (size_t)5); i++) {
-                fprintf(stderr, "  slot[%zu] = 0x%llx\n", i, (unsigned long long)firstSlot[i]);
-            }
-            fflush(stderr);
-        }
-
-        // Track Float values array visit (for debugging)
-        if (offset == 0x30971e8) {
-            visitedFloatValuesArray = true;
-        }
-
-        // Debug tracing for objects near Float values array (disabled - keep for future debugging)
-        // if (offset >= 0x3095000 && offset <= 0x3098000) { ... }
-
-        // Check if we visit the scheduler association
-        if (offset == schedulerOffset) {
-            visitedSchedulerAssoc = true;
-            uint64_t header = *headerPtr;
-            // std::cerr << "[DEBUG] Visiting scheduler at offset 0x" << std::hex << offset
-                      // << " header=0x" << header << " format=" << std::dec << (int)extractFormat(header)
-                      // << " size=" << size << std::endl;
-        }
-
-        // Also check if we SKIP OVER the scheduler
-        if (offset < schedulerOffset && offset + size > schedulerOffset) {
-            // std::cerr << "[DEBUG] SKIPPING OVER scheduler! Object at 0x" << std::hex << offset
-                      // << " size=" << std::dec << size << " would end at 0x" << std::hex << (offset + size)
-                      // << " schedulerOffset=0x" << schedulerOffset
-                      // << std::dec << std::endl;
-        }
-
-        // Print objects from 0x6c000 to 0x6e000 to trace what's happening
-        if (offset >= 0x6c000 && offset < 0x6e000) {
-            uint64_t header = *headerPtr;
-            // std::cerr << "[TRACE] off=0x" << std::hex << offset
-                      // << " hdr=0x" << header
-                      // << " slots=" << std::dec << (int)extractNumSlots(header)
-                      // << " fmt=" << (int)extractFormat(header)
-                      // << " cls=" << extractClassIndex(header)
-                      // << " sz=" << size
-                      // << " end=0x" << std::hex << (offset + size) << std::dec << std::endl;
-        }
-
+    forEachObject([this](uint64_t* headerPtr, size_t size) {
         // The header itself doesn't contain pointers (it has class index, not oop)
 
         // Get object format from header
@@ -405,14 +201,7 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
         if (hasPointers) {
             // All slots are pointers or SmallIntegers - relocate all
             for (size_t i = 0; i < slotCount; ++i) {
-                pointerCount++;
-                uint64_t oldValue = firstSlot[i];
-                // relocatePointer handles both object pointers AND SmallIntegers
-                uint64_t newValue = relocatePointer(oldValue);
-                // Debug tracing for specific pointers (disabled)
-                // if (oldValue == 0x1000044c070ULL) { ... }
-                firstSlot[i] = newValue;
-                if (oldValue != newValue) relocatedCount++;
+                firstSlot[i] = relocatePointer(firstSlot[i]);
             }
         } else if (isCompiledMethod) {
             // Compiled methods have header + literals followed by bytecodes
@@ -429,50 +218,12 @@ bool ImageLoader::relocatePointers(ObjectMemory& memory, LoadResult& result) {
                 // Relocate the literals (slots 1..numLiterals inclusive)
                 size_t pointerSlots = std::min(numLiterals + 1, slotCount);
                 for (size_t i = 1; i < pointerSlots; ++i) {
-                    pointerCount++;
-                    uint64_t oldValue = firstSlot[i];
-                    firstSlot[i] = relocatePointer(oldValue);
-                    if (oldValue != firstSlot[i]) relocatedCount++;
+                    firstSlot[i] = relocatePointer(firstSlot[i]);
                 }
             }
         }
         // Byte/word objects don't have pointers to relocate
     });
-
-    fprintf(stderr, "[RELOC] %zu objects, %zu pointers relocated, maxOffset=0x%zx visitedBad=%d\n",
-            objectCount, relocatedCount, maxOffsetSeen, visitedBadObject ? 1 : 0);
-    fflush(stderr);
-
-    // Post-relocation check: verify the cls=8462 object at offset ~0x3824488
-    {
-        size_t checkOff = 0x3824488;
-        if (checkOff + 168 <= loadedSize_) {
-            uint64_t* hdrPtr = reinterpret_cast<uint64_t*>(loadedData_ + checkOff);
-            uint64_t hdr = *hdrPtr;
-            uint32_t cls = hdr & 0x3FFFFF;
-            uint8_t fmt = (hdr >> 24) & 0x1F;
-            uint8_t nSlots = (hdr >> 56) & 0xFF;
-            fprintf(stderr, "[POST-RELOC] offset=0x%zx cls=%u fmt=%u slots=%u\n", checkOff, cls, fmt, nSlots);
-            if (cls == 8462 && nSlots == 19) {
-                uint64_t* slots = hdrPtr + 1;
-                for (int i = 0; i < 13; i++) {
-                    uint64_t v = slots[i];
-                    bool unrelocated = (v >= oldBase_ && v < oldBase_ + loadedSize_ && (v & 7) == 0);
-                    fprintf(stderr, "  slot[%d] = 0x%llx%s\n", i, (unsigned long long)v,
-                            unrelocated ? " [UNRELOCATED!]" : "");
-                }
-            }
-            fflush(stderr);
-        }
-    }
-
-    // DEBUG: Check the same offset after relocation
-    size_t testOff = 0x296e0;
-    if (testOff + 8 <= loadedSize_) {
-        uint64_t val = *reinterpret_cast<uint64_t*>(loadedData_ + testOff);
-        // std::cerr << "[DEBUG] After relocation: offset 0x" << std::hex << testOff
-                  // << " value=0x" << val << std::dec << std::endl;
-    }
 
     return true;
 }
@@ -496,12 +247,9 @@ void ImageLoader::relocateObjectSlots(uint64_t* headerPtr) {
         slotCount = static_cast<size_t>((rawWord << 8) >> 8);
     }
 
-    // Slots are after the header
     uint64_t* slots = headerPtr + 1;
     for (size_t i = 0; i < slotCount; ++i) {
-        uint64_t oldValue = slots[i];
-        // relocatePointer handles both object pointers and SmallIntegers
-        slots[i] = relocatePointer(oldValue);
+        slots[i] = relocatePointer(slots[i]);
     }
 }
 
@@ -525,14 +273,6 @@ bool ImageLoader::setupSpecialObjects(ObjectMemory& memory, LoadResult& result) 
     // were ALREADY relocated during step 3 (relocatePointers). We should NOT relocate them again.
     memory.setSpecialObjectsArray(specialObjects);
     memory.cacheSpecialObjects();
-
-    // DEBUG: Check the test offset after special objects setup
-    size_t testOff = 0x296e0;
-    if (testOff + 8 <= loadedSize_) {
-        uint64_t val = *reinterpret_cast<uint64_t*>(loadedData_ + testOff);
-        // std::cerr << "[DEBUG] After setupSpecialObjects: offset 0x" << std::hex << testOff
-                  // << " value=0x" << val << std::dec << std::endl;
-    }
 
     return true;
 }
@@ -584,7 +324,7 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     for (int i = 0; i < 4; i++) {
         obj = objectAfter(obj);
         if (obj >= heapStart + loadedSize_) {
-            std::cerr << "[CLASS-TABLE] ERROR: Ran off end of heap walking to object " << (i+2) << "\n";
+            result.error = "Ran off end of heap walking to object " + std::to_string(i + 2);
             return false;
         }
     }
@@ -592,12 +332,9 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
     ObjectHeader* hiddenRoots = reinterpret_cast<ObjectHeader*>(obj);
     size_t hrSlots = hiddenRoots->slotCount();
 
-    std::cerr << "[CLASS-TABLE] hiddenRootsObj at offset 0x" << std::hex << (obj - heapStart) << std::dec
-              << " fmt=" << (int)hiddenRoots->format() << " slots=" << hrSlots << "\n";
-
     if (hrSlots < MaxClassTablePages) {
-        std::cerr << "[CLASS-TABLE] ERROR: hiddenRoots has only " << hrSlots
-                  << " slots, expected >= " << MaxClassTablePages << "\n";
+        result.error = "hiddenRoots has only " + std::to_string(hrSlots)
+                     + " slots, expected >= " + std::to_string(MaxClassTablePages);
         return false;
     }
 
@@ -638,13 +375,7 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
             // are raw data that happens to have tag bits 000 — not class pointers.
             uint64_t classAddr = classOop.rawBits();
             if (classAddr < newBase_ || classAddr >= newBase_ + loadedSize_) {
-                static int skippedCount = 0;
-                if (skippedCount++ < 5) {
-                    fprintf(stderr, "[CLASS-TABLE] Skipping bad class entry at page %zu slot %zu: 0x%llx (outside heap)\n",
-                            pageNum, i, (unsigned long long)classAddr);
-                }
-                // Nil out the slot in the page object so GC won't try to mark
-                // this bad pointer when scanning the hiddenRootsObj page's slots.
+                // Nil out bad pointer so GC won't try to mark it
                 pageHdr->slotAtPut(i, nilObj);
                 continue;
             }
@@ -655,47 +386,8 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         }
     }
 
-    std::cerr << "[CLASS-TABLE] Registered " << totalClasses << " classes from "
-              << numPages << " pages\n";
-
-    // Diagnostic: check what's at index 4 (should be SmallFloat64)
-    {
-        Oop idx4 = memory.classAtIndex(4);
-        std::cerr << "[CLASS-TABLE] classAtIndex(4)=0x" << std::hex << idx4.rawBits() << std::dec;
-        if (idx4.isObject() && idx4.rawBits() > 0x10000) {
-            ObjectHeader* h = idx4.asObjectPtr();
-            std::cerr << " classIdx=" << h->classIndex() << " fmt=" << (int)h->format()
-                      << " slots=" << h->slotCount();
-            // Try to read name at slot 6 (for Class objects)
-            if (h->slotCount() > 6) {
-                Oop nm = h->slotAt(6);
-                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                    ObjectHeader* nh = nm.asObjectPtr();
-                    if (nh->isBytesObject() && nh->byteSize() < 100) {
-                        std::cerr << " name='" << std::string((char*)nh->bytes(), nh->byteSize()) << "'";
-                    }
-                }
-            }
-            // Try to read name from slot 7 (different Pharo layout)
-            if (h->slotCount() > 7) {
-                Oop nm = h->slotAt(7);
-                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                    ObjectHeader* nh = nm.asObjectPtr();
-                    if (nh->isBytesObject() && nh->byteSize() < 100) {
-                        std::cerr << " slot7='" << std::string((char*)nh->bytes(), nh->byteSize()) << "'";
-                    }
-                }
-            }
-            // Also dump first 10 slots
-            std::cerr << "\n[CLASS-TABLE]   slots:";
-            for (size_t si = 0; si < std::min(h->slotCount(), (size_t)10); si++) {
-                Oop sv = h->slotAt(si);
-                std::cerr << " [" << si << "]=0x" << std::hex << sv.rawBits() << std::dec;
-                if (sv.isSmallInteger()) std::cerr << "(SI=" << sv.asSmallInteger() << ")";
-            }
-        }
-        std::cerr << "\n";
-    }
+    std::cerr << "[ImageLoader] Registered " << totalClasses << " classes from "
+              << numPages << " pages" << std::endl;
 
     return totalClasses > 0;
 }

@@ -13,7 +13,6 @@
 #include <unordered_set>
 #include <functional>
 #include <sys/mman.h>
-#include <execinfo.h>
 
 namespace pharo {
 
@@ -103,7 +102,6 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
 
 Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
                                  ObjectFormat format) {
-    // DEBUG: Catch allocations with classIndex=0
     if (classIndex == 0) {
         static int zeroClassCount = 0;
         if (++zeroClassCount <= 10) {
@@ -112,53 +110,20 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
         }
     }
 
-    // Calculate size: header + slots
     size_t headerSize = sizeof(ObjectHeader);
     bool hasOverflow = slotCount >= 255;
     if (hasOverflow) {
-        headerSize += sizeof(uint64_t);  // Overflow word
+        headerSize += sizeof(uint64_t);
     }
 
     size_t bodySize = slotCount * sizeof(Oop);
     size_t totalSize = headerSize + bodySize;
-
-    // Align to 8 bytes
     totalSize = (totalSize + 7) & ~7ULL;
 
     // TEMPORARY FIX: Allocate directly in old space to bypass broken scavenge
     // The scavenge doesn't reset eden (to avoid corruption from missing pointer forwarding)
     // which causes eden to fill up. Until proper GC is implemented, allocate in old space.
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
-
-    // TRACE: Log Dictionary allocations (classIndex 3143)
-    if (classIndex == 3143) {
-        static FILE* dictAllocLog = nullptr;
-        static int dictAllocLogCount = 0;
-        if (!dictAllocLog) dictAllocLog = nullptr;
-        if (dictAllocLog && dictAllocLogCount < 20) {
-            dictAllocLogCount++;
-            fprintf(dictAllocLog, "[DICT-ALLOC #%d] slots=%zu totalSize=%zu\n",
-                    dictAllocLogCount, slotCount, totalSize);
-            fprintf(dictAllocLog, "  edenFree_ before allocation: 0x%llx\n",
-                    (unsigned long long)edenFree_);
-            fflush(dictAllocLog);
-        }
-    }
-
-    // TRACE: Log Context allocations
-    if (classIndex == 36) {  // Context class
-        static FILE* ctxAllocLog = nullptr;
-        static int ctxAllocLogCount = 0;
-        if (!ctxAllocLog) ctxAllocLog = nullptr;
-        if (ctxAllocLog && ctxAllocLogCount < 20) {
-            ctxAllocLogCount++;
-            fprintf(ctxAllocLog, "[CTX-ALLOC #%d] slots=%zu totalSize=%zu\n",
-                    ctxAllocLogCount, slotCount, totalSize);
-            fprintf(ctxAllocLog, "  Eden allocation result: %p (edenFree_=%p, edenStart=%p, survivorStart=%p)\n",
-                    (void*)obj, (void*)edenFree_, (void*)edenStart_, (void*)survivorStart_);
-            fflush(ctxAllocLog);
-        }
-    }
 
     if (!obj) {
         static int allocFailCount = 0;
@@ -183,10 +148,9 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
 
     initializeHeader(obj, classIndex, slotCount, format);
 
-    // Initialize slots to nil
     Oop* slots = obj->slots();
-    // DEFENSIVE: If nilObject_ is not yet set (during image load), use Oop::nil() (raw 0)
-    // This is okay because these objects will be overwritten during image loading
+    // During image load nilObject_ may not be set yet; raw 0 is fine since
+    // image loading will overwrite these slots.
     Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
     static bool warnedNilNotSet = false;
     if (nilObject_.rawBits() == 0 && slotCount > 0 && !warnedNilNotSet) {
@@ -202,15 +166,12 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
 }
 
 Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
-    // Calculate number of 64-bit slots needed
     size_t slotCount = (byteCount + 7) / 8;
 
-    // Determine the correct format based on padding
     size_t padding = (slotCount * 8) - byteCount;
     ObjectFormat format = static_cast<ObjectFormat>(
         static_cast<int>(ObjectFormat::Indexable8) + padding);
 
-    // Calculate total size
     size_t headerSize = sizeof(ObjectHeader);
     bool hasOverflow = slotCount >= 255;
     if (hasOverflow) {
@@ -234,7 +195,6 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
 
     initializeHeader(obj, classIndex, slotCount, format);
 
-    // Zero all bytes
     std::memset(obj->bytes(), 0, slotCount * 8);
 
     bytesAllocated_ += totalSize;
@@ -242,29 +202,23 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
 }
 
 Oop ObjectMemory::createString(const std::string& str) {
-    // Get ByteString class
     Oop stringClass = specialObject(SpecialObjectIndex::ClassByteString);
     if (stringClass.isNil() || !stringClass.isObject()) {
         return nilObject_;
     }
 
-    // Get class index for ByteString instances
-    // The class's identity hash IS the class index for its instances in Spur
+    // In Spur, a class's identity hash IS the class index for its instances
     ObjectHeader* classHdr = stringClass.asObjectPtr();
     uint32_t classIndex = classHdr->identityHash();
-
-    // If the class doesn't have an identity hash, fall back to classIndex (wrong but might work)
     if (classIndex == 0) {
         classIndex = classHdr->classIndex();
     }
 
-    // Allocate the string
     Oop strObj = allocateBytes(classIndex, str.size());
     if (strObj.isNil()) {
         return nilObject_;
     }
 
-    // Copy string content
     ObjectHeader* strHdr = strObj.asObjectPtr();
     std::memcpy(strHdr->bytes(), str.c_str(), str.size());
 
@@ -272,7 +226,6 @@ Oop ObjectMemory::createString(const std::string& str) {
 }
 
 Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
-    // Each word is 64 bits = 1 slot
     size_t slotCount = wordCount;
 
     size_t headerSize = sizeof(ObjectHeader);
@@ -311,13 +264,10 @@ Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, s
     size_t slotBytes = numSlots * 8;
     size_t totalBytes = slotBytes + bytecodeSize;
 
-    // Round up to slot alignment for the slot count field
     size_t totalSlots = (totalBytes + 7) / 8;
 
-    // Determine padding for the byte portion
+    // Format 24+padding = CompiledMethod with 0-3 unused trailing bytes
     size_t padding = (totalSlots * 8) - totalBytes;
-    // Format 24-27 = CompiledMethod (bytes with 0-3 odd bytes unused)
-    // This maps to ObjectFormat enum values for CompiledMethod
     ObjectFormat format = static_cast<ObjectFormat>(24 + padding);
 
     size_t headerSize = sizeof(ObjectHeader);
@@ -329,11 +279,9 @@ Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, s
     size_t totalSize = headerSize + totalSlots * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in old space
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
     if (!obj) return nilObject_;
 
-    // Handle overflow (byte 7 must be 0xFF for scanner recognition)
     if (hasOverflow) {
         uint64_t* overflow = reinterpret_cast<uint64_t*>(obj);
         *overflow = totalSlots | (0xFFULL << 56);
@@ -342,7 +290,6 @@ Oop ObjectMemory::allocateCompiledMethod(uint32_t classIndex, size_t numSlots, s
 
     initializeHeader(obj, classIndex, totalSlots, format);
 
-    // Zero all content (slots will be nil, bytecodes will be 0)
     std::memset(obj->slots(), 0, totalSlots * 8);
 
     bytesAllocated_ += totalSize;
@@ -418,164 +365,25 @@ Oop ObjectMemory::classOf(Oop obj) const {
         return classAtIndex(header->classIndex());
     }
 
-    // Validate pointer before dereferencing to catch corruption
     if (!isValidPointer(obj)) {
         static int corruptCount = 0;
-        corruptCount++;
-        if (corruptCount <= 20) {
-            uint64_t bits = obj.rawBits();
-            std::cerr << "[CLASSOF] INVALID POINTER #" << corruptCount
-                      << ": 0x" << std::hex << bits << std::dec;
-            // Try to decode as ASCII to help identify corruption source
-            char ascii[9];
-            for (int i = 0; i < 8; i++) {
-                uint8_t byte = (bits >> (i * 8)) & 0xFF;
-                ascii[i] = (byte >= 0x20 && byte < 0x7F) ? (char)byte : '.';
-            }
-            ascii[8] = '\0';
-            std::cerr << " ASCII(LE)=\"" << ascii << "\"";
-            // Also show reversed (big endian)
-            for (int i = 0; i < 4; i++) {
-                std::swap(ascii[i], ascii[7-i]);
-            }
-            std::cerr << " ASCII(BE)=\"" << ascii << "\"\n";
-            std::cerr.flush();
+        if (++corruptCount <= 5) {
+            std::cerr << "[CLASSOF] invalid pointer 0x" << std::hex
+                      << obj.rawBits() << std::dec << "\n";
         }
-        return nilObject_;  // Return proper nil instead of raw 0
+        return nilObject_;
     }
 
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t classIdx = header->classIndex();
     Oop cls = classAtIndex(classIdx);
 
-    // Debug: trace classOf for classIndex 3156 (OrderedCollection's metaclass)
-    static int oc3156Count = 0;
-    if (classIdx == 3156 && oc3156Count++ < 10) {
-        static FILE* ocLog = nullptr;
-        if (ocLog) {
-            fprintf(ocLog, "[CLASSOF-3156 #%d] obj=0x%llx classIdx=%u -> cls=0x%llx\n",
-                    oc3156Count, (unsigned long long)obj.rawBits(), classIdx,
-                    (unsigned long long)cls.rawBits());
-            // Check if obj and cls are the same
-            if (obj.rawBits() == cls.rawBits()) {
-                fprintf(ocLog, "  WARNING: obj == cls! This is wrong for class objects.\n");
-            }
-            fflush(ocLog);
-        }
-    }
-
-    // Debug: trace classOf for nil object (classIdx 3075)
-    static int nilClassOfCount = 0;
-    if (classIdx == 3075 && nilClassOfCount++ < 5) {
-        std::cerr << "[CLASSOF-NIL #" << nilClassOfCount << "] obj=0x" << std::hex << obj.rawBits()
-                  << " classIdx=" << classIdx << " -> cls=0x" << cls.rawBits()
-                  << " isNil=" << std::dec << cls.isNil() << "\n";
-    }
-
     if (cls.isNil() || cls.rawBits() == 0) {
         static int nilClassCount = 0;
-        static uint32_t lastBadClassIdx = 0;
-        static int sameClassIdxCount = 0;
-
-        nilClassCount++;
-
-        // Detect infinite loop on same bad classIdx
-        if (classIdx == lastBadClassIdx) {
-            sameClassIdxCount++;
-            if (sameClassIdxCount > 100) {
-                if (sameClassIdxCount == 101) {
-                    std::cerr << "[CLASSOF] STUCK IN LOOP on classIdx=" << classIdx
-                              << " - loop detected, returning nil\n";
-                }
-                if (sameClassIdxCount > 1000) {
-                    sameClassIdxCount = 0;
-                }
-            }
-        } else {
-            lastBadClassIdx = classIdx;
-            sameClassIdxCount = 1;
-        }
-
-        if (nilClassCount <= 20 || classIdx == 3156) {
-            std::cerr << "[CLASSOF] obj=0x" << std::hex << obj.rawBits()
-                      << " classIdx=" << std::dec << classIdx
-                      << " NOT FOUND in class table (tableSize=" << classTable_.size() << ")\n";
-        }
-
-        // Enhanced diagnostics on FIRST invalid classIdx after GC
-        if (nilClassCount == 1) {
-            uint64_t rawHeader = header->rawHeader();
-            std::cerr << "[CLASSOF-DIAG] FIRST classIdx=0!\n"
-                      << "  obj=0x" << std::hex << obj.rawBits() << std::dec << "\n"
-                      << "  rawHeader=0x" << std::hex << rawHeader << std::dec << "\n"
-                      << "  format=" << (int)header->format()
-                      << " hash=" << header->identityHash()
-                      << " slotCount=" << header->slotCount() << "\n"
-                      << "  isMarked=" << header->isMarked()
-                      << " isGrey=" << header->isGrey()
-                      << " isPinned=" << header->isPinned() << "\n";
-
-            // Check heap bounds
-            uintptr_t objAddr = (uintptr_t)header;
-            uintptr_t heapStart = (uintptr_t)oldSpaceStart_;
-            uintptr_t heapEnd = (uintptr_t)oldSpaceFree_;
-            std::cerr << "  heapStart=0x" << std::hex << heapStart
-                      << " heapEnd=0x" << heapEnd
-                      << " offset=" << std::dec << (objAddr - heapStart) << " bytes"
-                      << " (" << (objAddr - heapStart) / (1024*1024) << "MB)\n";
-            std::cerr << "  inHeap=" << (objAddr >= heapStart && objAddr < heapEnd) << "\n";
-
-            // Dump 8 words around the address
-            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(header);
-            std::cerr << "  MEMORY DUMP around obj:\n";
-            for (int i = -2; i < 6; ++i) {
-                uint64_t* p = wordPtr + i;
-                if ((uintptr_t)p >= heapStart && (uintptr_t)p < heapEnd + 64) {
-                    std::cerr << "    [" << (i >= 0 ? "+" : "") << i << "] 0x"
-                              << std::hex << *p << std::dec;
-                    if (i == 0) std::cerr << "  <-- HEADER";
-                    std::cerr << "\n";
-                }
-            }
-
-            // Try to find the enclosing object by scanning backwards
-            // to find the previous valid-looking header
-            std::cerr << "  SCANNING BACKWARDS for enclosing object...\n";
-            uint64_t* scan = wordPtr - 1;
-            int maxBack = 200;
-            while (scan >= reinterpret_cast<uint64_t*>(oldSpaceStart_) && maxBack-- > 0) {
-                uint64_t w = *scan;
-                uint8_t numSlots = (w >> 56) & 0xFF;
-                uint32_t ci = w & 0x3FFFFF;
-                uint8_t fmt = (w >> 24) & 0x1F;
-                if (ci > 0 && ci < 22000 && fmt <= 31 && numSlots < 255) {
-                    // Could be a valid header
-                    ObjectHeader* candidate = reinterpret_cast<ObjectHeader*>(scan);
-                    size_t candSlots = candidate->slotCount();
-                    size_t bodyBytes = candSlots * 8;
-                    uintptr_t candEnd = (uintptr_t)scan + 8 + bodyBytes;
-                    std::cerr << "    PREV obj=0x" << std::hex << (uintptr_t)scan
-                              << std::dec
-                              << " classIdx=" << ci << " fmt=" << (int)fmt
-                              << " slots=" << candSlots
-                              << " bodyEnd=0x" << std::hex << candEnd << std::dec
-                              << " containsCorrupt=" << (candEnd > objAddr) << "\n";
-                    if (candEnd > objAddr) {
-                        // This object CONTAINS the corrupt address
-                        size_t offsetInObj = objAddr - (uintptr_t)scan - 8;
-                        std::cerr << "    CORRUPT ADDR IS INSIDE THIS OBJECT at byte offset "
-                                  << offsetInObj << " (slot " << offsetInObj/8 << ")\n";
-                    }
-                    break;
-                }
-                scan--;
-            }
-            std::cerr.flush();
-
-            // Log interpreter state to identify what code triggered this
-            if (interpreter_) {
-                interpreter_->logCurrentMethod(stderr);
-            }
+        if (++nilClassCount <= 5) {
+            std::cerr << "[CLASSOF] classIdx=" << classIdx
+                      << " not in class table for obj 0x" << std::hex
+                      << obj.rawBits() << std::dec << "\n";
         }
     }
     return cls;
@@ -715,10 +523,8 @@ bool ObjectMemory::symbolEquals(Oop symbol, const char* str) const {
 }
 
 Oop ObjectMemory::findGlobal(const std::string& name) const {
-    // Get SmalltalkDictionary from special objects
     Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
     if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
-        // std::cerr << "[DEBUG] findGlobal: SmalltalkDictionary is nil" << std::endl;
         return nilObject_;
     }
 
@@ -743,7 +549,6 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
     Oop arraySlot = fetchPointer(1, sysDict);
 
     if (!arraySlot.isObject() || arraySlot.isNil()) {
-        // std::cerr << "[DEBUG] findGlobal: array slot is nil" << std::endl;
         return nilObject_;
     }
 
@@ -761,33 +566,29 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
         }
     }
 
-    // Search the array for the named global
-    int totalAssocs = 0;
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
         if (item.isNil() || !item.isObject()) continue;
-        if (!isValidPointer(item)) continue;  // Validate pointer
+        if (!isValidPointer(item)) continue;
 
         ObjectHeader* itemHeader = item.asObjectPtr();
         size_t slotCount = itemHeader->slotCount();
-        if (slotCount < 2 || slotCount > 100) continue;  // Sanity check
+        if (slotCount < 2 || slotCount > 100) continue;
 
         Oop key = fetchPointer(0, item);
         if (!key.isObject() || key.isNil()) continue;
-        if (!isValidPointer(key)) continue;  // Validate key pointer
+        if (!isValidPointer(key)) continue;
 
         ObjectHeader* keyHeader = key.asObjectPtr();
         if (!keyHeader->isBytesObject()) continue;
 
         size_t keySize = keyHeader->byteSize();
-        if (keySize > 1000) continue;  // Sanity check
+        if (keySize > 1000) continue;
 
-        totalAssocs++;
         if (symbolEquals(key, name.c_str())) {
             return fetchPointer(1, item);
         }
     }
-    (void)totalAssocs;  // Suppress unused warning
 
     // Modern Pharo might store additional entries in overflow structures at slots 2-5
     // Let me search those too (with defensive pointer validation)
@@ -857,124 +658,68 @@ Oop ObjectMemory::findGlobal(const std::string& name) const {
 }
 
 Oop ObjectMemory::lookupSymbol(const std::string& name) {
-    // Symbols are interned in Pharo. We need to find the Symbol instance
-    // with the given content.
-
-    static FILE* symLog = nullptr;
-    static bool logInit = false;
-    if (!logInit) {
-        logInit = true;
-        symLog = nullptr;
-    }
-
-    // Also find ByteSymbol class - Pharo uses ByteSymbol for most symbols
     Oop symbolClass = findGlobal("Symbol");
     Oop byteSymbolClass = findGlobal("ByteSymbol");
 
-    // Debug logging removed for cleaner output
-
-    // Use ByteSymbol if available (more common in Pharo), otherwise Symbol
     Oop targetClass = byteSymbolClass.isNil() ? symbolClass : byteSymbolClass;
     if (targetClass.isNil() || !targetClass.isObject()) {
-        if (symLog) { fprintf(symLog, "[SYM] Symbol/ByteSymbol class not found for '%s'\n", name.c_str()); fflush(symLog); }
         return nilObject_;
     }
 
-    // The class index that Symbol INSTANCES have is the identity hash of the Symbol class
     uint32_t symbolClassIdx = identityHashOf(targetClass);
     if (symbolClassIdx == 0) {
         symbolClassIdx = indexOfClass(targetClass);
     }
     if (symbolClassIdx == 0) {
-        if (symLog) { fprintf(symLog, "[SYM] Symbol/ByteSymbol class has no valid index for '%s'\n", name.c_str()); fflush(symLog); }
         return nilObject_;
     }
-    if (symLog) { fprintf(symLog, "[SYM] Looking for '%s', target classIdx=%u\n", name.c_str(), symbolClassIdx); fflush(symLog); }
-    if (symLog) { fprintf(symLog, "[SYM] permSpace=%p-%p oldSpace=%p-%p\n",
-                          (void*)permSpaceStart_, (void*)permSpaceEnd_,
-                          (void*)oldSpaceStart_, (void*)oldSpaceEnd_); fflush(symLog); }
 
-    // Helper lambda to scan a memory region for a symbol
-    auto scanRegion = [&](const uint8_t* start, const uint8_t* end, const char* regionName) -> Oop {
-        if (symLog) { fprintf(symLog, "[SYM] Scanning %s: %p-%p (%zu bytes)\n", regionName, (void*)start, (void*)end, (size_t)(end-start)); fflush(symLog); }
+    auto scanRegion = [&](const uint8_t* start, const uint8_t* end) -> Oop {
         if (start == nullptr || end == nullptr || start >= end) {
-            if (symLog) { fprintf(symLog, "[SYM] %s is empty or invalid, skipping\n", regionName); fflush(symLog); }
             return nilObject_;
         }
         const uint8_t* scan = start;
-        size_t objectCount = 0;
         while (scan < end) {
             ObjectHeader* header = reinterpret_cast<ObjectHeader*>(const_cast<uint8_t*>(scan));
-            uint64_t rawHeader = header->rawHeader();
 
-            // Debug disabled to reduce log size
-
-            // Free chunks have classIndex == 0 (Spur format)
             uint32_t clsIdx = header->classIndex();
             if (clsIdx == 0) {
-                // Skip this word and continue - classIndex 0 is reserved for free space
                 scan += 8;
                 continue;
             }
 
-            // Debug bytes objects disabled
-
-            // Check if this is a Symbol (ByteSymbol)
             if (clsIdx == symbolClassIdx) {
-                // Check if content matches
                 if (header->isBytesObject()) {
                     size_t byteSize = header->byteSize();
                     if (byteSize == name.size()) {
                         const uint8_t* bytes = header->bytes();
                         if (memcmp(bytes, name.c_str(), byteSize) == 0) {
-                            // Found the symbol!
-                            Oop result = Oop::fromObject(header);
-                            if (symLog) { fprintf(symLog, "[SYM] FOUND '%s' in %s at 0x%llx\n", name.c_str(), regionName, (unsigned long long)result.rawBits()); fflush(symLog); }
-                            return result;
+                            return Oop::fromObject(header);
                         }
                     }
                 }
             }
 
-            // Move to next object
             size_t objSize = header->totalSize();
             if (objSize == 0 || objSize > static_cast<size_t>(end - scan)) {
-                // Invalid object size - skip 8 bytes and keep trying
                 scan += 8;
                 continue;
             }
             scan += objSize;
-            objectCount++;
-            if (objectCount % 200000 == 0 && symLog) {
-                fprintf(symLog, "[SYM] %s: scanned %zu objects, at %p\n", regionName, objectCount, (void*)scan); fflush(symLog);
-            }
         }
-        if (symLog) { fprintf(symLog, "[SYM] %s: finished, scanned %zu objects\n", regionName, objectCount); fflush(symLog); }
         return nilObject_;
     };
 
-    // Scan permanent space first (symbols are often there)
-    if (symLog) { fprintf(symLog, "[SYM] Starting permSpace scan...\n"); fflush(symLog); }
-    Oop result = scanRegion(permSpaceStart_, permSpaceEnd_, "permSpace");
-    if (symLog) { fprintf(symLog, "[SYM] permSpace result: bits=0x%llx nilObj=0x%llx isFound=%d\n",
-                          (unsigned long long)result.rawBits(), (unsigned long long)nilObject_.rawBits(),
-                          result.rawBits() != nilObject_.rawBits()); fflush(symLog); }
+    Oop result = scanRegion(permSpaceStart_, permSpaceEnd_);
     if (result.rawBits() != nilObject_.rawBits()) return result;
 
-    // Scan old space (use oldSpaceFree_ which is the end of actual data, not oldSpaceEnd_ which is end of buffer)
-    if (symLog) { fprintf(symLog, "[SYM] Starting oldSpace scan (using oldSpaceFree_=%p)...\n", (void*)oldSpaceFree_); fflush(symLog); }
-    result = scanRegion(oldSpaceStart_, oldSpaceFree_, "oldSpace");
-    if (symLog) { fprintf(symLog, "[SYM] oldSpace result: bits=0x%llx isFound=%d\n",
-                          (unsigned long long)result.rawBits(),
-                          result.rawBits() != nilObject_.rawBits()); fflush(symLog); }
+    result = scanRegion(oldSpaceStart_, oldSpaceFree_);
     if (result.rawBits() != nilObject_.rawBits()) return result;
 
-    if (symLog) { fprintf(symLog, "[SYM] NOT FOUND '%s' after scanning all spaces\n", name.c_str()); fflush(symLog); }
     return nilObject_;
 }
 
 bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
-    // Get SmalltalkDictionary from special objects
     Oop smalltalkDict = specialObject(SpecialObjectIndex::SmalltalkDictionary);
     if (smalltalkDict.isNil() || !smalltalkDict.isObject()) {
         return false;
@@ -1016,7 +761,6 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
         }
     }
 
-    // Search for existing binding
     for (size_t i = 0; i < arraySize; ++i) {
         Oop item = arrayHeader->slotAt(i);
         if (item.isNil() || !item.isObject()) continue;
@@ -1034,14 +778,11 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
         if (!keyHeader->isBytesObject()) continue;
 
         if (symbolEquals(key, name.c_str())) {
-            // Found existing binding - update its value (slot 1)
             storePointer(1, item, value);
             return true;
         }
     }
 
-    // Not found - create new binding
-    // Find Symbol and Association classes
     Oop symbolClass = findGlobal("Symbol");
     Oop assocClass = findGlobal("Association");
     if (symbolClass.isNil() || assocClass.isNil()) {
@@ -1054,17 +795,14 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
         return false;
     }
 
-    // Allocate symbol (byte object)
     Oop symbolObj = allocateBytes(symbolClassIdx, name.size());
     if (symbolObj.isNil()) {
         return false;
     }
 
-    // Copy name into symbol
     ObjectHeader* symHdr = symbolObj.asObjectPtr();
     std::memcpy(symHdr->bytes(), name.c_str(), name.size());
 
-    // Allocate Association (2 pointer slots)
     Oop assocObj = allocateSlots(assocClassIdx, 2);
     if (assocObj.isNil()) {
         return false;
@@ -1089,122 +827,41 @@ bool ObjectMemory::setGlobal(const std::string& name, Oop value) {
 }
 
 Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
-    // Get MethodContext class
     Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);
     if (contextClass.isNil()) {
         return nilObject_;
     }
 
-    // Debug: Log Context class info once
-    static bool loggedContextClass = false;
-    if (!loggedContextClass) {
-        loggedContextClass = true;
-        if (contextClass.isObject()) {
-            ObjectHeader* ctxClsHdr = contextClass.asObjectPtr();
-            std::cerr << "[CONTEXT-CLASS] ClassMethodContext at 0x" << std::hex << contextClass.rawBits()
-                      << " classIndex=" << std::dec << ctxClsHdr->classIndex()
-                      << " format=" << (int)ctxClsHdr->format()
-                      << " slots=" << ctxClsHdr->slotCount() << "\n";
-            // Try to get class name
-            if (ctxClsHdr->slotCount() > 6) {
-                Oop nameOop = fetchPointer(6, contextClass);
-                if (nameOop.isObject()) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                        std::string name((char*)nameHdr->bytes(), nameHdr->byteSize());
-                        std::cerr << "[CONTEXT-CLASS] Name: '" << name << "'\n";
-                    }
-                }
-            }
-            // Also check what class 3104 is
-            Oop class3104 = classAtIndex(3104);
-            if (class3104.isObject() && !class3104.isNil()) {
-                ObjectHeader* c3104Hdr = class3104.asObjectPtr();
-                std::cerr << "[CLASS-3104] Class at index 3104: 0x" << std::hex << class3104.rawBits()
-                          << " format=" << std::dec << (int)c3104Hdr->format()
-                          << " slots=" << c3104Hdr->slotCount() << "\n";
-                if (c3104Hdr->slotCount() > 6) {
-                    Oop name3104 = fetchPointer(6, class3104);
-                    if (name3104.isObject()) {
-                        ObjectHeader* n3104Hdr = name3104.asObjectPtr();
-                        if (n3104Hdr->isBytesObject() && n3104Hdr->byteSize() < 100) {
-                            std::string name((char*)n3104Hdr->bytes(), n3104Hdr->byteSize());
-                            std::cerr << "[CLASS-3104] Name: '" << name << "'\n";
-                        }
-                    }
-                }
-            } else {
-                std::cerr << "[CLASS-3104] Class at index 3104 is nil or not object\n";
-            }
-        }
-    }
-
-    // Get method header to determine temp count
     Oop methodHeader = fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
         return nilObject_;
     }
 
     int64_t headerBits = methodHeader.asSmallInteger();
-    int numTemps = (headerBits >> 18) & 0x3F;  // VMMaker: MethodHeaderTempCountShift=21, untagged=18, 6 bits
-    // In Spur 64-bit, numLiterals is in bits 0-14 (no shift needed)
+    int numTemps = (headerBits >> 18) & 0x3F;
     int numLiterals = headerBits & 0x7FFF;
 
-    // MethodContext layout:
-    // slot 0: sender
-    // slot 1: pc (instruction pointer as SmallInteger offset, 1-based)
-    // slot 2: stackp (stack pointer within context)
-    // slot 3: method
-    // slot 4: closureOrNil
-    // slot 5: receiver
-    // slots 6+: arguments, temporaries, stack
-
-    // Context needs: 6 fixed slots + temps + some stack space
-    size_t contextSize = 6 + numTemps + 32;  // 32 extra for stack
+    size_t contextSize = 6 + numTemps + 32;  // 6 fixed + temps + stack
 
     uint32_t classIndex = indexOfClass(contextClass);
     if (classIndex == 0) {
-        // Context class not in table, try to register it
         classIndex = const_cast<ObjectMemory*>(this)->registerClass(contextClass);
     }
 
-    // Debug: Log Context class index once
-    static bool loggedClassIndex = false;
-    if (!loggedClassIndex) {
-        loggedClassIndex = true;
-        std::cerr << "[CONTEXT-ALLOC] Using classIndex=" << classIndex
-                  << " for Context instances\n";
-        // Verify round-trip
-        Oop verifyClass = classAtIndex(classIndex);
-        std::cerr << "[CONTEXT-ALLOC] classAtIndex(" << classIndex << ") returns 0x"
-                  << std::hex << verifyClass.rawBits() << std::dec;
-        if (verifyClass.rawBits() == contextClass.rawBits()) {
-            std::cerr << " (MATCHES contextClass)\n";
-        } else {
-            std::cerr << " (MISMATCH! contextClass=0x" << std::hex << contextClass.rawBits()
-                      << std::dec << ")\n";
-        }
-    }
-
-    // Use IndexableWithFixed for contexts (format 3) - they have fixed + indexed fields
     Oop context = allocateSlots(classIndex, contextSize, ObjectFormat::IndexableWithFixed);
     if (context.isNil()) {
         return nilObject_;
     }
 
-    // Calculate initial PC (after header + literals)
-    // PC is 1-based byte offset from start of method
-    int initialPC = (1 + numLiterals) * 8 + 1;  // +1 for 1-based
+    int initialPC = (1 + numLiterals) * 8 + 1;  // 1-based byte offset past header+literals
 
-    // Initialize context
-    storePointer(0, context, nil());                              // sender (nil = bottom of stack)
+    storePointer(0, context, nil());                              // sender
     storePointer(1, context, Oop::fromSmallInteger(initialPC));   // pc
     storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
     storePointer(3, context, method);                              // method
     storePointer(4, context, nil());                               // closureOrNil
     storePointer(5, context, receiver);                            // receiver
 
-    // Initialize temporaries to nil
     for (int i = 0; i < numTemps; ++i) {
         storePointer(6 + i, context, nil());
     }
@@ -1213,13 +870,11 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 }
 
 Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg) {
-    // Get MethodContext class
     Oop contextClass = specialObject(SpecialObjectIndex::ClassMethodContext);
     if (contextClass.isNil()) {
         return nilObject_;
     }
 
-    // Get method header to determine temp count and arg count
     Oop methodHeader = fetchPointer(0, method);
     if (!methodHeader.isSmallInteger()) {
         return nilObject_;
@@ -1230,16 +885,7 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
     int numArgs = (headerBits >> 24) & 0xF;  // Arguments are in bits 24-27
     int numLiterals = headerBits & 0x7FFF;
 
-    // Sanity check: we expect 1 argument for this method
-    if (numArgs != 1) {
-        static FILE* uiLog = nullptr;
-        if (!uiLog) uiLog = nullptr;
-        if (uiLog) {
-            fprintf(uiLog, "[UI] Warning: method has %d args, expected 1\n", numArgs);
-            fflush(uiLog);
-        }
-        // Still try to create context with the provided arg
-    }
+    (void)numArgs;  // May differ from 1 for some methods; proceed regardless
 
     // Context needs: 6 fixed slots + 1 arg + temps + some stack space
     size_t contextSize = 6 + numArgs + numTemps + 32;
@@ -1254,21 +900,16 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
         return nilObject_;
     }
 
-    // Calculate initial PC (after header + literals)
     int initialPC = (1 + numLiterals) * 8 + 1;
 
-    // Initialize context
     storePointer(0, context, nil());                                      // sender
     storePointer(1, context, Oop::fromSmallInteger(initialPC));           // pc
     storePointer(2, context, Oop::fromSmallInteger(numArgs + numTemps + 5)); // stackp
     storePointer(3, context, method);                                      // method
     storePointer(4, context, nil());                                       // closureOrNil
     storePointer(5, context, receiver);                                    // receiver
+    storePointer(6, context, arg);                                         // argument
 
-    // Store the argument
-    storePointer(6, context, arg);
-
-    // Initialize temporaries to nil (after args)
     for (int i = 0; i < numTemps; ++i) {
         storePointer(6 + numArgs + i, context, nil());
     }
@@ -1279,11 +920,8 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
 // ===== OBJECT ACCESS =====
 
 Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
-    // Return proper nil object instead of raw 0 for error cases
-    // This prevents corruption when the result is used as a message receiver
     if (!obj.isObject()) return nilObject_;
 
-    // Validate pointer before dereferencing
     if (!isValidPointer(obj)) {
         return nilObject_;
     }
@@ -1298,12 +936,8 @@ Oop ObjectMemory::fetchPointer(size_t index, Oop obj) const {
 void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
     if (!obj.isObject()) return;
     ObjectHeader* header = obj.asObjectPtr();
-
-    // Bounds check
     if (index >= header->slotCount()) return;
 
-
-    // Check for old->young pointer (needs remembered set)
     if (isOld(obj) && value.isObject() && isYoung(value)) {
         rememberObject(obj);
     }
@@ -1794,19 +1428,6 @@ GCResult ObjectMemory::fullGC() {
                 usedAfter / (1024*1024));
         fflush(stderr);
     }
-    // Log GC to file (Mac Catalyst stderr is lost)
-    {
-        FILE* gcLog = fopen("/tmp/iospharo-gc.log", "a");
-        if (gcLog) {
-            fprintf(gcLog, "[FULL-GC #%d] marked=%zu reclaimed=%zuKB time=%zums used=%zuMB\n",
-                    gcCallCount, markedCount, result.bytesReclaimed / 1024,
-                    (size_t)result.milliseconds, usedAfter / (1024*1024));
-            fflush(gcLog);
-            fclose(gcLog);
-        }
-    }
-
-    // Symbol class post-compaction check (disabled — verified clean)
 
     // Record compacted size for threshold-based GC triggering
     lastCompactedSize_ = oldSpaceFree_ - oldSpaceStart_;

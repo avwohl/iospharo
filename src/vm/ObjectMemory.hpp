@@ -234,19 +234,8 @@ public:
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {
             classTable_[index] = classOop;
-            // Track highest used index so registerClass starts after it
             if (index >= nextClassIndex_) {
                 nextClassIndex_ = index + 1;
-            }
-            // Log registration of low-numbered classes (these are often core classes)
-            if (index < 100) {
-                static FILE* classRegLog = nullptr;
-                if (!classRegLog) classRegLog = nullptr;
-                if (classRegLog) {
-                    fprintf(classRegLog, "[CLASS-REG] index=%u classOop=0x%llx\n",
-                            index, (unsigned long long)classOop.rawBits());
-                    fflush(classRegLog);
-                }
             }
         }
     }

@@ -61,29 +61,13 @@ static int g_lastDispatchArgCount = 0;
 static int g_lastDispatchPrimIndex = 0;
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
-// Trace sends after SDL_PollEvent returns a mouse event (set by FFI.cpp)
-std::atomic<int> g_traceAfterMouseSDLEvent{0};
-
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
-constexpr bool ENABLE_DEBUG_LOGGING = false;  // Disabled for performance
+constexpr bool ENABLE_DEBUG_LOGGING = false;
 
-// Global flag to trace sends after primitive 264 completes
-int g_traceSendsAfterPrim264 = 0;
-
-// Global step count and send trace file for startup debugging
+// Global step count for startup debugging
 int64_t g_stepCount = 0;
-
-// Trace flag for mouse button events (defined in FFI.cpp)
-extern int g_traceEventSends;
-
-// Track the p40 (MorphicRenderLoop) process for diagnostics
-static pharo::Oop g_savedP40Process = pharo::Oop::nil();
-
-// Global flag to trace jumps after isActivePlatform returns TRUE
-
-// REMOVED: g_debugPendingFlag (was for workaround code)
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 const char* g_xferReason = "unknown";  // Reason for the most recent transferTo call
@@ -133,11 +117,6 @@ bool Interpreter::initialize() {
     // Set up initial execution context
     // Find the startup process from special objects
 
-    {
-        FILE* initLog = nullptr;
-        if (initLog) { fprintf(initLog, "[INIT] Starting interpreter initialize...\n"); fclose(initLog); }
-    }
-
     // Invalidate all ExternalAddress objects from the previous VM session.
     // The image was saved by a different VM process whose ffi_type*, dlsym,
     // and other C pointers are at different addresses. ExternalAddress objects
@@ -184,142 +163,6 @@ bool Interpreter::initialize() {
         return false;
     }
 
-    // Dump all processes in the scheduler to understand what's running
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-    static FILE* procLog = nullptr;
-    if (procLog) {
-        fprintf(procLog, "[INIT] Dumping all processes in scheduler\n");
-        Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-
-        // Get quiescentProcessLists (array of LinkedLists, one per priority)
-        Oop queues = memory_.fetchPointer(0, processScheduler);
-        if (queues.isObject()) {
-            ObjectHeader* queuesHdr = queues.asObjectPtr();
-            size_t numPriorities = queuesHdr->slotCount();
-            fprintf(procLog, "[INIT] Found %zu priority levels\n", numPriorities);
-
-            for (size_t pri = 0; pri < numPriorities; pri++) {
-                Oop queue = queuesHdr->slotAt(pri);
-                if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
-
-                // LinkedList: slot 0 = firstLink, slot 1 = lastLink
-                Oop proc = memory_.fetchPointer(0, queue);
-                while (proc.isObject() && proc.rawBits() != nilObj.rawBits()) {
-                    // Get process name if it has one (slot 3 is name in modern Pharo)
-                    ObjectHeader* procHdr = proc.asObjectPtr();
-                    std::string procName = "<unnamed>";
-                    if (procHdr->slotCount() > 3) {
-                        Oop nameOop = memory_.fetchPointer(3, proc);
-                        if (nameOop.isObject() && nameOop.rawBits() != nilObj.rawBits()) {
-                            ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                            if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                                procName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            }
-                        }
-                    }
-
-                    // Get suspended context to find what method it's in
-                    std::string methodInfo = "<no context>";
-                    if (procHdr->slotCount() > 1) {
-                        Oop ctx = memory_.fetchPointer(1, proc);  // suspendedContext
-                        if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
-                            ObjectHeader* ctxHdr = ctx.asObjectPtr();
-                            if (ctxHdr->slotCount() > 3) {
-                                Oop method = memory_.fetchPointer(3, ctx);  // method
-                                if (method.isObject()) {
-                                    // Extract numLiterals from method header (slot 0)
-                                    Oop headerOop = memory_.fetchPointer(0, method);
-                                    if (headerOop.isSmallInteger()) {
-                                        int64_t headerBits = headerOop.asSmallInteger();
-                                        int numLits = headerBits & 0x7FFF;  // bits 0-14
-                                        if (numLits > 0) {
-                                            // Last literal (at index numLits) often contains selector
-                                            Oop assoc = memory_.fetchPointer(numLits, method);
-                                            if (assoc.isObject()) {
-                                                ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                                // Could be an Association with key = selector, or AdditionalMethodState
-                                                if (assocHdr->slotCount() > 0) {
-                                                    Oop selector = memory_.fetchPointer(0, assoc);
-                                                    if (selector.isObject()) {
-                                                        ObjectHeader* selHdr = selector.asObjectPtr();
-                                                        if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                                                            methodInfo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    fprintf(procLog, "[INIT] Priority %zu: Process '%s' in #%s (0x%llx)\n",
-                            pri + 1, procName.c_str(), methodInfo.c_str(), (unsigned long long)proc.rawBits());
-
-                    // Follow nextLink to next process in this queue
-                    proc = memory_.fetchPointer(0, proc);
-                }
-            }
-        }
-
-        // Also dump the active process
-        Oop active = memory_.fetchPointer(1, processScheduler);
-        if (active.isObject()) {
-            ObjectHeader* activeHdr = active.asObjectPtr();
-            std::string activeName = "<unnamed>";
-            if (activeHdr->slotCount() > 3) {
-                Oop nameOop = memory_.fetchPointer(3, active);
-                if (nameOop.isObject() && nameOop.rawBits() != nilObj.rawBits()) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                        activeName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-
-            // Get method for active process context
-            std::string activeMethod = "<no context>";
-            if (activeHdr->slotCount() > 1) {
-                Oop ctx = memory_.fetchPointer(1, active);
-                if (ctx.isObject() && ctx.rawBits() != nilObj.rawBits()) {
-                    ObjectHeader* ctxHdr = ctx.asObjectPtr();
-                    if (ctxHdr->slotCount() > 3) {
-                        Oop method = memory_.fetchPointer(3, ctx);
-                        if (method.isObject()) {
-                            // Extract numLiterals from method header (slot 0)
-                            Oop headerOop = memory_.fetchPointer(0, method);
-                            if (headerOop.isSmallInteger()) {
-                                int64_t headerBits = headerOop.asSmallInteger();
-                                int numLits = headerBits & 0x7FFF;  // bits 0-14
-                                if (numLits > 0) {
-                                    // Last literal (at index numLits) often contains selector
-                                    Oop assoc = memory_.fetchPointer(numLits, method);
-                                    if (assoc.isObject()) {
-                                        ObjectHeader* assocHdr = assoc.asObjectPtr();
-                                        if (assocHdr->slotCount() > 0) {
-                                            Oop selector = memory_.fetchPointer(0, assoc);
-                                            if (selector.isObject()) {
-                                                ObjectHeader* selHdr = selector.asObjectPtr();
-                                                if (selHdr->isBytesObject() && selHdr->byteSize() < 100) {
-                                                    activeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            fprintf(procLog, "[INIT] Active process: '%s' in #%s (0x%llx)\n",
-                    activeName.c_str(), activeMethod.c_str(), (unsigned long long)active.rawBits());
-        }
-        fflush(procLog);
-    }
-    }
-
     // Get the active process
     // ProcessScheduler layout: quiescentProcessLists (slot 0), activeProcess (slot 1)
     // DEBUG: "[DEBUG] Getting active process..."
@@ -337,12 +180,6 @@ bool Interpreter::initialize() {
     Oop currentPSLS = memory_.specialObject(SpecialObjectIndex::ProcessSignalingLowSpace);
     if (currentPSLS.isNil() || currentPSLS.rawBits() == memory_.nil().rawBits()) {
         memory_.setSpecialObject(SpecialObjectIndex::ProcessSignalingLowSpace, activeProcess);
-        FILE* initLog = nullptr;
-        if (initLog) {
-            fprintf(initLog, "[INIT] Set ProcessSignalingLowSpace to active process 0x%llx\n",
-                    (unsigned long long)activeProcess.rawBits());
-            fclose(initLog);
-        }
     }
 
     // Note: ExternalObjectsArray is managed by Pharo's VirtualMachine class.
@@ -506,20 +343,6 @@ bool Interpreter::initialize() {
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
     // to avoid crashes during early VM setup
 
-    // Log context details before executing
-    {
-        FILE* f = nullptr;
-        if (f) {
-            ObjectHeader* ctxHdr = context.asObjectPtr();
-            Oop pc = memory_.fetchPointer(1, context);
-            Oop stackp = memory_.fetchPointer(2, context);
-            Oop method = memory_.fetchPointer(3, context);
-            fprintf(f, "[INIT] Resuming context: pc=0x%llx stackp=0x%llx method=0x%llx slots=%zu\n",
-                    (unsigned long long)pc.rawBits(), (unsigned long long)stackp.rawBits(),
-                    (unsigned long long)method.rawBits(), ctxHdr->slotCount());
-            fclose(f);
-        }
-    }
     // Nil out the active process's suspendedContext now that we've loaded it.
     // This prevents GC from tracing stale context chains that keep objects alive.
     if (activeProcess.isObject() && !activeProcess.isNil()) {
@@ -1007,31 +830,10 @@ void Interpreter::renderWorldMorphs() {
     static int renderCallCount = 0;
     renderCallCount++;
 
-    // Debug logging to file (first 10 calls only)
-    static FILE* logFile = nullptr;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!logFile) {
-            logFile = nullptr;
-        }
-    }
-    if (logFile && renderCallCount <= 10) {
-        fprintf(logFile, "[RENDER #%d] Starting renderWorldMorphs\n", renderCallCount);
-        fflush(logFile);
-    }
-
     // Find the World global
     Oop world = memory_.findGlobal("World");
     if (world.isNil() || !world.isObject()) {
-        if (logFile && renderCallCount <= 10) {
-            fprintf(logFile, "[RENDER #%d] World not found or nil\n", renderCallCount);
-            fflush(logFile);
-        }
         return;
-    }
-
-    if (logFile && renderCallCount <= 10) {
-        fprintf(logFile, "[RENDER #%d] World found at 0x%llx\n", renderCallCount, (unsigned long long)world.rawBits());
-        fflush(logFile);
     }
 
     uint32_t* pixels = pharo::gDisplaySurface->pixels();
@@ -1203,20 +1005,11 @@ void Interpreter::renderWorldMorphs() {
         // Get submorphs (menu items)
         Oop submorphs = memory_.fetchPointer(2, menubarMorph);
         if (submorphs.isNil() || !submorphs.isObject()) {
-            if (logFile && renderCallCount <= 10) {
-                fprintf(logFile, "[MENUBAR] No submorphs found\n");
-                fflush(logFile);
-            }
             return;
         }
 
         ObjectHeader* subHdr = submorphs.asObjectPtr();
         size_t numItems = subHdr->slotCount();
-
-        if (logFile && renderCallCount <= 10) {
-            fprintf(logFile, "[MENUBAR] Found %zu menu items\n", numItems);
-            fflush(logFile);
-        }
 
         // Menu item text color (dark gray for readability on light background)
         uint32_t textColor = 0xFF1A1A1A;
@@ -1290,21 +1083,8 @@ void Interpreter::renderWorldMorphs() {
             if (!label.empty()) {
                 labels.push_back(label);
                 menuBarItemMorphs_.push_back(item);  // Store morph for dropdown access
-                if (logFile && renderCallCount <= 10) {
-                    fprintf(logFile, "[MENUBAR] Item %zu label: '%s'\n", i, label.c_str());
-                    fflush(logFile);
-                }
             } else {
-                if (logFile && renderCallCount <= 10) {
-                    fprintf(logFile, "[MENUBAR] Item %zu: no label found\n", i);
-                    fflush(logFile);
-                }
             }
-        }
-
-        if (logFile && renderCallCount <= 10) {
-            fprintf(logFile, "[MENUBAR] Total labels: %zu\n", labels.size());
-            fflush(logFile);
         }
 
         // Draw menu item labels with proper spacing
@@ -1322,21 +1102,11 @@ void Interpreter::renderWorldMorphs() {
         int itemSpacing = isRetina ? 56 : 28;  // Space between items
         int charWidth = isRetina ? 26 : 13;  // Approximate char width for larger font
 
-        if (logFile && renderCallCount <= 3) {
-            fprintf(logFile, "[MENUBAR] Drawing text at y=%d (offset=%d), scaledMenuBarHeight=%d, isRetina=%d, fontSize=%d\n",
-                    textY, titleBarOffset, scaledMenuBarHeight, isRetina ? 1 : 0, fontSize);
-            fflush(logFile);
-        }
-
         // Clear and rebuild menu item bounds
         menuItemBounds_.clear();
 
         int itemIndex = 0;
         for (const std::string& label : labels) {
-            if (logFile && renderCallCount <= 3) {
-                fprintf(logFile, "[MENUBAR] drawText('%s') at x=%d y=%d fontSize=%d\n", label.c_str(), textX, textY, fontSize);
-                fflush(logFile);
-            }
             int itemWidth = static_cast<int>(label.length()) * charWidth;
             int itemPadding = isRetina ? 16 : 8;
 
@@ -1369,11 +1139,6 @@ void Interpreter::renderWorldMorphs() {
         menuBarScale_ = isRetina ? 2 : 1;
 
         // Render dropdown menu if a menu is selected
-        if (logFile) {
-            fprintf(logFile, "[MENUBAR] selectedMenuIndex_=%d menuBarItemMorphs_.size()=%zu\n",
-                    selectedMenuIndex_, menuBarItemMorphs_.size());
-            fflush(logFile);
-        }
         if (selectedMenuIndex_ >= 0 && selectedMenuIndex_ < static_cast<int>(menuBarItemMorphs_.size())) {
             Oop selectedItem = menuBarItemMorphs_[selectedMenuIndex_];
 
@@ -1399,10 +1164,6 @@ void Interpreter::renderWorldMorphs() {
                                 std::string cn((char*)nameHdr->bytes(), nameHdr->byteSize());
                                 if (cn.find("Menu") != std::string::npos) {
                                     menuMorph = slotVal;
-                                    if (logFile) {
-                                        fprintf(logFile, "[DROPDOWN] Found menu in slot %zu: %s\n", slot, cn.c_str());
-                                        fflush(logFile);
-                                    }
                                     break;
                                 }
                             }
@@ -1421,11 +1182,6 @@ void Interpreter::renderWorldMorphs() {
                 if (!menuSubmorphs.isNil() && menuSubmorphs.isObject()) {
                     ObjectHeader* msHdr = menuSubmorphs.asObjectPtr();
                     size_t numMenuItems = msHdr->slotCount();
-
-                    if (logFile) {
-                        fprintf(logFile, "[DROPDOWN] Menu has %zu items\n", numMenuItems);
-                        fflush(logFile);
-                    }
 
                     for (size_t mi = 0; mi < numMenuItems; mi++) {
                         Oop menuItem = msHdr->slotAt(mi);
@@ -1488,23 +1244,12 @@ void Interpreter::renderWorldMorphs() {
                         if (!itemLabel.empty()) {
                             dropdownLabels.push_back(itemLabel);
                             dropdownItemMorphs.push_back(menuItem);
-                            if (logFile) {
-                                fprintf(logFile, "[DROPDOWN] Item %zu: '%s'\n", mi, itemLabel.c_str());
-                                fflush(logFile);
-                            }
                         }
                     }
                 }
             }
 
             // Draw dropdown if we have items
-            if (logFile) {
-                fprintf(logFile, "[DROPDOWN] dropdownLabels.size()=%zu\n", dropdownLabels.size());
-                for (const auto& lbl : dropdownLabels) {
-                    fprintf(logFile, "[DROPDOWN]   item: '%s'\n", lbl.c_str());
-                }
-                fflush(logFile);
-            }
             if (!dropdownLabels.empty()) {
                 // Calculate dropdown dimensions
                 int dropdownFontSize = fontSize;
@@ -1588,25 +1333,10 @@ void Interpreter::renderWorldMorphs() {
                 dropdownState_.valid = true;
                 dropdownState_.openTimeMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now().time_since_epoch()).count();
-                if (logFile) {
-                    fprintf(logFile, "[DROPDOWN-SET] x=%d y=%d w=%d h=%d items=%zu VALID=TRUE openTime=%lld\n",
-                            dropdownX, dropdownY, dropdownWidth, dropdownHeight,
-                            dropdownItemMorphs.size(), dropdownState_.openTimeMs);
-                    fflush(logFile);
-                }
             } else {
-                if (logFile) {
-                    fprintf(logFile, "[DROPDOWN-CLEAR] dropdownLabels empty, setting valid=false\n");
-                    fflush(logFile);
-                }
                 dropdownState_.valid = false;
             }
         } else {
-            if (logFile) {
-                fprintf(logFile, "[DROPDOWN-CLEAR] selectedMenuIndex_=%d menuBarItemMorphs_.size()=%zu, setting valid=false\n",
-                        selectedMenuIndex_, menuBarItemMorphs_.size());
-                fflush(logFile);
-            }
             dropdownState_.valid = false;
         }
 
@@ -1622,12 +1352,6 @@ void Interpreter::renderWorldMorphs() {
         std::string className = getMorphClassName(morph);
 
         // Log all morphs in first render to find "World Menu" button
-        if (logFile && renderCallCount == 1 && depth <= 6) {
-            std::string indent(depth * 2, ' ');
-            fprintf(logFile, "[MORPH-TREE] %s[%d] %s\n", indent.c_str(), index, className.c_str());
-            fflush(logFile);
-        }
-
         // Handle MenubarMorph specially - draw with text
         if (className == "MenubarMorph") {
             renderMenuBar(morph, 44);  // 44 pixel height (88 on Retina)
@@ -1715,12 +1439,6 @@ void Interpreter::renderWorldMorphs() {
     Oop worldColor = memory_.fetchPointer(4, world);
     uint32_t worldColorARGB = extractColor(worldColor);
 
-    if (logFile && renderCallCount <= 10) {
-        fprintf(logFile, "[RENDER #%d] World color = 0x%08x, display %dx%d\n",
-                renderCallCount, worldColorARGB, dispWidth, dispHeight);
-        fflush(logFile);
-    }
-
     for (int i = 0; i < dispWidth * dispHeight; i++) {
         pixels[i] = worldColorARGB;
     }
@@ -1733,20 +1451,11 @@ void Interpreter::renderWorldMorphs() {
         ObjectHeader* subHdr = submorphs.asObjectPtr();
         size_t numSubmorphs = subHdr->slotCount();
 
-        if (logFile && renderCallCount <= 10) {
-            fprintf(logFile, "[RENDER #%d] World has %zu submorphs\n", renderCallCount, numSubmorphs);
-            fflush(logFile);
-        }
-
         // First pass: render all submorphs EXCEPT MenubarMorph (render it last so it's on top)
         Oop menubarMorph = Oop::nil();
         for (size_t i = 0; i < numSubmorphs; i++) {
             Oop submorph = subHdr->slotAt(i);
             std::string cn = getMorphClassName(submorph);
-            if (logFile && renderCallCount <= 10 && i < 5) {
-                fprintf(logFile, "[RENDER #%d]   submorph[%zu] = %s\n", renderCallCount, i, cn.c_str());
-                fflush(logFile);
-            }
             if (cn == "MenubarMorph") {
                 menubarMorph = submorph;  // Save for later, render last
             } else {
@@ -1759,15 +1468,6 @@ void Interpreter::renderWorldMorphs() {
             renderMorph(menubarMorph, 0, 0);
         }
     } else {
-        if (logFile && renderCallCount <= 10) {
-            fprintf(logFile, "[RENDER #%d] No submorphs found\n", renderCallCount);
-            fflush(logFile);
-        }
-    }
-
-    if (logFile && renderCallCount <= 10) {
-        fprintf(logFile, "[RENDER #%d] Done, drew %d morphs\n", renderCallCount, totalMorphsDrawn);
-        fflush(logFile);
     }
 
     // Debug test - write to doOneCycle_debug.log from renderWorldMorphs
@@ -1860,55 +1560,14 @@ void Interpreter::processInputEvents() {
     // we let it handle events directly from gEventQueue.
     // Otherwise, we drain gEventQueue into passThroughEvents_ for primitive 264.
 
-    static FILE* logFile = nullptr;
-    static int callCount = 0;
-    static bool initialized = false;
-
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!initialized) {
-            initialized = true;
-            logFile = nullptr;
-        }
-
-        // Log periodically
-        if (++callCount % 1000 == 1 && logFile) {
-            fprintf(logFile, "[PROCESS-INPUT] call #%d passthrough=%zu queue=%s sdl2Active=%d\n",
-                    callCount, passThroughEvents_.size(),
-                    pharo::gEventQueue.isEmpty() ? "empty" : "has events",
-                    pharo::gEventQueue.isSDL2EventPollingActive() ? 1 : 0);
-            fflush(logFile);
-        }
-    }
-
     // When SDL event polling is active, let OSSDL2Driver handle events via SDL_PollEvent
     if (pharo::gEventQueue.isSDL2EventPollingActive()) return;
-
-    // Debug: Log queue address once for comparison with push address
-    static bool loggedQueueAddr = false;
-    if (!loggedQueueAddr && logFile) {
-        loggedQueueAddr = true;
-        fprintf(logFile, "[PROCESS-INPUT] queue addr=%p empty=%d\n",
-                (void*)&pharo::gEventQueue, pharo::gEventQueue.isEmpty() ? 1 : 0);
-        fflush(logFile);
-    }
-
     pharo::Event event;
     while (pharo::gEventQueue.pop(event)) {
         // Skip WindowMetrics events - internal to C++ rendering
         if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
             continue;
         }
-        // Log all mouse events to stderr for debugging
-        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            static int mouseEventCount = 0;
-            mouseEventCount++;
-            if (mouseEventCount <= 20) {
-                fprintf(stderr, "[DRAIN-EVT] Mouse #%d: subtype=%d at %d,%d buttons=%d semaIdx=%d\n",
-                        mouseEventCount, event.arg5, event.arg1, event.arg2, event.arg3,
-                        pharo::gEventQueue.getInputSemaphoreIndex());
-            }
-        }
-
         // Track mouse position for direct hand updates (backup if event system not working)
         if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
             lastMouseX_ = event.arg1 * menuBarScale_;
@@ -1922,22 +1581,8 @@ void Interpreter::processInputEvents() {
 
         // Signal the input semaphore to wake up Smalltalk's event loop
         int inputSemaIdx = pharo::gEventQueue.getInputSemaphoreIndex();
-        static int semaSignalCount = 0;
         if (inputSemaIdx > 0) {
-            semaSignalCount++;
-            if (logFile && semaSignalCount <= 10) {
-                fprintf(logFile, "[SEMA] Signaling input semaphore index=%d (signal #%d)\n",
-                        inputSemaIdx, semaSignalCount);
-                fflush(logFile);
-            }
             signalExternalSemaphore(inputSemaIdx);
-        } else {
-            static bool loggedNoSema = false;
-            if (logFile && !loggedNoSema) {
-                loggedNoSema = true;
-                fprintf(logFile, "[SEMA] Input semaphore index is %d - no signaling\n", inputSemaIdx);
-                fflush(logFile);
-            }
         }
 
         // Events are now in passThroughEvents_ and the input semaphore has been signaled.
@@ -1959,9 +1604,6 @@ void Interpreter::processInputEvents() {
 //
 // Events must be handled by Smalltalk's InputEventSensor and Morphic.
 // If events aren't working, fix InputEventSensor startup - don't add C++ workarounds.
-
-// NOTE: updateActiveHandPosition() REMOVED - was a workaround for missing InputEventSensor process
-// Events must go through proper Smalltalk InputEventSensor, not C++ workarounds
 
 // ===== DISPLAY SYNCHRONIZATION =====
 // Until BitBlt primitives are fully working, bypass Display Form and
@@ -2151,7 +1793,6 @@ void Interpreter::dumpProcessQueues() {
 }
 
 void Interpreter::interpret() {
-    { FILE* f = nullptr; if (f) { fprintf(f, "[INTERPRET] entered interpret() running_=%d\n", running_ ? 1 : 0); fclose(f); } }
     // Debug: Log special object addresses once at start
     if constexpr (ENABLE_DEBUG_LOGGING) {
         static bool loggedSpecialObjects = false;
@@ -2206,20 +1847,6 @@ void Interpreter::interpret() {
                 Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
                 int pri = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
                 g_watchdogProcessPriority = pri;
-
-                // Priority histogram: sample and report every 10M steps
-                static int priHist[81] = {0};  // priorities 0-80
-                if (pri >= 0 && pri <= 80) priHist[pri]++;
-                if (loopCount % 10000000 == 0) {
-                    fprintf(stderr, "[PRI-HIST] step=%lldM: ", (long long)loopCount / 1000000);
-                    for (int p = 80; p >= 1; p--) {
-                        if (priHist[p] > 0) {
-                            fprintf(stderr, "p%d=%d ", p, priHist[p]);
-                        }
-                    }
-                    fprintf(stderr, "\n");
-                    memset(priHist, 0, sizeof(priHist));
-                }
             }
         }
 
@@ -2263,17 +1890,6 @@ void Interpreter::interpret() {
             }
         }
 #endif
-
-        // Progress reporting every 10M steps
-        if (loopCount % 10000000 == 0) {
-            static auto startTime = std::chrono::steady_clock::now();
-            auto now = std::chrono::steady_clock::now();
-            auto secs = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
-            auto rate = secs > 0 ? loopCount / secs / 1000000 : 0;
-            fprintf(stderr, "[PROGRESS] %dM steps (%lds, %ldM/s)\n",
-                    loopCount / 1000000, (long)secs, (long)rate);
-            fflush(stderr);
-        }
 
         // Periodically look for Display Form
         if (displayForm_.isNil() && (loopCount % 100000 == 0)) {
@@ -2547,10 +2163,6 @@ void Interpreter::signalSemaphoreDirectly(int externalIndex) {
 extern int g_callbackSemaphoreIndex;
 
 void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
-    static int enterCount = 0;
-    enterCount++;
-    fprintf(stderr, "[CB#%d] enter depth=%d\n", enterCount, callbackDepth_);
-
     // 1. Materialize frame stack (saves current execution to Smalltalk contexts).
     //    This may trigger GC — vmcc is on C heap, so it's safe.
     //    GC SAFETY: protect activeProcess across materializeFrameStack (it allocates).
@@ -2586,8 +2198,6 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     // 6. Find and transfer to highest-priority ready process
     //    (The callback handler process should now be ready from the semaphore signal)
     Oop readyProcess = wakeHighestPriority();
-    fprintf(stderr, "[CB#%d] wake=%s\n", enterCount,
-            readyProcess.isNil() ? "nil" : (readyProcess.isObject() ? "obj" : "?"));
     if (readyProcess.isObject() && !readyProcess.isNil()) {
         setActiveProcess(readyProcess);
         Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
@@ -2818,17 +2428,6 @@ bool Interpreter::step() {
         // Signal finalization periodically for auto-GC mourners (not handled by the
         // one-shot flag which only fires after explicit GC primitives 130/131).
         signalFinalizationIfNeeded();
-
-        // Log active process priority + selector (disabled — fprintf overhead slows VM)
-        // Enable only when actively debugging scheduler issues
-        if (false && stepCheckCounter % 500000 == 0) {
-            Oop proc = getActiveProcess();
-            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
-            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
-            const char* sel = g_watchdogSelector[0] ? g_watchdogSelector : "?";
-            fprintf(stderr, "[PROC] steps=%lldM prio=%d sel=%s\n",
-                    (long long)(g_stepNum / 1000000), prio, sel);
-        }
 
         // Display sync requested by heartbeat thread — safe to access heap here
         if (pendingDisplaySync_.load(std::memory_order_acquire)) {
@@ -3753,11 +3352,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                 // Match Cog VM: cast to unsigned before shift to avoid UB on negative extB_
                 int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
                 extB_ = 0;
-                if (false && offset < 0 && g_stepNum >= 10000 && g_stepNum <= 25000) {
-                    static FILE* bjLog = nullptr;
-                    if (!bjLog) bjLog = nullptr;
-                    if (bjLog) { fprintf(bjLog, "[BJ #%llu] 0xED offset=%d IP=%p\n", g_stepNum, offset, (void*)instructionPointer_); fflush(bjLog); }
-                }
                 instructionPointer_ += offset;
                 break;
             }
@@ -5592,73 +5186,11 @@ void Interpreter::extendedSuperSend() {
     Oop methodClass = methodClassOf(method_);
     Oop superclass;
 
-    // Debug super sends - especially for Context newForMethod:
-    static int superSendDebug = 0;
-    bool traceThis = false;
-    std::string selectorStr;
-    if (selector.isObject() && memory_.isValidPointer(selector)) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-            selectorStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-            if (selectorStr == "basicNew:") {
-                traceThis = true;
-            }
-        }
-    }
-
-    if (traceThis && superSendDebug < 20) {
-        superSendDebug++;
-        FILE* f = fopen("/tmp/super_send_debug.txt", "a");
-        if (f) {
-            fprintf(f, "[SUPER #%d] selector=%s\n", superSendDebug, selectorStr.c_str());
-            fprintf(f, "  methodClass=0x%llx isNil=%d\n",
-                    (unsigned long long)methodClass.rawBits(), methodClass.isNil() ? 1 : 0);
-            if (methodClass.isObject() && memory_.isValidPointer(methodClass)) {
-                Oop mcName = memory_.fetchPointer(6, methodClass);
-                if (mcName.isObject() && mcName.rawBits() > 0x10000) {
-                    ObjectHeader* mcnHdr = mcName.asObjectPtr();
-                    if (mcnHdr->isBytesObject() && mcnHdr->byteSize() < 80) {
-                        fprintf(f, "  methodClass name=%.*s\n",
-                                (int)mcnHdr->byteSize(), (char*)mcnHdr->bytes());
-                    }
-                }
-            }
-            fprintf(f, "  receiver_ class=0x%llx\n",
-                    (unsigned long long)memory_.classOf(receiver_).rawBits());
-            fclose(f);
-        }
-    }
-
     if (methodClass.isNil() || !methodClass.isObject()) {
         // Fallback to receiver's class superclass
         superclass = superclassOf(memory_.classOf(receiver_));
-        if (traceThis && superSendDebug <= 20) {
-            FILE* f = fopen("/tmp/super_send_debug.txt", "a");
-            if (f) {
-                fprintf(f, "  FALLBACK: using receiver's class superclass\n");
-                fclose(f);
-            }
-        }
     } else {
         superclass = superclassOf(methodClass);
-    }
-
-    if (traceThis && superSendDebug <= 20) {
-        FILE* f = fopen("/tmp/super_send_debug.txt", "a");
-        if (f) {
-            fprintf(f, "  superclass for lookup=0x%llx\n", (unsigned long long)superclass.rawBits());
-            if (superclass.isObject() && memory_.isValidPointer(superclass)) {
-                Oop scName = memory_.fetchPointer(6, superclass);
-                if (scName.isObject() && scName.rawBits() > 0x10000) {
-                    ObjectHeader* scnHdr = scName.asObjectPtr();
-                    if (scnHdr->isBytesObject() && scnHdr->byteSize() < 80) {
-                        fprintf(f, "  superclass name=%.*s\n",
-                                (int)scnHdr->byteSize(), (char*)scnHdr->bytes());
-                    }
-                }
-            }
-            fclose(f);
-        }
     }
 
     Oop method = lookupMethod(selector, superclass);
@@ -6433,82 +5965,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Trace sends after mouse button events (set by FFI.cpp)
-    {
-        if (g_traceEventSends > 0) {
-            g_traceEventSends--;
-            // Get receiver class name
-            std::string rcvClassName = "?";
-            if (rcvr.isSmallInteger()) rcvClassName = "SmallInteger";
-            else if (rcvr.isNil()) rcvClassName = "nil";
-            else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(rcvr);
-                if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nh = nameOop.asObjectPtr();
-                        if (nh->isBytesObject() && nh->byteSize() < 100)
-                            rcvClassName = std::string((char*)nh->bytes(), nh->byteSize());
-                    }
-                }
-            }
-            std::string sel(selBytes, selLen);
-            // Get active process priority
-            int activePri = -1;
-            {
-                Oop ap = getActiveProcess();
-                if (ap.isObject() && ap.rawBits() > 0x10000) {
-                    Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, ap);
-                    if (priOop.isSmallInteger()) activePri = (int)priOop.asSmallInteger();
-                }
-            }
-            fprintf(stderr, "[SEND-TRACE] #%d p%d %s >> %s (args=%d) fd=%zu\n",
-                    20000 - g_traceEventSends, activePri, rcvClassName.c_str(), sel.c_str(), argCount, frameDepth_);
-
-            // When handleEvent: is sent, also log the argument class
-            if (sel == "handleEvent:" && argCount == 1) {
-                Oop arg = stackValue(0);
-                std::string argClassName = "?";
-                if (arg.isSmallInteger()) argClassName = "SmallInteger";
-                else if (arg.isNil()) argClassName = "nil";
-                else if (arg.isObject() && arg.rawBits() > 0x10000) {
-                    Oop argCls = memory_.classOf(arg);
-                    if (argCls.isObject() && argCls.rawBits() > 0x10000 && memory_.slotCountOf(argCls) > 6) {
-                        Oop argName = memory_.fetchPointer(6, argCls);
-                        if (argName.isObject() && argName.rawBits() > 0x10000) {
-                            ObjectHeader* anh = argName.asObjectPtr();
-                            if (anh->isBytesObject() && anh->byteSize() < 100)
-                                argClassName = std::string((char*)anh->bytes(), anh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "[HANDLE-EVENT] arg class: %s arg=0x%llx\n",
-                        argClassName.c_str(), (unsigned long long)arg.rawBits());
-            }
-
-            // When dispatchMorphicEvent: is sent, log the argument class
-            if (sel == "dispatchMorphicEvent:" && argCount == 1) {
-                Oop arg = stackValue(0);
-                std::string argClassName = "?";
-                if (arg.isSmallInteger()) argClassName = "SmallInteger";
-                else if (arg.isNil()) argClassName = "nil";
-                else if (arg.isObject() && arg.rawBits() > 0x10000) {
-                    Oop argCls = memory_.classOf(arg);
-                    if (argCls.isObject() && argCls.rawBits() > 0x10000 && memory_.slotCountOf(argCls) > 6) {
-                        Oop argName = memory_.fetchPointer(6, argCls);
-                        if (argName.isObject() && argName.rawBits() > 0x10000) {
-                            ObjectHeader* anh = argName.asObjectPtr();
-                            if (anh->isBytesObject() && anh->byteSize() < 100)
-                                argClassName = std::string((char*)anh->bytes(), anh->byteSize());
-                        }
-                    }
-                }
-                fprintf(stderr, "[DISPATCH-EVENT] arg class: %s arg=0x%llx\n",
-                        argClassName.c_str(), (unsigned long long)arg.rawBits());
-            }
-        }
-    }
-
     if (selBytes && selLen > 0) {
         // relinquishProcessorForMicroseconds: (35 chars)
         if (selLen == 35 && argCount == 1 &&
@@ -6721,24 +6177,13 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 }
 
 MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
-    static uint64_t cacheHits = 0;
-    static uint64_t cacheMisses = 0;
-
     size_t hash = cacheHash(selector, classOop);
     MethodCacheEntry& entry = methodCache_[hash];
 
     if (entry.selector == selector && entry.classOop == classOop) {
-        cacheHits++;
-        if ((cacheHits & 0xFFFFFF) == 0) { // every 16M hits
-            fprintf(stderr, "[CACHE-STATS] hits=%llu misses=%llu rate=%.2f%% step=%llu\n",
-                    cacheHits, cacheMisses,
-                    100.0 * cacheHits / (cacheHits + cacheMisses),
-                    g_stepCount);
-        }
         return &entry;
     }
 
-    cacheMisses++;
     return nullptr;
 }
 
@@ -7454,42 +6899,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         receiver_ = memory_.nil();
     }
 
-    // CRITICAL: Check if receiver is raw 0 - this indicates corruption
-    if (receiver_.rawBits() == 0) {
-        static FILE* blkRcvrZeroLog = nullptr;
-        static int blkRcvrZeroCount = 0;
-        if (!blkRcvrZeroLog) blkRcvrZeroLog = nullptr;
-        if (blkRcvrZeroLog && blkRcvrZeroCount++ < 20) {
-            fprintf(blkRcvrZeroLog, "[BLK-RCVR-ZERO #%d] In activateBlock! block=0x%llx\n",
-                    blkRcvrZeroCount, (unsigned long long)block.rawBits());
-            // Dump block slots
-            ObjectHeader* blkHdr = block.asObjectPtr();
-            fprintf(blkRcvrZeroLog, "  block slots: ");
-            for (size_t i = 0; i < std::min(blkHdr->slotCount(), (size_t)10); i++) {
-                fprintf(blkRcvrZeroLog, "[%zu]=0x%llx ", i, (unsigned long long)blkHdr->slotAt(i).rawBits());
-            }
-            fprintf(blkRcvrZeroLog, "\n");
-            // Get method name from compiledBlock
-            if (slot1.isObject()) {
-                std::string methodName = "?";
-                Oop hdr = memory_.fetchPointer(0, slot1);
-                if (hdr.isSmallInteger()) {
-                    int numLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, slot1);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                methodName = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-                fprintf(blkRcvrZeroLog, "  compiledBlock method: #%s\n", methodName.c_str());
-            }
-            fflush(blkRcvrZeroLog);
-        }
-    }
 
     // Copy the copied values from the closure into the temp area
     // BlockClosure layout (old style):
@@ -7510,56 +6919,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     int numCopied = static_cast<int>(blockSlots) - firstCopiedSlot;
     if (numCopied < 0) numCopied = 0;
 
-    // Log block activation details around the DNU step
-    if (g_stepNum >= 23000 && g_stepNum <= 25000) {
-        static FILE* blkActLog = nullptr;
-        if (!blkActLog) blkActLog = nullptr;
-        if (blkActLog) {
-            fprintf(blkActLog, "[BLK-ACT step=%llu] block=0x%llx blockSlots=%zu numCopied=%d argCount=%d\n",
-                    (unsigned long long)g_stepNum, (unsigned long long)block.rawBits(),
-                    blockSlots, numCopied, argCount);
-            fprintf(blkActLog, "  receiver_=0x%llx method_=0x%llx FP=%p SP=%p\n",
-                    (unsigned long long)receiver_.rawBits(),
-                    (unsigned long long)methodToExecute.rawBits(),
-                    (void*)framePointer_, (void*)stackPointer_);
-            // Dump block slots
-            for (size_t s = 0; s < blockSlots && s < 8; s++) {
-                Oop sv = memory_.fetchPointer(s, block);
-                fprintf(blkActLog, "  block[%zu] = 0x%llx%s\n", s, (unsigned long long)sv.rawBits(),
-                        sv.isNil() ? " (nil)" : "");
-            }
-            // Dump FP area
-            for (int f = 0; f < 5; f++) {
-                fprintf(blkActLog, "  FP[%d] = 0x%llx\n", f, (unsigned long long)(*(framePointer_ + f)).rawBits());
-            }
-            fflush(blkActLog);
-        }
-    }
-
     for (int i = 0; i < numCopied; i++) {
         Oop copiedValue = memory_.fetchPointer(firstCopiedSlot + i, block);
         setTemporary(argCount + i, copiedValue);
-
-        // Log copied values when tracing is active
-        if (g_traceEventSends > 0 && numCopied > 0) {
-            std::string valClass = "?";
-            if (copiedValue.isSmallInteger()) valClass = "SmallInteger(" + std::to_string(copiedValue.asSmallInteger()) + ")";
-            else if (copiedValue.isNil()) valClass = "nil";
-            else if (copiedValue.isObject() && copiedValue.rawBits() > 0x10000) {
-                Oop cls = memory_.classOf(copiedValue);
-                if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
-                    Oop nameOop = memory_.fetchPointer(6, cls);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nh = nameOop.asObjectPtr();
-                        if (nh->isBytesObject() && nh->byteSize() < 100)
-                            valClass = std::string((char*)nh->bytes(), nh->byteSize());
-                    }
-                }
-            }
-            fprintf(stderr, "[BLK-COPIED] temp[%d] = 0x%llx class=%s (slot %d of block)\n",
-                    argCount + i, (unsigned long long)copiedValue.rawBits(),
-                    valClass.c_str(), firstCopiedSlot + i);
-        }
     }
 
     instructionPointer_ = startAddress;
@@ -7858,110 +7220,7 @@ Oop Interpreter::literal(size_t index) const {
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
         if (index >= numLiterals) {
-            // Out-of-bounds literal access - this is a bug!
-            // Log details to help diagnose
-            static int litOobCount = 0;
-            static FILE* litOobLog = nullptr;
-            if (!litOobLog) litOobLog = nullptr;
-            litOobCount++;
-            if (litOobLog && litOobCount <= 50) {
-                fprintf(litOobLog, "[LIT-OOB #%d step=%llu] index=%zu >= numLiterals=%zu\n",
-                        litOobCount, g_stepNum, index, numLiterals);
-                // Log raw header to understand the decoding
-                fprintf(litOobLog, "  headerRaw=0x%llx headerBits=%lld (0x%llx)\n",
-                        (unsigned long long)methodHeader.rawBits(),
-                        (long long)headerBits, (unsigned long long)headerBits);
-                fprintf(litOobLog, "  method_=0x%llx\n", (unsigned long long)method_.rawBits());
-                // Check if method_ is a CompiledBlock (has outerCode in penultimate literal)
-                ObjectHeader* mh = literalMethod.asObjectPtr();
-                uint32_t methodClassIdx = mh->classIndex();
-                Oop methodClass = memory_.classAtIndex(methodClassIdx);
-                std::string methodClassName = "?";
-                if (methodClass.isObject()) {
-                    Oop mcName = memory_.fetchPointer(6, methodClass);
-                    if (mcName.isObject() && mcName.rawBits() > 0x10000) {
-                        ObjectHeader* mcnh = mcName.asObjectPtr();
-                        if (mcnh->isBytesObject() && mcnh->byteSize() < 50) {
-                            methodClassName = std::string((char*)mcnh->bytes(), mcnh->byteSize());
-                        }
-                    }
-                }
-                fprintf(litOobLog, "  method class: %s (classIdx=%u)\n",
-                        methodClassName.c_str(), methodClassIdx);
-                // Show bytecodes around IP to understand what's happening
-                fprintf(litOobLog, "  bytecodes around IP:\n");
-                uint8_t* methodBytes = mh->bytes();
-                size_t methodSize = mh->byteSize();
-                size_t ipOffset = instructionPointer_ - methodBytes;
-                size_t bytecodeStart = (1 + numLiterals) * 8;
-                fprintf(litOobLog, "    IP offset from method start: %zu, bytecodeStart: %zu\n",
-                        ipOffset, bytecodeStart);
-                // Show previous 10 bytecodes
-                fprintf(litOobLog, "    previous bytecodes: ");
-                for (int i = 10; i > 0; i--) {
-                    if (instructionPointer_ > methodBytes + i) {
-                        fprintf(litOobLog, "%02X ", *(instructionPointer_ - i));
-                    }
-                }
-                fprintf(litOobLog, "\n");
-                // Dump ALL bytecodes of this method
-                fprintf(litOobLog, "    ALL bytecodes (offset %zu to %zu): ", bytecodeStart, methodSize);
-                for (size_t b = bytecodeStart; b < methodSize; b++) {
-                    fprintf(litOobLog, "%02X ", methodBytes[b]);
-                }
-                fprintf(litOobLog, "\n");
-                // Call stack
-                fprintf(litOobLog, "  Call stack (frame depth=%zu):\n", frameDepth_);
-                for (size_t i = 0; i < std::min(frameDepth_, (size_t)5); i++) {
-                    if (frameDepth_ > i) {
-                        const auto& sf = savedFrames_[frameDepth_ - 1 - i];
-                        std::string frameSel = "<unknown>";
-                        if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                            Oop sfHdr = memory_.fetchPointer(0, sf.savedMethod);
-                            if (sfHdr.isSmallInteger()) {
-                                size_t sfLits = sfHdr.asSmallInteger() & 0x7FFF;
-                                if (sfLits >= 2) {
-                                    Oop sfSel = memory_.fetchPointer(sfLits - 1, sf.savedMethod);
-                                    if (sfSel.isObject() && sfSel.rawBits() > 0x10000) {
-                                        ObjectHeader* sfSelHdr = sfSel.asObjectPtr();
-                                        if (sfSelHdr->isBytesObject() && sfSelHdr->byteSize() < 50) {
-                                            frameSel = std::string((char*)sfSelHdr->bytes(), sfSelHdr->byteSize());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        fprintf(litOobLog, "    [%zu] %s\n", i, frameSel.c_str());
-                    }
-                }
-                fprintf(litOobLog, "  IP=%p bytecodeEnd_=%p\n", (void*)instructionPointer_, (void*)bytecodeEnd_);
-                // Get method selector
-                if (numLiterals >= 2) {
-                    Oop sel = memory_.fetchPointer(numLiterals - 1, literalMethod);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* sh = sel.asObjectPtr();
-                        if (sh->isBytesObject() && sh->byteSize() < 100) {
-                            std::string selStr((char*)sh->bytes(), sh->byteSize());
-                            fprintf(litOobLog, "  method selector: #%s\n", selStr.c_str());
-                        }
-                    }
-                }
-                // Check if IP is within method's bytes
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mh = method_.asObjectPtr();
-                    uint8_t* methodBytes = mh->bytes();
-                    size_t methodSize = mh->byteSize();
-                    bool ipInMethod = (instructionPointer_ >= methodBytes &&
-                                      instructionPointer_ < methodBytes + methodSize);
-                    fprintf(litOobLog, "  IP in method bounds: %s\n", ipInMethod ? "YES" : "NO");
-                    if (!ipInMethod) {
-                        fprintf(litOobLog, "  methodBytes=[%p-%p), IP=%p\n",
-                                (void*)methodBytes, (void*)(methodBytes + methodSize),
-                                (void*)instructionPointer_);
-                    }
-                }
-                fflush(litOobLog);
-            }
+            // Out-of-bounds literal access - return nil
             return memory_.specialObject(SpecialObjectIndex::NilObject);
         }
     } else {
@@ -7978,20 +7237,6 @@ Oop Interpreter::temporary(int index) const {
     // Frame layout: [receiver, arg0, arg1, ..., temp0, temp1, ...]
     // So all are accessed at framePointer_[1 + index]
     Oop result = *(framePointer_ + 1 + index);
-
-    // Log temp reads for debugging infinite loop
-    static FILE* tempLog = nullptr;
-    static int tempReadCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = nullptr;
-    }
-    if (tempLog && tempReadCount < 100) {
-        tempReadCount++;
-        fprintf(tempLog, "[TEMP_READ #%d] index=%d value=0x%llx frameDepth=%zu\n",
-                tempReadCount, index, (unsigned long long)result.rawBits(), frameDepth_);
-        fflush(tempLog);
-    }
-
     return result;
 }
 
@@ -8031,23 +7276,6 @@ void Interpreter::setOuterTemporary(int index, Oop value) {
 }
 
 void Interpreter::setTemporary(int index, Oop value) {
-    // Same layout as temporary() - see comment above
-
-    // Log temp writes for debugging infinite loop
-    static FILE* tempLog = nullptr;
-    static int tempWriteCount = 0;
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        if (!tempLog) tempLog = nullptr;
-    }
-    if (tempLog && tempWriteCount < 100) {
-        tempWriteCount++;
-        Oop oldValue = *(framePointer_ + 1 + index);
-        fprintf(tempLog, "[TEMP_WRITE #%d] index=%d old=0x%llx new=0x%llx frameDepth=%zu\n",
-                tempWriteCount, index, (unsigned long long)oldValue.rawBits(),
-                (unsigned long long)value.rawBits(), frameDepth_);
-        fflush(tempLog);
-    }
-
     *(framePointer_ + 1 + index) = value;
 
     // Write-through to context when materialized (frameDepth_==0).
@@ -10387,9 +9615,6 @@ void Interpreter::transferTo(Oop newProcess) {
         }
         Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
         newPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
-        // Track p40 process for diagnostic
-        if (newPri == 40) g_savedP40Process = newProcess;
-        else if (oldPri == 40) g_savedP40Process = oldProcess;
         (void)switchCount; // Suppress unused warning
     }
 
@@ -11348,12 +10573,9 @@ void Interpreter::installOSiOSDriver() {
                                                                                         }
                                                                                     }
 
-                                                                                    // NOTE: Event injection workaround REMOVED - was storing handEventQueue_
-                                                                                    // Events should go through proper Smalltalk InputEventSensor process
                                                                                 }
 
-                                                                                // NOTE: Event injection workaround REMOVED - was storing eventInjectionHand_
-                                                                                fprintf(driverLog, "[DRIVER] HandMorph found at 0x%llx (not storing - workaround removed)\n",
+                                                                                fprintf(driverLog, "[DRIVER] HandMorph found at 0x%llx\n",
                                                                                         (unsigned long long)handMorph.rawBits());
 
                                                                                 // Examine the existing MouseEvent in slot 12 to understand structure
@@ -11395,8 +10617,7 @@ void Interpreter::installOSiOSDriver() {
                                                                                                 l, (unsigned long long)mes.rawBits(), mesInfo.c_str());
                                                                                     }
 
-                                                                                    // NOTE: Event injection workaround REMOVED - was storing existingMouseEvent_ and mouseEventClassIndex_
-                                                                                    fprintf(driverLog, "[DRIVER] Found MouseEvent classIdx=%u (not storing - workaround removed)\n",
+                                                                                    fprintf(driverLog, "[DRIVER] Found MouseEvent classIdx=%u\n",
                                                                                             meHdr->classIndex());
                                                                                 }
                                                                             }
