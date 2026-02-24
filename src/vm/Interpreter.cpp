@@ -2606,6 +2606,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     //    Smalltalk code time to finish), restore the original process, and
     //    siglongjmp back to the C trampoline.
     long nestedStepCount = 0;
+    static constexpr long kCallbackTimeout = 10000000; // 10M steps ~1s
     while (running_) {
         for (int batch = 0; batch < 1000 && running_; batch++) {
             step();
@@ -2615,6 +2616,43 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         if (nestedStepCount % 1000000 == 0 && nestedStepCount > 0) {
             fprintf(stderr, "[CALLBACK] nested loop: %ld steps, pending=%s\n",
                     nestedStepCount, pendingCallbackReturn_ ? "YES" : "no");
+        }
+
+        // Timeout: if the callback handler never calls primitiveCallbackReturn
+        // (e.g., because an error killed the handler process), abandon the
+        // callback to prevent infinite spinning.
+        if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
+            fprintf(stderr, "[CALLBACK] TIMEOUT after %ld steps — abandoning callback\n",
+                    nestedStepCount);
+
+            // Pop suspended process from SuspendedProcessInCallout (LIFO)
+            Oop suspendedProcess = memory_.specialObject(
+                SpecialObjectIndex::SuspendedProcessInCallout);
+            if (!suspendedProcess.isNil() && suspendedProcess.isObject()) {
+                Oop nextInChain = memory_.fetchPointer(
+                    ProcessNextLinkIndex, suspendedProcess);
+                memory_.setSpecialObject(
+                    SpecialObjectIndex::SuspendedProcessInCallout, nextInChain);
+                memory_.storePointer(
+                    ProcessNextLinkIndex, suspendedProcess, memory_.nil());
+
+                // Restore the original process as active
+                setActiveProcess(suspendedProcess);
+
+                Oop ctx = memory_.fetchPointer(
+                    ProcessSuspendedContextIndex, suspendedProcess);
+                memory_.storePointer(
+                    ProcessSuspendedContextIndex, suspendedProcess, memory_.nil());
+                stackPointer_ = stackBase_;
+                frameDepth_ = 0;
+                if (!ctx.isNil() && ctx.isObject()) {
+                    executeFromContext(ctx);
+                }
+            }
+
+            // Return 0 to C by jumping back to the trampoline
+            siglongjmp(vmcc->trampoline, 1);
+            // DOES NOT RETURN
         }
 
         // Check for deferred callback return AFTER the batch completes.

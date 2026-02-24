@@ -204,6 +204,35 @@ endif()
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(test_load_image src/vm/test_load_image.cpp)
     target_link_libraries(test_load_image PharoVMCore)
+    # Force export testlib symbols so they're available via dlsym
+    target_link_options(test_load_image PRIVATE
+        -Wl,-u,_singleCallToCallback
+        -Wl,-u,_callbackInALoop
+        -Wl,-u,_reentringCallback
+        -Wl,-u,_callbackFromAnotherThread
+        -Wl,-u,_getValue
+        -Wl,-u,_simple_callback_f_int
+        -Wl,-u,_simple_callback_f_float
+        -Wl,-u,_simple_callback_f_double
+        -Wl,-u,_simple_callback_f_char
+        -Wl,-u,_simple_callback_f_short
+        -Wl,-u,_simple_callback_f_long
+        -Wl,-u,_simple_callback_f_int8_t
+        -Wl,-u,_simple_callback_f_int16_t
+        -Wl,-u,_simple_callback_f_int32_t
+        -Wl,-u,_simple_callback_f_int64_t
+        -Wl,-u,_simple_callback_f_uint
+        -Wl,-u,_simple_callback_f_uint8_t
+        -Wl,-u,_simple_callback_f_uint16_t
+        -Wl,-u,_simple_callback_f_uint32_t
+        -Wl,-u,_simple_callback_f_uint64_t
+        -Wl,-u,_simple_callback_f_ushort
+        -Wl,-u,_simple_callback_f_ulong
+        -Wl,-u,_simple_callback_f_longlong
+        -Wl,-u,_simple_callback_f_ulonglong
+        -Wl,-u,_simple_callback_f_pointer
+        -Wl,-u,_simple_callback_f_size_t
+    )
 
     add_executable(test_platform src/platform/test_platform.cpp)
     target_link_libraries(test_platform PharoVMCore)
