@@ -751,13 +751,17 @@ static sqInt proxy_loadBitBltFrom(sqInt bbOop) {
     gBBState.loaded = false;
 
     Oop bb = sqIntToOop(bbOop);
-    if (!bb.isObject()) return 0;
+    if (!bb.isObject()) {
+        return 0;
+    }
 
     // Parse destination form
     Oop destForm = gMem->fetchPointer(ProxyBBDestForm, bb);
     int dw = 0, dh = 0, dd = 0, dp = 0;
     uint32_t* dstPx = resolveFormPixels(destForm, dw, dh, dd, dp);
-    if (!dstPx || dd != 32) return 0;  // Only handle 32-bit dest
+    if (!dstPx || dd != 32) {
+        return 0;
+    }
 
     gBBState.destPixels = dstPx;
     gBBState.destWidth = dw;
@@ -797,8 +801,12 @@ static sqInt proxy_copyBits() {
 }
 
 static sqInt proxy_copyBitsFromtoat(sqInt leftX, sqInt rightX, sqInt yValue) {
-    if (!gBBState.loaded || !gBBState.destPixels) return 0;
-    if (!gBBState.srcPixels) return 0;
+    if (!gBBState.loaded || !gBBState.destPixels) {
+        return 0;
+    }
+    if (!gBBState.srcPixels) {
+        return 0;
+    }
 
     // Clip to destination bounds
     int x0 = static_cast<int>(leftX);
