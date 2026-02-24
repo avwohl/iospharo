@@ -377,8 +377,15 @@ static void* sMainRenderer = nullptr;  // First renderer is the "main" one (rend
 static void* sMainWindow = nullptr;    // First window is the "main" one (receives events)
 static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first copies to display
 
-// Pending window events to deliver (standard SDL2 window lifecycle events)
+// Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
+
+// Time-based EXPOSED event tracking — delays first render until UITheme is initialized.
+// Without this, SpStyleEnvironmentColorProxy DNU fires an Emergency Debugger.
+static bool sWindowCreated = false;
+static std::chrono::steady_clock::time_point sWindowCreatedTime;
+static int sNextExposedSecond = 3;  // First EXPOSED at 3 seconds after window creation
+static bool g_firstExposedDelivered = false;
 
 // Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
 static int sMouseX = 0;
@@ -401,7 +408,7 @@ bool ffi_isSDLEventPollingActive() {
 }
 
 bool ffi_isFirstExposedDelivered() {
-    return true;  // Events delivered immediately at CreateWindow
+    return g_firstExposedDelivered;
 }
 
 // Called from vm_setDisplaySize when the Metal view resizes.
@@ -461,11 +468,15 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     sWindows[handle] = state;
     if (!sMainWindow) sMainWindow = handle;
 
-    // Queue standard window events immediately — this is what real SDL2 does
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
-    sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+    // Delay initial window events — SpStyleEnvironmentColorProxy DNU fires
+    // Emergency Debugger if rendering triggers before UITheme is initialized.
+    // Time-based EXPOSED events (starting 3s after window creation) ensure the
+    // first render happens after startup completes.
+    if (!sWindowCreated) {
+        sWindowCreated = true;
+        sWindowCreatedTime = std::chrono::steady_clock::now();
+        sNextExposedSecond = 3;
+    }
     return handle;
 }
 
@@ -815,7 +826,28 @@ int stub_SDL_PollEvent(void* event) {
             sdlEvent->window.data1 = w;
             sdlEvent->window.data2 = h;
         }
+        if (windowEventType == SDL_WINDOWEVENT_EXPOSED) {
+            g_firstExposedDelivered = true;
+        }
         return 1;
+    }
+
+    // Time-based EXPOSED events: trigger full repaints during startup.
+    // UITheme needs ~3 seconds to initialize before rendering is safe.
+    if (sMainWindow && sWindowCreated && !g_firstExposedDelivered && sNextExposedSecond <= 30) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::steady_clock::now() - sWindowCreatedTime
+        ).count();
+        if (elapsed >= sNextExposedSecond) {
+            bool isFirst = (sNextExposedSecond == 3);
+            if (isFirst) {
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+                sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
+            }
+            sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
+            sNextExposedSecond += 5;
+        }
     }
 
     // Pop event from our queue. Return 0 quickly when empty so the event loop

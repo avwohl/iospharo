@@ -227,7 +227,9 @@ PrimitiveResult Interpreter::primitiveLowSpaceSemaphore(int argCount) {
 
 PrimitiveResult Interpreter::primitiveDeferDisplayUpdates(int argCount) {
     (void)argCount;
-    return PrimitiveResult::Failure;
+    // No-op: display update deferral not needed — our rendering pipeline
+    // handles this at the Metal level. Succeed so Smalltalk callers proceed.
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
@@ -337,7 +339,7 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
 
 PrimitiveResult Interpreter::primitiveSetInterruptKey(int argCount) {
     (void)argCount;
-    return PrimitiveResult::Failure;
+    // No-op: interrupt key not supported on iOS. Succeed so startup proceeds.
 }
 
 PrimitiveResult Interpreter::primitiveClone(int argCount) {
@@ -12469,10 +12471,16 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
                     // Check for known internal FFI functions that we don't support
                     // Return appropriate values instead of failing (which raises exceptions)
                     if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                        return PrimitiveResult::Failure;
+                        // No callback support — nil means "no pending callbacks"
+                        popN(static_cast<size_t>(argCount + 1));
+                        push(memory_.nil());
+                        return PrimitiveResult::Success;
                     }
                     if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                        return PrimitiveResult::Failure;
+                        // No callback support — 0 pending callbacks
+                        popN(static_cast<size_t>(argCount + 1));
+                        push(Oop::fromSmallInteger(0));
+                        return PrimitiveResult::Success;
                     }
                 }
             }
@@ -12773,10 +12781,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         if (litHdr->isBytesObject() && litHdr->byteSize() < 100) {
             std::string str((char*)litHdr->bytes(), litHdr->byteSize());
             if (str == "primNextPendingCallback" || str == "nextPendingCallback") {
-                return PrimitiveResult::Failure;
+                popN(static_cast<size_t>(argCount + 1));
+                push(memory_.nil());
+                return PrimitiveResult::Success;
             }
             if (str == "primNumberOfCallbacks" || str == "numberOfCallbacks") {
-                return PrimitiveResult::Failure;
+                popN(static_cast<size_t>(argCount + 1));
+                push(Oop::fromSmallInteger(0));
+                return PrimitiveResult::Success;
             }
             // CRITICAL: isVMDisplayUsingSDL2 check - OSSDL2Driver uses this to decide event handling
             if (str == "isVMDisplayUsingSDL2") {
@@ -12858,10 +12870,14 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 // Handle ThreadedFFI callback primitives - return nil/0 instead of failing
                 // This prevents exception handling from consuming startup cycles
                 if (primName == "primNextPendingCallback" || primName == "nextPendingCallback") {
-                    return PrimitiveResult::Failure;
+                    popN(static_cast<size_t>(argCount + 1));
+                    push(memory_.nil());
+                    return PrimitiveResult::Success;
                 }
                 if (primName == "primNumberOfCallbacks" || primName == "numberOfCallbacks") {
-                    return PrimitiveResult::Failure;
+                    popN(static_cast<size_t>(argCount + 1));
+                    push(Oop::fromSmallInteger(0));
+                    return PrimitiveResult::Success;
                 }
 
                 auto it = namedPrimitives_.find(key);
@@ -25027,11 +25043,13 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     // Return success with zeroed return value so Smalltalk sees nil/0 and
     // continues startup (SDLOSXPlatform >> initPlatformSpecific needs to
     // complete for SDL2 initialization to proceed).
+    // ObjC exceptions (NSException) from unsupported AppKit APIs on Mac Catalyst
+    // are C++ exceptions. Zero the return value so Smalltalk sees 0/nil and
+    // continues startup.
     try {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
-        fprintf(stderr, "[FFI] Exception during ffi_call — failing primitive\n");
-        return PrimitiveResult::Failure;
+        memset(returnHolder, 0, returnSize);
     }
 
 
