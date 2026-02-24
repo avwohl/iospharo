@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build PharoVMCore.xcframework for Mac Catalyst and iOS Simulator
+# Build PharoVMCore.xcframework for iOS Device, Mac Catalyst, and iOS Simulator
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -8,7 +8,7 @@ cd "$SCRIPT_DIR"
 BUILD_BASE="$SCRIPT_DIR/build-xcframework"
 XCFRAMEWORK_OUTPUT="$SCRIPT_DIR/PharoVMCore.xcframework"
 
-echo "=== Building PharoVMCore.xcframework (Mac Catalyst + iOS Simulator) ==="
+echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simulator) ==="
 
 # Clean previous builds
 rm -rf "$BUILD_BASE"
@@ -50,6 +50,40 @@ if [ ! -f "$CATALYST_LIB" ]; then
     exit 1
 fi
 
+# --- iOS Device (arm64) ---
+echo ""
+echo "=== Building for iOS Device (arm64) ==="
+mkdir -p "$BUILD_BASE/iphoneos"
+
+cmake -G Xcode \
+    -DCMAKE_SYSTEM_NAME=iOS \
+    -DCMAKE_OSX_ARCHITECTURES=arm64 \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 \
+    -DFORCE_XCFRAMEWORK_PLATFORM=ios-arm64 \
+    -B "$BUILD_BASE/iphoneos" \
+    -S .
+
+cd "$BUILD_BASE/iphoneos"
+
+xcodebuild -project PharoVM.xcodeproj \
+    -scheme PharoVMCore \
+    -configuration Release \
+    -destination 'generic/platform=iOS' \
+    ARCHS=arm64 \
+    ONLY_ACTIVE_ARCH=NO \
+    -quiet
+
+cd "$SCRIPT_DIR"
+
+DEVICE_LIB="$BUILD_BASE/iphoneos/Release-iphoneos/libPharoVMCore.a"
+
+if [ ! -f "$DEVICE_LIB" ]; then
+    echo "ERROR: iOS Device build failed — library not found at $DEVICE_LIB"
+    echo "Searching for libPharoVMCore.a..."
+    find "$BUILD_BASE/iphoneos" -name "libPharoVMCore.a" 2>/dev/null
+    exit 1
+fi
+
 # --- iOS Simulator (arm64) ---
 echo ""
 echo "=== Building for iOS Simulator (arm64) ==="
@@ -88,6 +122,7 @@ fi
 echo ""
 echo "=== Creating XCFramework ==="
 xcodebuild -create-xcframework \
+    -library "$DEVICE_LIB" \
     -library "$CATALYST_LIB" \
     -library "$SIMULATOR_LIB" \
     -output "$XCFRAMEWORK_OUTPUT"

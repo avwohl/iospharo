@@ -58,7 +58,20 @@ err() { echo -e "${RED}[error]${NC} $*" >&2; }
 # We build for two platforms initially:
 #   1. iOS Simulator: arm64 + x86_64
 #   2. Mac Catalyst: arm64 + x86_64
-# iOS Device (arm64) can be added later.
+setup_ios_device_arm64() {
+    export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+    export CC=$(xcrun --sdk iphoneos -f clang)
+    export CXX=$(xcrun --sdk iphoneos -f clang++)
+    export AR=$(xcrun --sdk iphoneos -f ar)
+    export RANLIB=$(xcrun --sdk iphoneos -f ranlib)
+    export CFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=15.0 -O2"
+    export CXXFLAGS="$CFLAGS"
+    export LDFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=15.0"
+    PLATFORM_NAME="ios-device-arm64"
+    HOST_TRIPLE="aarch64-apple-darwin"
+    CMAKE_ARCH="arm64"
+    MESON_CPU="aarch64"
+}
 
 setup_ios_simulator_arm64() {
     export SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
@@ -475,6 +488,7 @@ build_openssl() {
 
     local target
     case "$PLATFORM_NAME" in
+        ios-device-arm64) target="ios64-xcrun" ;;
         ios-simulator-arm64) target="iossimulator-xcrun" ;;
         ios-simulator-x86_64) target="iossimulator-xcrun" ;;
         maccatalyst-arm64) target="darwin64-arm64-cc" ;;
@@ -586,6 +600,7 @@ create_xcframework() {
     local libname="$1"     # e.g., libcairo.a
     local xcf_name="$2"    # e.g., cairo
 
+    local device_dir="${INSTALL_ROOT}/ios-device-arm64"
     local sim_fat="${BUILD_ROOT}/fat-ios-simulator"
     local cat_fat="${BUILD_ROOT}/fat-maccatalyst"
     local output="${PROJECT_DIR}/${xcf_name}.xcframework"
@@ -593,14 +608,23 @@ create_xcframework() {
     rm -rf "$output"
 
     local args=()
+    # iOS Device (arm64, single arch — no fat needed)
+    if [ -f "${device_dir}/lib/${libname}" ]; then
+        local header_dir="${device_dir}/include"
+        args+=(-library "${device_dir}/lib/${libname}")
+        if [ -d "$header_dir" ]; then
+            args+=(-headers "$header_dir")
+        fi
+    fi
+    # iOS Simulator (fat arm64+x86_64)
     if [ -f "${sim_fat}/lib/${libname}" ]; then
-        # Copy headers
         local header_dir="${INSTALL_ROOT}/ios-simulator-arm64/include"
         args+=(-library "${sim_fat}/lib/${libname}")
         if [ -d "$header_dir" ]; then
             args+=(-headers "$header_dir")
         fi
     fi
+    # Mac Catalyst (fat arm64+x86_64)
     if [ -f "${cat_fat}/lib/${libname}" ]; then
         local header_dir="${INSTALL_ROOT}/maccatalyst-arm64/include"
         args+=(-library "${cat_fat}/lib/${libname}")
@@ -669,6 +693,11 @@ main() {
 
     # Download sources
     download_sources
+
+    # Build for iOS Device (arm64)
+    log "=== Building for iOS Device arm64 ==="
+    setup_ios_device_arm64
+    build_all_for_platform
 
     # Build for iOS Simulator (arm64 + x86_64)
     log "=== Building for iOS Simulator arm64 ==="
