@@ -39,14 +39,12 @@ SDL2 text input stubs trigger becomeFirstResponder/resignFirstResponder
 on the MTKView. UIKeyInput conformance on iOS shows the soft keyboard
 and sends keystroke events (down/stroke/up) for each character.
 
-### Event Loop Wiring
+### Event Loop and GUI — Visually Verified (2026-02-24)
 OSSDL2Driver event loop via FFI stubs handles mouse clicks correctly.
-Menu bar, window controls, and basic interaction all work on Mac Catalyst.
 The two-path routing (SDL2 vs primitive 264) resolves correctly: standard
 Pharo images use OSSDL2Driver which activates the SDL2 path.
 
-### GUI Display and Interaction — Visually Verified (2026-02-24)
-All three CLAUDE.md requirements verified via screencapture -l (Metal-aware):
+Verified via `screencapture -x -l` (Metal-aware window capture):
 - Pharo 13 desktop renders correctly (dark theme, no red X, Welcome window)
 - Menu bar visible and clickable (world menu → Browse → System Browser works)
 - World menu opens on left-click desktop, right-click shows context menus
