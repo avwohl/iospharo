@@ -380,11 +380,15 @@ static bool sSDLRenderingActive = false;  // Set when SDL_RenderPresent first co
 // Pending synthetic window events (SDL2 sends these when window is created/shown)
 static std::queue<uint8_t> sPendingWindowEvents;
 
-// Time-based EXPOSED event tracking — delays first render until UITheme is initialized.
+// Poll-count based EXPOSED delay — simulates real SDL2 window creation latency.
+// Real SDL2 takes 200-500ms for OS window creation, during which SDL_PollEvent
+// returns 0 and the event loop yields. We simulate this: after SDL_CreateWindow,
+// SDL_PollEvent returns 0 for sPollCountdown calls. Each call triggers a 5ms yield
+// in OSSDL2Driver's event loop (Delay forMilliseconds: 5), giving SessionManager
+// CPU time to initialize UITheme before EXPOSED triggers rendering.
 // Without this, SpStyleEnvironmentColorProxy DNU fires an Emergency Debugger.
 static bool sWindowCreated = false;
-static std::chrono::steady_clock::time_point sWindowCreatedTime;
-static int sNextExposedSecond = 3;  // First EXPOSED at 3 seconds after window creation
+static int sPollCountdown = 0;     // Calls remaining before delivering EXPOSED
 static bool g_firstExposedDelivered = false;
 
 // Mouse state tracking - updated by SDL_PollEvent, queried by SDL_GetMouseState/SDL_GetModState
@@ -468,14 +472,14 @@ void* stub_SDL_CreateWindow(const char* title, int x, int y, int w, int h, uint3
     sWindows[handle] = state;
     if (!sMainWindow) sMainWindow = handle;
 
-    // Delay initial window events — SpStyleEnvironmentColorProxy DNU fires
-    // Emergency Debugger if rendering triggers before UITheme is initialized.
-    // Time-based EXPOSED events (starting 3s after window creation) ensure the
-    // first render happens after startup completes.
+    // Simulate real SDL2 window creation latency. Real SDL2 takes 200-500ms
+    // for the OS to create and composite the window. During that time,
+    // SDL_PollEvent returns 0 and the event loop yields. We return 0 for
+    // sPollCountdown calls (~1.5s at 5ms/yield), giving SessionManager
+    // enough CPU time to initialize UITheme before EXPOSED triggers rendering.
     if (!sWindowCreated) {
         sWindowCreated = true;
-        sWindowCreatedTime = std::chrono::steady_clock::now();
-        sNextExposedSecond = 3;
+        sPollCountdown = 300;  // 300 polls × 5ms yield = ~1.5s of SessionManager CPU time
     }
     return handle;
 }
@@ -832,21 +836,17 @@ int stub_SDL_PollEvent(void* event) {
         return 1;
     }
 
-    // Time-based EXPOSED events: trigger full repaints during startup.
-    // UITheme needs ~3 seconds to initialize before rendering is safe.
-    if (sMainWindow && sWindowCreated && !g_firstExposedDelivered && sNextExposedSecond <= 30) {
-        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::steady_clock::now() - sWindowCreatedTime
-        ).count();
-        if (elapsed >= sNextExposedSecond) {
-            bool isFirst = (sNextExposedSecond == 3);
-            if (isFirst) {
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
-                sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
-            }
+    // Poll-count countdown: simulate real SDL2 window creation latency.
+    // Each call where we return 0 causes the event loop to yield for ~5ms,
+    // giving SessionManager CPU time to initialize UITheme.
+    if (sMainWindow && sWindowCreated && sPollCountdown > 0) {
+        --sPollCountdown;
+        if (sPollCountdown == 0) {
+            // Window "creation" complete — deliver initial events like real SDL2
+            sPendingWindowEvents.push(SDL_WINDOWEVENT_SHOWN);
+            sPendingWindowEvents.push(SDL_WINDOWEVENT_FOCUS_GAINED);
+            sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
             sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
-            sNextExposedSecond += 5;
         }
     }
 

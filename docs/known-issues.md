@@ -2,23 +2,18 @@
 
 Last updated: 2026-02-24
 
-## High Priority (GUI)
-
-### SpStyleEnvironmentColorProxy DNU (Startup Timing)
-OSSDL2Driver's event loop runs at priority 60 and preempts SessionManager
-(priority 40). If EXPOSED is delivered immediately, rendering triggers
-before UITheme initializes → SpStyleEnvironmentColorProxy forwards DNU
-to nil theme → Emergency Debugger.
-
-**Root cause**: Our SDL2 stubs are instantaneous while real SDL2 has
-natural latency from OS window creation. Standard Pharo images rely on
-this latency.
-
-**Current fix**: 3-second delay before first EXPOSED event (FFI.cpp).
-This is a necessary VM-side adaptation, not a workaround — we cannot
-change the standard Pharo image's startup order.
-
 ## Verified Working
+
+### SpStyleEnvironmentColorProxy DNU (Startup Timing) — Fixed
+OSSDL2Driver's event loop (priority 60) preempts SessionManager (priority 40).
+Our SDL2 stubs are instantaneous while real SDL2 has natural latency from OS
+window creation. Without delay, EXPOSED triggers rendering before UITheme
+initializes → SpStyleEnvironmentColorProxy DNU → Emergency Debugger.
+
+**Fix**: Poll-count countdown (300 polls × 5ms yield ≈ 1.5s) in
+`stub_SDL_PollEvent` before delivering window events. This simulates the
+real SDL2 window creation latency, giving SessionManager CPU time to
+finish initialization. No wall-clock timers — purely event-loop driven.
 
 ### B2DPlugin Rendering
 Both long-standing TODOs in B2DPlugin.c resolved (unresolved upstream for 25+ years):
