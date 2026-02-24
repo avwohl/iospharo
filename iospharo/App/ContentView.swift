@@ -38,7 +38,7 @@ struct ContentView: View {
     private var pharoCanvas: some View {
         ZStack {
             PharoCanvasView(bridge: bridge)
-                .edgesIgnoringSafeArea(.all)
+                .ignoresSafeArea()
 
             #if !targetEnvironment(macCatalyst)
             MiddleClickButton(isActive: $bridge.middleClickActive)

@@ -44,7 +44,7 @@ struct NewImageView: View {
                             TextField("https://example.com/image.zip", text: $customURL)
                                 .textContentType(.URL)
                                 .keyboardType(.URL)
-                                .autocapitalization(.none)
+                                .textInputAutocapitalization(.never)
                                 .disableAutocorrection(true)
 
                             Button("Download") {

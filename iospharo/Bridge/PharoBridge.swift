@@ -22,7 +22,6 @@ class PharoBridge: ObservableObject {
     /// Published state
     @Published var isRunning = false
     @Published var isInitialized = false
-    @Published var displayNeedsUpdate = false
     @Published var errorMessage: String?
 
     /// Display dimensions
@@ -189,26 +188,11 @@ class PharoBridge: ObservableObject {
 
     // MARK: - Display Access
 
-    /// Get pointer to display bits for Metal rendering
-    func getDisplayBits() -> UnsafeMutableRawPointer? {
-        return ios_getDisplayBits()
-    }
-
-    /// Get current display dimensions
-    func getDisplaySize() -> (width: Int, height: Int) {
-        return (Int(ios_getDisplayWidth()), Int(ios_getDisplayHeight()))
-    }
-
     /// Get all display info atomically (prevents tearing during resize)
     func getDisplayBufferInfo() -> (pixels: UnsafeMutablePointer<UInt32>?, width: Int, height: Int, size: Int) {
         var info = IOSDisplayBufferInfo()
         ios_getDisplayBufferInfo(&info)
         return (info.pixels, Int(info.width), Int(info.height), Int(info.size))
-    }
-
-    /// Get display depth (bits per pixel)
-    func getDisplayDepth() -> Int {
-        return Int(ios_getDisplayDepth())
     }
 
     /// Notify VM of view size change
@@ -219,11 +203,6 @@ class PharoBridge: ObservableObject {
             self.displayWidth = width
             self.displayHeight = height
         }
-    }
-
-    /// Mark display as refreshed
-    func displayDidUpdate() {
-        displayNeedsUpdate = false
     }
 
     // MARK: - Touch Events
@@ -359,11 +338,3 @@ let IOS_CTRL_KEY = 2
 let IOS_ALT_KEY = 4
 let IOS_CMD_KEY = 8
 
-let IOS_TOUCH_DOWN = 0
-let IOS_TOUCH_MOVED = 1
-let IOS_TOUCH_UP = 2
-let IOS_TOUCH_CANCELLED = 3
-
-let IOS_KEY_DOWN = 0
-let IOS_KEY_UP = 1
-let IOS_KEY_CHAR = 2

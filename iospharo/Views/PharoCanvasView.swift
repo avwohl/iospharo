@@ -357,47 +357,6 @@ class PharoCanvasViewController: UIViewController {
 
     // MARK: - iOS Gesture Handlers
 
-    @objc func handleSingleTap(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        let button: Int
-        if bridge.middleClickActive {
-            button = IOS_BLUE_BUTTON
-            bridge.middleClickActive = false
-        } else {
-            button = IOS_RED_BUTTON
-        }
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: button)
-        bridge.sendTouchUp(at: point, buttons: button)
-    }
-
-    @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        switch gesture.state {
-        case .began:
-            bridge.sendMouseMoved(to: point, modifiers: 0)
-            bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        case .changed:
-            bridge.sendTouchMoved(to: point, buttons: IOS_RED_BUTTON)
-        case .ended, .cancelled:
-            bridge.sendTouchUp(at: point)
-        default:
-            break
-        }
-    }
-
-    @objc func handleDoubleTap(_ gesture: UITapGestureRecognizer) {
-        guard let bridge = bridge else { return }
-        let point = gesture.location(in: mtkView)
-        bridge.sendMouseMoved(to: point, modifiers: 0)
-        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        bridge.sendTouchUp(at: point)
-        bridge.sendTouchDown(at: point, buttons: IOS_RED_BUTTON)
-        bridge.sendTouchUp(at: point)
-    }
-
     @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
@@ -534,9 +493,6 @@ struct PharoCanvasView: UIViewControllerRepresentable {
     }
 
     func updateUIViewController(_ uiViewController: PharoCanvasViewController, context: Context) {
-        if bridge.displayNeedsUpdate {
-            uiViewController.updateDisplayTexture()
-        }
     }
 }
 
@@ -544,5 +500,5 @@ struct PharoCanvasView: UIViewControllerRepresentable {
 
 #Preview {
     PharoCanvasView(bridge: PharoBridge.shared)
-        .edgesIgnoringSafeArea(.all)
+        .ignoresSafeArea()
 }
