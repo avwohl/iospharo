@@ -94,17 +94,6 @@ class PharoBridge: ObservableObject {
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 
-        // Copy startup.st to image directory for Pharo to load on startup
-        let imageDir = (imagePath as NSString).deletingLastPathComponent
-        let startupDest = (imageDir as NSString).appendingPathComponent("startup.st")
-        if let bundledStartup = Bundle.main.path(forResource: "startup", ofType: "st") {
-            try? FileManager.default.removeItem(atPath: startupDest)
-            try? FileManager.default.copyItem(atPath: bundledStartup, toPath: startupDest)
-            #if DEBUG
-            fputs("[BRIDGE] Copied startup.st to \(startupDest)\n", stderr)
-            #endif
-        }
-
         // Set display size from actual screen BEFORE vm_init so the initial
         // Display Form matches the real screen size (not the 1024x768 default).
         let screenBounds = UIScreen.main.bounds

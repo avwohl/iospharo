@@ -27,7 +27,6 @@
 		A10015 /* NewImageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20015 /* NewImageView.swift */; };
 		A10016 /* DownloadProgressRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20016 /* DownloadProgressRow.swift */; };
 		A10017 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20017 /* SettingsView.swift */; };
-		A10019 /* startup.st in Resources */ = {isa = PBXBuildFile; fileRef = A20019 /* startup.st */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -55,7 +54,6 @@
 		A20016 /* DownloadProgressRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadProgressRow.swift; sourceTree = "<group>"; };
 		A20017 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20018 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
-		A20019 /* startup.st */ = {isa = PBXFileReference; lastKnownFileType = text; name = "startup.st"; path = "scripts/startup.st"; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -78,7 +76,6 @@
 			isa = PBXGroup;
 			children = (
 				A20018 /* Config.xcconfig */,
-				A20019 /* startup.st */,
 				A40002 /* iospharo */,
 				A40008 /* Frameworks */,
 				A40009 /* Products */,
@@ -236,7 +233,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10008 /* Assets.xcassets in Resources */,
-				A10019 /* startup.st in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
