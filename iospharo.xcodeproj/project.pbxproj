@@ -249,14 +249,26 @@
 			);
 			inputPaths = (
 				"$(PROJECT_DIR)/src/vm/ImageLoader.cpp",
-				"$(PROJECT_DIR)/src/vm/Interpreter.cpp",
-				"$(PROJECT_DIR)/src/vm/ObjectMemory.cpp",
-				"$(PROJECT_DIR)/src/vm/Primitives.cpp",
 				"$(PROJECT_DIR)/src/vm/ImageLoader.hpp",
+				"$(PROJECT_DIR)/src/vm/ImageWriter.cpp",
+				"$(PROJECT_DIR)/src/vm/ImageWriter.hpp",
+				"$(PROJECT_DIR)/src/vm/Interpreter.cpp",
 				"$(PROJECT_DIR)/src/vm/Interpreter.hpp",
+				"$(PROJECT_DIR)/src/vm/InterpreterProxy.cpp",
+				"$(PROJECT_DIR)/src/vm/InterpreterProxy.h",
+				"$(PROJECT_DIR)/src/vm/ObjectMemory.cpp",
 				"$(PROJECT_DIR)/src/vm/ObjectMemory.hpp",
 				"$(PROJECT_DIR)/src/vm/ObjectHeader.hpp",
 				"$(PROJECT_DIR)/src/vm/Oop.hpp",
+				"$(PROJECT_DIR)/src/vm/Primitives.cpp",
+				"$(PROJECT_DIR)/src/vm/FFI.cpp",
+				"$(PROJECT_DIR)/src/vm/FFI.hpp",
+				"$(PROJECT_DIR)/src/platform/EventQueue.cpp",
+				"$(PROJECT_DIR)/src/platform/EventQueue.hpp",
+				"$(PROJECT_DIR)/src/platform/PlatformBridge.cpp",
+				"$(PROJECT_DIR)/src/platform/PlatformBridge.h",
+				"$(PROJECT_DIR)/src/platform/iOSBridge.cpp",
+				"$(PROJECT_DIR)/src/platform/VMParameters.h",
 				"$(PROJECT_DIR)/PharoVMCore.xcframework/Info.plist",
 			);
 			name = "Check XCFramework Freshness";
@@ -266,7 +278,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "# Check if PharoVMCore.xcframework is older than VM source files\nXCFRAMEWORK=\"${PROJECT_DIR}/PharoVMCore.xcframework/Info.plist\"\nSRC_DIR=\"${PROJECT_DIR}/src/vm\"\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"error: PharoVMCore.xcframework not found!\"\n    echo \"error: Run ./build-xcframework.sh to build it.\"\n    exit 1\nfi\n\nXCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n\n# Check all .cpp and .hpp files in src/vm\nfor src in \"$SRC_DIR\"/*.cpp \"$SRC_DIR\"/*.hpp; do\n    if [ -f \"$src\" ]; then\n        SRC_TIME=$(stat -f %m \"$src\")\n        if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n            echo \"error: PharoVMCore.xcframework is STALE!\"\n            echo \"error: $(basename $src) is newer than xcframework.\"\n            echo \"error: Run ./build-xcframework.sh to rebuild.\"\n            exit 1\n        fi\n    fi\ndone\n\necho \"PharoVMCore.xcframework is up-to-date.\"\n";
+			shellScript = "# Check if PharoVMCore.xcframework is older than VM source files\nXCFRAMEWORK=\"${PROJECT_DIR}/PharoVMCore.xcframework/Info.plist\"\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"error: PharoVMCore.xcframework not found!\"\n    echo \"error: Run ./build-xcframework.sh to build it.\"\n    exit 1\nfi\n\nXCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n\n# Check all .cpp, .hpp, .h, and .c files in src/vm and src/platform\nfor src in \"${PROJECT_DIR}/src/vm\"/*.cpp \"${PROJECT_DIR}/src/vm\"/*.hpp \"${PROJECT_DIR}/src/vm\"/*.h \"${PROJECT_DIR}/src/platform\"/*.cpp \"${PROJECT_DIR}/src/platform\"/*.hpp \"${PROJECT_DIR}/src/platform\"/*.h; do\n    if [ -f \"$src\" ]; then\n        SRC_TIME=$(stat -f %m \"$src\")\n        if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n            echo \"error: PharoVMCore.xcframework is STALE!\"\n            echo \"error: $(basename $src) is newer than xcframework.\"\n            echo \"error: Run ./build-xcframework.sh to rebuild.\"\n            exit 1\n        fi\n    fi\ndone\n\necho \"PharoVMCore.xcframework is up-to-date.\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -428,12 +440,6 @@
 				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/../src/include",
-					"$(PROJECT_DIR)/../pharo-vm/include",
-					"$(PROJECT_DIR)/../pharo-vm/extracted/vm/include/common",
-					"$(PROJECT_DIR)/../pharo-vm/extracted/vm/include/osx",
-				);
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pharo Smalltalk";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
@@ -475,12 +481,6 @@
 				CURRENT_PROJECT_VERSION = 3;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = (
-					"$(PROJECT_DIR)/../src/include",
-					"$(PROJECT_DIR)/../pharo-vm/include",
-					"$(PROJECT_DIR)/../pharo-vm/extracted/vm/include/common",
-					"$(PROJECT_DIR)/../pharo-vm/extracted/vm/include/osx",
-				);
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pharo Smalltalk";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
