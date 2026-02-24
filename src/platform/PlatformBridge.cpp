@@ -213,6 +213,7 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter = new pharo::Interpreter(*gMemory);
     gMemory->setInterpreter(gInterpreter);  // Critical: GC needs this to update interpreter roots
     gInterpreter->setImageName(imagePath);
+    gInterpreter->setOriginalImageHeader(loader.header());
 
     // In Pharo 13, the standard VM is always "headless" by default.
     // OSWorldRenderer >> isApplicableFor: checks:

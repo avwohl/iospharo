@@ -33,6 +33,7 @@ message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 set(VM_SOURCES
     src/vm/ObjectMemory.cpp
     src/vm/ImageLoader.cpp
+    src/vm/ImageWriter.cpp
     src/vm/Interpreter.cpp
     src/vm/Primitives.cpp
     src/vm/FFI.cpp

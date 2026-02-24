@@ -7,6 +7,7 @@
 
 #include "Interpreter.hpp"
 #include "ImageLoader.hpp"
+#include "ImageWriter.hpp"
 #include "FFI.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
@@ -3710,17 +3711,83 @@ static std::string extractString(ObjectMemory& memory, Oop stringOop) {
 }
 
 PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
-    // Image saving is disabled, but we must return true to indicate
-    // "resuming from saved image" — this is how the active process
-    // was suspended when the image was saved. Returning true triggers
-    // SnapshotOperation to set isImageStarting=true, which calls
-    // SessionManager>>installNewSession to initialize currentSession.
-    // Failing the primitive breaks the entire startup sequence.
-    if (argCount > 0) {
-        popN(argCount);  // pop arguments
+    // Primitive 97: Save the image to disk.
+    // Returns true in the RESUMED image (isImageStarting), false in the LIVE VM.
+
+    // 1. Extract save path
+    std::string savePath;
+    if (argCount == 0) {
+        savePath = imageName_;
+    } else if (argCount == 1) {
+        savePath = extractString(memory_, stackValue(0));
+        if (savePath.empty()) return PrimitiveResult::Failure;
+    } else {
+        return PrimitiveResult::Failure;
     }
-    // Pop receiver, push true (isImageStarting = true)
-    stackTop() = memory_.specialObject(SpecialObjectIndex::TrueObject);
+
+    // 2. Materialize C++ frame stack → Smalltalk context objects
+    //    Protect activeProcess across GC using gcTempOop_.
+    Oop savedGcTemp = gcTempOop_;
+    gcTempOop_ = getActiveProcess();
+    Oop activeCtx = materializeFrameStack();
+    Oop activeProcess = gcTempOop_;
+    gcTempOop_ = savedGcTemp;
+
+    // 3. Save active process's suspendedContext so the saved image can resume
+    memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, activeCtx);
+
+    // 4. Full GC (tenures new space → old space, compacts old space)
+    //    Protect activeCtx across GC using gcTempOop_.
+    savedGcTemp = gcTempOop_;
+    gcTempOop_ = activeCtx;
+    memory_.fullGC();
+    activeCtx = gcTempOop_;
+    gcTempOop_ = savedGcTemp;
+    activeProcess = getActiveProcess();
+
+    // 5. Manipulate the materialized context's stack for the saved image.
+    //    Context layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closure, 5=receiver, 6+=temps+stack
+    static constexpr int ContextStackPointerSlot = 2;
+    static constexpr int ContextTempFrameStart = 6;
+
+    Oop stackpOop = memory_.fetchPointer(ContextStackPointerSlot, activeCtx);
+    if (!stackpOop.isSmallInteger()) {
+        fprintf(stderr, "[ImageWriter] Bad stackp in active context\n");
+        // Restore and fail gracefully
+        memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, memory_.nil());
+        executeFromContext(activeCtx);
+        return PrimitiveResult::Success;
+    }
+    int stackp = static_cast<int>(stackpOop.asSmallInteger());
+
+    if (argCount == 1) {
+        // Pop the filename argument from the saved context's stack
+        stackp -= 1;
+        memory_.storePointer(ContextStackPointerSlot, activeCtx,
+                             Oop::fromSmallInteger(stackp));
+    }
+
+    // The stack top in the saved context should be true (= "resuming from saved image")
+    int topSlot = ContextTempFrameStart + stackp - 1;
+    memory_.storePointer(topSlot, activeCtx,
+                         memory_.specialObject(SpecialObjectIndex::TrueObject));
+
+    // 6. Write image to disk
+    ImageWriter writer;
+    SaveResult result = writer.save(savePath, memory_, originalImageHeader_,
+                                    memory_.lastHash(), screenWidth_, screenHeight_);
+
+    // 7. Restore for the live VM: stack top = false (= "just saved, not resuming")
+    memory_.storePointer(topSlot, activeCtx,
+                         memory_.specialObject(SpecialObjectIndex::FalseObject));
+
+    // 8. Resume execution: nil out suspendedContext and restart from context
+    memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, memory_.nil());
+    executeFromContext(activeCtx);
+
+    if (!result.success) {
+        fprintf(stderr, "[ImageWriter] Save failed: %s\n", result.error.c_str());
+    }
     return PrimitiveResult::Success;
 }
 

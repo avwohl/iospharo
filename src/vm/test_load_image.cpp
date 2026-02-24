@@ -549,6 +549,7 @@ int main(int argc, char* argv[]) {
     Interpreter& interpreter = *interpreterPtr;
     memory.setInterpreter(&interpreter);
     interpreter.setImageName(imagePath);
+    interpreter.setOriginalImageHeader(loader.header());
     // Resolve argv[0] to absolute path so Smalltalk vm fullPath works
     {
         char* resolved = realpath(argv[0], nullptr);

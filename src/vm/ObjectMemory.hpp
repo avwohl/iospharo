@@ -577,6 +577,9 @@ private:
 
     // Identity hash counter (must be non-zero for LCG to work)
     uint32_t lastHash_ = 2166136261;
+public:
+    uint32_t lastHash() const { return lastHash_; }
+private:
 
     // GC state
     bool forceGCFlag_ = false;

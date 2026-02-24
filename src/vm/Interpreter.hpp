@@ -51,6 +51,7 @@
 #define PHARO_INTERPRETER_HPP
 
 #include "ObjectMemory.hpp"
+#include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
 #include <array>
 #include <atomic>
@@ -441,6 +442,11 @@ private:
     // System paths and arguments
     std::string imageName_;
     std::string vmPath_;
+    SpurImageHeader originalImageHeader_{};
+public:
+    void setOriginalImageHeader(const SpurImageHeader& h) { originalImageHeader_ = h; }
+    const SpurImageHeader& originalImageHeader() const { return originalImageHeader_; }
+private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
     std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
 
