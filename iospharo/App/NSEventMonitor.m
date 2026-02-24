@@ -63,28 +63,35 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
 
     _callback = [callback copy];
 
-    // Open log file
-    _logFile = fopen("/tmp/nsevent_objc.log", "w");
+#ifdef DEBUG
+    // Open log file (debug builds only)
+    NSString *logPath = [NSTemporaryDirectory() stringByAppendingPathComponent:@"nsevent_objc.log"];
+    _logFile = fopen([logPath UTF8String], "w");
     if (_logFile) {
         fprintf(_logFile, "[NSEVENT-OBJC] Installing mouse monitor...\n");
         fflush(_logFile);
     }
+#endif
 
     // Get NSEvent class dynamically
     Class NSEventClass = NSClassFromString(@"NSEvent");
     if (!NSEventClass) {
+#ifdef DEBUG
         if (_logFile) {
             fprintf(_logFile, "[NSEVENT-OBJC] ERROR: NSEvent class not found\n");
             fclose(_logFile);
             _logFile = NULL;
         }
+#endif
         return;
     }
 
+#ifdef DEBUG
     if (_logFile) {
         fprintf(_logFile, "[NSEVENT-OBJC] Found NSEvent class: %p\n", (__bridge void *)NSEventClass);
         fflush(_logFile);
     }
+#endif
 
     // Event mask for all mouse events
     NSEventMask mask = NSEventMaskLeftMouseDown | NSEventMaskLeftMouseUp |
@@ -95,11 +102,6 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
                        NSEventMaskOtherMouseDragged |
                        NSEventMaskScrollWheel;
 
-    if (_logFile) {
-        fprintf(_logFile, "[NSEVENT-OBJC] Event mask: 0x%llx\n", (unsigned long long)mask);
-        fflush(_logFile);
-    }
-
     // Try GLOBAL monitor first (local doesn't work on Mac Catalyst)
     // Note: Global monitors receive events not destined for our app, so we need to filter by window
     SEL addMonitorSelector = NSSelectorFromString(@"addGlobalMonitorForEventsMatchingMask:handler:");
@@ -107,38 +109,15 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
     if (![NSEventClass respondsToSelector:addMonitorSelector]) {
         // Fall back to local monitor
         addMonitorSelector = NSSelectorFromString(@"addLocalMonitorForEventsMatchingMask:handler:");
-        if (_logFile) {
-            fprintf(_logFile, "[NSEVENT-OBJC] Global monitor not available, trying local...\n");
-            fflush(_logFile);
-        }
-    } else {
-        if (_logFile) {
-            fprintf(_logFile, "[NSEVENT-OBJC] Using GLOBAL monitor (local doesn't work on Mac Catalyst)\n");
-            fflush(_logFile);
-        }
     }
 
     if (![NSEventClass respondsToSelector:addMonitorSelector]) {
-        if (_logFile) {
-            fprintf(_logFile, "[NSEVENT-OBJC] ERROR: NSEvent doesn't respond to monitor selector\n");
-            fclose(_logFile);
-            _logFile = NULL;
-        }
         return;
-    }
-
-    if (_logFile) {
-        fprintf(_logFile, "[NSEVENT-OBJC] NSEvent responds to selector, calling...\n");
-        fflush(_logFile);
     }
 
     // Create the handler block and keep a strong reference to it
     _handlerBlock = ^id(id event) {
         _eventCount++;
-
-        // EARLY LOG: verify handler is called at all
-        fprintf(_logFile, "[NSEVENT-HANDLER] CALLED #%d event=%p\n", _eventCount, (__bridge void *)event);
-        fflush(_logFile);
 
         // Get event type using performSelector
         SEL typeSel = NSSelectorFromString(@"type");
@@ -172,12 +151,13 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
 #pragma clang diagnostic pop
         }
 
-        // Log first 200 events
+#ifdef DEBUG
         if (_logFile && _eventCount <= 200) {
             fprintf(_logFile, "[NSEVENT-OBJC] #%d type=%lu loc=(%.1f,%.1f) btn=%ld\n",
                     _eventCount, (unsigned long)eventType, location.x, location.y, (long)buttonNumber);
             fflush(_logFile);
         }
+#endif
 
         // Call the Swift callback
         if (_callback) {
@@ -192,19 +172,7 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
     typedef id (*AddMonitorIMP)(Class, SEL, unsigned long long, id);
     AddMonitorIMP addMonitor = (AddMonitorIMP)objc_msgSend;
 
-    if (_logFile) {
-        fprintf(_logFile, "[NSEVENT-OBJC] Calling addLocalMonitorForEventsMatchingMask via objc_msgSend\n");
-        fprintf(_logFile, "[NSEVENT-OBJC] NSEventClass: %p, selector: %s, mask: 0x%llx, block: %p\n",
-                (__bridge void *)NSEventClass, sel_getName(addMonitorSelector), mask, (__bridge void *)_handlerBlock);
-        fflush(_logFile);
-    }
-
     _monitor = addMonitor(NSEventClass, addMonitorSelector, mask, _handlerBlock);
-
-    if (_logFile) {
-        fprintf(_logFile, "[NSEVENT-OBJC] Monitor installed: %p\n", (__bridge void *)_monitor);
-        fflush(_logFile);
-    }
 }
 
 + (void)removeMouseMonitor {
@@ -227,11 +195,13 @@ static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
     _callback = nil;
     _handlerBlock = nil;
 
+#ifdef DEBUG
     if (_logFile) {
         fprintf(_logFile, "[NSEVENT-OBJC] Monitor removed\n");
         fclose(_logFile);
         _logFile = NULL;
     }
+#endif
 }
 
 @end

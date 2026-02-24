@@ -5,6 +5,7 @@
  */
 
 #import <Foundation/Foundation.h>
+#include <sys/param.h>
 #include "pharovm/pharo.h"
 #include "pharovm/parameters/parameters.h"
 
@@ -91,7 +92,7 @@ void fillApplicationDirectory(char* vmPath) {
     @autoreleasepool {
         NSString* documentsPath = [NSSearchPathForDirectoriesInDomains(
             NSDocumentDirectory, NSUserDomainMask, YES) firstObject];
-        strcpy(vmPath, [documentsPath UTF8String]);
+        strlcpy(vmPath, [documentsPath UTF8String], MAXPATHLEN);
     }
 }
 
@@ -99,7 +100,7 @@ void fillApplicationDirectory(char* vmPath) {
 void fillBundlePath(char* bundlePath) {
     @autoreleasepool {
         NSString* path = [[NSBundle mainBundle] bundlePath];
-        strcpy(bundlePath, [path UTF8String]);
+        strlcpy(bundlePath, [path UTF8String], MAXPATHLEN);
     }
 }
 
@@ -107,6 +108,6 @@ void fillBundlePath(char* bundlePath) {
 void fillResourcesPath(char* resourcesPath) {
     @autoreleasepool {
         NSString* path = [[NSBundle mainBundle] resourcePath];
-        strcpy(resourcesPath, [path UTF8String]);
+        strlcpy(resourcesPath, [path UTF8String], MAXPATHLEN);
     }
 }

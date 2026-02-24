@@ -18,8 +18,10 @@ import SwiftUI
 class SceneDelegate: NSObject, UIWindowSceneDelegate {
     func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
         guard let windowScene = scene as? UIWindowScene else { return }
+        #if DEBUG
         fputs("[SCENE] willConnectTo — configuring window size\n", stderr)
         fflush(stderr)
+        #endif
 
         // Set window size constraints to prevent full-screen default
         if let sizeRestrictions = windowScene.sizeRestrictions {
@@ -30,10 +32,7 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
         // Request a reasonable initial window size
         if #available(macCatalyst 16.0, *) {
             let geometryPrefs = UIWindowScene.GeometryPreferences.Mac(systemFrame: CGRect(x: 100, y: 100, width: 1024, height: 768))
-            windowScene.requestGeometryUpdate(geometryPrefs) { error in
-                fputs("[SCENE] geometry update error: \(error.localizedDescription)\n", stderr)
-                fflush(stderr)
-            }
+            windowScene.requestGeometryUpdate(geometryPrefs) { _ in }
         }
     }
 }
@@ -42,9 +41,9 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
 /// App delegate to handle lifecycle events
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Note: stderr is already redirected to /tmp/iospharo-stderr.log by C++ PlatformBridge.
-        // Do NOT freopen here — it would truncate the VM init output.
+        #if DEBUG
         NSLog("[APP] didFinishLaunching")
+        #endif
         return true
     }
 
@@ -52,14 +51,18 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication, configurationForConnecting connectingSceneSession: UISceneSession, options: UIScene.ConnectionOptions) -> UISceneConfiguration {
         let config = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
         config.delegateClass = SceneDelegate.self
+        #if DEBUG
         fputs("[APP] configurationForConnecting scene — using SceneDelegate\n", stderr)
         fflush(stderr)
+        #endif
         return config
     }
     #endif
 
     func applicationWillTerminate(_ application: UIApplication) {
+        #if DEBUG
         NSLog("[APP] applicationWillTerminate - stopping VM")
+        #endif
         Task { @MainActor in
             PharoBridge.shared.stop()
         }

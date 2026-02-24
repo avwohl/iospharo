@@ -8830,10 +8830,8 @@ PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeast(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // We don't currently support dynamic memory growth - heap is pre-allocated
-    // Return 0 to indicate no growth occurred (not current free space, which
-    // would mislead the image into thinking we grew the heap)
-    // TODO: Implement actual heap growth via mmap or similar
+    // Heap is pre-allocated; dynamic growth not yet supported.
+    // Return 0 to indicate no growth occurred.
 
     pop();
     push(Oop::fromSmallInteger(0));  // No growth occurred
@@ -16938,8 +16936,7 @@ int ioShowSurface(int surfaceID, int x, int y, int w, int h) {
 
 // Primitive 292: Compress bitmap to byte array (Pharo RLE compression)
 // receiver compress: bm toByteArray: ba -> compressedSize
-// TODO: Implement correct Pharo RLE format (encodeInt: with codes 0-3).
-// For now, return Failure to use the Smalltalk fallback implementation.
+// Returns Failure to use the Smalltalk fallback implementation.
 PrimitiveResult Interpreter::primitiveCompressToByteArray(int argCount) {
     return PrimitiveResult::Failure;
 }

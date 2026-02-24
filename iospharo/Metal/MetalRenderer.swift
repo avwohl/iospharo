@@ -131,7 +131,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         textureWidth = width
         textureHeight = height
 
+        #if DEBUG
         NSLog("[METAL] Created texture \(width)x\(height)")
+        #endif
     }
 
     // MARK: - MTKViewDelegate
@@ -139,7 +141,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         let width = Int(view.bounds.size.width)
         let height = Int(view.bounds.size.height)
+        #if DEBUG
         NSLog("[METAL] drawableSizeWillChange: drawable=\(Int(size.width))x\(Int(size.height)), bounds=\(width)x\(height)")
+        #endif
         bridge?.setDisplaySize(width: width, height: height)
     }
 
@@ -164,9 +168,11 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         cmdBuf.present(drawable)
         cmdBuf.commit()
 
+        #if DEBUG
         if drawCount <= 3 || drawCount % 1800 == 0 {
             NSLog("[METAL-DRAW] #%d tex=%dx%d", drawCount, texture.width, texture.height)
         }
+        #endif
     }
 
     // MARK: - Direct Buffer Screenshot
@@ -179,7 +185,9 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         guard let bridge = bridge else { return }
         let (pixels, width, height, _) = bridge.getDisplayBufferInfo()
         guard let bits = pixels, width > 0, height > 0 else {
+            #if DEBUG
             NSLog("[SCREENSHOT] No display buffer for tag=%@", tag as NSString)
+            #endif
             return
         }
 
@@ -197,20 +205,27 @@ class MetalRenderer: NSObject, MTKViewDelegate {
             space: colorSpace,
             bitmapInfo: bitmapInfo.rawValue
         ) else {
+            #if DEBUG
             NSLog("[SCREENSHOT] Failed to create CGContext for tag=%@", tag as NSString)
+            #endif
             return
         }
 
         guard let cgImage = context.makeImage() else {
+            #if DEBUG
             NSLog("[SCREENSHOT] Failed to create CGImage for tag=%@", tag as NSString)
+            #endif
             return
         }
 
         let image = UIImage(cgImage: cgImage)
         if let data = image.pngData() {
-            let path = "/tmp/iospharo-\(tag).png"
+            let path = FileManager.default.temporaryDirectory
+                .appendingPathComponent("iospharo-\(tag).png").path
             try? data.write(to: URL(fileURLWithPath: path))
+            #if DEBUG
             NSLog("[SCREENSHOT] Saved %dx%d to %@", width, height, path as NSString)
+            #endif
         }
     }
 }

@@ -75,7 +75,10 @@ class ImageManager: ObservableObject {
     private let fileManager = FileManager.default
 
     private var documentsDirectory: URL {
-        fileManager.urls(for: .documentDirectory, in: .userDomainMask).first!
+        guard let docs = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            fatalError("Documents directory unavailable")
+        }
+        return docs
     }
 
     private var catalogURL: URL {
@@ -86,17 +89,25 @@ class ImageManager: ObservableObject {
 
     /// Load the image catalog from disk, scan for uncatalogued images, migrate legacy files
     func load() {
+        #if DEBUG
         fputs("[LIB] load() starting\n", stderr)
         fflush(stderr)
+        #endif
 
         // Ensure Images/ directory exists
-        try? fileManager.createDirectory(at: PharoImage.imagesRoot, withIntermediateDirectories: true)
+        do {
+            try fileManager.createDirectory(at: PharoImage.imagesRoot, withIntermediateDirectories: true)
+        } catch {
+            errorMessage = "Cannot create Images directory: \(error.localizedDescription)"
+        }
 
         // Load catalog JSON
         if let data = try? Data(contentsOf: catalogURL),
            let saved = try? JSONDecoder().decode([PharoImage].self, from: data) {
             images = saved
+            #if DEBUG
             fputs("[LIB] loaded \(saved.count) images from catalog\n", stderr)
+            #endif
         }
 
         // Migrate legacy loose .image files from Documents root
@@ -110,16 +121,23 @@ class ImageManager: ObservableObject {
 
         save()
 
+        #if DEBUG
         fputs("[LIB] load() done, \(images.count) images total\n", stderr)
         fflush(stderr)
+        #endif
     }
 
     func save() {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = .prettyPrinted
-        if let data = try? encoder.encode(images) {
-            try? data.write(to: catalogURL, options: .atomic)
+        do {
+            let data = try encoder.encode(images)
+            try data.write(to: catalogURL, options: .atomic)
+        } catch {
+            #if DEBUG
+            fputs("[LIB] save() failed: \(error)\n", stderr)
+            #endif
         }
     }
 
@@ -153,7 +171,9 @@ class ImageManager: ObservableObject {
                 let dst = destDir.appendingPathComponent("\(baseName).\(ext)")
                 if fileManager.fileExists(atPath: src.path) {
                     try? fileManager.moveItem(at: src, to: dst)
+                    #if DEBUG
                     fputs("[LIB] migrated \(baseName).\(ext) → Images/\(slug)/\n", stderr)
+                    #endif
                 }
             }
 
@@ -201,7 +221,9 @@ class ImageManager: ObservableObject {
                 )
                 img.refreshSize()
                 images.append(img)
+                #if DEBUG
                 fputs("[LIB] found uncatalogued image: \(dirName)/\(imageFileName)\n", stderr)
+                #endif
             }
         }
     }
@@ -309,7 +331,9 @@ class ImageManager: ObservableObject {
             images.append(entry)
             selectedImageID = entry.id
             save()
+            #if DEBUG
             fputs("[LIB] imported image: \(slug)/\(url.lastPathComponent)\n", stderr)
+            #endif
         } catch {
             errorMessage = "Import failed: \(error.localizedDescription)"
         }
@@ -327,7 +351,9 @@ class ImageManager: ObservableObject {
             selectedImageID = images.first?.id
         }
         save()
+        #if DEBUG
         fputs("[LIB] deleted image: \(image.directoryName)\n", stderr)
+        #endif
     }
 
     // MARK: - Launch tracking
@@ -384,7 +410,9 @@ class ImageManager: ObservableObject {
                 selectedImageID = entry.id
                 save()
                 statusMessage = nil
+                #if DEBUG
                 fputs("[LIB] downloaded and catalogued: \(slug)/\(imageFileName)\n", stderr)
+                #endif
             } else {
                 errorMessage = "No .image file found in download"
                 try? fileManager.removeItem(at: destDir)

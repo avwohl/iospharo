@@ -100,14 +100,18 @@ class PharoBridge: ObservableObject {
         let screenWidth = Int(screenBounds.width)
         let screenHeight = Int(screenBounds.height)
         ios_setDisplaySize(Int32(screenWidth), Int32(screenHeight))
+        #if DEBUG
         fputs("[BRIDGE] Pre-set display size to \(screenWidth)x\(screenHeight) from UIScreen\n", stderr)
+        #endif
 
         let initResult = vm_init(&parameters)
 
         if initResult != 0 {
             isInitialized = true
             isRunning = true
+            #if DEBUG
             NSLog("[BRIDGE] VM initialized, starting interpreter on background thread")
+            #endif
 
             // Start the interpreter on a background thread.
             // This returns immediately, leaving the main thread free for
@@ -269,9 +273,13 @@ class PharoBridge: ObservableObject {
     /// Stop the VM - MUST be called before app exit to prevent crash
     func stop() {
         guard isRunning else { return }
+        #if DEBUG
         NSLog("[BRIDGE] Stopping VM...")
+        #endif
         vm_stop()
+        #if DEBUG
         NSLog("[BRIDGE] VM stopped")
+        #endif
         isRunning = false
         isInitialized = false
     }

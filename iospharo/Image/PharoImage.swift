@@ -24,8 +24,10 @@ struct PharoImage: Codable, Identifiable, Equatable {
 
     /// Root directory for all images: Documents/Images/
     static var imagesRoot: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-            .appendingPathComponent("Images", isDirectory: true)
+        guard let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            fatalError("Documents directory unavailable")
+        }
+        return docs.appendingPathComponent("Images", isDirectory: true)
     }
 
     /// This image's directory: Documents/Images/<directoryName>/

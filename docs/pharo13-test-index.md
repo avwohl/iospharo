@@ -1532,8 +1532,8 @@ All 246 packages with their test classes, organized by category.
 ### Running Tests
 Currently, tests are run by injecting `run_sunit_tests.st` into a fresh image:
 ```bash
-/Users/wohl/Downloads/pharo /tmp/Pharo.image eval --save \
-  "'/Users/wohl/src/iospharo/scripts/run_sunit_tests.st' asFileReference fileIn"
+pharo /tmp/Pharo.image eval --save \
+  "'scripts/run_sunit_tests.st' asFileReference fileIn"
 ./build/test_load_image /tmp/Pharo.image
 cat /tmp/sunit_test_results.txt
 ```
