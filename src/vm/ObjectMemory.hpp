@@ -14,13 +14,18 @@
  *   │   Permanent Space  │  Special objects that never move
  *   ├────────────────────┤  ← permSpaceEnd_ / oldSpaceStart_
  *   │                    │
- *   │     Old Space      │  Tenured objects (survivors of GC)
+ *   │     Old Space      │  All allocations go here (bump pointer)
  *   │                    │
  *   ├────────────────────┤  ← oldSpaceEnd_ / newSpaceStart_
- *   │      Eden          │  New allocations go here
+ *   │  Eden (scratch)    │  Used by compacting GC for saved-first-fields
  *   ├────────────────────┤
- *   │   Survivor Space   │  Objects that survived 1 GC
+ *   │   Survivor Space   │  Reserved for future generational GC
  *   └────────────────────┘  ← newSpaceEnd_
+ *
+ * Generational GC is not implemented. All allocations go to old space.
+ * Eden exists as scratch memory for the compacting GC's planCompactSavingForwarders().
+ * The eden/survivor fields, write barrier, remembered set, and isYoung/isOld helpers
+ * are retained for future generational GC implementation.
  *
  * Memory space is determined by address range, not by Oop tag bits.
  * ObjectMemory provides isYoung/isOld/isPerm based on address checks.
@@ -650,15 +655,6 @@ private:
 
     /// Determine which space a pointer is in
     Space spaceForPointer(void* ptr) const;
-
-    /// Try to allocate in eden, trigger scavenge if needed
-    ObjectHeader* allocateInEden(size_t size);
-
-    /// Promote an object from new space to old space
-    Oop promoteObject(Oop obj);
-
-    /// Copy an object's bytes to new location
-    void copyObjectBytes(ObjectHeader* from, ObjectHeader* to);
 
     /// Mark an object as remembered
     void rememberObject(Oop obj);

@@ -1147,51 +1147,9 @@ uint32_t ObjectMemory::generateHash() {
 // ===== GARBAGE COLLECTION =====
 
 GCResult ObjectMemory::scavenge() {
-    auto start = std::chrono::steady_clock::now();
-    GCResult result{0, 0, 0};
-
-    // CRITICAL BUG FIX: The previous scavenge implementation copied objects from
-    // eden to old space but DID NOT UPDATE POINTERS. This caused memory corruption
-    // because:
-    // 1. Objects were copied to old space
-    // 2. Eden was reset (edenFree_ = edenStart_)
-    // 3. But pointers to eden objects were NOT updated
-    // 4. New allocations reused eden addresses, overwriting "live" objects
-    //
-    // Proper scavenging requires forwarding pointers or a Cheney-style two-finger
-    // algorithm with pointer updating. Until that's implemented, we MUST NOT
-    // reset eden after copying.
-    //
-    // For now, just promote everything to old space WITHOUT resetting eden.
-    // This wastes eden space but prevents corruption.
-
-    uint8_t* scan = edenStart_;
-    while (scan + 8 <= edenFree_) {  // Need at least 8 bytes for header
-        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(scan);
-        size_t size = obj->totalSize();
-
-        // Copy to old space
-        if (oldSpaceFree_ + size <= oldSpaceEnd_) {
-            std::memcpy(oldSpaceFree_, obj, size);
-            oldSpaceFree_ += size;
-            result.objectsMoved++;
-            result.bytesReclaimed += size;
-        }
-
-        scan += size;
-    }
-
-    // DO NOT reset eden - pointers are not updated!
-    // edenFree_ = edenStart_;  // DISABLED: causes memory corruption
-
-    auto end = std::chrono::steady_clock::now();
-    result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
-        end - start).count();
-
-    gcCount_++;
-    totalGCTime_ += result.milliseconds;
-
-    return result;
+    // Generational GC not implemented. All allocations go to old space.
+    // Eden is reserved as scratch space for compacting GC's saved-first-fields.
+    return fullGC();
 }
 
 GCResult ObjectMemory::incrementalGC() {
@@ -1367,12 +1325,7 @@ GCResult ObjectMemory::fullGC() {
 }
 
 bool ObjectMemory::needsGC() const {
-    if (forceGCFlag_) return true;
-
-    // Check if eden is nearly full
-    size_t edenSize = survivorStart_ - edenStart_;
-    size_t edenUsed = edenFree_ - edenStart_;
-    return edenUsed > (edenSize * 90 / 100);  // 90% full
+    return forceGCFlag_;
 }
 
 void ObjectMemory::addRoot(Oop* root) {
@@ -1590,8 +1543,7 @@ Oop ObjectMemory::objectAfter(Oop current) {
 ObjectMemory::Statistics ObjectMemory::statistics() const {
     Statistics stats;
     stats.bytesAllocated = bytesAllocated_;
-    stats.bytesFree = (oldSpaceEnd_ - oldSpaceFree_) +
-                      (survivorStart_ - edenFree_);
+    stats.bytesFree = (oldSpaceEnd_ - oldSpaceFree_);
     stats.objectCount = 0;  // Would need to count
     stats.gcCount = gcCount_;
     stats.totalGCTime = totalGCTime_;
@@ -1633,23 +1585,11 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
         }
 
         case Space::New:
-            return allocateInEden(size);
-
+            // Generational GC not implemented — eden is scratch for compacting GC.
+            // Fall through to return nullptr.
         default:
             return nullptr;
     }
-}
-
-ObjectHeader* ObjectMemory::allocateInEden(size_t size) {
-    size = (size + 7) & ~7ULL;
-
-    if (edenFree_ + size > survivorStart_) {
-        return nullptr;  // Eden is full
-    }
-
-    ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
-    edenFree_ += size;
-    return obj;
 }
 
 void ObjectMemory::initializeHeader(ObjectHeader* obj, uint32_t classIndex,
@@ -1695,27 +1635,6 @@ void ObjectMemory::rememberObject(Oop obj) {
             rememberedSet_.push_back(hdr);
         }
     }
-}
-
-Oop ObjectMemory::promoteObject(Oop obj) {
-    if (!obj.isObject() || !isYoung(obj)) {
-        return obj;
-    }
-
-    ObjectHeader* src = obj.asObjectPtr();
-    size_t size = src->totalSize();
-
-    ObjectHeader* dst = allocateRaw(size, Space::Old);
-    if (!dst) {
-        return nilObject_;  // Out of memory
-    }
-
-    std::memcpy(dst, src, size);
-    return Oop::fromObject(dst, Space::Old);
-}
-
-void ObjectMemory::copyObjectBytes(ObjectHeader* from, ObjectHeader* to) {
-    std::memcpy(to, from, from->totalSize());
 }
 
 // ===== OBJECT ENUMERATION =====
