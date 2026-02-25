@@ -1437,7 +1437,15 @@ void registerLibgit2Stubs() {
 
 void registerFreeTypeStubs() {
     // Only register stubs if real FreeType isn't statically linked
-    if (dlsym(RTLD_DEFAULT, "FT_Init_FreeType")) return;
+    if (dlsym(RTLD_DEFAULT, "FT_Init_FreeType")) {
+        #if DEBUG
+        fputs("[FFI] Real FreeType found — skipping stubs\n", stderr);
+        #endif
+        return;
+    }
+    #if DEBUG
+    fputs("[FFI] FreeType NOT found — registering stubs (bitmap fonts only)\n", stderr);
+    #endif
     registerFunction("FT_Init_FreeType", reinterpret_cast<void*>(stub_FT_Init_FreeType));
     registerFunction("FT_Done_FreeType", reinterpret_cast<void*>(stub_FT_Done_FreeType));
     registerFunction("FT_New_Face", reinterpret_cast<void*>(stub_FT_New_Face));

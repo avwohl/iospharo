@@ -15635,6 +15635,22 @@ enum FormFields {
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (argCount != 0) { return PrimitiveResult::Failure; }
 
+    // DEBUG: Track BitBlt rule usage to find button rendering issues
+    #if DEBUG
+    static int bitbltCallCount = 0;
+    static int bitbltFailCount = 0;
+    auto logFailure = [&](int rule, int srcD, int dstD, const char* reason) {
+        bitbltFailCount++;
+        if (bitbltFailCount <= 50 || bitbltFailCount % 500 == 0) {
+            fprintf(stderr, "[BITBLT-FAIL] #%d rule=%d src=%d dst=%d reason=%s\n",
+                    bitbltFailCount, rule, srcD, dstD, reason);
+        }
+    };
+    #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
+    #else
+    #define BITBLT_FAIL(rule, srcD, dstD, reason) return PrimitiveResult::Failure
+    #endif
+
     Oop bitBlt = stackTop();
     if (!bitBlt.isObject()) { return PrimitiveResult::Failure; }
 
@@ -15966,7 +15982,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 default: {
-                    return PrimitiveResult::Failure;
+                    BITBLT_FAIL(combinationRule, 0, destDepth, "no-src-fill-rule");
                 }
             }
         }
@@ -16499,7 +16515,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 default: {
-                    return PrimitiveResult::Failure;
+                    BITBLT_FAIL(combinationRule, srcDepth, destDepth, "32to32-rule");
                 }
             }
         }
@@ -16569,7 +16585,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        return PrimitiveResult::Failure;
+                        BITBLT_FAIL(combinationRule, 1, 32, "1to32-rule");
                     }
                 }
             }
@@ -16631,7 +16647,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        return PrimitiveResult::Failure;
+                        BITBLT_FAIL(combinationRule, 8, 32, "8to32-rule");
                     }
                 }
             }
@@ -16663,7 +16679,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 7: dstRow[x] |= srcPixel; break;
                     case 25: if (srcPixel != 0) dstRow[x] = srcPixel; break;
                     default: {
-                        return PrimitiveResult::Failure;
+                        BITBLT_FAIL(combinationRule, 16, 32, "16to32-rule");
                     }
                 }
             }
@@ -16718,7 +16734,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         break;
                     }
                     default: {
-                        return PrimitiveResult::Failure;
+                        BITBLT_FAIL(combinationRule, srcDepth, 32, "Nto32-rule");
                     }
                 }
             }
