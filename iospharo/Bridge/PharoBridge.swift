@@ -179,6 +179,17 @@ class PharoBridge: ObservableObject {
             // This returns immediately, leaving the main thread free for
             // SwiftUI/UIKit event processing and Metal rendering.
             vm_run()
+
+            // Monitor for VM exit (primitiveQuit sets running_ = false)
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                while vm_isRunning() {
+                    Thread.sleep(forTimeInterval: 0.1)
+                }
+                // VM has exited — clean up on main thread
+                DispatchQueue.main.async {
+                    self?.handleVMExit()
+                }
+            }
         } else {
             errorMessage = "Failed to initialize VM"
         }
@@ -311,6 +322,17 @@ class PharoBridge: ObservableObject {
     }
 
     // MARK: - Shutdown
+
+    /// Called when the interpreter exits naturally (e.g. primitiveQuit)
+    private func handleVMExit() {
+        guard isRunning else { return }
+        #if DEBUG
+        NSLog("[BRIDGE] VM exited, cleaning up")
+        #endif
+        vm_stop()  // Join threads, stop heartbeat (idempotent)
+        isRunning = false
+        isInitialized = false
+    }
 
     /// Stop the VM - MUST be called before app exit to prevent crash
     func stop() {

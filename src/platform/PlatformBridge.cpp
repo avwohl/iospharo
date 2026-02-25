@@ -273,6 +273,11 @@ void vm_run(void) {
 
         // Call interpret() which includes periodic event processing and semaphore handling
         gInterpreter->interpret();
+
+        // Interpreter exited (primitiveQuit or stopVM called).
+        // Stop heartbeat from this thread before marking as not running,
+        // so vm_stop() doesn't need to join a dead heartbeat thread.
+        gInterpreter->stopHeartbeat();
         gRunning = false;
     });
 }
@@ -337,11 +342,28 @@ void vm_runOnMainThread(void) {
 }
 
 void vm_stop(void) {
-    gRunning = false;
-    if (gVMThread.joinable()) {
-        gVMThread.join();
+    // Signal the interpreter to exit its main loop
+    if (gInterpreter) {
+        gInterpreter->stop();
     }
-    // Stop the heartbeat thread
+
+    // Wait for the interpreter thread with a timeout.
+    // applicationWillTerminate gives ~5 seconds; don't block forever.
+    if (gVMThread.joinable()) {
+        auto start = std::chrono::steady_clock::now();
+        while (gRunning) {
+            auto elapsed = std::chrono::steady_clock::now() - start;
+            if (elapsed > std::chrono::seconds(2)) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (!gRunning) {
+            gVMThread.join();
+        } else {
+            gVMThread.detach();  // Abandon thread if interpreter won't stop
+        }
+    }
+
+    // Stop the heartbeat thread (may already be stopped by VM thread)
     if (gInterpreter) {
         gInterpreter->stopHeartbeat();
     }

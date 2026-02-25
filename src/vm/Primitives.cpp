@@ -3513,22 +3513,12 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
 
 PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
-    // The standard Cog VM always exits on this primitive.
-    // The image's SnapshotOperation checks isImageStarting and only calls
-    // quitPrimitive when actually intended to quit (not during startup resume).
-
-    int exitCode = 0;
-    if (argCount > 0) {
-        Oop arg = stackTop();
-        if (arg.isSmallInteger()) {
-            exitCode = static_cast<int>(arg.asSmallInteger());
-        }
-    }
+    // On iOS, std::exit() from a background thread causes SIGABRT.
+    // Instead, stop the interpreter loop and let the app handle cleanup.
 
     running_ = false;
-    std::exit(exitCode);
 
-    return PrimitiveResult::Success;  // Never reached
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveExitToDebugger(int argCount) {
