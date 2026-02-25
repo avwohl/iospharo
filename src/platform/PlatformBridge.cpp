@@ -17,25 +17,12 @@
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
-#include <objc/objc.h>
-// C API for autorelease pool management from C++ threads.
-// Any thread that might create ObjC objects (even indirectly via FFI callbacks)
-// must have an autorelease pool, or objects leak into an implicit pool that
-// crashes on thread exit when it tries to release already-freed objects.
-extern "C" void *objc_autoreleasePoolPush(void);
-extern "C" void objc_autoreleasePoolPop(void *pool);
 #endif
 
 namespace pharo {
     DisplaySurface* gDisplaySurface = nullptr;
 }
 
-#ifdef __APPLE__
-// Thread-local autorelease pool for the VM thread.  The relinquish callback
-// pops and re-pushes this pool on every yield, preventing autoreleased ObjC
-// objects from accumulating for the entire thread lifetime.
-static thread_local void *tls_autoreleasePool = nullptr;
-#endif
 
 // Double-buffered display surface with deferred resize
 // Resize is queued and applied during buffer swap to prevent tearing
@@ -273,18 +260,6 @@ void vm_run(void) {
 
     // Set relinquish callback for background thread (uses usleep, not CFRunLoop)
     gInterpreter->setRelinquishCallback([](int microseconds) {
-#ifdef __APPLE__
-        // Drain autoreleased ObjC objects that accumulated since the last
-        // yield.  FFI callbacks (clipboard, SDL2 stubs, etc.) create
-        // autoreleased objects on this thread.  Without periodic draining,
-        // they pile up for the entire interpret() run and are freed
-        // externally before the pool drains at thread exit → crash in
-        // AutoreleasePoolPage::releaseUntil().
-        if (tls_autoreleasePool) {
-            objc_autoreleasePoolPop(tls_autoreleasePool);
-        }
-        tls_autoreleasePool = objc_autoreleasePoolPush();
-#endif
         int sleepUs = std::max(microseconds, 1000);
         if (sleepUs > 10000) sleepUs = 10000;  // Cap at 10ms
         usleep(sleepUs);
@@ -292,9 +267,6 @@ void vm_run(void) {
 
     gRunning = true;
     gVMThread = std::thread([]() {
-#ifdef __APPLE__
-        tls_autoreleasePool = objc_autoreleasePoolPush();
-#endif
         // Post a window resize event to trigger Pharo layout
         if (gDisplay) {
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
@@ -308,12 +280,6 @@ void vm_run(void) {
         // so vm_stop() doesn't need to join a dead heartbeat thread.
         gInterpreter->stopHeartbeat();
         gRunning = false;
-#ifdef __APPLE__
-        if (tls_autoreleasePool) {
-            objc_autoreleasePoolPop(tls_autoreleasePool);
-            tls_autoreleasePool = nullptr;
-        }
-#endif
     });
 }
 
