@@ -54,8 +54,10 @@ build_slice() {
     cmake -G Ninja \
         -DCMAKE_C_COMPILER="$cc" \
         -DCMAKE_CXX_COMPILER="$cxx" \
+        -DCMAKE_OBJC_COMPILER="$cc" \
         -DCMAKE_C_FLAGS="$cflags" \
         -DCMAKE_CXX_FLAGS="$cflags" \
+        -DCMAKE_OBJC_FLAGS="$cflags" \
         -DCMAKE_OSX_ARCHITECTURES="$arch" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_SYSTEM_NAME=iOS \
