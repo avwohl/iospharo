@@ -16,6 +16,7 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <os/log.h>
+#include <CoreFoundation/CoreFoundation.h>
 #endif
 
 // Device log: writes to stderr, os_log, AND a file (for real device visibility)
@@ -47,12 +48,27 @@ inline void vmLog(const char* fmt, ...) {
     static bool tried = false;
     if (!tried) {
         tried = true;
+
+        // Get build number from Info.plist
+        const char* buildNum = "0";
 #ifdef __APPLE__
+        CFBundleRef bundle = CFBundleGetMainBundle();
+        if (bundle) {
+            CFStringRef buildRef = (CFStringRef)CFBundleGetValueForInfoDictionaryKey(
+                bundle, CFSTR("CFBundleVersion"));
+            if (buildRef) {
+                static char buildBuf[32];
+                if (CFStringGetCString(buildRef, buildBuf, sizeof(buildBuf), kCFStringEncodingUTF8)) {
+                    buildNum = buildBuf;
+                }
+            }
+        }
+
         // Prefer Documents/ which is accessible via Files app (UIFileSharingEnabled)
         const char* home = getenv("HOME");
         if (home) {
             char path[1024];
-            snprintf(path, sizeof(path), "%s/Documents/vm_debug.log", home);
+            snprintf(path, sizeof(path), "%s/Documents/vm_debug_build%s.log", home, buildNum);
             logFile = fopen(path, "w");
         }
         // Fallback to tmp/
@@ -60,7 +76,7 @@ inline void vmLog(const char* fmt, ...) {
             const char* tmpDir = getenv("TMPDIR");
             if (tmpDir) {
                 char path[1024];
-                snprintf(path, sizeof(path), "%s/vm_debug.log", tmpDir);
+                snprintf(path, sizeof(path), "%s/vm_debug_build%s.log", tmpDir, buildNum);
                 logFile = fopen(path, "w");
             }
         }

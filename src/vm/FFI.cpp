@@ -140,6 +140,18 @@ void registerSDL2Stubs();
 void registerFreeTypeStubs();
 void registerLibgit2Stubs();
 
+} // close namespace ffi/pharo temporarily for extern "C" declarations
+}
+
+// VM marker symbols (defined later, declared here for initializeFFI)
+extern "C" {
+void* primitiveLoadSymbolFromModule(void* symbol, void* module);
+void* primitiveLoadModule(void* moduleName);
+}
+
+namespace pharo {
+namespace ffi {
+
 static bool sInitialized = false;
 static std::unordered_map<std::string, void*> sFunctionCache;
 
@@ -152,6 +164,14 @@ bool initializeFFI() {
     // Register SDL2 stub functions — these MUST win over any real SDL2
     // because we use fake window handles that real SDL2 can't handle.
     registerSDL2Stubs();
+
+    // Register VM marker symbols so TFFIBackend finds them via lookupFunction()
+    // instead of relying on dlsym(RTLD_DEFAULT) which fails on App Store builds
+    // where symbol visibility is stripped.
+    registerFunction("primitiveLoadSymbolFromModule",
+                     reinterpret_cast<void*>(primitiveLoadSymbolFromModule));
+    registerFunction("primitiveLoadModule",
+                     reinterpret_cast<void*>(primitiveLoadModule));
 
     vmLog("[FFI] initializeFFI: done, %zu functions in cache\n", sFunctionCache.size());
 
