@@ -27,37 +27,31 @@ LoadResult ImageLoader::load(const std::string& path, ObjectMemory& memory) {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open()) {
         result.error = "Cannot open image file: " + path;
-        std::cerr << "[ImageLoader] " << result.error << "\n";
         return result;
     }
 
     // Step 1: Read and validate header
     if (!readHeader(file, result)) {
-        std::cerr << "[ImageLoader] Header read failed: " << result.error << "\n";
         return result;
     }
 
     // Step 2: Load heap data
     if (!loadHeapData(file, memory, result)) {
-        std::cerr << "[ImageLoader] Heap load failed: " << result.error << "\n";
         return result;
     }
 
     // Step 3: Relocate pointers
     if (!relocatePointers(memory, result)) {
-        std::cerr << "[ImageLoader] Relocate failed: " << result.error << "\n";
         return result;
     }
 
     // Step 4: Set up special objects
     if (!setupSpecialObjects(memory, result)) {
-        std::cerr << "[ImageLoader] Special objects failed: " << result.error << "\n";
         return result;
     }
 
     // Step 5: Build class table
     if (!buildClassTable(memory, result)) {
-        std::cerr << "[ImageLoader] Class table failed: " << result.error << "\n";
         return result;
     }
 
@@ -396,9 +390,6 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
             totalClasses++;
         }
     }
-
-    std::cerr << "[ImageLoader] Registered " << totalClasses << " classes from "
-              << numPages << " pages" << std::endl;
 
     return totalClasses > 0;
 }
