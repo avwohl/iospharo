@@ -133,6 +133,11 @@ static uint8_t* cairoLockSurface(intptr_t handle, int* pitch) {
 }
 
 #if __APPLE__
+// Push an autorelease pool (returns a token for popping).
+extern "C" void* objc_autoreleasePoolPush(void);
+// Pop an autorelease pool (frees all objects autoreleased since the push).
+extern "C" void  objc_autoreleasePoolPop(void* pool);
+
 // Context and trampoline for dispatching FFI calls to the main thread.
 // Defined at file scope so the function pointer works in all C++ standards.
 struct FFIMainCtx {
@@ -151,8 +156,16 @@ static void doFFICall(void* p) {
 
 static void ffiCallOnMainThread(void* p) {
     FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
+    // Push an autorelease pool that we NEVER pop. This keeps autoreleased
+    // ObjC objects alive so the VM thread can reference them in later FFI
+    // calls. Without this, the main thread's run loop drains its pool
+    // between dispatch_sync calls, freeing autoreleased objects (NSString,
+    // NSMenuItem, etc.) that Pharo stores as ExternalAddress pointers.
+    // The standard Pharo VM doesn't have this problem because the interpreter
+    // runs on the main thread — the pool isn't drained between FFI calls.
+    objc_autoreleasePoolPush();
+
     // Use ObjC @try/@catch to catch AppKit/UIKit exceptions.
-    // C++ catch(...) does not reliably catch ObjC exceptions in .cpp files.
     if (!objc_guarded_call(doFFICall, p)) {
         memset(c->ret, 0, c->retSize);
     }
