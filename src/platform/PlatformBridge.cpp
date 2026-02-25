@@ -20,6 +20,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 #include <objc/runtime.h>
 #include <objc/message.h>
+#include "../vm/ObjCExceptionGuard.h"
 
 // On Mac Catalyst, the Pharo image calls [NSApplication finishLaunching]
 // via ObjC FFI during SDL platform init. This throws assertion failures
@@ -191,6 +192,7 @@ bool vm_initialize(size_t heapSize) {
     }
 
 #ifdef __APPLE__
+    objc_install_exception_handler();
     swizzleFinishLaunching();
 #endif
 

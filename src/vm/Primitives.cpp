@@ -27,6 +27,7 @@
 #include <CoreFoundation/CoreFoundation.h>
 // CoreFoundation pulls in objc headers which define nil as a macro
 #undef nil
+#include "ObjCExceptionGuard.h"
 #endif
 #include <thread>
 #include <fstream>
@@ -142,11 +143,17 @@ struct FFIMainCtx {
     size_t retSize;
 };
 
+// Inner function that performs the actual ffi_call — called inside ObjC @try/@catch
+static void doFFICall(void* p) {
+    FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
+    ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
+}
+
 static void ffiCallOnMainThread(void* p) {
     FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
-    try {
-        ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
-    } catch (...) {
+    // Use ObjC @try/@catch to catch AppKit/UIKit exceptions.
+    // C++ catch(...) does not reliably catch ObjC exceptions in .cpp files.
+    if (!objc_guarded_call(doFFICall, p)) {
         memset(c->ret, 0, c->retSize);
     }
 }
@@ -25163,8 +25170,11 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
         FFIMainCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
         dispatch_sync_f(dispatch_get_main_queue(), &ctx, ffiCallOnMainThread);
     } else {
-        try { ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs); }
-        catch (...) { memset(returnHolder, 0, returnSize); }
+        // Already on main thread — still guard against ObjC exceptions
+        FFIMainCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
+        if (!objc_guarded_call(doFFICall, &ctx)) {
+            memset(returnHolder, 0, returnSize);
+        }
     }
 #else
     try { ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs); }

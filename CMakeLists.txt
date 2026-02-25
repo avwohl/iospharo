@@ -1,6 +1,6 @@
 # PharoVM - Clean C++ VM for macOS and iOS
 cmake_minimum_required(VERSION 3.20)
-project(PharoVM LANGUAGES C CXX)
+project(PharoVM LANGUAGES C CXX OBJC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -42,7 +42,11 @@ set(VM_SOURCES
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
     src/platform/iOSBridge.cpp
+    src/vm/ObjCExceptionGuard.m
 )
+
+# Mark Objective-C sources explicitly
+set_source_files_properties(src/vm/ObjCExceptionGuard.m PROPERTIES LANGUAGE OBJC)
 
 # VMMaker-generated C plugins (compiled as C, not C++)
 set(PLUGIN_C_SOURCES
