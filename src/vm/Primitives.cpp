@@ -131,6 +131,27 @@ static uint8_t* cairoLockSurface(intptr_t handle, int* pitch) {
     return g_cairo_image_surface_get_data(surf);
 }
 
+#if __APPLE__
+// Context and trampoline for dispatching FFI calls to the main thread.
+// Defined at file scope so the function pointer works in all C++ standards.
+struct FFIMainCtx {
+    ffi_cif* cif;
+    void* funcPtr;
+    void* ret;
+    void** args;
+    size_t retSize;
+};
+
+static void ffiCallOnMainThread(void* p) {
+    FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
+    try {
+        ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
+    } catch (...) {
+        memset(c->ret, 0, c->retSize);
+    }
+}
+#endif
+
 namespace pharo {
 
 // Forward declarations for LargeInteger arithmetic helpers
@@ -25138,32 +25159,16 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     // dispatch_sync blocks the VM thread until the call completes, matching
     // the synchronous semantics of "same thread" callouts.
 #if __APPLE__
-    struct FFICallCtx {
-        ffi_cif* cif; void* funcPtr; void* ret; void** args; size_t retSize;
-    };
-    FFICallCtx ctx{cif, funcPtr, returnHolder, argPtrs, returnSize};
     if (!pthread_main_np()) {
-        dispatch_sync_f(dispatch_get_main_queue(), &ctx, [](void* p) {
-            auto* c = static_cast<FFICallCtx*>(p);
-            try {
-                ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
-            } catch (...) {
-                memset(c->ret, 0, c->retSize);
-            }
-        });
+        FFIMainCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
+        dispatch_sync_f(dispatch_get_main_queue(), &ctx, ffiCallOnMainThread);
     } else {
-        try {
-            ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
-        } catch (...) {
-            memset(returnHolder, 0, returnSize);
-        }
+        try { ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs); }
+        catch (...) { memset(returnHolder, 0, returnSize); }
     }
 #else
-    try {
-        ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
-    } catch (...) {
-        memset(returnHolder, 0, returnSize);
-    }
+    try { ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs); }
+    catch (...) { memset(returnHolder, 0, returnSize); }
 #endif
 
 
