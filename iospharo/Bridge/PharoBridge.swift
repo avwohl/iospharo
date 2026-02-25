@@ -158,12 +158,14 @@ class PharoBridge: ObservableObject {
 
         // Set display size from actual screen BEFORE vm_init so the initial
         // Display Form matches the real screen size (not the 1024x768 default).
+        // Use logical bounds (points), not nativeBounds (physical pixels) — the
+        // Metal renderer stretches the texture to fill the retina drawable.
         let screenBounds = UIScreen.main.bounds
         let screenWidth = Int(screenBounds.width)
         let screenHeight = Int(screenBounds.height)
         ios_setDisplaySize(Int32(screenWidth), Int32(screenHeight))
         #if DEBUG
-        fputs("[BRIDGE] Pre-set display size to \(screenWidth)x\(screenHeight) from UIScreen\n", stderr)
+        fputs("[BRIDGE] Pre-set display size to \(screenWidth)x\(screenHeight) from UIScreen.bounds\n", stderr)
         #endif
 
         let initResult = vm_init(&parameters)

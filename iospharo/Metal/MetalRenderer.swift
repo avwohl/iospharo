@@ -139,6 +139,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     // MARK: - MTKViewDelegate
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
+        // Use logical points (view.bounds) not physical pixels (size parameter).
+        // The Metal renderer stretches the texture to fill the drawable, handling
+        // retina scaling automatically. Using physical pixels would make Pharo
+        // text microscopic on 2x/3x retina displays.
         let width = Int(view.bounds.size.width)
         let height = Int(view.bounds.size.height)
         #if DEBUG

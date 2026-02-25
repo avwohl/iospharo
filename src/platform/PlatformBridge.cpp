@@ -172,18 +172,17 @@ public:
         context_ = ctx;
     }
 
-    // Queue resize - applied during next update() to prevent tearing
+    // Resize the display buffer. Clears to black to prevent garbled display
+    // from stale pixel data written at the old pitch being read at the new pitch.
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (w == width_ && h == height_ && d == depth_ && !pendingResize_) return;
 
-        // Resize back buffer immediately (VM renders here)
         width_ = w;
         height_ = h;
         depth_ = d;
-        backBuffer_.resize(w * h);
+        backBuffer_.assign(w * h, 0);  // Clear to black (not resize — avoids stale data)
 
-        // Queue front buffer resize for next swap (Metal reads from front)
         pendingWidth_ = w;
         pendingHeight_ = h;
         pendingDepth_ = d;

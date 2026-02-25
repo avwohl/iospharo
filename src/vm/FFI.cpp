@@ -1428,12 +1428,16 @@ static void stub_git_libgit2_version(int* major, int* minor, int* rev) {
 static int stub_git_generic_error() { return -1; }
 
 void registerLibgit2Stubs() {
+    // Only register stubs if real libgit2 isn't statically linked
+    if (dlsym(RTLD_DEFAULT, "git_libgit2_init")) return;
     registerFunction("git_libgit2_init", reinterpret_cast<void*>(stub_git_libgit2_init));
     registerFunction("git_libgit2_shutdown", reinterpret_cast<void*>(stub_git_libgit2_shutdown));
     registerFunction("git_libgit2_version", reinterpret_cast<void*>(stub_git_libgit2_version));
 }
 
 void registerFreeTypeStubs() {
+    // Only register stubs if real FreeType isn't statically linked
+    if (dlsym(RTLD_DEFAULT, "FT_Init_FreeType")) return;
     registerFunction("FT_Init_FreeType", reinterpret_cast<void*>(stub_FT_Init_FreeType));
     registerFunction("FT_Done_FreeType", reinterpret_cast<void*>(stub_FT_Done_FreeType));
     registerFunction("FT_New_Face", reinterpret_cast<void*>(stub_FT_New_Face));

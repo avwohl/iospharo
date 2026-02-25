@@ -73,6 +73,48 @@ build_slice() {
         echo "ERROR: $slice_name build failed — library not found at $lib"
         exit 1
     fi
+
+    # Merge all third-party static libraries into PharoVMCore.a so that
+    # all symbols (cairo, freetype, libgit2, etc.) are available via dlsym
+    # at runtime. Without this, the Pharo image can't find them via FFI.
+    local third_party_libs=()
+    local thindir="$builddir/thin-libs"
+    mkdir -p "$thindir"
+    # Note: SDL2 is NOT merged — FFI.cpp intercepts all SDL_ calls with stubs.
+    # libffi is NOT merged — it's linked separately in the Xcode project.
+    for xcf_entry in \
+        "cairo:libcairo.a" \
+        "freetype:libfreetype.a" \
+        "pixman:libpixman-1.a" \
+        "harfbuzz:libharfbuzz.a" \
+        "libpng16:libpng16.a" \
+        "libgit2:libgit2.a" \
+        "libssl:libssl.a" \
+        "libcrypto:libcrypto.a" \
+        "libssh2:libssh2.a"; do
+        local xcf_name="${xcf_entry%%:*}"
+        local lib_file="${xcf_entry##*:}"
+        local lib_path="$SCRIPT_DIR/${xcf_name}.xcframework/${xcfw_platform}/${lib_file}"
+        if [ -f "$lib_path" ]; then
+            # Extract single-arch slice from potentially fat libraries
+            local thin_path="$thindir/${xcf_name}-${lib_file}"
+            if lipo -info "$lib_path" 2>&1 | grep -q "Non-fat"; then
+                cp "$lib_path" "$thin_path"
+            else
+                lipo -thin "$arch" "$lib_path" -output "$thin_path" 2>/dev/null || cp "$lib_path" "$thin_path"
+            fi
+            third_party_libs+=("$thin_path")
+        fi
+    done
+
+    if [ ${#third_party_libs[@]} -gt 0 ]; then
+        echo "  Merging ${#third_party_libs[@]} third-party libraries into PharoVMCore.a"
+        mv "$lib" "$builddir/libPharoVMCore-vm-only.a"
+        libtool -static -o "$lib" "$builddir/libPharoVMCore-vm-only.a" "${third_party_libs[@]}"
+        rm "$builddir/libPharoVMCore-vm-only.a"
+    fi
+    rm -rf "$thindir"
+
     echo "$slice_name: $(lipo -info "$lib" 2>&1)"
 }
 
