@@ -13,7 +13,6 @@
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
-#include "../platform/DeviceLog.hpp"
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
@@ -12457,13 +12456,10 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
 
     // Initialize FFI on first call
     if (!ffiInitialized) {
-        vmLog("[P117] Initializing FFI (first callout)\n");
         ffiInitialized = ffi::initializeFFI();
         if (!ffiInitialized) {
-            vmLog("[P117] FFI init FAILED\n");
             return PrimitiveResult::Failure;
         }
-        vmLog("[P117] FFI init OK\n");
     }
 
     // The FFI call specification comes from the method's literals
@@ -12728,10 +12724,6 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 // primitiveExternalCall -> result
 // Calls a primitive defined in an external plugin module
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
-    static int p147count = 0;
-    p147count++;
-    if (p147count <= 5 || p147count % 10000 == 0)
-        vmLog("[P147] #%d argCount=%d\n", p147count, argCount);
     // Use newMethod_ (the method being activated) rather than method_ (the caller)
     // because executePrimitive runs BEFORE activateMethod
     Oop method = newMethod_.isObject() ? newMethod_ : method_;
@@ -13078,12 +13070,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-    if (p147count <= 20) {
-        vmLog("[P147] #%d FAILED - no named prim or FFI callout matched. literals:", p147count);
-        for (size_t i = 0; i < literalStrings.size() && i < 5; i++)
-            vmLog(" '%s'", literalStrings[i].c_str());
-        vmLog("\n");
-    }
     return PrimitiveResult::Failure;
 }
 
@@ -22372,10 +22358,6 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     }
 
     std::string symbolName((char*)symbolHdr->bytes(), symbolHdr->byteSize());
-    static int loadSymCount = 0;
-    loadSymCount++;
-    if (loadSymCount <= 30 || symbolName.find("SDL") != std::string::npos)
-        vmLog("[LOADSYM] #%d sym='%s'\n", loadSymCount, symbolName.c_str());
 
     // Module can be nil, a string name, or an ExternalAddress handle
     std::string moduleName;
@@ -22551,7 +22533,6 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     }
 
     std::string moduleName((char*)moduleHdr->bytes(), moduleHdr->byteSize());
-    vmLog("[LOADMOD] '%s'\n", moduleName.c_str());
 
     void* moduleHandle = nullptr;
 
@@ -22613,10 +22594,8 @@ PrimitiveResult Interpreter::primitiveLoadModule(int argCount) {
     }
 
     if (!moduleHandle) {
-        vmLog("[LOADMOD] FAILED '%s'\n", moduleName.c_str());
         return PrimitiveResult::Failure;
     }
-    vmLog("[LOADMOD] OK '%s' handle=%p\n", moduleName.c_str(), moduleHandle);
 
     // Create an ExternalAddress containing the module handle
     Oop externalAddressClass = memory_.specialObject(SpecialObjectIndex::ClassExternalAddress);

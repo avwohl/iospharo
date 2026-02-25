@@ -11,7 +11,6 @@
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
-#include "../platform/DeviceLog.hpp"
 #include <cstring>
 #include <cmath>
 #include <csetjmp>
@@ -496,13 +495,6 @@ void Interpreter::syncDisplayToSurface() {
     }
 
     // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
-    static int syncLogCount = 0;
-    syncLogCount++;
-    if (syncLogCount <= 5 || syncLogCount % 5000 == 0) {
-        vmLog("[SYNC] #%d sdlActive=%d displayForm=%s\n",
-              syncLogCount, ffi_isSDLRenderingActive() ? 1 : 0,
-              displayForm_.isNil() ? "nil" : "set");
-    }
     if (displayForm_.isNil()) {
         worldRenderer_.render();
         return;

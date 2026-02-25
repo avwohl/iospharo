@@ -8,7 +8,6 @@
 #include "../platform/EventQueue.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/PlatformBridge.h"
-#include "../platform/DeviceLog.hpp"
 #include <algorithm>
 #include <cstring>
 #include <chrono>
@@ -159,8 +158,6 @@ bool initializeFFI() {
     if (sInitialized) return true;
     sInitialized = true;
 
-    vmLog("[FFI] initializeFFI: registering SDL2 stubs\n");
-
     // Register SDL2 stub functions — these MUST win over any real SDL2
     // because we use fake window handles that real SDL2 can't handle.
     registerSDL2Stubs();
@@ -172,8 +169,6 @@ bool initializeFFI() {
                      reinterpret_cast<void*>(primitiveLoadSymbolFromModule));
     registerFunction("primitiveLoadModule",
                      reinterpret_cast<void*>(primitiveLoadModule));
-
-    vmLog("[FFI] initializeFFI: done, %zu functions in cache\n", sFunctionCache.size());
 
     // FreeType and libgit2 stubs are NOT registered at init time.
     // lookupFunction() tries real libraries first (via dlsym/dlopen),
@@ -277,12 +272,8 @@ static void* tryLoadFromSearchPaths(const std::string& moduleName, const std::st
 }
 
 void* lookupFunction(const std::string& moduleName, const std::string& funcName) {
-    static int lookupCount = 0;
-    lookupCount++;
     auto it = sFunctionCache.find(funcName);
     if (it != sFunctionCache.end()) {
-        if (lookupCount <= 30 || funcName.find("SDL") != std::string::npos)
-            vmLog("[LOOKUP] #%d '%s':'%s' -> cached %p\n", lookupCount, moduleName.c_str(), funcName.c_str(), it->second);
         return it->second;
     }
 
@@ -363,7 +354,6 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         return func;
     }
 
-    vmLog("[LOOKUP] #%d '%s':'%s' -> NOT FOUND\n", lookupCount, moduleName.c_str(), funcName.c_str());
     return nullptr;
 }
 
@@ -620,7 +610,6 @@ int stub_SDL_RenderClear(void* renderer) {
 void stub_SDL_RenderPresent(void* renderer) {
     if (!sSDLRenderingActive) {
         sSDLRenderingActive = true;
-        vmLog("[SDL] RenderPresent: SDL rendering NOW ACTIVE\n");
     }
 
     // Only the main renderer writes to gDisplaySurface
