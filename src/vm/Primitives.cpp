@@ -22,8 +22,6 @@
 #include <dlfcn.h>
 #include <dirent.h>
 #if __APPLE__
-#include <dispatch/dispatch.h>
-#include <pthread.h>
 #include <CoreFoundation/CoreFoundation.h>
 // CoreFoundation pulls in objc headers which define nil as a macro
 #undef nil
@@ -133,14 +131,8 @@ static uint8_t* cairoLockSurface(intptr_t handle, int* pitch) {
 }
 
 #if __APPLE__
-// Push an autorelease pool (returns a token for popping).
-extern "C" void* objc_autoreleasePoolPush(void);
-// Pop an autorelease pool (frees all objects autoreleased since the push).
-extern "C" void  objc_autoreleasePoolPop(void* pool);
-
-// Context and trampoline for dispatching FFI calls to the main thread.
-// Defined at file scope so the function pointer works in all C++ standards.
-struct FFIMainCtx {
+// Context for FFI calls wrapped in ObjC @try/@catch.
+struct FFICallCtx {
     ffi_cif* cif;
     void* funcPtr;
     void* ret;
@@ -150,25 +142,8 @@ struct FFIMainCtx {
 
 // Inner function that performs the actual ffi_call — called inside ObjC @try/@catch
 static void doFFICall(void* p) {
-    FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
+    FFICallCtx* c = static_cast<FFICallCtx*>(p);
     ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
-}
-
-static void ffiCallOnMainThread(void* p) {
-    FFIMainCtx* c = static_cast<FFIMainCtx*>(p);
-    // Push an autorelease pool that we NEVER pop. This keeps autoreleased
-    // ObjC objects alive so the VM thread can reference them in later FFI
-    // calls. Without this, the main thread's run loop drains its pool
-    // between dispatch_sync calls, freeing autoreleased objects (NSString,
-    // NSMenuItem, etc.) that Pharo stores as ExternalAddress pointers.
-    // The standard Pharo VM doesn't have this problem because the interpreter
-    // runs on the main thread — the pool isn't drained between FFI calls.
-    objc_autoreleasePoolPush();
-
-    // Use ObjC @try/@catch to catch AppKit/UIKit exceptions.
-    if (!objc_guarded_call(doFFICall, p)) {
-        memset(c->ret, 0, c->retSize);
-    }
 }
 #endif
 
@@ -25170,21 +25145,19 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    // Perform the FFI call.
-    // On Apple platforms, dispatch to the main thread via dispatch_sync_f.
-    // The standard Pharo VM runs the interpreter on the main thread, so
-    // "same thread" FFI callouts implicitly happen on the main thread.
-    // Our interpreter runs on a background thread, so we must explicitly
-    // dispatch to main for AppKit/UIKit calls that require it.
-    // dispatch_sync blocks the VM thread until the call completes, matching
-    // the synchronous semantics of "same thread" callouts.
+    // Perform the FFI call on the current (VM) thread.
+    // The standard Pharo VM runs the interpreter on the main thread, but
+    // we run it on a background thread. We do NOT dispatch to the main
+    // thread because: (1) dispatching via dispatch_sync causes autoreleased
+    // ObjC objects to be freed between calls (the main thread's run loop
+    // drains its pool), turning ExternalAddress pointers into dangling refs;
+    // (2) AppKit methods that need the main thread are swizzled to no-ops
+    // on Mac Catalyst; (3) Foundation methods are thread-safe.
+    // The VM thread has a long-lived autorelease pool (pushed at startup)
+    // that keeps ObjC objects alive for the duration of the VM.
 #if __APPLE__
-    if (!pthread_main_np()) {
-        FFIMainCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
-        dispatch_sync_f(dispatch_get_main_queue(), &ctx, ffiCallOnMainThread);
-    } else {
-        // Already on main thread — still guard against ObjC exceptions
-        FFIMainCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
+    {
+        FFICallCtx ctx = {cif, funcPtr, returnHolder, argPtrs, returnSize};
         if (!objc_guarded_call(doFFICall, &ctx)) {
             memset(returnHolder, 0, returnSize);
         }

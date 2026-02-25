@@ -332,6 +332,17 @@ void vm_run(void) {
 
     gRunning = true;
     gVMThread = std::thread([]() {
+#ifdef __APPLE__
+        // Push a long-lived autorelease pool for the VM thread.
+        // FFI calls from the Pharo image create autoreleased ObjC objects
+        // (NSString, NSArray, etc). Without a pool, these leak with runtime
+        // warnings. This pool is never drained — objects stay alive for the
+        // VM's lifetime, matching the standard Pharo VM's behavior where
+        // the main thread's pool wraps the entire interpreter loop.
+        extern void* objc_autoreleasePoolPush(void);
+        objc_autoreleasePoolPush();
+#endif
+
         // Post a window resize event to trigger Pharo layout
         if (gDisplay) {
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
@@ -415,20 +426,12 @@ void vm_stop(void) {
 
     // Wait for the interpreter thread with a timeout.
     // applicationWillTerminate gives ~5 seconds; don't block forever.
-    // Pump the CFRunLoop while waiting so that any pending dispatch_sync
-    // blocks from the VM thread (FFI calls dispatched to main) can execute.
-    // Without this, dispatch_sync deadlocks: main thread sleeps here while
-    // VM thread blocks in dispatch_sync waiting for main.
     if (gVMThread.joinable()) {
         auto start = std::chrono::steady_clock::now();
         while (gRunning) {
             auto elapsed = std::chrono::steady_clock::now() - start;
             if (elapsed > std::chrono::seconds(2)) break;
-#ifdef __APPLE__
-            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.01, true);
-#else
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
-#endif
         }
         if (!gRunning) {
             gVMThread.join();
