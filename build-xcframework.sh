@@ -16,11 +16,13 @@ cd "$SCRIPT_DIR"
 BUILD_BASE="$SCRIPT_DIR/build-xcframework"
 XCFRAMEWORK_OUTPUT="$SCRIPT_DIR/PharoVMCore.xcframework"
 
+XCFRAMEWORK_TMP="$SCRIPT_DIR/PharoVMCore.xcframework.tmp"
+
 echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simulator) ==="
 
-# Clean previous builds
+# Clean previous build intermediates (but keep existing xcframework until new one is ready)
 rm -rf "$BUILD_BASE"
-rm -rf "$XCFRAMEWORK_OUTPUT"
+rm -rf "$XCFRAMEWORK_TMP"
 mkdir -p "$BUILD_BASE"
 
 # Helper: configure, build, and find the output library
@@ -119,7 +121,12 @@ xcodebuild -create-xcframework \
     -library "$BUILD_BASE/iphoneos/libPharoVMCore.a" \
     -library "$BUILD_BASE/maccatalyst-universal/libPharoVMCore.a" \
     -library "$BUILD_BASE/simulator-universal/libPharoVMCore.a" \
-    -output "$XCFRAMEWORK_OUTPUT"
+    -output "$XCFRAMEWORK_TMP"
+
+# Atomic swap: only replace the old xcframework after the new one is fully built.
+# This prevents Xcode from seeing a missing xcframework if the build fails midway.
+rm -rf "$XCFRAMEWORK_OUTPUT"
+mv "$XCFRAMEWORK_TMP" "$XCFRAMEWORK_OUTPUT"
 
 # Touch Info.plist so Xcode freshness check passes
 touch "$XCFRAMEWORK_OUTPUT/Info.plist"
