@@ -52,9 +52,11 @@ typedef NS_ENUM(NSUInteger, NSEventType) {
 
 static id _monitor = nil;
 static MouseEventCallback _callback = nil;
-static FILE *_logFile = NULL;
 static int _eventCount = 0;
 static id (^_handlerBlock)(id) = nil;  // Keep strong reference to handler
+#ifdef DEBUG
+static FILE *_logFile = NULL;
+#endif
 
 + (void)installMouseMonitorWithCallback:(MouseEventCallback)callback {
     if (_monitor) {
