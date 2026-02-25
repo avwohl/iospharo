@@ -34,6 +34,13 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
             let geometryPrefs = UIWindowScene.GeometryPreferences.Mac(systemFrame: CGRect(x: 100, y: 100, width: 1024, height: 768))
             windowScene.requestGeometryUpdate(geometryPrefs) { _ in }
         }
+
+        // Move traffic light buttons above content so they don't overlap
+        // the Pharo menu bar. Use a standard toolbar to create title bar space.
+        if let titlebar = windowScene.titlebar {
+            titlebar.titleVisibility = .hidden
+            titlebar.toolbarStyle = .automatic
+        }
     }
 }
 #endif
