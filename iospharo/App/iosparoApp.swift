@@ -42,6 +42,15 @@ class SceneDelegate: NSObject, UIWindowSceneDelegate {
             titlebar.toolbarStyle = .automatic
         }
     }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        // When the last window closes on Mac Catalyst, quit the app
+        let remaining = UIApplication.shared.connectedScenes.filter { $0 != scene }
+        if remaining.isEmpty {
+            PharoBridge.shared.stop()
+            exit(0)
+        }
+    }
 }
 #endif
 
