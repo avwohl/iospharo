@@ -52,11 +52,17 @@ class PharoMTKView: MTKView {
 
     override func didMoveToWindow() {
         super.didMoveToWindow()
+        #if targetEnvironment(macCatalyst)
+        // On Mac Catalyst, becomeFirstResponder captures hardware keyboard
+        // events without showing an on-screen keyboard.
         if window != nil {
             DispatchQueue.main.async {
                 self.becomeFirstResponder()
             }
         }
+        #endif
+        // On iOS, don't auto-become first responder — it shows the soft keyboard.
+        // The VM will call vm_setTextInputCallback(true) when it needs text input.
     }
 
     // MARK: - Touch Handling
@@ -209,7 +215,7 @@ class PharoCanvasViewController: UIViewController {
 
     override func loadView() {
         view = UIView()
-        view.backgroundColor = .black
+        view.backgroundColor = .white
     }
 
     override func viewDidLoad() {
@@ -241,8 +247,9 @@ class PharoCanvasViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        #if targetEnvironment(macCatalyst)
         mtkView.becomeFirstResponder()
-
+        #endif
     }
 
     private func setupGestureRecognizers() {

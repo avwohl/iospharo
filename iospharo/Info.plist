@@ -23,6 +23,8 @@
 	<integer>1</integer>
 	<key>PharoMaxOldSpaceSize</key>
 	<integer>536870912</integer>
+	<key>UIUserInterfaceStyle</key>
+	<string>Light</string>
 	<key>UIFileSharingEnabled</key>
 	<true/>
 	<key>LSSupportsOpeningDocumentsInPlace</key>

@@ -48,7 +48,7 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         // Configure the Metal view
         metalView.device = device
         metalView.colorPixelFormat = .bgra8Unorm
-        metalView.clearColor = MTLClearColor(red: 0.15, green: 0.20, blue: 0.22, alpha: 1.0)
+        metalView.clearColor = MTLClearColor(red: 0.92, green: 0.92, blue: 0.92, alpha: 1.0)
 
         // Create the render pipeline
         guard let library = device.makeDefaultLibrary() else {

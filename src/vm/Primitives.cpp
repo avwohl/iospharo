@@ -15923,8 +15923,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     for (intptr_t x = 0; x < width; x++) row[x] = fill;
                     break;
                 case 7: // OR
-                case 25: // paint (same as OR)
                     for (intptr_t x = 0; x < width; x++) row[x] |= fill;
+                    break;
+                case 25: // pixPaint: non-zero fill replaces dest
+                    if (fill != 0) {
+                        for (intptr_t x = 0; x < width; x++) row[x] = fill;
+                    }
                     break;
                 case 0: // AND
                     for (intptr_t x = 0; x < width; x++) row[x] &= fill;
@@ -16164,7 +16168,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = gray; break;
                     case 0: dstRow[x] &= gray; break;
-                    case 7: case 25: dstRow[x] |= gray; break;
+                    case 7: dstRow[x] |= gray; break;
+                    case 25: if (gray != 0) dstRow[x] = gray; break;
                     case 6: dstRow[x] ^= gray; break;
                     default: dstRow[x] = gray; break;
                 }
@@ -16206,7 +16211,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcVal; break;
                     case 0: dstRow[x] &= srcVal; break;
-                    case 7: case 25: dstRow[x] |= srcVal; break;
+                    case 7: dstRow[x] |= srcVal; break;
+                    case 25: if (srcVal != 0) dstRow[x] = srcVal; break;
                     case 6: dstRow[x] ^= srcVal; break;
                     case 1: if (srcBit) dstRow[x] &= ~srcVal; break;
                     default: dstRow[x] = srcVal; break;
@@ -16250,7 +16256,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 switch (combinationRule) {
                     case 3: case 34: dstRow[dx] = srcVal; break;
                     case 0: dstRow[dx] &= srcVal; break;
-                    case 7: case 25: dstRow[dx] |= srcVal; break;
+                    case 7: dstRow[dx] |= srcVal; break;
+                    case 25: if (srcVal != 0) dstRow[dx] = srcVal; break;
                     case 6: dstRow[dx] ^= srcVal; break;
                     default: dstRow[dx] = srcVal; break;
                 }
@@ -16354,9 +16361,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (srcRow[x] & ht);
                     break;
                 case 7:  // OR: dest = dest OR (source AND halftone)
-                case 25: // paint (same as OR for 32-bit)
                     for (intptr_t x = 0; x < width; x++) dstRow[x] |= (srcRow[x] & ht);
                     break;
+                case 25: { // pixPaint: non-zero source replaces dest
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        if (s != 0) dstRow[x] = s;
+                    }
+                    break;
+                }
                 case 1:  // AND complement: dest = dest AND NOT(source AND halftone)
                     for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(srcRow[x] & ht);
                     break;
@@ -16525,8 +16538,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 3: case 34:
                         dstRow[x] = srcPixel;
                         break;
-                    case 25: case 7: // paint/OR
+                    case 7: // OR
                         dstRow[x] |= srcPixel;
+                        break;
+                    case 25: // pixPaint: non-zero source replaces dest
+                        if (srcPixel != 0) dstRow[x] = srcPixel;
                         break;
                     case 0: // AND
                         dstRow[x] &= srcPixel;
@@ -16593,8 +16609,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 3: case 34:
                         dstRow[x] = srcPixel;
                         break;
-                    case 25: case 7:
+                    case 7: // OR
                         dstRow[x] |= srcPixel;
+                        break;
+                    case 25: // pixPaint: non-zero source replaces dest
+                        if (srcPixel != 0) dstRow[x] = srcPixel;
                         break;
                     case 24: { // alpha blend (source-over, non-premultiplied)
                         uint32_t sa = (srcPixel >> 24) & 0xFF;
@@ -16641,7 +16660,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 uint32_t srcPixel = 0xFF000000 | (r << 16) | (g << 8) | b;
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
-                    case 25: case 7: dstRow[x] |= srcPixel; break;
+                    case 7: dstRow[x] |= srcPixel; break;
+                    case 25: if (srcPixel != 0) dstRow[x] = srcPixel; break;
                     default: {
                         return PrimitiveResult::Failure;
                     }
@@ -16680,7 +16700,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
-                    case 25: case 7: dstRow[x] |= srcPixel; break;
+                    case 7: dstRow[x] |= srcPixel; break;
+                    case 25: if (srcPixel != 0) dstRow[x] = srcPixel; break;
                     case 24: { // alpha blend (source-over, non-premultiplied)
                         uint32_t sa = (srcPixel >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = srcPixel; break; }

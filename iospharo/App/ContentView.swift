@@ -192,9 +192,9 @@ struct MiddleClickButton: View {
                 }) {
                     Image(systemName: "computermouse.fill")
                         .font(.system(size: 18))
-                        .foregroundColor(isActive ? .white : .white.opacity(0.7))
+                        .foregroundColor(isActive ? .white : .gray)
                         .frame(width: 44, height: 44)
-                        .background(isActive ? Color.blue : Color.black.opacity(0.4))
+                        .background(isActive ? Color.blue : Color.gray.opacity(0.3))
                         .clipShape(Circle())
                         .overlay(
                             Circle()

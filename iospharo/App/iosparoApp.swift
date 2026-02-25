@@ -87,7 +87,7 @@ struct iosparoApp: App {
     @StateObject private var imageManager = ImageManager()
 
     var body: some Scene {
-        return WindowGroup {
+        WindowGroup {
             ContentView()
                 .environmentObject(bridge)
                 .environmentObject(imageManager)
@@ -97,6 +97,16 @@ struct iosparoApp: App {
                         imageManager.importImage(from: url)
                     }
                 }
+        }
+        .commands {
+            // Enable Quit menu item (Cmd+Q) on Mac Catalyst
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit iospharo") {
+                    PharoBridge.shared.stop()
+                    exit(0)
+                }
+                .keyboardShortcut("q")
+            }
         }
     }
 }
