@@ -6,6 +6,25 @@
       parallelizeBuildables = "YES"
       buildImplicitDependencies = "YES"
       buildArchitectures = "Automatic">
+      <PreActions>
+         <ExecutionAction
+            ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
+            <ActionContent
+               title = "Ensure XCFramework exists"
+               scriptText = "cd &quot;${PROJECT_DIR}&quot;&#10;if [ ! -f &quot;PharoVMCore.xcframework/Info.plist&quot; ]; then&#10;    echo &quot;PharoVMCore.xcframework missing, building...&quot;&#10;    ./build-xcframework.sh&#10;fi&#10;"
+               shellToInvoke = "/bin/bash">
+               <EnvironmentBuildable>
+                  <BuildableReference
+                     BuildableIdentifier = "primary"
+                     BlueprintIdentifier = "A50001"
+                     BuildableName = "iospharo.app"
+                     BlueprintName = "iospharo"
+                     ReferencedContainer = "container:iospharo.xcodeproj">
+                  </BuildableReference>
+               </EnvironmentBuildable>
+            </ActionContent>
+         </ExecutionAction>
+      </PreActions>
       <BuildActionEntries>
          <BuildActionEntry
             buildForTesting = "YES"
