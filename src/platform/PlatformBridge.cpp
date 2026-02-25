@@ -36,33 +36,44 @@ static void swizzleCatalystAppKit() {
             (IMP)+[](id, SEL){}, "v@:");
     }
 
-    // [NSMenu insertItemWithTitle:action:keyEquivalent:atIndex:] — crashes in
-    // objc_opt_isKindOfClass when NSMenuItem validates the title string.
-    // Return nil (no menu item created).
+    // Pharo's SDL platform init creates AppKit menus via FFI.
+    // On Catalyst these crash — swizzle ALL NSMenu/NSMenuItem mutation
+    // methods to no-ops so none of them touch invalid ObjC objects.
+    // Note: lambdas with variadic args can't convert to IMP, so we use
+    // concrete signatures. Extra args are ignored on ARM64 calling convention.
+    auto voidNoop1 = (IMP)+[](id, SEL, id){};
+    auto voidNoop2 = (IMP)+[](id, SEL, id, long){};
+    auto nilRet4 = (IMP)+[](id, SEL, id, SEL, id, long) -> id { return nullptr; };
+    auto nilRet3 = (IMP)+[](id, SEL, id, SEL, id) -> id { return nullptr; };
+    auto voidNoopBool = (IMP)+[](id, SEL, bool){};
+    auto voidNoopSel = (IMP)+[](id, SEL, SEL){};
+    auto voidNoopLong = (IMP)+[](id, SEL, long){};
+    auto voidNoop2Obj = (IMP)+[](id, SEL, id, id){};
+    auto voidNoopUL = (IMP)+[](id, SEL, unsigned long){};
+
     Class nsMenu = objc_getClass("NSMenu");
     if (nsMenu) {
-        class_replaceMethod(nsMenu,
-            sel_registerName("insertItemWithTitle:action:keyEquivalent:atIndex:"),
-            (IMP)+[](id, SEL, id, SEL, id, long) -> id { return nullptr; },
-            "@@:@:@l");
-        class_replaceMethod(nsMenu,
-            sel_registerName("addItemWithTitle:action:keyEquivalent:"),
-            (IMP)+[](id, SEL, id, SEL, id) -> id { return nullptr; },
-            "@@:@:@");
-        class_replaceMethod(nsMenu,
-            sel_registerName("setTitle:"),
-            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsMenu, sel_registerName("insertItemWithTitle:action:keyEquivalent:atIndex:"), nilRet4, "@@:@:@l");
+        class_replaceMethod(nsMenu, sel_registerName("addItemWithTitle:action:keyEquivalent:"), nilRet3, "@@:@:@");
+        class_replaceMethod(nsMenu, sel_registerName("insertItem:atIndex:"), voidNoop2, "v@:@l");
+        class_replaceMethod(nsMenu, sel_registerName("addItem:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenu, sel_registerName("removeItem:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenu, sel_registerName("removeItemAtIndex:"), voidNoopLong, "v@:l");
+        class_replaceMethod(nsMenu, sel_registerName("setTitle:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenu, sel_registerName("setSubmenu:forItem:"), voidNoop2Obj, "v@:@@");
+        class_replaceMethod(nsMenu, sel_registerName("setAutoenablesItems:"), voidNoopBool, "v@:B");
     }
 
-    // [NSMenuItem setSubmenu:], [NSMenuItem setEnabled:], etc.
     Class nsMenuItem = objc_getClass("NSMenuItem");
     if (nsMenuItem) {
-        class_replaceMethod(nsMenuItem,
-            sel_registerName("setSubmenu:"),
-            (IMP)+[](id, SEL, id){}, "v@:@");
-        class_replaceMethod(nsMenuItem,
-            sel_registerName("setEnabled:"),
-            (IMP)+[](id, SEL, bool){}, "v@:B");
+        class_replaceMethod(nsMenuItem, sel_registerName("setSubmenu:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenuItem, sel_registerName("setEnabled:"), voidNoopBool, "v@:B");
+        class_replaceMethod(nsMenuItem, sel_registerName("setTitle:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenuItem, sel_registerName("setAction:"), voidNoopSel, "v@::");
+        class_replaceMethod(nsMenuItem, sel_registerName("setTarget:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenuItem, sel_registerName("setKeyEquivalent:"), voidNoop1, "v@:@");
+        class_replaceMethod(nsMenuItem, sel_registerName("setKeyEquivalentModifierMask:"), voidNoopUL, "v@:Q");
+        class_replaceMethod(nsMenuItem, sel_registerName("setTag:"), voidNoopLong, "v@:l");
     }
 #endif
 }
