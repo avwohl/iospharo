@@ -22,15 +22,48 @@
 #include <objc/message.h>
 #include "../vm/ObjCExceptionGuard.h"
 
-// On Mac Catalyst, the Pharo image calls [NSApplication finishLaunching]
-// via ObjC FFI during SDL platform init. This throws assertion failures
-// because UIKit already launched the app. Swizzle it to a no-op.
-static void swizzleFinishLaunching() {
+// On Mac Catalyst, the Pharo image calls AppKit APIs via FFI during SDL
+// platform init (finishLaunching, NSMenu creation, etc). These crash on
+// Catalyst because UIKit manages the app lifecycle and menus. Swizzle
+// the problematic methods to no-ops — Pharo's AppKit menus are meaningless
+// on Catalyst since UIKit handles menus via UIMenu.
+static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
+    // [NSApplication finishLaunching] — throws assertion failures
     Class nsApp = objc_getClass("NSApplication");
-    if (!nsApp) return;
-    SEL sel = sel_registerName("finishLaunching");
-    class_replaceMethod(nsApp, sel, (IMP)+[](id, SEL){}, "v@:");
+    if (nsApp) {
+        class_replaceMethod(nsApp, sel_registerName("finishLaunching"),
+            (IMP)+[](id, SEL){}, "v@:");
+    }
+
+    // [NSMenu insertItemWithTitle:action:keyEquivalent:atIndex:] — crashes in
+    // objc_opt_isKindOfClass when NSMenuItem validates the title string.
+    // Return nil (no menu item created).
+    Class nsMenu = objc_getClass("NSMenu");
+    if (nsMenu) {
+        class_replaceMethod(nsMenu,
+            sel_registerName("insertItemWithTitle:action:keyEquivalent:atIndex:"),
+            (IMP)+[](id, SEL, id, SEL, id, long) -> id { return nullptr; },
+            "@@:@:@l");
+        class_replaceMethod(nsMenu,
+            sel_registerName("addItemWithTitle:action:keyEquivalent:"),
+            (IMP)+[](id, SEL, id, SEL, id) -> id { return nullptr; },
+            "@@:@:@");
+        class_replaceMethod(nsMenu,
+            sel_registerName("setTitle:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+    }
+
+    // [NSMenuItem setSubmenu:], [NSMenuItem setEnabled:], etc.
+    Class nsMenuItem = objc_getClass("NSMenuItem");
+    if (nsMenuItem) {
+        class_replaceMethod(nsMenuItem,
+            sel_registerName("setSubmenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsMenuItem,
+            sel_registerName("setEnabled:"),
+            (IMP)+[](id, SEL, bool){}, "v@:B");
+    }
 #endif
 }
 #endif
@@ -193,7 +226,7 @@ bool vm_initialize(size_t heapSize) {
 
 #ifdef __APPLE__
     objc_install_exception_handler();
-    swizzleFinishLaunching();
+    swizzleCatalystAppKit();
 #endif
 
     gMemory = new pharo::ObjectMemory();
