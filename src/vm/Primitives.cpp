@@ -25130,21 +25130,41 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     memset(returnHolder, 0, returnSize);
 
     // Perform the FFI call.
-    // Wrap in try/catch to handle ObjC exceptions (NSException) that may be
-    // thrown by AppKit calls (e.g., setSubmenu: in Mac Catalyst where certain
-    // AppKit menu APIs aren't fully supported). On Apple platforms, ObjC
-    // exceptions are C++ exceptions, so catch(...) catches them.
-    // Return success with zeroed return value so Smalltalk sees nil/0 and
-    // continues startup (SDLOSXPlatform >> initPlatformSpecific needs to
-    // complete for SDL2 initialization to proceed).
-    // ObjC exceptions (NSException) from unsupported AppKit APIs on Mac Catalyst
-    // are C++ exceptions. Zero the return value so Smalltalk sees 0/nil and
-    // continues startup.
+    // On Apple platforms, dispatch to the main thread via dispatch_sync_f.
+    // The standard Pharo VM runs the interpreter on the main thread, so
+    // "same thread" FFI callouts implicitly happen on the main thread.
+    // Our interpreter runs on a background thread, so we must explicitly
+    // dispatch to main for AppKit/UIKit calls that require it.
+    // dispatch_sync blocks the VM thread until the call completes, matching
+    // the synchronous semantics of "same thread" callouts.
+#if __APPLE__
+    struct FFICallCtx {
+        ffi_cif* cif; void* funcPtr; void* ret; void** args; size_t retSize;
+    };
+    FFICallCtx ctx{cif, funcPtr, returnHolder, argPtrs, returnSize};
+    if (!pthread_main_np()) {
+        dispatch_sync_f(dispatch_get_main_queue(), &ctx, [](void* p) {
+            auto* c = static_cast<FFICallCtx*>(p);
+            try {
+                ffi_call(c->cif, FFI_FN(c->funcPtr), c->ret, c->args);
+            } catch (...) {
+                memset(c->ret, 0, c->retSize);
+            }
+        });
+    } else {
+        try {
+            ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
+        } catch (...) {
+            memset(returnHolder, 0, returnSize);
+        }
+    }
+#else
     try {
         ffi_call(cif, FFI_FN(funcPtr), returnHolder, argPtrs);
     } catch (...) {
         memset(returnHolder, 0, returnSize);
     }
+#endif
 
 
     // Marshall return value back to Smalltalk
