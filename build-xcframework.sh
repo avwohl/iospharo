@@ -10,6 +10,9 @@
 # following the same pattern as scripts/build-third-party.sh.
 set -e
 
+# Ensure Homebrew tools (cmake, ninja) are in PATH when run from Xcode build phases
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
