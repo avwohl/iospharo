@@ -17,6 +17,13 @@
 
 #ifdef __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
+#include <objc/objc.h>
+// C API for autorelease pool management from C++ threads.
+// Any thread that might create ObjC objects (even indirectly via FFI callbacks)
+// must have an autorelease pool, or objects leak into an implicit pool that
+// crashes on thread exit when it tries to release already-freed objects.
+extern "C" void *objc_autoreleasePoolPush(void);
+extern "C" void objc_autoreleasePoolPop(void *pool);
 #endif
 
 namespace pharo {
@@ -266,6 +273,14 @@ void vm_run(void) {
 
     gRunning = true;
     gVMThread = std::thread([]() {
+#ifdef __APPLE__
+        // Every pthread that may create ObjC objects (even indirectly via FFI
+        // callbacks) needs an autorelease pool.  Without one, autoreleased
+        // objects accumulate in an implicit pool that is only drained at thread
+        // exit — by which time the objects may already be freed, causing
+        // EXC_BAD_ACCESS in AutoreleasePoolPage::releaseUntil().
+        void *pool = objc_autoreleasePoolPush();
+#endif
         // Post a window resize event to trigger Pharo layout
         if (gDisplay) {
             vm_postWindowEvent(gDisplay->width(), gDisplay->height());
@@ -279,6 +294,9 @@ void vm_run(void) {
         // so vm_stop() doesn't need to join a dead heartbeat thread.
         gInterpreter->stopHeartbeat();
         gRunning = false;
+#ifdef __APPLE__
+        objc_autoreleasePoolPop(pool);
+#endif
     });
 }
 

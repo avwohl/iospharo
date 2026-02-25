@@ -29,6 +29,9 @@ extern std::atomic<bool> g_emergencyDebuggerTriggered;
 #include <CoreFoundation/CFRunLoop.h>
 // Undefine Objective-C's nil macro to avoid conflict with Oop::nil()
 #undef nil
+// C API for autorelease pool management from C++ threads
+extern "C" void *objc_autoreleasePoolPush(void);
+extern "C" void objc_autoreleasePoolPop(void *pool);
 #endif
 
 // SIGSEGV recovery support - used by executeFromContext, handler in test_load_image.cpp
@@ -893,6 +896,9 @@ void Interpreter::startHeartbeat() {
 
     heartbeatRunning_ = true;
     heartbeatThread_ = std::thread([this]() {
+#ifdef __APPLE__
+      void *pool = objc_autoreleasePoolPush();
+#endif
       try {
         int tickCount = 0;
 
@@ -954,6 +960,9 @@ void Interpreter::startHeartbeat() {
         (void)e;  // Heartbeat thread exception
       } catch (...) {
       }
+#ifdef __APPLE__
+      objc_autoreleasePoolPop(pool);
+#endif
     });
 }
 
