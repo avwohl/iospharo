@@ -348,10 +348,15 @@ void vm_run(void) {
         gInterpreter->interpret();
 
         // Interpreter exited (primitiveQuit or stopVM called).
-        // Stop heartbeat from this thread before marking as not running,
-        // so vm_stop() doesn't need to join a dead heartbeat thread.
         gInterpreter->stopHeartbeat();
         gRunning = false;
+
+        // Do NOT return — returning triggers pthread TSD cleanup which
+        // crashes releasing ObjC objects in autorelease pool pages created
+        // internally by FFI calls. Block forever; process exit kills us.
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::hours(24));
+        }
     });
 }
 
@@ -420,8 +425,9 @@ void vm_stop(void) {
         gInterpreter->stop();
     }
 
-    // Wait for the interpreter thread with a timeout.
-    // applicationWillTerminate gives ~5 seconds; don't block forever.
+    // Wait for the interpreter to finish, then detach the thread.
+    // We never join — the VM thread blocks forever after interpret() returns
+    // to avoid pthread TSD cleanup crashing on ObjC autorelease pool pages.
     if (gVMThread.joinable()) {
         auto start = std::chrono::steady_clock::now();
         while (gRunning) {
@@ -429,11 +435,7 @@ void vm_stop(void) {
             if (elapsed > std::chrono::seconds(2)) break;
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
-        if (!gRunning) {
-            gVMThread.join();
-        } else {
-            gVMThread.detach();  // Abandon thread if interpreter won't stop
-        }
+        gVMThread.detach();
     }
 
     // Stop the heartbeat thread (may already be stopped by VM thread)
