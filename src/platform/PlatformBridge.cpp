@@ -332,16 +332,12 @@ void vm_run(void) {
 
     gRunning = true;
     gVMThread = std::thread([]() {
-#ifdef __APPLE__
-        // Push a long-lived autorelease pool for the VM thread.
-        // FFI calls from the Pharo image create autoreleased ObjC objects
-        // (NSString, NSArray, etc). Without a pool, these leak with runtime
-        // warnings. This pool is never drained — objects stay alive for the
-        // VM's lifetime, matching the standard Pharo VM's behavior where
-        // the main thread's pool wraps the entire interpreter loop.
-        extern void* objc_autoreleasePoolPush(void);
-        objc_autoreleasePoolPush();
-#endif
+        // No autorelease pool on this thread. ObjC objects created by FFI
+        // calls (NSString, NSArray, etc.) are leaked without a pool, which
+        // keeps them alive for Pharo to reference via ExternalAddress — the
+        // same lifetime as the standard Pharo VM where the pool wraps the
+        // entire interpreter loop and is never drained. Without a pool,
+        // thread exit doesn't try to release potentially-freed objects.
 
         // Post a window resize event to trigger Pharo layout
         if (gDisplay) {
