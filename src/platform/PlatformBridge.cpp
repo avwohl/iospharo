@@ -16,7 +16,22 @@
 #include <mutex>
 
 #ifdef __APPLE__
+#include <TargetConditionals.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <objc/runtime.h>
+#include <objc/message.h>
+
+// On Mac Catalyst, the Pharo image calls [NSApplication finishLaunching]
+// via ObjC FFI during SDL platform init. This throws assertion failures
+// because UIKit already launched the app. Swizzle it to a no-op.
+static void swizzleFinishLaunching() {
+#if TARGET_OS_MACCATALYST
+    Class nsApp = objc_getClass("NSApplication");
+    if (!nsApp) return;
+    SEL sel = sel_registerName("finishLaunching");
+    class_replaceMethod(nsApp, sel, (IMP)+[](id, SEL){}, "v@:");
+#endif
+}
 #endif
 
 namespace pharo {
@@ -174,6 +189,10 @@ bool vm_initialize(size_t heapSize) {
     if (gMemory) {
         return true;
     }
+
+#ifdef __APPLE__
+    swizzleFinishLaunching();
+#endif
 
     gMemory = new pharo::ObjectMemory();
     pharo::MemoryConfig config;
