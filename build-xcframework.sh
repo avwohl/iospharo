@@ -16,7 +16,7 @@ cd "$SCRIPT_DIR"
 BUILD_BASE="$SCRIPT_DIR/build-xcframework"
 XCFRAMEWORK_OUTPUT="$SCRIPT_DIR/PharoVMCore.xcframework"
 
-XCFRAMEWORK_TMP="$SCRIPT_DIR/PharoVMCore.xcframework.tmp"
+XCFRAMEWORK_TMP="$SCRIPT_DIR/PharoVMCore-tmp.xcframework"
 
 echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simulator) ==="
 
