@@ -18,7 +18,6 @@
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008 /* Assets.xcassets */; };
 		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009 /* Metal.framework */; };
 		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A /* MetalKit.framework */; };
-		A1000B /* PharoVMCore.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000B /* PharoVMCore.xcframework */; };
 		A1000C /* libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* libffi.xcframework */; };
 		A10010 /* NSEventMonitor.m in Sources */ = {isa = PBXBuildFile; fileRef = A20010 /* NSEventMonitor.m */; };
 		A10012 /* PharoImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* PharoImage.swift */; };
@@ -40,7 +39,6 @@
 		A20008 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A20009 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
 		A2000A /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
-		A2000B /* PharoVMCore.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = PharoVMCore.xcframework; sourceTree = SOURCE_ROOT; };
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
@@ -64,7 +62,6 @@
 				4E4B3BEE2F0859030064396B /* ZIPFoundation in Frameworks */,
 				A10009 /* Metal.framework in Frameworks */,
 				A1000A /* MetalKit.framework in Frameworks */,
-				A1000B /* PharoVMCore.xcframework in Frameworks */,
 				A1000C /* libffi.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -152,7 +149,6 @@
 			children = (
 				A20009 /* Metal.framework */,
 				A2000A /* MetalKit.framework */,
-				A2000B /* PharoVMCore.xcframework */,
 				A2000F /* libffi.xcframework */,
 			);
 			name = Frameworks;
@@ -455,10 +451,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"-ObjC",
-					"-all_load",
-				);
+				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.awohl.pharo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = YES;
@@ -496,10 +489,7 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = (
-					"-ObjC",
-					"-all_load",
-				);
+				OTHER_LDFLAGS = "$(inherited)";
 				PRODUCT_BUNDLE_IDENTIFIER = com.awohl.pharo;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTS_MACCATALYST = YES;
