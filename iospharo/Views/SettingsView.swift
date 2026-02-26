@@ -28,6 +28,28 @@ struct SettingsView: View {
                         Text(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Unknown")
                             .foregroundColor(.gray)
                     }
+
+                    Text("This is an experimental, community-built Pharo VM for iOS. It is not affiliated with, endorsed by, or supported by Pharo.org.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    Link(destination: URL(string: "https://github.com/avwohl/iospharo")!) {
+                        HStack {
+                            Label("GitHub Project", systemImage: "link")
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    Link(destination: URL(string: "https://github.com/avwohl/iospharo/issues")!) {
+                        HStack {
+                            Label("Report a Bug", systemImage: "ladybug")
+                            Spacer()
+                            Image(systemName: "arrow.up.right.square")
+                                .foregroundColor(.secondary)
+                        }
+                    }
                 }
             }
             .navigationTitle("Settings")

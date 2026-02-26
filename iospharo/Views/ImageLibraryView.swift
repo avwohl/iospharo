@@ -154,6 +154,8 @@ struct ImageLibraryView: View {
                 .controlSize(.large)
             }
 
+            disclaimerBlock
+
             Spacer()
         }
         .padding()
@@ -185,7 +187,32 @@ struct ImageLibraryView: View {
                     }
                 }
             }
+
+            Section {
+                disclaimerBlock
+            }
+            .listRowBackground(Color.clear)
         }
+    }
+
+    // MARK: - Disclaimer
+
+    private var disclaimerBlock: some View {
+        VStack(spacing: 4) {
+            Text("Experimental release — not affiliated with or endorsed by Pharo.org")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+            HStack(spacing: 12) {
+                Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
+                Text("·")
+                    .foregroundColor(.secondary)
+                Link("Report a Bug", destination: URL(string: "https://github.com/avwohl/iospharo/issues")!)
+            }
+            .font(.caption)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
     }
 
     // MARK: - Actions
