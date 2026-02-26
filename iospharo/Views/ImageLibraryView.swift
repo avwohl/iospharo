@@ -26,12 +26,6 @@ struct ImageLibraryView: View {
                     imageList
                 }
             }
-            .onAppear {
-                // Auto-launch when there's exactly one image (skip library screen)
-                if imageManager.images.count == 1, let image = imageManager.images.first {
-                    launchImage(image)
-                }
-            }
             .navigationTitle("Pharo Images")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
