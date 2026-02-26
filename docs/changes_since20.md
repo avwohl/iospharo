@@ -61,9 +61,36 @@ Build 21 — 2026-02-26
 - Always visible regardless of selection state
 - Removed redundant disclaimer from settings screen
 
-## Known Issues
+## Known Issues (Build 21)
 
 - Two-finger scroll does not work on iPad — must use scrollbar widgets
   (reported by Tim, Pharo users group)
 - Stage Manager window resize causes garbled display
+- Onboarding/help overlay needed — users don't discover gestures
+
+---
+
+Build 22 — 2026-02-26
+
+## Bug Fixes
+
+### Two-Finger Scroll on iPad (reported by Tim, Pharo users group)
+- Fixed: two-finger scroll did nothing on iPad. The pan gesture recognizer had
+  cancelsTouchesInView=false, so individual finger touches also sent mouse-down
+  events to Pharo, conflicting with the scroll events. Set to true and added
+  require(toFail:) coordination with the two-finger tap gesture.
+
+### Stage Manager Window Resize
+- Fixed: resizing via Stage Manager or Mac window drag caused garbled display.
+  Root cause was a use-after-free race: backBuffer_.assign() could reallocate
+  the display buffer while the VM thread held a stale pointer from pixels().
+  Fix: pre-reserve buffer capacity (4096x3072) so resize() never reallocates.
+
+### App Exit on Quit
+- Fixed: on iPhone, quitting Pharo returned to the image library in a broken
+  state (VM global state not resettable). App now calls exit(0) after VM
+  cleanup, matching the Cmd+Q behavior on Mac Catalyst.
+
+## Known Issues
+
 - Onboarding/help overlay needed — users don't discover gestures
