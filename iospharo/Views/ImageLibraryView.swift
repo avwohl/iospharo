@@ -66,6 +66,21 @@ struct ImageLibraryView: View {
                 if imageManager.images.isEmpty && !imageManager.isDownloading {
                     emptyState
                 } else {
+                    // Project info bar
+                    HStack(spacing: 4) {
+                        Text("iospharo — Experimental release, not affiliated with or endorsed by")
+                            .foregroundColor(.secondary)
+                        Link("Pharo.org", destination: URL(string: "https://pharo.org")!)
+                        Spacer()
+                        Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
+                        Text("·").foregroundColor(.secondary)
+                        Link("Report a Bug", destination: URL(string: "https://github.com/avwohl/iospharo/issues")!)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                    .background(Color(.secondarySystemBackground))
+
                     // Search filter bar
                     HStack {
                         Image(systemName: "magnifyingglass")
@@ -453,7 +468,10 @@ struct ImageLibraryView: View {
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
             } else {
-                disclaimerBlock
+                Text("Select an image to see details, or right-click for options")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
                     .padding(.vertical, 8)
             }
         }
