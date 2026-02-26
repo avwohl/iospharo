@@ -30,10 +30,23 @@
 static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
     // [NSApplication finishLaunching] — throws assertion failures
+    // [NSApplication setMainMenu:] — throws "API misuse: setting the main
+    //   menu on a non-main thread" because the VM thread calls SDL init
+    //   which creates AppKit menus via FFI.
     Class nsApp = objc_getClass("NSApplication");
     if (nsApp) {
         class_replaceMethod(nsApp, sel_registerName("finishLaunching"),
             (IMP)+[](id, SEL){}, "v@:");
+        class_replaceMethod(nsApp, sel_registerName("setMainMenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsApp, sel_registerName("setAppleMenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsApp, sel_registerName("setServicesMenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsApp, sel_registerName("setWindowsMenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
+        class_replaceMethod(nsApp, sel_registerName("setHelpMenu:"),
+            (IMP)+[](id, SEL, id){}, "v@:@");
     }
 
     // Pharo's SDL platform init creates AppKit menus via FFI.
