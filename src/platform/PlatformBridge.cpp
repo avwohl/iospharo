@@ -351,10 +351,9 @@ void vm_run(void) {
         // entire interpreter loop and is never drained. Without a pool,
         // thread exit doesn't try to release potentially-freed objects.
 
-        // Post a window resize event to trigger Pharo layout
-        if (gDisplay) {
-            vm_postWindowEvent(gDisplay->width(), gDisplay->height());
-        }
+        // Don't post window events here. The SDL poll countdown delivers
+        // SIZE_CHANGED + EXPOSED after SessionManager has had time to
+        // initialize UITheme (~1.5s). Posting early causes redundant redraws.
 
         // Call interpret() which includes periodic event processing and semaphore handling
         gInterpreter->interpret();
@@ -389,10 +388,9 @@ void vm_runOnMainThread(void) {
         vm_setDisplaySize(1024, 768, 32);
     }
 
-    // Post a window resize event to trigger Pharo layout
-    if (gDisplay) {
-        vm_postWindowEvent(gDisplay->width(), gDisplay->height());
-    }
+    // Don't post window events here. The SDL poll countdown delivers
+    // SIZE_CHANGED + EXPOSED after SessionManager has had time to
+    // initialize UITheme (~1.5s). Posting early causes redundant redraws.
 
     // Set a relinquish callback that processes the native run loop.
     // When Pharo calls Processor yield or Delay wait, the VM calls

@@ -156,6 +156,21 @@ class MetalRenderer: NSObject, MTKViewDelegate {
     func draw(in view: MTKView) {
         drawCount += 1
 
+        // Don't render the Pharo framebuffer until Pharo has completed its first
+        // frame (SDL_RenderPresent called). Before that, the buffer contains
+        // uninitialized/partial content from startup. Show the clear color instead.
+        guard ffi_isSDLRenderingActive() else {
+            // Just present the clear color (light gray)
+            guard let drawable = view.currentDrawable,
+                  let rpd = view.currentRenderPassDescriptor,
+                  let cmdBuf = commandQueue.makeCommandBuffer(),
+                  let enc = cmdBuf.makeRenderCommandEncoder(descriptor: rpd) else { return }
+            enc.endEncoding()
+            cmdBuf.present(drawable)
+            cmdBuf.commit()
+            return
+        }
+
         updateDisplayTexture()
 
         guard let texture = displayTexture else { return }

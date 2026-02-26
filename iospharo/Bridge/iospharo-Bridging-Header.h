@@ -100,6 +100,7 @@ void vm_startTextInput(void);
 void vm_stopTextInput(void);
 
 /* SDL2 readiness flags */
+bool ffi_isSDLRenderingActive(void);     // True after first SDL_RenderPresent (Pharo drew a frame)
 bool ffi_isSDLEventPollingActive(void);  // True when OSSDL2Driver event loop is running
 bool ffi_isFirstExposedDelivered(void);  // True when first EXPOSED event was delivered to image
 

@@ -448,6 +448,11 @@ void ffi_notifyDisplayResize(int width, int height) {
         wit->second.height = height;
     }
 
+    // Don't push events during poll countdown — SessionManager needs time
+    // to initialize UITheme before receiving SIZE_CHANGED. The countdown
+    // expiry will deliver SIZE_CHANGED + EXPOSED with the current dimensions.
+    if (sPollCountdown > 0) return;
+
     sPendingWindowEvents.push(SDL_WINDOWEVENT_SIZE_CHANGED);
     sPendingWindowEvents.push(SDL_WINDOWEVENT_EXPOSED);
 }
