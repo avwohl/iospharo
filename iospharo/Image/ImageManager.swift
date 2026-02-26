@@ -400,7 +400,7 @@ class ImageManager: ObservableObject {
             // Find the extracted .image file
             if let imageFileName = findFirstImageFile(in: destDir) {
                 var entry = PharoImage.create(
-                    name: imageFileName.replacingOccurrences(of: ".image", with: ""),
+                    name: label,
                     directoryName: slug,
                     imageFileName: imageFileName,
                     pharoVersion: version ?? guessPharoVersion(from: imageFileName)

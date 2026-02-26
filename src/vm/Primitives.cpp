@@ -15945,6 +15945,31 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 3: // store
                     for (intptr_t x = 0; x < width; x++) row[x] = fill;
                     break;
+                case 34: { // alphaBlendScaled fill (premultiplied source-over)
+                    uint32_t sa = (fill >> 24) & 0xFF;
+                    if (sa == 255) {
+                        for (intptr_t x = 0; x < width; x++) row[x] = fill;
+                    } else if (sa > 0) {
+                        uint32_t invSa = 255 - sa;
+                        uint32_t fillRB = fill & 0xFF00FF;
+                        uint32_t fillG  = fill & 0x00FF00;
+                        for (intptr_t x = 0; x < width; x++) {
+                            uint32_t d = row[x];
+                            uint32_t dAlpha = (d >> 24) & 0xFF;
+                            // First: dest * (1 - alpha/255)
+                            uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                            uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                            uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                            uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                            // Then add premultiplied source
+                            uint32_t rb = (fillRB + dst_rb) & 0xFF00FF;
+                            uint32_t g = (fillG + dst_g) & 0x00FF00;
+                            uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                            row[x] = rb | g | (outAlpha << 24);
+                        }
+                    }
+                    break;
+                }
                 case 7: // OR
                     for (intptr_t x = 0; x < width; x++) row[x] |= fill;
                     break;
@@ -16370,13 +16395,37 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
             switch (combinationRule) {
                 case 3:  // store (source AND halftone)
-                case 34: // sourceWord
                     if (ht == 0xFFFFFFFF) {
                         memcpy(dstRow, srcRow, width * 4);
                     } else {
                         for (intptr_t x = 0; x < width; x++) dstRow[x] = srcRow[x] & ht;
                     }
                     break;
+                case 34: { // alphaBlendScaled: premultiplied source-over compositing
+                    // result = source + dest * (1 - srcAlpha/255)
+                    // Source pixels are already premultiplied by alpha.
+                    // Background pixels (0x00000000) leave dest unchanged.
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        uint32_t sa = (s >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = s; continue; }
+                        if (sa == 0) continue;
+                        uint32_t invSa = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        // First: dest * (1 - alpha/255) per channel
+                        uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                        uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                        uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                        // Then add premultiplied source
+                        uint32_t rb = ((s & 0xFF00FF) + dst_rb) & 0xFF00FF;
+                        uint32_t g = ((s & 0x00FF00) + dst_g) & 0x00FF00;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = rb | g | (outAlpha << 24);
+                    }
+                    break;
+                }
                 case 0:  // AND: dest = dest AND (source AND halftone)
                     for (intptr_t x = 0; x < width; x++) dstRow[x] &= (srcRow[x] & ht);
                     break;
@@ -16558,9 +16607,26 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 srcPixel &= ht;
 
                 switch (combinationRule) {
-                    case 3: case 34:
+                    case 3:
                         dstRow[x] = srcPixel;
                         break;
+                    case 34: { // alphaBlendScaled (premultiplied source-over)
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t invSa = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                        uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                        uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) + dst_rb) & 0xFF00FF;
+                        uint32_t g = ((srcPixel & 0x00FF00) + dst_g) & 0x00FF00;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = rb | g | (outAlpha << 24);
+                        break;
+                    }
                     case 7: // OR
                         dstRow[x] |= srcPixel;
                         break;
@@ -16612,12 +16678,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t sx = sourceX + x;
-                // 8-bit: 4 pixels per word, MSB first
-                intptr_t byteOffset = srcRowOffset + sx;
-                // Pharo stores 8-bit pixels in 32-bit words, big-endian byte order within word
+                // 8-bit: 4 pixels per word, MSB first within each 32-bit word
+                // On little-endian: pixel 0 is at byte offset 3 (MSB), pixel 3 at byte offset 0 (LSB)
                 intptr_t wordIdx = sx / 4;
-                intptr_t byteInWord = 3 - (sx % 4);  // MSB first
-                uint8_t pixelIdx = *(srcBytes + srcRowOffset + wordIdx * 4 + (3 - byteInWord));
+                intptr_t byteInWord = 3 - (sx % 4);
+                uint8_t pixelIdx = *(srcBytes + srcRowOffset + wordIdx * 4 + byteInWord);
 
                 uint32_t srcPixel;
                 if (cmTable && pixelIdx < cmSize) {
@@ -16629,9 +16694,26 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 srcPixel &= ht;
 
                 switch (combinationRule) {
-                    case 3: case 34:
+                    case 3:
                         dstRow[x] = srcPixel;
                         break;
+                    case 34: { // alphaBlendScaled (premultiplied source-over)
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t invSa = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                        uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                        uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) + dst_rb) & 0xFF00FF;
+                        uint32_t g = ((srcPixel & 0x00FF00) + dst_g) & 0x00FF00;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = rb | g | (outAlpha << 24);
+                        break;
+                    }
                     case 7: // OR
                         dstRow[x] |= srcPixel;
                         break;
@@ -16722,7 +16804,24 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
 
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = srcPixel; break;
+                    case 3: dstRow[x] = srcPixel; break;
+                    case 34: { // alphaBlendScaled (premultiplied source-over)
+                        uint32_t sa = (srcPixel >> 24) & 0xFF;
+                        if (sa == 255) { dstRow[x] = srcPixel; break; }
+                        if (sa == 0) break;
+                        uint32_t invSa = 255 - sa;
+                        uint32_t d = dstRow[x];
+                        uint32_t dAlpha = (d >> 24) & 0xFF;
+                        uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                        uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                        uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                        uint32_t rb = ((srcPixel & 0xFF00FF) + dst_rb) & 0xFF00FF;
+                        uint32_t g = ((srcPixel & 0x00FF00) + dst_g) & 0x00FF00;
+                        uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                        dstRow[x] = rb | g | (outAlpha << 24);
+                        break;
+                    }
                     case 7: dstRow[x] |= srcPixel; break;
                     case 25: if (srcPixel != 0) dstRow[x] = srcPixel; break;
                     case 24: { // alpha blend (source-over, non-premultiplied)
