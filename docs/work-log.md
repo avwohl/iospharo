@@ -127,3 +127,29 @@ The 12 failures and 5 errors are consistent with known VM differences:
 - **Simulation**: `testTranscriptPrinting` — bytecode simulator not handling
   SistaV1 encoding
 - The remaining failures are minor edge cases, not core VM issues
+
+## 2026-02-26: Timer Check Starvation Bug Fix
+
+### Problem
+`BlockClosureValueWithinDurationTest >> testValueWithinNonLocalReturn` hangs
+forever. The test spawns a P79 watchdog process that does
+`(Delay forMilliseconds: 200) wait` then delivers `signalException: TimedOut`
+to the test process. The test process runs `[] repeat` while waiting.
+
+### Root Cause
+The periodic timer check in `step()` fires every 1024 bytecodes, gated by
+`!inExtension_` (to avoid corrupting extension byte state during process
+switches). `[] repeat` compiles to a 2-byte backward jump: ExtendB (0xE1) +
+Jump (0xED). Since 1024 is even and the loop is 2 bytecodes, `inExtension_`
+is **always true** when `stepCheckCounter & 0x3FF == 0`. The timer check is
+permanently skipped, so the 200ms delay never fires and the test hangs.
+
+### Fix
+When the periodic check is skipped due to `inExtension_`, set a
+`deferredPeriodicCheck` flag. On the very next step where `inExtension_` is
+false, fire the deferred check. This guarantees the timer check runs within
+1-2 steps of being due, regardless of loop alignment.
+
+### Verification
+- Custom test injecting `signalException: TimedOut` from P79: **PASS**
+- Clean image regression test: no crashes, timer system working normally
