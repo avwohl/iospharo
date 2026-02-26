@@ -28,8 +28,8 @@ class PharoBridge: ObservableObject {
     @Published var displayWidth: Int = 1024
     @Published var displayHeight: Int = 768
 
-    /// Right-click mode toggle — when active, next tap sends yellow-button (right-click)
-    @Published var middleClickActive = false
+    /// Virtual Ctrl key toggle — when active, touches and keyboard events include Ctrl modifier
+    @Published var ctrlModifierActive = false
 
     /// Soft keyboard visibility toggle (iOS only)
     @Published var keyboardVisible = false

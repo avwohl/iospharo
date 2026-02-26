@@ -76,12 +76,9 @@ class PharoMTKView: MTKView {
         let point = touch.location(in: self)
         var buttons = buttonMaskToPharo(event)
 
-        // Right-click modifier button: override to yellow button, then deactivate
-        if bridge.middleClickActive {
+        // Virtual Ctrl key: Ctrl+click = right-click in Pharo
+        if bridge.ctrlModifierActive {
             buttons = IOS_YELLOW_BUTTON
-            DispatchQueue.main.async {
-                bridge.middleClickActive = false
-            }
         }
 
         currentButton = buttons
@@ -342,7 +339,7 @@ class PharoCanvasViewController: UIViewController {
             action: #selector(handleLongPress(_:))
         )
         longPressGesture.minimumPressDuration = 0.5
-        longPressGesture.cancelsTouchesInView = false
+        longPressGesture.cancelsTouchesInView = true
         targetView.addGestureRecognizer(longPressGesture)
 
         let twoFingerTapGesture = UITapGestureRecognizer(
@@ -414,8 +411,11 @@ class PharoCanvasViewController: UIViewController {
         let point = gesture.location(in: mtkView)
         switch gesture.state {
         case .began:
-            // Suppress the direct touch handler's button-up so it doesn't
-            // send a competing RED button-up after our YELLOW button-down.
+            // touchesBegan already sent RED button down. Clean it up before
+            // sending YELLOW, otherwise Pharo has conflicting button states.
+            bridge.sendTouchUp(at: point, buttons: IOS_RED_BUTTON)
+            // Suppress touchesCancelled/touchesEnded from sending another RED up
+            mtkView.suppressNextTouchCancel = true
             mtkView.suppressNextTouchEnd = true
             bridge.sendMouseMoved(to: point, modifiers: 0)
             bridge.sendTouchDown(at: point, buttons: IOS_YELLOW_BUTTON)
@@ -522,20 +522,23 @@ extension PharoMTKView: UIKeyInput {
     var keyboardType: UIKeyboardType { .asciiCapable }
 
     func insertText(_ text: String) {
+        // Include Ctrl modifier when virtual Ctrl button is active
+        let mods: Int32 = (bridge?.ctrlModifierActive == true) ? Int32(IOS_CTRL_KEY) : 0
         for char in text {
             guard let scalar = char.unicodeScalars.first else { continue }
             // Map LF (10) to CR (13) — Pharo uses CR for return key
             let charCode = scalar.value == 10 ? Int32(13) : Int32(scalar.value)
-            vm_postKeyEvent(0, charCode, 0, 0)  // down
-            vm_postKeyEvent(2, charCode, 0, 0)  // stroke
-            vm_postKeyEvent(1, charCode, 0, 0)  // up
+            vm_postKeyEvent(0, charCode, 0, mods)  // down
+            vm_postKeyEvent(2, charCode, 0, mods)  // stroke
+            vm_postKeyEvent(1, charCode, 0, mods)  // up
         }
     }
 
     func deleteBackward() {
-        vm_postKeyEvent(0, 8, 8, 0)  // down (backspace)
-        vm_postKeyEvent(2, 8, 8, 0)  // stroke
-        vm_postKeyEvent(1, 8, 8, 0)  // up
+        let mods: Int32 = (bridge?.ctrlModifierActive == true) ? Int32(IOS_CTRL_KEY) : 0
+        vm_postKeyEvent(0, 8, 8, mods)  // down (backspace)
+        vm_postKeyEvent(2, 8, 8, mods)  // stroke
+        vm_postKeyEvent(1, 8, 8, mods)  // up
     }
 }
 #endif

@@ -42,7 +42,7 @@ struct ContentView: View {
 
             #if !targetEnvironment(macCatalyst)
             FloatingToolbar(
-                rightClickActive: $bridge.middleClickActive,
+                ctrlActive: $bridge.ctrlModifierActive,
                 keyboardVisible: $bridge.keyboardVisible
             )
             #endif
@@ -181,7 +181,7 @@ struct DiagnosticsView: View {
 
 #if !targetEnvironment(macCatalyst)
 struct FloatingToolbar: View {
-    @Binding var rightClickActive: Bool
+    @Binding var ctrlActive: Bool
     @Binding var keyboardVisible: Bool
     @State private var offset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
@@ -195,6 +195,7 @@ struct FloatingToolbar: View {
                     // Keyboard toggle
                     FloatingButton(
                         icon: "keyboard",
+                        label: nil,
                         isActive: keyboardVisible,
                         action: {
                             keyboardVisible.toggle()
@@ -208,12 +209,13 @@ struct FloatingToolbar: View {
                         }
                     )
 
-                    // Right-click modifier
+                    // Virtual Ctrl key — stays active until tapped again
                     FloatingButton(
-                        icon: "cursorarrow.click.2",
-                        isActive: rightClickActive,
+                        icon: "control",
+                        label: "Ctrl",
+                        isActive: ctrlActive,
                         action: {
-                            rightClickActive.toggle()
+                            ctrlActive.toggle()
                         }
                     )
                 }
@@ -240,17 +242,25 @@ struct FloatingToolbar: View {
 
 struct FloatingButton: View {
     let icon: String
+    let label: String?
     let isActive: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 16))
-                .foregroundColor(isActive ? .white : .gray)
-                .frame(width: 40, height: 40)
-                .background(isActive ? Color.blue : Color.gray.opacity(0.3))
-                .clipShape(Circle())
+            Group {
+                if let label = label {
+                    Text(label)
+                        .font(.system(size: 12, weight: .bold, design: .rounded))
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 16))
+                }
+            }
+            .foregroundColor(isActive ? .white : .gray)
+            .frame(width: 40, height: 40)
+            .background(isActive ? Color.blue : Color.gray.opacity(0.3))
+            .clipShape(Circle())
         }
     }
 }
