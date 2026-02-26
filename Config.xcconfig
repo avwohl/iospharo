@@ -7,7 +7,7 @@
 PHARO_XCFW_SLICE[sdk=iphoneos*] = ios-arm64
 PHARO_XCFW_SLICE[sdk=macosx*] = ios-arm64_x86_64-maccatalyst
 PHARO_XCFW_SLICE[sdk=iphonesimulator*] = ios-arm64_x86_64-simulator
-PHARO_VMCORE_LIB = $(PROJECT_DIR)/PharoVMCore.xcframework/$(PHARO_XCFW_SLICE)/libPharoVMCore.a
+PHARO_VMCORE_LIB = $(PROJECT_DIR)/Frameworks/PharoVMCore.xcframework/$(PHARO_XCFW_SLICE)/libPharoVMCore.a
 
 OTHER_LDFLAGS = -ObjC -all_load -force_load $(PHARO_VMCORE_LIB) -liconv -lbz2 -lz
 

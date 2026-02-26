@@ -73,10 +73,10 @@ Takes about 15 minutes on first run. Use `--no-crypto` to skip OpenSSL and libss
 ### Step 3: Build the VM xcframework
 
 ```bash
-./build-xcframework.sh
+scripts/build-xcframework.sh
 ```
 
-This produces `PharoVMCore.xcframework` with slices for:
+This produces `Frameworks/PharoVMCore.xcframework` with slices for:
 - iOS device (arm64)
 - iOS Simulator (arm64)
 - Mac Catalyst (arm64)
@@ -114,10 +114,10 @@ iospharo/
 ├── src/platform/     Platform abstraction (EventQueue, display)
 ├── src/ios/          Generated interpreter reference (cointerp-cpp.c)
 ├── iospharo/         SwiftUI app (Metal renderer, bridge, views)
-├── scripts/          Build scripts for third-party libraries
+├── scripts/          Build scripts (VM xcframework, third-party libraries)
 ├── docs/             Technical reference (bytecode spec, architecture)
-├── CMakeLists.txt    CMake build for the VM library
-└── build-xcframework.sh   Builds PharoVMCore.xcframework
+├── Frameworks/       Built xcframeworks (gitignored)
+└── CMakeLists.txt    CMake build for the VM library
 ```
 
 ## Architecture

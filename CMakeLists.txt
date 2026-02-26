@@ -91,8 +91,8 @@ target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/jpeg
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/testlib
     ${CMAKE_SOURCE_DIR}/src/platform
-    ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
-    ${CMAKE_SOURCE_DIR}/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
+    ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
+    ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
 )
 
 target_compile_options(PharoVMCore PRIVATE
@@ -122,7 +122,7 @@ if(PHARO_WITH_CRYPTO)
 endif()
 
 # Link SDL2 static library with force_load to ensure all symbols are available for dlsym
-set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
+set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
 if(EXISTS ${SDL2_LIBRARY})
     # Force load all symbols from SDL2 so they're available via dlsym at runtime
     target_link_libraries(PharoVMCore "-Wl,-force_load,${SDL2_LIBRARY}")
@@ -130,7 +130,7 @@ if(EXISTS ${SDL2_LIBRARY})
 endif()
 
 # Link libffi static library
-set(LIBFFI_LIBRARY ${CMAKE_SOURCE_DIR}/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/libffi.a)
+set(LIBFFI_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/libffi.a)
 if(EXISTS ${LIBFFI_LIBRARY})
     target_link_libraries(PharoVMCore ${LIBFFI_LIBRARY})
     message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
@@ -189,7 +189,7 @@ foreach(LIB_ENTRY cairo:libcairo.a freetype:libfreetype.a pixman:libpixman-1.a h
     string(REPLACE ":" ";" LIB_PARTS ${LIB_ENTRY})
     list(GET LIB_PARTS 0 XCF_NAME)
     list(GET LIB_PARTS 1 LIB_FILE)
-    set(LIB_XCF ${CMAKE_SOURCE_DIR}/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/${LIB_FILE})
+    set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/${LIB_FILE})
     if(EXISTS ${LIB_XCF})
         target_link_libraries(PharoVMCore ${LIB_XCF})
         message(STATUS "Using ${XCF_NAME}: ${LIB_XCF}")
@@ -199,7 +199,7 @@ endforeach()
 # Crypto xcframeworks (conditional)
 if(PHARO_WITH_CRYPTO)
     foreach(LIB_NAME ssl crypto ssh2 git2)
-        set(LIB_XCF ${CMAKE_SOURCE_DIR}/lib${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+        set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/lib${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
         if(EXISTS ${LIB_XCF})
             target_link_libraries(PharoVMCore ${LIB_XCF})
             message(STATUS "Using lib${LIB_NAME}: ${LIB_XCF}")

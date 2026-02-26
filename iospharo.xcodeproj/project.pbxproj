@@ -42,7 +42,7 @@
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A2000F /* libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = libffi.xcframework; sourceTree = SOURCE_ROOT; };
+		A2000F /* libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/libffi.xcframework; sourceTree = SOURCE_ROOT; };
 		A20010 /* NSEventMonitor.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = NSEventMonitor.m; sourceTree = "<group>"; };
 		A20011 /* NSEventMonitor.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = NSEventMonitor.h; sourceTree = "<group>"; };
 		A20012 /* PharoImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoImage.swift; sourceTree = "<group>"; };
@@ -265,7 +265,7 @@
 				"$(PROJECT_DIR)/src/platform/PlatformBridge.h",
 				"$(PROJECT_DIR)/src/platform/iOSBridge.cpp",
 				"$(PROJECT_DIR)/src/platform/VMParameters.h",
-				"$(PROJECT_DIR)/PharoVMCore.xcframework/Info.plist",
+				"$(PROJECT_DIR)/Frameworks/PharoVMCore.xcframework/Info.plist",
 			);
 			name = "Check XCFramework Freshness";
 			outputFileListPaths = (
@@ -274,7 +274,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "# Auto-rebuild PharoVMCore.xcframework if VM sources are newer\nXCFRAMEWORK=\"${PROJECT_DIR}/PharoVMCore.xcframework/Info.plist\"\nNEEDS_REBUILD=0\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"warning: PharoVMCore.xcframework not found, building...\"\n    NEEDS_REBUILD=1\nelse\n    XCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n    for src in \"${PROJECT_DIR}/src/vm\"/*.cpp \"${PROJECT_DIR}/src/vm\"/*.hpp \"${PROJECT_DIR}/src/vm\"/*.h \"${PROJECT_DIR}/src/platform\"/*.cpp \"${PROJECT_DIR}/src/platform\"/*.hpp \"${PROJECT_DIR}/src/platform\"/*.h; do\n        if [ -f \"$src\" ]; then\n            SRC_TIME=$(stat -f %m \"$src\")\n            if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n                echo \"warning: $(basename $src) is newer than xcframework, rebuilding...\"\n                NEEDS_REBUILD=1\n                break\n            fi\n        fi\n    done\nfi\n\nif [ \"$NEEDS_REBUILD\" -eq 1 ]; then\n    echo \"Building PharoVMCore.xcframework...\"\n    cd \"${PROJECT_DIR}\"\n    ./build-xcframework.sh 2>&1 | tail -5\n    if [ ${PIPESTATUS[0]} -ne 0 ]; then\n        echo \"error: build-xcframework.sh failed\"\n        exit 1\n    fi\n    echo \"PharoVMCore.xcframework rebuilt successfully.\"\nelse\n    echo \"PharoVMCore.xcframework is up-to-date.\"\nfi\n";
+			shellScript = "# Auto-rebuild PharoVMCore.xcframework if VM sources are newer\nXCFRAMEWORK=\"${PROJECT_DIR}/Frameworks/PharoVMCore.xcframework/Info.plist\"\nNEEDS_REBUILD=0\n\nif [ ! -f \"$XCFRAMEWORK\" ]; then\n    echo \"warning: PharoVMCore.xcframework not found, building...\"\n    NEEDS_REBUILD=1\nelse\n    XCF_TIME=$(stat -f %m \"$XCFRAMEWORK\")\n    for src in \"${PROJECT_DIR}/src/vm\"/*.cpp \"${PROJECT_DIR}/src/vm\"/*.hpp \"${PROJECT_DIR}/src/vm\"/*.h \"${PROJECT_DIR}/src/platform\"/*.cpp \"${PROJECT_DIR}/src/platform\"/*.hpp \"${PROJECT_DIR}/src/platform\"/*.h; do\n        if [ -f \"$src\" ]; then\n            SRC_TIME=$(stat -f %m \"$src\")\n            if [ \"$SRC_TIME\" -gt \"$XCF_TIME\" ]; then\n                echo \"warning: $(basename $src) is newer than xcframework, rebuilding...\"\n                NEEDS_REBUILD=1\n                break\n            fi\n        fi\n    done\nfi\n\nif [ \"$NEEDS_REBUILD\" -eq 1 ]; then\n    echo \"Building PharoVMCore.xcframework...\"\n    cd \"${PROJECT_DIR}\"\n    ./scripts/build-xcframework.sh 2>&1 | tail -5\n    if [ ${PIPESTATUS[0]} -ne 0 ]; then\n        echo \"error: build-xcframework.sh failed\"\n        exit 1\n    fi\n    echo \"PharoVMCore.xcframework rebuilt successfully.\"\nelse\n    echo \"PharoVMCore.xcframework is up-to-date.\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

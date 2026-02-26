@@ -34,7 +34,7 @@ stdbuf
 # Xcode derived data
 DerivedData/
 *.xcworkspace
-*.xcframework
+Frameworks/
 
 # Xcode
 *.xcuserstate

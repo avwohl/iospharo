@@ -14,12 +14,13 @@ set -e
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+cd "$PROJECT_DIR"
 
-BUILD_BASE="$SCRIPT_DIR/build-xcframework"
-XCFRAMEWORK_OUTPUT="$SCRIPT_DIR/PharoVMCore.xcframework"
+BUILD_BASE="$PROJECT_DIR/build-xcframework"
+XCFRAMEWORK_OUTPUT="$PROJECT_DIR/Frameworks/PharoVMCore.xcframework"
 
-XCFRAMEWORK_TMP="$SCRIPT_DIR/PharoVMCore-tmp.xcframework"
+XCFRAMEWORK_TMP="$PROJECT_DIR/Frameworks/PharoVMCore-tmp.xcframework"
 
 echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simulator) ==="
 
@@ -27,6 +28,7 @@ echo "=== Building PharoVMCore.xcframework (iOS Device + Mac Catalyst + iOS Simu
 rm -rf "$BUILD_BASE"
 rm -rf "$XCFRAMEWORK_TMP"
 mkdir -p "$BUILD_BASE"
+mkdir -p "$PROJECT_DIR/Frameworks"
 
 # Helper: configure, build, and find the output library
 build_slice() {
@@ -94,7 +96,7 @@ build_slice() {
         "libssh2:libssh2.a"; do
         local xcf_name="${xcf_entry%%:*}"
         local lib_file="${xcf_entry##*:}"
-        local lib_path="$SCRIPT_DIR/${xcf_name}.xcframework/${xcfw_platform}/${lib_file}"
+        local lib_path="$PROJECT_DIR/Frameworks/${xcf_name}.xcframework/${xcfw_platform}/${lib_file}"
         if [ -f "$lib_path" ]; then
             # Extract single-arch slice from potentially fat libraries
             local thin_path="$thindir/${xcf_name}-${lib_file}"

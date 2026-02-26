@@ -27,7 +27,7 @@ LIBFFI_VERSION="3.5.2"
 LIBFFI_URL="https://github.com/libffi/libffi/releases/download/v${LIBFFI_VERSION}/libffi-${LIBFFI_VERSION}.tar.gz"
 LIBFFI_SRC="${SOURCES_DIR}/libffi-${LIBFFI_VERSION}"
 
-OUTPUT="${PROJECT_DIR}/libffi.xcframework"
+OUTPUT="${PROJECT_DIR}/Frameworks/libffi.xcframework"
 
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -172,6 +172,7 @@ for slice in ios-device-arm64 ios-sim-universal catalyst-universal macos-univers
 done
 
 log "Creating xcframework..."
+mkdir -p "$(dirname "$OUTPUT")"
 rm -rf "$OUTPUT"
 
 xcodebuild -create-xcframework \

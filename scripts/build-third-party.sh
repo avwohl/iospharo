@@ -645,8 +645,9 @@ create_xcframework() {
     local device_dir="${INSTALL_ROOT}/ios-device-arm64"
     local sim_fat="${BUILD_ROOT}/fat-ios-simulator"
     local cat_fat="${BUILD_ROOT}/fat-maccatalyst"
-    local output="${PROJECT_DIR}/${xcf_name}.xcframework"
+    local output="${PROJECT_DIR}/Frameworks/${xcf_name}.xcframework"
 
+    mkdir -p "${PROJECT_DIR}/Frameworks"
     rm -rf "$output"
 
     local args=()
@@ -762,8 +763,8 @@ main() {
     # Package as xcframeworks
     package_xcframeworks
 
-    log "Done! xcframeworks created in ${PROJECT_DIR}/"
-    ls -la "${PROJECT_DIR}"/*.xcframework 2>/dev/null || warn "No xcframeworks found"
+    log "Done! xcframeworks created in ${PROJECT_DIR}/Frameworks/"
+    ls -la "${PROJECT_DIR}"/Frameworks/*.xcframework 2>/dev/null || warn "No xcframeworks found"
 }
 
 main "$@"

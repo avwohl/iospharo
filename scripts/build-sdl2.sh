@@ -27,7 +27,7 @@ SDL2_VERSION="2.26.5"
 SDL2_URL="https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_VERSION}/SDL2-${SDL2_VERSION}.tar.gz"
 SDL2_SRC="${SOURCES_DIR}/SDL2-${SDL2_VERSION}"
 
-OUTPUT="${PROJECT_DIR}/SDL2.xcframework"
+OUTPUT="${PROJECT_DIR}/Frameworks/SDL2.xcframework"
 
 GREEN='\033[0;32m'
 NC='\033[0m'
@@ -173,6 +173,7 @@ for slice in ios-device-arm64 ios-sim-universal catalyst-universal macos-univers
 done
 
 log "Creating xcframework..."
+mkdir -p "$(dirname "$OUTPUT")"
 rm -rf "$OUTPUT"
 
 xcodebuild -create-xcframework \

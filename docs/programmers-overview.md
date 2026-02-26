@@ -92,10 +92,14 @@ iospharo/                # Swift app (Mac Catalyst + iOS)
   Image/                 #   ImageManager.swift (download, catalog, import)
 
 scripts/                 # Build and test helpers
-  build-third-party.sh   #   Builds cairo, freetype, libffi, etc. as xcframeworks
+  build-third-party.sh   #   Builds cairo, freetype, etc. as xcframeworks → Frameworks/
   build-xcframework.sh   #   Builds PharoVMCore.xcframework (3 platform slices)
+  build-libffi.sh        #   Builds libffi.xcframework
+  build-sdl2.sh          #   Builds SDL2.xcframework
   run_sunit_tests.st     #   Injects SUnit test runner into a Pharo image
   run_batch_tests.sh     #   Runs full test suite in batches
+
+Frameworks/              # Built xcframeworks (gitignored, not in repo)
 
 docs/                    # Documentation
   SistaV1-Bytecode-Spec.md  # Local copy of the Sista V1 bytecode spec
@@ -122,7 +126,7 @@ cmake -B build -G Ninja && cmake --build build
 ./scripts/build-third-party.sh
 
 # 2. Build PharoVMCore.xcframework (3 slices: device, simulator, Mac Catalyst)
-./build-xcframework.sh
+scripts/build-xcframework.sh
 
 # 3. Build the app
 cp Local.xcconfig.example Local.xcconfig   # edit with your Apple team ID
