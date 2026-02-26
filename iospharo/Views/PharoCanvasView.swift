@@ -227,7 +227,6 @@ class PharoCanvasViewController: UIViewController {
         mtkView.translatesAutoresizingMaskIntoConstraints = false
         mtkView.isPaused = false
         mtkView.enableSetNeedsDisplay = false
-        // 30fps: presentsWithTransaction blocks main thread each frame
         mtkView.preferredFramesPerSecond = 30
 
         view.addSubview(mtkView)

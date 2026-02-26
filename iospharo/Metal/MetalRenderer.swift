@@ -4,9 +4,8 @@
  * Metal rendering backend for displaying the Pharo VM framebuffer.
  * Updates a texture from VM display bits and renders it to screen.
  *
- * Note: screencapture cannot capture Metal layer content from Mac Catalyst apps.
- * Use saveDisplayBufferAsPNG() for visual verification — it reads the VM's
- * display buffer directly via CGContext.
+ * Note: `screencapture -x` cannot capture Metal layer content from Mac Catalyst
+ * apps — use `screencapture -x -l <WINDOW_ID>` with a specific window ID instead.
  */
 
 import Metal

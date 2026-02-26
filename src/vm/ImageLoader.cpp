@@ -101,9 +101,9 @@ bool ImageLoader::readHeader(std::ifstream& file, LoadResult& result) {
     result.fullBlockClosures = (header_.imageHeaderFlags &
                                 static_cast<uint64_t>(ImageFlags::FullBlockClosures)) != 0;
 
-    // Parse screen size
-    result.screenWidth = static_cast<uint32_t>(header_.screenSize >> 32);
-    result.screenHeight = static_cast<uint32_t>(header_.screenSize & 0xFFFFFFFF);
+    // Parse screen size (packed as width << 16 | height, per Spur format)
+    result.screenWidth = static_cast<uint32_t>((header_.screenSize >> 16) & 0xFFFF);
+    result.screenHeight = static_cast<uint32_t>(header_.screenSize & 0xFFFF);
 
     result.heapSize = header_.imageBytes;
 

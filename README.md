@@ -78,8 +78,8 @@ scripts/build-xcframework.sh
 
 This produces `Frameworks/PharoVMCore.xcframework` with slices for:
 - iOS device (arm64)
-- iOS Simulator (arm64)
-- Mac Catalyst (arm64)
+- iOS Simulator (arm64 + x86_64)
+- Mac Catalyst (arm64 + x86_64)
 
 ### Step 4: Build the app
 
@@ -138,19 +138,17 @@ iospharo/
 
 The image's OSSDL2Driver calls SDL2 functions via FFI. Our SDL2 stubs bridge
 these to the Metal rendering pipeline. Touch gestures are mapped to Pharo
-mouse events (tap=left, long-press=right, two-finger=middle).
+mouse events (tap=left-click, long-press=right-click, two-finger tap=right-click).
 
 ## Configuration
 
-VM parameters in `iospharo/Info.plist`:
+VM parameters are set in `PharoBridge.swift` when calling `vm_init()`:
 
-| Key | Default | Description |
-|-----|---------|-------------|
-| `PharoImageFile` | `Pharo.image` | Image filename |
-| `PharoMaxOldSpaceSize` | 536870912 (512 MB) | Max heap size |
-| `PharoEdenSize` | 10485760 (10 MB) | Young generation size |
-| `PharoCodeSize` | 67108864 (64 MB) | Code space size |
-| `PharoHeadless` | false | Run without display |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `maxOldSpaceSize` | 2 GB | Max heap (virtual, lazy commit) |
+| `edenSize` | 10 MB | Young generation size |
+| `maxCodeSize` | 0 | JIT code space (unused) |
 
 ## License
 

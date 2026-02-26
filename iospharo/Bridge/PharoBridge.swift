@@ -28,7 +28,7 @@ class PharoBridge: ObservableObject {
     @Published var displayWidth: Int = 1024
     @Published var displayHeight: Int = 768
 
-    /// Middle-click mode toggle (iOS floating button)
+    /// Middle-click mode toggle (iOS floating button) — TODO: wire to touch event handling
     @Published var middleClickActive = false
 
     private var imagePath: String?

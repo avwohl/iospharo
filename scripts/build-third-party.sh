@@ -4,7 +4,7 @@
 # Builds static libraries for:
 #   - iOS Simulator (arm64 + x86_64)
 #   - Mac Catalyst (arm64 + x86_64)
-#   - iOS Device (arm64)  [future]
+#   - iOS Device (arm64)
 #
 # Then packages each as an .xcframework.
 #

@@ -232,8 +232,8 @@ void printHeader(const SpurImageHeader& header) {
               << std::dec << std::endl;
     std::cout << "Last hash:         " << header.lastHash << std::endl;
 
-    uint32_t width = static_cast<uint32_t>(header.screenSize >> 32);
-    uint32_t height = static_cast<uint32_t>(header.screenSize & 0xFFFFFFFF);
+    uint32_t width = static_cast<uint32_t>((header.screenSize >> 16) & 0xFFFF);
+    uint32_t height = static_cast<uint32_t>(header.screenSize & 0xFFFF);
     std::cout << "Screen size:       " << width << " x " << height << std::endl;
 
     std::cout << "Flags:             0x" << std::hex << header.imageHeaderFlags

@@ -247,7 +247,7 @@ bool Interpreter::initialize() {
         std::string rcvrClassName = "<unknown>";
         std::string methodSelector = "<unknown>";
 
-        // Get receiver's class name (Pharo 12 layout)
+        // Get receiver's class name
         if (receiver.isObject() && receiver.rawBits() > 0x10000) {
             Oop rcvrClass = memory_.classOf(receiver);
             if (rcvrClass.isObject()) {
@@ -471,8 +471,6 @@ void Interpreter::processInputEvents() {
 }
 
 // ===== DISPLAY SYNCHRONIZATION =====
-// Until BitBlt primitives are fully working, bypass Display Form and
-// render World morphs directly.
 
 void Interpreter::syncDisplayToSurface() {
     if (!pharo::gDisplaySurface) return;

@@ -97,14 +97,12 @@ namespace pharo {
 }
 
 
-// Double-buffered display surface with deferred resize
-// Resize is queued and applied during buffer swap to prevent tearing
+// Single-buffered display surface — the VM writes directly and Metal reads at 30fps.
+// Mutex protects dimensions/buffer pointer during resize.
 class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d)
-        : width_(w), height_(h), depth_(d),
-          pendingWidth_(0), pendingHeight_(0), pendingDepth_(0),
-          pendingResize_(false) {
+        : width_(w), height_(h), depth_(d) {
         backBuffer_.resize(w * h);
     }
 
@@ -146,8 +144,7 @@ public:
     }
 
     bool isResizing() const {
-        std::lock_guard<std::mutex> lock(mutex_);
-        return pendingResize_;
+        return false;  // Resize is immediate (no deferred/double-buffer)
     }
 
     void invalidateRect(int x, int y, int w, int h) override {
@@ -167,12 +164,6 @@ public:
         int newWidth, newHeight;
         {
             std::lock_guard<std::mutex> lock(mutex_);
-
-            // Apply pending resize
-            if (pendingResize_) {
-                pendingResize_ = false;
-            }
-
             newWidth = width_;
             newHeight = height_;
         }
@@ -189,29 +180,19 @@ public:
     // from stale pixel data written at the old pitch being read at the new pitch.
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (w == width_ && h == height_ && d == depth_ && !pendingResize_) return;
+        if (w == width_ && h == height_ && d == depth_) return;
 
         width_ = w;
         height_ = h;
         depth_ = d;
         backBuffer_.assign(w * h, 0);  // Clear to black (not resize — avoids stale data)
-
-        pendingWidth_ = w;
-        pendingHeight_ = h;
-        pendingDepth_ = d;
-        pendingResize_ = true;
     }
 
 private:
     mutable std::mutex mutex_;
 
-    // Back buffer dimensions (current rendering target)
     int width_, height_, depth_;
     std::vector<uint32_t> backBuffer_;
-
-    // Pending resize (applied during swap)
-    int pendingWidth_, pendingHeight_, pendingDepth_;
-    bool pendingResize_;
 
     DisplayUpdateFunc updateCallback_ = nullptr;
     void* context_ = nullptr;

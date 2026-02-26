@@ -1377,8 +1377,10 @@ void registerSDL2Stubs() {
 }
 
 // ========== FreeType stubs ==========
-// FreeType is not available on iOS/Mac Catalyst. Register stubs that return
-// error codes so the image falls back to bitmap fonts.
+// FreeType is bundled as a static xcframework, but the Pharo image sometimes
+// tries to load it as a shared library via FFI before finding the static
+// symbols. These stubs return error codes, causing the image to fall back
+// to the statically-linked FreeType (via the FT2Plugin path).
 
 static int stub_FT_Init_FreeType(void** alibrary) {
     if (alibrary) *alibrary = nullptr;
@@ -1414,8 +1416,9 @@ static void* stub_FT_Library_Version(void* lib, int* maj, int* min, int* pat) {
 }
 
 // ========== libgit2 stubs ==========
-// libgit2 is bundled with reference VM but not available on iOS/Mac Catalyst.
-// Register stubs that return error codes so Iceberg/LGit falls back gracefully.
+// libgit2 is statically linked into PharoVMCore.a. These stubs catch FFI
+// attempts to load it as a shared library, returning error codes so the
+// image falls back to the statically-linked symbols (found via dlsym).
 
 static int stub_git_libgit2_init() {
     return -1;  // GIT_ERROR

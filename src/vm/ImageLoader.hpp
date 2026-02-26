@@ -82,7 +82,7 @@ struct SpurImageHeader {
     uint64_t startOfMemory;       // Base address when saved
     uint64_t specialObjectsOop;   // Oop of special objects array
     uint64_t lastHash;            // Last identity hash
-    uint64_t screenSize;          // width << 32 | height
+    uint64_t screenSize;          // width << 16 | height
     uint64_t imageHeaderFlags;    // Various flags
     uint32_t extraVMMemory;       // Extra memory requested (KB)
     uint16_t numStackPages;       // Stack pages (if present)

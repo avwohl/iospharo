@@ -105,7 +105,7 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     size_t totalSize = headerSize + bodySize;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in old space (eden/scavenge not yet implemented)
+    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) {
@@ -153,7 +153,7 @@ Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in old space (eden/scavenge not yet implemented)
+    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) return nilObject_;
@@ -209,7 +209,7 @@ Oop ObjectMemory::allocateWords(uint32_t classIndex, size_t wordCount) {
     size_t totalSize = headerSize + slotCount * 8;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in old space (eden/scavenge not yet implemented)
+    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
 
     if (!obj) return nilObject_;
@@ -277,7 +277,7 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     size_t size = src->totalSize();
     bool hasOverflow = src->hasOverflowSlots();
 
-    // Allocate in old space (eden/scavenge not yet implemented)
+    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
     ObjectHeader* copy = allocateRaw(size, Space::Old);
     if (!copy) return nilObject_;
 

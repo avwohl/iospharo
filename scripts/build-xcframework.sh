@@ -6,8 +6,8 @@
 #
 # Uses cmake with Ninja generator (not Xcode) because cmake -G Xcode spawns
 # xcodebuild for compiler identification which hangs in sandboxed environments.
-# Cross-compilation is controlled via CFLAGS/sysroot, not CMAKE_SYSTEM_NAME=iOS,
-# following the same pattern as scripts/build-third-party.sh.
+# Cross-compilation uses CMAKE_SYSTEM_NAME=iOS with FORCE_XCFRAMEWORK_PLATFORM
+# to select the correct xcframework slice for each platform's dependencies.
 set -e
 
 # Ensure Homebrew tools (cmake, ninja) are in PATH when run from Xcode build phases

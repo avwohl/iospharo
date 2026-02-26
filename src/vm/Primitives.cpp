@@ -15331,16 +15331,14 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     Event event;
     bool hasEvent = false;
 
-    // IMPORTANT: Only read from passThroughEvents_, which is populated by processInputEvents().
-    // processInputEvents() filters menu-related events and passes non-menu events through.
-    // We do NOT read directly from gEventQueue here - that would bypass menu handling.
+    // Only read from passThroughEvents_, which is populated by processInputEvents().
+    // processInputEvents() drains gEventQueue (skipping internal WindowMetrics events)
+    // into passThroughEvents_. We do NOT read gEventQueue directly here.
     if (!passThroughEvents_.empty()) {
         event = passThroughEvents_.front();
         passThroughEvents_.erase(passThroughEvents_.begin());
         hasEvent = true;
     }
-    // Note: We intentionally do NOT fall back to gEventQueue.pop() here.
-    // All events must go through processInputEvents() first for menu handling.
 
     if (hasEvent) {
         // Fill buffer with event data - only write slots that exist

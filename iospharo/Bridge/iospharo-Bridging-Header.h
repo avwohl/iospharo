@@ -25,7 +25,6 @@ void vm_run_interpreter(void);
 void vm_runOnMainThread(void);  // Run interpreter on the current (main) thread
 bool vm_isRunning(void);  // Check if interpreter is running
 void vm_stop(void);  // Must be called before app exit to prevent crash
-int vm_main_with_parameters(VMParameters* parameters);
 void vm_parameters_init(VMParameters* parameters);
 void vm_parameters_destroy(VMParameters* parameters);
 
@@ -49,17 +48,10 @@ typedef struct {
 
 void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info);
 
-/* SAFE: Copy display to destination buffer under lock (prevents tearing) */
-bool ios_copyDisplayBuffer(uint32_t* dest, size_t destSize, int* outWidth, int* outHeight);
-
 /* Check if display is being resized (Metal should skip updates) */
 bool ios_isDisplayResizing(void);
 
-/* iOS event bridge functions (legacy) */
-void ios_queueTouchEvent(int type, int x, int y, int buttons, int modifiers);
-void ios_queueKeyEvent(int charCode, int pressCode, int modifiers);
-
-/* Platform event functions (new C++ EventQueue) */
+/* Event functions (C++ EventQueue) */
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers);
 void vm_postKeyEvent(int type, int charCode, int keyCode, int modifiers);
 void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);

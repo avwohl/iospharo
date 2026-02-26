@@ -151,7 +151,7 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - The VM must work with standard Pharo images that other VM clients use for release
 - Do NOT create iOS-specific images that require special preparation
 - Any testing with modified images is fine, but the goal is normal image compatibility
-- The display driver (OSiOSDriver) should work without requiring image-side changes
+- The display driver (OSSDL2Driver) should work without requiring image-side changes
 - **Use fresh images only**: Always test with freshly downloaded Pharo images, not previously-saved ones
 - **Image saving works**: Primitive 97 (snapshot) saves the heap in standard Spur format via ImageWriter. Converts iOS immediate tags back to standard Spur encoding. Both `Smalltalk snapshot:andQuit:` (standard SessionManager path with session stop/start) and raw `<primitive: 97>` work. Save-reload roundtrip verified.
 
@@ -162,11 +162,11 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - FFI test failures in batch runs are test-runner forking artifacts, not FFI bugs
 
 ## Debugging
-- **Debug before asking**: Always run the app and check logs yourself before asking the user to test. Use `/tmp/iospharo-render.log` and other log files to diagnose issues.
+- **Debug before asking**: Always run the app and check logs yourself before asking the user to test.
 - Always test on Mac first - it starts up much faster than the iOS simulator
 - Use `./build/test_load_image <image-path>` for quick VM testing
 - Build with `cmake --build build` from the project root
-- Full build cycle: `cmake --build build-app && scripts/build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
+- Full build cycle: `scripts/build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
 
 ---
 ## Running Official Pharo Test Suite
