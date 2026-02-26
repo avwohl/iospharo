@@ -356,6 +356,57 @@ class ImageManager: ObservableObject {
         #endif
     }
 
+    // MARK: - Rename
+
+    func renameImage(_ image: PharoImage, to newName: String) {
+        guard let idx = images.firstIndex(where: { $0.id == image.id }) else { return }
+        images[idx].name = newName
+        save()
+    }
+
+    // MARK: - Duplicate
+
+    func duplicateImage(_ image: PharoImage) {
+        let slug = makeSlug(from: image.name + "-copy") + "-" + UUID().uuidString.prefix(4).lowercased()
+        let destDir = PharoImage.imagesRoot.appendingPathComponent(slug, isDirectory: true)
+
+        do {
+            try fileManager.copyItem(at: image.directoryURL, to: destDir)
+
+            var entry = PharoImage.create(
+                name: "\(image.name) (copy)",
+                directoryName: slug,
+                imageFileName: image.imageFileName,
+                pharoVersion: image.pharoVersion
+            )
+            entry.refreshSize()
+            images.append(entry)
+            save()
+            #if DEBUG
+            fputs("[LIB] duplicated image: \(image.directoryName) → \(slug)\n", stderr)
+            #endif
+        } catch {
+            errorMessage = "Duplicate failed: \(error.localizedDescription)"
+        }
+    }
+
+    // MARK: - Total Size
+
+    /// Sum all file sizes in the image's directory
+    func totalSizeForImage(_ image: PharoImage) -> Int64? {
+        guard let contents = try? fileManager.contentsOfDirectory(
+            at: image.directoryURL, includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return nil }
+
+        var total: Int64 = 0
+        for url in contents {
+            if let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize {
+                total += Int64(size)
+            }
+        }
+        return total > 0 ? total : nil
+    }
+
     // MARK: - Launch tracking
 
     func markLaunched(_ image: PharoImage) {

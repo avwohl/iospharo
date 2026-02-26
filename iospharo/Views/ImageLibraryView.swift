@@ -8,6 +8,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum SortOrder: String, CaseIterable {
+    case name = "Name"
+    case dateCreated = "Date Added"
+    case lastUsed = "Last Used"
+    case size = "Size"
+}
+
 struct ImageLibraryView: View {
     @EnvironmentObject var imageManager: ImageManager
     @EnvironmentObject var bridge: PharoBridge
@@ -16,6 +23,27 @@ struct ImageLibraryView: View {
     @State private var showingFileImporter = false
     @State private var showingSettings = false
     @State private var imageToDelete: PharoImage?
+    @State private var sortOrder: SortOrder = .name
+    @State private var imageToRename: PharoImage?
+    @State private var renameText: String = ""
+    @State private var imageToShare: PharoImage?
+
+    private var sortedImages: [PharoImage] {
+        switch sortOrder {
+        case .name:
+            return imageManager.images.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        case .dateCreated:
+            return imageManager.images.sorted { $0.createdAt > $1.createdAt }
+        case .lastUsed:
+            return imageManager.images.sorted {
+                ($0.lastLaunchedAt ?? .distantPast) > ($1.lastLaunchedAt ?? .distantPast)
+            }
+        case .size:
+            return imageManager.images.sorted {
+                ($0.imageSizeBytes ?? 0) > ($1.imageSizeBytes ?? 0)
+            }
+        }
+    }
 
     var body: some View {
         NavigationView {
@@ -47,10 +75,22 @@ struct ImageLibraryView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        showingSettings = true
-                    } label: {
-                        Image(systemName: "gear")
+                    HStack(spacing: 12) {
+                        Button {
+                            showingSettings = true
+                        } label: {
+                            Image(systemName: "gear")
+                        }
+
+                        Menu {
+                            Picker("Sort by", selection: $sortOrder) {
+                                ForEach(SortOrder.allCases, id: \.self) { order in
+                                    Text(order.rawValue).tag(order)
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "line.3.horizontal.decrease.circle")
+                        }
                     }
                 }
             }
@@ -91,6 +131,26 @@ struct ImageLibraryView: View {
                 if let image = imageToDelete {
                     Text("This will permanently remove \"\(image.name)\" and all its files.")
                 }
+            }
+            .alert("Rename Image", isPresented: .init(
+                get: { imageToRename != nil },
+                set: { if !$0 { imageToRename = nil } }
+            )) {
+                TextField("Name", text: $renameText)
+                Button("Rename") {
+                    if let image = imageToRename, !renameText.isEmpty {
+                        imageManager.renameImage(image, to: renameText)
+                    }
+                    imageToRename = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    imageToRename = nil
+                }
+            } message: {
+                Text("Enter a new name for this image.")
+            }
+            .sheet(item: $imageToShare) { image in
+                ShareSheet(activityItems: [image.directoryURL])
             }
         }
         // Error banner
@@ -172,11 +232,45 @@ struct ImageLibraryView: View {
             }
 
             Section {
-                ForEach(imageManager.images) { image in
+                ForEach(sortedImages) { image in
                     Button {
                         launchImage(image)
                     } label: {
                         ImageRow(image: image)
+                    }
+                    .contextMenu {
+                        Button {
+                            launchImage(image)
+                        } label: {
+                            Label("Launch", systemImage: "play.fill")
+                        }
+
+                        Button {
+                            renameText = image.name
+                            imageToRename = image
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+
+                        Button {
+                            imageManager.duplicateImage(image)
+                        } label: {
+                            Label("Duplicate", systemImage: "doc.on.doc")
+                        }
+
+                        Button {
+                            imageToShare = image
+                        } label: {
+                            Label("Share", systemImage: "square.and.arrow.up")
+                        }
+
+                        Divider()
+
+                        Button(role: .destructive) {
+                            imageToDelete = image
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
                     .swipeActions(edge: .trailing, allowsFullSwipe: false) {
                         Button(role: .destructive) {
@@ -199,10 +293,14 @@ struct ImageLibraryView: View {
 
     private var disclaimerBlock: some View {
         VStack(spacing: 4) {
-            Text("Experimental release — not affiliated with or endorsed by Pharo.org")
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .multilineTextAlignment(.center)
+            HStack(spacing: 0) {
+                Text("Experimental release — not affiliated with or endorsed by ")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Link("Pharo.org", destination: URL(string: "https://pharo.org")!)
+                    .font(.caption)
+            }
+            .multilineTextAlignment(.center)
             HStack(spacing: 12) {
                 Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
                 Text("·")
@@ -224,4 +322,16 @@ struct ImageLibraryView: View {
             bridge.start()
         }
     }
+}
+
+// MARK: - Share Sheet (UIActivityViewController wrapper)
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let activityItems: [Any]
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
 }
