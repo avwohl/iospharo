@@ -29,10 +29,6 @@ struct SettingsView: View {
                             .foregroundColor(.gray)
                     }
 
-                    Text("This is an experimental, community-built Pharo VM for iOS. It is not affiliated with, endorsed by, or supported by Pharo.org.")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
                     Link(destination: URL(string: "https://github.com/avwohl/iospharo")!) {
                         HStack {
                             Label("GitHub Project", systemImage: "link")
