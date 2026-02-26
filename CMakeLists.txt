@@ -249,5 +249,5 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 endif()
 
 message(STATUS "PharoVM Clean C++ configured")
-message(STATUS "  Build tests with: make test_load_image test_platform")
+message(STATUS "  Build tests with: cmake --build build -- test_load_image test_platform")
 message(STATUS "  For Swift apps, use Xcode with the bridging header")

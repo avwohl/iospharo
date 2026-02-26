@@ -34,7 +34,6 @@ public:
 
     // ===== Accessors for Interpreter event handling =====
 
-    int menuBarScale() const { return menuBarScale_; }
     int menuBarTop() const { return menuBarTop_; }
     int menuBarBottom() const { return menuBarBottom_; }
     int selectedMenuIndex() const { return selectedMenuIndex_; }
@@ -82,8 +81,6 @@ private:
     std::vector<Oop> menuBarItemMorphs_;
     int menuBarTop_ = 28;
     int menuBarBottom_ = 72;
-    int menuBarScale_ = 1;
-
     DropdownState dropdownState_;
     WorldMenuBounds pendingMenuBounds_;
     bool hasVisibleMenu_ = false;

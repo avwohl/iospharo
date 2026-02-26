@@ -459,11 +459,6 @@ private:
     // Display Form (the Smalltalk Form that represents the screen)
     Oop displayForm_ = Oop::nil();
 
-    // Mouse tracking for event handling
-    int lastMouseX_ = 0;
-    int lastMouseY_ = 0;
-    int lastMouseButtons_ = 0;
-    int lastMouseEventType_ = 0;  // 0=move, 1=down, 2=up
 
     // Pending world menu invocation (queued to avoid reentrant execution)
     int pendingWorldMenuX_ = -1;

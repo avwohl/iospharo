@@ -89,6 +89,9 @@ build_slice() {
         -DSDL_TEST=OFF
         -DSDL_TESTS=OFF
         -DSDL2_DISABLE_SDL2MAIN=ON
+        # Disable all SDL2 subsystems — we only need the headers and symbol table.
+        # The VM (src/vm/FFI.cpp) provides stub implementations for all SDL2 functions
+        # that Pharo calls via FFI, bridging them to the Metal rendering pipeline.
         -DSDL_OPENGL=OFF
         -DSDL_OPENGLES=OFF
         -DSDL_VIDEO=OFF

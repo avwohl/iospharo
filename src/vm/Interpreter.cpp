@@ -457,13 +457,6 @@ void Interpreter::processInputEvents() {
         if (event.type == static_cast<int>(pharo::EventType::WindowMetrics)) {
             continue;
         }
-        // Track mouse position for direct hand updates (backup if event system not working)
-        if (event.type == static_cast<int>(pharo::EventType::Mouse)) {
-            lastMouseX_ = event.arg1 * worldRenderer_.menuBarScale();
-            lastMouseY_ = event.arg2 * worldRenderer_.menuBarScale();
-            lastMouseButtons_ = event.arg3;
-            lastMouseEventType_ = event.arg5;
-        }
 
         // All events go to Pharo via passThroughEvents_ (consumed by primitive 264)
         passThroughEvents_.push_back(event);

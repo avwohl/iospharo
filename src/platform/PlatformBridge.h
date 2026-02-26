@@ -49,7 +49,6 @@ void vm_setDisplayUpdateCallback(DisplayUpdateFunc callback, void* context);
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers);
 void vm_postKeyEvent(int type, int charCode, int keyCode, int modifiers);
 void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
-void vm_postWindowEvent(int width, int height);
 
 // Clipboard (callbacks registered by Swift)
 typedef const char* (*ClipboardGetFunc)(void);

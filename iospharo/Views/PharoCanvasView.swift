@@ -425,9 +425,6 @@ class PharoCanvasViewController: UIViewController {
         }
     }
 
-    func updateDisplayTexture() {
-        renderer?.updateDisplayTexture()
-    }
 }
 
 // MARK: - UIContextMenuInteractionDelegate (Mac Catalyst right-click)

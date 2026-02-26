@@ -1,7 +1,7 @@
 #!/bin/bash
 # Run test suite in batches, each with a fresh Pharo image.
-# GC compaction corruption kills the runner after ~150-200 classes,
-# so we split into batches of 150 classes each.
+# Split into small batches to avoid hitting VM limitations during
+# extended test runs. Each batch starts from a fresh image.
 
 BATCH_SIZE=25
 TOTAL_CLASSES=600  # approximate

@@ -589,14 +589,6 @@ void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers) {
     pharo::gEventQueue.push(event);
 }
 
-void vm_postWindowEvent(int width, int height) {
-    pharo::Event event;
-    event.type = static_cast<int>(pharo::EventType::WindowMetrics);
-    event.arg1 = width;
-    event.arg2 = height;
-    pharo::gEventQueue.push(event);
-}
-
 // Clipboard
 static ClipboardGetFunc gClipboardGet = nullptr;
 static ClipboardSetFunc gClipboardSet = nullptr;

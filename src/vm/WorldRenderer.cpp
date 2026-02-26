@@ -394,7 +394,6 @@ void WorldRenderer::renderMenuBar(uint32_t* pixels, int dispWidth, int dispHeigh
     // Store menu bar bounds for click detection
     menuBarTop_ = titleBarOffset;
     menuBarBottom_ = titleBarOffset + scaledMenuBarHeight;
-    menuBarScale_ = isRetina ? 2 : 1;
 
     // Render dropdown menu if a menu is selected
     if (selectedMenuIndex_ >= 0 && selectedMenuIndex_ < static_cast<int>(menuBarItemMorphs_.size())) {
