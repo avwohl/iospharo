@@ -13,6 +13,9 @@ struct ContentView: View {
     @EnvironmentObject var bridge: PharoBridge
     @EnvironmentObject var imageManager: ImageManager
 
+    @AppStorage("hasSeenGestureHelp") private var hasSeenGestureHelp = false
+    @State private var showingHelp = false
+
     var body: some View {
         ZStack {
             if bridge.isRunning {
@@ -43,8 +46,17 @@ struct ContentView: View {
             #if !targetEnvironment(macCatalyst)
             FloatingToolbar(
                 ctrlActive: $bridge.ctrlModifierActive,
-                keyboardVisible: $bridge.keyboardVisible
+                keyboardVisible: $bridge.keyboardVisible,
+                showHelp: $showingHelp
             )
+
+            // Gesture help overlay — shown on first launch or when help tapped
+            if showingHelp || !hasSeenGestureHelp {
+                GestureHelpOverlay {
+                    hasSeenGestureHelp = true
+                    showingHelp = false
+                }
+            }
             #endif
         }
     }
@@ -183,6 +195,7 @@ struct DiagnosticsView: View {
 struct FloatingToolbar: View {
     @Binding var ctrlActive: Bool
     @Binding var keyboardVisible: Bool
+    @Binding var showHelp: Bool
     @State private var offset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
 
@@ -192,6 +205,14 @@ struct FloatingToolbar: View {
             HStack {
                 Spacer()
                 HStack(spacing: 8) {
+                    // Help button
+                    FloatingButton(
+                        icon: "questionmark",
+                        label: nil,
+                        isActive: false,
+                        action: { showHelp = true }
+                    )
+
                     // Keyboard toggle
                     FloatingButton(
                         icon: "keyboard",
@@ -261,6 +282,109 @@ struct FloatingButton: View {
             .frame(width: 40, height: 40)
             .background(isActive ? Color.blue : Color.gray.opacity(0.3))
             .clipShape(Circle())
+        }
+    }
+}
+
+// MARK: - Gesture Help Overlay
+
+struct GestureHelpOverlay: View {
+    let onDismiss: () -> Void
+
+    var body: some View {
+        ZStack {
+            // Dim background
+            Color.black.opacity(0.7)
+                .ignoresSafeArea()
+                .onTapGesture { onDismiss() }
+
+            VStack(spacing: 20) {
+                Text("Quick Start")
+                    .font(.title2)
+                    .fontWeight(.bold)
+                    .foregroundColor(.white)
+
+                VStack(alignment: .leading, spacing: 14) {
+                    helpRow("hand.tap", "Tap", "Left-click (select, activate)")
+                    helpRow("hand.tap", "Long press", "Right-click (context menu)")
+                    helpRow("hand.draw", "Two-finger scroll", "Scroll lists and text")
+                    helpRow("hand.tap", "Two-finger tap", "Right-click (alternative)")
+
+                    Divider().background(Color.white.opacity(0.3))
+
+                    helpRow("keyboard", "Keyboard button", "Show/hide the soft keyboard")
+                    helpRow("control", "Ctrl button", "Hold Ctrl for shortcuts")
+
+                    Divider().background(Color.white.opacity(0.3))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("With Ctrl active or hardware keyboard:")
+                            .font(.caption)
+                            .foregroundColor(.white.opacity(0.7))
+                        HStack(spacing: 16) {
+                            shortcutLabel("Ctrl+D", "Do It")
+                            shortcutLabel("Ctrl+P", "Print It")
+                            shortcutLabel("Ctrl+E", "Inspect It")
+                        }
+                    }
+                }
+
+                Button {
+                    onDismiss()
+                } label: {
+                    Text("Got it")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(Color.blue)
+                        .cornerRadius(10)
+                }
+                .padding(.top, 8)
+
+                Text("Tap ? to see this again")
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.5))
+            }
+            .padding(24)
+            .frame(maxWidth: 360)
+            .background(Color(.systemGray6).opacity(0.95))
+            .cornerRadius(16)
+            .environment(\.colorScheme, .dark)
+        }
+        .transition(.opacity)
+    }
+
+    private func helpRow(_ icon: String, _ gesture: String, _ description: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(.blue)
+                .frame(width: 28, alignment: .center)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(gesture)
+                    .font(.subheadline)
+                    .fontWeight(.medium)
+                    .foregroundColor(.white)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.white.opacity(0.7))
+            }
+        }
+    }
+
+    private func shortcutLabel(_ key: String, _ action: String) -> some View {
+        VStack(spacing: 2) {
+            Text(key)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                .foregroundColor(.white)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.gray.opacity(0.4))
+                .cornerRadius(4)
+            Text(action)
+                .font(.system(size: 10))
+                .foregroundColor(.white.opacity(0.7))
         }
     }
 }

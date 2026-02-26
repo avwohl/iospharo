@@ -57,7 +57,6 @@ some kind of first-launch help or gesture guide showing:
 
 ## Already Known (not new)
 
-- **Black screen on resize**: Stage Manager resize bug (pitch/stride mismatch).
-  Already tracked in MEMORY.md TODO.
+- **Black screen on resize**: Stage Manager resize bug — FIXED in build 22.
 - **Settings/dark mode slow**: SwiftUI sheet animation. No actual dark mode
   toggle exists — follows system setting passively.
