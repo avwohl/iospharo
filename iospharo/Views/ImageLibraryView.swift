@@ -1,8 +1,8 @@
 /*
  * ImageLibraryView.swift
  *
- * Main screen showing the image library. Lists all downloaded/imported images,
- * provides download and import actions, and allows launching or deleting images.
+ * Main screen showing the image library in a Pharo Launcher-style table layout.
+ * Features: search filter, sortable column headers, detail panel, context menu.
  */
 
 import SwiftUI
@@ -10,6 +10,7 @@ import UniformTypeIdentifiers
 
 enum SortOrder: String, CaseIterable {
     case name = "Name"
+    case version = "Version"
     case dateCreated = "Date Added"
     case lastUsed = "Last Used"
     case size = "Size"
@@ -24,34 +25,89 @@ struct ImageLibraryView: View {
     @State private var showingSettings = false
     @State private var imageToDelete: PharoImage?
     @State private var sortOrder: SortOrder = .name
+    @State private var sortAscending: Bool = true
     @State private var imageToRename: PharoImage?
     @State private var renameText: String = ""
     @State private var imageToShare: PharoImage?
+    @State private var filterText: String = ""
+    @State private var selectedImageID: UUID?
 
-    private var sortedImages: [PharoImage] {
-        switch sortOrder {
-        case .name:
-            return imageManager.images.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        case .dateCreated:
-            return imageManager.images.sorted { $0.createdAt > $1.createdAt }
-        case .lastUsed:
-            return imageManager.images.sorted {
-                ($0.lastLaunchedAt ?? .distantPast) > ($1.lastLaunchedAt ?? .distantPast)
+    private var filteredImages: [PharoImage] {
+        let base = filterText.isEmpty
+            ? imageManager.images
+            : imageManager.images.filter { $0.name.localizedCaseInsensitiveContains(filterText) }
+
+        return base.sorted { a, b in
+            let result: Bool
+            switch sortOrder {
+            case .name:
+                result = a.name.localizedCaseInsensitiveCompare(b.name) == .orderedAscending
+            case .version:
+                result = (a.pharoVersion ?? "") < (b.pharoVersion ?? "")
+            case .dateCreated:
+                result = a.createdAt < b.createdAt
+            case .lastUsed:
+                result = (a.lastLaunchedAt ?? .distantPast) < (b.lastLaunchedAt ?? .distantPast)
+            case .size:
+                result = (a.imageSizeBytes ?? 0) < (b.imageSizeBytes ?? 0)
             }
-        case .size:
-            return imageManager.images.sorted {
-                ($0.imageSizeBytes ?? 0) > ($1.imageSizeBytes ?? 0)
-            }
+            return sortAscending ? result : !result
         }
+    }
+
+    private var selectedImage: PharoImage? {
+        guard let id = selectedImageID else { return nil }
+        return imageManager.images.first { $0.id == id }
     }
 
     var body: some View {
         NavigationView {
-            Group {
+            VStack(spacing: 0) {
                 if imageManager.images.isEmpty && !imageManager.isDownloading {
                     emptyState
                 } else {
-                    imageList
+                    // Search filter bar
+                    HStack {
+                        Image(systemName: "magnifyingglass")
+                            .foregroundColor(.secondary)
+                        TextField("Filter images...", text: $filterText)
+                            .textFieldStyle(.plain)
+                        if !filterText.isEmpty {
+                            Button {
+                                filterText = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemBackground))
+
+                    Divider()
+
+                    // Column headers
+                    columnHeaders
+
+                    Divider()
+
+                    // Download progress
+                    if imageManager.isDownloading {
+                        DownloadProgressRow()
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                        Divider()
+                    }
+
+                    // Image table
+                    imageTable
+
+                    Divider()
+
+                    // Detail panel
+                    detailPanel
                 }
             }
             .navigationTitle("Pharo Images")
@@ -75,22 +131,10 @@ struct ImageLibraryView: View {
                 }
 
                 ToolbarItem(placement: .navigationBarLeading) {
-                    HStack(spacing: 12) {
-                        Button {
-                            showingSettings = true
-                        } label: {
-                            Image(systemName: "gear")
-                        }
-
-                        Menu {
-                            Picker("Sort by", selection: $sortOrder) {
-                                ForEach(SortOrder.allCases, id: \.self) { order in
-                                    Text(order.rawValue).tag(order)
-                                }
-                            }
-                        } label: {
-                            Image(systemName: "line.3.horizontal.decrease.circle")
-                        }
+                    Button {
+                        showingSettings = true
+                    } label: {
+                        Image(systemName: "gear")
                     }
                 }
             }
@@ -153,6 +197,7 @@ struct ImageLibraryView: View {
                 ShareSheet(activityItems: [image.directoryURL])
             }
         }
+        .navigationViewStyle(.stack)
         // Error banner
         .overlay(alignment: .bottom) {
             if let error = imageManager.errorMessage {
@@ -171,6 +216,52 @@ struct ImageLibraryView: View {
                 }
             }
         }
+    }
+
+    // MARK: - Column Headers
+
+    private var columnHeaders: some View {
+        HStack(spacing: 0) {
+            columnHeaderButton("Name", order: .name)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            columnHeaderButton("Version", order: .version)
+                .frame(width: ImageTableLayout.versionWidth, alignment: .leading)
+
+            columnHeaderButton("Size", order: .size)
+                .frame(width: ImageTableLayout.sizeWidth, alignment: .trailing)
+
+            columnHeaderButton("Last Modified", order: .lastUsed)
+                .frame(width: ImageTableLayout.lastModifiedWidth, alignment: .leading)
+                .padding(.leading, 12)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground))
+    }
+
+    private func columnHeaderButton(_ title: String, order: SortOrder) -> some View {
+        Button {
+            if sortOrder == order {
+                sortAscending.toggle()
+            } else {
+                sortOrder = order
+                sortAscending = true
+            }
+        } label: {
+            HStack(spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+                if sortOrder == order {
+                    Image(systemName: sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundColor(.accentColor)
+                }
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Empty State
@@ -221,86 +312,174 @@ struct ImageLibraryView: View {
         .padding()
     }
 
-    // MARK: - Image List
+    // MARK: - Image Table
 
-    private var imageList: some View {
-        List {
-            if imageManager.isDownloading {
-                Section {
-                    DownloadProgressRow()
+    private var imageTable: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(filteredImages) { image in
+                    ImageRow(image: image, isSelected: image.id == selectedImageID)
+                        .onTapGesture {
+                            selectedImageID = image.id
+                        }
+                        .contextMenu {
+                            Button {
+                                launchImage(image)
+                            } label: {
+                                Label("Launch", systemImage: "play.fill")
+                            }
+
+                            Button {
+                                renameText = image.name
+                                imageToRename = image
+                            } label: {
+                                Label("Rename", systemImage: "pencil")
+                            }
+
+                            Button {
+                                imageManager.duplicateImage(image)
+                            } label: {
+                                Label("Duplicate", systemImage: "doc.on.doc")
+                            }
+
+                            Button {
+                                imageToShare = image
+                            } label: {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+
+                            Divider()
+
+                            Button(role: .destructive) {
+                                imageToDelete = image
+                            } label: {
+                                Label("Delete", systemImage: "trash")
+                            }
+                        }
+
+                    Divider()
+                        .padding(.leading, 12)
                 }
             }
+        }
+        .frame(maxHeight: .infinity)
+    }
 
-            Section {
-                ForEach(sortedImages) { image in
+    // MARK: - Detail Panel
+
+    private var detailPanel: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let image = selectedImage {
+                // Info bar
+                Text("\(image.name), \(image.imageFileName)")
+                    .font(.caption)
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.gray)
+
+                // Details grid
+                VStack(alignment: .leading, spacing: 4) {
+                    detailRow("Image file", value: image.imageFileName)
+                    if let version = image.pharoVersion {
+                        detailRow("Pharo version", value: versionLabel(version))
+                    }
+                    if let totalSize = imageManager.totalSizeForImage(image) {
+                        let formatter = ByteCountFormatter()
+                        detailRow("Total size", value: formatter.string(fromByteCount: totalSize))
+                    }
+                    detailRow("Created", value: formatDate(image.createdAt))
+                    if let launched = image.lastLaunchedAt {
+                        detailRow("Last launched", value: formatDate(launched))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+
+                // Action buttons
+                HStack(spacing: 16) {
                     Button {
                         launchImage(image)
                     } label: {
-                        ImageRow(image: image)
+                        Label("Launch", systemImage: "play.fill")
                     }
-                    .contextMenu {
-                        Button {
-                            launchImage(image)
-                        } label: {
-                            Label("Launch", systemImage: "play.fill")
-                        }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
 
-                        Button {
-                            renameText = image.name
-                            imageToRename = image
-                        } label: {
-                            Label("Rename", systemImage: "pencil")
-                        }
-
-                        Button {
-                            imageManager.duplicateImage(image)
-                        } label: {
-                            Label("Duplicate", systemImage: "doc.on.doc")
-                        }
-
-                        Button {
-                            imageToShare = image
-                        } label: {
-                            Label("Share", systemImage: "square.and.arrow.up")
-                        }
-
-                        Divider()
-
-                        Button(role: .destructive) {
-                            imageToDelete = image
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                    Button {
+                        renameText = image.name
+                        imageToRename = image
+                    } label: {
+                        Label("Rename", systemImage: "pencil")
                     }
-                    .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                        Button(role: .destructive) {
-                            imageToDelete = image
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        imageToShare = image
+                    } label: {
+                        Label("Share", systemImage: "square.and.arrow.up")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        imageToDelete = image
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-            }
-
-            Section {
+                .padding(.horizontal, 12)
+                .padding(.bottom, 4)
+            } else {
                 disclaimerBlock
+                    .padding(.vertical, 8)
             }
-            .listRowBackground(Color.clear)
+        }
+        .background(Color(.secondarySystemBackground))
+    }
+
+    private func detailRow(_ label: String, value: String) -> some View {
+        HStack(alignment: .top) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Text(value)
+                .font(.caption)
+        }
+    }
+
+    private func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
+
+    private func versionLabel(_ version: String) -> String {
+        switch version {
+        case "130": return "Pharo 13"
+        case "120": return "Pharo 12"
+        case "110": return "Pharo 11"
+        case "100": return "Pharo 10"
+        default: return "Pharo \(version)"
         }
     }
 
     // MARK: - Disclaimer
 
     private var disclaimerBlock: some View {
-        VStack(spacing: 4) {
-            HStack(spacing: 0) {
-                Text("Experimental release — not affiliated with or endorsed by ")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Link("Pharo.org", destination: URL(string: "https://pharo.org")!)
-                    .font(.caption)
-            }
-            .multilineTextAlignment(.center)
+        VStack(spacing: 2) {
+            Text(disclaimerAttributed)
+                .font(.caption)
+                .multilineTextAlignment(.center)
             HStack(spacing: 12) {
                 Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
                 Text("·")
@@ -310,7 +489,14 @@ struct ImageLibraryView: View {
             .font(.caption)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 8)
+    }
+
+    private var disclaimerAttributed: AttributedString {
+        var prefix = AttributedString("Experimental release — not affiliated with or endorsed by ")
+        prefix.foregroundColor = .secondary
+        var link = AttributedString("Pharo.org")
+        link.link = URL(string: "https://pharo.org")
+        return prefix + link
     }
 
     // MARK: - Actions
