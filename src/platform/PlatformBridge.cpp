@@ -103,7 +103,12 @@ class SimpleDisplaySurface : public pharo::DisplaySurface {
 public:
     SimpleDisplaySurface(int w, int h, int d)
         : width_(w), height_(h), depth_(d) {
-        backBuffer_.resize(w * h);
+        // Pre-reserve capacity for the largest display we'll ever see.
+        // This guarantees resize() never reallocates the backing storage,
+        // which would invalidate the pointer the VM thread got from pixels().
+        static constexpr size_t kMaxPixels = 4096 * 3072;  // ~48MB virtual
+        backBuffer_.reserve(kMaxPixels);
+        backBuffer_.resize(w * h, 0);
     }
 
     int width() const override {
@@ -178,14 +183,18 @@ public:
 
     // Resize the display buffer. Clears to black to prevent garbled display
     // from stale pixel data written at the old pitch being read at the new pitch.
+    // Uses resize() + fill() instead of assign() to avoid reallocation — the
+    // VM thread may hold a pointer from pixels() and writing to it concurrently.
     void resize(int w, int h, int d) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (w == width_ && h == height_ && d == depth_) return;
 
+        size_t needed = static_cast<size_t>(w) * h;
         width_ = w;
         height_ = h;
         depth_ = d;
-        backBuffer_.assign(w * h, 0);  // Clear to black (not resize — avoids stale data)
+        backBuffer_.resize(needed);  // Grows within reserved capacity — no realloc
+        std::fill(backBuffer_.begin(), backBuffer_.end(), 0);  // Clear to black
     }
 
 private:

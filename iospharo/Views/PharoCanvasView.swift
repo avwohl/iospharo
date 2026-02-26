@@ -342,21 +342,25 @@ class PharoCanvasViewController: UIViewController {
         longPressGesture.cancelsTouchesInView = true
         targetView.addGestureRecognizer(longPressGesture)
 
-        let twoFingerTapGesture = UITapGestureRecognizer(
-            target: self,
-            action: #selector(handleTwoFingerTap(_:))
-        )
-        twoFingerTapGesture.numberOfTouchesRequired = 2
-        targetView.addGestureRecognizer(twoFingerTapGesture)
-
         let twoFingerPanGesture = UIPanGestureRecognizer(
             target: self,
             action: #selector(handleTwoFingerPan(_:))
         )
         twoFingerPanGesture.minimumNumberOfTouches = 2
         twoFingerPanGesture.maximumNumberOfTouches = 2
-        twoFingerPanGesture.cancelsTouchesInView = false
+        // Must cancel individual finger touches — otherwise touchesBegan fires
+        // RED button-down for each finger, conflicting with the scroll events.
+        twoFingerPanGesture.cancelsTouchesInView = true
         targetView.addGestureRecognizer(twoFingerPanGesture)
+
+        let twoFingerTapGesture = UITapGestureRecognizer(
+            target: self,
+            action: #selector(handleTwoFingerTap(_:))
+        )
+        twoFingerTapGesture.numberOfTouchesRequired = 2
+        // Only fire tap if pan gesture fails (no significant movement)
+        twoFingerTapGesture.require(toFail: twoFingerPanGesture)
+        targetView.addGestureRecognizer(twoFingerTapGesture)
 
         let pinchGesture = UIPinchGestureRecognizer(
             target: self,

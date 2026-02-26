@@ -332,6 +332,14 @@ class PharoBridge: ObservableObject {
         vm_stop()  // Join threads, stop heartbeat (idempotent)
         isRunning = false
         isInitialized = false
+
+        // Exit the app after a brief delay to let SwiftUI settle.
+        // The VM cannot be re-launched without restarting the process
+        // (global memory/thread state is not fully resettable yet).
+        // This matches the Cmd+Q behavior on Mac Catalyst.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            exit(0)
+        }
     }
 
     /// Stop the VM - MUST be called before app exit to prevent crash
