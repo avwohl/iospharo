@@ -1218,8 +1218,20 @@ bool Interpreter::step() {
     // checks did NOT — causing the non-deterministic "factorial returns receiver" bug.
     {
     static int stepCheckCounter = 0;
+    static bool deferredPeriodicCheck = false;
     stepCheckCounter++;
-    if ((stepCheckCounter & 0x3FF) == 0 && !inExtension_) {  // every 1024 steps
+    bool periodicCheckDue = (stepCheckCounter & 0x3FF) == 0;  // every 1024 steps
+
+    if (periodicCheckDue && inExtension_) {
+        // Can't run periodic checks now — defer to next non-extension step.
+        // Without this, tight loops whose bytecode count divides evenly into 1024
+        // (e.g. `[] repeat` = 2-byte ExtendB+Jump) permanently align the check
+        // with extension bytes, starving timer and signal checks forever.
+        deferredPeriodicCheck = true;
+    }
+
+    if ((periodicCheckDue || deferredPeriodicCheck) && !inExtension_) {
+        deferredPeriodicCheck = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -6581,23 +6593,6 @@ void Interpreter::transferTo(Oop newProcess) {
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
-    }
-
-    // Log process switches with priorities
-    {
-        static int switchCount = 0;
-        switchCount++;
-        int oldPri = -1, newPri = -1;
-        if (oldProcess.isObject() && oldProcess.rawBits() > 0x10000) {
-            ObjectHeader* oldHdr = oldProcess.asObjectPtr();
-            if (oldHdr->slotCount() > ProcessPriorityIndex) {
-                Oop p = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
-                oldPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
-            }
-        }
-        Oop p = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-        newPri = p.isSmallInteger() ? p.asSmallInteger() : -1;
-        (void)switchCount; // Suppress unused warning
     }
 
     // Save outgoing process's NLR state if any is active.
