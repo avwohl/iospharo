@@ -123,6 +123,27 @@ class PharoMTKView: MTKView {
             guard let key = press.key else { continue }
             let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
 
+            #if !targetEnvironment(macCatalyst)
+            // On iOS, UIKeyInput handles regular characters, enter, and backspace.
+            // Only process keys here that UIKeyInput can't: special keys (arrows,
+            // function keys) and modifier combos (Cmd+D, Ctrl+C, etc.).
+            // Without this guard, every key fires BOTH here AND in UIKeyInput,
+            // causing enter/backspace to be doubled.
+            let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
+            if !hasCommandOrControl {
+                let code = key.keyCode
+                let isSpecialKey = (code == .keyboardUpArrow || code == .keyboardDownArrow ||
+                                    code == .keyboardLeftArrow || code == .keyboardRightArrow ||
+                                    code == .keyboardHome || code == .keyboardEnd ||
+                                    code == .keyboardPageUp || code == .keyboardPageDown ||
+                                    code == .keyboardDeleteForward || code == .keyboardEscape)
+                if !isSpecialKey {
+                    // Regular char, enter, or backspace without modifiers — UIKeyInput handles it
+                    continue
+                }
+            }
+            #endif
+
             // Try character from key first
             if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
                 let charCode = Int32(scalar.value)
@@ -147,6 +168,22 @@ class PharoMTKView: MTKView {
         for press in presses {
             guard let key = press.key else { continue }
             let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
+
+            #if !targetEnvironment(macCatalyst)
+            // Mirror the same skip logic as pressesBegan
+            let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
+            if !hasCommandOrControl {
+                let code = key.keyCode
+                let isSpecialKey = (code == .keyboardUpArrow || code == .keyboardDownArrow ||
+                                    code == .keyboardLeftArrow || code == .keyboardRightArrow ||
+                                    code == .keyboardHome || code == .keyboardEnd ||
+                                    code == .keyboardPageUp || code == .keyboardPageDown ||
+                                    code == .keyboardDeleteForward || code == .keyboardEscape)
+                if !isSpecialKey {
+                    continue
+                }
+            }
+            #endif
 
             if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
                 vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)  // up
@@ -463,6 +500,17 @@ extension PharoMTKView: UIKeyInput {
     var hasText: Bool {
         return true
     }
+
+    // Disable autocorrect/prediction — it buffers characters instead of
+    // delivering them to insertText() immediately, making regular typing
+    // appear broken. Also disable smart quotes/dashes which mangle code.
+    var autocorrectionType: UITextAutocorrectionType { .no }
+    var autocapitalizationType: UITextAutocapitalizationType { .none }
+    var spellCheckingType: UITextSpellCheckingType { .no }
+    var smartQuotesType: UITextSmartQuotesType { .no }
+    var smartDashesType: UITextSmartDashesType { .no }
+    var smartInsertDeleteType: UITextSmartInsertDeleteType { .no }
+    var keyboardType: UIKeyboardType { .asciiCapable }
 
     func insertText(_ text: String) {
         for char in text {
