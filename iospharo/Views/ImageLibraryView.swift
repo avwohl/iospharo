@@ -348,6 +348,12 @@ struct ImageLibraryView: View {
                                 Label("Share", systemImage: "square.and.arrow.up")
                             }
 
+                            Button {
+                                showInFiles(image)
+                            } label: {
+                                Label("Show in Files", systemImage: "folder")
+                            }
+
                             Divider()
 
                             Button(role: .destructive) {
@@ -383,6 +389,7 @@ struct ImageLibraryView: View {
                 // Details grid
                 VStack(alignment: .leading, spacing: 4) {
                     detailRow("Image file", value: image.imageFileName)
+                    detailRow("Location", value: image.directoryURL.path)
                     if let version = image.pharoVersion {
                         detailRow("Pharo version", value: versionLabel(version))
                     }
@@ -421,6 +428,14 @@ struct ImageLibraryView: View {
                         imageToShare = image
                     } label: {
                         Label("Share", systemImage: "square.and.arrow.up")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+
+                    Button {
+                        showInFiles(image)
+                    } label: {
+                        Label("Show in Files", systemImage: "folder")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -507,6 +522,22 @@ struct ImageLibraryView: View {
         if bridge.loadImage(at: image.imagePath) {
             bridge.start()
         }
+    }
+
+    private func showInFiles(_ image: PharoImage) {
+        let url = image.directoryURL
+        #if targetEnvironment(macCatalyst)
+        // On Mac Catalyst, opening a file:// URL opens Finder
+        UIApplication.shared.open(url)
+        #else
+        // On iPad, present a document picker rooted at the image directory
+        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+              let rootVC = scene.windows.first?.rootViewController else { return }
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item, .folder])
+        picker.directoryURL = url
+        picker.allowsMultipleSelection = false
+        rootVC.present(picker, animated: true)
+        #endif
     }
 }
 
