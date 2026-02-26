@@ -28,8 +28,11 @@ class PharoBridge: ObservableObject {
     @Published var displayWidth: Int = 1024
     @Published var displayHeight: Int = 768
 
-    /// Middle-click mode toggle (iOS floating button) — TODO: wire to touch event handling
+    /// Right-click mode toggle — when active, next tap sends yellow-button (right-click)
     @Published var middleClickActive = false
+
+    /// Soft keyboard visibility toggle (iOS only)
+    @Published var keyboardVisible = false
 
     private var imagePath: String?
 
@@ -110,6 +113,7 @@ class PharoBridge: ObservableObject {
                 } else {
                     view.resignFirstResponder()
                 }
+                PharoBridge.shared.keyboardVisible = active
             }
         }
     }

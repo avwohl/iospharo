@@ -74,7 +74,16 @@ class PharoMTKView: MTKView {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
-        let buttons = buttonMaskToPharo(event)
+        var buttons = buttonMaskToPharo(event)
+
+        // Right-click modifier button: override to yellow button, then deactivate
+        if bridge.middleClickActive {
+            buttons = IOS_YELLOW_BUTTON
+            DispatchQueue.main.async {
+                bridge.middleClickActive = false
+            }
+        }
+
         currentButton = buttons
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)

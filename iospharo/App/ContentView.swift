@@ -41,7 +41,10 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             #if !targetEnvironment(macCatalyst)
-            MiddleClickButton(isActive: $bridge.middleClickActive)
+            FloatingToolbar(
+                rightClickActive: $bridge.middleClickActive,
+                keyboardVisible: $bridge.keyboardVisible
+            )
             #endif
         }
     }
@@ -174,11 +177,12 @@ struct DiagnosticsView: View {
     }
 }
 
-// MARK: - Floating Middle-Click Button (iOS only)
+// MARK: - Floating Toolbar (iOS only)
 
 #if !targetEnvironment(macCatalyst)
-struct MiddleClickButton: View {
-    @Binding var isActive: Bool
+struct FloatingToolbar: View {
+    @Binding var rightClickActive: Bool
+    @Binding var keyboardVisible: Bool
     @State private var offset: CGSize = .zero
     @State private var dragOffset: CGSize = .zero
 
@@ -187,19 +191,31 @@ struct MiddleClickButton: View {
             Spacer()
             HStack {
                 Spacer()
-                Button(action: {
-                    isActive.toggle()
-                }) {
-                    Image(systemName: "computermouse.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(isActive ? .white : .gray)
-                        .frame(width: 44, height: 44)
-                        .background(isActive ? Color.blue : Color.gray.opacity(0.3))
-                        .clipShape(Circle())
-                        .overlay(
-                            Circle()
-                                .stroke(isActive ? Color.white : Color.clear, lineWidth: 2)
-                        )
+                HStack(spacing: 8) {
+                    // Keyboard toggle
+                    FloatingButton(
+                        icon: "keyboard",
+                        isActive: keyboardVisible,
+                        action: {
+                            keyboardVisible.toggle()
+                            if let view = gPharoMTKView {
+                                if keyboardVisible {
+                                    view.becomeFirstResponder()
+                                } else {
+                                    view.resignFirstResponder()
+                                }
+                            }
+                        }
+                    )
+
+                    // Right-click modifier
+                    FloatingButton(
+                        icon: "cursorarrow.click.2",
+                        isActive: rightClickActive,
+                        action: {
+                            rightClickActive.toggle()
+                        }
+                    )
                 }
                 .offset(x: offset.width + dragOffset.width,
                         y: offset.height + dragOffset.height)
@@ -219,6 +235,23 @@ struct MiddleClickButton: View {
             }
         }
         .allowsHitTesting(true)
+    }
+}
+
+struct FloatingButton: View {
+    let icon: String
+    let isActive: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 16))
+                .foregroundColor(isActive ? .white : .gray)
+                .frame(width: 40, height: 40)
+                .background(isActive ? Color.blue : Color.gray.opacity(0.3))
+                .clipShape(Circle())
+        }
     }
 }
 #endif
