@@ -1,5 +1,10 @@
 # Claude Code Instructions
 
+## Formatting
+- **Never use markdown tables** (pipes and dashes). They look terrible when
+  copy-pasted into email. Use indented plain-text columns or bullet lists instead.
+  A fixed-width font can be assumed.
+
 ## GUI Testing: MANDATORY Timeouts
 
 **Every GUI test MUST have a hard timeout that actually kills the process.**

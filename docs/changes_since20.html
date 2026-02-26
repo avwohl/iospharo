@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="" xml:lang="">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>Changes Since Build 20</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Changes Since Build 20</h1>
+</header>
+<h1 id="changes-since-build-20">Changes Since Build 20</h1>
+<p>Build 21 — 2026-02-26</p>
+<h2 id="bug-fixes">Bug Fixes</h2>
+<h3 id="ios-soft-keyboard-input-reported-by-tim-pharo-users-group">iOS
+Soft Keyboard Input (reported by Tim, Pharo users group)</h3>
+<ul>
+<li>Fixed: regular character input did nothing on iPad soft keyboard.
+Root cause was iOS autocorrect/prediction buffering characters instead
+of delivering them immediately. Disabled autocorrection,
+autocapitalization, spell checking, smart quotes, and smart dashes on
+the Pharo canvas view.</li>
+<li>Fixed: Backspace and Enter were doubled (entered twice per
+keystroke). On iOS, both pressesBegan and UIKeyInput fired for the same
+key. pressesBegan now skips keys that UIKeyInput handles (regular chars,
+enter, backspace without Cmd/Ctrl).</li>
+</ul>
+<h3
+id="long-press-right-click-reliability-reported-by-tim-pharo-users-group">Long-Press
+Right-Click Reliability (reported by Tim, Pharo users group)</h3>
+<ul>
+<li>Fixed: long-press to right-click failed most of the time.
+touchesBegan sent a RED (left) button-down immediately on finger
+contact; 0.5s later the long-press handler sent YELLOW (right)
+button-down on top of it. Pharo had conflicting button states and
+ignored the right-click. Fix: explicitly send RED button-up before
+YELLOW button-down, and set cancelsTouchesInView so UIKit cleanly
+cancels the original touch.</li>
+</ul>
+<h3 id="timer-check-starvation">Timer Check Starvation</h3>
+<ul>
+<li>Fixed: periodic check (every 1024 bytecodes) could be permanently
+starved by tight loops with even bytecode counts. Added deferred check
+flag that fires on the next non-extension step if skipped. Fixes
+BlockClosureValueWithinDurationTest hang.</li>
+</ul>
+<h2 id="new-features">New Features</h2>
+<h3 id="image-library-redesign">Image Library Redesign</h3>
+<ul>
+<li>Redesigned image library to match the Pharo Launcher table
+layout</li>
+<li>Full-width table with sortable column headers: Name, Version, Size,
+Last Modified</li>
+<li>Click column headers to sort ascending/descending with sort
+indicator arrows</li>
+<li>Search/filter bar at top to filter images by name</li>
+<li>Detail panel at bottom shows image info when selected (file name,
+location, version, total size, created/launched dates)</li>
+<li>Context menu on image rows: Launch, Rename, Duplicate, Share, Show
+in Files, Delete</li>
+<li>Rename alert with text field</li>
+<li>Duplicate creates a full copy of the image directory</li>
+<li>Share sheet for AirDrop / Save to Files</li>
+<li>Show in Files button opens the image directory in Finder (Mac) or
+Files app (iPad)</li>
+</ul>
+<h3 id="virtual-ctrl-key-suggested-by-tim-pharo-users-group">Virtual
+Ctrl Key (suggested by Tim, Pharo users group)</h3>
+<ul>
+<li>New floating “Ctrl” button on the iOS canvas toolbar</li>
+<li>Toggle on/off — stays active until tapped again</li>
+<li>When active: canvas taps include Ctrl modifier (Ctrl+click =
+right-click)</li>
+<li>When active: soft keyboard input includes Ctrl modifier (Ctrl+E = Do
+It, Ctrl+D = Debug It, Ctrl+P = Print It, etc.)</li>
+</ul>
+<h3 id="keyboard-toggle-button">Keyboard Toggle Button</h3>
+<ul>
+<li>New floating keyboard button on the iOS canvas toolbar</li>
+<li>Tap to show/hide the soft keyboard on demand</li>
+<li>State syncs with VM text input callbacks</li>
+</ul>
+<h3 id="project-info-bar">Project Info Bar</h3>
+<ul>
+<li>Persistent info bar at the top of the image library window</li>
+<li>Shows: project name, experimental release disclaimer, Pharo.org
+link, GitHub link, Report a Bug link</li>
+<li>Always visible regardless of selection state</li>
+<li>Removed redundant disclaimer from settings screen</li>
+</ul>
+<h2 id="known-issues">Known Issues</h2>
+<ul>
+<li>Two-finger scroll does not work on iPad — must use scrollbar widgets
+(reported by Tim, Pharo users group)</li>
+<li>Stage Manager window resize causes garbled display</li>
+<li>Onboarding/help overlay needed — users don’t discover gestures</li>
+</ul>
+</body>
+</html>
