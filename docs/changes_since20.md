@@ -91,6 +91,12 @@ Build 22 — 2026-02-26
   state (VM global state not resettable). App now calls exit(0) after VM
   cleanup, matching the Cmd+Q behavior on Mac Catalyst.
 
+### Gesture Help Overlay (iOS)
+- New first-launch overlay explaining touch gestures, toolbar buttons, and
+  keyboard shortcuts (Ctrl+D = Do It, Ctrl+P = Print It, Ctrl+E = Inspect It)
+- Auto-shows once on first canvas launch, persisted via @AppStorage
+- "?" help button added to floating toolbar to re-show on demand
+
 ## Known Issues
 
-- Onboarding/help overlay needed — users don't discover gestures
+- (none currently tracked)

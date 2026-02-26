@@ -20,7 +20,12 @@ On iPhone, quitting Pharo (via the World menu) would drop you back to the image
 library in a broken state instead of closing the app. The app now exits cleanly
 when Pharo quits, matching the Cmd+Q behavior on Mac.
 
-## Known Issues
+### Gesture Quick Start (iOS)
+First time you launch a Pharo image, a help overlay shows the key gestures:
+  - Tap = left-click, Long press = right-click (context menu)
+  - Two-finger scroll, Two-finger tap = right-click
+  - Keyboard and Ctrl toolbar buttons
+  - Ctrl+D (Do It), Ctrl+P (Print It), Ctrl+E (Inspect It)
 
-- Onboarding/help overlay needed — new users don't discover gestures
-  (long-press for right-click, two-finger scroll, Ctrl button, etc.)
+Tap "Got it" to dismiss. Tap the "?" button in the floating toolbar to see
+it again anytime.
