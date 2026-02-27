@@ -45,6 +45,7 @@ static int gSessionID = 1;
 // Active socket tracking for I/O monitor thread
 static std::mutex gSocketMutex;
 static std::vector<PrivateSocket*> gActiveSockets;
+static std::vector<PrivateSocket*> gDeleteQueue; // deferred deletion
 
 // I/O monitor thread
 static std::thread gIOThread;
@@ -104,10 +105,13 @@ static void ioMonitorLoop() {
         int maxfd = gWakePipe[0];
         FD_SET(gWakePipe[0], &readfds);
 
-        // Snapshot active sockets under lock
+        // Snapshot active sockets and drain deletion queue under lock
         std::vector<PrivateSocket*> snapshot;
         {
             std::lock_guard<std::mutex> lock(gSocketMutex);
+            // Free sockets that were destroyed since last iteration
+            for (auto* ps : gDeleteQueue) delete ps;
+            gDeleteQueue.clear();
             snapshot = gActiveSockets;
         }
 
@@ -223,6 +227,8 @@ void socketPluginShutdown() {
         delete ps;
     }
     gActiveSockets.clear();
+    for (auto* ps : gDeleteQueue) delete ps;
+    gDeleteQueue.clear();
 }
 
 // =====================================================================
@@ -321,7 +327,7 @@ extern "C" sqInt sp_primitiveSocketDestroy(void) {
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
 
-    unregisterSocket(ps);
+    // Close fd first so I/O thread skips this socket (fd < 0 check)
     if (ps->fd >= 0) {
         close(ps->fd);
         ps->fd = -1;
@@ -331,7 +337,18 @@ extern "C" sqInt sp_primitiveSocketDestroy(void) {
     SQSocket* s = (SQSocket*)vm->firstIndexableField(socketOop);
     s->sessionID = 0;
     s->privateSocketPtr = nullptr;
-    delete ps;
+
+    // Remove from active list and defer deletion to I/O thread
+    // (avoids use-after-free if I/O thread has a snapshot including this socket)
+    {
+        std::lock_guard<std::mutex> lock(gSocketMutex);
+        auto it = std::find(gActiveSockets.begin(), gActiveSockets.end(), ps);
+        if (it != gActiveSockets.end()) {
+            gActiveSockets.erase(it);
+        }
+        gDeleteQueue.push_back(ps);
+    }
+    wakeIOThread();
 
     vm->pop(1); // pop socketHandle, leave receiver
     return 0;
