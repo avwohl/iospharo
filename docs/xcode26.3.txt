@@ -1,0 +1,38 @@
+Xcode 26.3 Release Notes Summary (2026-02-27)
+===============================================
+
+This release is almost entirely about AI/agentic coding. No build system,
+compiler, linker, simulator, Mac Catalyst, or Metal changes.
+
+What's new:
+  - Swift 6.2.3
+  - SDKs: iOS 26.2, iPadOS 26.2, macOS 26.2, tvOS 26.2, visionOS 26.2
+  - Requires macOS Sequoia 15.6+
+  - Agentic coding: Claude Agent and OpenAI Codex can run inside Xcode
+  - MCP (Model Context Protocol) support for external tool integration
+  - ~25 bug fixes, all related to the AI coding assistant UI
+
+Agentic coding in Xcode:
+  Agents can browse project files, run builds/tests, capture Xcode Previews,
+  update project settings, and iterate through fixes autonomously. Xcode
+  exposes its capabilities via MCP, so any compatible agent can connect.
+
+  Supported agents at launch: Anthropic Claude Agent, OpenAI Codex.
+
+  This is the IDE experience -- it does not change the toolchain. Projects
+  built via xcodebuild/cmake on the command line are unaffected.
+
+Potential use:
+  Could try using Claude through Xcode's agentic UI instead of the terminal.
+  Worth evaluating whether the Xcode Previews integration and visual
+  verification loop is useful for GUI work.
+
+Known issues:
+  - Projects in ~/Desktop, ~/Downloads, ~/Documents may have permission
+    problems with agents (no re-prompt after denial)
+  - Pasting files into the coding assistant doesn't always work
+  - Some agent settings require Xcode relaunch to take effect
+
+References:
+  https://developer.apple.com/documentation/xcode-release-notes/xcode-26_3-release-notes
+  https://www.apple.com/newsroom/2026/02/xcode-26-point-3-unlocks-the-power-of-agentic-coding/
