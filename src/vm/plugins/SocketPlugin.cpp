@@ -177,6 +177,15 @@ static void ioMonitorLoop() {
                     char peek;
                     int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
                     if (n == 0) {
+                        fprintf(stderr, "[SOCK] recv peek returned 0 → OTHER_END_CLOSED (fd=%d)\n", ps->fd);
+                        ps->sockState = SOCK_OTHER_END_CLOSED;
+                        if (ps->connSema > 0 && vm) {
+                            vm->signalSemaphoreWithIndex(ps->connSema);
+                        }
+                    } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                        fprintf(stderr, "[SOCK] recv peek error: errno=%d (%s) fd=%d → OTHER_END_CLOSED\n",
+                                errno, strerror(errno), ps->fd);
+                        ps->sockError = errno;
                         ps->sockState = SOCK_OTHER_END_CLOSED;
                         if (ps->connSema > 0 && vm) {
                             vm->signalSemaphoreWithIndex(ps->connSema);
@@ -527,6 +536,19 @@ extern "C" sqInt sp_primitiveSocketConnectionStatus(void) {
         // Invalid/destroyed socket — return Invalid status instead of failing
         vm->popthenPush(2, vm->integerObjectOf(SOCK_INVALID));
         return 0;
+    }
+
+    static int statusLogCount = 0;
+    if (ps->sockState != SOCK_CONNECTED || statusLogCount < 20) {
+        // Log non-CONNECTED states always, and first 20 CONNECTED checks
+        fprintf(stderr, "[SOCK] ConnectionStatus fd=%d → %d (%s)\n",
+                ps->fd, ps->sockState,
+                ps->sockState == SOCK_UNCONNECTED ? "Unconnected" :
+                ps->sockState == SOCK_WAITING_FOR_CONNECTION ? "WaitingForConnection" :
+                ps->sockState == SOCK_CONNECTED ? "Connected" :
+                ps->sockState == SOCK_OTHER_END_CLOSED ? "OtherEndClosed" :
+                ps->sockState == SOCK_THIS_END_CLOSED ? "ThisEndClosed" : "?");
+        if (ps->sockState == SOCK_CONNECTED) statusLogCount++;
     }
 
     vm->popthenPush(2, vm->integerObjectOf(ps->sockState));
