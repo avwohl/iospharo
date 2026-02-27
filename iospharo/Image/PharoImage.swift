@@ -19,49 +19,6 @@ struct PharoImage: Codable, Identifiable, Equatable {
     var createdAt: Date
     var lastLaunchedAt: Date?
     var imageSizeBytes: Int64?
-    /// Whether to apply iOS-specific patches (menu bar overflow, etc.) on launch
-    var applyIOSPatches: Bool
-
-    // Custom Codable to default applyIOSPatches=true for existing catalog entries
-    enum CodingKeys: String, CodingKey {
-        case id, name, directoryName, imageFileName, pharoVersion
-        case createdAt, lastLaunchedAt, imageSizeBytes, applyIOSPatches
-    }
-
-    init(
-        id: UUID,
-        name: String,
-        directoryName: String,
-        imageFileName: String,
-        pharoVersion: String?,
-        createdAt: Date,
-        lastLaunchedAt: Date?,
-        imageSizeBytes: Int64?,
-        applyIOSPatches: Bool = true
-    ) {
-        self.id = id
-        self.name = name
-        self.directoryName = directoryName
-        self.imageFileName = imageFileName
-        self.pharoVersion = pharoVersion
-        self.createdAt = createdAt
-        self.lastLaunchedAt = lastLaunchedAt
-        self.imageSizeBytes = imageSizeBytes
-        self.applyIOSPatches = applyIOSPatches
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        directoryName = try container.decode(String.self, forKey: .directoryName)
-        imageFileName = try container.decode(String.self, forKey: .imageFileName)
-        pharoVersion = try container.decodeIfPresent(String.self, forKey: .pharoVersion)
-        createdAt = try container.decode(Date.self, forKey: .createdAt)
-        lastLaunchedAt = try container.decodeIfPresent(Date.self, forKey: .lastLaunchedAt)
-        imageSizeBytes = try container.decodeIfPresent(Int64.self, forKey: .imageSizeBytes)
-        applyIOSPatches = try container.decodeIfPresent(Bool.self, forKey: .applyIOSPatches) ?? true
-    }
 
     // MARK: - Paths
 
@@ -105,8 +62,7 @@ struct PharoImage: Codable, Identifiable, Equatable {
             pharoVersion: pharoVersion,
             createdAt: Date(),
             lastLaunchedAt: nil,
-            imageSizeBytes: nil,
-            applyIOSPatches: true
+            imageSizeBytes: nil
         )
     }
 

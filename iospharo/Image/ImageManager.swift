@@ -407,51 +407,6 @@ class ImageManager: ObservableObject {
         return total > 0 ? total : nil
     }
 
-    // MARK: - iOS Patches
-
-    func setIOSPatches(_ image: PharoImage, enabled: Bool) {
-        guard let idx = images.firstIndex(where: { $0.id == image.id }) else { return }
-        images[idx].applyIOSPatches = enabled
-        save()
-    }
-
-    /// Copy or remove iOS patch scripts in the image directory before launch.
-    /// Pharo's StartupLoader evaluates .st files in the image directory on startup.
-    func prepareIOSPatches(for image: PharoImage) {
-        let patchFileName = "menubar_overflow.st"
-        let destURL = image.directoryURL.appendingPathComponent(patchFileName)
-
-        if image.applyIOSPatches {
-            // Copy from app bundle to image directory
-            guard let bundleURL = Bundle.main.url(forResource: "menubar_overflow", withExtension: "st") else {
-                #if DEBUG
-                fputs("[LIB] menubar_overflow.st not found in app bundle\n", stderr)
-                #endif
-                return
-            }
-            // Always overwrite with latest version from bundle
-            try? fileManager.removeItem(at: destURL)
-            do {
-                try fileManager.copyItem(at: bundleURL, to: destURL)
-                #if DEBUG
-                fputs("[LIB] copied menubar_overflow.st to \(image.directoryName)/\n", stderr)
-                #endif
-            } catch {
-                #if DEBUG
-                fputs("[LIB] failed to copy menubar_overflow.st: \(error)\n", stderr)
-                #endif
-            }
-        } else {
-            // Remove the patch file if it exists
-            if fileManager.fileExists(atPath: destURL.path) {
-                try? fileManager.removeItem(at: destURL)
-                #if DEBUG
-                fputs("[LIB] removed menubar_overflow.st from \(image.directoryName)/\n", stderr)
-                #endif
-            }
-        }
-    }
-
     // MARK: - Launch tracking
 
     func markLaunched(_ image: PharoImage) {
