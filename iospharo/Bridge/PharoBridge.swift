@@ -31,6 +31,9 @@ class PharoBridge: ObservableObject {
     /// Virtual Ctrl key toggle — when active, touches and keyboard events include Ctrl modifier
     @Published var ctrlModifierActive = false
 
+    /// Virtual Cmd key toggle — when active, keyboard events include Cmd modifier (one-shot)
+    @Published var cmdModifierActive = false
+
     /// Soft keyboard visibility toggle (iOS only)
     @Published var keyboardVisible = false
 

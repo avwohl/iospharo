@@ -57,6 +57,7 @@ struct ContentView: View {
             #if !targetEnvironment(macCatalyst)
             FloatingToolbar(
                 ctrlActive: $bridge.ctrlModifierActive,
+                cmdActive: $bridge.cmdModifierActive,
                 keyboardVisible: $bridge.keyboardVisible,
                 showHelp: $showingHelp
             )
@@ -205,6 +206,7 @@ struct DiagnosticsView: View {
 #if !targetEnvironment(macCatalyst)
 struct FloatingToolbar: View {
     @Binding var ctrlActive: Bool
+    @Binding var cmdActive: Bool
     @Binding var keyboardVisible: Bool
     @Binding var showHelp: Bool
     @State private var offset: CGSize = .zero
@@ -241,13 +243,23 @@ struct FloatingToolbar: View {
                         }
                     )
 
-                    // Virtual Ctrl key — stays active until tapped again
+                    // Virtual Ctrl key — one-shot modifier
                     FloatingButton(
                         icon: "control",
                         label: "Ctrl",
                         isActive: ctrlActive,
                         action: {
                             ctrlActive.toggle()
+                        }
+                    )
+
+                    // Virtual Cmd key — one-shot modifier
+                    FloatingButton(
+                        icon: "command",
+                        label: "Cmd",
+                        isActive: cmdActive,
+                        action: {
+                            cmdActive.toggle()
                         }
                     )
                 }
@@ -324,18 +336,19 @@ struct GestureHelpOverlay: View {
                     Divider().background(Color.white.opacity(0.3))
 
                     helpRow("keyboard", "Keyboard button", "Show/hide the soft keyboard")
-                    helpRow("control", "Ctrl button", "Hold Ctrl for shortcuts")
+                    helpRow("control", "Ctrl button", "One-shot Ctrl modifier")
+                    helpRow("command", "Cmd button", "One-shot Cmd modifier")
 
                     Divider().background(Color.white.opacity(0.3))
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("With Ctrl active or hardware keyboard:")
+                        Text("Shortcuts (Ctrl or Cmd + key):")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                         HStack(spacing: 16) {
-                            shortcutLabel("Ctrl+D", "Do It")
-                            shortcutLabel("Ctrl+P", "Print It")
-                            shortcutLabel("Ctrl+E", "Inspect It")
+                            shortcutLabel("D", "Do It")
+                            shortcutLabel("P", "Print It")
+                            shortcutLabel("E", "Inspect It")
                         }
                     }
                 }

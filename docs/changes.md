@@ -40,6 +40,11 @@ The virtual Ctrl button on the iOS toolbar now auto-clears after a
 touch/click, acting as a one-shot modifier (like Shift on a phone
 keyboard). Previously it stayed active until tapped again.
 
+### Virtual Cmd Button (suggested by Tim)
+Added a Cmd button to the iOS floating toolbar alongside Ctrl. Tap Cmd
+then type a key to send Cmd+key — e.g. Cmd then D for "Do It". Like
+Ctrl, it's one-shot: auto-clears after a keystroke or touch.
+
 ---
 
 # What's New in Build 30
