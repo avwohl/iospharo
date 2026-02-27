@@ -3,49 +3,90 @@
  are collected under a '...' dropdown at the right edge.
 
  Installed via StartupLoader: place this file in the image directory.
- Only activates when items don't fit; no-op on wide screens/desktop."!
+ Only activates when items don't fit; no-op on wide screens/desktop.
+
+ MenubarMorph items are MenubarItemMorph (subclass chain:
+   MenubarItemMorph < DockingBarMenuItemMorph < MenuItemMorph < StringMorph).
+ Menu bar is built in MenubarMorph>>open, resized via displayExtentChanged."!
 
 Object subclass: #MenubarOverflowPatcher
   instanceVariableNames: ''
-  classVariableNames: 'Installed'
+  classVariableNames: 'Installed OriginalItems'
   package: 'IOSPatches'!
 
 !MenubarOverflowPatcher class methodsFor: 'patching'!
 install
-  "Compile a replacement MenubarMorph>>updateMenu that calls the overflow logic.
+  "Hook into MenubarMorph to apply overflow on open and resize.
    Only installs once (guarded by Installed class var)."
   Installed == true ifTrue: [^ self].
 
   "Verify MenubarMorph exists"
   (Smalltalk globals at: #MenubarMorph ifAbsent: [nil]) ifNil: [^ self].
 
-  "Install wrapper: after the standard updateMenu rebuilds items,
-   apply overflow to fit narrow screens."
-  MenubarMorph compile: 'updateMenuWithOverflow
-  "Replacement updateMenu that applies overflow for narrow screens."
-  self updateMenuOriginal.
+  "Hook open: save original items after building, then apply overflow"
+  MenubarMorph compile: 'open
+  super open.
+  MenubarOverflowPatcher saveItemsFrom: self.
   MenubarOverflowPatcher applyOverflowTo: self' classified: 'menu'.
 
-  "Save original if not already saved"
-  (MenubarMorph canUnderstand: #updateMenuOriginal) ifFalse: [
-    | originalSource |
-    originalSource := (MenubarMorph >> #updateMenu) sourceCode.
-    "Rename the selector in the source"
-    originalSource := originalSource copyReplaceAll: 'updateMenu' with: 'updateMenuOriginal'.
-    MenubarMorph compile: originalSource classified: 'menu'].
-
-  "Now replace updateMenu to call our wrapper"
-  MenubarMorph compile: 'updateMenu
-  self updateMenuWithOverflow' classified: 'menu'.
+  "Hook displayExtentChanged: after resize, rebuild from saved items"
+  MenubarMorph compile: 'displayExtentChanged
+  super displayExtentChanged.
+  MenubarOverflowPatcher rebuildOverflowFor: self' classified: 'layout'.
 
   Installed := true! !
 
-!MenubarOverflowPatcher class methodsFor: 'patching'!
+!MenubarOverflowPatcher class methodsFor: 'overflow'!
+saveItemsFrom: aMenuBar
+  "Save the original menu items so we can rebuild on resize."
+  | items |
+  items := aMenuBar submorphs select: [:m | m isKindOf: MenuItemMorph].
+  "Store as array of {contents. icon. subMenu. target. selector. arguments. helpText}"
+  OriginalItems := items collect: [:item |
+    | rec |
+    rec := Dictionary new.
+    rec at: #contents put: item contents.
+    rec at: #icon put: ([item icon] on: Error do: [:e | nil]).
+    rec at: #subMenu put: item subMenu.
+    rec at: #target put: ([item target] on: Error do: [:e | nil]).
+    rec at: #selector put: ([item selector] on: Error do: [:e | nil]).
+    rec at: #arguments put: ([item arguments] on: Error do: [:e | #()]).
+    rec at: #keyText put: ([item keyText] on: Error do: [:e | nil]).
+    rec]! !
+
+!MenubarOverflowPatcher class methodsFor: 'overflow'!
+rebuildOverflowFor: aMenuBar
+  "Rebuild the menu bar from saved items and apply overflow for new width."
+  OriginalItems ifNil: [^ self].
+
+  "Remove all current items"
+  (aMenuBar submorphs select: [:m | m isKindOf: MenuItemMorph])
+    do: [:m | m delete].
+
+  "Re-add all original items"
+  OriginalItems do: [:rec |
+    | item |
+    item := aMenuBar newMenuItem
+      contents: (rec at: #contents);
+      subMenu: (rec at: #subMenu);
+      yourself.
+    (rec at: #icon) ifNotNil: [:i | item icon: i].
+    (rec at: #keyText) ifNotNil: [:k | item keyText: k].
+    (rec at: #target) ifNotNil: [:t |
+      item target: t.
+      (rec at: #selector) ifNotNil: [:s | item selector: s].
+      (rec at: #arguments) ifNotNil: [:a | item arguments: a]].
+    aMenuBar addMorphBack: item].
+
+  "Now apply overflow"
+  self applyOverflowTo: aMenuBar! !
+
+!MenubarOverflowPatcher class methodsFor: 'overflow'!
 applyOverflowTo: aMenuBar
   "Apply priority+ overflow: show as many items as fit, put the rest under '...'."
   | items overflowButtonWidth availableWidth cumulativeWidth cutoffIndex overflowItems overflowButton subMenu |
 
-  items := aMenuBar submorphs select: [:m | m class name = 'ToggleMenuItemMorph'].
+  items := aMenuBar submorphs select: [:m | m isKindOf: MenuItemMorph].
   items ifEmpty: [^ self].
 
   overflowButtonWidth := 44.
@@ -73,20 +114,16 @@ applyOverflowTo: aMenuBar
   "Build the overflow submenu"
   subMenu := MenuMorph new.
   overflowItems do: [:item |
-    | menuItem |
-    menuItem := item hasSubMenu
-      ifTrue: [
-        "For items with submenus, create a menu item that opens the submenu"
-        subMenu add: item contents target: item selector: item actionSelector.
-        "Transfer the submenu"
-        (subMenu menuItems last) subMenu: item subMenu]
-      ifFalse: [
-        subMenu add: item contents target: item target selector: item actionSelector]].
+    | mi |
+    mi := subMenu add: item contents
+      target: (item target ifNil: [item])
+      selector: (item selector ifNil: [#yourself])
+      argumentList: #().
+    item subMenu ifNotNil: [:sm | mi subMenu: sm]].
 
-  "Create the '...' toggle button"
-  overflowButton := ToggleMenuItemMorph new
+  "Create the '...' overflow button as a MenubarItemMorph"
+  overflowButton := aMenuBar newMenuItem
     contents: '...';
-    font: items first font;
     subMenu: subMenu;
     yourself.
 
