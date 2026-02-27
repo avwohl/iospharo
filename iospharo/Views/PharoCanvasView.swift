@@ -274,7 +274,7 @@ class PharoCanvasViewController: UIViewController {
 
         view.addSubview(mtkView)
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
