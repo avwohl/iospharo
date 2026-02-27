@@ -14,6 +14,11 @@
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include "../platform/PlatformBridge.h"
+#include "plugins/SoundPlugin.h"
+
+// SoundPlugin callback for signaling VM semaphores from audio thread
+extern "C" void soundSetSignalFunc(void (*fn)(int));
+
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
@@ -17587,10 +17592,17 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
 // Most fail to Smalltalk fallback which provides software synthesis.
 // Not implemented -- stubs return defaults or fail to Smalltalk.
 
-// Sound system state (minimal stub)
-static bool soundOutputRunning = false;
+// Sound output state
 static int soundSampleRate = 44100;
-static int soundVolume = 100;  // 0-100
+
+// Helper: trampoline from SoundPlugin audio thread to VM semaphore signaling
+static Interpreter* gSoundInterpreter = nullptr;
+
+static void soundSemaSignal(int index) {
+    if (gSoundInterpreter) {
+        gSoundInterpreter->signalExternalSemaphore(index);
+    }
+}
 
 // Primitive 300: Start sound output
 // sampleRate stereo semaIndex primitiveSoundStart -> success
@@ -17601,39 +17613,30 @@ PrimitiveResult Interpreter::primitiveSoundStart(int argCount) {
     Oop stereoOop = stackValue(1);
     Oop sampleRateOop = stackValue(2);
 
-    if (!sampleRateOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
+    if (!sampleRateOop.isSmallInteger()) return PrimitiveResult::Failure;
 
-    soundSampleRate = static_cast<int>(sampleRateOop.asSmallInteger());
-    soundOutputRunning = true;
+    int rate = static_cast<int>(sampleRateOop.asSmallInteger());
+    bool stereo = (stereoOop == memory_.trueObject());
+    int semaIdx = semaIndexOop.isSmallInteger() ? static_cast<int>(semaIndexOop.asSmallInteger()) : 0;
+
+    soundSampleRate = rate;
+
+    // Wire up semaphore signaling
+    gSoundInterpreter = this;
+    soundSetSignalFunc(soundSemaSignal);
+
+    bool ok = soundInit(rate, stereo, semaIdx);
 
     popN(3);
-    // Return success (true)
-    push(memory_.trueObject());
+    push(ok ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
 // Primitive 301: Start sound with semaphore notification
 // sampleRate stereo semaIndex primitiveSoundStartWithSemaphore -> success
 PrimitiveResult Interpreter::primitiveSoundStartWithSemaphore(int argCount) {
-    if (argCount != 3) return PrimitiveResult::Failure;
-
-    Oop semaIndexOop = stackTop();
-    Oop stereoOop = stackValue(1);
-    Oop sampleRateOop = stackValue(2);
-
-    if (!sampleRateOop.isSmallInteger()) {
-        return PrimitiveResult::Failure;
-    }
-
-    soundSampleRate = static_cast<int>(sampleRateOop.asSmallInteger());
-    soundOutputRunning = true;
-
-    // Not implemented
-    popN(3);
-    push(memory_.trueObject());
-    return PrimitiveResult::Success;
+    // Same as primitiveSoundStart — semaphore is always used
+    return primitiveSoundStart(argCount);
 }
 
 // Primitive 302: Stop sound output
@@ -17641,7 +17644,7 @@ PrimitiveResult Interpreter::primitiveSoundStartWithSemaphore(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    soundOutputRunning = false;
+    soundStop();
     return PrimitiveResult::Success;
 }
 
@@ -17650,11 +17653,10 @@ PrimitiveResult Interpreter::primitiveSoundStop(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundAvailableSpace(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Return a reasonable buffer size (8KB worth of samples)
-    intptr_t availableBytes = soundOutputRunning ? 8192 : 0;
+    intptr_t avail = soundAvailableSpace();
 
     pop();
-    push(Oop::fromSmallInteger(availableBytes));
+    push(Oop::fromSmallInteger(avail));
     return PrimitiveResult::Success;
 }
 
@@ -17675,11 +17677,27 @@ PrimitiveResult Interpreter::primitiveSoundPlaySamples(int argCount) {
     }
 
     intptr_t count = countOop.asSmallInteger();
+    intptr_t startIndex = startIndexOop.asSmallInteger();
 
-    // Stub: pretend we played them all
+    // Buffer is a word array (SoundBuffer) — data is 16-bit samples
+    // startIndex is 1-based in samples (2 bytes each)
+    size_t byteOffset = (startIndex - 1) * 2;
+    size_t byteCount = count * 2;
+
+    ObjectHeader* bufHdr = bufferOop.asObjectPtr();
+    uint8_t* rawPtr = reinterpret_cast<uint8_t*>(bufHdr->slots());
+    size_t bufBytes = memory_.byteSizeOf(bufferOop);
+
+    if (byteOffset + byteCount > bufBytes) {
+        return PrimitiveResult::Failure;
+    }
+
+    int written = soundPlaySamples(rawPtr, static_cast<int>(byteOffset), static_cast<int>(byteCount));
+
+    // Return number of samples played (not bytes)
     popN(3);
     pop();
-    push(Oop::fromSmallInteger(soundOutputRunning ? count : 0));
+    push(Oop::fromSmallInteger(written / 2));
     return PrimitiveResult::Success;
 }
 
@@ -17694,10 +17712,12 @@ PrimitiveResult Interpreter::primitiveSoundPlaySilence(int argCount) {
     }
 
     intptr_t count = countOop.asSmallInteger();
+    int byteCount = static_cast<int>(count) * 2; // 16-bit samples
+    int written = soundPlaySilence(byteCount);
 
     pop();
     pop();
-    push(Oop::fromSmallInteger(soundOutputRunning ? count : 0));
+    push(Oop::fromSmallInteger(written / 2));
     return PrimitiveResult::Success;
 }
 
@@ -17706,8 +17726,11 @@ PrimitiveResult Interpreter::primitiveSoundPlaySilence(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundGetVolume(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    float vol = soundGetVolume();
+    int intVol = static_cast<int>(vol * 100.0f + 0.5f);
+
     pop();
-    push(Oop::fromSmallInteger(soundVolume));
+    push(Oop::fromSmallInteger(intVol));
     return PrimitiveResult::Success;
 }
 
@@ -17724,7 +17747,8 @@ PrimitiveResult Interpreter::primitiveSoundSetVolume(int argCount) {
     intptr_t vol = volumeOop.asSmallInteger();
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
-    soundVolume = static_cast<int>(vol);
+
+    soundSetVolume(static_cast<float>(vol) / 100.0f);
 
     pop();  // volume arg
     return PrimitiveResult::Success;
@@ -17735,7 +17759,7 @@ PrimitiveResult Interpreter::primitiveSoundSetVolume(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundSetStereoBalance(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Not implemented
+    // Audio Queue Services doesn't have per-queue stereo balance
     pop();
     return PrimitiveResult::Success;
 }
@@ -17948,14 +17972,24 @@ PrimitiveResult Interpreter::primitiveSoundInsertSamples(int argCount) {
 PrimitiveResult Interpreter::primitiveSoundStartBuffered(int argCount) {
     if (argCount != 4) return PrimitiveResult::Failure;
 
+    Oop semaIndexOop = stackTop();
+    Oop stereoOop = stackValue(1);
     Oop sampleRateOop = stackValue(2);
-    if (sampleRateOop.isSmallInteger()) {
-        soundSampleRate = static_cast<int>(sampleRateOop.asSmallInteger());
-    }
-    soundOutputRunning = true;
+    // bufferSize (3) ignored — we use our own ring buffer size
+
+    int rate = sampleRateOop.isSmallInteger() ? static_cast<int>(sampleRateOop.asSmallInteger()) : 44100;
+    bool stereo = (stereoOop == memory_.trueObject());
+    int semaIdx = semaIndexOop.isSmallInteger() ? static_cast<int>(semaIndexOop.asSmallInteger()) : 0;
+
+    soundSampleRate = rate;
+
+    gSoundInterpreter = this;
+    soundSetSignalFunc(soundSemaSignal);
+
+    bool ok = soundInit(rate, stereo, semaIdx);
 
     popN(4);
-    push(memory_.trueObject());
+    push(ok ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 

@@ -1048,11 +1048,11 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
 
         // addressArray and portArray are word arrays (Array of SmallIntegers)
         // Store at index 0 (Smalltalk 1-based)
-        if (!vm->isNilObject(addrArrayOop) && vm->stSizeOf(addrArrayOop) >= 1) {
+        if (addrArrayOop != vm->nilObject() && vm->stSizeOf(addrArrayOop) >= 1) {
             vm->storePointerofObjectwithValue(0, addrArrayOop,
                 vm->integerObjectOf((sqInt)senderAddr));
         }
-        if (!vm->isNilObject(portArrayOop) && vm->stSizeOf(portArrayOop) >= 1) {
+        if (portArrayOop != vm->nilObject() && vm->stSizeOf(portArrayOop) >= 1) {
             vm->storePointerofObjectwithValue(0, portArrayOop,
                 vm->integerObjectOf(senderPort));
         }
