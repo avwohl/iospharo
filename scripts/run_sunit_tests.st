@@ -45,7 +45,7 @@ runDiagnostic: stream
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
   "Run all tests and write results to /tmp/sunit_test_results.txt and /tmp/sunit_test_detail.txt"
-  | testClasses stream detail runNum totalP totalF totalE totalS totalT seen addOnce batchStart batchEnd batchClasses |
+  | testClasses stream detail runNum totalP totalF totalE totalS totalT seen addOnce batchStart batchEnd batchClasses timeoutScale watchdogTimeout |
   runNum := self nextRunNumber.
 
   testClasses := OrderedCollection new.
@@ -492,14 +492,37 @@ runAllTests
        stream flush]]
     on: Error do: [:e |
      stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; cr. stream flush].
-    "Increase TestExecutionEnvironment watchdog timeout so our 15s watchdog fires first.
-     Default is 10 seconds, which kills the runner process before our watchdog can handle it."
-    [TestCase defaultTimeLimit: 120 seconds] on: Error do: [:e |].
+    "Patch test timeouts for non-JIT VM. Read scale from /tmp/sunit_timeout_scale.txt
+     (default 10). Override TestCase>>defaultTimeLimit and remove per-class overrides
+     so all tests inherit a generous scaled timeout instead of the 10s JIT default."
+    timeoutScale := 10.
+    [| f |
+     f := '/tmp/sunit_timeout_scale.txt' asFileReference.
+     f exists ifTrue: [
+       | v | v := f contents trimBoth asInteger.
+       v > 0 ifTrue: [timeoutScale := v]]]
+    on: Error do: [:e |].
+    watchdogTimeout := 10 * timeoutScale + 30. "base timeout + 30s buffer"
+    [| patched |
+     TestCase compile: ('defaultTimeLimit
+  ^ {1} seconds' format: {(10 * timeoutScale) printString})
+       classified: 'running'.
+     patched := 0.
+     TestCase allSubclasses do: [:cls |
+       (cls includesSelector: #defaultTimeLimit) ifTrue: [
+         cls removeSelector: #defaultTimeLimit. patched := patched + 1]].
+     stream nextPutAll: 'Timeout: scale='; print: timeoutScale;
+       nextPutAll: 'x, defaultTimeLimit='; print: 10 * timeoutScale;
+       nextPutAll: 's, watchdog='; print: watchdogTimeout;
+       nextPutAll: 's, '; print: patched; nextPutAll: ' class overrides removed'; cr.
+     stream flush]
+    on: Error do: [:e |
+     stream nextPutAll: 'Timeout patch error: '; nextPutAll: e messageText; cr. stream flush].
     "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
      DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
     CurrentExecutionEnvironment runTestsBy: [
     batchClasses do: [:tc | | counts |
-      [counts := self runTestClass: tc run: runNum on: stream detail: detail.
+      [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout.
       totalP := totalP + (counts at: 1).
       totalF := totalF + (counts at: 2).
       totalE := totalE + (counts at: 3).
@@ -547,7 +570,7 @@ runAllTests
   Smalltalk quitPrimitive! !
 
 !SUnitRunner class methodsFor: 'running'!
-runTestClass: testClass run: runNum on: s detail: d
+runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
   "Run all tests in a class. Returns #(pass fail error skip timeout)."
   | sels p f e sk t testPriority consecutiveTimeouts |
 
@@ -618,9 +641,9 @@ runTestClass: testClass run: runNum on: s detail: d
     (#(testOneGBAllocation testOneGWordAllocation
        testMethodsOfTheClassShouldNotBeRepeatedInItsSuperclasses
        testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass
-       "IntegerTest tests that exceed 10s timeout due to slow LargeInteger operations.
-        Our LargeInteger division/printing is O(n^2) vs reference VM's optimized C.
-        When they timeout, the runner (same priority 40) can't preempt, causing hang."
+       "IntegerTest: O(n^2) LargeInteger division/printing vs reference VM's optimized C.
+        These take minutes even with scaled timeouts. When they hang at P40, the runner
+        (also P40) can't preempt to fire the watchdog, so they must be skipped."
        testPrintStringBase testPositiveIntegerPrinting testNegativeIntegerPrinting
        testSlowFactorial testReciprocalModulo testPrintStringAll
        "testTransformingDeprecation hangs the VM: Deprecation>>transform triggers
@@ -630,7 +653,7 @@ runTestClass: testClass run: runNum on: s detail: d
       includes: sel) ifFalse: [
       | result |
       s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
-      result := self runSingleTest: testClass selector: sel timeout: 30 priority: testPriority on: s.
+      result := self runSingleTest: testClass selector: sel timeout: watchdogSecs priority: testPriority on: s.
       result ifNil: [
         p := p + 1. consecutiveTimeouts := 0.
         d nextPutAll: runNum printString; nextPut: $	.
