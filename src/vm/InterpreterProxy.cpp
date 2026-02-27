@@ -1626,3 +1626,64 @@ void initializeSqueakSSL(Interpreter* interp) {
 
 }
 #endif // PHARO_WITH_CRYPTO
+
+// =====================================================================
+// SocketPlugin integration (TCP sockets)
+// =====================================================================
+extern "C" {
+    sqInt SocketPlugin_setInterpreter(VirtualMachine* anInterpreter);
+    sqInt sp_primitiveSocketCreate3Semaphores(void);
+    sqInt sp_primitiveSocketDestroy(void);
+    sqInt sp_primitiveSocketConnectToPort(void);
+    sqInt sp_primitiveSocketConnectionStatus(void);
+    sqInt sp_primitiveSocketCloseConnection(void);
+    sqInt sp_primitiveSocketAbortConnection(void);
+    sqInt sp_primitiveSocketSendDataBufCount(void);
+    sqInt sp_primitiveSocketSendDone(void);
+    sqInt sp_primitiveSocketReceiveDataAvailable(void);
+    sqInt sp_primitiveSocketReceiveDataBufCount(void);
+    sqInt sp_primitiveSocketLocalPort(void);
+    sqInt sp_primitiveSocketLocalAddress(void);
+    sqInt sp_primitiveSocketRemoteAddress(void);
+    sqInt sp_primitiveSocketRemotePort(void);
+    sqInt sp_primitiveSocketError(void);
+    sqInt sp_primitiveSocketGetOptions(void);
+    sqInt sp_primitiveSocketSetOptions(void);
+    sqInt sp_primitiveSocketListenOnPortBacklog(void);
+    sqInt sp_primitiveSocketListenOnPortBacklogInterface(void);
+    sqInt sp_primitiveSocketAccept3Semaphores(void);
+    sqInt sp_primitiveHasSocketAccess(void);
+}
+
+void initializeSocketPlugin(Interpreter* interp) {
+    SocketPlugin_setInterpreter(&theProxy);
+
+    using PrimFn = sqInt (*)(void);
+    struct { const char* name; PrimFn fn; } prims[] = {
+        {"primitiveSocketCreate3Semaphores", sp_primitiveSocketCreate3Semaphores},
+        {"primitiveSocketDestroy", sp_primitiveSocketDestroy},
+        {"primitiveSocketConnectToPort", sp_primitiveSocketConnectToPort},
+        {"primitiveSocketConnectionStatus", sp_primitiveSocketConnectionStatus},
+        {"primitiveSocketCloseConnection", sp_primitiveSocketCloseConnection},
+        {"primitiveSocketAbortConnection", sp_primitiveSocketAbortConnection},
+        {"primitiveSocketSendDataBufCount", sp_primitiveSocketSendDataBufCount},
+        {"primitiveSocketSendDone", sp_primitiveSocketSendDone},
+        {"primitiveSocketReceiveDataAvailable", sp_primitiveSocketReceiveDataAvailable},
+        {"primitiveSocketReceiveDataBufCount", sp_primitiveSocketReceiveDataBufCount},
+        {"primitiveSocketLocalPort", sp_primitiveSocketLocalPort},
+        {"primitiveSocketLocalAddress", sp_primitiveSocketLocalAddress},
+        {"primitiveSocketRemoteAddress", sp_primitiveSocketRemoteAddress},
+        {"primitiveSocketRemotePort", sp_primitiveSocketRemotePort},
+        {"primitiveSocketError", sp_primitiveSocketError},
+        {"primitiveSocketGetOptions", sp_primitiveSocketGetOptions},
+        {"primitiveSocketSetOptions", sp_primitiveSocketSetOptions},
+        {"primitiveSocketListenOnPortBacklog", sp_primitiveSocketListenOnPortBacklog},
+        {"primitiveSocketListenOnPortBacklogInterface", sp_primitiveSocketListenOnPortBacklogInterface},
+        {"primitiveSocketAccept3Semaphores", sp_primitiveSocketAccept3Semaphores},
+        {"primitiveHasSocketAccess", sp_primitiveHasSocketAccess},
+    };
+
+    for (auto& p : prims) {
+        interp->registerNamedPrimitive("SocketPlugin", p.name, reinterpret_cast<Interpreter::ExternalPrimFunc>(p.fn));
+    }
+}

@@ -29,6 +29,9 @@ void initializeDSAPrims(pharo::Interpreter* interp);
 void initializeJPEGReaderPlugin(pharo::Interpreter* interp);
 void initializeJPEGReadWriter2Plugin(pharo::Interpreter* interp);
 
+// Initialize SocketPlugin (TCP sockets)
+void initializeSocketPlugin(pharo::Interpreter* interp);
+
 // Initialize SqueakSSL (crypto — compiled only when PHARO_WITH_CRYPTO=1)
 #if PHARO_WITH_CRYPTO
 void initializeSqueakSSL(pharo::Interpreter* interp);

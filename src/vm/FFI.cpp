@@ -1127,6 +1127,27 @@ int stub_SDL_GetDisplayBounds(int displayIndex, void* rect) {
     return 0;
 }
 
+int stub_SDL_GetDisplayUsableBounds(int displayIndex, void* rect) {
+    // Returns usable display area (below Pharo menu bar).
+    // Pharo's OSWorldRenderer calls this to determine where windows can be placed.
+    // Without a proper offset, new windows (debugger, browser) appear under the
+    // Pharo menu bar with unreachable title bars.
+    static const int kMenuBarHeight = 28;  // Pharo TaskbarMorph default height
+    if (rect) {
+        int* r = static_cast<int*>(rect);
+        r[0] = 0;     // x
+        r[1] = kMenuBarHeight;     // y — below menu bar
+        if (pharo::gDisplaySurface) {
+            r[2] = pharo::gDisplaySurface->width();
+            r[3] = pharo::gDisplaySurface->height() - kMenuBarHeight;
+        } else {
+            r[2] = 1024;
+            r[3] = 768 - kMenuBarHeight;
+        }
+    }
+    return 0;
+}
+
 // Timer stubs
 uint32_t stub_SDL_GetTicks() {
     static auto start = std::chrono::steady_clock::now();
@@ -1245,6 +1266,7 @@ SDL_EXPORT uint32_t SDL_GetModState() { return stub_SDL_GetModState(); }
 SDL_EXPORT void SDL_SetModState(uint32_t state) { stub_SDL_SetModState(state); }
 SDL_EXPORT int SDL_GetNumVideoDisplays() { return stub_SDL_GetNumVideoDisplays(); }
 SDL_EXPORT int SDL_GetDisplayBounds(int d, void* r) { return stub_SDL_GetDisplayBounds(d, r); }
+SDL_EXPORT int SDL_GetDisplayUsableBounds(int d, void* r) { return stub_SDL_GetDisplayUsableBounds(d, r); }
 SDL_EXPORT uint32_t SDL_GetTicks() { return stub_SDL_GetTicks(); }
 SDL_EXPORT uint64_t SDL_GetPerformanceCounter() { return stub_SDL_GetPerformanceCounter(); }
 SDL_EXPORT uint64_t SDL_GetPerformanceFrequency() { return stub_SDL_GetPerformanceFrequency(); }
@@ -1354,6 +1376,7 @@ void registerSDL2Stubs() {
     // Video
     registerFunction("SDL_GetNumVideoDisplays", reinterpret_cast<void*>(stub_SDL_GetNumVideoDisplays));
     registerFunction("SDL_GetDisplayBounds", reinterpret_cast<void*>(stub_SDL_GetDisplayBounds));
+    registerFunction("SDL_GetDisplayUsableBounds", reinterpret_cast<void*>(stub_SDL_GetDisplayUsableBounds));
 
     // Timer
     registerFunction("SDL_GetTicks", reinterpret_cast<void*>(stub_SDL_GetTicks));

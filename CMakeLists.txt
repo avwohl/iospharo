@@ -39,6 +39,7 @@ set(VM_SOURCES
     src/vm/Primitives.cpp
     src/vm/FFI.cpp
     src/vm/InterpreterProxy.cpp
+    src/vm/plugins/SocketPlugin.cpp
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
     src/platform/iOSBridge.cpp

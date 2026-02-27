@@ -8236,6 +8236,9 @@ void Interpreter::initializePrimitives() {
     initializeDSAPrims(this);
     initializeSqueakSSL(this);
 #endif
+
+    // Initialize SocketPlugin (TCP sockets with I/O monitor thread)
+    initializeSocketPlugin(this);
 }
 
 void Interpreter::registerNamedPrimitive(const std::string& module, const std::string& name, PrimitiveFunc func) {
