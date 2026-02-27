@@ -417,7 +417,11 @@ OSStatus SqueakSSLRead(SSLConnectionRef connection, void* data,
         return noErr;
     }
 
-    ssl->dataLen = 0;
+    /* We consumed sz bytes but didn't have enough — shift remainder */
+    ssl->dataLen -= sz;
+    if (ssl->dataLen > 0) {
+        memmove(ssl->dataBuf, ssl->dataBuf + sz, ssl->dataLen);
+    }
     *dataLength = sz;
     return errSSLWouldBlock;
 }

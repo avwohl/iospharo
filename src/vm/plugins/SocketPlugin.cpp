@@ -34,6 +34,7 @@ struct PrivateSocket {
     int writeSema;       // write semaphore index
     int sockState;       // one of SOCK_* constants
     int sockError;       // errno after socket error
+    bool writeSignaled;  // true after write-ready signaled; reset on EAGAIN
 };
 
 // =====================================================================
@@ -155,23 +156,14 @@ static void ioMonitorLoop() {
                 getsockopt(ps->fd, SOL_SOCKET, SO_ERROR, &err, &len);
                 if (err == 0) {
                     ps->sockState = SOCK_CONNECTED;
-                    fprintf(stderr, "[SOCK] Connection established (fd=%d)\n", ps->fd);
                 } else {
                     ps->sockError = err;
                     ps->sockState = SOCK_UNCONNECTED;
                     fprintf(stderr, "[SOCK] Connection failed: err=%d (%s) fd=%d\n",
                             err, strerror(err), ps->fd);
                 }
-                fprintf(stderr, "[SOCK] About to signal: connSema=%d writeSema=%d vm=%p fd=%d\n",
-                        ps->connSema, ps->writeSema, (void*)vm, ps->fd);
                 if (ps->connSema > 0 && vm) {
-                    fprintf(stderr, "[SOCK] Calling vm->signalSemaphoreWithIndex(%d) fnptr=%p\n",
-                            ps->connSema, (void*)(*(void**)&vm->signalSemaphoreWithIndex));
                     vm->signalSemaphoreWithIndex(ps->connSema);
-                    fprintf(stderr, "[SOCK] signalSemaphoreWithIndex returned\n");
-                } else {
-                    fprintf(stderr, "[SOCK] SKIPPED connSema signal (connSema=%d vm=%p)\n",
-                            ps->connSema, (void*)vm);
                 }
                 if (ps->writeSema > 0 && vm) {
                     vm->signalSemaphoreWithIndex(ps->writeSema);
@@ -185,14 +177,11 @@ static void ioMonitorLoop() {
                     char peek;
                     int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
                     if (n == 0) {
-                        fprintf(stderr, "[SOCK] recv peek returned 0 → OTHER_END_CLOSED (fd=%d)\n", ps->fd);
                         ps->sockState = SOCK_OTHER_END_CLOSED;
                         if (ps->connSema > 0 && vm) {
                             vm->signalSemaphoreWithIndex(ps->connSema);
                         }
                     } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        fprintf(stderr, "[SOCK] recv peek error: errno=%d (%s) fd=%d → OTHER_END_CLOSED\n",
-                                errno, strerror(errno), ps->fd);
                         ps->sockError = errno;
                         ps->sockState = SOCK_OTHER_END_CLOSED;
                         if (ps->connSema > 0 && vm) {
@@ -203,10 +192,11 @@ static void ioMonitorLoop() {
                         vm->signalSemaphoreWithIndex(ps->readSema);
                     }
                 }
-                if (FD_ISSET(ps->fd, &writefds)) {
+                if (FD_ISSET(ps->fd, &writefds) && !ps->writeSignaled) {
                     if (ps->writeSema > 0 && vm) {
                         vm->signalSemaphoreWithIndex(ps->writeSema);
                     }
+                    ps->writeSignaled = true;
                 }
             }
         }
@@ -294,37 +284,21 @@ static PrivateSocket* privateSocketFrom(sqInt socketOop) {
 //        semaIndex, readSemaIndex, writeSemaIndex
 // Returns: socketHandle (ByteArray of sizeof(SQSocket))
 extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
-    fprintf(stderr, "[SOCK] primitiveSocketCreate3Semaphores called (vm=%p, ioRunning=%d)\n",
-            (void*)vm, gIORunning.load());
-
     sqInt writeSemaIndex = vm->stackIntegerValue(0);
     sqInt readSemaIndex  = vm->stackIntegerValue(1);
     sqInt semaIndex      = vm->stackIntegerValue(2);
     // sendBufSize (3) and recvBufSize (4) are ignored — OS manages buffers
     sqInt socketType     = vm->stackIntegerValue(5);
     // netType (6) ignored — always IPv4
-    if (vm->failed()) {
-        fprintf(stderr, "[SOCK] FAIL: stackIntegerValue failed (type=%ld, sema=%ld/%ld/%ld)\n",
-                (long)socketType, (long)semaIndex, (long)readSemaIndex, (long)writeSemaIndex);
-        return vm->primitiveFail();
-    }
-
-    fprintf(stderr, "[SOCK] args: socketType=%ld sema=%ld/%ld/%ld\n",
-            (long)socketType, (long)semaIndex, (long)readSemaIndex, (long)writeSemaIndex);
+    if (vm->failed()) return vm->primitiveFail();
 
     // Create the OS socket
     int domain = AF_INET;
     int type = (socketType == UDP_SOCKET_TYPE) ? SOCK_DGRAM : SOCK_STREAM;
     int fd = socket(domain, type, 0);
-    if (fd < 0) {
-        fprintf(stderr, "[SOCK] FAIL: socket() errno=%d (%s)\n", errno, strerror(errno));
-        return vm->primitiveFail();
-    }
-
-    fprintf(stderr, "[SOCK] socket() OK fd=%d\n", fd);
+    if (fd < 0) return vm->primitiveFail();
 
     if (!setNonBlocking(fd)) {
-        fprintf(stderr, "[SOCK] FAIL: setNonBlocking errno=%d (%s)\n", errno, strerror(errno));
         close(fd);
         return vm->primitiveFail();
     }
@@ -339,20 +313,16 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     // (needed for waitForDataFor: which checks isConnected in its polling loop)
     ps->sockState = (socketType == UDP_SOCKET_TYPE) ? SOCK_CONNECTED : SOCK_UNCONNECTED;
     ps->sockError = 0;
+    ps->writeSignaled = false;
 
     // Allocate ByteArray for SQSocket handle
     sqInt classBA = vm->classByteArray();
-    fprintf(stderr, "[SOCK] classByteArray=0x%lx, sizeof(SQSocket)=%zu\n",
-            (unsigned long)classBA, sizeof(SQSocket));
     sqInt socketOop = vm->instantiateClassindexableSize(classBA, sizeof(SQSocket));
     if (vm->failed()) {
-        fprintf(stderr, "[SOCK] FAIL: instantiateClass failed\n");
         close(fd);
         delete ps;
         return vm->primitiveFail();
     }
-
-    fprintf(stderr, "[SOCK] ByteArray allocated oop=0x%lx\n", (unsigned long)socketOop);
 
     // Pin the ByteArray so its address doesn't change during GC
     vm->pushRemappableOop(socketOop);
@@ -361,7 +331,6 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     socketOop = vm->popRemappableOop();
     SQSocket* s = (SQSocket*)vm->firstIndexableField(socketOop);
     if (!s) {
-        fprintf(stderr, "[SOCK] FAIL: firstIndexableField returned null\n");
         close(fd);
         delete ps;
         return vm->primitiveFail();
@@ -370,15 +339,11 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     s->socketType = (int)socketType;
     s->privateSocketPtr = ps;
 
-    fprintf(stderr, "[SOCK] SQSocket filled: session=%d type=%d ptr=%p\n",
-            s->sessionID, s->socketType, (void*)ps);
-
     // Register for I/O monitoring
     registerSocket(ps);
 
     // Replace all 8 stack items (7 args + receiver) with the result
     vm->popthenPush(8, socketOop);
-    fprintf(stderr, "[SOCK] primitiveSocketCreate3Semaphores OK fd=%d\n", fd);
     return 0;
 }
 
@@ -498,35 +463,18 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
         ps->fd = newFd;
     }
 
-    // Log connect attempt
-    if (ss.ss_family == AF_INET) {
-        struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
-        uint8_t* b = (uint8_t*)&sa->sin_addr.s_addr;
-        fprintf(stderr, "[SOCK] Connecting to %d.%d.%d.%d:%ld (IPv4, fd=%d)\n",
-                b[0], b[1], b[2], b[3], (long)port, ps->fd);
-    } else if (ss.ss_family == AF_INET6) {
-        char v6str[INET6_ADDRSTRLEN];
-        inet_ntop(AF_INET6, &((struct sockaddr_in6*)&ss)->sin6_addr, v6str, sizeof(v6str));
-        fprintf(stderr, "[SOCK] Connecting to [%s]:%ld (IPv6/NAT64, fd=%d)\n",
-                v6str, (long)port, ps->fd);
-    }
-
     freeaddrinfo(aiResult);
 
     int result = connect(ps->fd, (struct sockaddr*)&ss, ssLen);
     if (result == 0) {
         // Immediate connection (unlikely for TCP but possible on localhost)
         ps->sockState = SOCK_CONNECTED;
-        fprintf(stderr, "[SOCK] Connected immediately (fd=%d)\n", ps->fd);
         if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
     } else if (errno == EINPROGRESS) {
         ps->sockState = SOCK_WAITING_FOR_CONNECTION;
-        fprintf(stderr, "[SOCK] Connect in progress (fd=%d)\n", ps->fd);
         wakeIOThread(); // ensure monitor notices
     } else {
         ps->sockError = errno;
-        fprintf(stderr, "[SOCK] Connect failed immediately: errno=%d (%s) fd=%d\n",
-                errno, strerror(errno), ps->fd);
         return vm->primitiveFail();
     }
 
@@ -544,19 +492,6 @@ extern "C" sqInt sp_primitiveSocketConnectionStatus(void) {
         // Invalid/destroyed socket — return Invalid status instead of failing
         vm->popthenPush(2, vm->integerObjectOf(SOCK_INVALID));
         return 0;
-    }
-
-    static int statusLogCount = 0;
-    if (ps->sockState != SOCK_CONNECTED || statusLogCount < 20) {
-        // Log non-CONNECTED states always, and first 20 CONNECTED checks
-        fprintf(stderr, "[SOCK] ConnectionStatus fd=%d → %d (%s)\n",
-                ps->fd, ps->sockState,
-                ps->sockState == SOCK_UNCONNECTED ? "Unconnected" :
-                ps->sockState == SOCK_WAITING_FOR_CONNECTION ? "WaitingForConnection" :
-                ps->sockState == SOCK_CONNECTED ? "Connected" :
-                ps->sockState == SOCK_OTHER_END_CLOSED ? "OtherEndClosed" :
-                ps->sockState == SOCK_THIS_END_CLOSED ? "ThisEndClosed" : "?");
-        if (ps->sockState == SOCK_CONNECTED) statusLogCount++;
     }
 
     vm->popthenPush(2, vm->integerObjectOf(ps->sockState));
@@ -624,6 +559,7 @@ extern "C" sqInt sp_primitiveSocketSendDataBufCount(void) {
     if (sent < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             sent = 0; // Nothing sent yet, try again later
+            ps->writeSignaled = false; // Re-arm write notification
         } else {
             ps->sockError = errno;
             return vm->primitiveFail();
@@ -1058,6 +994,7 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
     ps->writeSema = (int)writeSemaIndex;
     ps->sockState = SOCK_CONNECTED;
     ps->sockError = 0;
+    ps->writeSignaled = false;
 
     sqInt socketOop = vm->instantiateClassindexableSize(vm->classByteArray(), sizeof(SQSocket));
     if (vm->failed()) {

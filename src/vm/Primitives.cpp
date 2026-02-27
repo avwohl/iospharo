@@ -12822,16 +12822,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             }
         }
     }
-    // Diagnostic: log SocketPlugin and SqueakSSL dispatches
-    for (auto& ls : literalStrings) {
-        if (ls.find("Socket") != std::string::npos || ls == "SqueakSSL") {
-            fprintf(stderr, "[DISPATCH] primitiveExternalCall literals:");
-            for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
-            fprintf(stderr, "\n");
-            break;
-        }
-    }
-
     // Try all combinations of module:name from literal strings
     for (size_t a = 0; a < literalStrings.size(); a++) {
         // Try as direct name with empty module
