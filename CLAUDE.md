@@ -171,7 +171,8 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - Always test on Mac first - it starts up much faster than the iOS simulator
 - Use `./build/test_load_image <image-path>` for quick VM testing
 - Build with `cmake --build build` from the project root
-- Full build cycle: `scripts/build-xcframework.sh && xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
+- Full build cycle: `xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
+  (Xcode's "Check XCFramework Freshness" build phase auto-runs `build-xcframework.sh` if VM sources changed — no need to run it manually)
 
 ---
 ## Running Official Pharo Test Suite
