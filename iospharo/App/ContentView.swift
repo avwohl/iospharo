@@ -41,7 +41,9 @@ struct ContentView: View {
     private var pharoCanvas: some View {
         ZStack {
             PharoCanvasView(bridge: bridge)
+                #if targetEnvironment(macCatalyst)
                 .ignoresSafeArea()
+                #endif
 
             #if !targetEnvironment(macCatalyst)
             FloatingToolbar(

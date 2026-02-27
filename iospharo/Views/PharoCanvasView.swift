@@ -258,7 +258,11 @@ class PharoCanvasViewController: UIViewController {
 
     override func loadView() {
         view = UIView()
+        #if targetEnvironment(macCatalyst)
         view.backgroundColor = .white
+        #else
+        view.backgroundColor = .black  // Fills behind rounded corners / Dynamic Island
+        #endif
     }
 
     override func viewDidLoad() {
@@ -273,12 +277,24 @@ class PharoCanvasViewController: UIViewController {
         mtkView.preferredFramesPerSecond = 30
 
         view.addSubview(mtkView)
+        #if targetEnvironment(macCatalyst)
+        // Mac Catalyst: no rounded corners or notch, fill the whole window
         NSLayoutConstraint.activate([
             mtkView.topAnchor.constraint(equalTo: view.topAnchor),
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
+        #else
+        // iOS: respect safe area to avoid rendering under rounded corners / Dynamic Island
+        let guide = view.safeAreaLayoutGuide
+        NSLayoutConstraint.activate([
+            mtkView.topAnchor.constraint(equalTo: guide.topAnchor),
+            mtkView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
+            mtkView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
+            mtkView.trailingAnchor.constraint(equalTo: guide.trailingAnchor)
+        ])
+        #endif
 
         if let bridge = bridge {
             renderer = MetalRenderer(metalView: mtkView, bridge: bridge)

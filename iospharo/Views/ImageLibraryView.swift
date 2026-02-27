@@ -68,7 +68,7 @@ struct ImageLibraryView: View {
                 } else {
                     // Project info bar
                     HStack(spacing: 4) {
-                        Text("iospharo — Experimental release, not affiliated with or endorsed by")
+                        Text("iospharo — Experimental release, not endorsed by")
                             .foregroundColor(.secondary)
                         Link("Pharo.org", destination: URL(string: "https://pharo.org")!)
                         Spacer()
@@ -525,7 +525,7 @@ struct ImageLibraryView: View {
     }
 
     private var disclaimerAttributed: AttributedString {
-        var prefix = AttributedString("Experimental release — not affiliated with or endorsed by ")
+        var prefix = AttributedString("Experimental release — not endorsed by ")
         prefix.foregroundColor = .secondary
         var link = AttributedString("Pharo.org")
         link.link = URL(string: "https://pharo.org")
