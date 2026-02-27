@@ -673,6 +673,7 @@ static sqInt proxy_showDisplayBitsLeftTopRightBottom(sqInt aForm, sqInt l, sqInt
 }
 
 static sqInt proxy_signalSemaphoreWithIndex(sqInt semaIndex) {
+    fprintf(stderr, "[SEMA] signalSemaphoreWithIndex(%d)\n", (int)semaIndex);
     gInterp->signalExternalSemaphore(static_cast<int>(semaIndex));
     return 0;
 }

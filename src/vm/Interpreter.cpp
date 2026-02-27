@@ -994,7 +994,11 @@ void Interpreter::processPendingSignals() {
         if (tableIndex >= tableSize) continue;
 
         Oop semaphore = memory_.fetchPointer(tableIndex, semTable);
-        if (semaphore.isNil() || !semaphore.isObject()) continue;
+        if (semaphore.isNil() || !semaphore.isObject()) {
+            fprintf(stderr, "[SEMA] processPendingSignals: index=%d → nil/invalid semaphore (tableIndex=%zu, tableSize=%zu)\n",
+                    index, tableIndex, tableSize);
+            continue;
+        }
 
         synchronousSignal(semaphore);
     }
