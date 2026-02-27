@@ -107,13 +107,21 @@ class PharoBridge: ObservableObject {
     private func setupTextInputCallback() {
         vm_setTextInputCallback { active in
             DispatchQueue.main.async {
+                #if targetEnvironment(macCatalyst)
+                // Mac Catalyst: becomeFirstResponder captures hardware keyboard
+                // without showing an on-screen keyboard, so always honor Pharo's request.
                 guard let view = gPharoMTKView else { return }
                 if active {
                     view.becomeFirstResponder()
                 } else {
                     view.resignFirstResponder()
                 }
-                PharoBridge.shared.keyboardVisible = active
+                #else
+                // iOS: Don't let Pharo's SDL_StartTextInput show the soft keyboard.
+                // The user controls the keyboard via the floating toolbar button.
+                // Pharo calls SDL_StartTextInput aggressively (e.g. when refocusing
+                // any morph), which would pop the keyboard at unwanted times.
+                #endif
             }
         }
     }
