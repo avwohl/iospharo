@@ -10,6 +10,7 @@
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
+#include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
@@ -635,6 +636,22 @@ extern "C" sqInt sp_primitiveSocketRemotePort(void) {
     return 0;
 }
 
+// Helper: match option name (not null-terminated) against a C string
+static bool optNameIs(const char* buf, sqInt len, const char* expected) {
+    sqInt elen = (sqInt)strlen(expected);
+    return len == elen && memcmp(buf, expected, (size_t)elen) == 0;
+}
+
+// Helper: parse value string as integer
+static int parseOptValue(const char* buf, sqInt len) {
+    if (len <= 0) return 0;
+    char tmp[32];
+    sqInt cpLen = len < 31 ? len : 31;
+    memcpy(tmp, buf, (size_t)cpLen);
+    tmp[cpLen] = '\0';
+    return (int)strtol(tmp, nullptr, 10);
+}
+
 // primitiveSocketGetOptions
 // Stack: receiver, socketHandle, optionName (ByteString)
 // Returns: Array of {errorCode. returnedValue}
@@ -650,35 +667,33 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
     sqInt nameLen = vm->byteSizeOf(nameOop);
 
     int errCode = 0;
-    sqInt retVal = 0;
+    int retVal = 0;
 
-    // Recognize common options
-    if (nameLen == 10 && memcmp(optName, "TCP_NODELAY", 10) == 0) {
-        // "TCP_NODELAY" is 11 chars but the image sends it truncated sometimes
-        int val = 0;
-        socklen_t vlen = sizeof(val);
-        if (getsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, &vlen) < 0) {
+    if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &retVal, &vlen) < 0)
             errCode = errno;
-        }
-        retVal = val;
-    } else if (nameLen == 11 && memcmp(optName, "TCP_NODELAY", 11) == 0) {
-        int val = 0;
-        socklen_t vlen = sizeof(val);
-        if (getsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, &vlen) < 0) {
-            errCode = errno;
-        }
-        retVal = val;
-    } else if (nameLen == 11 && memcmp(optName, "SO_LINGER\0\0", 11) == 0) {
+    } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
         struct linger lin;
         socklen_t vlen = sizeof(lin);
-        if (getsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, &vlen) < 0) {
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, &vlen) < 0)
             errCode = errno;
-        }
-        retVal = lin.l_onoff ? lin.l_linger : 0;
+        else
+            retVal = lin.l_onoff ? lin.l_linger : 0;
+    } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &retVal, &vlen) < 0)
+            errCode = errno;
+    } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &retVal, &vlen) < 0)
+            errCode = errno;
+    } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
+        socklen_t vlen = sizeof(retVal);
+        if (getsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &retVal, &vlen) < 0)
+            errCode = errno;
     } else {
         // Unknown option — return 0 with no error (like the standard VM)
-        errCode = 0;
-        retVal = 0;
     }
 
     // Return a 2-element Array: {errCode. retVal}
@@ -694,7 +709,7 @@ extern "C" sqInt sp_primitiveSocketGetOptions(void) {
 
 // primitiveSocketSetOptions
 // Stack: receiver, socketHandle, optionName, optionValue
-// Returns: SmallInteger (0 = success, nonzero = error)
+// Returns: Array of {errorCode. returnedValue}
 extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     sqInt valueOop  = vm->stackValue(0);
     sqInt nameOop   = vm->stackValue(1);
@@ -713,39 +728,47 @@ extern "C" sqInt sp_primitiveSocketSetOptions(void) {
     sqInt valueLen = vm->byteSizeOf(valueOop);
 
     int errCode = 0;
+    int retVal = 0;
 
-    if (nameLen >= 10 && memcmp(optName, "TCP_NODELAY", nameLen > 11 ? 11 : nameLen) == 0) {
-        // Parse value string as integer
-        int val = 0;
-        if (valueLen > 0 && optValue[0] >= '0' && optValue[0] <= '9') {
-            val = optValue[0] - '0';
-        }
-        if (setsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) < 0) {
+    if (optNameIs(optName, nameLen, "TCP_NODELAY")) {
+        int val = parseOptValue(optValue, valueLen);
+        if (setsockopt(ps->fd, IPPROTO_TCP, TCP_NODELAY, &val, sizeof(val)) < 0)
             errCode = errno;
-        }
-    } else if (nameLen >= 9 && memcmp(optName, "SO_LINGER", 9) == 0) {
-        int val = 0;
-        if (valueLen > 0 && optValue[0] >= '0' && optValue[0] <= '9') {
-            val = optValue[0] - '0';
-        }
+        retVal = val;
+    } else if (optNameIs(optName, nameLen, "SO_LINGER")) {
+        int val = parseOptValue(optValue, valueLen);
         struct linger lin;
         lin.l_onoff = (val > 0) ? 1 : 0;
         lin.l_linger = val;
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0) {
+        if (setsockopt(ps->fd, SOL_SOCKET, SO_LINGER, &lin, sizeof(lin)) < 0)
             errCode = errno;
-        }
-    } else if (nameLen >= 12 && memcmp(optName, "SO_KEEPALIVE", 12) == 0) {
-        int val = 0;
-        if (valueLen > 0 && optValue[0] >= '0' && optValue[0] <= '9') {
-            val = optValue[0] - '0';
-        }
-        if (setsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) < 0) {
+        retVal = val;
+    } else if (optNameIs(optName, nameLen, "SO_KEEPALIVE")) {
+        int val = parseOptValue(optValue, valueLen);
+        if (setsockopt(ps->fd, SOL_SOCKET, SO_KEEPALIVE, &val, sizeof(val)) < 0)
             errCode = errno;
-        }
+        retVal = val;
+    } else if (optNameIs(optName, nameLen, "SO_SNDBUF")) {
+        int val = parseOptValue(optValue, valueLen);
+        if (setsockopt(ps->fd, SOL_SOCKET, SO_SNDBUF, &val, sizeof(val)) < 0)
+            errCode = errno;
+        retVal = val;
+    } else if (optNameIs(optName, nameLen, "SO_RCVBUF")) {
+        int val = parseOptValue(optValue, valueLen);
+        if (setsockopt(ps->fd, SOL_SOCKET, SO_RCVBUF, &val, sizeof(val)) < 0)
+            errCode = errno;
+        retVal = val;
     }
-    // Unknown options are silently ignored (return 0)
+    // Unknown options are silently ignored (return {0. 0})
 
-    vm->popthenPush(4, vm->integerObjectOf(errCode));
+    // Return a 2-element Array: {errCode. retVal} (same as getOptions)
+    sqInt resultArray = vm->instantiateClassindexableSize(vm->classArray(), 2);
+    if (vm->failed()) return vm->primitiveFail();
+
+    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf(errCode));
+    vm->storePointerofObjectwithValue(1, resultArray, vm->integerObjectOf(retVal));
+
+    vm->popthenPush(4, resultArray);
     return 0;
 }
 
