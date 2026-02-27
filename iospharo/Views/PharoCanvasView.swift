@@ -65,6 +65,25 @@ class PharoMTKView: MTKView {
         // The VM will call vm_setTextInputCallback(true) when it needs text input.
     }
 
+    #if !targetEnvironment(macCatalyst)
+    @discardableResult
+    override func resignFirstResponder() -> Bool {
+        let result = super.resignFirstResponder()
+        if result {
+            // Give hardware keyboard focus back to the view controller
+            var r: UIResponder? = self.next
+            while r != nil {
+                if let vc = r as? PharoCanvasViewController {
+                    vc.becomeFirstResponder()
+                    break
+                }
+                r = r?.next
+            }
+        }
+        return result
+    }
+    #endif
+
     // MARK: - Touch Handling
 
     private var currentButton: Int = IOS_RED_BUTTON
@@ -203,7 +222,7 @@ class PharoMTKView: MTKView {
     }
 
     /// Map UIKeyModifierFlags to Pharo modifier mask
-    private func modifierFlagsToPharo(_ flags: UIKeyModifierFlags) -> Int {
+    func modifierFlagsToPharo(_ flags: UIKeyModifierFlags) -> Int {
         var mods = 0
         if flags.contains(.shift) { mods |= IOS_SHIFT_KEY }
         if flags.contains(.control) { mods |= IOS_CTRL_KEY }
@@ -213,7 +232,7 @@ class PharoMTKView: MTKView {
     }
 
     /// Map UIKeyboardHIDUsage to Pharo charCode for special keys
-    private func specialKeyCharCode(_ keyCode: UIKeyboardHIDUsage) -> Int32 {
+    func specialKeyCharCode(_ keyCode: UIKeyboardHIDUsage) -> Int32 {
         switch keyCode {
         case .keyboardReturnOrEnter: return 13
         case .keyboardEscape: return 27
@@ -304,12 +323,78 @@ class PharoCanvasViewController: UIViewController {
         setupGestureRecognizers()
     }
 
+    override var canBecomeFirstResponder: Bool {
+        #if targetEnvironment(macCatalyst)
+        return false  // On Mac, MTKView is always first responder
+        #else
+        return true   // On iOS, VC handles hardware keyboard when soft keyboard is hidden
+        #endif
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         #if targetEnvironment(macCatalyst)
         mtkView.becomeFirstResponder()
+        #else
+        // On iOS, make the VC first responder for hardware keyboard input.
+        // The VC doesn't conform to UIKeyInput, so no soft keyboard appears.
+        becomeFirstResponder()
         #endif
     }
+
+    // MARK: - Hardware Keyboard (iOS)
+    //
+    // On iOS, the MTKView's pressesBegan skips regular characters because
+    // UIKeyInput.insertText handles them when the soft keyboard is showing.
+    // But when the soft keyboard is hidden, the MTKView is not first responder
+    // and receives no keyboard events at all. The VC fills this gap: it
+    // becomes first responder when the soft keyboard is hidden and handles
+    // ALL hardware keyboard events here.
+
+    #if !targetEnvironment(macCatalyst)
+    override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard bridge != nil else {
+            super.pressesBegan(presses, with: event)
+            return
+        }
+        for press in presses {
+            guard let key = press.key else { continue }
+            let modifiers = Int32(mtkView.modifierFlagsToPharo(key.modifierFlags))
+
+            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+                let charCode = Int32(scalar.value)
+                vm_postKeyEvent(0, charCode, 0, modifiers)  // down
+                vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
+            } else {
+                let charCode = mtkView.specialKeyCharCode(key.keyCode)
+                if charCode > 0 {
+                    vm_postKeyEvent(0, charCode, 0, modifiers)  // down
+                    vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
+                }
+            }
+        }
+    }
+
+    override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+        guard bridge != nil else {
+            super.pressesEnded(presses, with: event)
+            return
+        }
+        for press in presses {
+            guard let key = press.key else { continue }
+            let modifiers = Int32(mtkView.modifierFlagsToPharo(key.modifierFlags))
+
+            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+                vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)  // up
+            } else {
+                let charCode = mtkView.specialKeyCharCode(key.keyCode)
+                if charCode > 0 {
+                    vm_postKeyEvent(1, charCode, 0, modifiers)  // up
+                }
+            }
+        }
+    }
+    #endif
 
     private func setupGestureRecognizers() {
         let targetView = mtkView as UIView
