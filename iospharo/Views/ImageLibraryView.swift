@@ -74,6 +74,8 @@ struct ImageLibraryView: View {
                         Spacer()
                         Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
                         Text("·").foregroundColor(.secondary)
+                        Link("Changes", destination: URL(string: "https://github.com/avwohl/iospharo/blob/main/docs/changes.md")!)
+                        Text("·").foregroundColor(.secondary)
                         Link("Report a Bug", destination: URL(string: "https://github.com/avwohl/iospharo/issues")!)
                     }
                     .font(.caption)
@@ -515,6 +517,9 @@ struct ImageLibraryView: View {
                 .multilineTextAlignment(.center)
             HStack(spacing: 12) {
                 Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
+                Text("·")
+                    .foregroundColor(.secondary)
+                Link("Changes", destination: URL(string: "https://github.com/avwohl/iospharo/blob/main/docs/changes.md")!)
                 Text("·")
                     .foregroundColor(.secondary)
                 Link("Report a Bug", destination: URL(string: "https://github.com/avwohl/iospharo/issues")!)
