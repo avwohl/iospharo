@@ -420,6 +420,30 @@ struct ImageLibraryView: View {
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
 
+                // iOS patches toggle (iOS only, not Mac Catalyst)
+                #if !targetEnvironment(macCatalyst)
+                Divider()
+                    .padding(.horizontal, 12)
+                Toggle(isOn: Binding(
+                    get: { image.applyIOSPatches },
+                    set: { newValue in
+                        imageManager.setIOSPatches(image, enabled: newValue)
+                    }
+                )) {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("Apply iOS patches")
+                            .font(.caption)
+                        Text("Menu bar overflow for narrow screens")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
+                #endif
+
                 // Action buttons
                 HStack(spacing: 16) {
                     Button {
@@ -537,6 +561,9 @@ struct ImageLibraryView: View {
     private func launchImage(_ image: PharoImage) {
         imageManager.markLaunched(image)
         imageManager.selectedImageID = image.id
+        #if !targetEnvironment(macCatalyst)
+        imageManager.prepareIOSPatches(for: image)
+        #endif
         if bridge.loadImage(at: image.imagePath) {
             bridge.start()
         }
