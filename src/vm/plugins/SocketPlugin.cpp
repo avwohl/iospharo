@@ -14,6 +14,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <mutex>
+#include <netdb.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/select.h>
@@ -377,50 +378,68 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     socklen_t ssLen;
     memset(&ss, 0, sizeof(ss));
 
+    // Build IP address string for getaddrinfo (handles NAT64 synthesis)
+    char addrStr[INET6_ADDRSTRLEN];
+    addrStr[0] = '\0';
+
     if (vm->isIntegerObject(addrOop)) {
         // SmallInteger: IPv4 address in host byte order
         uint32_t hostAddr = (uint32_t)vm->integerValueOf(addrOop);
-        struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
-        sa->sin_family = AF_INET;
-        sa->sin_port = htons((uint16_t)port);
-        sa->sin_addr.s_addr = htonl(hostAddr);
-        ssLen = sizeof(struct sockaddr_in);
+        uint32_t netAddr = htonl(hostAddr);
+        inet_ntop(AF_INET, &netAddr, addrStr, sizeof(addrStr));
     } else if (vm->isBytes(addrOop)) {
         sqInt addrSize = vm->byteSizeOf(addrOop);
         uint8_t* bytes = (uint8_t*)vm->firstIndexableField(addrOop);
         if (addrSize == 4) {
-            // 4-byte ByteArray: IPv4 in network byte order
-            struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
-            sa->sin_family = AF_INET;
-            sa->sin_port = htons((uint16_t)port);
-            memcpy(&sa->sin_addr.s_addr, bytes, 4);
-            ssLen = sizeof(struct sockaddr_in);
+            inet_ntop(AF_INET, bytes, addrStr, sizeof(addrStr));
         } else if (addrSize == 16) {
-            // 16-byte ByteArray: IPv6 address
-            // Re-create socket as AF_INET6 if currently AF_INET
-            int oldFd = ps->fd;
-            int newFd = socket(AF_INET6, SOCK_STREAM, 0);
-            if (newFd < 0) {
-                ps->sockError = errno;
-                return vm->primitiveFail();
-            }
-            if (!setNonBlocking(newFd)) {
-                close(newFd);
-                return vm->primitiveFail();
-            }
-            close(oldFd);
-            ps->fd = newFd;
-
-            struct sockaddr_in6* sa6 = (struct sockaddr_in6*)&ss;
-            sa6->sin6_family = AF_INET6;
-            sa6->sin6_port = htons((uint16_t)port);
-            memcpy(&sa6->sin6_addr, bytes, 16);
-            ssLen = sizeof(struct sockaddr_in6);
+            inet_ntop(AF_INET6, bytes, addrStr, sizeof(addrStr));
         } else {
             return vm->primitiveFail();
         }
     } else {
         return vm->primitiveFail();
+    }
+
+    // Use getaddrinfo to resolve the numeric address — on IPv6-only networks
+    // with NAT64, this synthesizes the proper IPv6 address from an IPv4 literal.
+    // This is Apple's recommended approach for NAT64 compatibility.
+    char portStr[8];
+    snprintf(portStr, sizeof(portStr), "%ld", (long)port);
+    struct addrinfo hints = {};
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_NUMERICHOST;
+    struct addrinfo* aiResult = nullptr;
+
+    int aiErr = getaddrinfo(addrStr, portStr, &hints, &aiResult);
+    if (aiErr != 0 || !aiResult) {
+        fprintf(stderr, "[SOCK] getaddrinfo('%s', '%s') failed: %s\n",
+                addrStr, portStr, gai_strerror(aiErr));
+        return vm->primitiveFail();
+    }
+
+    // Use the first result — on NAT64 networks this is the synthesized IPv6
+    struct addrinfo* chosen = aiResult;
+    memcpy(&ss, chosen->ai_addr, chosen->ai_addrlen);
+    ssLen = (socklen_t)chosen->ai_addrlen;
+
+    // If address family changed (IPv4→IPv6 via NAT64), re-create the socket
+    if (chosen->ai_family == AF_INET6) {
+        int oldFd = ps->fd;
+        int newFd = socket(AF_INET6, SOCK_STREAM, 0);
+        if (newFd < 0) {
+            ps->sockError = errno;
+            freeaddrinfo(aiResult);
+            return vm->primitiveFail();
+        }
+        if (!setNonBlocking(newFd)) {
+            close(newFd);
+            freeaddrinfo(aiResult);
+            return vm->primitiveFail();
+        }
+        close(oldFd);
+        ps->fd = newFd;
     }
 
     // Log connect attempt
@@ -430,8 +449,13 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
         fprintf(stderr, "[SOCK] Connecting to %d.%d.%d.%d:%ld (IPv4, fd=%d)\n",
                 b[0], b[1], b[2], b[3], (long)port, ps->fd);
     } else if (ss.ss_family == AF_INET6) {
-        fprintf(stderr, "[SOCK] Connecting to IPv6 addr port %ld (fd=%d)\n", (long)port, ps->fd);
+        char v6str[INET6_ADDRSTRLEN];
+        inet_ntop(AF_INET6, &((struct sockaddr_in6*)&ss)->sin6_addr, v6str, sizeof(v6str));
+        fprintf(stderr, "[SOCK] Connecting to [%s]:%ld (IPv6/NAT64, fd=%d)\n",
+                v6str, (long)port, ps->fd);
     }
+
+    freeaddrinfo(aiResult);
 
     int result = connect(ps->fd, (struct sockaddr*)&ss, ssLen);
     if (result == 0) {

@@ -24958,16 +24958,22 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
         if (err == 0 && result) {
-            // Use the FIRST result from getaddrinfo — the OS orders results
-            // by what works best on the current network. On IPv6-preferred
-            // networks (common on iPad), forcing IPv4 can cause connect timeouts.
+            // MUST prefer IPv4: Pharo 13's SocketAddress>>fromOldByteAddress:
+            // enforces size=4 and raises SizeMismatch on 16-byte addresses.
+            // On IPv6-only networks (NAT64/DNS64), if no IPv4 result exists,
+            // extract the embedded IPv4 from the synthesized IPv6 address
+            // (last 4 bytes of well-known prefix 64:ff9b::/96).
             struct addrinfo* chosen = nullptr;
+            struct addrinfo* firstV6 = nullptr;
             int v4Count = 0, v6Count = 0;
             for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-                if (rp->ai_family == AF_INET) v4Count++;
-                else if (rp->ai_family == AF_INET6) v6Count++;
-                if (!chosen && (rp->ai_family == AF_INET || rp->ai_family == AF_INET6))
-                    chosen = rp;
+                if (rp->ai_family == AF_INET) {
+                    v4Count++;
+                    if (!chosen) chosen = rp;
+                } else if (rp->ai_family == AF_INET6) {
+                    v6Count++;
+                    if (!firstV6) firstV6 = rp;
+                }
             }
 
             fprintf(stderr, "[DNS] '%s' resolved in %ldms: %d IPv4, %d IPv6 results\n",
@@ -24980,12 +24986,20 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
                 *validPtr = true;
                 uint8_t* b = resultBuf;
                 fprintf(stderr, "[DNS] Using IPv4: %d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
-            } else if (chosen && chosen->ai_family == AF_INET6) {
-                struct sockaddr_in6* addr6 = (struct sockaddr_in6*)chosen->ai_addr;
-                memcpy(resultBuf, &addr6->sin6_addr, 16);
-                *resultSizePtr = 16;
+            } else if (firstV6) {
+                // No IPv4 results — likely an IPv6-only network (NAT64/DNS64).
+                // Pharo 13 can only handle 4-byte addresses in its resolver path,
+                // so extract the embedded IPv4 from the synthesized IPv6 address
+                // (last 4 bytes for well-known prefix 64:ff9b::/96 and most others).
+                // The connect primitive will re-resolve this via getaddrinfo to get
+                // the proper NAT64 synthesized IPv6 address for actual connection.
+                struct sockaddr_in6* addr6 = (struct sockaddr_in6*)firstV6->ai_addr;
+                uint8_t* v6bytes = (uint8_t*)&addr6->sin6_addr;
+                memcpy(resultBuf, v6bytes + 12, 4);
+                *resultSizePtr = 4;
                 *validPtr = true;
-                fprintf(stderr, "[DNS] Using IPv6 (16 bytes)\n");
+                fprintf(stderr, "[DNS] IPv6-only: extracted embedded IPv4 %d.%d.%d.%d from synthesized IPv6\n",
+                        resultBuf[0], resultBuf[1], resultBuf[2], resultBuf[3]);
             } else {
                 *validPtr = false;
                 fprintf(stderr, "[DNS] No usable address found\n");
