@@ -1,3 +1,28 @@
+# What's New in Build 27
+
+Build 27 — 2026-02-27
+
+## Bug Fixes
+
+### Keyboard Text Input Fixed (reported by users)
+Typing in Pharo editors (Playground, System Browser, Transcript, etc.) did
+nothing — keystrokes were intercepted as shortcuts but never inserted as text.
+
+Root cause: the SDL2 event stub only generated SDL_KEYDOWN/KEYUP events.
+Pharo's OSSDL2Driver requires SDL_TEXTINPUT events for text insertion. Real
+SDL2 generates both: KEYDOWN, TEXTINPUT, KEYUP for each typed character.
+
+Fix: keystroke events with printable characters and no command modifiers now
+generate SDL_TEXTINPUT with proper UTF-8 encoding. Modifier chords (Cmd+C,
+Ctrl+X, etc.) continue to generate only KEYDOWN/KEYUP so shortcuts still work.
+
+### Pharo Menu Bar No Longer Overlaps macOS Traffic Lights
+On Mac Catalyst, the Pharo in-image menu bar (Pharo, Browse, Debug, ...)
+overlapped the red/yellow/green window controls. The Metal view now insets
+from the top on Mac to leave room for the title bar area.
+
+---
+
 # What's New in Build 25
 
 Build 25 — 2026-02-27
