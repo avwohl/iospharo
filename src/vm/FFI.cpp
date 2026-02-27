@@ -119,6 +119,15 @@ struct SDL_KeyboardEvent {
     SDL_Keysym keysym;
 };
 
+#define SDL_TEXTINPUTEVENT_TEXT_SIZE 32
+
+struct SDL_TextInputEvent {
+    uint32_t type;        // SDL_TEXTINPUT
+    uint32_t timestamp;
+    uint32_t windowID;
+    char text[SDL_TEXTINPUTEVENT_TEXT_SIZE];  // UTF-8 encoded text
+};
+
 // SDL_Event union
 union SDL_Event {
     uint32_t type;
@@ -128,6 +137,7 @@ union SDL_Event {
     SDL_MouseButtonEvent button;
     SDL_MouseWheelEvent wheel;
     SDL_KeyboardEvent key;
+    SDL_TextInputEvent text;
     uint8_t padding[56];  // SDL_Event is 56 bytes
 };
 
@@ -957,6 +967,43 @@ int stub_SDL_PollEvent(void* event) {
         // arg1=charCode, arg2=subtype (0=down, 1=up, 2=keystroke),
         // arg3=modifiers, arg4=keyCode (scancode)
         int subtype = pharoEvent.arg2;
+        int charCode = pharoEvent.arg1;
+
+        // Keystroke (subtype 2) with printable character → SDL_TEXTINPUT
+        // Real SDL2 generates: KEYDOWN, TEXTINPUT, KEYUP for typed characters.
+        // We get: down(0), stroke(2), up(1) — so stroke maps to TEXTINPUT.
+        // Non-printable keys (arrows, backspace, escape) stay as KEYDOWN.
+        bool isPrintable = (charCode >= 32 && charCode != 127) ||
+                           charCode == 13 || charCode == 9;
+        if (subtype == 2 && isPrintable && !(pharoEvent.arg3 & ~1)) {
+            // Only generate TEXTINPUT for unmodified keys (or Shift only).
+            // Cmd+C, Ctrl+X etc. are shortcuts, not text input.
+            memset(sdlEvent, 0, sizeof(SDL_Event));
+            sdlEvent->text.type = SDL_TEXTINPUT;
+            sdlEvent->text.timestamp = pharoEvent.timeStamp;
+            sdlEvent->text.windowID = windowID;
+            // Encode charCode as UTF-8
+            char* p = sdlEvent->text.text;
+            if (charCode < 0x80) {
+                *p++ = static_cast<char>(charCode);
+            } else if (charCode < 0x800) {
+                *p++ = static_cast<char>(0xC0 | (charCode >> 6));
+                *p++ = static_cast<char>(0x80 | (charCode & 0x3F));
+            } else if (charCode < 0x10000) {
+                *p++ = static_cast<char>(0xE0 | (charCode >> 12));
+                *p++ = static_cast<char>(0x80 | ((charCode >> 6) & 0x3F));
+                *p++ = static_cast<char>(0x80 | (charCode & 0x3F));
+            } else {
+                *p++ = static_cast<char>(0xF0 | (charCode >> 18));
+                *p++ = static_cast<char>(0x80 | ((charCode >> 12) & 0x3F));
+                *p++ = static_cast<char>(0x80 | ((charCode >> 6) & 0x3F));
+                *p++ = static_cast<char>(0x80 | (charCode & 0x3F));
+            }
+            *p = '\0';
+            return 1;
+        }
+
+        // Key down/up or non-printable keystroke → SDL_KEYDOWN/KEYUP
         if (subtype == 0 || subtype == 2) {
             sdlEvent->key.type = SDL_KEYDOWN;
             sdlEvent->key.state = 1;
@@ -968,7 +1015,7 @@ int stub_SDL_PollEvent(void* event) {
         sdlEvent->key.windowID = windowID;
         sdlEvent->key.repeat = 0;
         sdlEvent->key.keysym.scancode = pharoEvent.arg4;
-        sdlEvent->key.keysym.sym = pharoEvent.arg1;
+        sdlEvent->key.keysym.sym = charCode;
         uint16_t sdlMod = 0;
         if (pharoEvent.arg3 & 1) sdlMod |= 0x0001;  // KMOD_LSHIFT
         if (pharoEvent.arg3 & 2) sdlMod |= 0x0040;  // KMOD_LCTRL

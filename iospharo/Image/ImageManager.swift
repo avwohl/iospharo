@@ -91,7 +91,6 @@ class ImageManager: ObservableObject {
     func load() {
         #if DEBUG
         fputs("[LIB] load() starting\n", stderr)
-        fflush(stderr)
         #endif
 
         // Ensure Images/ directory exists
