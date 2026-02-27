@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="generator" content="pandoc" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
-  <title>Changes Since Build 23</title>
+  <title>Changes Since Build 22</title>
   <style>
     /* Default styles provided by pandoc.
     ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
@@ -173,11 +173,23 @@
 </head>
 <body>
 <header id="title-block-header">
-<h1 class="title">Changes Since Build 23</h1>
+<h1 class="title">Changes Since Build 22</h1>
 </header>
 <h1 id="whats-new-in-build-24">What’s New in Build 24</h1>
 <p>Build 24 — 2026-02-27</p>
 <h2 id="bug-fixes">Bug Fixes</h2>
+<h3 id="iphone-forced-to-landscape-mode">iPhone Forced to Landscape
+Mode</h3>
+<p>Portrait mode on iPhone (~390px wide) made Pharo essentially
+unusable: - The image library buttons wrapped into unreadable vertical
+text - Pharo’s desktop windows and dialogs are designed for 1024px+ and
+didn’t fit at all - The Save As dialog was completely broken — no
+visible text input field, keyboard covered half the window - Keyboard
+input reportedly didn’t register</p>
+<p>The app now locks iPhone to landscape orientation, giving ~844px of
+width on modern iPhones. This is enough for Pharo’s UI to work without
+any image-side patching. iPad keeps all orientations (portrait and
+landscape). Mac is unaffected.</p>
 <h3 id="iphone-safe-area-insets">iPhone Safe Area Insets</h3>
 <p>The Pharo display now respects iOS safe area insets on iPhone and
 iPad. Previously, content rendered edge-to-edge, causing the menu bar
