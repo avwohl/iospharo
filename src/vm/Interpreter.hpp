@@ -1215,6 +1215,12 @@ private:
     PrimitiveResult primitiveLocaleTimezoneOffset(int argCount);    // 398
     PrimitiveResult primitiveLocaleDaylightSaving(int argCount);    // 399
 
+    // SecurityPlugin named primitives
+    PrimitiveResult primitiveCanWriteImage(int argCount);
+    PrimitiveResult primitiveDisableImageWrite(int argCount);
+    PrimitiveResult primitiveGetSecureUserDirectory(int argCount);
+    PrimitiveResult primitiveGetUntrustedUserDirectory(int argCount);
+
     // Image/graphics primitives (400-409)
     PrimitiveResult primitiveImageReadHeader(int argCount);         // 400
     PrimitiveResult primitiveImageReadPixels(int argCount);         // 401

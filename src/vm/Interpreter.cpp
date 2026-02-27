@@ -8383,6 +8383,12 @@ void Interpreter::initializeNamedPrimitives() {
     // High-resolution clock (used by Time class>>primNanoClock)
     registerNamedPrimitive("", "primitiveHighResClock", &Interpreter::primitiveHighResClock);
 
+    // SecurityPlugin primitives
+    registerNamedPrimitive("SecurityPlugin", "primitiveCanWriteImage", &Interpreter::primitiveCanWriteImage);
+    registerNamedPrimitive("SecurityPlugin", "primitiveDisableImageWrite", &Interpreter::primitiveDisableImageWrite);
+    registerNamedPrimitive("SecurityPlugin", "primitiveGetSecureUserDirectory", &Interpreter::primitiveGetSecureUserDirectory);
+    registerNamedPrimitive("SecurityPlugin", "primitiveGetUntrustedUserDirectory", &Interpreter::primitiveGetUntrustedUserDirectory);
+
     // LocalePlugin primitives
     registerNamedPrimitive("LocalePlugin", "primitiveTimezoneOffset", &Interpreter::primitiveLocaleTimezoneOffset);
     registerNamedPrimitive("LocalePlugin", "primitiveDaylightSavingTimeActive", &Interpreter::primitiveLocaleDaylightSaving);

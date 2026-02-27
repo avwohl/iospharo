@@ -19099,6 +19099,63 @@ PrimitiveResult Interpreter::primitiveLocaleDaylightSaving(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SECURITY PLUGIN NAMED PRIMITIVES =====
+
+// primitiveCanWriteImage -> true (always allow image saving)
+PrimitiveResult Interpreter::primitiveCanWriteImage(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    pop();
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveDisableImageWrite -> self (no-op, we always allow)
+PrimitiveResult Interpreter::primitiveDisableImageWrite(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    return PrimitiveResult::Success;
+}
+
+// primitiveGetSecureUserDirectory -> string (image directory)
+PrimitiveResult Interpreter::primitiveGetSecureUserDirectory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    // Use the directory containing the image file
+    std::string dir;
+    const std::string& imgPath = imageName_;
+    size_t lastSlash = imgPath.rfind('/');
+    if (lastSlash != std::string::npos) {
+        dir = imgPath.substr(0, lastSlash);
+    } else {
+        // Fallback: HOME/Documents
+        const char* home = getenv("HOME");
+        dir = home ? std::string(home) + "/Documents" : "/tmp";
+    }
+
+    Oop result = createStringObject(memory_, dir);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
+// primitiveGetUntrustedUserDirectory -> string (temp directory)
+PrimitiveResult Interpreter::primitiveGetUntrustedUserDirectory(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    const char* tmpdir = getenv("TMPDIR");
+    std::string dir = tmpdir ? tmpdir : "/tmp";
+
+    Oop result = createStringObject(memory_, dir);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pop();
+    push(result);
+    return PrimitiveResult::Success;
+}
+
 // ===== IMAGE/GRAPHICS PRIMITIVES (400-409) =====
 
 // Primitive 400: Read image header (get dimensions, format)
