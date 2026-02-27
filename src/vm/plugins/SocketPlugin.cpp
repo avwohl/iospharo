@@ -355,12 +355,26 @@ extern "C" sqInt sp_primitiveSocketDestroy(void) {
 }
 
 // primitiveSocketConnectToPort
-// Stack: receiver, socketHandle, address (32-bit integer), port
+// Stack: receiver, socketHandle, address (integer or ByteArray), port
 extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     sqInt port    = vm->stackIntegerValue(0);
-    sqInt addr    = vm->stackIntegerValue(1);
+    sqInt addrOop = vm->stackValue(1);
     sqInt socketOop = vm->stackValue(2);
     if (vm->failed()) return vm->primitiveFail();
+
+    // Address can be a SmallInteger (host byte order) or a ByteArray (4 bytes, network order)
+    uint32_t hostAddr = 0;
+    if (vm->isIntegerObject(addrOop)) {
+        hostAddr = (uint32_t)vm->integerValueOf(addrOop);
+    } else if (vm->isBytes(addrOop) && vm->byteSizeOf(addrOop) >= 4) {
+        uint8_t* bytes = (uint8_t*)vm->firstIndexableField(addrOop);
+        // ByteArray is in network byte order (big-endian): a.b.c.d
+        // Convert to host byte order for htonl below
+        hostAddr = ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
+                   ((uint32_t)bytes[2] << 8)  | (uint32_t)bytes[3];
+    } else {
+        return vm->primitiveFail();
+    }
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
@@ -370,7 +384,8 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     memset(&sa, 0, sizeof(sa));
     sa.sin_family = AF_INET;
     sa.sin_port = htons((uint16_t)port);
-    sa.sin_addr.s_addr = htonl((uint32_t)addr);
+    sa.sin_addr.s_addr = htonl(hostAddr);
+
 
     int result = connect(ps->fd, (struct sockaddr*)&sa, sizeof(sa));
     if (result == 0) {
