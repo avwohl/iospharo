@@ -16,6 +16,30 @@ paths (`[SOCK]` prefix on stderr / os_log). This helps diagnose the
 "Socket destroyed" error reported on real iPad hardware where socket
 creation fails but works on Mac Catalyst.
 
+### Enter/Backspace Doubling (reported by Tim)
+Enter key inserted two newlines and Backspace deleted two characters.
+
+Root cause: insertText() sent three events per keystroke: down, stroke,
+up. For Enter (charCode 13), the down event generated SDL_KEYDOWN(Return)
+and the stroke generated SDL_TEXTINPUT("\r"). Pharo processed both as
+text insertions. Real SDL2 does NOT generate SDL_TEXTINPUT for Enter,
+Backspace, or Tab — only KEYDOWN/KEYUP.
+
+For Backspace (charCode 8), the stroke bypassed the TEXTINPUT path
+(not printable) and fell through to the SDL_KEYDOWN condition, generating
+a duplicate keydown.
+
+Fix: removed Enter (13) and Tab (9) from the isPrintable set in the SDL
+event converter. Non-printable stroke events are now silently skipped.
+deleteBackward() no longer sends the redundant stroke event.
+
+## Changes
+
+### Ctrl Button Is Now One-Shot (suggested by Tim)
+The virtual Ctrl button on the iOS toolbar now auto-clears after a
+touch/click, acting as a one-shot modifier (like Shift on a phone
+keyboard). Previously it stayed active until tapped again.
+
 ---
 
 # What's New in Build 30
