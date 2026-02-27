@@ -24930,11 +24930,12 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     resolverStatus_.store(2);  // ResolverBusy
     resolverResultValid_ = false;
 
+    int semaIndex = resolverSemaIndex_;
+
     // Capture pointers for the background thread
     uint8_t* resultBuf = resolverResult_;
     std::atomic<int>* statusPtr = &resolverStatus_;
     bool* validPtr = &resolverResultValid_;
-    int semaIndex = resolverSemaIndex_;
     auto* interp = this;
 
     // Spawn detached thread for DNS resolution

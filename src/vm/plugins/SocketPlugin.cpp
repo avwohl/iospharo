@@ -291,7 +291,9 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->connSema = (int)semaIndex;
     ps->readSema = (int)readSemaIndex;
     ps->writeSema = (int)writeSemaIndex;
-    ps->sockState = SOCK_UNCONNECTED;
+    // UDP sockets are connectionless — mark as Connected so isConnected returns true
+    // (needed for waitForDataFor: which checks isConnected in its polling loop)
+    ps->sockState = (socketType == UDP_SOCKET_TYPE) ? SOCK_CONNECTED : SOCK_UNCONNECTED;
     ps->sockError = 0;
 
     // Allocate ByteArray for SQSocket handle
@@ -949,13 +951,14 @@ extern "C" sqInt sp_primitiveHasSocketAccess(void) {
 // =====================================================================
 
 // primitiveSocketSendUDPDataBufCount
-// Stack: receiver, socketHandle, data, startIndex, count, address (ByteArray 4), port
+// Pharo method: primSocket: socketID sendUDPData: data toHost: hostAddr port: port startIndex: start count: count
+// Stack [0]=count [1]=startIndex [2]=port [3]=hostAddr [4]=data [5]=socketID [6]=receiver
 // Returns: SmallInteger (bytes sent)
 extern "C" sqInt sp_primitiveSocketSendUDPDataBufCount(void) {
-    sqInt port       = vm->stackIntegerValue(0);
-    sqInt addrOop    = vm->stackValue(1);
-    sqInt count      = vm->stackIntegerValue(2);
-    sqInt startIndex = vm->stackIntegerValue(3);
+    sqInt count      = vm->stackIntegerValue(0);
+    sqInt startIndex = vm->stackIntegerValue(1);
+    sqInt port       = vm->stackIntegerValue(2);
+    sqInt addrOop    = vm->stackValue(3);
     sqInt dataOop    = vm->stackValue(4);
     sqInt socketOop  = vm->stackValue(5);
     if (vm->failed()) return vm->primitiveFail();
@@ -1004,16 +1007,14 @@ extern "C" sqInt sp_primitiveSocketSendUDPDataBufCount(void) {
 }
 
 // primitiveSocketReceiveUDPDataBufCount
-// Stack: receiver, socketHandle, data, startIndex, count, addressArray, portArray
-// Fills addressArray[0] with sender address (integer), portArray[0] with sender port
-// Returns: SmallInteger (bytes received)
+// Pharo method: primSocket: socketID receiveUDPDataInto: buf startingAt: start count: count
+// Stack [0]=count [1]=startIndex [2]=data [3]=socketID [4]=receiver
+// Returns: Array {bytesReceived, senderAddress (ByteArray 4), senderPort, moreFlag}
 extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
-    sqInt portArrayOop = vm->stackValue(0);
-    sqInt addrArrayOop = vm->stackValue(1);
-    sqInt count        = vm->stackIntegerValue(2);
-    sqInt startIndex   = vm->stackIntegerValue(3);
-    sqInt dataOop      = vm->stackValue(4);
-    sqInt socketOop    = vm->stackValue(5);
+    sqInt count      = vm->stackIntegerValue(0);
+    sqInt startIndex = vm->stackIntegerValue(1);
+    sqInt dataOop    = vm->stackValue(2);
+    sqInt socketOop  = vm->stackValue(3);
     if (vm->failed()) return vm->primitiveFail();
 
     PrivateSocket* ps = privateSocketFrom(socketOop);
@@ -1032,6 +1033,7 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
 
     ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
                                 (struct sockaddr*)&from, &fromLen);
+    bool moreData = false;
     if (received < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             received = 0;
@@ -1039,26 +1041,34 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
             ps->sockError = errno;
             return vm->primitiveFail();
         }
+    } else if (received > 0) {
+        // Check if more data from same datagram is available
+        char peekBuf;
+        int more = (int)recvfrom(ps->fd, &peekBuf, 1, MSG_PEEK | MSG_DONTWAIT, nullptr, nullptr);
+        moreData = (more > 0);
     }
 
-    // Fill in source address and port if we received data
-    if (received > 0) {
-        uint32_t senderAddr = ntohl(from.sin_addr.s_addr);
-        int senderPort = ntohs(from.sin_port);
+    // Build result Array: {bytesReceived, senderAddress (ByteArray 4), senderPort, moreFlag}
+    // Allocate ByteArray for sender address first, protect it, then allocate Array
+    sqInt addrBA = vm->instantiateClassindexableSize(vm->classByteArray(), 4);
+    if (vm->failed()) return vm->primitiveFail();
+    uint8_t* addrBuf = (uint8_t*)vm->firstIndexableField(addrBA);
+    // Copy sender address in network byte order (4 raw bytes)
+    uint32_t rawAddr = from.sin_addr.s_addr; // already network byte order
+    memcpy(addrBuf, &rawAddr, 4);
 
-        // addressArray and portArray are word arrays (Array of SmallIntegers)
-        // Store at index 0 (Smalltalk 1-based)
-        if (addrArrayOop != vm->nilObject() && vm->stSizeOf(addrArrayOop) >= 1) {
-            vm->storePointerofObjectwithValue(0, addrArrayOop,
-                vm->integerObjectOf((sqInt)senderAddr));
-        }
-        if (portArrayOop != vm->nilObject() && vm->stSizeOf(portArrayOop) >= 1) {
-            vm->storePointerofObjectwithValue(0, portArrayOop,
-                vm->integerObjectOf(senderPort));
-        }
-    }
+    vm->pushRemappableOop(addrBA);
+    sqInt resultArray = vm->instantiateClassindexableSize(vm->classArray(), 4);
+    addrBA = vm->popRemappableOop();
+    if (vm->failed()) return vm->primitiveFail();
 
-    vm->popthenPush(7, vm->integerObjectOf((sqInt)received));
+    // Fill the 4-element Array
+    vm->storePointerofObjectwithValue(0, resultArray, vm->integerObjectOf((sqInt)received));
+    vm->storePointerofObjectwithValue(1, resultArray, addrBA);
+    vm->storePointerofObjectwithValue(2, resultArray, vm->integerObjectOf(ntohs(from.sin_port)));
+    vm->storePointerofObjectwithValue(3, resultArray, moreData ? vm->trueObject() : vm->falseObject());
+
+    vm->popthenPush(5, resultArray); // pop receiver + 4 args, push result
     return 0;
 }
 

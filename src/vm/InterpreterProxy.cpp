@@ -606,8 +606,9 @@ static sqInt proxy_instantiateClassindexableSize(sqInt classPointer, sqInt size)
         if (result.isNil()) gFailed = true;
         return oopToSqInt(result);
     } else {
-        // Pointer array
-        Oop result = gMem->allocateSlots(classIdx, static_cast<size_t>(size));
+        // Pointer object — instSpec maps directly to ObjectFormat
+        ObjectFormat fmt = static_cast<ObjectFormat>(instSpec);
+        Oop result = gMem->allocateSlots(classIdx, static_cast<size_t>(size), fmt);
         if (result.isNil()) gFailed = true;
         return oopToSqInt(result);
     }
