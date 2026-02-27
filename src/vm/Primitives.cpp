@@ -13,6 +13,7 @@
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
+#include "../platform/PlatformBridge.h"
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
@@ -4137,15 +4138,17 @@ PrimitiveResult Interpreter::primitiveBeep(int argCount) {
 // With argument: sets clipboard contents (returns receiver)
 PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
     if (argCount == 0) {
-        // Get clipboard text
-        Oop result = createStringObject(memory_, clipboardText_);
-        if (result.isNil() && !clipboardText_.empty()) {
+        // Get clipboard text from platform
+        const char* text = vm_getClipboardText();
+        std::string clipText = text ? text : "";
+
+        Oop result = createStringObject(memory_, clipText);
+        if (result.isNil() && !clipText.empty()) {
             return PrimitiveResult::Failure;
         }
 
         // If clipboard is empty, return empty string
         if (result.isNil()) {
-            // Try to create an empty string
             Oop stringClass = memory_.specialObject(SpecialObjectIndex::ClassByteString);
             if (stringClass.isNil()) {
                 return PrimitiveResult::Failure;
@@ -4170,7 +4173,7 @@ PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
         if (!textOop.isObject()) {
             // If nil, clear clipboard
             if (textOop.isNil()) {
-                clipboardText_.clear();
+                vm_setClipboardText("");
                 pop();  // Pop argument, leave receiver
                 return PrimitiveResult::Success;
             }
@@ -4193,7 +4196,7 @@ PrimitiveResult Interpreter::primitiveClipboardText(int argCount) {
             newText.push_back(static_cast<char>(memory_.fetchByte(i, textOop)));
         }
 
-        clipboardText_ = newText;
+        vm_setClipboardText(newText.c_str());
 
         // Return receiver (pop argument, leave receiver)
         pop();
@@ -18601,7 +18604,22 @@ PrimitiveResult Interpreter::primitiveClipboardTextStore(int argCount) {
     Oop stringOop = stackTop();
     if (stringOop.isImmediate()) return PrimitiveResult::Failure;
 
-    // Would store to UIPasteboard
+    // Extract bytes from string object
+    ObjectHeader* header = stringOop.asObjectPtr();
+    ObjectFormat format = header->format();
+    if (format < ObjectFormat::Indexable8 || format > ObjectFormat::Indexable8_7) {
+        return PrimitiveResult::Failure;
+    }
+
+    size_t len = memory_.byteSizeOf(stringOop);
+    std::string text;
+    text.reserve(len);
+    for (size_t i = 0; i < len; ++i) {
+        text.push_back(static_cast<char>(memory_.fetchByte(i, stringOop)));
+    }
+
+    vm_setClipboardText(text.c_str());
+
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -18611,8 +18629,11 @@ PrimitiveResult Interpreter::primitiveClipboardTextStore(int argCount) {
 PrimitiveResult Interpreter::primitiveClipboardHasText(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    const char* text = vm_getClipboardText();
+    bool hasText = text && text[0] != '\0';
+
     pop();
-    push(memory_.falseObject());
+    push(hasText ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
@@ -18621,6 +18642,7 @@ PrimitiveResult Interpreter::primitiveClipboardHasText(int argCount) {
 PrimitiveResult Interpreter::primitiveClipboardClear(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    vm_setClipboardText("");
     pop();
     return PrimitiveResult::Success;
 }
