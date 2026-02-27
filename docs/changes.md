@@ -46,6 +46,16 @@ and other apps works on both iOS and Mac.
 
 ## Bug Fixes
 
+### Async DNS Resolution (fixes slow startup and connection failures)
+DNS lookups (primitiveResolverStartNameLookup) were blocking the entire VM
+thread via a synchronous getaddrinfo() call. This caused two problems:
+  - 30-second startup delay: the UI couldn't render while DNS blocked
+  - ConnectionClosed errors: already-connected sockets sat idle while DNS
+    blocked other Pharo processes, causing servers to timeout
+
+DNS now runs on a background thread and signals the resolver semaphore when
+done. primitiveResolverStatus returns the real state (Busy/Ready/Error).
+
 ### SocketPlugin Connect with ByteArray Addresses
 Fixed primitiveSocketConnectToPort to accept 4-byte ByteArray addresses in
 network byte order, in addition to SmallInteger addresses. Pharo 13's
