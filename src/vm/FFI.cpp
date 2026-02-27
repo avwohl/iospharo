@@ -890,6 +890,7 @@ int stub_SDL_PollEvent(void* event) {
     // relinquish callback. Do NOT block here -- the event loop tight-loops
     // at priority 60 and blocking starves all lower-priority processes.
     pharo::Event pharoEvent;
+nextEvent:
     if (!pharo::gEventQueue.pop(pharoEvent)) {
         return 0;
     }
@@ -972,9 +973,9 @@ int stub_SDL_PollEvent(void* event) {
         // Keystroke (subtype 2) with printable character → SDL_TEXTINPUT
         // Real SDL2 generates: KEYDOWN, TEXTINPUT, KEYUP for typed characters.
         // We get: down(0), stroke(2), up(1) — so stroke maps to TEXTINPUT.
-        // Non-printable keys (arrows, backspace, escape) stay as KEYDOWN.
-        bool isPrintable = (charCode >= 32 && charCode != 127) ||
-                           charCode == 13 || charCode == 9;
+        // Non-printable keys (arrows, backspace, enter, escape, tab) do NOT
+        // get SDL_TEXTINPUT in real SDL2 — only KEYDOWN/KEYUP.
+        bool isPrintable = (charCode >= 32 && charCode != 127);
         if (subtype == 2 && isPrintable && !(pharoEvent.arg3 & ~1)) {
             // Only generate TEXTINPUT for unmodified keys (or Shift only).
             // Cmd+C, Ctrl+X etc. are shortcuts, not text input.
@@ -1003,8 +1004,15 @@ int stub_SDL_PollEvent(void* event) {
             return 1;
         }
 
-        // Key down/up or non-printable keystroke → SDL_KEYDOWN/KEYUP
-        if (subtype == 0 || subtype == 2) {
+        if (subtype == 2) {
+            // Stroke event for non-printable or modified key — no SDL event needed.
+            // The down event (subtype 0) already generated SDL_KEYDOWN.
+            // Skip this event and try the next one.
+            goto nextEvent;
+        }
+
+        // Key down/up → SDL_KEYDOWN/KEYUP
+        if (subtype == 0) {
             sdlEvent->key.type = SDL_KEYDOWN;
             sdlEvent->key.state = 1;
         } else {

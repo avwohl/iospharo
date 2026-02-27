@@ -98,6 +98,10 @@ class PharoMTKView: MTKView {
         // Virtual Ctrl key: Ctrl+click = right-click in Pharo
         if bridge.ctrlModifierActive {
             buttons = IOS_YELLOW_BUTTON
+            // Auto-clear after click — one-shot modifier like a phone keyboard's Shift
+            DispatchQueue.main.async {
+                bridge.ctrlModifierActive = false
+            }
         }
 
         currentButton = buttons
@@ -634,17 +638,19 @@ extension PharoMTKView: UIKeyInput {
             guard let scalar = char.unicodeScalars.first else { continue }
             // Map LF (10) to CR (13) — Pharo uses CR for return key
             let charCode = scalar.value == 10 ? Int32(13) : Int32(scalar.value)
-            vm_postKeyEvent(0, charCode, 0, mods)  // down
-            vm_postKeyEvent(2, charCode, 0, mods)  // stroke
-            vm_postKeyEvent(1, charCode, 0, mods)  // up
+            let isPrintable = charCode >= 32 && charCode != 127
+            vm_postKeyEvent(0, charCode, 0, mods)  // down → SDL_KEYDOWN
+            if isPrintable {
+                vm_postKeyEvent(2, charCode, 0, mods)  // stroke → SDL_TEXTINPUT
+            }
+            vm_postKeyEvent(1, charCode, 0, mods)  // up → SDL_KEYUP
         }
     }
 
     func deleteBackward() {
         let mods: Int32 = (bridge?.ctrlModifierActive == true) ? Int32(IOS_CTRL_KEY) : 0
-        vm_postKeyEvent(0, 8, 8, mods)  // down (backspace)
-        vm_postKeyEvent(2, 8, 8, mods)  // stroke
-        vm_postKeyEvent(1, 8, 8, mods)  // up
+        vm_postKeyEvent(0, 8, 8, mods)  // down → SDL_KEYDOWN
+        vm_postKeyEvent(1, 8, 8, mods)  // up → SDL_KEYUP
     }
 }
 #endif
