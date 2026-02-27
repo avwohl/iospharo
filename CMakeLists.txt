@@ -41,6 +41,7 @@ set(VM_SOURCES
     src/vm/InterpreterProxy.cpp
     src/vm/plugins/SocketPlugin.cpp
     src/vm/plugins/SoundPlugin.cpp
+    src/vm/plugins/MIDIPlugin.cpp
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
     src/platform/iOSBridge.cpp
@@ -155,6 +156,7 @@ if(APPLE)
             "-framework GameController"
             "-framework CoreHaptics"
             "-framework CoreMotion"
+            "-framework CoreMIDI"
         )
         # SqueakSSL uses Apple Security.framework
         if(PHARO_WITH_CRYPTO)
@@ -176,6 +178,7 @@ if(APPLE)
             "-framework CoreHaptics"
             "-framework ForceFeedback"
             "-framework Carbon"
+            "-framework CoreMIDI"
             "-liconv"
         )
         # SqueakSSL uses Apple Security.framework
