@@ -53,7 +53,7 @@ Build 30 — 2026-02-27
 
 ## Bug Fixes
 
-### Crash on Quit (SIGABRT) (reported by users)
+### Crash on Quit (SIGABRT)
 Quitting Pharo crashed the app with SIGABRT instead of exiting cleanly.
 
 Root cause: the SocketPlugin I/O monitor thread was a static std::thread
@@ -73,12 +73,11 @@ addresses — returning 16-byte IPv6 addresses crashes with SizeMismatch.
 on IPv6-only networks because there is no IPv4 route.
 
 Fix: DNS always returns 4-byte IPv4 addresses (extracting the embedded
-IPv4 from synthesized IPv6 when no IPv4 results exist). The socket
-connect primitive now uses getaddrinfo() with AI_NUMERICHOST to
-re-resolve the address before connecting — on NAT64 networks this
-synthesizes the proper IPv6 address from the IPv4 literal, and the
-socket is automatically re-created as AF_INET6. This is Apple's
-recommended approach for NAT64 compatibility.
+IPv4 from synthesized IPv6 when no native IPv4 results exist). The socket
+connect primitive uses getaddrinfo() to re-resolve the address before
+connecting — on NAT64 networks this synthesizes the proper IPv6 address
+from the IPv4 literal, and the socket is automatically re-created as
+AF_INET6. This is Apple's recommended approach for NAT64 compatibility.
 
 ---
 
@@ -88,7 +87,7 @@ Build 28 — 2026-02-27
 
 ## Bug Fixes
 
-### Hardware Keyboard Input on iPad (reported by users)
+### Hardware Keyboard Input on iPad
 Typing with a connected hardware keyboard (Bluetooth or Smart Connector)
 did nothing when the on-screen keyboard was hidden. The soft keyboard
 worked fine.
@@ -125,7 +124,7 @@ Build 27 — 2026-02-27
 
 ## Bug Fixes
 
-### Keyboard Text Input Fixed (reported by users)
+### Keyboard Text Input Fixed
 Typing in Pharo editors (Playground, System Browser, Transcript, etc.) did
 nothing — keystrokes were intercepted as shortcuts but never inserted as text.
 
@@ -271,12 +270,14 @@ On iPhone, quitting Pharo (via the World menu) would drop you back to the image
 library in a broken state instead of closing the app. The app now exits cleanly
 when Pharo quits, matching the Cmd+Q behavior on Mac.
 
+## New Features
+
 ### Gesture Quick Start (iOS)
 First time you launch a Pharo image, a help overlay shows the key gestures:
   - Tap = left-click, Long press = right-click (context menu)
   - Two-finger scroll, Two-finger tap = right-click
-  - Keyboard and Ctrl toolbar buttons
-  - Ctrl+D (Do It), Ctrl+P (Print It), Ctrl+E (Inspect It)
+  - Keyboard, Ctrl, and Cmd toolbar buttons
+  - Shortcuts: D (Do It), P (Print It), E (Inspect It)
 
 Tap "Got it" to dismiss. Tap the "?" button in the floating toolbar to see
 it again anytime.
@@ -289,7 +290,7 @@ Build 21 — 2026-02-26
 
 ## Bug Fixes
 
-### iOS Soft Keyboard Input (reported by Tim, Pharo users group)
+### iOS Soft Keyboard Input (reported by Tim)
 - Fixed: regular character input did nothing on iPad soft keyboard. Root cause
   was iOS autocorrect/prediction buffering characters instead of delivering them
   immediately. Disabled autocorrection, autocapitalization, spell checking, smart
@@ -298,7 +299,7 @@ Build 21 — 2026-02-26
   both pressesBegan and UIKeyInput fired for the same key. pressesBegan now skips
   keys that UIKeyInput handles (regular chars, enter, backspace without Cmd/Ctrl).
 
-### Long-Press Right-Click Reliability (reported by Tim, Pharo users group)
+### Long-Press Right-Click Reliability (reported by Tim)
 - Fixed: long-press to right-click failed most of the time. touchesBegan sent a
   RED (left) button-down immediately on finger contact; 0.5s later the long-press
   handler sent YELLOW (right) button-down on top of it. Pharo had conflicting
@@ -327,12 +328,16 @@ Build 21 — 2026-02-26
 - Share sheet for AirDrop / Save to Files
 - Show in Files button opens the image directory in Finder (Mac) or Files app (iPad)
 
-### Virtual Ctrl Key (suggested by Tim, Pharo users group)
+### Virtual Ctrl Key (suggested by Tim)
 - New floating "Ctrl" button on the iOS canvas toolbar
-- Toggle on/off — stays active until tapped again
+- One-shot modifier: auto-clears after a touch or keystroke
 - When active: canvas taps include Ctrl modifier (Ctrl+click = right-click)
-- When active: soft keyboard input includes Ctrl modifier (Ctrl+E = Do It,
-  Ctrl+D = Debug It, Ctrl+P = Print It, etc.)
+- When active: soft keyboard input includes Ctrl modifier for shortcuts
+
+### Virtual Cmd Key (suggested by Tim)
+- New floating "Cmd" button on the iOS canvas toolbar
+- One-shot modifier: auto-clears after a keystroke
+- When active: soft keyboard input includes Cmd modifier (Cmd+D = Do It, etc.)
 
 ### Keyboard Toggle Button
 - New floating keyboard button on the iOS canvas toolbar
