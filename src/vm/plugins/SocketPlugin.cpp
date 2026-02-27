@@ -154,9 +154,12 @@ static void ioMonitorLoop() {
                 getsockopt(ps->fd, SOL_SOCKET, SO_ERROR, &err, &len);
                 if (err == 0) {
                     ps->sockState = SOCK_CONNECTED;
+                    fprintf(stderr, "[SOCK] Connection established (fd=%d)\n", ps->fd);
                 } else {
                     ps->sockError = err;
                     ps->sockState = SOCK_UNCONNECTED;
+                    fprintf(stderr, "[SOCK] Connection failed: err=%d (%s) fd=%d\n",
+                            err, strerror(err), ps->fd);
                 }
                 if (ps->connSema > 0 && vm) {
                     vm->signalSemaphoreWithIndex(ps->connSema);
@@ -206,6 +209,9 @@ void socketPluginInit() {
 
     gIORunning.store(true);
     gIOThread = std::thread(ioMonitorLoop);
+    // Detach so std::thread destructor won't call std::terminate() if
+    // the process exits (via exit()) before socketPluginShutdown runs.
+    gIOThread.detach();
 }
 
 void socketPluginShutdown() {
@@ -213,9 +219,8 @@ void socketPluginShutdown() {
 
     gIORunning.store(false);
     wakeIOThread();
-    if (gIOThread.joinable()) {
-        gIOThread.join();
-    }
+    // Thread is detached, so just give it a moment to notice the flag
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
     if (gWakePipe[0] >= 0) { close(gWakePipe[0]); gWakePipe[0] = -1; }
     if (gWakePipe[1] >= 0) { close(gWakePipe[1]); gWakePipe[1] = -1; }
@@ -418,16 +423,30 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
         return vm->primitiveFail();
     }
 
+    // Log connect attempt
+    if (ss.ss_family == AF_INET) {
+        struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
+        uint8_t* b = (uint8_t*)&sa->sin_addr.s_addr;
+        fprintf(stderr, "[SOCK] Connecting to %d.%d.%d.%d:%ld (IPv4, fd=%d)\n",
+                b[0], b[1], b[2], b[3], (long)port, ps->fd);
+    } else if (ss.ss_family == AF_INET6) {
+        fprintf(stderr, "[SOCK] Connecting to IPv6 addr port %ld (fd=%d)\n", (long)port, ps->fd);
+    }
+
     int result = connect(ps->fd, (struct sockaddr*)&ss, ssLen);
     if (result == 0) {
         // Immediate connection (unlikely for TCP but possible on localhost)
         ps->sockState = SOCK_CONNECTED;
+        fprintf(stderr, "[SOCK] Connected immediately (fd=%d)\n", ps->fd);
         if (ps->connSema > 0) vm->signalSemaphoreWithIndex(ps->connSema);
     } else if (errno == EINPROGRESS) {
         ps->sockState = SOCK_WAITING_FOR_CONNECTION;
+        fprintf(stderr, "[SOCK] Connect in progress (fd=%d)\n", ps->fd);
         wakeIOThread(); // ensure monitor notices
     } else {
         ps->sockError = errno;
+        fprintf(stderr, "[SOCK] Connect failed immediately: errno=%d (%s) fd=%d\n",
+                errno, strerror(errno), ps->fd);
         return vm->primitiveFail();
     }
 

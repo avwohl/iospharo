@@ -24878,6 +24878,7 @@ PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
     if (!semaOop.isSmallInteger()) return PrimitiveResult::Failure;
     resolverSemaIndex_ = (int)semaOop.asSmallInteger();
     resolverStatus_.store(1);  // ResolverReady
+    fprintf(stderr, "[NET] Network initialized, resolver semaphore index=%d\n", resolverSemaIndex_);
     popN(1);  // pop semaphoreIndex arg, leave receiver
     return PrimitiveResult::Success;
 }
@@ -24940,6 +24941,7 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     auto* interp = this;
 
     // Spawn detached thread for DNS resolution
+    fprintf(stderr, "[DNS] Starting lookup for '%s' (semaIndex=%d)\n", hostname.c_str(), semaIndex);
     std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp]() {
         // Use AF_UNSPEC to allow both IPv4 and IPv6.
         // On iOS IPv6-only networks, AF_INET can timeout (~40s) because
@@ -24950,39 +24952,55 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         hints.ai_socktype = SOCK_STREAM;
         struct addrinfo* result = nullptr;
 
+        auto t0 = std::chrono::steady_clock::now();
         int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
+        auto t1 = std::chrono::steady_clock::now();
+        long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
         if (err == 0 && result) {
             // Prefer IPv4 if available (Pharo's NetNameResolver expects 4 bytes)
             struct addrinfo* chosen = nullptr;
+            int v4Count = 0, v6Count = 0;
             for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-                if (rp->ai_family == AF_INET) {
-                    chosen = rp;
-                    break;
-                }
-                if (!chosen) chosen = rp;  // fall back to first result
+                if (rp->ai_family == AF_INET) { v4Count++; if (!chosen || chosen->ai_family != AF_INET) chosen = rp; }
+                else if (rp->ai_family == AF_INET6) { v6Count++; if (!chosen) chosen = rp; }
             }
+            // Re-scan to prefer IPv4
+            for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
+                if (rp->ai_family == AF_INET) { chosen = rp; break; }
+            }
+
+            fprintf(stderr, "[DNS] '%s' resolved in %ldms: %d IPv4, %d IPv6 results\n",
+                    hostname.c_str(), ms, v4Count, v6Count);
 
             if (chosen && chosen->ai_family == AF_INET) {
                 struct sockaddr_in* addr = (struct sockaddr_in*)chosen->ai_addr;
                 memcpy(resultBuf, &addr->sin_addr.s_addr, 4);
                 *resultSizePtr = 4;
                 *validPtr = true;
+                uint8_t* b = resultBuf;
+                fprintf(stderr, "[DNS] Using IPv4: %d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
             } else if (chosen && chosen->ai_family == AF_INET6) {
                 struct sockaddr_in6* addr6 = (struct sockaddr_in6*)chosen->ai_addr;
                 memcpy(resultBuf, &addr6->sin6_addr, 16);
                 *resultSizePtr = 16;
                 *validPtr = true;
+                fprintf(stderr, "[DNS] Using IPv6 (16 bytes)\n");
             } else {
                 *validPtr = false;
+                fprintf(stderr, "[DNS] No usable address found\n");
             }
             freeaddrinfo(result);
             statusPtr->store(*validPtr ? 1 : 3);
         } else {
             *validPtr = false;
             statusPtr->store(3);  // ResolverError
+            fprintf(stderr, "[DNS] '%s' FAILED after %ldms: err=%d (%s)\n",
+                    hostname.c_str(), ms, err, gai_strerror(err));
         }
 
         // Signal the resolver semaphore so Pharo knows the lookup is done
+        fprintf(stderr, "[DNS] Signaling semaphore %d (status=%d)\n", semaIndex, statusPtr->load());
         if (semaIndex > 0) {
             interp->signalExternalSemaphore(semaIndex);
         }
