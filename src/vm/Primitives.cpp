@@ -24934,24 +24934,49 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
 
     // Capture pointers for the background thread
     uint8_t* resultBuf = resolverResult_;
+    int* resultSizePtr = &resolverResultSize_;
     std::atomic<int>* statusPtr = &resolverStatus_;
     bool* validPtr = &resolverResultValid_;
     auto* interp = this;
 
     // Spawn detached thread for DNS resolution
-    std::thread([hostname, resultBuf, statusPtr, validPtr, semaIndex, interp]() {
+    std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp]() {
+        // Use AF_UNSPEC to allow both IPv4 and IPv6.
+        // On iOS IPv6-only networks, AF_INET can timeout (~40s) because
+        // there's no IPv4 DNS server. AF_UNSPEC lets the OS return whatever
+        // address family is available (with DNS64/NAT64 synthesis if needed).
         struct addrinfo hints = {};
-        hints.ai_family = AF_INET;  // IPv4
+        hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_STREAM;
         struct addrinfo* result = nullptr;
 
         int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
         if (err == 0 && result) {
-            struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
-            memcpy(resultBuf, &addr->sin_addr.s_addr, 4);
-            *validPtr = true;
+            // Prefer IPv4 if available (Pharo's NetNameResolver expects 4 bytes)
+            struct addrinfo* chosen = nullptr;
+            for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
+                if (rp->ai_family == AF_INET) {
+                    chosen = rp;
+                    break;
+                }
+                if (!chosen) chosen = rp;  // fall back to first result
+            }
+
+            if (chosen && chosen->ai_family == AF_INET) {
+                struct sockaddr_in* addr = (struct sockaddr_in*)chosen->ai_addr;
+                memcpy(resultBuf, &addr->sin_addr.s_addr, 4);
+                *resultSizePtr = 4;
+                *validPtr = true;
+            } else if (chosen && chosen->ai_family == AF_INET6) {
+                struct sockaddr_in6* addr6 = (struct sockaddr_in6*)chosen->ai_addr;
+                memcpy(resultBuf, &addr6->sin6_addr, 16);
+                *resultSizePtr = 16;
+                *validPtr = true;
+            } else {
+                *validPtr = false;
+            }
             freeaddrinfo(result);
-            statusPtr->store(1);  // ResolverReady
+            statusPtr->store(*validPtr ? 1 : 3);
         } else {
             *validPtr = false;
             statusPtr->store(3);  // ResolverError
@@ -24974,13 +24999,16 @@ PrimitiveResult Interpreter::primitiveResolverNameLookupResult(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
     if (!resolverResultValid_) return PrimitiveResult::Failure;
 
+    int size = resolverResultSize_;
+    if (size != 4 && size != 16) return PrimitiveResult::Failure;
+
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     if (byteArrayClass.isNil()) return PrimitiveResult::Failure;
     uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
-    Oop result = memory_.allocateBytes(classIndex, 4);
+    Oop result = memory_.allocateBytes(classIndex, size);
     if (result.isNil()) return PrimitiveResult::Failure;
 
-    for (int i = 0; i < 4; i++)
+    for (int i = 0; i < size; i++)
         memory_.storeByte(i, result, resolverResult_[i]);
 
     popN(1);  // pop receiver

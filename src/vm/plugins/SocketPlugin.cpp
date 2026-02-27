@@ -364,31 +364,61 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     sqInt socketOop = vm->stackValue(2);
     if (vm->failed()) return vm->primitiveFail();
 
-    // Address can be a SmallInteger (host byte order) or a ByteArray (4 bytes, network order)
-    uint32_t hostAddr = 0;
-    if (vm->isIntegerObject(addrOop)) {
-        hostAddr = (uint32_t)vm->integerValueOf(addrOop);
-    } else if (vm->isBytes(addrOop) && vm->byteSizeOf(addrOop) >= 4) {
-        uint8_t* bytes = (uint8_t*)vm->firstIndexableField(addrOop);
-        // ByteArray is in network byte order (big-endian): a.b.c.d
-        // Convert to host byte order for htonl below
-        hostAddr = ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) |
-                   ((uint32_t)bytes[2] << 8)  | (uint32_t)bytes[3];
-    } else {
-        return vm->primitiveFail();
-    }
-
     PrivateSocket* ps = privateSocketFrom(socketOop);
     if (!ps) return vm->primitiveFail();
     if (ps->fd < 0) return vm->primitiveFail();
 
-    struct sockaddr_in sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sin_family = AF_INET;
-    sa.sin_port = htons((uint16_t)port);
-    sa.sin_addr.s_addr = htonl(hostAddr);
+    struct sockaddr_storage ss;
+    socklen_t ssLen;
+    memset(&ss, 0, sizeof(ss));
 
-    int result = connect(ps->fd, (struct sockaddr*)&sa, sizeof(sa));
+    if (vm->isIntegerObject(addrOop)) {
+        // SmallInteger: IPv4 address in host byte order
+        uint32_t hostAddr = (uint32_t)vm->integerValueOf(addrOop);
+        struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
+        sa->sin_family = AF_INET;
+        sa->sin_port = htons((uint16_t)port);
+        sa->sin_addr.s_addr = htonl(hostAddr);
+        ssLen = sizeof(struct sockaddr_in);
+    } else if (vm->isBytes(addrOop)) {
+        sqInt addrSize = vm->byteSizeOf(addrOop);
+        uint8_t* bytes = (uint8_t*)vm->firstIndexableField(addrOop);
+        if (addrSize == 4) {
+            // 4-byte ByteArray: IPv4 in network byte order
+            struct sockaddr_in* sa = (struct sockaddr_in*)&ss;
+            sa->sin_family = AF_INET;
+            sa->sin_port = htons((uint16_t)port);
+            memcpy(&sa->sin_addr.s_addr, bytes, 4);
+            ssLen = sizeof(struct sockaddr_in);
+        } else if (addrSize == 16) {
+            // 16-byte ByteArray: IPv6 address
+            // Re-create socket as AF_INET6 if currently AF_INET
+            int oldFd = ps->fd;
+            int newFd = socket(AF_INET6, SOCK_STREAM, 0);
+            if (newFd < 0) {
+                ps->sockError = errno;
+                return vm->primitiveFail();
+            }
+            if (!setNonBlocking(newFd)) {
+                close(newFd);
+                return vm->primitiveFail();
+            }
+            close(oldFd);
+            ps->fd = newFd;
+
+            struct sockaddr_in6* sa6 = (struct sockaddr_in6*)&ss;
+            sa6->sin6_family = AF_INET6;
+            sa6->sin6_port = htons((uint16_t)port);
+            memcpy(&sa6->sin6_addr, bytes, 16);
+            ssLen = sizeof(struct sockaddr_in6);
+        } else {
+            return vm->primitiveFail();
+        }
+    } else {
+        return vm->primitiveFail();
+    }
+
+    int result = connect(ps->fd, (struct sockaddr*)&ss, ssLen);
     if (result == 0) {
         // Immediate connection (unlikely for TCP but possible on localhost)
         ps->sockState = SOCK_CONNECTED;

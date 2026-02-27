@@ -434,7 +434,8 @@ private:
     int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
     int64_t osErrorCode_ = 0;  // OS error code for PrimErrOSError (e.g., errno)
     // DNS resolver state (async)
-    uint8_t resolverResult_[4] = {};       // DNS lookup result (IPv4 address)
+    uint8_t resolverResult_[16] = {};      // DNS lookup result (IPv4=4 bytes, IPv6=16 bytes)
+    int resolverResultSize_ = 0;           // 4 for IPv4, 16 for IPv6
     bool resolverResultValid_ = false;
     int resolverSemaIndex_ = 0;            // Semaphore to signal when lookup completes
     std::atomic<int> resolverStatus_{0};   // 0=Uninit, 1=Ready, 2=Busy, 3=Error
