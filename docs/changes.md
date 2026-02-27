@@ -1,3 +1,40 @@
+# What's New in Build 28
+
+Build 28 — 2026-02-27
+
+## Bug Fixes
+
+### Hardware Keyboard Input on iPad (reported by users)
+Typing with a connected hardware keyboard (Bluetooth or Smart Connector)
+did nothing when the on-screen keyboard was hidden. The soft keyboard
+worked fine.
+
+Root cause: on iOS, regular key events were routed exclusively through
+UIKeyInput (which only fires when the view is first responder / soft
+keyboard showing). With the soft keyboard hidden, no view was first
+responder, so hardware keyboard events went nowhere.
+
+Fix: the view controller now becomes first responder on iOS when the soft
+keyboard is hidden, capturing hardware keyboard events via pressesBegan.
+When the soft keyboard is shown, the Metal view takes over via UIKeyInput.
+When dismissed, focus returns to the view controller automatically.
+
+### Network Connections Timeout on iPad (~40 seconds)
+The Help Browser and other network operations locked up for ~40 seconds
+then failed with "connection aborted" on real iPads.
+
+Root cause: DNS resolution forced IPv4 only (AF_INET). On IPv6-preferred
+networks (common on iPad, especially cellular), the IPv4 DNS query times
+out because there may be no IPv4 DNS server available.
+
+Fix: DNS now uses AF_UNSPEC, allowing the OS to use whatever address
+family is available (with automatic DNS64/NAT64 synthesis on iOS). IPv4
+results are preferred when available. Socket connect handles both 4-byte
+IPv4 and 16-byte IPv6 addresses, re-creating the socket as AF_INET6 when
+needed.
+
+---
+
 # What's New in Build 27
 
 Build 27 — 2026-02-27
