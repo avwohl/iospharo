@@ -74,6 +74,8 @@ struct ImageLibraryView: View {
                         Spacer()
                         Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
                         Text("·").foregroundColor(.secondary)
+                        Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
+                            .foregroundColor(.secondary)
                         Link("Changes", destination: URL(string: "https://github.com/avwohl/iospharo/blob/main/docs/changes.md")!)
                         Text("·").foregroundColor(.secondary)
                         Link("Report a Bug", destination: URL(string: "https://github.com/avwohl/iospharo/issues")!)
@@ -518,6 +520,8 @@ struct ImageLibraryView: View {
             HStack(spacing: 12) {
                 Link("GitHub", destination: URL(string: "https://github.com/avwohl/iospharo")!)
                 Text("·")
+                    .foregroundColor(.secondary)
+                Text("v\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))")
                     .foregroundColor(.secondary)
                 Link("Changes", destination: URL(string: "https://github.com/avwohl/iospharo/blob/main/docs/changes.md")!)
                 Text("·")
