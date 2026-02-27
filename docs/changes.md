@@ -1,3 +1,38 @@
+# What's New in Build 29
+
+Build 29 — 2026-02-27
+
+## Bug Fixes
+
+### Crash on Quit (SIGABRT) (reported by users)
+Quitting Pharo crashed the app with SIGABRT instead of exiting cleanly.
+
+Root cause: the SocketPlugin I/O monitor thread was a static std::thread
+that was still joinable when exit() ran. During atexit cleanup, its
+destructor called std::terminate() which aborted the process.
+
+Fix: the I/O thread is now detached after creation so its destructor is
+a no-op during process exit.
+
+### Network Connections on IPv6-Only Networks (NAT64)
+Expanded the Build 28 DNS fix to fully support IPv6-only networks with
+NAT64/DNS64 (common on iPad cellular and some WiFi networks).
+
+Two problems: (1) Pharo 13's NetNameResolver requires exactly 4-byte
+addresses — returning 16-byte IPv6 addresses crashes with SizeMismatch.
+(2) Even with a valid IPv4 address from DNS, connecting via IPv4 fails
+on IPv6-only networks because there is no IPv4 route.
+
+Fix: DNS always returns 4-byte IPv4 addresses (extracting the embedded
+IPv4 from synthesized IPv6 when no IPv4 results exist). The socket
+connect primitive now uses getaddrinfo() with AI_NUMERICHOST to
+re-resolve the address before connecting — on NAT64 networks this
+synthesizes the proper IPv6 address from the IPv4 literal, and the
+socket is automatically re-created as AF_INET6. This is Apple's
+recommended approach for NAT64 compatibility.
+
+---
+
 # What's New in Build 28
 
 Build 28 — 2026-02-27
