@@ -1,3 +1,23 @@
+# What's New in Build 31
+
+Build 31 — 2026-02-27
+
+## Bug Fixes
+
+### NAT64 Connect Fix
+Removed AI_NUMERICHOST flag from the socket connect path. Apple docs
+explicitly state that AI_NUMERICHOST prevents IPv6 address synthesis on
+NAT64 networks — which is the exact mechanism needed for connectivity on
+IPv6-only cellular/WiFi networks with NAT64.
+
+### Socket Creation Diagnostics
+Added comprehensive logging to socket creation, connect, and plugin init
+paths (`[SOCK]` prefix on stderr / os_log). This helps diagnose the
+"Socket destroyed" error reported on real iPad hardware where socket
+creation fails but works on Mac Catalyst.
+
+---
+
 # What's New in Build 30
 
 Build 30 — 2026-02-27

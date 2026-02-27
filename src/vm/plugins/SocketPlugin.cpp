@@ -204,7 +204,11 @@ void socketPluginInit() {
     if (gIORunning.load()) return;
 
     // Create self-pipe for waking select()
-    if (pipe(gWakePipe) < 0) return;
+    if (pipe(gWakePipe) < 0) {
+        fprintf(stderr, "[SOCK] socketPluginInit: pipe() failed errno=%d (%s)\n",
+                errno, strerror(errno));
+        return;
+    }
     setNonBlocking(gWakePipe[0]);
     setNonBlocking(gWakePipe[1]);
 
@@ -213,6 +217,9 @@ void socketPluginInit() {
     // Detach so std::thread destructor won't call std::terminate() if
     // the process exits (via exit()) before socketPluginShutdown runs.
     gIOThread.detach();
+
+    fprintf(stderr, "[SOCK] socketPluginInit OK (pipe=%d/%d, I/O thread started)\n",
+            gWakePipe[0], gWakePipe[1]);
 }
 
 void socketPluginShutdown() {
@@ -270,23 +277,37 @@ static PrivateSocket* privateSocketFrom(sqInt socketOop) {
 //        semaIndex, readSemaIndex, writeSemaIndex
 // Returns: socketHandle (ByteArray of sizeof(SQSocket))
 extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
+    fprintf(stderr, "[SOCK] primitiveSocketCreate3Semaphores called (vm=%p, ioRunning=%d)\n",
+            (void*)vm, gIORunning.load());
+
     sqInt writeSemaIndex = vm->stackIntegerValue(0);
     sqInt readSemaIndex  = vm->stackIntegerValue(1);
     sqInt semaIndex      = vm->stackIntegerValue(2);
     // sendBufSize (3) and recvBufSize (4) are ignored — OS manages buffers
     sqInt socketType     = vm->stackIntegerValue(5);
     // netType (6) ignored — always IPv4
-    if (vm->failed()) return vm->primitiveFail();
+    if (vm->failed()) {
+        fprintf(stderr, "[SOCK] FAIL: stackIntegerValue failed (type=%ld, sema=%ld/%ld/%ld)\n",
+                (long)socketType, (long)semaIndex, (long)readSemaIndex, (long)writeSemaIndex);
+        return vm->primitiveFail();
+    }
+
+    fprintf(stderr, "[SOCK] args: socketType=%ld sema=%ld/%ld/%ld\n",
+            (long)socketType, (long)semaIndex, (long)readSemaIndex, (long)writeSemaIndex);
 
     // Create the OS socket
     int domain = AF_INET;
     int type = (socketType == UDP_SOCKET_TYPE) ? SOCK_DGRAM : SOCK_STREAM;
     int fd = socket(domain, type, 0);
     if (fd < 0) {
+        fprintf(stderr, "[SOCK] FAIL: socket() errno=%d (%s)\n", errno, strerror(errno));
         return vm->primitiveFail();
     }
 
+    fprintf(stderr, "[SOCK] socket() OK fd=%d\n", fd);
+
     if (!setNonBlocking(fd)) {
+        fprintf(stderr, "[SOCK] FAIL: setNonBlocking errno=%d (%s)\n", errno, strerror(errno));
         close(fd);
         return vm->primitiveFail();
     }
@@ -303,12 +324,18 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->sockError = 0;
 
     // Allocate ByteArray for SQSocket handle
-    sqInt socketOop = vm->instantiateClassindexableSize(vm->classByteArray(), sizeof(SQSocket));
+    sqInt classBA = vm->classByteArray();
+    fprintf(stderr, "[SOCK] classByteArray=0x%lx, sizeof(SQSocket)=%zu\n",
+            (unsigned long)classBA, sizeof(SQSocket));
+    sqInt socketOop = vm->instantiateClassindexableSize(classBA, sizeof(SQSocket));
     if (vm->failed()) {
+        fprintf(stderr, "[SOCK] FAIL: instantiateClass failed\n");
         close(fd);
         delete ps;
         return vm->primitiveFail();
     }
+
+    fprintf(stderr, "[SOCK] ByteArray allocated oop=0x%lx\n", (unsigned long)socketOop);
 
     // Pin the ByteArray so its address doesn't change during GC
     vm->pushRemappableOop(socketOop);
@@ -316,15 +343,25 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     // Fill in the SQSocket struct
     socketOop = vm->popRemappableOop();
     SQSocket* s = (SQSocket*)vm->firstIndexableField(socketOop);
+    if (!s) {
+        fprintf(stderr, "[SOCK] FAIL: firstIndexableField returned null\n");
+        close(fd);
+        delete ps;
+        return vm->primitiveFail();
+    }
     s->sessionID = gSessionID;
     s->socketType = (int)socketType;
     s->privateSocketPtr = ps;
+
+    fprintf(stderr, "[SOCK] SQSocket filled: session=%d type=%d ptr=%p\n",
+            s->sessionID, s->socketType, (void*)ps);
 
     // Register for I/O monitoring
     registerSocket(ps);
 
     // Replace all 8 stack items (7 args + receiver) with the result
     vm->popthenPush(8, socketOop);
+    fprintf(stderr, "[SOCK] primitiveSocketCreate3Semaphores OK fd=%d\n", fd);
     return 0;
 }
 
@@ -404,12 +441,14 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     // Use getaddrinfo to resolve the numeric address — on IPv6-only networks
     // with NAT64, this synthesizes the proper IPv6 address from an IPv4 literal.
     // This is Apple's recommended approach for NAT64 compatibility.
+    // NOTE: Do NOT use AI_NUMERICHOST — Apple docs explicitly say it prevents
+    // IPv6 address synthesis on NAT64 networks.
     char portStr[8];
     snprintf(portStr, sizeof(portStr), "%ld", (long)port);
     struct addrinfo hints = {};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICHOST;
+    hints.ai_flags = AI_NUMERICSERV;  // port is numeric, but let address resolve for NAT64
     struct addrinfo* aiResult = nullptr;
 
     int aiErr = getaddrinfo(addrStr, portStr, &hints, &aiResult);
@@ -1150,6 +1189,7 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
 // =====================================================================
 
 extern "C" sqInt SocketPlugin_setInterpreter(VirtualMachine* anInterpreter) {
+    fprintf(stderr, "[SOCK] SocketPlugin_setInterpreter called (proxy=%p)\n", (void*)anInterpreter);
     vm = anInterpreter;
     socketPluginInit();
     return 0;
