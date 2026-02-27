@@ -1,6 +1,6 @@
 "Network Test Jig — tests DNS, TCP, and UDP from within the Pharo image.
  Inject into a fresh image and run with our VM.
- Results written to /tmp/network_test_results.txt"!
+ Results written to network_test_results.txt in the image directory."!
 
 "Ensure DNU does not infinite-loop if something goes wrong"
 (UndefinedObject canUnderstand: #findNextHandlerContext)
@@ -13,8 +13,12 @@ Object subclass: #NetworkTestRunner
     package: 'NetworkTests'!
 
 !NetworkTestRunner class methodsFor: 'logging'!
+resultsFile
+    ^ FileLocator imageDirectory / 'network_test_results.txt'! !
+
+!NetworkTestRunner class methodsFor: 'logging'!
 log: aString
-    '/tmp/network_test_results.txt' asFileReference writeStreamDo: [ :ws |
+    self resultsFile writeStreamDo: [ :ws |
         ws setToEnd.
         ws nextPutAll: aString.
         ws nextPut: Character lf ]! !
@@ -146,7 +150,7 @@ startUp: isImageStarting
     isImageStarting ifFalse: [ ^ self ].
     [
         (Delay forSeconds: 3) wait.
-        '/tmp/network_test_results.txt' asFileReference ensureDelete.
+        self resultsFile ensureDelete.
         self runAll.
     ] fork! !
 

@@ -33,6 +33,15 @@ struct ContentView: View {
         }
         .onAppear {
             imageManager.load()
+            // Auto-launch when there is exactly one image
+            if !bridge.isRunning, imageManager.images.count == 1,
+               let image = imageManager.images.first {
+                imageManager.markLaunched(image)
+                imageManager.selectedImageID = image.id
+                if bridge.loadImage(at: image.imagePath) {
+                    bridge.start()
+                }
+            }
         }
     }
 
