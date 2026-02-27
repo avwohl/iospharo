@@ -162,8 +162,16 @@ static void ioMonitorLoop() {
                     fprintf(stderr, "[SOCK] Connection failed: err=%d (%s) fd=%d\n",
                             err, strerror(err), ps->fd);
                 }
+                fprintf(stderr, "[SOCK] About to signal: connSema=%d writeSema=%d vm=%p fd=%d\n",
+                        ps->connSema, ps->writeSema, (void*)vm, ps->fd);
                 if (ps->connSema > 0 && vm) {
+                    fprintf(stderr, "[SOCK] Calling vm->signalSemaphoreWithIndex(%d) fnptr=%p\n",
+                            ps->connSema, (void*)(*(void**)&vm->signalSemaphoreWithIndex));
                     vm->signalSemaphoreWithIndex(ps->connSema);
+                    fprintf(stderr, "[SOCK] signalSemaphoreWithIndex returned\n");
+                } else {
+                    fprintf(stderr, "[SOCK] SKIPPED connSema signal (connSema=%d vm=%p)\n",
+                            ps->connSema, (void*)vm);
                 }
                 if (ps->writeSema > 0 && vm) {
                     vm->signalSemaphoreWithIndex(ps->writeSema);
