@@ -24865,8 +24865,8 @@ PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// ===== SOCKETPLUGIN STUBS =====
-// Minimal stubs for NetNameResolver — enough for UUID generation.
+// ===== DNS RESOLVER (NetNameResolver) =====
+// Async DNS resolution via background thread.
 // The image calls these via <primitive: 'xxx' module: 'SocketPlugin'>.
 
 // primitiveInitializeNetwork
@@ -24874,6 +24874,10 @@ PrimitiveResult Interpreter::primitiveGetenv(int argCount) {
 // NetNameResolver>>primInitializeNetwork: semaIndex
 PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
+    Oop semaOop = stackTop();
+    if (!semaOop.isSmallInteger()) return PrimitiveResult::Failure;
+    resolverSemaIndex_ = (int)semaOop.asSmallInteger();
+    resolverStatus_.store(1);  // ResolverReady
     popN(1);  // pop semaphoreIndex arg, leave receiver
     return PrimitiveResult::Success;
 }
@@ -24884,7 +24888,7 @@ PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
 PrimitiveResult Interpreter::primitiveResolverStatus(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
     popN(1);  // pop receiver
-    push(Oop::fromSmallInteger(1));  // ResolverReady
+    push(Oop::fromSmallInteger(resolverStatus_.load()));
     return PrimitiveResult::Success;
 }
 
@@ -24910,8 +24914,7 @@ PrimitiveResult Interpreter::primitiveResolverLocalAddress(int argCount) {
 // primitiveResolverStartNameLookup
 // Stack: receiver, nameString -> receiver
 // NetNameResolver>>primStartLookupOfName: hostName
-// Starts an async DNS lookup. We do it synchronously (blocking) for simplicity
-// and immediately make the result available.
+// Spawns a background thread for DNS resolution so the VM thread isn't blocked.
 PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
@@ -24920,23 +24923,44 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     ObjectHeader* nameHdr = nameOop.asObjectPtr();
     if (!nameHdr->isBytesObject()) return PrimitiveResult::Failure;
 
+    // Copy hostname before returning (the oop data may move during GC)
     std::string hostname((char*)nameHdr->bytes(), nameHdr->byteSize());
 
-    // Do synchronous DNS lookup
-    struct addrinfo hints = {};
-    hints.ai_family = AF_INET;  // IPv4
-    hints.ai_socktype = SOCK_STREAM;
-    struct addrinfo* result = nullptr;
+    // Set status to Busy
+    resolverStatus_.store(2);  // ResolverBusy
+    resolverResultValid_ = false;
 
-    int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
-    if (err == 0 && result) {
-        struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
-        memcpy(resolverResult_, &addr->sin_addr.s_addr, 4);
-        resolverResultValid_ = true;
-        freeaddrinfo(result);
-    } else {
-        resolverResultValid_ = false;
-    }
+    // Capture pointers for the background thread
+    uint8_t* resultBuf = resolverResult_;
+    std::atomic<int>* statusPtr = &resolverStatus_;
+    bool* validPtr = &resolverResultValid_;
+    int semaIndex = resolverSemaIndex_;
+    auto* interp = this;
+
+    // Spawn detached thread for DNS resolution
+    std::thread([hostname, resultBuf, statusPtr, validPtr, semaIndex, interp]() {
+        struct addrinfo hints = {};
+        hints.ai_family = AF_INET;  // IPv4
+        hints.ai_socktype = SOCK_STREAM;
+        struct addrinfo* result = nullptr;
+
+        int err = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
+        if (err == 0 && result) {
+            struct sockaddr_in* addr = (struct sockaddr_in*)result->ai_addr;
+            memcpy(resultBuf, &addr->sin_addr.s_addr, 4);
+            *validPtr = true;
+            freeaddrinfo(result);
+            statusPtr->store(1);  // ResolverReady
+        } else {
+            *validPtr = false;
+            statusPtr->store(3);  // ResolverError
+        }
+
+        // Signal the resolver semaphore so Pharo knows the lookup is done
+        if (semaIndex > 0) {
+            interp->signalExternalSemaphore(semaIndex);
+        }
+    }).detach();
 
     popN(1);  // pop name arg, leave receiver
     return PrimitiveResult::Success;
@@ -24968,6 +24992,7 @@ PrimitiveResult Interpreter::primitiveResolverNameLookupResult(int argCount) {
 PrimitiveResult Interpreter::primitiveResolverAbortLookup(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
     resolverResultValid_ = false;
+    resolverStatus_.store(1);  // ResolverReady (abort = go back to ready)
     return PrimitiveResult::Success;
 }
 

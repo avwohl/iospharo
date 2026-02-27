@@ -433,8 +433,11 @@ private:
     bool primitiveFailed_;
     int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
     int64_t osErrorCode_ = 0;  // OS error code for PrimErrOSError (e.g., errno)
-    uint8_t resolverResult_[4] = {};  // DNS lookup result (IPv4 address)
+    // DNS resolver state (async)
+    uint8_t resolverResult_[4] = {};       // DNS lookup result (IPv4 address)
     bool resolverResultValid_ = false;
+    int resolverSemaIndex_ = 0;            // Semaphore to signal when lookup completes
+    std::atomic<int> resolverStatus_{0};   // 0=Uninit, 1=Ready, 2=Busy, 3=Error
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
