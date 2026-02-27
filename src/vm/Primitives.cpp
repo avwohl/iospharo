@@ -18969,17 +18969,60 @@ PrimitiveResult Interpreter::primitiveSSLClose(int argCount) {
 
 // ===== LOCALE PRIMITIVES (390-399) =====
 
+#if __APPLE__
+// Helper: get a CFLocale string property as std::string
+static std::string cfLocaleString(CFLocaleKey key) {
+    CFLocaleRef locale = CFLocaleCopyCurrent();
+    if (!locale) return "";
+    CFTypeRef value = CFLocaleGetValue(locale, key);
+    std::string result;
+    if (value && CFGetTypeID(value) == CFStringGetTypeID()) {
+        CFStringRef str = static_cast<CFStringRef>(value);
+        char buf[256];
+        if (CFStringGetCString(str, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+            result = buf;
+        }
+    }
+    CFRelease(locale);
+    return result;
+}
+
+// Helper: get a CFDateFormatter format string
+static std::string cfDateFormat(CFDateFormatterStyle dateStyle, CFDateFormatterStyle timeStyle) {
+    CFLocaleRef locale = CFLocaleCopyCurrent();
+    if (!locale) return "";
+    CFDateFormatterRef fmt = CFDateFormatterCreate(kCFAllocatorDefault, locale, dateStyle, timeStyle);
+    CFRelease(locale);
+    if (!fmt) return "";
+    CFStringRef formatStr = CFDateFormatterGetFormat(fmt);
+    std::string result;
+    if (formatStr) {
+        char buf[256];
+        if (CFStringGetCString(formatStr, buf, sizeof(buf), kCFStringEncodingUTF8)) {
+            result = buf;
+        }
+    }
+    CFRelease(fmt);
+    return result;
+}
+#endif
+
 // Primitive 390: Get system language
 // primitiveLocaleLanguage -> string (e.g., "en", "fr", "de")
 PrimitiveResult Interpreter::primitiveLocaleLanguage(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Not implemented
-    Oop lang = createStringObject(memory_, "en");
-    if (lang.isNil()) return PrimitiveResult::Failure;
+    std::string lang = "en";
+#if __APPLE__
+    std::string val = cfLocaleString(kCFLocaleLanguageCode);
+    if (!val.empty()) lang = val;
+#endif
+
+    Oop result = createStringObject(memory_, lang);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(lang);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -18988,11 +19031,17 @@ PrimitiveResult Interpreter::primitiveLocaleLanguage(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleCountry(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop country = createStringObject(memory_, "US");
-    if (country.isNil()) return PrimitiveResult::Failure;
+    std::string country = "US";
+#if __APPLE__
+    std::string val = cfLocaleString(kCFLocaleCountryCode);
+    if (!val.empty()) country = val;
+#endif
+
+    Oop result = createStringObject(memory_, country);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(country);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19001,11 +19050,17 @@ PrimitiveResult Interpreter::primitiveLocaleCountry(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleCurrencySymbol(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop symbol = createStringObject(memory_, "$");
-    if (symbol.isNil()) return PrimitiveResult::Failure;
+    std::string symbol = "$";
+#if __APPLE__
+    std::string val = cfLocaleString(kCFLocaleCurrencySymbol);
+    if (!val.empty()) symbol = val;
+#endif
+
+    Oop result = createStringObject(memory_, symbol);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(symbol);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19014,11 +19069,17 @@ PrimitiveResult Interpreter::primitiveLocaleCurrencySymbol(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleDecimalSeparator(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop sep = createStringObject(memory_, ".");
-    if (sep.isNil()) return PrimitiveResult::Failure;
+    std::string sep = ".";
+#if __APPLE__
+    std::string val = cfLocaleString(kCFLocaleDecimalSeparator);
+    if (!val.empty()) sep = val;
+#endif
+
+    Oop result = createStringObject(memory_, sep);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(sep);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19027,11 +19088,17 @@ PrimitiveResult Interpreter::primitiveLocaleDecimalSeparator(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleThousandsSeparator(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop sep = createStringObject(memory_, ",");
-    if (sep.isNil()) return PrimitiveResult::Failure;
+    std::string sep = ",";
+#if __APPLE__
+    std::string val = cfLocaleString(kCFLocaleGroupingSeparator);
+    if (!val.empty()) sep = val;
+#endif
+
+    Oop result = createStringObject(memory_, sep);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(sep);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19040,11 +19107,17 @@ PrimitiveResult Interpreter::primitiveLocaleThousandsSeparator(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleDateFormat(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop fmt = createStringObject(memory_, "MM/dd/yyyy");
-    if (fmt.isNil()) return PrimitiveResult::Failure;
+    std::string fmt = "MM/dd/yyyy";
+#if __APPLE__
+    std::string val = cfDateFormat(kCFDateFormatterShortStyle, kCFDateFormatterNoStyle);
+    if (!val.empty()) fmt = val;
+#endif
+
+    Oop result = createStringObject(memory_, fmt);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(fmt);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19053,11 +19126,17 @@ PrimitiveResult Interpreter::primitiveLocaleDateFormat(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleTimeFormat(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop fmt = createStringObject(memory_, "HH:mm:ss");
-    if (fmt.isNil()) return PrimitiveResult::Failure;
+    std::string fmt = "HH:mm:ss";
+#if __APPLE__
+    std::string val = cfDateFormat(kCFDateFormatterNoStyle, kCFDateFormatterMediumStyle);
+    if (!val.empty()) fmt = val;
+#endif
+
+    Oop result = createStringObject(memory_, fmt);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(fmt);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19066,11 +19145,18 @@ PrimitiveResult Interpreter::primitiveLocaleTimeFormat(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleTimezone(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop tz = createStringObject(memory_, "UTC");
-    if (tz.isNil()) return PrimitiveResult::Failure;
+    std::string tz = "UTC";
+    time_t now = time(nullptr);
+    struct tm local;
+    if (localtime_r(&now, &local) && local.tm_zone) {
+        tz = local.tm_zone;
+    }
+
+    Oop result = createStringObject(memory_, tz);
+    if (result.isNil()) return PrimitiveResult::Failure;
 
     pop();
-    push(tz);
+    push(result);
     return PrimitiveResult::Success;
 }
 
@@ -19094,8 +19180,13 @@ PrimitiveResult Interpreter::primitiveLocaleTimezoneOffset(int argCount) {
 PrimitiveResult Interpreter::primitiveLocaleDaylightSaving(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    time_t now = time(nullptr);
+    struct tm local;
+    localtime_r(&now, &local);
+    bool isDST = local.tm_isdst > 0;
+
     pop();
-    push(memory_.falseObject());
+    push(isDST ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 

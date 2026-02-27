@@ -8390,6 +8390,14 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SecurityPlugin", "primitiveGetUntrustedUserDirectory", &Interpreter::primitiveGetUntrustedUserDirectory);
 
     // LocalePlugin primitives
+    registerNamedPrimitive("LocalePlugin", "primitiveLanguage", &Interpreter::primitiveLocaleLanguage);
+    registerNamedPrimitive("LocalePlugin", "primitiveCountry", &Interpreter::primitiveLocaleCountry);
+    registerNamedPrimitive("LocalePlugin", "primitiveCurrencySymbol", &Interpreter::primitiveLocaleCurrencySymbol);
+    registerNamedPrimitive("LocalePlugin", "primitiveDecimalSeparator", &Interpreter::primitiveLocaleDecimalSeparator);
+    registerNamedPrimitive("LocalePlugin", "primitiveDigitGroupingSeparator", &Interpreter::primitiveLocaleThousandsSeparator);
+    registerNamedPrimitive("LocalePlugin", "primitiveDateFormat", &Interpreter::primitiveLocaleDateFormat);
+    registerNamedPrimitive("LocalePlugin", "primitiveTimeFormat", &Interpreter::primitiveLocaleTimeFormat);
+    registerNamedPrimitive("LocalePlugin", "primitiveTimezone", &Interpreter::primitiveLocaleTimezone);
     registerNamedPrimitive("LocalePlugin", "primitiveTimezoneOffset", &Interpreter::primitiveLocaleTimezoneOffset);
     registerNamedPrimitive("LocalePlugin", "primitiveDaylightSavingTimeActive", &Interpreter::primitiveLocaleDaylightSaving);
 
