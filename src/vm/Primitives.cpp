@@ -24958,16 +24958,16 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
         long ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
 
         if (err == 0 && result) {
-            // Prefer IPv4 if available (Pharo's NetNameResolver expects 4 bytes)
+            // Use the FIRST result from getaddrinfo — the OS orders results
+            // by what works best on the current network. On IPv6-preferred
+            // networks (common on iPad), forcing IPv4 can cause connect timeouts.
             struct addrinfo* chosen = nullptr;
             int v4Count = 0, v6Count = 0;
             for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-                if (rp->ai_family == AF_INET) { v4Count++; if (!chosen || chosen->ai_family != AF_INET) chosen = rp; }
-                else if (rp->ai_family == AF_INET6) { v6Count++; if (!chosen) chosen = rp; }
-            }
-            // Re-scan to prefer IPv4
-            for (struct addrinfo* rp = result; rp != nullptr; rp = rp->ai_next) {
-                if (rp->ai_family == AF_INET) { chosen = rp; break; }
+                if (rp->ai_family == AF_INET) v4Count++;
+                else if (rp->ai_family == AF_INET6) v6Count++;
+                if (!chosen && (rp->ai_family == AF_INET || rp->ai_family == AF_INET6))
+                    chosen = rp;
             }
 
             fprintf(stderr, "[DNS] '%s' resolved in %ldms: %d IPv4, %d IPv6 results\n",
