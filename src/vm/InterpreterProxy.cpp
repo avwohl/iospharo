@@ -1653,6 +1653,8 @@ extern "C" {
     sqInt sp_primitiveSocketListenOnPortBacklogInterface(void);
     sqInt sp_primitiveSocketAccept3Semaphores(void);
     sqInt sp_primitiveHasSocketAccess(void);
+    sqInt sp_primitiveSocketSendUDPDataBufCount(void);
+    sqInt sp_primitiveSocketReceiveUDPDataBufCount(void);
 }
 
 void initializeSocketPlugin(Interpreter* interp) {
@@ -1681,6 +1683,8 @@ void initializeSocketPlugin(Interpreter* interp) {
         {"primitiveSocketListenOnPortBacklogInterface", sp_primitiveSocketListenOnPortBacklogInterface},
         {"primitiveSocketAccept3Semaphores", sp_primitiveSocketAccept3Semaphores},
         {"primitiveHasSocketAccess", sp_primitiveHasSocketAccess},
+        {"primitiveSocketSendUDPDataBufCount", sp_primitiveSocketSendUDPDataBufCount},
+        {"primitiveSocketReceiveUDPDataBufCount", sp_primitiveSocketReceiveUDPDataBufCount},
     };
 
     for (auto& p : prims) {

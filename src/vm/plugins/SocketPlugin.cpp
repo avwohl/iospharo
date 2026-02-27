@@ -386,7 +386,6 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
     sa.sin_port = htons((uint16_t)port);
     sa.sin_addr.s_addr = htonl(hostAddr);
 
-
     int result = connect(ps->fd, (struct sockaddr*)&sa, sizeof(sa));
     if (result == 0) {
         // Immediate connection (unlikely for TCP but possible on localhost)
@@ -942,6 +941,124 @@ extern "C" sqInt sp_primitiveSocketAccept3Semaphores(void) {
 // Returns: true (we always allow socket access)
 extern "C" sqInt sp_primitiveHasSocketAccess(void) {
     vm->popthenPush(1, vm->trueObject());
+    return 0;
+}
+
+// =====================================================================
+// UDP primitives: sendto / recvfrom
+// =====================================================================
+
+// primitiveSocketSendUDPDataBufCount
+// Stack: receiver, socketHandle, data, startIndex, count, address (ByteArray 4), port
+// Returns: SmallInteger (bytes sent)
+extern "C" sqInt sp_primitiveSocketSendUDPDataBufCount(void) {
+    sqInt port       = vm->stackIntegerValue(0);
+    sqInt addrOop    = vm->stackValue(1);
+    sqInt count      = vm->stackIntegerValue(2);
+    sqInt startIndex = vm->stackIntegerValue(3);
+    sqInt dataOop    = vm->stackValue(4);
+    sqInt socketOop  = vm->stackValue(5);
+    if (vm->failed()) return vm->primitiveFail();
+
+    PrivateSocket* ps = privateSocketFrom(socketOop);
+    if (!ps || ps->fd < 0) return vm->primitiveFail();
+
+    if (!vm->isBytes(dataOop)) return vm->primitiveFail();
+    char* buf = (char*)vm->firstIndexableField(dataOop);
+    sqInt bufSize = vm->byteSizeOf(dataOop);
+
+    sqInt offset = startIndex - 1;
+    if (offset < 0 || offset + count > bufSize) return vm->primitiveFail();
+
+    // Build destination address
+    uint32_t hostAddr = 0;
+    if (vm->isIntegerObject(addrOop)) {
+        hostAddr = (uint32_t)vm->integerValueOf(addrOop);
+    } else if (vm->isBytes(addrOop) && vm->byteSizeOf(addrOop) >= 4) {
+        uint8_t* abytes = (uint8_t*)vm->firstIndexableField(addrOop);
+        hostAddr = ((uint32_t)abytes[0] << 24) | ((uint32_t)abytes[1] << 16) |
+                   ((uint32_t)abytes[2] << 8)  | (uint32_t)abytes[3];
+    } else {
+        return vm->primitiveFail();
+    }
+
+    struct sockaddr_in dest;
+    memset(&dest, 0, sizeof(dest));
+    dest.sin_family = AF_INET;
+    dest.sin_port = htons((uint16_t)port);
+    dest.sin_addr.s_addr = htonl(hostAddr);
+
+    ssize_t sent = sendto(ps->fd, buf + offset, (size_t)count, 0,
+                          (struct sockaddr*)&dest, sizeof(dest));
+    if (sent < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            sent = 0;
+        } else {
+            ps->sockError = errno;
+            return vm->primitiveFail();
+        }
+    }
+
+    vm->popthenPush(7, vm->integerObjectOf((sqInt)sent));
+    return 0;
+}
+
+// primitiveSocketReceiveUDPDataBufCount
+// Stack: receiver, socketHandle, data, startIndex, count, addressArray, portArray
+// Fills addressArray[0] with sender address (integer), portArray[0] with sender port
+// Returns: SmallInteger (bytes received)
+extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
+    sqInt portArrayOop = vm->stackValue(0);
+    sqInt addrArrayOop = vm->stackValue(1);
+    sqInt count        = vm->stackIntegerValue(2);
+    sqInt startIndex   = vm->stackIntegerValue(3);
+    sqInt dataOop      = vm->stackValue(4);
+    sqInt socketOop    = vm->stackValue(5);
+    if (vm->failed()) return vm->primitiveFail();
+
+    PrivateSocket* ps = privateSocketFrom(socketOop);
+    if (!ps || ps->fd < 0) return vm->primitiveFail();
+
+    if (!vm->isBytes(dataOop)) return vm->primitiveFail();
+    char* buf = (char*)vm->firstIndexableField(dataOop);
+    sqInt bufSize = vm->byteSizeOf(dataOop);
+
+    sqInt offset = startIndex - 1;
+    if (offset < 0 || offset + count > bufSize) return vm->primitiveFail();
+
+    struct sockaddr_in from;
+    socklen_t fromLen = sizeof(from);
+    memset(&from, 0, sizeof(from));
+
+    ssize_t received = recvfrom(ps->fd, buf + offset, (size_t)count, 0,
+                                (struct sockaddr*)&from, &fromLen);
+    if (received < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            received = 0;
+        } else {
+            ps->sockError = errno;
+            return vm->primitiveFail();
+        }
+    }
+
+    // Fill in source address and port if we received data
+    if (received > 0) {
+        uint32_t senderAddr = ntohl(from.sin_addr.s_addr);
+        int senderPort = ntohs(from.sin_port);
+
+        // addressArray and portArray are word arrays (Array of SmallIntegers)
+        // Store at index 0 (Smalltalk 1-based)
+        if (!vm->isNilObject(addrArrayOop) && vm->stSizeOf(addrArrayOop) >= 1) {
+            vm->storePointerofObjectwithValue(0, addrArrayOop,
+                vm->integerObjectOf((sqInt)senderAddr));
+        }
+        if (!vm->isNilObject(portArrayOop) && vm->stSizeOf(portArrayOop) >= 1) {
+            vm->storePointerofObjectwithValue(0, portArrayOop,
+                vm->integerObjectOf(senderPort));
+        }
+    }
+
+    vm->popthenPush(7, vm->integerObjectOf((sqInt)received));
     return 0;
 }
 
