@@ -87,6 +87,19 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "=== Tier 3b: Traits (run early — later class-modifying tests contaminate
+     trait invariant checks like testTraitsUsersSanity) ==="
+  #(TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
+    TraitPureBehaviorTest TraitPrecedenceCompositionTest
+    TraitWithAliasTest TraitWithConflictsTest
+    TraitChangesTest TraitMethodDescriptionTest
+    TraitOverloadingOfMethodsInTraitedClassTest
+    TraitPackagingTest TraitInTraitClassTest
+    TraitWithMethodsInProtocolsTest
+    SlotTraitsTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "=== Tier 4: More collections ==="
   #(LinkedListTest OrderedDictionaryTest
     IdentityDictionaryTest StackTest
@@ -162,7 +175,8 @@ runAllTests
     SlotAnnouncementsTest SlotClassVariableTest
     ClassVariableTest GlobalVariableTest LiteralVariableTest
     SlotLayoutEqualityTest SlotLayoutExtensionTest
-    SlotTraitsTest SelfVariableTest TemporaryVariableTest
+    "SlotTraitsTest moved to Tier 3b"
+    SelfVariableTest TemporaryVariableTest
     ThisContextVariableTest BooleanSlotTest WriteOnceSlotTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
@@ -245,14 +259,7 @@ runAllTests
     RGEnvironmentTest RGBackendTest RGAnnouncementsTest
     RGEnsureTraitTest RGEnvironmentBackendTest
     RGEnvironmentQueryInterfaceTest RGReadOnlyImageBackendTest
-    "Trait tests"
-    TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
-    TraitPureBehaviorTest TraitPrecedenceCompositionTest
-    TraitWithAliasTest TraitWithConflictsTest
-    TraitChangesTest TraitMethodDescriptionTest
-    TraitOverloadingOfMethodsInTraitedClassTest
-    TraitPackagingTest TraitInTraitClassTest
-    TraitWithMethodsInProtocolsTest
+    "Trait tests moved to Tier 3b"
     "ClassAnnotation tests"
     ClassAnnotationTest ActiveClassAnnotationsTest
     QueryAnnotationsFromClassTest RegisteredClassAnnotationsTest
