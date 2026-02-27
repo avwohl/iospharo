@@ -73,12 +73,11 @@ addresses — returning 16-byte IPv6 addresses crashes with SizeMismatch.
 on IPv6-only networks because there is no IPv4 route.
 
 Fix: DNS always returns 4-byte IPv4 addresses (extracting the embedded
-IPv4 from synthesized IPv6 when no IPv4 results exist). The socket
-connect primitive now uses getaddrinfo() with AI_NUMERICHOST to
-re-resolve the address before connecting — on NAT64 networks this
-synthesizes the proper IPv6 address from the IPv4 literal, and the
-socket is automatically re-created as AF_INET6. This is Apple's
-recommended approach for NAT64 compatibility.
+IPv4 from synthesized IPv6 when no native IPv4 results exist). The socket
+connect primitive uses getaddrinfo() to re-resolve the address before
+connecting — on NAT64 networks this synthesizes the proper IPv6 address
+from the IPv4 literal, and the socket is automatically re-created as
+AF_INET6. This is Apple's recommended approach for NAT64 compatibility.
 
 ---
 
