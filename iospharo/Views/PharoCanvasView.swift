@@ -278,9 +278,10 @@ class PharoCanvasViewController: UIViewController {
 
         view.addSubview(mtkView)
         #if targetEnvironment(macCatalyst)
-        // Mac Catalyst: no rounded corners or notch, fill the whole window
+        // Mac Catalyst: use safe area for top (title bar / traffic lights)
+        // but fill to window edges on left/right/bottom (no rounded corners)
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
+            mtkView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
