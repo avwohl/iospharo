@@ -252,6 +252,14 @@ class PharoBridge: ObservableObject {
                   [ ^ self childrenOf: (MicSectionBlock fromRoot: aNode loadMicrodown) ]
                     on: Error do: [ ^ #() ]]
             ] on: Error do: [ ^ #() ]'].
+        "Refresh stale doc browser windows from previous saved sessions"
+        "The tree may be empty if the image was saved when SSL was broken."
+        (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
+          [
+            (Delay forMilliseconds: 3000) wait.
+            MicDocumentBrowserPresenter allInstances do: [:each |
+              [ each updateTree ] on: Error do: [ "ignore" ] ].
+          ] fork ].
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")
         NSLog("[BRIDGE] writeStartupScript: directory=%@ path=%@", directory, path)
