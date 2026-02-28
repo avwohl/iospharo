@@ -704,17 +704,12 @@ sqInt sqEncryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     ssl->outLen = 0;
     ssl->outMax = dstLen;
 
-    fprintf(stderr, "[SSL] sqEncryptSSL: srcLen=%d outLen=%d outMax=%d\n",
-            (int)srcLen, ssl->outLen, ssl->outMax);
-
     status = SSLWrite(ssl->ctx, srcBuf, srcLen, &nbytes);
     if (nbytes != srcLen) {
-        fprintf(stderr, "[SSL] SSLWrite partial: wrote %zu of %d\n", nbytes, (int)srcLen);
         return SQSSL_GENERIC_ERROR;
     }
     if (status == errSSLWouldBlock || status == noErr
         || status == errSSLClosedGraceful) {
-        fprintf(stderr, "[SSL] sqEncryptSSL: produced %d encrypted bytes\n", ssl->outLen);
         return ssl->outLen;
     }
     fprintf(stderr, "[SSL] SSLWrite FAILED: %d\n", (int)status);
@@ -750,31 +745,10 @@ sqInt sqDecryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
             return SQSSL_OUT_OF_MEMORY;
         }
     }
-    fprintf(stderr, "[SSL] sqDecryptSSL: srcLen=%d dataLen=%d dstLen=%d\n",
-            (int)srcLen, ssl->dataLen, (int)dstLen);
     memcpy(ssl->dataBuf + ssl->dataLen, srcBuf, srcLen);
     ssl->dataLen += srcLen;
 
     status = SSLRead(ssl->ctx, dstBuf, dstLen, &nbytes);
-    fprintf(stderr, "[SSL] SSLRead: status=%d nbytes=%d dataLen=%d\n",
-            (int)status, (int)nbytes, ssl->dataLen);
-    if (nbytes > 0) {
-        /* Log first line of decrypted data to see HTTP response */
-        static int decryptLogCount = 0;
-        if (decryptLogCount < 20) {
-            char preview[256];
-            int plen = nbytes < 255 ? (int)nbytes : 255;
-            memcpy(preview, dstBuf, plen);
-            /* Replace non-printable chars */
-            for (int i = 0; i < plen; i++) {
-                if (preview[i] == '\r' || preview[i] == '\n') preview[i] = '|';
-                else if (preview[i] < 32 || preview[i] > 126) preview[i] = '.';
-            }
-            preview[plen] = '\0';
-            fprintf(stderr, "[SSL] DATA[%d]: %s\n", decryptLogCount, preview);
-            decryptLogCount++;
-        }
-    }
     if (status == errSSLWouldBlock || status == noErr
         || status == errSSLClosedGraceful) {
         return nbytes;

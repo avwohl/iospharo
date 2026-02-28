@@ -35,6 +35,7 @@ struct PrivateSocket {
     int sockState;       // one of SOCK_* constants
     int sockError;       // errno after socket error
     bool writeSignaled;  // true after write-ready signaled; reset on EAGAIN
+    bool eofDetected;    // true after I/O thread sees MSG_PEEK return 0 (FIN)
 };
 
 // =====================================================================
@@ -123,8 +124,8 @@ static void ioMonitorLoop() {
                 // Monitor for connect completion (writable = connected)
                 FD_SET(ps->fd, &writefds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
-            } else if (ps->sockState == SOCK_CONNECTED) {
-                // Monitor for readable data
+            } else if (ps->sockState == SOCK_CONNECTED && !ps->eofDetected) {
+                // Monitor for readable data (skip if EOF already detected)
                 FD_SET(ps->fd, &readfds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
                 // Also monitor writability for send readiness
@@ -170,18 +171,25 @@ static void ioMonitorLoop() {
                 }
             }
 
-            if (ps->sockState == SOCK_CONNECTED) {
+            if (ps->sockState == SOCK_CONNECTED && !ps->eofDetected) {
                 if (FD_ISSET(ps->fd, &readfds)) {
                     // Data available or connection closed
-                    // Peek to detect close
+                    // Peek to detect close vs data
                     char peek;
                     int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
                     if (n == 0) {
-                        ps->sockState = SOCK_OTHER_END_CLOSED;
+                        // EOF (FIN received) — DON'T change sockState here.
+                        // The recv() primitive will set SOCK_OTHER_END_CLOSED
+                        // when Pharo actually reads 0 bytes. This prevents a
+                        // race where SSL-buffered data is lost because Pharo
+                        // sees isConnected=false before draining the SSL layer.
+                        ps->eofDetected = true;
+                        // Signal both semaphores so waiting code wakes up
                         if (ps->connSema > 0 && vm) {
                             vm->signalSemaphoreWithIndex(ps->connSema);
                         }
                     } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                        // Actual socket error — set state immediately
                         ps->sockError = errno;
                         ps->sockState = SOCK_OTHER_END_CLOSED;
                         if (ps->connSema > 0 && vm) {
@@ -314,6 +322,7 @@ extern "C" sqInt sp_primitiveSocketCreate3Semaphores(void) {
     ps->sockState = (socketType == UDP_SOCKET_TYPE) ? SOCK_CONNECTED : SOCK_UNCONNECTED;
     ps->sockError = 0;
     ps->writeSignaled = false;
+    ps->eofDetected = false;
 
     // Allocate ByteArray for SQSocket handle
     sqInt classBA = vm->classByteArray();
@@ -632,10 +641,14 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
             received = 0; // No data available yet
         } else {
             ps->sockError = errno;
+            fprintf(stderr, "[SOCK] recv fd=%d error=%d (%s)\n",
+                    ps->fd, errno, strerror(errno));
             return vm->primitiveFail();
         }
     } else if (received == 0) {
-        // Connection closed by remote end
+        // Connection closed by remote end — this is the definitive EOF.
+        // The I/O thread may have already set eofDetected, but this is
+        // where we actually transition the state (after all data is read).
         ps->sockState = SOCK_OTHER_END_CLOSED;
     }
 

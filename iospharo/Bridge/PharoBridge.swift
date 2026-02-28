@@ -180,10 +180,12 @@ class PharoBridge: ObservableObject {
         // Change working directory to image's directory so Pharo's
         // StartupPreferencesLoader finds startup.st alongside the image
         let imageDir = (imagePath as NSString).deletingLastPathComponent
+        fputs("[BRIDGE] imagePath=\(imagePath) imageDir=\(imageDir)\n", stderr)
         FileManager.default.changeCurrentDirectoryPath(imageDir)
 
         // Write startup.st with image patches (loaded by StartupPreferencesLoader)
         Self.writeStartupScript(to: imageDir)
+        fputs("[BRIDGE] after writeStartupScript, startup.st exists=\(FileManager.default.fileExists(atPath: imageDir + "/startup.st"))\n", stderr)
 
         let initResult = vm_init(&parameters)
 
@@ -228,9 +230,45 @@ class PharoBridge: ObservableObject {
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
           MicGitHubRessourceReference compile: 'githubApi
             ^ MicGitHubAPI new beAnonymous'].
+        "Fix: doc browser error handler uses messageText instead of message"
+        (Smalltalk hasClassNamed: #MicDocumentBrowserModel) ifTrue: [
+          MicDocumentBrowserModel compile: 'document
+            resourceReference ifNil: [ ^ nil ].
+            document ifNotNil: [ ^ document ].
+            [ document := resourceReference loadMicrodown ]
+              on: Error
+              do: [ :error |
+                document := Microdown parse: ''# Error
+        '', error messageText ].
+            ^ document'].
+        "Pre-load doc roots: override defaultDocumentRoots to return children directly"
+        (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
+          MicDocumentBrowserPresenter compile: 'defaultDocumentRoots
+            | root |
+            root := MicResourceReference fromUri: ''github://pharo-project/pharo/doc''.
+            ^ [root loadChildren sorted: [:a :b |
+              a printString < b printString]]
+                on: Error do: [:e | OrderedCollection with: root]'].
+        "Robust childrenOf: that handles API errors"
+        (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
+          MicDocumentBrowserPresenter compile: 'childrenOf: aNode
+            [ (aNode isKindOf: MicElement) ifTrue: [ ^ aNode subsections children ].
+              aNode loadChildren
+                ifNotEmpty: [ :children | ^ children sort: [:a :b |
+                    (self displayStringOf: a) < (self displayStringOf: b)] ]
+                ifEmpty: [
+                  [ ^ self childrenOf: (MicSectionBlock fromRoot: aNode loadMicrodown) ]
+                    on: Error do: [ ^ #() ]]
+            ] on: Error do: [ ^ #() ]'].
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")
-        try? script.write(toFile: path, atomically: true, encoding: .utf8)
+        NSLog("[BRIDGE] writeStartupScript: directory=%@ path=%@", directory, path)
+        do {
+            try script.write(toFile: path, atomically: true, encoding: .utf8)
+            NSLog("[BRIDGE] startup.st written successfully (%d bytes)", script.count)
+        } catch {
+            NSLog("[BRIDGE] ERROR writing startup.st: %@", error.localizedDescription)
+        }
     }
 
     // MARK: - Display Access
