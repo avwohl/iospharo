@@ -1,3 +1,60 @@
+# What's New in Build 34
+
+Build 34 — 2026-02-28
+
+## Bug Fixes
+
+### SSL Read Stall on Connection Close (Doc Browser Blank Right Pane)
+Clicking items in the Help Documentation Browser showed a blank right pane.
+The tree populated correctly (fixed in Build 33), but document content never
+loaded because HTTPS downloads from raw.githubusercontent.com stalled after
+receiving partial data.
+
+Root cause: Race condition between the I/O monitor thread and Pharo's SSL
+read loop. When the HTTP server sent `Connection: close`, the TCP FIN
+arrived while SSL-buffered data remained unread. The I/O thread's MSG_PEEK
+detected FIN (recv returned 0) and immediately set SOCK_OTHER_END_CLOSED.
+Pharo's `readInto:startingAt:count:` loop checks `self isConnected` on
+each iteration — with the state already set to "closed", the loop exited
+before draining the SSL layer's internal buffer, losing the tail of the
+HTTP response.
+
+Fix: Added `eofDetected` flag to the socket struct. The I/O thread now
+sets this flag instead of changing sockState when MSG_PEEK returns 0. The
+recv() primitive is the only place that sets SOCK_OTHER_END_CLOSED, and
+only when recv() itself returns 0 (meaning the kernel buffer is truly
+empty). The I/O thread also stops monitoring sockets with eofDetected set,
+preventing spin-signaling of the read semaphore.
+
+Verified: 2.6 MB GitHub API response over HTTPS completes without stall
+(previously stalled after ~900 bytes on the third connection).
+
+### Doc Browser Error Handler Crash
+Clicking a tree item that failed to load crashed with DNU on
+`MicResourceReferenceError >> #message`. The error handler in
+`MicDocumentBrowserModel >> document` used `error message` but the
+actual Pharo API is `error messageText`.
+
+Fix: startup.st now patches `document` to use `messageText` and wraps
+the error in a Microdown `# Error` heading for graceful display.
+
+### Doc Browser Tree Expansion Crash
+Expanding tree nodes called `childrenOf:` which had no error handling.
+Network failures or rate limits caused unhandled exceptions.
+
+Fix: startup.st overrides `childrenOf:` with comprehensive error
+handling — wraps all network calls in `on: Error do:` blocks, returning
+empty arrays on failure instead of crashing.
+
+## Logging Cleanup
+
+Removed verbose SSL encrypt/decrypt diagnostic logging from sqMacSSL.c
+(added in Build 33 for debugging). Kept only error messages (SSLRead
+FAILED, SSLWrite FAILED). SSL handshake logging is still present since
+it's infrequent and useful for connection diagnostics.
+
+---
+
 # What's New in Build 33
 
 Build 33 — 2026-02-27
