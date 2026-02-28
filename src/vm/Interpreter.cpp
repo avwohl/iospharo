@@ -1530,14 +1530,13 @@ ExecuteResult Interpreter::stepDetailed() {
     // Track what we're about to do
     uint8_t bytecode = fetchByte();
 
-    // Check if this is a send bytecode (message send)
-    bool isSend = (bytecode >= 0x60 && bytecode <= 0x7F) ||  // Sista send
-                  (bytecode >= 0x80 && bytecode <= 0x8F) ||  // V3 send
-                  (bytecode >= 0xB0 && bytecode <= 0xBF) ||  // Arithmetic sends
-                  (bytecode >= 0xC0 && bytecode <= 0xCF) ||  // More sends
-                  (bytecode >= 0xD0 && bytecode <= 0xDF) ||  // Send literal 0-15
-                  (bytecode >= 0xEA && bytecode <= 0xED) ||  // Extended sends
-                  bytecode == 0xF8 || bytecode == 0xF9;      // Super sends
+    // Check if this is a send bytecode (message send) per Sista V1 spec
+    bool isSend = (bytecode >= 0x60 && bytecode <= 0x6F) ||  // Send Arithmetic Message
+                  (bytecode >= 0x70 && bytecode <= 0x7F) ||  // Send Special Message
+                  (bytecode >= 0x80 && bytecode <= 0x8F) ||  // Send Literal Selector, 0 args
+                  (bytecode >= 0x90 && bytecode <= 0x9F) ||  // Send Literal Selector, 1 arg
+                  (bytecode >= 0xA0 && bytecode <= 0xAF) ||  // Send Literal Selector, 2 args
+                  bytecode == 0xEA || bytecode == 0xEB;       // Extended send / super send
 
     // Reset primitive tracking before dispatch
     lastPrimitiveIndex_ = 0;
@@ -4674,7 +4673,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         methodToExecute = compiledBlock;
         Oop header = memory_.fetchPointer(0, compiledBlock);
         int64_t headerBits = header.asSmallInteger();
-        int numLiterals = headerBits & 0xFFFF;
+        int numLiterals = headerBits & 0x7FFF;  // bits 0-14
         size_t bytecodeOffset = (1 + numLiterals) * 8;
         startAddress = blockObj->bytes() + bytecodeOffset;
 
@@ -5537,7 +5536,7 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     // 248 iiiiiiii mssjjjjj (callPrimitive)
     // The primitive number = iiiiiiii | (jjjjj << 8), i.e. lowByte | ((highByte & 0x1F) << 8)
     if (bytecodes[0] == 248) {
-        int primIndex = bytecodes[1] | (bytecodes[2] << 8);
+        int primIndex = bytecodes[1] | ((bytecodes[2] & 0x1F) << 8);
         return primIndex;
     }
 

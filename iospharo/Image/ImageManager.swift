@@ -541,8 +541,4 @@ class ImageManager: ObservableObject {
 
     // MARK: - Legacy compat
 
-    /// Called by ContentView on appear — loads the catalog
-    func checkForExistingImage() {
-        load()
-    }
 }

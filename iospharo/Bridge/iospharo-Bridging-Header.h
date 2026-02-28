@@ -10,19 +10,12 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* NSEvent monitoring helper for Mac Catalyst */
-#if TARGET_OS_MACCATALYST
-#import "../App/NSEventMonitor.h"
-#endif
-
 /* VM Parameters (shared definition) */
 #include "../../src/platform/VMParameters.h"
 
 /* VM lifecycle functions */
 int vm_init(VMParameters* parameters);
 void vm_run(void);  // Start interpreter on background thread (returns immediately)
-void vm_run_interpreter(void);
-void vm_runOnMainThread(void);  // Run interpreter on the current (main) thread
 bool vm_isRunning(void);  // Check if interpreter is running
 void vm_stop(void);  // Must be called before app exit to prevent crash
 void vm_parameters_init(VMParameters* parameters);
@@ -32,10 +25,6 @@ void vm_parameters_destroy(VMParameters* parameters);
 typedef void (*IOSDisplayUpdateCallback)(int x, int y, int width, int height);
 
 void ios_registerDisplayUpdateCallback(IOSDisplayUpdateCallback callback);
-void* ios_getDisplayBits(void);
-int ios_getDisplayWidth(void);
-int ios_getDisplayHeight(void);
-int ios_getDisplayDepth(void);
 void ios_setDisplaySize(int width, int height);
 
 /* Atomic display info (prevents tearing during resize) */
@@ -47,9 +36,6 @@ typedef struct {
 } IOSDisplayBufferInfo;
 
 void ios_getDisplayBufferInfo(IOSDisplayBufferInfo* info);
-
-/* Check if display is being resized (Metal should skip updates) */
-bool ios_isDisplayResizing(void);
 
 /* Event functions (C++ EventQueue) */
 void vm_postMouseEvent(int type, int x, int y, int buttons, int modifiers);
@@ -82,19 +68,13 @@ void vm_postScrollEvent(int x, int y, int deltaX, int deltaY, int modifiers);
 typedef const char* (*ClipboardGetFunc)(void);
 typedef void (*ClipboardSetFunc)(const char* text);
 void vm_setClipboardCallbacks(ClipboardGetFunc getFunc, ClipboardSetFunc setFunc);
-const char* vm_getClipboardText(void);
-void vm_setClipboardText(const char* text);
 
 /* Text input (keyboard) bridge */
 typedef void (*TextInputFunc)(bool active);
 void vm_setTextInputCallback(TextInputFunc func);
-void vm_startTextInput(void);
-void vm_stopTextInput(void);
 
-/* SDL2 readiness flags */
+/* SDL2 readiness flag */
 bool ffi_isSDLRenderingActive(void);     // True after first SDL_RenderPresent (Pharo drew a frame)
-bool ffi_isSDLEventPollingActive(void);  // True when OSSDL2Driver event loop is running
-bool ffi_isFirstExposedDelivered(void);  // True when first EXPOSED event was delivered to image
 
 /* iOS utility functions */
 int iosIsIPad(void);
