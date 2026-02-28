@@ -1,115 +1,247 @@
 # Pharo Image Issues
 
-Bugs and limitations in the stock Pharo 13 image that we work around
-in iospharo's startup.st. Ideally these would be fixed upstream so the
-startup.st patches can be removed.
+Bugs and limitations in the stock Pharo 13 image that affect iospharo.
+We work around the bugs via `startup.st` (auto-loaded by
+`StartupPreferencesLoader`). Ideally these would be fixed upstream so
+the patches can be removed.
 
-Also includes feature requests that would improve Pharo on mobile/tablet.
+Tested against:
 
----
-
-## Bugs (patched by startup.st)
-
-### 1. IceTokenCredentials sends bad auth to GitHub API
-
-Fresh Pharo 13 images ship with `IceTokenCredentials` containing a
-placeholder string `'YOUR TOKEN'`. When `MicGitHubAPI` fetches doc
-tree data, it sends this as an Authorization header. GitHub returns
-401 without `X-Ratelimit-Remaining`, and `extractRateInfo:` crashes
-with `KeyNotFound`.
-
-**Impact**: Documentation Browser tree is empty on first open.
-
-**Our workaround**: Override `MicGitHubRessourceReference >> githubApi`
-to return `MicGitHubAPI new beAnonymous` (no auth for public repos).
-
-**Upstream fix**: Either ship with blank credentials (no header sent)
-or have `MicGitHubAPI` fall back to anonymous when auth fails with 401.
-
-### 2. MicDocumentBrowserModel >> document uses wrong error API
-
-The error handler calls `error message` but the correct Pharo API is
-`error messageText`. Causes a secondary `MessageNotUnderstood` crash
-when any document fails to load.
-
-**Our workaround**: Recompile `document` with `error messageText` and
-wrap the error in a Microdown `# Error` heading for display.
-
-**Upstream fix**: One-line change: `error message` -> `error messageText`.
-
-### 3. MicDocumentBrowserPresenter >> childrenOf: has no error handling
-
-Expanding tree nodes calls `childrenOf:` which makes network requests
-with zero error handling. DNS failures, timeouts, rate limits, or
-malformed responses all cause unhandled exceptions that crash the
-browser.
-
-**Our workaround**: Recompile with `on: Error do: [ ^ #() ]` wrappers
-around all network calls.
-
-**Upstream fix**: Add error handling to `childrenOf:`. Return empty
-children and optionally display a retry indicator on the node.
+    Pharo-13.1.0+SNAPSHOT.build.729.sha.f201357
+    pharoImage-arm64.zip from https://get.pharo.org/64/130
+    Downloaded 2026-02-28
 
 ---
 
-## Feature Requests
+## Bug 1: MicGitHubRessourceReference >> githubApi creates authenticated client by default
 
-### 4. Portrait layout / small-screen support
+**Class**: `MicGitHubRessourceReference` (package Microdown-RichTextComposer)
+**Method**: `githubApi`
 
-On an iPhone in portrait orientation (or any narrow window), the Pharo
-menu bar (`Pharo | Browse | Debug | Sources | System | Library |
-Windows | Help`) does not wrap, condense, or adapt. Menu items are
-clipped or overlap, and standard Pharo windows (browsers, inspectors,
-workspaces) don't fit in the narrow width.
+Stock source:
+
+    githubApi
+        ^ MicGitHubAPI new
+
+`MicGitHubAPI new` defaults to authenticated mode. It picks up
+credentials from `IceTokenCredentials`, which in a fresh image
+contains `nil` for the token. The resulting HTTP request includes
+an `Authorization: Bearer nil` header (or similar malformed value).
+GitHub returns `401 Unauthorized`.
+
+The 401 response omits the `X-Ratelimit-Remaining` header. The
+error-handling path in `MicGitHubAPI` calls `extractRateInfo:`,
+which does `response headers at: 'X-Ratelimit-Remaining'` without
+a default, causing a `KeyNotFound` exception.
+
+**Steps to reproduce** (stock Pharo 13, any VM):
+
+    1. Download a fresh image from https://get.pharo.org/64/130
+    2. Open Help > Microdown Document Browser
+    3. Click the triangle to expand "github://pharo-project/pharo/doc"
+    4. Tree stays empty; a debugger opens on KeyNotFound
+
+**Suggested fix**: Either
+
+  (a) Change `githubApi` to `^ MicGitHubAPI new beAnonymous` (public
+      repos don't need auth), or
+
+  (b) Have `MicGitHubAPI >> extractRateInfo:` use
+      `response headers at: 'X-Ratelimit-Remaining' ifAbsent: [nil]`
+      so 401 responses don't crash, or
+
+  (c) Have `MicGitHubAPI` detect 401 and retry anonymously.
+
+**Our workaround** (startup.st):
+
+    MicGitHubRessourceReference compile: 'githubApi
+        ^ MicGitHubAPI new beAnonymous'.
+
+---
+
+## Bug 2: MicDocumentBrowserModel >> document sends #message instead of #messageText
+
+**Class**: `MicDocumentBrowserModel` (package Microdown-RichTextComposer)
+**Method**: `document`
+
+Stock source:
+
+    document
+        resourceReference ifNil: [ ^ nil ].
+        document ifNotNil: [ ^ document ].
+        [ document := resourceReference loadMicrodown.]
+            on: MicResourceReferenceError
+            do: [ :error |
+                document := Microdown parse: '# Error: ' , error message].
+        ^ document
+
+The `do:` block sends `error message`. But `MicResourceReferenceError`
+inherits from `Error`, which does not implement `#message` as a public
+API. The correct accessor is `#messageText`. This causes a
+`MessageNotUnderstood: MicResourceReferenceError >> #message` when
+any document fails to load (network timeout, 404, etc.).
+
+**Steps to reproduce**:
+
+    1. Open the Documentation Browser
+    2. Click any tree item while the network is unreachable
+       (or point to a nonexistent path)
+    3. Debugger opens on MessageNotUnderstood
+
+**Suggested fix**: Change `error message` to `error messageText`.
+
+**Our workaround** (startup.st):
+
+    MicDocumentBrowserModel compile: 'document
+        resourceReference ifNil: [ ^ nil ].
+        document ifNotNil: [ ^ document ].
+        [ document := resourceReference loadMicrodown ]
+            on: Error
+            do: [ :error |
+                document := Microdown parse:
+                    ''# Error
+    '', error messageText ].
+        ^ document'.
+
+(We also widen the handler from `MicResourceReferenceError` to `Error`
+because network errors like `ConnectionTimedOut` are not subclasses of
+`MicResourceReferenceError`.)
+
+---
+
+## Bug 3: MicDocumentBrowserPresenter >> childrenOf: missing outer error handling
+
+**Class**: `MicDocumentBrowserPresenter` (package Microdown-RichTextComposer)
+**Method**: `childrenOf:`
+
+Stock source:
+
+    childrenOf: aNode
+        "I am a utility method to find children in a node"
+        (aNode isKindOf: MicElement)
+            ifTrue: [ ^ aNode subsections children].
+        aNode loadChildren
+            ifNotEmpty: [ :children |
+                ^ children sort: [:a :b |
+                    (self displayStringOf: a) < (self displayStringOf: b)] ]
+            ifEmpty: [
+                [ ^ self childrenOf:
+                    (MicSectionBlock fromRoot: aNode loadMicrodown) ]
+                on: Error
+                do: [ ^ #() ]]
+
+The `ifEmpty:` branch has an `on: Error do:` handler, but the
+`ifNotEmpty:` branch (and the initial `aNode loadChildren` call itself)
+does not. If `loadChildren` raises an exception before returning a
+collection — e.g., DNS failure, socket timeout, JSON parse error — it
+propagates uncaught and opens a debugger.
+
+**Steps to reproduce**:
+
+    1. Open the Documentation Browser
+    2. Disconnect from the network (or block api.github.com)
+    3. Click the triangle to expand a tree node
+    4. Debugger opens on ConnectionTimedOut (or similar)
+
+**Suggested fix**: Wrap the entire method body in `on: Error do:`:
+
+    childrenOf: aNode
+        [
+            (aNode isKindOf: MicElement)
+                ifTrue: [ ^ aNode subsections children ].
+            aNode loadChildren
+                ifNotEmpty: [ :children |
+                    ^ children sort: [:a :b |
+                        (self displayStringOf: a)
+                            < (self displayStringOf: b)] ]
+                ifEmpty: [
+                    ^ self childrenOf:
+                        (MicSectionBlock fromRoot: aNode loadMicrodown) ]
+        ] on: Error do: [ ^ #() ]
+
+---
+
+## Feature Request: Portrait layout / small-screen support
+
+On an iPhone in portrait orientation (or any narrow window < ~500pt),
+the Pharo menu bar does not adapt:
+
+    Pharo | Browse | Debug | Sources | System | Library | Windows | Help
+
+All 8 items render in a single row. On a 393pt-wide iPhone 16 screen,
+the last 3-4 items are clipped. There is no wrapping, truncation, or
+overflow menu. Standard tool windows (System Browser, Inspector,
+Workspace) are designed for ~800pt minimum width and are unusable in
+portrait.
 
 This is the single biggest obstacle to using Pharo on a phone.
 
-**What would help**:
+**Concrete suggestions** (from least to most effort):
 
-  - A layout system aware of available screen size, similar to how iOS
-    and macOS apps use size classes (compact vs regular) to switch
-    between layouts.
+  1. **Menu bar overflow**: If world width < 600pt, collapse the menu
+     bar into a single button that opens a vertical list of all menus.
+     This is a Morphic-only change — no VM or platform work needed.
 
-  - In compact/portrait mode:
-      - Collapse the menu bar into a hamburger menu or a single-row
-        icon strip.
-      - Stack tool panes vertically instead of side-by-side (e.g.,
-        browser: class list above method list above source, not three
-        columns).
-      - Use full-width sheets or navigation-style push for sub-panels
-        instead of floating windows.
+  2. **Narrow window layouts for tools**: The System Browser currently
+     uses a 4-pane horizontal layout (packages | classes | protocols |
+     methods) with source below. In a narrow window, stack these as a
+     drill-down navigation: tap a package to see its classes full-width,
+     tap a class to see methods full-width, etc. Similar to how Xcode's
+     navigator works on a narrow iPad split.
 
-  - Respect `UITraitCollection` horizontal size class when running
-    under Mac Catalyst / UIKit. Pharo already gets the window bounds
-    from `SDL_GetWindowSize`; it could derive a compact/regular flag
-    and expose it to the Morphic layout engine.
+  3. **Size-class-aware layout engine**: Expose a `compactWidth` flag
+     (true when world width < 600pt) to the Morphic layout system.
+     Morphic layouts could query this and choose between horizontal and
+     vertical arrangements. The VM already provides window dimensions
+     via `SDL_GetWindowSize`; this just needs to be surfaced as a
+     Morphic preference.
 
-  - Even a minimal first step would help: if the world width is below
-    some threshold (e.g., 500px), switch the menu bar to a pop-up menu
-    triggered by a single button.
+  4. **Full adaptive layout**: Adopt a constraint-based or responsive
+     layout system (like iOS Auto Layout or CSS Flexbox) where panes
+     specify minimum widths and the system automatically reflows.
 
-### 5. Keyboard shortcut discoverability on touch devices
+Even just suggestion 1 (menu overflow button) would make portrait
+orientation functional.
 
-Pharo relies heavily on keyboard shortcuts (Cmd+D, Cmd+P, Cmd+E,
-etc.) that are invisible on a touch device. There is no on-screen
-hint of what shortcuts exist or how to invoke them without a physical
-keyboard.
+---
 
-**What would help**: A discoverable shortcut palette or long-press
-radial menu that exposes the most common actions (Do It, Print It,
-Inspect It, Accept, Cancel) as tap targets.
+## Feature Request: Keyboard shortcut discoverability
 
-### 6. Touch-friendly scroll and selection
+Pharo relies on keyboard shortcuts that are invisible on touch devices:
 
-Pharo's Morphic event handling assumes a mouse with precise pixel
-positioning and a scroll wheel. On a touch screen:
+    Cmd+D (Do It)    Cmd+P (Print It)    Cmd+I (Inspect It)
+    Cmd+S (Accept)   Cmd+L (Cancel)      Cmd+B (Browse It)
 
-  - Text selection requires long-press + drag, but there are no visible
-    selection handles.
-  - Scrolling in lists and text panes conflicts with Morphic's own
-    drag handling.
-  - There is no pinch-to-zoom for code panes (useful on small screens).
+Without a physical keyboard, there is no way to discover or invoke
+these. iospharo adds a floating toolbar with Ctrl/Cmd modifier buttons,
+but this only helps if you already know the shortcuts exist.
 
-**What would help**: A touch input mode that uses platform-native
-gestures (UIKit scroll views, selection handles, pinch-to-zoom) when
-running on a touch device.
+**Suggestion**: Add a context-sensitive action bar or long-press
+radial menu that surfaces the 5-6 most common actions for the
+current selection (Do It, Print It, Inspect It, Accept, Cancel,
+Browse) as labeled tap targets. This could be a standard Morphic
+widget that appears above any text editor morph.
+
+---
+
+## Feature Request: Touch-friendly scroll and selection
+
+Morphic's event model assumes mouse input. On a touchscreen:
+
+  - **Scrolling**: Drag gestures conflict with Morphic's morph-drag
+    and text-selection handlers. Two-finger scroll works (via our VM's
+    gesture recognizer), but single-finger scroll is natural on touch.
+
+  - **Text selection**: Requires precise drag with no visible handles.
+    iOS/Android text selection uses drag handles at both ends of the
+    selection and a magnifier loupe. Morphic provides none of these.
+
+  - **Zoom**: No pinch-to-zoom on code panes. On a phone-sized screen,
+    code is too small to read without zooming.
+
+**Suggestion**: A `TouchInputMode` preference that, when enabled:
+
+  - Delegates scroll to the platform's native scroll physics
+  - Shows selection handles on text selections
+  - Supports pinch-to-zoom on text panes (scaling the font size
+    or using a viewport transform)
