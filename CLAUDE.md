@@ -160,6 +160,12 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - **Use fresh images only**: Always test with freshly downloaded Pharo images, not previously-saved ones
 - **Image saving works**: Primitive 97 (snapshot) saves the heap in standard Spur format via ImageWriter. Converts iOS immediate tags back to standard Spur encoding. Both `Smalltalk snapshot:andQuit:` (standard SessionManager path with session stop/start) and raw `<primitive: 97>` work. Save-reload roundtrip verified.
 
+## Image Issues and Upstream Wishlist
+- `docs/image_issues.md` tracks Pharo 13 image bugs we patch via startup.st
+  and feature requests (portrait layout, touch support) for upstream
+- The startup.st patches are written by `PharoBridge.writeStartupScript()`
+  and auto-loaded by Pharo's `StartupPreferencesLoader` on every image start
+
 ## SDL2 and FFI
 - **SDL2 and FFI are working** — SDL2 stubs are registered, TFFI primitives implemented,
   type auto-fill bootstraps correctly, and all FFI tests pass (23/23)
