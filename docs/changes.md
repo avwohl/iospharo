@@ -1,3 +1,27 @@
+# What's New in Build 38
+
+Build 38 — 2026-02-28
+
+## Bug Fixes
+
+### Cmd+Q Now Quits the App on Mac
+Pressing Cmd+Q did nothing on Mac Catalyst — the standard Mac quit
+shortcut was silently swallowed.
+
+Root cause: To prevent crashes from Pharo's FFI calls to AppKit menu
+APIs on the VM thread, `setMainMenu:` was swizzled to a complete no-op.
+This also blocked UIKit/SwiftUI from installing the system menu bar
+(including the Quit item). Since Cmd+Q dispatches through the system
+menu bar on Mac, there was nothing to handle it.
+
+Fix: `setMainMenu:` now checks `pthread_main_np()` — calls from the
+main thread (UIKit creating the menu) pass through to the original
+implementation, while calls from the VM thread (Pharo FFI) are silently
+ignored. A UIKeyCommand fallback on the view controller provides a
+second layer of defense.
+
+---
+
 # What's New in Build 37
 
 Build 37 — 2026-02-28
