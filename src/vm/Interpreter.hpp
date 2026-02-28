@@ -22,24 +22,31 @@
  *   - Operand stack
  *
  * SISTA V1 BYTECODES (256 bytecodes):
+ *   See docs/SistaV1-Bytecode-Spec.md for the full spec.
  *
  *   0-15:    Push receiver variable 0-15
- *   16-31:   Push temporary 0-15
+ *   16-31:   Push literal variable 0-15
  *   32-63:   Push literal constant 0-31
- *   64-95:   Push literal variable 0-31
- *   96-103:  Pop and store receiver variable 0-7
- *   104-111: Pop and store temporary 0-7
- *   112-119: Push special (receiver, true, false, nil, -1, 0, 1, 2)
- *   120-127: Return (receiver, true, false, nil, top, block)
- *   128-143: Extended push (2 bytes)
- *   144-159: Extended store (2 bytes)
- *   160-167: Pop and store into receiver variable (extended)
- *   168-175: Pop and store into temporary (extended)
- *   176-191: Arithmetic send (+, -, <, >, <=, >=, =, ~=, *, /, \\, @, etc.)
- *   192-207: Common sends (at:, at:put:, size, next, nextPut:, etc.)
- *   208-223: Send literal selector 0-15 with 0 args
- *   224-239: Send literal selector 0-15 with 1 arg
- *   240-255: Extended sends and jumps (2-3 bytes)
+ *   64-75:   Push temp 0-11
+ *   76-82:   Push special (receiver, true, false, nil, 0, 1, thisContext)
+ *   83:      Dup top
+ *   84-87:   Unused
+ *   88-91:   Return (receiver, true, false, nil)
+ *   92:      Return top
+ *   93-95:   Unused
+ *   96-111:  Send arithmetic selector 0-15
+ *   112-127: Send special selector 16-31
+ *   128-143: Send literal sel 0-15 with 0 args
+ *   144-159: Send literal sel 0-15 with 1 arg
+ *   160-175: Send literal sel 0-15 with 2 args
+ *   176-183: Short unconditional jump
+ *   184-191: Short jump if true
+ *   192-199: Short jump if false
+ *   200-207: Pop and store receiver variable 0-7
+ *   208-215: Pop and store temp 0-7
+ *   216:     Pop top
+ *   217-223: Unused
+ *   224+:    2-byte and 3-byte extended bytecodes (E0-FF)
  *
  * METHOD CACHE:
  *

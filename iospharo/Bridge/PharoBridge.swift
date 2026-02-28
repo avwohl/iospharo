@@ -50,12 +50,10 @@ class PharoBridge: ObservableObject {
     // MARK: - Display Callback
 
     private func setupDisplayCallback() {
-        // Register a lightweight callback that just sets a flag.
-        // The Metal renderer polls the front buffer directly on every
-        // draw(in:) call, so the callback is mainly for future use.
+        // Register a no-op callback. The Metal renderer polls the front buffer
+        // directly on every draw(in:) call, so no notification is needed.
         let callback: IOSDisplayUpdateCallback = { x, y, width, height in
-            // No-op: MetalRenderer always copies the front buffer
-            // on every draw(in:) call, bypassing the callback chain.
+            // No-op: MetalRenderer copies the front buffer every frame.
         }
 
         self.displayCallback = callback

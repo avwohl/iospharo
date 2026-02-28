@@ -126,8 +126,6 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     Oop* slots = obj->slots();
     // During image load nilObject_ may not be set yet; raw 0 is fine since
     // image loading will overwrite these slots.
-    // During image load nilObject_ may not be set yet; raw 0 is fine since
-    // image loading will overwrite these slots.
     Oop nilValue = (nilObject_.rawBits() != 0) ? nilObject_ : Oop::nil();
     for (size_t i = 0; i < slotCount; ++i) {
         slots[i] = nilValue;

@@ -169,8 +169,8 @@ static FILE *_logFile = NULL;
         return event;  // Return event to allow normal processing
     };
 
-    // Use objc_msgSend to call addLocalMonitorForEventsMatchingMask:handler:
-    // Signature: + (id)addLocalMonitorForEventsMatchingMask:(NSEventMask)mask handler:(NSEvent * (^)(NSEvent *))block
+    // Use objc_msgSend to call addGlobalMonitor (or addLocalMonitor fallback)
+    // Signature: + (id)add{Global,Local}MonitorForEventsMatchingMask:(NSEventMask)mask handler:(...)
     typedef id (*AddMonitorIMP)(Class, SEL, unsigned long long, id);
     AddMonitorIMP addMonitor = (AddMonitorIMP)objc_msgSend;
 

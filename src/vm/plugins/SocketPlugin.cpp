@@ -1,5 +1,5 @@
 /*
- * SocketPlugin.cpp - TCP socket primitives for Pharo VM
+ * SocketPlugin.cpp - TCP/UDP socket primitives for Pharo VM
  *
  * Non-blocking POSIX sockets with a background I/O monitor thread that
  * signals Pharo semaphores when sockets become readable/writable or

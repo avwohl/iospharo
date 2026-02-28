@@ -7441,7 +7441,6 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
 // Primitive 199: Exception handler marker (NOT thisContext!)
 // This primitive is used by BlockClosure>>on:do: as a marker for exception handling.
 // It should ALWAYS fail so the method falls through to 'self value' which evaluates the block.
-// The actual thisContext primitive is 185.
 PrimitiveResult Interpreter::primitiveExceptionMarker(int argCount) {
     // Always fail - this is just a marker primitive
     // The Smalltalk code falls through to 'self value' after this fails
@@ -7596,7 +7595,7 @@ PrimitiveResult Interpreter::primitiveSlotAt(int argCount) {
     return PrimitiveResult::Success;
 }
 
-// Primitive 174: Write slot at given index (0-based)
+// Primitive 174: Write slot at given index (1-based from Smalltalk)
 // Per official VM: handles byte/word/pointer objects differently
 PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
     // Primitive 174: Low-level slot write
@@ -9333,24 +9332,24 @@ static constexpr size_t ContextMethodIndex = 3;
 static constexpr size_t ContextClosureOrNilIndex = 4;
 static constexpr size_t ContextReceiverIndex = 5;
 
-// Primitive 186: Mark a method context as a handler method
+// Primitive table slot 186: Mark a method context as a handler method
 // Used by exception handling to identify on:do: handler contexts
 PrimitiveResult Interpreter::primitiveMarkHandlerMethod(int argCount) {
     // Marker primitives MUST FAIL so the method body executes.
-    // The primitive index (199) in the method header marks the context
-    // as an exception handler for on:do: lookup purposes.
+    // The method header's primitive index (199 for on:do:) marks the context
+    // as an exception handler for stack-unwinding lookup purposes.
     return PrimitiveResult::Failure;
 }
 
-// Primitive 187: Mark a method context as an unwind protect method
+// Primitive table slot 187: Mark a method context as an unwind protect method
 // Used by exception handling to identify ensure: contexts
 PrimitiveResult Interpreter::primitiveMarkUnwindMethod(int argCount) {
     // This primitive marks the current context as an unwind-protect context.
     // These are contexts that must be run even when unwinding the stack.
 
     // Marker primitives MUST FAIL so the method body executes.
-    // The primitive index (198) in the method header is what matters —
-    // it tells the VM to suppress context switching during this activation.
+    // The method header's primitive index (198 for ensure:) is what matters —
+    // it tells the VM this activation needs unwind protection.
     // Returning Success would skip the ensure: body entirely!
     return PrimitiveResult::Failure;
 }

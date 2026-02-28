@@ -1,7 +1,8 @@
 /*
- * FFI.cpp - Foreign Function Interface using libffi
+ * FFI.cpp - Foreign Function Interface for Pharo VM
  *
- * Portable FFI implementation supporting all calling conventions.
+ * Implements UFFI/TFFI primitives and SDL2 stub functions.
+ * Uses libffi for native callouts on ARM64.
  */
 
 #include "FFI.hpp"

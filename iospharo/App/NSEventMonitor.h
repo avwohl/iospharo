@@ -16,7 +16,7 @@ typedef void (^MouseEventCallback)(int eventType, double x, double y, int button
 /// Helper class to install NSEvent monitors for mouse tracking
 @interface NSEventMonitorHelper : NSObject
 
-/// Install a local event monitor for mouse events
+/// Install a global event monitor for mouse events (falls back to local if global fails)
 /// @param callback Block called for each mouse event
 + (void)installMouseMonitorWithCallback:(MouseEventCallback)callback;
 

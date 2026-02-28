@@ -62,7 +62,7 @@ class PharoMTKView: MTKView {
         }
         #endif
         // On iOS, don't auto-become first responder — it shows the soft keyboard.
-        // The VM will call vm_setTextInputCallback(true) when it needs text input.
+        // The user controls keyboard visibility via the floating toolbar button.
     }
 
     #if !targetEnvironment(macCatalyst)

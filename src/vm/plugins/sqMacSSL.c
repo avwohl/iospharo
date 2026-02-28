@@ -1,6 +1,6 @@
 /****************************************************************************
  *   PROJECT: SqueakSSL implementation for Mac OS X
- *   FILE:    sqMac2SSL.c
+ *   FILE:    sqMacSSL.c
  *   CONTENT: SSL platform functions
  *
  *   AUTHORS:  Andreas Raab (ar)
@@ -426,7 +426,7 @@ OSStatus SqueakSSLRead(SSLConnectionRef connection, void* data,
     return errSSLWouldBlock;
 }
 
-/* SqueakSSLRead: Custom write function for Secure Transport */
+/* SqueakSSLWrite: Custom write function for Secure Transport */
 OSStatus SqueakSSLWrite(SSLConnectionRef connection, const void* data,
                         size_t* dataLength)
 {

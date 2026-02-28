@@ -24,8 +24,8 @@
  *   2:  Indexable pointer fields only (e.g., Array)
  *   3:  Both fixed and indexable pointer fields
  *   4:  Weak fields (indexable)
- *   5:  Weak with fixed fields
- *   6:  Reserved (was 64-bit indexable, unused)
+ *   5:  Ephemeron (weak reference with fixed fields)
+ *   6:  Unused (reserved)
  *   7:  Reserved
  *   8:  Reserved
  *   9:  64-bit indexable

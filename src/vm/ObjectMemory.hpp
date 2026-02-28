@@ -134,9 +134,9 @@ enum class SpecialObjectIndex : size_t {
     ClassFloat = 9,
     ClassMethodContext = 10,
     SuspendedProcessInCallout = 11, // Used by FFI callbacks (not a class)
-    // Alias: legacy code references ClassBlockClosure at index 11, but in
-    // modern Pharo (12+) this slot holds SuspendedProcessInCallout.
-    // Use ClassFullBlockClosure (index 59) for the actual closure class.
+    // Note: In Pharo 12+ this slot is SuspendedProcessInCallout, not ClassBlockClosure.
+    // Use ClassFullBlockClosure (index 59) for closures.
+    // Alias kept for code that checks "is this a block closure?" against class index.
     ClassBlockClosure = 11,
     ClassProcess = 27,              // WARNING: May be unused/nil in modern images
     ClassPoint = 12,

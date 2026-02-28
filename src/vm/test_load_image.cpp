@@ -268,11 +268,11 @@ void printSpecialObjects(ObjectMemory& memory) {
     ObjectHeader* arrayHeader = specialArray.asObjectPtr();
     uint64_t rawHeader = arrayHeader->rawHeader();
     std::cout << "  Raw header: 0x" << std::hex << rawHeader << std::dec << std::endl;
-    std::cout << "  Slot count byte: " << (rawHeader & 0xFF) << std::endl;
-    std::cout << "  Hash: " << ((rawHeader >> 8) & 0x3FFFFF) << std::endl;
-    std::cout << "  Format: " << ((rawHeader >> 30) & 0x1F) << std::endl;
-    std::cout << "  Class index: " << ((rawHeader >> 35) & 0x3FFFFF) << std::endl;
-    std::cout << "  Flags: " << ((rawHeader >> 57) & 0x7F) << std::endl;
+    std::cout << "  Slot count (bits 0-7): " << (rawHeader & 0xFF) << std::endl;
+    std::cout << "  Hash (bits 8-29): " << ((rawHeader >> 8) & 0x3FFFFF) << std::endl;
+    std::cout << "  Format (bits 30-34): " << ((rawHeader >> 30) & 0x1F) << std::endl;
+    std::cout << "  Class index (bits 35-56): " << ((rawHeader >> 35) & 0x3FFFFF) << std::endl;
+    std::cout << "  Flags (bits 57-63): " << ((rawHeader >> 57) & 0x7F) << std::endl;
 
     size_t slotCount = arrayHeader->slotCount();
     std::cout << "  Computed slot count: " << slotCount << std::endl;
@@ -509,7 +509,7 @@ int main(int argc, char* argv[]) {
         free(pathCopy);
     }
 
-    // Initialize memory (256 MB should be enough for most images)
+    // Initialize memory (4 GB virtual via mmap lazy commit)
     ObjectMemory memory;
     MemoryConfig config;
     config.oldSpaceSize = 4ULL * 1024 * 1024 * 1024;  // 4 GB virtual (mmap lazy commit)

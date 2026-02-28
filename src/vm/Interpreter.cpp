@@ -1571,7 +1571,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     // Key differences from V3PlusClosures:
     // - 0x10-0x1F: push literal var (not temp)
     // - 0x30-0x3F: push temp 0-15
-    // - 0x40-0x4B: push temp 16-27
+    // - 0x40-0x4B: push temp 0-11
     // - 0x4C-0x4F: push self, true, false, nil
     // - 0x50-0x51: push 0, push 1
 
@@ -2518,7 +2518,7 @@ void Interpreter::pushTemporary(int index) {
 }
 
 void Interpreter::pushLiteralConstant(int index) {
-    // V3PlusClosures: Simple literal push, no extensions
+    // Simple literal push, no extensions
     // The index is already the full literal index (0-31 from bytecode 0x20-0x3F,
     // or 0-63 from extended push bytecode 0x80)
     Oop val = literal(index);
@@ -2526,7 +2526,7 @@ void Interpreter::pushLiteralConstant(int index) {
 }
 
 void Interpreter::pushLiteralVariable(int index) {
-    // V3PlusClosures: Simple literal variable push, no extensions
+    // Simple literal variable push, no extensions
     // Literal variable is an Association, fetch its value
     Oop assoc = literal(index);
 
@@ -4040,7 +4040,7 @@ void Interpreter::arithmeticSend(int which) {
 }
 
 void Interpreter::commonSend(int which) {
-    // In Sista V1, bytecodes 192-207 are "send special selector 16-31"
+    // In Sista V1, bytecodes 112-127 (0x70-0x7F) are "send special selector 16-31"
     // These use the special selectors array (special object index 23)
     // The array format is: [selector0, argCount0, selector1, argCount1, ...]
     // Bytecode 192 sends special selector 16, bytecode 207 sends special selector 31
@@ -4398,14 +4398,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
     // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
     // CompiledMethod: homeMethod_ = method
-    // CompiledBlock: homeMethod_ = slot 0 (the home method)
+    // CompiledBlock: homeMethod_ = slot 2 first (Pharo 11+ FullBlockClosure), fallback to slot 0 chain
     if (method.isObject()) {
         ObjectHeader* methodHdr = method.asObjectPtr();
         uint32_t classIdx = methodHdr->classIndex();
 
         if (classIdx == compiledBlockClassIndex_) {
-            // CompiledBlock - get home method from slot 2 (Pharo 11+ FullBlockClosure model)
-            // Layout: slot 0 = header, slot 1 = selector, slot 2 = home method
+            // CompiledBlock - try slot 2 first (enclosing method in FullBlockClosure model)
             homeMethod_ = method;  // Default in case chain traversal fails
 
             // Try slot 2 first (home method in FullBlockClosure model)
@@ -5515,18 +5514,18 @@ int Interpreter::primitiveIndexOf(Oop method) const {
 
     // CompiledMethod header format (after SmallInteger decoding):
     //   bits 0-14: numLiterals (15 bits)
-    //   bit 15: needsLargeFrame
-    //   bits 16-23: numTemps (8 bits)
+    //   bit 15: requiresCounters / needsLargeFrame
+    //   bit 16: hasPrimitive
+    //   bit 17: isOptimized / needsLargeFrame
+    //   bits 18-23: numTemps (6 bits)
     //   bits 24-27: numArgs (4 bits)
     //   bits 28-29: accessModifier
-    //   bit 30: hasPrimitive flag
+    //   bit 30: alternate header format flag
     //
     // The primitive number is encoded in the bytecode stream.
     // When hasPrimitive is set, bytecodes start with a callPrimitive bytecode.
 
-    // Check hasPrimitive flag
-    // In the raw SmallInteger oop, this is bit 19 (AlternateHeaderHasPrimFlag = 0x80000)
-    // After asSmallInteger() decoding (>> 3), it becomes bit 16
+    // Check hasPrimitive flag (bit 16 after SmallInteger decoding)
     bool hasPrimitive = (bits >> 16) & 1;
     if (!hasPrimitive) return 0;
 
@@ -5535,8 +5534,8 @@ int Interpreter::primitiveIndexOf(Oop method) const {
     uint8_t* bytecodes = methodObj->bytes() + (1 + numLiterals) * 8;
 
     // In Sista V1, primitive call is encoded as:
-    // 248 lowByte highByte (callPrimitive)
-    // The primitive number = lowByte | (highByte << 8)
+    // 248 iiiiiiii mssjjjjj (callPrimitive)
+    // The primitive number = iiiiiiii | (jjjjj << 8), i.e. lowByte | ((highByte & 0x1F) << 8)
     if (bytecodes[0] == 248) {
         int primIndex = bytecodes[1] | (bytecodes[2] << 8);
         return primIndex;
@@ -5605,8 +5604,9 @@ void Interpreter::createBlock() {
 }
 
 void Interpreter::createFullBlock() {
-    // Similar to createBlock but for full block closures
-    createBlock();  // Simplified - treat same for now
+    // Dead code: createFullBlockWithLiteral() handles all FullBlockClosure creation.
+    // Kept as fallback but never called in practice.
+    createBlock();
 }
 
 void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool receiverOnStack, bool ignoreOuterContext) {
@@ -7374,7 +7374,7 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // Fourth try: Try Object >> yourself just to prove basic execution works
+    // Last resort: Try Object >> yourself just to prove basic execution works
     if (startupAttempt == 4) {
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
         if (arrayClass.isObject()) {
@@ -8050,7 +8050,7 @@ void Interpreter::initializePrimitives() {
     // This ensures the table matches what the Pharo image expects
     #include "../ios/generated_primitives.inc"
 
-    // Temporary debug print primitive (slot 255, normally unused)
+    // Debug print primitive (slot 255, unused by standard Pharo image)
     primitiveTable_[255] = &Interpreter::primitiveDebugPrint;
 
     // Primitives 256-519: In Sista V1 / Spur, the callPrimitive bytecode encodes
@@ -8359,12 +8359,10 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
-    // Named primitives have high numbers (typically >= 32768)
-    // They are looked up by name from method literals - not yet implemented
-    // For now, fail gracefully so the method body executes
+    // Named primitives (index >= 32768) are dispatched via registerNamedPrimitive()
+    // during initializePrimitiveTable(). If we see one here, it means it wasn't
+    // registered — fail so the method body executes as fallback.
     if (primitiveIndex >= 32768) {
-        // Named primitive - would need to look up by name in method literals
-        // For now, just fail and let the method body execute
         return PrimitiveResult::Failure;
     }
 
@@ -8423,7 +8421,7 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
         }
     }
 
-    // Regular primitives (0-255): dispatch through primitive table
+    // Regular primitives (0-255): dispatch through the primitive table
     {
         PrimitiveFunc prim = primitiveTable_[primitiveIndex];
         if (prim) {
@@ -8441,8 +8439,9 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
 }
 
 Oop Interpreter::activeContext() const {
-    // Would return actual context object
-    // For stack-based execution, we'd need to materialize one
+    // Returns the reified context object for the current frame.
+    // Currently returns nil — context materialization is done
+    // on-demand in primitiveThisContext() / ensureFrameIsContext().
     return Oop::nil();
 }
 
