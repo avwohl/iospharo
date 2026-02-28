@@ -10,15 +10,23 @@ import SwiftUI
 struct ImageRow: View {
     let image: PharoImage
     let isSelected: Bool
+    var isAutoLaunch: Bool = false
 
     var body: some View {
         HStack(spacing: 0) {
             // Name column (flexible)
-            Text(image.name)
-                .font(.system(.body, design: .default))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 4) {
+                if isAutoLaunch {
+                    Image(systemName: "star.fill")
+                        .font(.system(size: 10))
+                        .foregroundColor(.orange)
+                }
+                Text(image.name)
+                    .font(.system(.body, design: .default))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             // Version column
             Text(versionLabel(image.pharoVersion))

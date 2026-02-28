@@ -124,12 +124,15 @@ static void ioMonitorLoop() {
                 // Monitor for connect completion (writable = connected)
                 FD_SET(ps->fd, &writefds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
-            } else if (ps->sockState == SOCK_CONNECTED && !ps->eofDetected) {
-                // Monitor for readable data (skip if EOF already detected)
+            } else if (ps->sockState == SOCK_CONNECTED) {
+                // Always monitor for readable data — even after EOF, Pharo's
+                // SSL layer may have buffered data that needs draining
                 FD_SET(ps->fd, &readfds);
                 if (ps->fd > maxfd) maxfd = ps->fd;
-                // Also monitor writability for send readiness
-                FD_SET(ps->fd, &writefds);
+                // Only monitor writability if EOF hasn't been seen
+                if (!ps->eofDetected) {
+                    FD_SET(ps->fd, &writefds);
+                }
             }
         }
 
@@ -171,36 +174,38 @@ static void ioMonitorLoop() {
                 }
             }
 
-            if (ps->sockState == SOCK_CONNECTED && !ps->eofDetected) {
+            if (ps->sockState == SOCK_CONNECTED) {
                 if (FD_ISSET(ps->fd, &readfds)) {
-                    // Data available or connection closed
-                    // Peek to detect close vs data
-                    char peek;
-                    int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
-                    if (n == 0) {
-                        // EOF (FIN received) — DON'T change sockState here.
-                        // The recv() primitive will set SOCK_OTHER_END_CLOSED
-                        // when Pharo actually reads 0 bytes. This prevents a
-                        // race where SSL-buffered data is lost because Pharo
-                        // sees isConnected=false before draining the SSL layer.
-                        ps->eofDetected = true;
-                        // Signal both semaphores so waiting code wakes up
-                        if (ps->connSema > 0 && vm) {
-                            vm->signalSemaphoreWithIndex(ps->connSema);
-                        }
-                    } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
-                        // Actual socket error — set state immediately
-                        ps->sockError = errno;
-                        ps->sockState = SOCK_OTHER_END_CLOSED;
-                        if (ps->connSema > 0 && vm) {
-                            vm->signalSemaphoreWithIndex(ps->connSema);
+                    if (!ps->eofDetected) {
+                        // First time seeing readability — peek to detect EOF
+                        char peek;
+                        int n = (int)recv(ps->fd, &peek, 1, MSG_PEEK);
+                        if (n == 0) {
+                            // EOF (FIN received) — DON'T change sockState here.
+                            // The recv() primitive will set SOCK_OTHER_END_CLOSED
+                            // when Pharo actually reads 0 bytes. This prevents a
+                            // race where SSL-buffered data is lost because Pharo
+                            // sees isConnected=false before draining the SSL layer.
+                            ps->eofDetected = true;
+                            if (ps->connSema > 0 && vm) {
+                                vm->signalSemaphoreWithIndex(ps->connSema);
+                            }
+                        } else if (n < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+                            // Actual socket error — set state immediately
+                            ps->sockError = errno;
+                            ps->sockState = SOCK_OTHER_END_CLOSED;
+                            if (ps->connSema > 0 && vm) {
+                                vm->signalSemaphoreWithIndex(ps->connSema);
+                            }
                         }
                     }
+                    // Always signal readSema — after EOF, Pharo's SSL layer
+                    // still has buffered data that needs draining via recv()
                     if (ps->readSema > 0 && vm) {
                         vm->signalSemaphoreWithIndex(ps->readSema);
                     }
                 }
-                if (FD_ISSET(ps->fd, &writefds) && !ps->writeSignaled) {
+                if (!ps->eofDetected && FD_ISSET(ps->fd, &writefds) && !ps->writeSignaled) {
                     if (ps->writeSema > 0 && vm) {
                         vm->signalSemaphoreWithIndex(ps->writeSema);
                     }

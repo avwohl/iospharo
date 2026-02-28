@@ -1,3 +1,45 @@
+# What's New in Build 35
+
+Build 35 — 2026-02-28
+
+## New Features
+
+### Auto-Launch with Countdown Splash
+Right-click any image in the library and choose "Set as Auto-Launch" to
+mark it as the default. On next app launch, a 3-second countdown splash
+appears with the image name and a "Show Library" button to cancel. This
+replaces the old automatic behavior (which launched whenever there was
+exactly one image with no escape hatch).
+
+Auto-launch images show an orange star icon in the image list. The
+preference persists across sessions via AppStorage. Deleting an auto-launch
+image automatically clears the preference.
+
+### CLI `--image` Flag
+Launch the app with a specific image from the command line:
+
+    open /path/to/iospharo.app --args --image /tmp/Pharo.image
+
+This bypasses both the library and the splash screen for immediate launch.
+Useful for automated testing and scripting.
+
+## Bug Fixes
+
+### SSL Data Loss After EOF (Doc Browser Blank Right Pane)
+The Build 34 `eofDetected` fix had a secondary bug: after setting
+`eofDetected = true`, the I/O thread stopped monitoring the socket entirely
+and never signaled `readSema` again. Pharo's SSL layer had buffered
+decrypted data but was never woken up to drain it via `recv()`.
+
+Fix: The I/O thread now continues monitoring SOCK_CONNECTED sockets in
+`readfds` even after EOF. The MSG_PEEK probe only runs once (gated on
+`!eofDetected`), but `readSema` is signaled every 100ms until Pharo's
+`recv()` returns 0 and the recv primitive sets SOCK_OTHER_END_CLOSED.
+Write monitoring is skipped after EOF (no point signaling write-ready
+after FIN).
+
+---
+
 # What's New in Build 34
 
 Build 34 — 2026-02-28

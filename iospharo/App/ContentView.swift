@@ -14,13 +14,26 @@ struct ContentView: View {
     @EnvironmentObject var imageManager: ImageManager
 
     @AppStorage("hasSeenGestureHelp") private var hasSeenGestureHelp = false
+    @AppStorage("autoLaunchImageID") private var autoLaunchImageID: String?
     @State private var showingHelp = false
+    @State private var showingSplash = false
+    @State private var splashImage: PharoImage?
 
     var body: some View {
         ZStack {
             if bridge.isRunning {
                 // Pharo is running — full-screen canvas
                 pharoCanvas
+            } else if showingSplash, let image = splashImage {
+                // Auto-launch countdown splash
+                AutoLaunchSplashView(
+                    imageName: image.name,
+                    onLaunch: { launchImage(image) },
+                    onCancel: {
+                        showingSplash = false
+                        splashImage = nil
+                    }
+                )
             } else {
                 // Image library (handles empty state, downloads, list)
                 ImageLibraryView()
@@ -33,16 +46,48 @@ struct ContentView: View {
         }
         .onAppear {
             imageManager.load()
-            // Auto-launch when there is exactly one image
-            if !bridge.isRunning, imageManager.images.count == 1,
-               let image = imageManager.images.first {
-                imageManager.markLaunched(image)
-                imageManager.selectedImageID = image.id
-                if bridge.loadImage(at: image.imagePath) {
+            guard !bridge.isRunning else { return }
+
+            // Priority 1: CLI --image flag (immediate launch, no splash)
+            if let cliPath = Self.parseCommandLineImagePath() {
+                if bridge.loadImage(at: cliPath) {
                     bridge.start()
                 }
+                return
+            }
+
+            // Priority 2: User-selected auto-launch image (show splash)
+            if let idString = autoLaunchImageID,
+               let uuid = UUID(uuidString: idString),
+               let image = imageManager.images.first(where: { $0.id == uuid }) {
+                splashImage = image
+                showingSplash = true
             }
         }
+    }
+
+    // MARK: - Launch Helper
+
+    private func launchImage(_ image: PharoImage) {
+        showingSplash = false
+        splashImage = nil
+        imageManager.markLaunched(image)
+        imageManager.selectedImageID = image.id
+        if bridge.loadImage(at: image.imagePath) {
+            bridge.start()
+        }
+    }
+
+    // MARK: - CLI Argument Parsing
+
+    /// Check for `--image /path/to/Pharo.image` in process arguments.
+    /// Usage: `open /path/to/iospharo.app --args --image /tmp/Pharo.image`
+    private static func parseCommandLineImagePath() -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let idx = args.firstIndex(of: "--image"),
+              idx + 1 < args.count else { return nil }
+        let path = args[idx + 1]
+        return FileManager.default.fileExists(atPath: path) ? path : nil
     }
 
     // MARK: - Views

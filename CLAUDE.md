@@ -174,6 +174,15 @@ The bytecode ranges 0xE0-0xFF are completely different between the two sets.
 - Full build cycle: `xcodebuild -project iospharo.xcodeproj -scheme iospharo -configuration Debug -destination 'platform=macOS,variant=Mac Catalyst' build`
   (Xcode's "Check XCFramework Freshness" build phase auto-runs `build-xcframework.sh` if VM sources changed — no need to run it manually)
 
+## Auto-Launch and CLI `--image` Flag
+- The app supports a `--image` CLI flag to launch directly with a specific image file:
+  ```bash
+  timeout 60 open /path/to/iospharo.app --args --image /tmp/Pharo.image
+  ```
+  This bypasses the image library and splash screen — useful for automated testing.
+- Users can also right-click an image in the library and choose "Set as Auto-Launch"
+  to get a 3-second countdown splash on next app launch (with a "Show Library" cancel button).
+
 ---
 ## Running Official Pharo Test Suite
 

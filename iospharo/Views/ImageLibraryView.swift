@@ -31,6 +31,7 @@ struct ImageLibraryView: View {
     @State private var imageToShare: PharoImage?
     @State private var filterText: String = ""
     @State private var selectedImageID: UUID?
+    @AppStorage("autoLaunchImageID") private var autoLaunchImageID: String?
 
     private var filteredImages: [PharoImage] {
         let base = filterText.isEmpty
@@ -337,7 +338,11 @@ struct ImageLibraryView: View {
         ScrollView {
             LazyVStack(spacing: 0) {
                 ForEach(filteredImages) { image in
-                    ImageRow(image: image, isSelected: image.id == selectedImageID)
+                    ImageRow(
+                        image: image,
+                        isSelected: image.id == selectedImageID,
+                        isAutoLaunch: autoLaunchImageID == image.id.uuidString
+                    )
                         .onTapGesture {
                             selectedImageID = image.id
                         }
@@ -346,6 +351,20 @@ struct ImageLibraryView: View {
                                 launchImage(image)
                             } label: {
                                 Label("Launch", systemImage: "play.fill")
+                            }
+
+                            if autoLaunchImageID == image.id.uuidString {
+                                Button {
+                                    autoLaunchImageID = nil
+                                } label: {
+                                    Label("Clear Auto-Launch", systemImage: "star.slash")
+                                }
+                            } else {
+                                Button {
+                                    autoLaunchImageID = image.id.uuidString
+                                } label: {
+                                    Label("Set as Auto-Launch", systemImage: "star.fill")
+                                }
                             }
 
                             Button {

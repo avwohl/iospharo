@@ -344,6 +344,11 @@ class ImageManager: ObservableObject {
         // Remove from disk
         try? fileManager.removeItem(at: image.directoryURL)
 
+        // Clear auto-launch if this was the auto-launch image
+        if UserDefaults.standard.string(forKey: "autoLaunchImageID") == image.id.uuidString {
+            UserDefaults.standard.removeObject(forKey: "autoLaunchImageID")
+        }
+
         // Remove from catalog
         images.removeAll { $0.id == image.id }
         if selectedImageID == image.id {
