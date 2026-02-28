@@ -1,3 +1,93 @@
+# What's New in Build 33
+
+Build 33 — 2026-02-27
+
+## Bug Fixes
+
+### Help Browser Document Tree Empty
+The Documentation Browser (Help > Documentation) opened but showed no
+entries in the doc tree — just "I am a directory and has no contents"
+when clicking the root node. Three issues were involved:
+
+Root cause: Fresh Pharo 13 images ship with `IceTokenCredentials`
+containing the placeholder token `'YOUR TOKEN'`. `MicGitHubAPI` uses
+these credentials by default (not anonymous), causing GitHub to return
+401 with no rate-limit headers. `MicGitHubAPI >> extractRateInfo:`
+then crashes with `KeyNotFound: 'X-Ratelimit-Remaining'`. This is a
+Pharo image bug affecting all VMs, not specific to ours.
+
+Fix: The VM now auto-creates a `startup.st` alongside the Pharo image.
+Pharo's `StartupPreferencesLoader` loads this script on every startup,
+patching `MicGitHubRessourceReference >> githubApi` to use anonymous
+API access (`MicGitHubAPI new beAnonymous`). No auth is needed for
+public GitHub repos.
+
+Supporting changes:
+  - VM sets working directory to the image's parent directory so
+    `StartupPreferencesLoader` finds `startup.st` (both in
+    `test_load_image` and `PharoBridge`)
+  - Added SSL diagnostic logging (fprintf) to `sqMacSSL.c` for
+    handshake, encrypt, and decrypt operations
+
+## Diagnostics
+
+### SSL Diagnostic Logging
+Added `fprintf(stderr, ...)` diagnostics throughout SqueakSSL
+(`sqConnectSSL`, `sqEncryptSSL`, `sqDecryptSSL`). The existing
+`logTrace()` macro was compiled out as `((void)0)` in `debug.h`, making
+SSL completely invisible in logs. The new fprintf logging shows
+handshake progress, data flow, and error codes, which was critical for
+verifying that SSL works correctly and the doc browser bug was
+image-side, not VM-side.
+
+---
+
+# What's New in Build 32
+
+Build 32 — 2026-02-27
+
+## Bug Fixes
+
+### SqueakSSL Data Loss on Partial Reads
+HTTPS connections (used by the Help Browser, Iceberg, and ZnClient) could
+silently corrupt TLS records, causing connections to fail or return garbled
+data.
+
+Root cause: Apple Secure Transport's read callback requests N bytes of
+encrypted data. When the socket buffer had fewer than N bytes available,
+SqueakSSLRead() correctly copied what it had and returned errSSLWouldBlock,
+but then set dataLen to 0 — discarding the bytes it had just delivered to
+SSL. On the next callback, SSL expected the continuation of the same TLS
+record but got new data from the socket, corrupting the record boundary.
+
+Fix: after a partial read, dataLen is decremented by the number of bytes
+consumed and any remaining bytes are shifted to the front of the buffer
+with memmove(). SSL now sees a consistent byte stream across callbacks.
+
+### Write Semaphore Spam (millions of log lines)
+The stderr log grew to 2.6 million lines in under a minute, almost entirely
+`[SEMA] signalSemaphoreWithIndex(10)` messages.
+
+Root cause: TCP sockets are almost always writable (the kernel send buffer
+is rarely full). The I/O monitor thread polls every 100ms with select(),
+and every poll signaled the write semaphore for every connected socket.
+Each signal also triggered the `[SEMA]` log line in the interpreter proxy.
+
+Fix: added a `writeSignaled` flag to each socket. The write semaphore is
+signaled once when the socket becomes writable, then suppressed until a
+send() returns EAGAIN (buffer full), which re-arms the flag. This matches
+the edge-triggered semantics that Pharo's SocketStream expects.
+
+### Debug Logging Cleanup
+Removed verbose diagnostic logging added during socket/SSL debugging:
+  - Removed per-call `[SEMA] signalSemaphoreWithIndex(N)` from the
+    interpreter proxy (the single biggest source of log spam)
+  - Removed `[SOCK]` debug prints from socket creation, connect, and
+    status paths (kept error-case prints and one-time init messages)
+  - Removed `[DISPATCH]` logging for every Socket/SqueakSSL primitive call
+
+---
+
 # What's New in Build 31
 
 Build 31 — 2026-02-27

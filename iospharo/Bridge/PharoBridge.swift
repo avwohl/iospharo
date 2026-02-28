@@ -177,6 +177,14 @@ class PharoBridge: ObservableObject {
         // Metal view is laid out and provides the actual view dimensions, triggering
         // a single clean resize + redraw.
 
+        // Change working directory to image's directory so Pharo's
+        // StartupPreferencesLoader finds startup.st alongside the image
+        let imageDir = (imagePath as NSString).deletingLastPathComponent
+        FileManager.default.changeCurrentDirectoryPath(imageDir)
+
+        // Write startup.st with image patches (loaded by StartupPreferencesLoader)
+        Self.writeStartupScript(to: imageDir)
+
         let initResult = vm_init(&parameters)
 
         if initResult != 0 {
@@ -206,6 +214,23 @@ class PharoBridge: ObservableObject {
         }
 
         vm_parameters_destroy(&parameters)
+    }
+
+    // MARK: - Image Patches
+
+    /// Write startup.st with Pharo image patches.
+    /// Pharo's StartupPreferencesLoader auto-loads startup.st from the
+    /// working directory on every image startup.
+    private static func writeStartupScript(to directory: String) {
+        let script = """
+        "Pharo 13 image patches - auto-applied by iospharo VM"
+        "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
+        (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
+          MicGitHubRessourceReference compile: 'githubApi
+            ^ MicGitHubAPI new beAnonymous'].
+        """
+        let path = (directory as NSString).appendingPathComponent("startup.st")
+        try? script.write(toFile: path, atomically: true, encoding: .utf8)
     }
 
     // MARK: - Display Access

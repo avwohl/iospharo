@@ -18,6 +18,8 @@
 #include <csignal>
 #include <csetjmp>
 #include <execinfo.h>
+#include <libgen.h>   // dirname
+#include <unistd.h>   // chdir
 #include <unistd.h>
 
 #ifdef __APPLE__
@@ -495,6 +497,17 @@ int main(int argc, char* argv[]) {
     // Detect test mode: first image arg is "test"
     bool testMode = (!imageArgs.empty() && imageArgs[0] == "test");
     std::cout << "\nLoading image: " << imagePath << std::endl;
+
+    // Change working directory to image's directory so Pharo's
+    // StartupPreferencesLoader finds startup.st alongside the image
+    {
+        char* pathCopy = strdup(imagePath);
+        const char* dir = dirname(pathCopy);
+        if (chdir(dir) != 0) {
+            std::cerr << "Warning: could not chdir to " << dir << std::endl;
+        }
+        free(pathCopy);
+    }
 
     // Initialize memory (256 MB should be enough for most images)
     ObjectMemory memory;

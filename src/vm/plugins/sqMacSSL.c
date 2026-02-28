@@ -541,11 +541,13 @@ sqInt sqConnectSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     OSStatus status;
     sqSSL* ssl = sqSSLFromHandle(handle);
 
-    logTrace("sqConnectSSL: %x\n", (int)ssl);
+    fprintf(stderr, "[SSL] sqConnectSSL: ssl=%p state=%d srcLen=%d\n",
+            (void*)ssl, ssl ? ssl->state : -1, (int)srcLen);
 
     /* Verify state of session */
     if (ssl == NULL
         || (ssl->state != SQSSL_UNUSED && ssl->state != SQSSL_CONNECTING)) {
+        fprintf(stderr, "[SSL] sqConnectSSL: INVALID STATE\n");
         return SQSSL_INVALID_STATE;
     }
 
@@ -577,27 +579,34 @@ sqInt sqConnectSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     }
 
     status = SSLHandshake(ssl->ctx);
+    fprintf(stderr, "[SSL] SSLHandshake returned %d (dataLen=%d outLen=%d)\n",
+            (int)status, ssl->dataLen, ssl->outLen);
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
     if (status == errSSLServerAuthCompleted) {
+        fprintf(stderr, "[SSL] Server auth completed, verifying cert\n");
         OSStatus secStatus = sqVerifyCert(ssl, true);
         if(secStatus != noErr) {
-            logStatus(secStatus, "sqConnectSSL: sqVerifyCert");
+            fprintf(stderr, "[SSL] sqVerifyCert failed: %d\n", (int)secStatus);
             // we should but currently _cannot_ return here.
             // return SQSSL_GENERIC_ERROR;
         }
         // Continue Handshake
         status = SSLHandshake(ssl->ctx);
+        fprintf(stderr, "[SSL] SSLHandshake(2) returned %d (dataLen=%d outLen=%d)\n",
+                (int)status, ssl->dataLen, ssl->outLen);
     }
 #endif // MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
     if (status == errSSLWouldBlock) {
         /* Return token to caller */
-        logTrace("sqConnectSSL: Produced %d token bytes\n", ssl->outLen);
+        fprintf(stderr, "[SSL] WouldBlock, produced %d token bytes\n", ssl->outLen);
         return ssl->outLen ? ssl->outLen : SQSSL_NEED_MORE_DATA;
     } else if (status != noErr) {
+        fprintf(stderr, "[SSL] SSLHandshake FAILED: %d\n", (int)status);
         logStatus(status, "sqConnectSSL: SSLHandshake");
         return SQSSL_GENERIC_ERROR;
     }
     ssl->state = SQSSL_CONNECTED;
+    fprintf(stderr, "[SSL] CONNECTED!\n");
 
     /* Extract the peer name from the cert */
     status = sqGetPeerCertificates(ssl);
@@ -695,16 +704,20 @@ sqInt sqEncryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     ssl->outLen = 0;
     ssl->outMax = dstLen;
 
-    logTrace("sqEncryptSSL: Encrypting %" PRIdSQINT " bytes\n", srcLen);
+    fprintf(stderr, "[SSL] sqEncryptSSL: srcLen=%d outLen=%d outMax=%d\n",
+            (int)srcLen, ssl->outLen, ssl->outMax);
 
     status = SSLWrite(ssl->ctx, srcBuf, srcLen, &nbytes);
     if (nbytes != srcLen) {
+        fprintf(stderr, "[SSL] SSLWrite partial: wrote %zu of %d\n", nbytes, (int)srcLen);
         return SQSSL_GENERIC_ERROR;
     }
     if (status == errSSLWouldBlock || status == noErr
         || status == errSSLClosedGraceful) {
+        fprintf(stderr, "[SSL] sqEncryptSSL: produced %d encrypted bytes\n", ssl->outLen);
         return ssl->outLen;
     }
+    fprintf(stderr, "[SSL] SSLWrite FAILED: %d\n", (int)status);
     logStatus(status, "sqDecryptSSL: SSLWrite");
     return SQSSL_GENERIC_ERROR;
 }
@@ -737,17 +750,36 @@ sqInt sqDecryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
             return SQSSL_OUT_OF_MEMORY;
         }
     }
-    logTrace("sqDecryptSSL: Input data %" PRIdSQINT " bytes\n", srcLen);
+    fprintf(stderr, "[SSL] sqDecryptSSL: srcLen=%d dataLen=%d dstLen=%d\n",
+            (int)srcLen, ssl->dataLen, (int)dstLen);
     memcpy(ssl->dataBuf + ssl->dataLen, srcBuf, srcLen);
     ssl->dataLen += srcLen;
 
-    logTrace("sqDecryptSSL: Decrypting %d bytes\n", ssl->dataLen);
-
     status = SSLRead(ssl->ctx, dstBuf, dstLen, &nbytes);
+    fprintf(stderr, "[SSL] SSLRead: status=%d nbytes=%d dataLen=%d\n",
+            (int)status, (int)nbytes, ssl->dataLen);
+    if (nbytes > 0) {
+        /* Log first line of decrypted data to see HTTP response */
+        static int decryptLogCount = 0;
+        if (decryptLogCount < 20) {
+            char preview[256];
+            int plen = nbytes < 255 ? (int)nbytes : 255;
+            memcpy(preview, dstBuf, plen);
+            /* Replace non-printable chars */
+            for (int i = 0; i < plen; i++) {
+                if (preview[i] == '\r' || preview[i] == '\n') preview[i] = '|';
+                else if (preview[i] < 32 || preview[i] > 126) preview[i] = '.';
+            }
+            preview[plen] = '\0';
+            fprintf(stderr, "[SSL] DATA[%d]: %s\n", decryptLogCount, preview);
+            decryptLogCount++;
+        }
+    }
     if (status == errSSLWouldBlock || status == noErr
         || status == errSSLClosedGraceful) {
         return nbytes;
     }
+    fprintf(stderr, "[SSL] SSLRead FAILED: %d\n", (int)status);
     logStatus(status, "sqDecryptSSL: SSLRead");
     return SQSSL_GENERIC_ERROR;
 }
