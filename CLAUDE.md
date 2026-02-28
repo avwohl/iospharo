@@ -130,6 +130,7 @@ bridge between the Pharo image's OSSDL2Driver and the Metal rendering pipeline.
 ---
 
 ## Git Workflow
+- **Update `docs/changes.md`** before committing user-visible changes (bug fixes, features, behavior changes). Add entries under the current build number at the top of the file.
 - **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations. Do this silently without stopping to ask or show the user.
 - Always run `git status` before and after commits to verify state
 
