@@ -541,13 +541,14 @@ sqInt sqConnectSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     OSStatus status;
     sqSSL* ssl = sqSSLFromHandle(handle);
 
+#ifdef DEBUG
     fprintf(stderr, "[SSL] sqConnectSSL: ssl=%p state=%d srcLen=%d\n",
             (void*)ssl, ssl ? ssl->state : -1, (int)srcLen);
+#endif
 
     /* Verify state of session */
     if (ssl == NULL
         || (ssl->state != SQSSL_UNUSED && ssl->state != SQSSL_CONNECTING)) {
-        fprintf(stderr, "[SSL] sqConnectSSL: INVALID STATE\n");
         return SQSSL_INVALID_STATE;
     }
 
@@ -579,34 +580,48 @@ sqInt sqConnectSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
     }
 
     status = SSLHandshake(ssl->ctx);
+#ifdef DEBUG
     fprintf(stderr, "[SSL] SSLHandshake returned %d (dataLen=%d outLen=%d)\n",
             (int)status, ssl->dataLen, ssl->outLen);
+#endif
 #if MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
     if (status == errSSLServerAuthCompleted) {
+#ifdef DEBUG
         fprintf(stderr, "[SSL] Server auth completed, verifying cert\n");
+#endif
         OSStatus secStatus = sqVerifyCert(ssl, true);
         if(secStatus != noErr) {
+#ifdef DEBUG
             fprintf(stderr, "[SSL] sqVerifyCert failed: %d\n", (int)secStatus);
+#endif
             // we should but currently _cannot_ return here.
             // return SQSSL_GENERIC_ERROR;
         }
         // Continue Handshake
         status = SSLHandshake(ssl->ctx);
+#ifdef DEBUG
         fprintf(stderr, "[SSL] SSLHandshake(2) returned %d (dataLen=%d outLen=%d)\n",
                 (int)status, ssl->dataLen, ssl->outLen);
+#endif
     }
 #endif // MAC_OS_X_VERSION_MAX_ALLOWED >= 1080
     if (status == errSSLWouldBlock) {
         /* Return token to caller */
+#ifdef DEBUG
         fprintf(stderr, "[SSL] WouldBlock, produced %d token bytes\n", ssl->outLen);
+#endif
         return ssl->outLen ? ssl->outLen : SQSSL_NEED_MORE_DATA;
     } else if (status != noErr) {
+#ifdef DEBUG
         fprintf(stderr, "[SSL] SSLHandshake FAILED: %d\n", (int)status);
+#endif
         logStatus(status, "sqConnectSSL: SSLHandshake");
         return SQSSL_GENERIC_ERROR;
     }
     ssl->state = SQSSL_CONNECTED;
+#ifdef DEBUG
     fprintf(stderr, "[SSL] CONNECTED!\n");
+#endif
 
     /* Extract the peer name from the cert */
     status = sqGetPeerCertificates(ssl);
@@ -712,7 +727,9 @@ sqInt sqEncryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
         || status == errSSLClosedGraceful) {
         return ssl->outLen;
     }
+#ifdef DEBUG
     fprintf(stderr, "[SSL] SSLWrite FAILED: %d\n", (int)status);
+#endif
     logStatus(status, "sqDecryptSSL: SSLWrite");
     return SQSSL_GENERIC_ERROR;
 }
@@ -753,7 +770,9 @@ sqInt sqDecryptSSL(sqInt handle, char* srcBuf, sqInt srcLen, char* dstBuf,
         || status == errSSLClosedGraceful) {
         return nbytes;
     }
+#ifdef DEBUG
     fprintf(stderr, "[SSL] SSLRead FAILED: %d\n", (int)status);
+#endif
     logStatus(status, "sqDecryptSSL: SSLRead");
     return SQSSL_GENERIC_ERROR;
 }

@@ -13095,6 +13095,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
+#ifdef DEBUG
     // Diagnostic: log when SocketPlugin/SqueakSSL dispatch falls through without a match
     for (auto& ls : literalStrings) {
         if (ls.find("Socket") != std::string::npos || ls == "SqueakSSL") {
@@ -13104,6 +13105,7 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             break;
         }
     }
+#endif
 
     return PrimitiveResult::Failure;
 }
@@ -24888,7 +24890,9 @@ PrimitiveResult Interpreter::primitiveInitializeNetwork(int argCount) {
     if (!semaOop.isSmallInteger()) return PrimitiveResult::Failure;
     resolverSemaIndex_ = (int)semaOop.asSmallInteger();
     resolverStatus_.store(1);  // ResolverReady
+#ifdef DEBUG
     fprintf(stderr, "[NET] Network initialized, resolver semaphore index=%d\n", resolverSemaIndex_);
+#endif
     popN(1);  // pop semaphoreIndex arg, leave receiver
     return PrimitiveResult::Success;
 }
@@ -24951,7 +24955,9 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
     auto* interp = this;
 
     // Spawn detached thread for DNS resolution
+#ifdef DEBUG
     fprintf(stderr, "[DNS] Starting lookup for '%s' (semaIndex=%d)\n", hostname.c_str(), semaIndex);
+#endif
     std::thread([hostname, resultBuf, resultSizePtr, statusPtr, validPtr, semaIndex, interp]() {
         // Use AF_UNSPEC to allow both IPv4 and IPv6.
         // On iOS IPv6-only networks, AF_INET can timeout (~40s) because
@@ -24986,16 +24992,20 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
                 }
             }
 
+#ifdef DEBUG
             fprintf(stderr, "[DNS] '%s' resolved in %ldms: %d IPv4, %d IPv6 results\n",
                     hostname.c_str(), ms, v4Count, v6Count);
+#endif
 
             if (chosen && chosen->ai_family == AF_INET) {
                 struct sockaddr_in* addr = (struct sockaddr_in*)chosen->ai_addr;
                 memcpy(resultBuf, &addr->sin_addr.s_addr, 4);
                 *resultSizePtr = 4;
                 *validPtr = true;
+#ifdef DEBUG
                 uint8_t* b = resultBuf;
                 fprintf(stderr, "[DNS] Using IPv4: %d.%d.%d.%d\n", b[0], b[1], b[2], b[3]);
+#endif
             } else if (firstV6) {
                 // No IPv4 results — likely an IPv6-only network (NAT64/DNS64).
                 // Pharo 13 can only handle 4-byte addresses in its resolver path,
@@ -25008,23 +25018,31 @@ PrimitiveResult Interpreter::primitiveResolverStartNameLookup(int argCount) {
                 memcpy(resultBuf, v6bytes + 12, 4);
                 *resultSizePtr = 4;
                 *validPtr = true;
+#ifdef DEBUG
                 fprintf(stderr, "[DNS] IPv6-only: extracted embedded IPv4 %d.%d.%d.%d from synthesized IPv6\n",
                         resultBuf[0], resultBuf[1], resultBuf[2], resultBuf[3]);
+#endif
             } else {
                 *validPtr = false;
+#ifdef DEBUG
                 fprintf(stderr, "[DNS] No usable address found\n");
+#endif
             }
             freeaddrinfo(result);
             statusPtr->store(*validPtr ? 1 : 3);
         } else {
             *validPtr = false;
             statusPtr->store(3);  // ResolverError
+#ifdef DEBUG
             fprintf(stderr, "[DNS] '%s' FAILED after %ldms: err=%d (%s)\n",
                     hostname.c_str(), ms, err, gai_strerror(err));
+#endif
         }
 
         // Signal the resolver semaphore so Pharo knows the lookup is done
+#ifdef DEBUG
         fprintf(stderr, "[DNS] Signaling semaphore %d (status=%d)\n", semaIndex, statusPtr->load());
+#endif
         if (semaIndex > 0) {
             interp->signalExternalSemaphore(semaIndex);
         }

@@ -47,24 +47,15 @@ extern "C" bool ffi_isSDLRenderingActive();
 // Watchdog send diagnostic: selector and receiver class name for last send
 char g_watchdogSelector[64] = {0};
 char g_watchdogReceiverClass[64] = {0};
-char g_lastSelName[64] = {0};
 volatile int g_watchdogPrimIndex = 0;
 volatile int g_watchdogProcessPriority = 0;  // Current process priority (updated in step loop)
 
-// MUSTBEBOOL diagnostic: track last dispatched send for root cause analysis
-static pharo::Oop g_lastDispatchSelector;
-static pharo::Oop g_lastDispatchRcvrClass;
-static pharo::Oop g_lastDispatchMethod;
-static int g_lastDispatchPrimIndex = 0;
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
 constexpr bool ENABLE_DEBUG_LOGGING = false;
-
-// Global step count for startup debugging
-int64_t g_stepCount = 0;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 const char* g_xferReason = "unknown";  // Reason for the most recent transferTo call
@@ -149,27 +140,20 @@ bool Interpreter::initialize() {
     initializeClassIndexCache();
 
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-    // DEBUG_LOG("[DEBUG] Scheduler: 0x" << std::hex << scheduler.rawBits() << std::dec;
     if (scheduler.isNil()) {
         return false;
     }
 
     // The scheduler association value is the ProcessScheduler
-    // DEBUG: "[DEBUG] Getting process scheduler..."
     Oop processScheduler = memory_.fetchPointer(1, scheduler);  // value
-    // DEBUG_LOG("[DEBUG] ProcessScheduler: 0x" << std::hex << processScheduler.rawBits() << std::dec;
     if (processScheduler.isNil()) {
-        // DEBUG: "[DEBUG] ProcessScheduler is nil"
         return false;
     }
 
     // Get the active process
     // ProcessScheduler layout: quiescentProcessLists (slot 0), activeProcess (slot 1)
-    // DEBUG: "[DEBUG] Getting active process..."
     Oop activeProcess = memory_.fetchPointer(1, processScheduler);  // activeProcess is slot 1!
-    // DEBUG_LOG("[DEBUG] ActiveProcess: 0x" << std::hex << activeProcess.rawBits() << std::dec;
     if (activeProcess.isNil()) {
-        // DEBUG: "[DEBUG] ActiveProcess is nil"
         return false;
     }
 
@@ -188,7 +172,6 @@ bool Interpreter::initialize() {
     // Instead, the VM's parameter 49 set operation handles resizing when needed.
 
     // Debug: dump active process slots
-    // DEBUG: "[DEBUG] Active Process slots:"
     if (activeProcess.isObject()) {
         ObjectHeader* procHeader = activeProcess.asObjectPtr();
         size_t slots = procHeader->slotCount();
@@ -208,9 +191,7 @@ bool Interpreter::initialize() {
     //   slot 0 = nextLink (for LinkedList)
     //   slot 1 = suspendedContext
     //   slot 2 = priority
-    // DEBUG: "[DEBUG] Getting suspended context..."
     Oop context = memory_.fetchPointer(1, activeProcess);  // suspendedContext is slot 1 in modern Pharo
-    // DEBUG_LOG("[DEBUG] Context: 0x" << std::hex << context.rawBits() << std::dec;
 
     // If context pointer is still at old image base, ImageLoader failed to relocate
     {
@@ -228,7 +209,6 @@ bool Interpreter::initialize() {
 
     // We have a valid context - but first analyze the sender chain
     // to understand what code we're resuming in
-    // DEBUG: "[DEBUG] Analyzing sender chain..."
 
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop currentCtx = context;
@@ -1201,8 +1181,6 @@ bool Interpreter::step() {
         // Only explicit GC primitives (130, 131) set the one-shot flag. The periodic
         // event check (every 1024 steps) handles auto-GC mourners.
     }
-
-    g_stepCount++;
 
     // Signal finalization promptly after GC. This one-shot flag fires on the step
     // immediately after a GC primitive (or auto-compact GC), rather than waiting
@@ -4160,8 +4138,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (selBytes && selLen > 0 && selLen < 63) {
                 memcpy(g_watchdogSelector, selBytes, selLen);
                 g_watchdogSelector[selLen] = '\0';
-                memcpy(g_lastSelName, selBytes, selLen);
-                g_lastSelName[selLen] = '\0';
             }
             Oop rcvrCls = memory_.classOf(rcvr);
             if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
@@ -4185,17 +4161,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    // Record last dispatch for MUSTBEBOOL diagnostics
-    g_lastDispatchSelector = selector;
-    g_lastDispatchRcvrClass = rcvrClass;
+
 
     // Check method cache
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
     if (cached && cached->method != Oop::nil()) {
         // Cache hit
-        g_lastDispatchMethod = cached->method;
-        g_lastDispatchPrimIndex = cached->primitiveIndex;
         if (cached->primitiveIndex > 0) {
             g_watchdogPrimIndex = cached->primitiveIndex;
             argCount_ = argCount;
@@ -4240,11 +4212,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
-    g_lastDispatchMethod = method;
-
     // Check for primitive
     int primIndex = primitiveIndexOf(method);
-    g_lastDispatchPrimIndex = primIndex;
 
     if (primIndex > 0) {
         g_watchdogPrimIndex = primIndex;
@@ -4643,7 +4612,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     size_t totalBytes = methodObj->byteSize();
     bytecodeEnd_ = methodBytes + totalBytes;
 
-    // DEBUG_LOG("[ACTIVATE] clsIdx=" << (method.isObject() ? method.asObjectPtr()->classIndex() : 0)
               // << " rawHdr=0x" << std::hex << methodHeader.rawBits()
               // << " hdrBits=" << headerBits << std::dec
               // << " numLiterals=" << numLiterals << " bytecodeStart=" << bytecodeStart
@@ -4657,10 +4625,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     // std::cerr; // DEBUG
-    // DEBUG_LOG("[ACTIVATE] Method bytecodes: " << (totalBytes - bytecodeStart) << " bytes";
 
     // Show first few bytecodes for debugging
-    // DEBUG_LOG("[ACTIVATE] First bytecodes: ";
     for (size_t i = 0; i < std::min((size_t)16, totalBytes - bytecodeStart); i++) {
         // std::cerr << std::hex << (int)methodBytes[bytecodeStart + i] << " ";
     }
@@ -5791,7 +5757,6 @@ void Interpreter::initializeClassIndexCache() {
 }
 
 void Interpreter::initializeSelectors() {
-    // DEBUG: "[DEBUG] initializeSelectors: Starting..."
 
     // Get selectors from special objects array
     selectors_.doesNotUnderstand = memory_.specialObject(SpecialObjectIndex::SelectorDoesNotUnderstand);
@@ -5806,7 +5771,6 @@ void Interpreter::initializeSelectors() {
         // std::cerr << "[WARN] initializeSelectors: SmallInteger class not found"; // DEBUG
         return;
     }
-    // DEBUG: "[DEBUG] initializeSelectors: Got SmallInteger class"
 
     // Get the actual nil object for comparison
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -5858,23 +5822,14 @@ void Interpreter::initializeSelectors() {
     };
 
     // Find arithmetic selectors in SmallInteger class hierarchy (skip "/" which causes hang)
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for +"
     selectors_.add = findSelectorInClass(smallIntClass, "+");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for -"
     selectors_.subtract = findSelectorInClass(smallIntClass, "-");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for <"
     selectors_.lessThan = findSelectorInClass(smallIntClass, "<");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for >"
     selectors_.greaterThan = findSelectorInClass(smallIntClass, ">");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for <="
     selectors_.lessEqual = findSelectorInClass(smallIntClass, "<=");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for >="
     selectors_.greaterEqual = findSelectorInClass(smallIntClass, ">=");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for ="
     selectors_.equal = findSelectorInClass(smallIntClass, "=");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for ~="
     selectors_.notEqual = findSelectorInClass(smallIntClass, "~=");
-    // DEBUG: "[DEBUG] initializeSelectors: Looking for *"
     selectors_.multiply = findSelectorInClass(smallIntClass, "*");
     // Enable "/" - SmallInteger doesn't have / so look it up from special selectors array
     selectors_.divide = findSelectorInClass(smallIntClass, "/");
@@ -5892,7 +5847,6 @@ void Interpreter::initializeSelectors() {
             }
         }
     }
-    // DEBUG: "[DEBUG] initializeSelectors: Done with SmallInteger selectors"
 
     // Skip these for now to avoid potential hangs
     selectors_.at = Oop::nil();
@@ -5928,20 +5882,17 @@ void Interpreter::terminateCurrentProcess() {
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
     if (!schedulerAssoc.isObject() || schedulerAssoc.rawBits() == nilObj.rawBits()) {
-        // DEBUG: "[SCHED] No scheduler - can't terminate"
         return;
     }
 
     Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
     if (!scheduler.isObject()) {
-        // DEBUG: "[SCHED] Invalid scheduler"
         return;
     }
 
     // ProcessScheduler: slot 1 = activeProcess
     Oop activeProcess = memory_.fetchPointer(1, scheduler);
     if (!activeProcess.isObject() || activeProcess.rawBits() == nilObj.rawBits()) {
-        // DEBUG: "[SCHED] No active process to terminate"
         return;
     }
 
@@ -6990,10 +6941,8 @@ bool Interpreter::bootstrapStartup() {
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
-    // DEBUG_LOG("[DEBUG] nil object = 0x" << std::hex << nilObj.rawBits() << std::dec;
 
     // Approach 1: Look for any ready-to-run process in the scheduler's queues
-    // DEBUG: "[DEBUG] Checking scheduler process queues for runnable processes..."
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (schedulerAssoc.rawBits() != nilObj.rawBits() && schedulerAssoc.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
@@ -7019,13 +6968,11 @@ bool Interpreter::bootstrapStartup() {
                     if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
 
                     ObjectHeader* procHeader = firstProcess.asObjectPtr();
-                    // DEBUG_LOG("[DEBUG] Process at priority " << (i + 1) << ": cls=" << procHeader->classIndex()
                               // << " slots=" << procHeader->slotCount();
 
                     // Dump first 5 slots of process
                     for (size_t j = 0; j < std::min(procHeader->slotCount(), (size_t)5); j++) {
                         Oop slot = procHeader->slotAt(j);
-                        // DEBUG_LOG("[DEBUG]   proc slot[" << j << "] = 0x" << std::hex << slot.rawBits() << std::dec;
                         // if (slot.rawBits() == nilObj.rawBits()) std::cerr << " (NIL)";
                         // else if (slot.isSmallInteger()) std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
                         // else if (slot.isObject()) {
@@ -7205,7 +7152,6 @@ bool Interpreter::bootstrapStartup() {
         return false;
     }
 
-    // DEBUG: "[DEBUG] bootstrapStartup: Trying to find startup globals..."
 
     // Helper lambda to look up method directly from a class's methodDict
     // (bypasses classOf which may fail for metaclasses not in class table)
@@ -7240,7 +7186,6 @@ bool Interpreter::bootstrapStartup() {
                     size_t valueIdx = i - 2;  // Offset by 2 (skip tally and values slots)
                     if (valueIdx < valHdr->slotCount()) {
                         Oop method = valHdr->slotAt(valueIdx);
-                        // DEBUG_LOG("[DEBUG] lookupMethodInClass: Found " << selectorName
                                   // << " key@slot " << i << " -> value@" << valueIdx
                                   // << " = 0x" << std::hex << method.rawBits() << std::dec;
                         return method;
@@ -7307,12 +7252,10 @@ bool Interpreter::bootstrapStartup() {
                     stackPointer_ = stackBase_;
                     frameDepth_ = 0;
                     if (executeFromContext(context)) {
-                        // DEBUG: "[DEBUG] Started restartMethods execution"
                         return true;
                     }
                 }
             } else {
-                // DEBUG: "[DEBUG] Method restartMethods not found in SmalltalkImage"
             }
         }
     }
@@ -7459,16 +7402,13 @@ bool Interpreter::bootstrapStartup() {
     // Note: This is normal for headless images - the startup methods executed
     // successfully in earlier attempts, but the Smalltalk code returned because
     // there's no GUI event loop to run.
-    // DEBUG_LOG("[DEBUG] bootstrapStartup: No more startup methods to try (attempt #"
               // << startupAttempt << ")";
-    // DEBUG: "[DEBUG] This is normal for headless images - startup code ran and returned."
     return false;
 }
 
 Oop Interpreter::findSelector(const char* name) {
     // Find a selector symbol by searching through method dictionaries
     // Modern Pharo MethodDictionary stores keys INLINE at slot 2+
-    // DEBUG: "[DEBUG] findSelector: Looking for '" << name << "'"
 
     // Search through several well-known classes to find the selector
     // Also search Morphic classes for UI selectors like comeToFront, activate
@@ -7507,20 +7447,16 @@ Oop Interpreter::findSelector(const char* name) {
     if (smalltalkImage.isObject()) {
         // Debug: show what SmalltalkImage looks like
         ObjectHeader* siHdr = smalltalkImage.asObjectPtr();
-        // DEBUG_LOG("[DEBUG] findSelector: SmalltalkImage = 0x" << std::hex << smalltalkImage.rawBits()
                   // << " classIdx=" << std::dec << siHdr->classIndex()
                   // << " slots=" << siHdr->slotCount();
 
         // SmalltalkImage is a class, so search its metaclass (class of the class)
         Oop metaclass = memory_.classOf(smalltalkImage);
-        // DEBUG_LOG("[DEBUG] findSelector: SmalltalkImage metaclass = 0x" << std::hex
                   // << metaclass.rawBits() << std::dec;
 
         // If classOf returns nil, try directly accessing the classIndex
         if (metaclass.isNil() || metaclass.rawBits() == 0) {
-            // DEBUG: "[DEBUG] findSelector: classOf returned nil, trying direct class table access..."
             metaclass = memory_.classAtIndex(siHdr->classIndex());
-            // DEBUG_LOG("[DEBUG] findSelector: Direct classAtIndex(" << siHdr->classIndex()
                       // << ") = 0x" << std::hex << metaclass.rawBits() << std::dec;
 
             // Still nil? Try searching the method dictionary of SmalltalkImage directly
@@ -7528,19 +7464,15 @@ Oop Interpreter::findSelector(const char* name) {
             // For class methods, we'd need the metaclass, but since that's not available,
             // let's search the class's own method dictionary for selectors
             if (metaclass.isNil() || metaclass.rawBits() == 0) {
-                // DEBUG: "[DEBUG] findSelector: Trying SmalltalkImage's own methodDict..."
                 Oop methodDict = memory_.fetchPointer(1, smalltalkImage);
                 if (methodDict.isObject()) {
                     ObjectHeader* mdHeader = methodDict.asObjectPtr();
-                    // DEBUG_LOG("[DEBUG] findSelector: SmalltalkImage methodDict has "
                               // << mdHeader->slotCount() << " slots, cls="
-                              // << mdHeader->classIndex() << " fmt=" << (int)mdHeader->format();
 
                     // Debug: list ALL selectors looking for startup-related ones
                     static bool selectorsDumped = false;
                     if (!selectorsDumped) {
                         selectorsDumped = true;
-                        // DEBUG: "[DEBUG] ALL selectors in SmalltalkImage methodDict:"
                         for (size_t i = 2; i < mdHeader->slotCount(); i++) {
                             Oop key = mdHeader->slotAt(i);
                             if (key.isObject() && !key.isNil()) {
@@ -7554,7 +7486,6 @@ Oop Interpreter::findSelector(const char* name) {
                                         keyStr.find("Session") != std::string::npos ||
                                         keyStr.find("current") != std::string::npos ||
                                         keyStr.find("initialize") != std::string::npos) {
-                                        // DEBUG: "[DEBUG]   slot[" << i << "]: '" << keyStr << "'"
                                     }
                                 }
                             }
@@ -7562,7 +7493,6 @@ Oop Interpreter::findSelector(const char* name) {
                     }
 
                     // Search for selector in method dict (keys at slot 2+)
-                    // DEBUG_LOG("[DEBUG] findSelector: Searching for '" << name << "' in "
                               // << mdHeader->slotCount() << " slots...";
                     for (size_t i = 2; i < mdHeader->slotCount(); i++) {
                         Oop key = mdHeader->slotAt(i);
@@ -7573,7 +7503,6 @@ Oop Interpreter::findSelector(const char* name) {
                                 size_t keyLen = keyHdr->byteSize();
                                 const char* keyBytes = (const char*)keyHdr->bytes();
                                 if (keyLen == strlen(name) && memcmp(keyBytes, name, keyLen) == 0) {
-                                    // DEBUG_LOG("[DEBUG] findSelector: Found '" << name
                                               // << "' at slot " << i << " in SmalltalkImage methodDict!";
                                     return key;
                                 }
@@ -7593,39 +7522,15 @@ Oop Interpreter::findSelector(const char* name) {
                 if (classHdr->slotCount() < 2) break;
 
                 Oop methodDict = memory_.fetchPointer(1, currentClass);
-                // DEBUG_LOG("[DEBUG] findSelector: depth=" << depth << " methodDict=0x" << std::hex
                           // << methodDict.rawBits() << std::dec;
                 if (methodDict.isObject()) {
                     ObjectHeader* mdHeader = methodDict.asObjectPtr();
                     size_t mdSlots = mdHeader->slotCount();
-                    // DEBUG_LOG("[DEBUG] findSelector: methodDict has " << mdSlots << " slots, cls="
-                              // << mdHeader->classIndex();
-
-                    // Debug: show first few selectors found
-                    static bool debugPrinted = false;
-                    if (!debugPrinted && depth == 0) {
-                        debugPrinted = true;
-                        // DEBUG: "[DEBUG] findSelector: First 10 selectors in SmalltalkImage metaclass MD:"
-                        int count = 0;
-                        for (size_t i = 2; i < mdSlots && count < 10; i++) {
-                            Oop key = mdHeader->slotAt(i);
-                            if (key.isObject() && !key.isNil()) {
-                                ObjectHeader* keyHdr = key.asObjectPtr();
-                                if (keyHdr->isBytesObject() && keyHdr->byteSize() <= 50) {
-                                    std::string keyStr((char*)keyHdr->bytes(), keyHdr->byteSize());
-                                    // DEBUG: "[DEBUG]   slot[" << i << "]: '" << keyStr << "'"
-                                    count++;
-                                }
-                            }
-                        }
-                    }
-
                     // Keys are stored inline from slot 2 onwards
                     for (size_t i = 2; i < mdSlots; i++) {
                         Oop key = mdHeader->slotAt(i);
                         if (key.isObject() && !key.isNil()) {
                             if (memory_.symbolEquals(key, name)) {
-                                // DEBUG: "[DEBUG] findSelector: Found '" << name << "' in SmalltalkImage metaclass!"
                                 return key;
                             }
                         }
@@ -7655,7 +7560,6 @@ Oop Interpreter::findSelector(const char* name) {
                     Oop key = mdHeader->slotAt(i);
                     if (key.isObject() && !key.isNil()) {
                         if (memory_.symbolEquals(key, name)) {
-                            // DEBUG: "[DEBUG] findSelector: Found '" << name << "' in SmalltalkImage class!"
                             return key;
                         }
                     }
@@ -7691,7 +7595,6 @@ Oop Interpreter::findSelector(const char* name) {
                     Oop key = mdHeader->slotAt(i);
                     if (key.isObject() && !key.isNil()) {
                         if (memory_.symbolEquals(key, name)) {
-                            // DEBUG: "[DEBUG] findSelector: Found '" << name << "' in class " << ci << "!"
                             return key;
                         }
                     }
@@ -7739,7 +7642,6 @@ Oop Interpreter::findSelector(const char* name) {
         }
     }
 
-    // DEBUG: "[DEBUG] findSelector: '" << name << "' not found"
     return Oop::nil();
 }
 
@@ -7931,7 +7833,6 @@ bool Interpreter::executeFromContext(Oop context) {
                         if (outerMethodCls == compiledMethodClassIndex_) {
                             // Found home CompiledMethod
                             homeMethod_ = outerMethod;
-                            // DEBUG: "[DEBUG] executeFromContext: Found homeMethod via closure chain"
                             break;
                         } else if (outerMethodCls == compiledBlockClassIndex_) {
                             // Still a block - get closure from outer context
@@ -7947,7 +7848,6 @@ bool Interpreter::executeFromContext(Oop context) {
         }
     }
 
-    // DEBUG_LOG("[DEBUG] executeFromContext: context=0x" << std::hex << context.rawBits()
               // << " method=0x" << method_.rawBits()
               // << " receiver=0x" << receiver_.rawBits() << std::dec;
 
@@ -7959,7 +7859,6 @@ bool Interpreter::executeFromContext(Oop context) {
             Oop closure = memory_.fetchPointer(4, context);  // closureOrNil
             if (closure.isObject() && memory_.isValidPointer(closure)) {
                 ObjectHeader* closureHdr = closure.asObjectPtr();
-                // DEBUG_LOG("[DEBUG] Closure at slot 4: cls=" << closureHdr->classIndex()
                           // << " slots=" << closureHdr->slotCount();
             }
         }
@@ -7971,7 +7870,6 @@ bool Interpreter::executeFromContext(Oop context) {
 
     // Get method header to calculate bytecode start
     ObjectHeader* methodObj = method_.asObjectPtr();
-    // DEBUG_LOG("[DEBUG] executeFromContext: Method has " << methodObj->slotCount() << " slots, cls=" << methodObj->classIndex() << ", fmt=" << (int)methodObj->format();
 
     Oop methodHeader = memory_.fetchPointer(0, method_);
     // std::cerr; // DEBUG
@@ -8045,7 +7943,6 @@ bool Interpreter::executeFromContext(Oop context) {
     if (savedStackp.isSmallInteger()) {
         stackp = static_cast<int>(savedStackp.asSmallInteger());
     }
-    // DEBUG: "[DEBUG] executeFromContext: savedStackp=" << stackp << " numTemps=" << numTemps
 
     // Push receiver first - this establishes our frame
     push(receiver_);

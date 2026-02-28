@@ -180,12 +180,16 @@ class PharoBridge: ObservableObject {
         // Change working directory to image's directory so Pharo's
         // StartupPreferencesLoader finds startup.st alongside the image
         let imageDir = (imagePath as NSString).deletingLastPathComponent
+        #if DEBUG
         fputs("[BRIDGE] imagePath=\(imagePath) imageDir=\(imageDir)\n", stderr)
+        #endif
         FileManager.default.changeCurrentDirectoryPath(imageDir)
 
         // Write startup.st with image patches (loaded by StartupPreferencesLoader)
         Self.writeStartupScript(to: imageDir)
+        #if DEBUG
         fputs("[BRIDGE] after writeStartupScript, startup.st exists=\(FileManager.default.fileExists(atPath: imageDir + "/startup.st"))\n", stderr)
+        #endif
 
         let initResult = vm_init(&parameters)
 
@@ -262,10 +266,14 @@ class PharoBridge: ObservableObject {
           ] fork ].
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")
+        #if DEBUG
         NSLog("[BRIDGE] writeStartupScript: directory=%@ path=%@", directory, path)
+        #endif
         do {
             try script.write(toFile: path, atomically: true, encoding: .utf8)
+            #if DEBUG
             NSLog("[BRIDGE] startup.st written successfully (%d bytes)", script.count)
+            #endif
         } catch {
             NSLog("[BRIDGE] ERROR writing startup.st: %@", error.localizedDescription)
         }

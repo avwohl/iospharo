@@ -163,8 +163,10 @@ static void ioMonitorLoop() {
                 } else {
                     ps->sockError = err;
                     ps->sockState = SOCK_UNCONNECTED;
+#ifdef DEBUG
                     fprintf(stderr, "[SOCK] Connection failed: err=%d (%s) fd=%d\n",
                             err, strerror(err), ps->fd);
+#endif
                 }
                 if (ps->connSema > 0 && vm) {
                     vm->signalSemaphoreWithIndex(ps->connSema);
@@ -238,8 +240,10 @@ void socketPluginInit() {
     // the process exits (via exit()) before socketPluginShutdown runs.
     gIOThread.detach();
 
+#ifdef DEBUG
     fprintf(stderr, "[SOCK] socketPluginInit OK (pipe=%d/%d, I/O thread started)\n",
             gWakePipe[0], gWakePipe[1]);
+#endif
 }
 
 void socketPluginShutdown() {
@@ -449,8 +453,10 @@ extern "C" sqInt sp_primitiveSocketConnectToPort(void) {
 
     int aiErr = getaddrinfo(addrStr, portStr, &hints, &aiResult);
     if (aiErr != 0 || !aiResult) {
+#ifdef DEBUG
         fprintf(stderr, "[SOCK] getaddrinfo('%s', '%s') failed: %s\n",
                 addrStr, portStr, gai_strerror(aiErr));
+#endif
         return vm->primitiveFail();
     }
 
@@ -646,8 +652,10 @@ extern "C" sqInt sp_primitiveSocketReceiveDataBufCount(void) {
             received = 0; // No data available yet
         } else {
             ps->sockError = errno;
+#ifdef DEBUG
             fprintf(stderr, "[SOCK] recv fd=%d error=%d (%s)\n",
                     ps->fd, errno, strerror(errno));
+#endif
             return vm->primitiveFail();
         }
     } else if (received == 0) {
@@ -1174,7 +1182,9 @@ extern "C" sqInt sp_primitiveSocketReceiveUDPDataBufCount(void) {
 // =====================================================================
 
 extern "C" sqInt SocketPlugin_setInterpreter(VirtualMachine* anInterpreter) {
+#ifdef DEBUG
     fprintf(stderr, "[SOCK] SocketPlugin_setInterpreter called (proxy=%p)\n", (void*)anInterpreter);
+#endif
     vm = anInterpreter;
     socketPluginInit();
     return 0;

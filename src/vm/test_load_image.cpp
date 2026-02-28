@@ -672,13 +672,6 @@ int main(int argc, char* argv[]) {
             std::cout << "After GC: used=" << (usedAfter / (1024*1024)) << "MB free=" << (freeAfter / (1024*1024)) << "MB" << std::endl;
             std::cout << "Freed: " << ((freeAfter > freeBefore) ? (freeAfter - freeBefore) / 1024 : 0) << "KB" << std::endl;
             std::cout << "GC reclaimed: " << gcResult.bytesReclaimed << " bytes, moved: " << gcResult.objectsMoved << " objects, took: " << gcResult.milliseconds << "ms" << std::endl;
-            // Check 0x300002298 after fullGC
-            {
-                auto* check2 = reinterpret_cast<ObjectHeader*>(memory.oldSpaceStart() + 0x2298);
-                fprintf(stderr, "[TIMING] After fullGC: 0x2298 ci=%d fmt=%d slots=%zu rawHdr=0x%llx\n",
-                        check2->classIndex(), (int)check2->format(), check2->slotCount(),
-                        (unsigned long long)check2->rawHeader());
-            }
         }
 
 

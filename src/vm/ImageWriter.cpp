@@ -229,7 +229,9 @@ SaveResult ImageWriter::save(const std::string& path, ObjectMemory& memory,
         return result;
     }
 
+#ifdef DEBUG
     fprintf(stderr, "[ImageWriter] Saved %zu bytes to %s\n", heapBytes, path.c_str());
+#endif
     result.success = true;
     return result;
 }
