@@ -27,18 +27,33 @@
 // Catalyst because UIKit manages the app lifecycle and menus. Swizzle
 // the problematic methods to no-ops — Pharo's AppKit menus are meaningless
 // on Catalyst since UIKit handles menus via UIMenu.
+// Saved original IMP for setMainMenu: — called through for UIKit (main thread) calls.
+static IMP origSetMainMenu = nullptr;
+
 static void swizzleCatalystAppKit() {
 #if TARGET_OS_MACCATALYST
     // [NSApplication finishLaunching] — throws assertion failures
     // [NSApplication setMainMenu:] — throws "API misuse: setting the main
     //   menu on a non-main thread" because the VM thread calls SDL init
-    //   which creates AppKit menus via FFI.
+    //   which creates AppKit menus via FFI. We block off-main-thread calls
+    //   but allow UIKit's main-thread calls so the system Quit menu works.
     Class nsApp = objc_getClass("NSApplication");
     if (nsApp) {
         class_replaceMethod(nsApp, sel_registerName("finishLaunching"),
             (IMP)+[](id, SEL){}, "v@:");
+
+        // Save original setMainMenu: and replace with thread-checking version
+        Method m = class_getInstanceMethod(nsApp, sel_registerName("setMainMenu:"));
+        if (m) origSetMainMenu = method_getImplementation(m);
         class_replaceMethod(nsApp, sel_registerName("setMainMenu:"),
-            (IMP)+[](id, SEL, id){}, "v@:@");
+            (IMP)+[](id self_, SEL sel_, id menu) {
+                // Allow UIKit's main-thread calls (creates system menu with Quit).
+                // Block Pharo FFI calls from the VM thread.
+                if (pthread_main_np() && origSetMainMenu) {
+                    ((void(*)(id, SEL, id))origSetMainMenu)(self_, sel_, menu);
+                }
+            }, "v@:@");
+
         class_replaceMethod(nsApp, sel_registerName("setAppleMenu:"),
             (IMP)+[](id, SEL, id){}, "v@:@");
         class_replaceMethod(nsApp, sel_registerName("setServicesMenu:"),

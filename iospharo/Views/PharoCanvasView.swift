@@ -50,6 +50,7 @@ class PharoMTKView: MTKView {
         return true
     }
 
+
     override func didMoveToWindow() {
         super.didMoveToWindow()
         #if targetEnvironment(macCatalyst)
@@ -325,7 +326,24 @@ class PharoCanvasViewController: UIViewController {
         }
 
         setupGestureRecognizers()
+
+        #if targetEnvironment(macCatalyst)
+        // Cmd+Q fallback: the system menu bar handles Cmd+Q via SwiftUI
+        // .commands, but register a UIKeyCommand as backup in case the
+        // menu bar doesn't intercept it (e.g. during first-responder edge cases).
+        let quitCommand = UIKeyCommand(input: "q", modifierFlags: .command,
+                                       action: #selector(handleQuit(_:)))
+        quitCommand.title = "Quit iospharo"
+        addKeyCommand(quitCommand)
+        #endif
     }
+
+    #if targetEnvironment(macCatalyst)
+    @objc func handleQuit(_ sender: Any?) {
+        PharoBridge.shared.stop()
+        exit(0)
+    }
+    #endif
 
     override var canBecomeFirstResponder: Bool {
         #if targetEnvironment(macCatalyst)
