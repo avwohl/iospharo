@@ -241,14 +241,6 @@ class PharoBridge: ObservableObject {
                 document := Microdown parse: ''# Error
         '', error messageText ].
             ^ document'].
-        "Pre-load doc roots: override defaultDocumentRoots to return children directly"
-        (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
-          MicDocumentBrowserPresenter compile: 'defaultDocumentRoots
-            | root |
-            root := MicResourceReference fromUri: ''github://pharo-project/pharo/doc''.
-            ^ [root loadChildren sorted: [:a :b |
-              a printString < b printString]]
-                on: Error do: [:e | OrderedCollection with: root]'].
         "Robust childrenOf: that handles API errors"
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
           MicDocumentBrowserPresenter compile: 'childrenOf: aNode
