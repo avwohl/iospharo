@@ -1,3 +1,67 @@
+# What's New in Build 37
+
+Build 37 — 2026-02-28
+
+## Code Review and Cleanup
+
+Full comment-vs-code audit across the entire codebase, fixing stale
+comments and correcting actual bugs found during the review.
+
+### Comment Fixes (15 files)
+  - Interpreter.hpp: rewrote bytecode summary from V3PlusClosures to
+    Sista V1 with correct ranges and descriptions
+  - Interpreter.cpp: fixed bytecode range labels, header bit layout
+    docs, method comments (createFullBlock, activeContext,
+    executePrimitive), startup attempt labels
+  - Primitives.cpp: removed wrong thisContext reference, fixed 0-based
+    vs 1-based indexing comment, clarified handler/unwind marker
+    primitive table slot vs method header primitive index
+  - ObjectMemory.hpp/cpp: clarified ClassBlockClosure alias, removed
+    duplicated comment
+  - ObjectHeader.hpp: format 5 "Weak with fixed" → "Ephemeron",
+    format 6 clarified as unused
+  - test_load_image.cpp: fixed "256 MB" → "4 GB virtual", added bit
+    range labels to header dump
+  - FFI.cpp: updated file header to reflect actual contents
+  - SocketPlugin.cpp: "TCP" → "TCP/UDP"
+  - sqMacSSL.c: fixed filename typo, fixed SqueakSSLRead → SqueakSSLWrite
+  - PharoBridge.swift: simplified display callback comment
+  - PharoCanvasView.swift: fixed stale vm_setTextInputCallback reference
+  - NSEventMonitor.h/m: fixed local → global preferred comment (then
+    deleted — see below)
+
+### Bug Fixes Found by Review
+  - isSend bytecode ranges in stepDetailed() were wrong: included
+    jumps (0xB0-0xBF), stores (0xC0-0xDF), callPrimitive (0xF8),
+    and pushClosure (0xF9) as sends; missed 1-arg (0x90-0x9F) and
+    2-arg (0xA0-0xAF) sends. Now matches Sista V1 spec exactly.
+  - primitiveIndexOf() used full byte for high bits of primitive
+    index instead of masking with & 0x1F. The callPrimitive format
+    is `248 iiiiiiii mssjjjjj` — only the low 5 bits (jjjjj) are
+    the primitive index high bits.
+  - numLiterals extraction in FullBlockClosure activation used
+    & 0xFFFF instead of & 0x7FFF, including bit 15 (requiresCounters
+    flag) in the literal count.
+
+### Dead Code Removed
+  - NSEventMonitor.h/m (253 lines) — never called from anywhere,
+    superseded by UIKit gesture handlers
+  - 9 unused bridging header declarations (deprecated display getters,
+    unused VM entry points, unused SDL2 flags)
+  - ImageManager.checkForExistingImage() — dead wrapper, load() is
+    called directly
+
+### Debug Code Removed
+  - Removed unused globals: g_lastDispatchSelector, g_lastDispatchRcvrClass,
+    g_lastDispatchMethod, g_lastDispatchPrimIndex, g_lastSelName, g_stepCount
+  - Removed ~60 commented-out DEBUG_LOG lines
+  - Gated [DNS], [NET], [SOCK], [SSL], [ImageWriter], [DISPATCH] logging
+    behind #ifdef DEBUG
+  - Gated Swift fputs/NSLog behind #if DEBUG
+  - Deleted DeviceLog.hpp and 12 stale scripts
+
+---
+
 # What's New in Build 35
 
 Build 35 — 2026-02-28
