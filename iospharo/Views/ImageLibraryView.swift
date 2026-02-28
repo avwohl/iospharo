@@ -478,6 +478,25 @@ struct ImageLibraryView: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
 
+                    if autoLaunchImageID == image.id.uuidString {
+                        Button {
+                            autoLaunchImageID = nil
+                        } label: {
+                            Label("Auto-Launch", systemImage: "star.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .tint(.orange)
+                    } else {
+                        Button {
+                            autoLaunchImageID = image.id.uuidString
+                        } label: {
+                            Label("Auto-Launch", systemImage: "star")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+
                     Spacer()
 
                     Button(role: .destructive) {
