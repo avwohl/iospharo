@@ -151,7 +151,6 @@ class PharoMTKView: MTKView {
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
 
             #if !targetEnvironment(macCatalyst)
             // On iOS, UIKeyInput handles regular characters, enter, and backspace.
@@ -159,34 +158,10 @@ class PharoMTKView: MTKView {
             // function keys) and modifier combos (Cmd+D, Ctrl+C, etc.).
             // Without this guard, every key fires BOTH here AND in UIKeyInput,
             // causing enter/backspace to be doubled.
-            let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
-            if !hasCommandOrControl {
-                let code = key.keyCode
-                let isSpecialKey = (code == .keyboardUpArrow || code == .keyboardDownArrow ||
-                                    code == .keyboardLeftArrow || code == .keyboardRightArrow ||
-                                    code == .keyboardHome || code == .keyboardEnd ||
-                                    code == .keyboardPageUp || code == .keyboardPageDown ||
-                                    code == .keyboardDeleteForward || code == .keyboardEscape)
-                if !isSpecialKey {
-                    // Regular char, enter, or backspace without modifiers — UIKeyInput handles it
-                    continue
-                }
-            }
+            if !shouldHandleKeyInPresses(key) { continue }
             #endif
 
-            // Try character from key first
-            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
-                let charCode = Int32(scalar.value)
-                vm_postKeyEvent(0, charCode, 0, modifiers)  // down
-                vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
-            } else {
-                // Special key without printable character (arrows, function keys, etc.)
-                let charCode = specialKeyCharCode(key.keyCode)
-                if charCode > 0 {
-                    vm_postKeyEvent(0, charCode, 0, modifiers)  // down
-                    vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
-                }
-            }
+            postKeyDown(key)
         }
     }
 
@@ -197,33 +172,25 @@ class PharoMTKView: MTKView {
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
 
             #if !targetEnvironment(macCatalyst)
-            // Mirror the same skip logic as pressesBegan
-            let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
-            if !hasCommandOrControl {
-                let code = key.keyCode
-                let isSpecialKey = (code == .keyboardUpArrow || code == .keyboardDownArrow ||
-                                    code == .keyboardLeftArrow || code == .keyboardRightArrow ||
-                                    code == .keyboardHome || code == .keyboardEnd ||
-                                    code == .keyboardPageUp || code == .keyboardPageDown ||
-                                    code == .keyboardDeleteForward || code == .keyboardEscape)
-                if !isSpecialKey {
-                    continue
-                }
-            }
+            if !shouldHandleKeyInPresses(key) { continue }
             #endif
 
-            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
-                vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)  // up
-            } else {
-                let charCode = specialKeyCharCode(key.keyCode)
-                if charCode > 0 {
-                    vm_postKeyEvent(1, charCode, 0, modifiers)  // up
-                }
-            }
+            postKeyUp(key)
         }
+    }
+
+    /// Whether a key should be processed in pressesBegan/Ended on iOS (vs UIKeyInput)
+    private func shouldHandleKeyInPresses(_ key: UIKey) -> Bool {
+        let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
+        if hasCommandOrControl { return true }
+        let code = key.keyCode
+        return code == .keyboardUpArrow || code == .keyboardDownArrow ||
+               code == .keyboardLeftArrow || code == .keyboardRightArrow ||
+               code == .keyboardHome || code == .keyboardEnd ||
+               code == .keyboardPageUp || code == .keyboardPageDown ||
+               code == .keyboardDeleteForward || code == .keyboardEscape
     }
 
     /// Map UIKeyModifierFlags to Pharo modifier mask
@@ -253,6 +220,35 @@ class PharoMTKView: MTKView {
         case .keyboardPageUp: return 11
         case .keyboardPageDown: return 12
         default: return 0
+        }
+    }
+
+    /// Post key down + keystroke events for a UIKey
+    func postKeyDown(_ key: UIKey) {
+        let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
+        if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+            let charCode = Int32(scalar.value)
+            vm_postKeyEvent(0, charCode, 0, modifiers)
+            vm_postKeyEvent(2, charCode, 0, modifiers)
+        } else {
+            let charCode = specialKeyCharCode(key.keyCode)
+            if charCode > 0 {
+                vm_postKeyEvent(0, charCode, 0, modifiers)
+                vm_postKeyEvent(2, charCode, 0, modifiers)
+            }
+        }
+    }
+
+    /// Post key up event for a UIKey
+    func postKeyUp(_ key: UIKey) {
+        let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
+        if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+            vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)
+        } else {
+            let charCode = specialKeyCharCode(key.keyCode)
+            if charCode > 0 {
+                vm_postKeyEvent(1, charCode, 0, modifiers)
+            }
         }
     }
 
@@ -391,19 +387,7 @@ class PharoCanvasViewController: UIViewController {
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let modifiers = Int32(mtkView.modifierFlagsToPharo(key.modifierFlags))
-
-            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
-                let charCode = Int32(scalar.value)
-                vm_postKeyEvent(0, charCode, 0, modifiers)  // down
-                vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
-            } else {
-                let charCode = mtkView.specialKeyCharCode(key.keyCode)
-                if charCode > 0 {
-                    vm_postKeyEvent(0, charCode, 0, modifiers)  // down
-                    vm_postKeyEvent(2, charCode, 0, modifiers)  // stroke
-                }
-            }
+            mtkView.postKeyDown(key)
         }
     }
 
@@ -414,16 +398,7 @@ class PharoCanvasViewController: UIViewController {
         }
         for press in presses {
             guard let key = press.key else { continue }
-            let modifiers = Int32(mtkView.modifierFlagsToPharo(key.modifierFlags))
-
-            if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
-                vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)  // up
-            } else {
-                let charCode = mtkView.specialKeyCharCode(key.keyCode)
-                if charCode > 0 {
-                    vm_postKeyEvent(1, charCode, 0, modifiers)  // up
-                }
-            }
+            mtkView.postKeyUp(key)
         }
     }
     #endif

@@ -1451,9 +1451,10 @@ ExecuteResult Interpreter::stepDetailed() {
 // ===== BYTECODE DISPATCH =====
 
 void Interpreter::dispatchBytecode(uint8_t bytecode) {
-    // Record bytecode in history buffer for debugging
-    recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
-    recentBytecodeIdx_++;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+        recentBytecodeIdx_++;
+    }
     // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
     // Key differences from V3PlusClosures:
     // - 0x10-0x1F: push literal var (not temp)
