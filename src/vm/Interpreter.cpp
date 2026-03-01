@@ -171,21 +171,6 @@ bool Interpreter::initialize() {
     // The VM should NOT pre-initialize this array as Pharo will replace it.
     // Instead, the VM's parameter 49 set operation handles resizing when needed.
 
-    // Debug: dump active process slots
-    if (activeProcess.isObject()) {
-        ObjectHeader* procHeader = activeProcess.asObjectPtr();
-        size_t slots = procHeader->slotCount();
-        // std::cerr << "  ActiveProcess has " << slots << " slots, classIndex=" << procHeader->classIndex(); // DEBUG
-        for (size_t i = 0; i < slots && i < 6; i++) {
-            Oop slot = procHeader->slotAt(i);
-            // std::cerr << "  [" << i << "]: 0x" << std::hex << slot.rawBits() << std::dec;
-            if (slot.isSmallInteger()) {
-                // std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-            }
-            // std::cerr; // DEBUG
-        }
-    }
-
     // Get the suspended context
     // Modern Pharo Process layout:
     //   slot 0 = nextLink (for LinkedList)
@@ -500,9 +485,14 @@ void Interpreter::syncDisplayToSurface() {
 
     // Copy pixels (32-bit assumed for now)
     if (srcDepth == 32) {
-        for (int y = 0; y < copyHeight; y++) {
-            for (int x = 0; x < copyWidth; x++) {
-                dstPixels[y * dstWidth + x] = srcPixels[y * srcWidth + x];
+        if (srcWidth == dstWidth) {
+            // Widths match — single memcpy for entire buffer
+            std::memcpy(dstPixels, srcPixels, copyWidth * copyHeight * sizeof(uint32_t));
+        } else {
+            // Widths differ — memcpy per row
+            for (int y = 0; y < copyHeight; y++) {
+                std::memcpy(dstPixels + y * dstWidth, srcPixels + y * srcWidth,
+                            copyWidth * sizeof(uint32_t));
             }
         }
     }
@@ -637,24 +627,6 @@ void Interpreter::dumpProcessQueues() {
 
 void Interpreter::interpret() {
     // Debug: Log special object addresses once at start
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        static bool loggedSpecialObjects = false;
-        if (!loggedSpecialObjects) {
-            loggedSpecialObjects = true;
-            FILE* soLog = nullptr;
-            if (soLog) {
-                Oop trueObj = memory_.trueObject();
-                Oop falseObj = memory_.falseObject();
-                Oop nilObj = memory_.nil();
-                fprintf(soLog, "true:  0x%llx\n", (unsigned long long)trueObj.rawBits());
-                fprintf(soLog, "false: 0x%llx\n", (unsigned long long)falseObj.rawBits());
-                fprintf(soLog, "nil:   0x%llx\n", (unsigned long long)nilObj.rawBits());
-                fflush(soLog);
-                fclose(soLog);
-            }
-        }
-    }
-
     volatile int loopCount = 0;
 #if __APPLE__
     volatile int64_t lastRunLoopPumpMs = 0;  // Tracks ms since start (volatile for longjmp)
@@ -2324,13 +2296,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 // ===== STACK OPERATIONS =====
 
 void Interpreter::push(Oop value) {
-    // Stack growth diagnostic: log when stack is abnormally large
-    {
-        size_t sd = static_cast<size_t>(stackPointer_ - stackBase_);
-        if (sd > 500) {
-        }
-    }
-
     if (stackPointer_ >= stack_.data() + MaxStackDepth) {
         stopVM("Stack overflow in push()");
         return;

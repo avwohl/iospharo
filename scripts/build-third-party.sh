@@ -55,89 +55,75 @@ err() { echo -e "${RED}[error]${NC} $*" >&2; }
 # Platform configuration
 # =====================================================================
 
-# We build for two platforms initially:
-#   1. iOS Simulator: arm64 + x86_64
-#   2. Mac Catalyst: arm64 + x86_64
-setup_ios_device_arm64() {
-    export SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
-    export CC=$(xcrun --sdk iphoneos -f clang)
-    export CXX=$(xcrun --sdk iphoneos -f clang++)
-    export AR=$(xcrun --sdk iphoneos -f ar)
-    export RANLIB=$(xcrun --sdk iphoneos -f ranlib)
-    export CFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=15.0 -O2"
+# Parameterized platform setup: setup_platform SDK ARCH EXTRA_CFLAGS LABEL HOST_TRIPLE MESON_CPU
+# Autotools config.sub doesn't understand iOS triples, so HOST_TRIPLE uses
+# plain darwin and CFLAGS carries the actual target.
+setup_platform() {
+    local sdk="$1" arch="$2" extra_cflags="$3" label="$4" host="$5" meson_cpu="$6"
+    export SDKROOT=$(xcrun --sdk "$sdk" --show-sdk-path)
+    export CC=$(xcrun --sdk "$sdk" -f clang)
+    export CXX=$(xcrun --sdk "$sdk" -f clang++)
+    export AR=$(xcrun --sdk "$sdk" -f ar)
+    export RANLIB=$(xcrun --sdk "$sdk" -f ranlib)
+    export CFLAGS="-arch $arch -isysroot $SDKROOT $extra_cflags -O2"
     export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-arch arm64 -isysroot $SDKROOT -miphoneos-version-min=15.0"
-    PLATFORM_NAME="ios-device-arm64"
-    HOST_TRIPLE="aarch64-apple-darwin"
-    CMAKE_ARCH="arm64"
-    MESON_CPU="aarch64"
+    export LDFLAGS="-arch $arch -isysroot $SDKROOT $extra_cflags"
+    PLATFORM_NAME="$label"
+    HOST_TRIPLE="$host"
+    CMAKE_ARCH="$arch"
+    MESON_CPU="$meson_cpu"
     MESON_SYSTEM="ios"
 }
 
-setup_ios_simulator_arm64() {
-    export SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
-    export CC=$(xcrun --sdk iphonesimulator -f clang)
-    export CXX=$(xcrun --sdk iphonesimulator -f clang++)
-    export AR=$(xcrun --sdk iphonesimulator -f ar)
-    export RANLIB=$(xcrun --sdk iphonesimulator -f ranlib)
-    export CFLAGS="-arch arm64 -isysroot $SDKROOT -mios-simulator-version-min=15.0 -O2"
-    export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-arch arm64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
-    PLATFORM_NAME="ios-simulator-arm64"
-    # Autotools config.sub doesn't understand iOS triples.
-    # Use aarch64-apple-darwin and rely on CFLAGS for actual target.
-    HOST_TRIPLE="aarch64-apple-darwin"
-    CMAKE_ARCH="arm64"
-    MESON_CPU="aarch64"
-    MESON_SYSTEM="ios"
+setup_ios_device_arm64()    { setup_platform iphoneos       arm64  "-miphoneos-version-min=15.0"           ios-device-arm64     aarch64-apple-darwin aarch64; }
+setup_ios_simulator_arm64() { setup_platform iphonesimulator arm64  "-mios-simulator-version-min=15.0"     ios-simulator-arm64  aarch64-apple-darwin aarch64; }
+setup_ios_simulator_x86_64(){ setup_platform iphonesimulator x86_64 "-mios-simulator-version-min=15.0"     ios-simulator-x86_64 x86_64-apple-darwin  x86_64;  }
+setup_maccatalyst_arm64()   { setup_platform macosx          arm64  "-target arm64-apple-ios15.0-macabi"   maccatalyst-arm64    aarch64-apple-darwin aarch64; }
+setup_maccatalyst_x86_64()  { setup_platform macosx          x86_64 "-target x86_64-apple-ios15.0-macabi" maccatalyst-x86_64   x86_64-apple-darwin  x86_64;  }
+
+# Convert space-separated flags to meson array format
+# e.g., "-arch arm64 -O2" -> "'-arch', 'arm64', '-O2'"
+meson_array_from_flags() {
+    local result=""
+    for flag in $1; do
+        [ -n "$result" ] && result="$result, "
+        result="$result'$flag'"
+    done
+    echo "$result"
 }
 
-setup_ios_simulator_x86_64() {
-    export SDKROOT=$(xcrun --sdk iphonesimulator --show-sdk-path)
-    export CC=$(xcrun --sdk iphonesimulator -f clang)
-    export CXX=$(xcrun --sdk iphonesimulator -f clang++)
-    export AR=$(xcrun --sdk iphonesimulator -f ar)
-    export RANLIB=$(xcrun --sdk iphonesimulator -f ranlib)
-    export CFLAGS="-arch x86_64 -isysroot $SDKROOT -mios-simulator-version-min=15.0 -O2"
-    export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -mios-simulator-version-min=15.0"
-    PLATFORM_NAME="ios-simulator-x86_64"
-    HOST_TRIPLE="x86_64-apple-darwin"
-    CMAKE_ARCH="x86_64"
-    MESON_CPU="x86_64"
-    MESON_SYSTEM="ios"
-}
+# Generate a meson cross-compilation file.
+# Usage: generate_meson_crossfile OUTPUT_PATH [--with-cpp]
+generate_meson_crossfile() {
+    local crossfile="$1"
+    local with_cpp="${2:-}"
+    local meson_c_args meson_link_args
+    meson_c_args=$(meson_array_from_flags "$CFLAGS")
+    meson_link_args=$(meson_array_from_flags "$LDFLAGS")
 
-setup_maccatalyst_arm64() {
-    export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-    export CC=$(xcrun --sdk macosx -f clang)
-    export CXX=$(xcrun --sdk macosx -f clang++)
-    export AR=$(xcrun --sdk macosx -f ar)
-    export RANLIB=$(xcrun --sdk macosx -f ranlib)
-    export CFLAGS="-arch arm64 -isysroot $SDKROOT -target arm64-apple-ios15.0-macabi -O2"
-    export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-arch arm64 -isysroot $SDKROOT -target arm64-apple-ios15.0-macabi"
-    PLATFORM_NAME="maccatalyst-arm64"
-    HOST_TRIPLE="aarch64-apple-darwin"
-    CMAKE_ARCH="arm64"
-    MESON_CPU="aarch64"
-    MESON_SYSTEM="ios"
-}
+    cat > "$crossfile" <<CROSSEOF
+[binaries]
+c = '$CC'
+$([ "$with_cpp" = "--with-cpp" ] && echo "cpp = '$CXX'")
+ar = '$AR'
+ranlib = '$RANLIB'
+pkg-config = 'pkg-config'
+exe_wrapper = '/usr/bin/true'
 
-setup_maccatalyst_x86_64() {
-    export SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-    export CC=$(xcrun --sdk macosx -f clang)
-    export CXX=$(xcrun --sdk macosx -f clang++)
-    export AR=$(xcrun --sdk macosx -f ar)
-    export RANLIB=$(xcrun --sdk macosx -f ranlib)
-    export CFLAGS="-arch x86_64 -isysroot $SDKROOT -target x86_64-apple-ios15.0-macabi -O2"
-    export CXXFLAGS="$CFLAGS"
-    export LDFLAGS="-arch x86_64 -isysroot $SDKROOT -target x86_64-apple-ios15.0-macabi"
-    PLATFORM_NAME="maccatalyst-x86_64"
-    HOST_TRIPLE="x86_64-apple-darwin"
-    CMAKE_ARCH="x86_64"
-    MESON_CPU="x86_64"
-    MESON_SYSTEM="ios"
+[built-in options]
+c_args = [$meson_c_args]
+c_link_args = [$meson_link_args]
+
+[properties]
+needs_exe_wrapper = true
+skip_sanity_check = true
+
+[host_machine]
+system = '$MESON_SYSTEM'
+cpu_family = '$MESON_CPU'
+cpu = '$MESON_CPU'
+endian = 'little'
+CROSSEOF
 }
 
 # =====================================================================
@@ -316,45 +302,8 @@ build_pixman() {
     rm -rf "$builddir"
     mkdir -p "$builddir"
 
-    # Create meson cross file (reuse helper from cairo)
     local crossfile="${builddir}/cross.txt"
-
-    meson_array_from_flags() {
-        local result=""
-        for flag in $1; do
-            [ -n "$result" ] && result="$result, "
-            result="$result'$flag'"
-        done
-        echo "$result"
-    }
-
-    local meson_c_args
-    meson_c_args=$(meson_array_from_flags "$CFLAGS")
-    local meson_link_args
-    meson_link_args=$(meson_array_from_flags "$LDFLAGS")
-
-    cat > "$crossfile" <<CROSSEOF
-[binaries]
-c = '$CC'
-ar = '$AR'
-ranlib = '$RANLIB'
-pkg-config = 'pkg-config'
-exe_wrapper = '/usr/bin/true'
-
-[built-in options]
-c_args = [$meson_c_args]
-c_link_args = [$meson_link_args]
-
-[properties]
-needs_exe_wrapper = true
-skip_sanity_check = true
-
-[host_machine]
-system = '$MESON_SYSTEM'
-cpu_family = '$MESON_CPU'
-cpu = '$MESON_CPU'
-endian = 'little'
-CROSSEOF
+    generate_meson_crossfile "$crossfile"
 
     cd "$builddir"
     log "Configuring pixman (meson) for $PLATFORM_NAME..."
@@ -439,48 +388,8 @@ build_cairo() {
     rm -rf "$builddir"
     mkdir -p "$builddir"
 
-    # Create meson cross file
     local crossfile="${builddir}/cross.txt"
-
-    # Helper: convert space-separated flags to meson array format
-    # e.g., "-arch arm64 -O2" -> "'-arch', 'arm64', '-O2'"
-    meson_array_from_flags() {
-        local result=""
-        for flag in $1; do
-            [ -n "$result" ] && result="$result, "
-            result="$result'$flag'"
-        done
-        echo "$result"
-    }
-
-    local meson_c_args
-    meson_c_args=$(meson_array_from_flags "$CFLAGS")
-    local meson_link_args
-    meson_link_args=$(meson_array_from_flags "$LDFLAGS")
-
-    cat > "$crossfile" <<CROSSEOF
-[binaries]
-c = '$CC'
-cpp = '$CXX'
-ar = '$AR'
-ranlib = '$RANLIB'
-pkg-config = 'pkg-config'
-exe_wrapper = '/usr/bin/true'
-
-[built-in options]
-c_args = [$meson_c_args]
-c_link_args = [$meson_link_args]
-
-[properties]
-needs_exe_wrapper = true
-skip_sanity_check = true
-
-[host_machine]
-system = '$MESON_SYSTEM'
-cpu_family = '$MESON_CPU'
-cpu = '$MESON_CPU'
-endian = 'little'
-CROSSEOF
+    generate_meson_crossfile "$crossfile" --with-cpp
 
     cd "$builddir"
     log "Configuring cairo (meson) for $PLATFORM_NAME..."

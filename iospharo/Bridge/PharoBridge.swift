@@ -24,10 +24,6 @@ class PharoBridge: ObservableObject {
     @Published var isInitialized = false
     @Published var errorMessage: String?
 
-    /// Display dimensions
-    @Published var displayWidth: Int = 1024
-    @Published var displayHeight: Int = 768
-
     /// Virtual Ctrl key toggle — when active, touches and keyboard events include Ctrl modifier
     @Published var ctrlModifierActive = false
 
@@ -300,11 +296,6 @@ class PharoBridge: ObservableObject {
     /// Notify VM of view size change
     func setDisplaySize(width: Int, height: Int) {
         ios_setDisplaySize(Int32(width), Int32(height))
-        // Defer property updates to avoid "Publishing changes from within view updates" warning
-        Task { @MainActor in
-            self.displayWidth = width
-            self.displayHeight = height
-        }
     }
 
     // MARK: - Touch Events
@@ -323,11 +314,6 @@ class PharoBridge: ObservableObject {
     func sendTouchUp(at point: CGPoint, buttons: Int = IOS_RED_BUTTON, modifiers: Int = 0) {
         vm_postMouseEvent(2, Int32(point.x), Int32(point.y),
                           Int32(buttons), Int32(modifiers))
-    }
-
-    func sendTouchCancelled(at point: CGPoint, buttons: Int = IOS_RED_BUTTON) {
-        vm_postMouseEvent(2, Int32(point.x), Int32(point.y),
-                          Int32(buttons), 0)
     }
 
     func sendMouseMoved(to point: CGPoint, modifiers: Int = 0) {

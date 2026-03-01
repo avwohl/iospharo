@@ -29,7 +29,7 @@ struct ImageRow: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             // Version column
-            Text(versionLabel(image.pharoVersion))
+            Text(image.versionLabel)
                 .font(.system(.body, design: .default))
                 .foregroundColor(.secondary)
                 .frame(width: ImageTableLayout.versionWidth, alignment: .leading)
@@ -66,16 +66,6 @@ struct ImageRow: View {
         return formatter.localizedString(for: date, relativeTo: Date())
     }
 
-    private func versionLabel(_ version: String?) -> String {
-        guard let version = version else { return "—" }
-        switch version {
-        case "130": return "Pharo 13"
-        case "120": return "Pharo 12"
-        case "110": return "Pharo 11"
-        case "100": return "Pharo 10"
-        default: return "Pharo \(version)"
-        }
-    }
 }
 
 /// Shared column width constants for header and rows

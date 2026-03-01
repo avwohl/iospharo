@@ -62,7 +62,7 @@ build_app() {
 # Launch the app
 launch_app() {
     echo -e "${YELLOW}Launching app...${NC}"
-    "$APP_PATH/Contents/MacOS/$APP_NAME" 2>&1 | tee "$LOG_FILE" &
+    timeout 120 "$APP_PATH/Contents/MacOS/$APP_NAME" 2>&1 | tee "$LOG_FILE" &
     APP_PID=$!
     echo "App PID: $APP_PID"
 

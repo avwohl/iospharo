@@ -72,6 +72,7 @@
 #include <string>
 #include <unordered_map>
 #include <thread>
+#include <deque>
 #include <vector>
 
 // Forward declaration for FFI callback support (defined in vmCallback.h)
@@ -514,7 +515,7 @@ private:
     int debugClickFrame_ = 0;  // Frame counter for fade-out
 
     // Pass-through events (events not handled by processInputEvents, passed to Pharo)
-    std::vector<pharo::Event> passThroughEvents_;
+    std::deque<pharo::Event> passThroughEvents_;
 
     // External semaphore signaling (for I/O events)
     // Ring buffer: stores up to 64 pending signal indices, lock-free producer/consumer

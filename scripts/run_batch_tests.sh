@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Run test suite in batches, each with a fresh Pharo image.
 # Split into small batches to avoid hitting VM limitations during
 # extended test runs. Each batch starts from a fresh image.

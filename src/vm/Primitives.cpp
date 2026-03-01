@@ -1278,20 +1278,9 @@ PrimitiveResult Interpreter::primitiveQuo(int argCount) {
         }
 
         // Truncated division (quo:)
-        int64_t result = a / b;
-        if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
-            primitiveSuccess(Oop::fromSmallInteger(result));
-            return PrimitiveResult::Success;
-        }
-        // Result doesn't fit in SmallInteger
-        bool neg = result < 0;
-        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
-        std::vector<uint8_t> bytes;
-        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
-        if (bytes.empty()) bytes.push_back(0);
-        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
-        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
-        primitiveSuccess(largeResult);
+        Oop result = int64ToOop(memory_, a / b);
+        if (result.isNil()) return PrimitiveResult::Failure;
+        primitiveSuccess(result);
         return PrimitiveResult::Success;
     }
 
@@ -1301,79 +1290,40 @@ PrimitiveResult Interpreter::primitiveQuo(int argCount) {
 PrimitiveResult Interpreter::primitiveBitAnd(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
-
     int64_t a, b;
-    if (trySigned64BitValueOf(memory_, rcvr, a) &&
-        trySigned64BitValueOf(memory_, arg, b)) {
-        int64_t result = a & b;
-        if (Oop::canBeSmallInteger(result)) {
-            primitiveSuccess(Oop::fromSmallInteger(result));
-            return PrimitiveResult::Success;
-        }
-        bool neg = result < 0;
-        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
-        std::vector<uint8_t> bytes;
-        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
-        if (bytes.empty()) bytes.push_back(0);
-        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
-        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
-        primitiveSuccess(largeResult);
-        return PrimitiveResult::Success;
-    }
-
-    return PrimitiveResult::Failure;
+    if (!trySigned64BitValueOf(memory_, rcvr, a) ||
+        !trySigned64BitValueOf(memory_, arg, b))
+        return PrimitiveResult::Failure;
+    Oop result = int64ToOop(memory_, a & b);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveBitOr(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
-
     int64_t a, b;
-    if (trySigned64BitValueOf(memory_, rcvr, a) &&
-        trySigned64BitValueOf(memory_, arg, b)) {
-        int64_t result = a | b;
-        if (Oop::canBeSmallInteger(result)) {
-            primitiveSuccess(Oop::fromSmallInteger(result));
-            return PrimitiveResult::Success;
-        }
-        bool neg = result < 0;
-        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
-        std::vector<uint8_t> bytes;
-        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
-        if (bytes.empty()) bytes.push_back(0);
-        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
-        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
-        primitiveSuccess(largeResult);
-        return PrimitiveResult::Success;
-    }
-
-    return PrimitiveResult::Failure;
+    if (!trySigned64BitValueOf(memory_, rcvr, a) ||
+        !trySigned64BitValueOf(memory_, arg, b))
+        return PrimitiveResult::Failure;
+    Oop result = int64ToOop(memory_, a | b);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveBitXor(int argCount) {
     Oop arg = stackValue(0);
     Oop rcvr = stackValue(1);
-
     int64_t a, b;
-    if (trySigned64BitValueOf(memory_, rcvr, a) &&
-        trySigned64BitValueOf(memory_, arg, b)) {
-        int64_t result = a ^ b;
-        if (Oop::canBeSmallInteger(result)) {
-            primitiveSuccess(Oop::fromSmallInteger(result));
-            return PrimitiveResult::Success;
-        }
-        bool neg = result < 0;
-        uint64_t mag = neg ? (uint64_t)(-(result + 1)) + 1 : (uint64_t)result;
-        std::vector<uint8_t> bytes;
-        while (mag > 0) { bytes.push_back(mag & 0xFF); mag >>= 8; }
-        if (bytes.empty()) bytes.push_back(0);
-        Oop largeResult = makeLargeInteger(memory_, bytes, neg);
-        if (largeResult.rawBits() == 0) return PrimitiveResult::Failure;
-        primitiveSuccess(largeResult);
-        return PrimitiveResult::Success;
-    }
-
-    return PrimitiveResult::Failure;
+    if (!trySigned64BitValueOf(memory_, rcvr, a) ||
+        !trySigned64BitValueOf(memory_, arg, b))
+        return PrimitiveResult::Failure;
+    Oop result = int64ToOop(memory_, a ^ b);
+    if (result.isNil()) return PrimitiveResult::Failure;
+    primitiveSuccess(result);
+    return PrimitiveResult::Success;
 }
 
 PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
@@ -1845,20 +1795,10 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
             return PrimitiveResult::Failure;
         }
         size_t fixedFields = 0;
-        // Formats 3, 4, 5 all can have named (fixed) instVars before indexable slots:
-        //   3 = IndexableWithFixed (e.g. Context)
-        //   4 = Weak (weak variable, may have fixed fields e.g. WeakAnnouncementSubscription)
-        //   5 = WeakWithFixed/Ephemeron
         if (fmt == ObjectFormat::IndexableWithFixed ||
             fmt == ObjectFormat::Weak ||
             fmt == ObjectFormat::WeakWithFixed) {
-            Oop objClass = memory_.classOf(rcvr);
-            if (objClass.isObject()) {
-                Oop instSpec = memory_.fetchPointer(2, objClass);
-                if (instSpec.isSmallInteger()) {
-                    fixedFields = instSpec.asSmallInteger() & 0xFFFF;
-                }
-            }
+            fixedFields = memory_.fixedFieldCountOf(rcvr);
         }
         size_t slotCount = header->slotCount();
         if (fixedFields > slotCount) {
@@ -1946,13 +1886,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
         if (fmt == ObjectFormat::IndexableWithFixed ||
             fmt == ObjectFormat::Weak ||
             fmt == ObjectFormat::WeakWithFixed) {
-            Oop objClass = memory_.classOf(rcvr);
-            if (objClass.isObject()) {
-                Oop instSpec = memory_.fetchPointer(2, objClass);
-                if (instSpec.isSmallInteger()) {
-                    fixedFields = instSpec.asSmallInteger() & 0xFFFF;
-                }
-            }
+            fixedFields = memory_.fixedFieldCountOf(rcvr);
         }
         size_t slotCount = header->slotCount();
         if (fixedFields > slotCount) {
@@ -2094,29 +2028,13 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
         size = header->byteSize();
     } else if (fmt == ObjectFormat::IndexableWithFixed) {
         // Objects with both fixed and indexable fields (e.g., Context)
-        // Get fixed field count from class instance specification
-        Oop objClass = memory_.classOf(rcvr);
-        size_t fixedFields = 0;
-        if (objClass.isObject()) {
-            Oop instSpec = memory_.fetchPointer(2, objClass);
-            if (instSpec.isSmallInteger()) {
-                fixedFields = instSpec.asSmallInteger() & 0xFFFF;
-            }
-        }
+        size_t fixedFields = memory_.fixedFieldCountOf(rcvr);
         size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
     } else if (fmt == ObjectFormat::Indexable) {
         // Pure indexable objects (Array): all slots are indexable
         size = totalSlots;
     } else if (fmt == ObjectFormat::Weak || fmt == ObjectFormat::WeakWithFixed) {
-        // Weak objects - similar to indexable
-        Oop objClass = memory_.classOf(rcvr);
-        size_t fixedFields = 0;
-        if (objClass.isObject()) {
-            Oop instSpec = memory_.fetchPointer(2, objClass);
-            if (instSpec.isSmallInteger()) {
-                fixedFields = instSpec.asSmallInteger() & 0xFFFF;
-            }
-        }
+        size_t fixedFields = memory_.fixedFieldCountOf(rcvr);
         size = (totalSlots > fixedFields) ? totalSlots - fixedFields : 0;
     } else if (fmt == ObjectFormat::Indexable64) {
         // 64-bit word array: each 64-bit slot = 1 indexable element
@@ -2602,25 +2520,12 @@ PrimitiveResult Interpreter::primitiveShallowCopy(int argCount) {
 PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
     Oop rcvr = stackValue(argCount);  // Receiver is under arguments
 
-    uint32_t hash;
-    if (rcvr.isSmallInteger()) {
-        // SmallInteger identity hash: use the value itself (masked to positive range)
-        hash = static_cast<uint32_t>(rcvr.asSmallInteger()) & 0x3FFFFF;
-    } else if (rcvr.isCharacter()) {
-        // Character identity hash: use the character value
-        hash = static_cast<uint32_t>(rcvr.asCharacter()) & 0x3FFFFF;
-    } else if (rcvr.isSmallFloat()) {
-        // SmallFloat identity hash: hash the raw bits
-        uint64_t bits = rcvr.rawBits();
-        hash = static_cast<uint32_t>((bits >> 32) ^ bits) & 0x3FFFFF;
-    } else if (rcvr.isObject()) {
-        // Follow forwarding pointers (created by become:)
+    // Follow forwarding pointers for heap objects (created by become:)
+    if (rcvr.isObject()) {
         rcvr = memory_.followForwarded(rcvr);
-        // identityHashOf handles lazy hash generation and caching
-        hash = memory_.identityHashOf(rcvr);
-    } else {
-        return PrimitiveResult::Failure;
     }
+
+    uint32_t hash = memory_.identityHashOf(rcvr);
 
     popN(argCount + 1);
     push(Oop::fromSmallInteger(hash));
@@ -13949,20 +13854,7 @@ PrimitiveResult Interpreter::primitiveObjectHeaderPut(int argCount) {
 PrimitiveResult Interpreter::primitiveIdentityHashSmallInteger(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop receiver = stackTop();
-
-    uint32_t hash;
-    if (receiver.isSmallInteger()) {
-        // For SmallIntegers, use the value itself as the hash
-        hash = static_cast<uint32_t>(receiver.asSmallInteger() & 0x3FFFFFFF);
-    } else if (receiver.isCharacter()) {
-        hash = receiver.asCharacter();
-    } else if (receiver.isObject()) {
-        hash = memory_.identityHashOf(receiver);
-    } else {
-        // SmallFloat - use bits as hash
-        hash = static_cast<uint32_t>(receiver.rawBits() >> 3);
-    }
+    uint32_t hash = memory_.identityHashOf(stackTop());
 
     pop();
     push(Oop::fromSmallInteger(hash));
@@ -15356,7 +15248,7 @@ PrimitiveResult Interpreter::primitiveGetNextEvent(int argCount) {
     // into passThroughEvents_. We do NOT read gEventQueue directly here.
     if (!passThroughEvents_.empty()) {
         event = passThroughEvents_.front();
-        passThroughEvents_.erase(passThroughEvents_.begin());
+        passThroughEvents_.pop_front();
         hasEvent = true;
     }
 

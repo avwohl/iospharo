@@ -428,8 +428,8 @@ struct ImageLibraryView: View {
                 VStack(alignment: .leading, spacing: 4) {
                     detailRow("Image file", value: image.imageFileName)
                     detailRow("Location", value: image.directoryURL.path)
-                    if let version = image.pharoVersion {
-                        detailRow("Pharo version", value: versionLabel(version))
+                    if image.pharoVersion != nil {
+                        detailRow("Pharo version", value: image.versionLabel)
                     }
                     if let totalSize = imageManager.totalSizeForImage(image) {
                         let formatter = ByteCountFormatter()
@@ -536,16 +536,6 @@ struct ImageLibraryView: View {
         formatter.dateStyle = .medium
         formatter.timeStyle = .short
         return formatter.string(from: date)
-    }
-
-    private func versionLabel(_ version: String) -> String {
-        switch version {
-        case "130": return "Pharo 13"
-        case "120": return "Pharo 12"
-        case "110": return "Pharo 11"
-        case "100": return "Pharo 10"
-        default: return "Pharo \(version)"
-        }
     }
 
     // MARK: - Disclaimer

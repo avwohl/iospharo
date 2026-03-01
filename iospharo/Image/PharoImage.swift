@@ -72,6 +72,18 @@ struct PharoImage: Codable, Identifiable, Equatable {
         imageSizeBytes = attrs?[.size] as? Int64
     }
 
+    /// Human-readable version label (e.g., "130" -> "Pharo 13")
+    var versionLabel: String {
+        guard let version = pharoVersion else { return "—" }
+        switch version {
+        case "130": return "Pharo 13"
+        case "120": return "Pharo 12"
+        case "110": return "Pharo 11"
+        case "100": return "Pharo 10"
+        default: return "Pharo \(version)"
+        }
+    }
+
     /// Human-readable file size
     var formattedSize: String? {
         guard let bytes = imageSizeBytes else { return nil }

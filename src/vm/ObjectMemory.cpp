@@ -962,6 +962,11 @@ size_t ObjectMemory::fixedFieldCountOf(ObjectHeader* obj) const {
     return 0;
 }
 
+size_t ObjectMemory::fixedFieldCountOf(Oop obj) const {
+    if (!obj.isObject()) return 0;
+    return fixedFieldCountOf(obj.asObjectPtr());
+}
+
 size_t ObjectMemory::byteSizeOf(Oop obj) const {
     if (!obj.isObject()) return 0;
     return obj.asObjectPtr()->byteSize();

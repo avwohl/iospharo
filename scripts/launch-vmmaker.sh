@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Launch VMMaker image with Pharo VM for iOS VM simulation debugging
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -28,7 +29,7 @@ fi
 echo "Launching VMMaker..."
 echo "  VM: $VM_EXECUTABLE"
 echo "  Image: $VMMAKER_IMAGE"
-echo "  Using pharo-vm-ios fork: $(basename $PHARO_VM_DIR)"
+echo "  Using pharo-vm-ios fork: $(basename "$PHARO_VM_DIR")"
 echo ""
 echo "=== To generate cointerp.cpp for iOS ==="
 echo ""

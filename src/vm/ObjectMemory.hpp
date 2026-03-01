@@ -269,6 +269,7 @@ public:
     /// For WeakWithFixed objects, these are the strong fields before the weak
     /// variable part. Reads the instance specification from the object's class.
     size_t fixedFieldCountOf(ObjectHeader* obj) const;
+    size_t fixedFieldCountOf(Oop obj) const;
 
     /// Register a class in the class table, returns assigned index
     uint32_t registerClass(Oop classOop);
