@@ -106,6 +106,7 @@ struct ContentView: View {
                 )
                 PharoCanvasView(bridge: bridge)
             }
+            .ignoresSafeArea(.keyboard)
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -254,69 +255,163 @@ struct ModifierStrip: View {
     @Binding var keyboardVisible: Bool
     @Binding var showHelp: Bool
 
+    private var isIPad: Bool { bridge.isIPad }
+
+    private var buttonSize: CGFloat { isIPad ? 34 : 32 }
+    private var buttonSpacing: CGFloat { isIPad ? 5 : 4 }
+    private var stripWidth: CGFloat { isIPad ? 44 : 40 }
+
     var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: buttonSpacing) {
+            if isIPad {
+                iPadStrip
+            } else {
+                iPhoneStrip
+            }
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 2)
+        .frame(width: stripWidth)
+        .background(Color(.systemGray6).opacity(0.95))
+    }
+
+    // MARK: - iPad Layout (16 buttons)
+
+    private var iPadStrip: some View {
+        Group {
             // --- Modifier keys ---
             StripButton(label: "Ctrl", icon: "control",
-                        isActive: bridge.ctrlModifierActive) {
+                        isActive: bridge.ctrlModifierActive, size: buttonSize) {
                 bridge.ctrlModifierActive.toggle()
             }
-
             StripButton(label: "Cmd", icon: "command",
-                        isActive: bridge.cmdModifierActive) {
+                        isActive: bridge.cmdModifierActive, size: buttonSize) {
                 bridge.cmdModifierActive.toggle()
             }
 
-            StripButton(label: "Tab", icon: nil, isActive: false) {
+            // --- Direct keys ---
+            StripButton(label: "Tab", size: buttonSize) {
                 bridge.sendKeyShortcut("\t", modifiers: 0)
             }
-
-            StripButton(label: "Esc", icon: nil, isActive: false) {
+            StripButton(label: "Esc", size: buttonSize) {
                 let code: Int32 = 27
                 vm_postKeyEvent(0, code, 0, 0)
                 vm_postKeyEvent(1, code, 0, 0)
             }
+            StripButton(icon: "delete.left", size: buttonSize) {
+                let code: Int32 = 8
+                vm_postKeyEvent(0, code, 0, 0)
+                vm_postKeyEvent(1, code, 0, 0)
+            }
 
-            Divider()
-                .frame(width: 28)
-                .background(Color.gray.opacity(0.5))
+            stripDivider
 
             // --- Pharo action shortcuts ---
-            StripButton(label: "DoIt", icon: nil, isActive: false) {
+            StripButton(label: "DoIt", size: buttonSize) {
                 bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
             }
-
-            StripButton(label: "Print", icon: nil, isActive: false) {
+            StripButton(label: "Print", size: buttonSize) {
                 bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
             }
-
-            StripButton(label: "Inspect", icon: nil, isActive: false) {
+            StripButton(label: "Inspect", size: buttonSize) {
                 bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Debug", size: buttonSize) {
+                bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY | IOS_SHIFT_KEY)
+            }
+
+            stripDivider
+
+            // --- Clipboard & editing ---
+            StripButton(icon: "scissors", size: buttonSize) {
+                bridge.sendKeyShortcut("x", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(icon: "doc.on.doc", size: buttonSize) {
+                bridge.sendKeyShortcut("c", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(icon: "doc.on.clipboard", size: buttonSize) {
+                bridge.sendKeyShortcut("v", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Expand", size: buttonSize) {
+                bridge.sendKeyShortcut("2", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Accept", size: buttonSize) {
+                bridge.sendKeyShortcut("s", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Cancel", size: buttonSize) {
+                bridge.sendKeyShortcut("l", modifiers: IOS_CMD_KEY)
             }
 
             Spacer()
 
             // --- Utility ---
-            StripButton(label: nil, icon: "keyboard",
-                        isActive: keyboardVisible) {
-                keyboardVisible.toggle()
-                if let view = gPharoMTKView {
-                    if keyboardVisible {
-                        view.becomeFirstResponder()
-                    } else {
-                        view.resignFirstResponder()
-                    }
-                }
-            }
-
-            StripButton(label: nil, icon: "questionmark", isActive: false) {
+            keyboardButton
+            StripButton(icon: "questionmark", size: buttonSize) {
                 showHelp = true
             }
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 2)
-        .frame(width: 44)
-        .background(Color(.systemGray6).opacity(0.95))
+    }
+
+    // MARK: - iPhone Layout (8 buttons)
+
+    private var iPhoneStrip: some View {
+        Group {
+            // Keyboard at TOP so it's not covered when keyboard shows
+            keyboardButton
+
+            stripDivider
+
+            // --- Modifier keys ---
+            StripButton(label: "Ctrl", icon: "control",
+                        isActive: bridge.ctrlModifierActive, size: buttonSize) {
+                bridge.ctrlModifierActive.toggle()
+            }
+            StripButton(label: "Cmd", icon: "command",
+                        isActive: bridge.cmdModifierActive, size: buttonSize) {
+                bridge.cmdModifierActive.toggle()
+            }
+            StripButton(icon: "delete.left", size: buttonSize) {
+                let code: Int32 = 8
+                vm_postKeyEvent(0, code, 0, 0)
+                vm_postKeyEvent(1, code, 0, 0)
+            }
+
+            stripDivider
+
+            // --- Essential actions ---
+            StripButton(label: "DoIt", size: buttonSize) {
+                bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Print", size: buttonSize) {
+                bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
+            }
+            StripButton(label: "Inspect", size: buttonSize) {
+                bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+            }
+
+            Spacer()
+        }
+    }
+
+    // MARK: - Shared Components
+
+    private var keyboardButton: some View {
+        StripButton(icon: "keyboard", isActive: keyboardVisible, size: buttonSize) {
+            keyboardVisible.toggle()
+            if let view = gPharoMTKView {
+                if keyboardVisible {
+                    view.becomeFirstResponder()
+                } else {
+                    view.resignFirstResponder()
+                }
+            }
+        }
+    }
+
+    private var stripDivider: some View {
+        Divider()
+            .frame(width: buttonSize - 6)
+            .background(Color.gray.opacity(0.5))
     }
 }
 
@@ -324,23 +419,33 @@ struct StripButton: View {
     let label: String?
     let icon: String?
     let isActive: Bool
+    let size: CGFloat
     let action: () -> Void
+
+    init(label: String? = nil, icon: String? = nil, isActive: Bool = false,
+         size: CGFloat = 34, action: @escaping () -> Void) {
+        self.label = label
+        self.icon = icon
+        self.isActive = isActive
+        self.size = size
+        self.action = action
+    }
 
     var body: some View {
         Button(action: action) {
             Group {
                 if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 14))
+                        .font(.system(size: size * 0.4))
                 } else if let label = label {
                     Text(label)
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .font(.system(size: size * 0.29, weight: .semibold, design: .rounded))
                 }
             }
             .foregroundColor(isActive ? .white : .primary)
-            .frame(width: 36, height: 36)
+            .frame(width: size, height: size)
             .background(isActive ? Color.blue : Color.gray.opacity(0.2))
-            .cornerRadius(8)
+            .cornerRadius(size * 0.22)
         }
     }
 }
@@ -371,13 +476,13 @@ struct GestureHelpOverlay: View {
 
                     Divider().background(Color.white.opacity(0.3))
 
-                    helpRow("sidebar.left", "Left strip", "Modifier keys and shortcuts")
+                    helpRow("sidebar.left", "Left strip", "Modifier keys, actions, clipboard")
                     helpRow("keyboard", "Keyboard button", "Show/hide the soft keyboard")
 
                     Divider().background(Color.white.opacity(0.3))
 
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Strip buttons:")
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Strip actions:")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
                         HStack(spacing: 12) {
@@ -385,6 +490,14 @@ struct GestureHelpOverlay: View {
                             shortcutLabel("Print", "Cmd+P")
                             shortcutLabel("Inspect", "Cmd+I")
                         }
+                        HStack(spacing: 12) {
+                            shortcutLabel("Debug", "Cmd+Shift+D")
+                            shortcutLabel("Accept", "Cmd+S")
+                            shortcutLabel("Cancel", "Cmd+L")
+                        }
+                        Text("Also: Cut, Copy, Paste, Expand selection")
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.6))
                     }
                 }
 

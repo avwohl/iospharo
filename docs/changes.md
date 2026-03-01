@@ -1,3 +1,41 @@
+# What's New in Build 42
+
+Build 42 — 2026-03-01
+
+## New Features
+
+### Expanded Modifier Strip (iPad)
+The left-side strip now has 16 buttons covering the most common Pharo
+operations, so you rarely need to show the soft keyboard:
+
+  - Ctrl, Cmd — modifier toggles (same as before)
+  - Tab, Esc, Backspace — direct keys (Backspace is new)
+  - DoIt, PrintIt, InspectIt, DebugIt — Pharo evaluation shortcuts
+  - Cut, Copy, Paste — clipboard (Cmd+X/C/V)
+  - Expand, Accept, Cancel — select enclosing expression (Cmd+2),
+    save code (Cmd+S), cancel edit (Cmd+L)
+  - Keyboard toggle and Help at the bottom
+
+### Compact iPhone Strip
+On iPhone the strip shows a reduced set of 8 buttons that fits the
+shorter landscape height:
+
+  - Keyboard toggle at the top (stays accessible when keyboard shows)
+  - Ctrl, Cmd, Backspace
+  - DoIt, PrintIt, InspectIt
+
+No Help button on iPhone (not enough room).
+
+## Bug Fixes
+
+### iPad Floating Keyboard Blank Space
+When the iPad floating keyboard appeared, the Pharo canvas shrank and
+left a blank area at the bottom. The canvas now ignores the keyboard
+safe area — the keyboard floats over the Metal-rendered content instead
+of pushing it up.
+
+---
+
 # What's New in Build 39
 
 Build 39 — 2026-03-01
