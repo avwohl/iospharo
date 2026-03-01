@@ -279,43 +279,24 @@ struct ModifierStrip: View {
 
     private var iPadStrip: some View {
         Group {
-            // --- Modifier keys ---
-            StripButton(label: "Ctrl", icon: "control",
-                        isActive: bridge.ctrlModifierActive, size: buttonSize) {
-                bridge.ctrlModifierActive.toggle()
-            }
-            StripButton(label: "Cmd", icon: "command",
-                        isActive: bridge.cmdModifierActive, size: buttonSize) {
-                bridge.cmdModifierActive.toggle()
-            }
+            ctrlButton
+            cmdButton
 
             // --- Direct keys ---
             StripButton(label: "Tab", size: buttonSize) {
                 bridge.sendKeyShortcut("\t", modifiers: 0)
             }
             StripButton(label: "Esc", size: buttonSize) {
-                let code: Int32 = 27
-                vm_postKeyEvent(0, code, 0, 0)
-                vm_postKeyEvent(1, code, 0, 0)
+                bridge.sendRawKey(27)
             }
-            StripButton(icon: "delete.left", size: buttonSize) {
-                let code: Int32 = 8
-                vm_postKeyEvent(0, code, 0, 0)
-                vm_postKeyEvent(1, code, 0, 0)
-            }
+            backspaceButton
 
             stripDivider
 
             // --- Pharo action shortcuts ---
-            StripButton(label: "DoIt", size: buttonSize) {
-                bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
-            }
-            StripButton(label: "Print", size: buttonSize) {
-                bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
-            }
-            StripButton(label: "Inspect", size: buttonSize) {
-                bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
-            }
+            doItButton
+            printButton
+            inspectButton
             StripButton(label: "Debug", size: buttonSize) {
                 bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY | IOS_SHIFT_KEY)
             }
@@ -358,42 +339,57 @@ struct ModifierStrip: View {
         Group {
             // Keyboard at TOP so it's not covered when keyboard shows
             keyboardButton
-
             stripDivider
-
-            // --- Modifier keys ---
-            StripButton(label: "Ctrl", icon: "control",
-                        isActive: bridge.ctrlModifierActive, size: buttonSize) {
-                bridge.ctrlModifierActive.toggle()
-            }
-            StripButton(label: "Cmd", icon: "command",
-                        isActive: bridge.cmdModifierActive, size: buttonSize) {
-                bridge.cmdModifierActive.toggle()
-            }
-            StripButton(icon: "delete.left", size: buttonSize) {
-                let code: Int32 = 8
-                vm_postKeyEvent(0, code, 0, 0)
-                vm_postKeyEvent(1, code, 0, 0)
-            }
-
+            ctrlButton
+            cmdButton
+            backspaceButton
             stripDivider
-
-            // --- Essential actions ---
-            StripButton(label: "DoIt", size: buttonSize) {
-                bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
-            }
-            StripButton(label: "Print", size: buttonSize) {
-                bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
-            }
-            StripButton(label: "Inspect", size: buttonSize) {
-                bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
-            }
-
+            doItButton
+            printButton
+            inspectButton
             Spacer()
         }
     }
 
-    // MARK: - Shared Components
+    // MARK: - Shared Buttons
+
+    private var ctrlButton: some View {
+        StripButton(icon: "control",
+                    isActive: bridge.ctrlModifierActive, size: buttonSize) {
+            bridge.ctrlModifierActive.toggle()
+        }
+    }
+
+    private var cmdButton: some View {
+        StripButton(icon: "command",
+                    isActive: bridge.cmdModifierActive, size: buttonSize) {
+            bridge.cmdModifierActive.toggle()
+        }
+    }
+
+    private var backspaceButton: some View {
+        StripButton(icon: "delete.left", size: buttonSize) {
+            bridge.sendRawKey(8, keyCode: 8)
+        }
+    }
+
+    private var doItButton: some View {
+        StripButton(label: "DoIt", size: buttonSize) {
+            bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
+        }
+    }
+
+    private var printButton: some View {
+        StripButton(label: "Print", size: buttonSize) {
+            bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
+        }
+    }
+
+    private var inspectButton: some View {
+        StripButton(label: "Inspect", size: buttonSize) {
+            bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+        }
+    }
 
     private var keyboardButton: some View {
         StripButton(icon: "keyboard", isActive: keyboardVisible, size: buttonSize) {

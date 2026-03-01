@@ -685,17 +685,7 @@ extension PharoMTKView: UIKeyInput {
     }
 
     func deleteBackward() {
-        var mods: Int32 = 0
-        if bridge?.ctrlModifierActive == true { mods |= Int32(IOS_CTRL_KEY) }
-        if bridge?.cmdModifierActive == true { mods |= Int32(IOS_CMD_KEY) }
-        if mods != 0 {
-            DispatchQueue.main.async { [weak self] in
-                self?.bridge?.ctrlModifierActive = false
-                self?.bridge?.cmdModifierActive = false
-            }
-        }
-        vm_postKeyEvent(0, 8, 8, mods)  // down → SDL_KEYDOWN
-        vm_postKeyEvent(1, 8, 8, mods)  // up → SDL_KEYUP
+        bridge?.sendRawKey(8, keyCode: 8)
     }
 }
 #endif

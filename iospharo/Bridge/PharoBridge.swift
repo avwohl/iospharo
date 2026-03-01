@@ -370,6 +370,22 @@ class PharoBridge: ObservableObject {
         vm_postKeyEvent(1, code, 0, mods)  // up
     }
 
+    /// Send a raw key down + up by integer key code, incorporating active modifier toggles.
+    /// Clears modifier toggles after use (same behavior as PharoCanvasView keyboard input).
+    func sendRawKey(_ charCode: Int32, keyCode: Int32 = 0, modifiers: Int32 = 0) {
+        var mods = modifiers
+        if ctrlModifierActive { mods |= Int32(IOS_CTRL_KEY) }
+        if cmdModifierActive { mods |= Int32(IOS_CMD_KEY) }
+        if mods != modifiers {
+            DispatchQueue.main.async { [weak self] in
+                self?.ctrlModifierActive = false
+                self?.cmdModifierActive = false
+            }
+        }
+        vm_postKeyEvent(0, charCode, keyCode, mods)  // down
+        vm_postKeyEvent(1, charCode, keyCode, mods)  // up
+    }
+
     /// Send string as key events
     func sendString(_ string: String, modifiers: Int = 0) {
         for char in string {
@@ -388,9 +404,9 @@ class PharoBridge: ObservableObject {
 
     // MARK: - Utilities
 
-    /// Check if running on iPad
+    /// Check if running on iPad (or Mac Catalyst, which uses iPad idiom)
     var isIPad: Bool {
-        return iosIsIPad() != 0
+        return UIDevice.current.userInterfaceIdiom == .pad
     }
 
     /// Get device model string
