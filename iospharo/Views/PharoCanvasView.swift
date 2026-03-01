@@ -327,6 +327,16 @@ class PharoCanvasViewController: UIViewController {
 
         setupGestureRecognizers()
 
+        #if !targetEnvironment(macCatalyst)
+        // Sync keyboardVisible when the user dismisses the keyboard via the
+        // system close button (the globe/dismiss key) rather than our toggle.
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.bridge?.keyboardVisible = false
+        }
+        #endif
+
         #if targetEnvironment(macCatalyst)
         // Cmd+Q fallback: the system menu bar handles Cmd+Q via SwiftUI
         // .commands, but register a UIKeyCommand as backup in case the

@@ -94,18 +94,18 @@ struct ContentView: View {
 
     private var pharoCanvas: some View {
         ZStack {
+            #if targetEnvironment(macCatalyst)
             PharoCanvasView(bridge: bridge)
-                #if targetEnvironment(macCatalyst)
                 .ignoresSafeArea()
-                #endif
-
-            #if !targetEnvironment(macCatalyst)
-            FloatingToolbar(
-                ctrlActive: $bridge.ctrlModifierActive,
-                cmdActive: $bridge.cmdModifierActive,
-                keyboardVisible: $bridge.keyboardVisible,
-                showHelp: $showingHelp
-            )
+            #else
+            HStack(spacing: 0) {
+                ModifierStrip(
+                    bridge: bridge,
+                    keyboardVisible: $bridge.keyboardVisible,
+                    showHelp: $showingHelp
+                )
+                PharoCanvasView(bridge: bridge)
+            }
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -246,110 +246,101 @@ struct DiagnosticsView: View {
     }
 }
 
-// MARK: - Floating Toolbar (iOS only)
+// MARK: - Left-Side Modifier Strip (iOS only)
 
 #if !targetEnvironment(macCatalyst)
-struct FloatingToolbar: View {
-    @Binding var ctrlActive: Bool
-    @Binding var cmdActive: Bool
+struct ModifierStrip: View {
+    @ObservedObject var bridge: PharoBridge
     @Binding var keyboardVisible: Bool
     @Binding var showHelp: Bool
-    @State private var offset: CGSize = .zero
-    @State private var dragOffset: CGSize = .zero
 
     var body: some View {
-        VStack {
+        VStack(spacing: 6) {
+            // --- Modifier keys ---
+            StripButton(label: "Ctrl", icon: "control",
+                        isActive: bridge.ctrlModifierActive) {
+                bridge.ctrlModifierActive.toggle()
+            }
+
+            StripButton(label: "Cmd", icon: "command",
+                        isActive: bridge.cmdModifierActive) {
+                bridge.cmdModifierActive.toggle()
+            }
+
+            StripButton(label: "Tab", icon: nil, isActive: false) {
+                bridge.sendKeyShortcut("\t", modifiers: 0)
+            }
+
+            StripButton(label: "Esc", icon: nil, isActive: false) {
+                let code: Int32 = 27
+                vm_postKeyEvent(0, code, 0, 0)
+                vm_postKeyEvent(1, code, 0, 0)
+            }
+
+            Divider()
+                .frame(width: 28)
+                .background(Color.gray.opacity(0.5))
+
+            // --- Pharo action shortcuts ---
+            StripButton(label: "DoIt", icon: nil, isActive: false) {
+                bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
+            }
+
+            StripButton(label: "Print", icon: nil, isActive: false) {
+                bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
+            }
+
+            StripButton(label: "Inspect", icon: nil, isActive: false) {
+                bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+            }
+
             Spacer()
-            HStack {
-                Spacer()
-                HStack(spacing: 8) {
-                    // Help button
-                    FloatingButton(
-                        icon: "questionmark",
-                        label: nil,
-                        isActive: false,
-                        action: { showHelp = true }
-                    )
 
-                    // Keyboard toggle
-                    FloatingButton(
-                        icon: "keyboard",
-                        label: nil,
-                        isActive: keyboardVisible,
-                        action: {
-                            keyboardVisible.toggle()
-                            if let view = gPharoMTKView {
-                                if keyboardVisible {
-                                    view.becomeFirstResponder()
-                                } else {
-                                    view.resignFirstResponder()
-                                }
-                            }
-                        }
-                    )
-
-                    // Virtual Ctrl key — one-shot modifier
-                    FloatingButton(
-                        icon: "control",
-                        label: "Ctrl",
-                        isActive: ctrlActive,
-                        action: {
-                            ctrlActive.toggle()
-                        }
-                    )
-
-                    // Virtual Cmd key — one-shot modifier
-                    FloatingButton(
-                        icon: "command",
-                        label: "Cmd",
-                        isActive: cmdActive,
-                        action: {
-                            cmdActive.toggle()
-                        }
-                    )
+            // --- Utility ---
+            StripButton(label: nil, icon: "keyboard",
+                        isActive: keyboardVisible) {
+                keyboardVisible.toggle()
+                if let view = gPharoMTKView {
+                    if keyboardVisible {
+                        view.becomeFirstResponder()
+                    } else {
+                        view.resignFirstResponder()
+                    }
                 }
-                .offset(x: offset.width + dragOffset.width,
-                        y: offset.height + dragOffset.height)
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            dragOffset = value.translation
-                        }
-                        .onEnded { value in
-                            offset.width += value.translation.width
-                            offset.height += value.translation.height
-                            dragOffset = .zero
-                        }
-                )
-                .padding(.trailing, 16)
-                .padding(.bottom, 80)
+            }
+
+            StripButton(label: nil, icon: "questionmark", isActive: false) {
+                showHelp = true
             }
         }
-        .allowsHitTesting(true)
+        .padding(.vertical, 8)
+        .padding(.horizontal, 2)
+        .frame(width: 44)
+        .background(Color(.systemGray6).opacity(0.95))
     }
 }
 
-struct FloatingButton: View {
-    let icon: String
+struct StripButton: View {
     let label: String?
+    let icon: String?
     let isActive: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Group {
-                if let label = label {
-                    Text(label)
-                        .font(.system(size: 12, weight: .bold, design: .rounded))
-                } else {
+                if let icon = icon {
                     Image(systemName: icon)
-                        .font(.system(size: 16))
+                        .font(.system(size: 14))
+                } else if let label = label {
+                    Text(label)
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
                 }
             }
-            .foregroundColor(isActive ? .white : .gray)
-            .frame(width: 40, height: 40)
-            .background(isActive ? Color.blue : Color.gray.opacity(0.3))
-            .clipShape(Circle())
+            .foregroundColor(isActive ? .white : .primary)
+            .frame(width: 36, height: 36)
+            .background(isActive ? Color.blue : Color.gray.opacity(0.2))
+            .cornerRadius(8)
         }
     }
 }
@@ -380,20 +371,19 @@ struct GestureHelpOverlay: View {
 
                     Divider().background(Color.white.opacity(0.3))
 
+                    helpRow("sidebar.left", "Left strip", "Modifier keys and shortcuts")
                     helpRow("keyboard", "Keyboard button", "Show/hide the soft keyboard")
-                    helpRow("control", "Ctrl button", "One-shot Ctrl modifier")
-                    helpRow("command", "Cmd button", "One-shot Cmd modifier")
 
                     Divider().background(Color.white.opacity(0.3))
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Shortcuts (Ctrl or Cmd + key):")
+                        Text("Strip buttons:")
                             .font(.caption)
                             .foregroundColor(.white.opacity(0.7))
-                        HStack(spacing: 16) {
-                            shortcutLabel("D", "Do It")
-                            shortcutLabel("P", "Print It")
-                            shortcutLabel("E", "Inspect It")
+                        HStack(spacing: 12) {
+                            shortcutLabel("DoIt", "Cmd+D")
+                            shortcutLabel("Print", "Cmd+P")
+                            shortcutLabel("Inspect", "Cmd+I")
                         }
                     }
                 }

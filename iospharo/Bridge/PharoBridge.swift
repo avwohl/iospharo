@@ -347,6 +347,18 @@ class PharoBridge: ObservableObject {
         sendKeyUp(character, modifiers: modifiers)
     }
 
+    /// Send a full key shortcut sequence (down + stroke + up) for toolbar action buttons.
+    /// Unlike sendKeyTyped which only sends down + up, this includes the stroke event
+    /// that Pharo needs to process the character as text input with modifiers.
+    func sendKeyShortcut(_ character: Character, modifiers: Int) {
+        guard let scalar = character.unicodeScalars.first else { return }
+        let code = Int32(scalar.value)
+        let mods = Int32(modifiers)
+        vm_postKeyEvent(0, code, 0, mods)  // down
+        vm_postKeyEvent(2, code, 0, mods)  // stroke
+        vm_postKeyEvent(1, code, 0, mods)  // up
+    }
+
     /// Send string as key events
     func sendString(_ string: String, modifiers: Int = 0) {
         for char in string {

@@ -1,3 +1,32 @@
+# What's New in Build 39
+
+Build 39 — 2026-03-01
+
+## New Features
+
+### Left-Side Modifier Strip (iOS)
+Replaced the floating circular toolbar buttons with a vertical strip on the
+left edge of the screen. The strip stays fixed (no dragging) and provides:
+
+  - Ctrl / Cmd — one-shot modifier toggles (same behavior as before)
+  - Tab / Esc — direct key sends
+  - DoIt / Print / Inspect — synthesize Cmd+D / Cmd+P / Cmd+I without
+    needing to show the soft keyboard. Requested by Tim who found that
+    the old Cmd button required showing the keyboard to type the letter.
+  - Keyboard toggle and ? help button at the bottom
+
+The canvas fills the remaining width to the right of the strip.
+
+## Bug Fixes
+
+### Keyboard Toggle Out of Sync
+The keyboard toggle button could get stuck in the "on" state when the user
+dismissed the soft keyboard via the system globe/dismiss key instead of the
+strip button. Now observes `keyboardWillHideNotification` to keep the
+toggle in sync.
+
+---
+
 # What's New in Build 38
 
 Build 38 — 2026-02-28
