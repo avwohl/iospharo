@@ -19,6 +19,17 @@ The canvas fills the remaining width to the right of the strip.
 
 ## Bug Fixes
 
+### Menu Shortcut Symbols Show as "?" (reported by Tim)
+Menu items showed "?D" instead of "Cmd+D" for keyboard shortcuts. The
+embedded Source Sans Pro font (2012) lacks the Unicode modifier key
+glyphs (U+2318 ⌘, U+2303 ⌃, etc.) that Pharo's `KMOSXShortcutPrinter`
+uses. Adobe added these glyphs in Source Sans 2.040 (2018) but Pharo
+still ships the old version. This affects all Pharo VMs, not just ours.
+
+Fix: startup.st now patches `KMShortcutPrinter symbolTable` to use
+ASCII text labels ("Cmd+", "Ctrl+", "Shift+", "Opt+") instead of the
+missing Unicode symbols.
+
 ### Keyboard Toggle Out of Sync
 The keyboard toggle button could get stuck in the "on" state when the user
 dismissed the soft keyboard via the system globe/dismiss key instead of the

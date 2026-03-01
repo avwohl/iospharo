@@ -254,6 +254,17 @@ class PharoBridge: ObservableObject {
                   [ ^ self childrenOf: (MicSectionBlock fromRoot: aNode loadMicrodown) ]
                     on: Error do: [ ^ #() ]]
             ] on: Error do: [ ^ #() ]'].
+        "Fix: menu shortcut symbols (U+2318 etc.) missing from embedded Source Sans Pro"
+        "The embedded font is from 2012; Adobe added these glyphs in v2.040 (2018)."
+        "Replace Unicode symbols with readable ASCII abbreviations."
+        (Smalltalk hasClassNamed: #KMShortcutPrinter) ifTrue: [
+          KMShortcutPrinter symbolTable
+            at: #Cmd put: 'Cmd+';
+            at: #Meta put: 'Cmd+';
+            at: #Alt put: 'Opt+';
+            at: #Ctrl put: 'Ctrl+';
+            at: #Shift put: 'Shift+';
+            at: #Enter put: 'Enter'].
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [

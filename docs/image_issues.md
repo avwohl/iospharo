@@ -161,6 +161,60 @@ propagates uncaught and opens a debugger.
 
 ---
 
+## Bug 4: Menu shortcut modifier symbols render as "?" (missing font glyphs)
+
+**Class**: `KMShortcutPrinter` / `KMOSXShortcutPrinter` (package Keymapping-Core)
+**Method**: `KMShortcutPrinter class >> createSymbolTable`
+
+The shortcut printer uses Unicode symbols for modifier keys:
+
+    Modifier     Codepoint   Symbol   Unicode Name
+    Cmd/Meta     U+2318      ⌘       PLACE OF INTEREST SIGN
+    Alt/Option   U+2325      ⌥       OPTION KEY
+    Ctrl         U+2303      ⌃       UP ARROWHEAD
+    Shift        U+21E7      ⇧       UPWARDS WHITE ARROW
+    Enter        U+23CE      ⏎       RETURN SYMBOL
+
+The embedded `SourceSansProRegular` font (copyright 2010, 2012, from the
+old SourceForge repo) does not contain any of these glyphs. FreeType
+renders the `.notdef` glyph (a small box) which at small sizes looks
+like "?". None of the other embedded fonts (Lucida Grande, Source Code
+Pro) have these glyphs either.
+
+Adobe added the macOS keyboard modifier glyphs to Source Sans Pro in
+**version 2.040** (October 2018). The current version is 3.052 (April
+2023). Pharo still ships the 2012 version.
+
+**This affects ALL Pharo VMs on ALL platforms**, not just iospharo. The
+stock Pharo 13 image on macOS with the official Pharo VM has the same
+missing glyphs — they render as tiny `.notdef` rectangles.
+
+**Steps to reproduce** (stock Pharo 13, any VM):
+
+    1. Open any tool with keyboard shortcuts (System Browser, Playground)
+    2. Right-click to open a context menu
+    3. Menu items with shortcuts show "?D", "?S" etc. instead of "⌘D", "⌘S"
+
+**Suggested fix**: Update `SourceSansProRegular` in the `EmbeddedFreeType`
+package to Source Sans 3 (version 3.052). The font is SIL Open Font
+Licensed and a drop-in replacement. This would fix shortcut display for
+all Pharo users on all platforms.
+
+**Our workaround** (startup.st):
+
+    KMShortcutPrinter symbolTable
+        at: #Cmd put: 'Cmd+';
+        at: #Meta put: 'Cmd+';
+        at: #Alt put: 'Opt+';
+        at: #Ctrl put: 'Ctrl+';
+        at: #Shift put: 'Shift+';
+        at: #Enter put: 'Enter'.
+
+This replaces the Unicode symbols with ASCII text labels so shortcuts
+display as "Cmd+D", "Cmd+S", etc.
+
+---
+
 ## Feature Request: Portrait layout / small-screen support
 
 On an iPhone in portrait orientation (or any narrow window < ~500pt),
