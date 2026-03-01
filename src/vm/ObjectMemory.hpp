@@ -271,6 +271,26 @@ public:
     size_t fixedFieldCountOf(ObjectHeader* obj) const;
     size_t fixedFieldCountOf(Oop obj) const;
 
+    /// Extract the bytes of a byte-format Oop as a std::string.
+    /// Returns empty string if obj is not a bytes object.
+    std::string oopToString(Oop obj) const;
+
+    /// Get the name of a class object as a string.
+    /// Handles metaclasses (fetches thisClass, appends " class"). Returns "?" on failure.
+    std::string nameOfClass(Oop classObj) const;
+
+    /// Get the name of an Oop's class as a string (calls classOf then nameOfClass).
+    /// Returns "?" on failure.
+    std::string classNameOf(Oop obj) const;
+
+    /// Extract the number of literals from a CompiledMethod's header (slot 0).
+    /// Returns 0 if method is not a valid CompiledMethod.
+    size_t numLiteralsOf(Oop method) const;
+
+    /// Get the selector (penultimate literal) of a CompiledMethod as a string.
+    /// Returns "?" on failure.
+    std::string selectorOf(Oop method) const;
+
     /// Register a class in the class table, returns assigned index
     uint32_t registerClass(Oop classOop);
 

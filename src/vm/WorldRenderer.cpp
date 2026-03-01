@@ -138,20 +138,8 @@ WorldRenderer::WorldRenderer(ObjectMemory& memory)
     : memory_(memory) {}
 
 std::string WorldRenderer::getMorphClassName(Oop morph) const {
-    Oop morphClass = memory_.classOf(morph);
-    if (morphClass.isObject()) {
-        ObjectHeader* clsHdr = morphClass.asObjectPtr();
-        if (clsHdr->slotCount() > 6) {
-            Oop clsName = memory_.fetchPointer(6, morphClass);
-            if (clsName.isObject()) {
-                ObjectHeader* nameHdr = clsName.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                    return std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
-            }
-        }
-    }
-    return "Unknown";
+    std::string name = memory_.classNameOf(morph);
+    return name == "?" ? "Unknown" : name;
 }
 
 uint32_t WorldRenderer::extractColor(Oop colorObj) const {
@@ -238,12 +226,7 @@ bool WorldRenderer::extractBounds(Oop morph, int dispWidth, int dispHeight,
 }
 
 std::string WorldRenderer::extractString(Oop strObj) const {
-    if (strObj.isNil() || !strObj.isObject()) return "";
-    ObjectHeader* hdr = strObj.asObjectPtr();
-    if (hdr->isBytesObject() && hdr->byteSize() < 100) {
-        return std::string((char*)hdr->bytes(), hdr->byteSize());
-    }
-    return "";
+    return memory_.oopToString(strObj);
 }
 
 void WorldRenderer::renderMenuBar(uint32_t* pixels, int dispWidth, int dispHeight,
@@ -407,22 +390,10 @@ void WorldRenderer::renderMenuBar(uint32_t* pixels, int dispWidth, int dispHeigh
             Oop slotVal = memory_.fetchPointer(slot, selectedItem);
             if (slotVal.isNil() || !slotVal.isObject()) continue;
 
-            Oop slotClass = memory_.classOf(slotVal);
-            if (slotClass.isObject()) {
-                ObjectHeader* classHdr = slotClass.asObjectPtr();
-                if (classHdr->slotCount() > 6) {
-                    Oop className = memory_.fetchPointer(6, slotClass);
-                    if (className.isObject()) {
-                        ObjectHeader* nameHdr = className.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            std::string cn((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            if (cn.find("Menu") != std::string::npos) {
-                                menuMorph = slotVal;
-                                break;
-                            }
-                        }
-                    }
-                }
+            std::string cn = memory_.classNameOf(slotVal);
+            if (cn.find("Menu") != std::string::npos) {
+                menuMorph = slotVal;
+                break;
             }
         }
 

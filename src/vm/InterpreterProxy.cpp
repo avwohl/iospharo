@@ -367,26 +367,14 @@ static sqInt proxy_storePointerofObjectwithValue(sqInt fieldIndex, sqInt oop, sq
 // =====================================================================
 // Testing
 // =====================================================================
-// Helper: get class name as C string from a class Oop. Returns empty string on failure.
-static std::string proxyClassName(Oop cls) {
-    if (!cls.isObject()) return "";
-    ObjectHeader* hdr = cls.asObjectPtr();
-    if (hdr->slotCount() < 7) return "";
-    Oop nameOop = hdr->slotAt(6);  // slot 6 = name
-    if (!nameOop.isObject()) return "";
-    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-    if (!nameHdr->isBytesObject() || nameHdr->byteSize() > 100) return "";
-    return std::string(reinterpret_cast<const char*>(nameHdr->bytes()), nameHdr->byteSize());
-}
-
 static sqInt proxy_isKindOf(sqInt oop, char* aString) {
     if (!aString) return 0;
     Oop obj = sqIntToOop(oop);
     Oop cls = gMem->classOf(obj);
     Oop prev = Oop::nil();
     while (cls.isObject() && cls.rawBits() != prev.rawBits()) {
-        std::string name = proxyClassName(cls);
-        if (!name.empty() && name == aString) return 1;
+        std::string name = gMem->nameOfClass(cls);
+        if (name != "?" && name == aString) return 1;
         prev = cls;
         ObjectHeader* hdr = cls.asObjectPtr();
         if (hdr->slotCount() < 1) break;
@@ -398,9 +386,8 @@ static sqInt proxy_isKindOf(sqInt oop, char* aString) {
 static sqInt proxy_isMemberOf(sqInt oop, char* aString) {
     if (!aString) return 0;
     Oop obj = sqIntToOop(oop);
-    Oop cls = gMem->classOf(obj);
-    std::string name = proxyClassName(cls);
-    return (!name.empty() && name == aString) ? 1 : 0;
+    std::string name = gMem->classNameOf(obj);
+    return (name != "?" && name == aString) ? 1 : 0;
 }
 
 static sqInt proxy_isBytes(sqInt oop) {

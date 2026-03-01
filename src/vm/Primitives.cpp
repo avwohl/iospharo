@@ -12831,21 +12831,11 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
             Oop moduleOop = memory_.fetchPointer(0, literal);
             Oop nameOop = memory_.fetchPointer(1, literal);
 
-            // Extract strings
-            std::string moduleName, primName;
-
-            if (moduleOop.isObject() && memory_.isValidPointer(moduleOop)) {
-                ObjectHeader* modHdr = moduleOop.asObjectPtr();
-                if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
-                    moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
-                }
-            }
+            std::string moduleName = memory_.oopToString(moduleOop);
+            std::string primName = memory_.oopToString(nameOop);
 
             if (nameOop.isObject() && memory_.isValidPointer(nameOop)) {
                 ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 100) {
-                    primName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                }
                 // If nameOop is a FixedSize object, check its slots for module/name
                 if (nameHdr->format() == ObjectFormat::FixedSize && nameHdr->slotCount() >= 2) {
                     // This could be ExternalLibraryFunction - check slots
@@ -12853,8 +12843,8 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                         Oop innerOop = memory_.fetchPointer(j, nameOop);
                         if (innerOop.isObject() && memory_.isValidPointer(innerOop)) {
                             ObjectHeader* innerHdr = innerOop.asObjectPtr();
-                            if (innerHdr->isBytesObject() && innerHdr->byteSize() < 100) {
-                                std::string str((char*)innerHdr->bytes(), innerHdr->byteSize());
+                            if (innerHdr->isBytesObject()) {
+                                std::string str = memory_.oopToString(innerOop);
                                 // If this is slot 3 or 5, it might be module or function name
                                 if (j == 3) {
                                     moduleName = str;
@@ -12868,8 +12858,8 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                                     Oop deepOop = memory_.fetchPointer(k, innerOop);
                                     if (deepOop.isObject() && memory_.isValidPointer(deepOop)) {
                                         ObjectHeader* deepHdr = deepOop.asObjectPtr();
-                                        if (deepHdr->isBytesObject() && deepHdr->byteSize() < 100) {
-                                            std::string str((char*)deepHdr->bytes(), deepHdr->byteSize());
+                                        if (deepHdr->isBytesObject()) {
+                                            std::string str = memory_.oopToString(deepOop);
                                             // Extract module and primitive names
                                             if (str == "MiscPrimitivePlugin" || str == "primitiveStringHash") {
                                                 if (str.find("Plugin") != std::string::npos) {
@@ -12942,24 +12932,8 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
                 Oop moduleOop = memory_.fetchPointer(0, lit0);
                 Oop functionOop = memory_.fetchPointer(1, lit0);
 
-                std::string moduleName, functionName;
-
-                // Extract module name
-                if (moduleOop.isObject() && memory_.isValidPointer(moduleOop) &&
-                    moduleOop.rawBits() != memory_.nil().rawBits()) {
-                    ObjectHeader* modHdr = moduleOop.asObjectPtr();
-                    if (modHdr->isBytesObject() && modHdr->byteSize() < 100) {
-                        moduleName = std::string((char*)modHdr->bytes(), modHdr->byteSize());
-                    }
-                }
-
-                // Extract function name
-                if (functionOop.isObject() && memory_.isValidPointer(functionOop)) {
-                    ObjectHeader* funcHdr = functionOop.asObjectPtr();
-                    if (funcHdr->isBytesObject() && funcHdr->byteSize() < 100) {
-                        functionName = std::string((char*)funcHdr->bytes(), funcHdr->byteSize());
-                    }
-                }
+                std::string moduleName = memory_.oopToString(moduleOop);
+                std::string functionName = memory_.oopToString(functionOop);
 
                 if (!functionName.empty()) {
                     // First try named primitive lookup
@@ -22734,7 +22708,7 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
                     moduleName = "<SDL2-builtin>";
                 }
             } else if (moduleHdr->isBytesObject()) {
-                moduleName = std::string((char*)moduleHdr->bytes(), moduleHdr->byteSize());
+                moduleName = memory_.oopToString(moduleOop);
 
                 // For SDL2, use our built-in stubs
                 if (moduleName.find("SDL2") != std::string::npos ||

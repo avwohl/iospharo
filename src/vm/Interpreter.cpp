@@ -209,51 +209,8 @@ bool Interpreter::initialize() {
         Oop receiver = memory_.fetchPointer(5, currentCtx);
         Oop method = memory_.fetchPointer(3, currentCtx);
 
-        std::string rcvrClassName = "<unknown>";
-        std::string methodSelector = "<unknown>";
-
-        // Get receiver's class name
-        if (receiver.isObject() && receiver.rawBits() > 0x10000) {
-            Oop rcvrClass = memory_.classOf(receiver);
-            if (rcvrClass.isObject()) {
-                ObjectHeader* clsHdr = rcvrClass.asObjectPtr();
-                size_t clsSlots = clsHdr->slotCount();
-                Oop nameOop;
-                if (clsSlots == 6) {
-                    // Metaclass - get thisClass from slot 5, then name from slot 6
-                    Oop thisClass = memory_.fetchPointer(5, rcvrClass);
-                    if (thisClass.isObject() && thisClass.rawBits() > 0x10000) {
-                        ObjectHeader* tcHdr = thisClass.asObjectPtr();
-                        if (tcHdr->slotCount() >= 7) {
-                            nameOop = memory_.fetchPointer(6, thisClass);
-                        }
-                    }
-                } else if (clsSlots >= 7) {
-                    // Regular Class - name is at slot 6
-                    nameOop = memory_.fetchPointer(6, rcvrClass);
-                }
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() <= 50) {
-                        rcvrClassName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-        }
-
-        // Try to get method selector (literal 1 in CompiledMethod)
-        if (method.isObject() && method.rawBits() > 0x10000) {
-            ObjectHeader* methodHdr = method.asObjectPtr();
-            if (methodHdr->isCompiledMethod() && methodHdr->slotCount() >= 2) {
-                Oop selectorOop = memory_.fetchPointer(1, method);
-                if (selectorOop.isObject() && selectorOop.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = selectorOop.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() <= 50) {
-                        methodSelector = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    }
-                }
-            }
-        }
+        std::string rcvrClassName = memory_.classNameOf(receiver);
+        std::string methodSelector = memory_.selectorOf(method);
 
         // Check if we're in snapshot-related code
         if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
@@ -509,25 +466,10 @@ void Interpreter::stopVM(const char* reason) {
 
 void Interpreter::dumpCurrentMethod() {
     fprintf(stderr, "\n=== CURRENT METHOD (frameDepth=%zu) ===\n", frameDepth_);
-    auto getSel = [&](Oop method) -> std::string {
-        if (!method.isObject() || method.rawBits() < 0x10000) return "?";
-        ObjectHeader* mHdr = method.asObjectPtr();
-        if (!mHdr->isCompiledMethod()) return "?";
-        Oop hdr = memory_.fetchPointer(0, method);
-        if (!hdr.isSmallInteger()) return "?";
-        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-        if (numLits < 2 || numLits >= 100) return "?";
-        Oop sel = memory_.fetchPointer(numLits - 1, method);
-        if (!sel.isObject() || sel.rawBits() < 0x10000) return "?";
-        ObjectHeader* selHdr = sel.asObjectPtr();
-        if (!selHdr->isBytesObject() || selHdr->byteSize() >= 100) return "?";
-        return std::string((char*)selHdr->bytes(), selHdr->byteSize());
-    };
-    // Current method
-    fprintf(stderr, "  [current] #%s\n", getSel(method_).c_str());
+    fprintf(stderr, "  [current] #%s\n", memory_.selectorOf(method_).c_str());
     int count = 0;
     for (int f = static_cast<int>(frameDepth_); f >= 0 && count < 10; f--, count++) {
-        fprintf(stderr, "  [%d] #%s\n", f, getSel(savedFrames_[f].savedMethod).c_str());
+        fprintf(stderr, "  [%d] #%s\n", f, memory_.selectorOf(savedFrames_[f].savedMethod).c_str());
     }
     fprintf(stderr, "=== END ===\n\n");
 }
@@ -555,20 +497,7 @@ void Interpreter::dumpProcessQueues() {
             if (chdr->slotCount() < 6) break;
             Oop chainMeth = memory_.fetchPointer(3, chainCtx);
             std::string cmn = "?";
-            if (chainMeth.isObject() && chainMeth.rawBits() > 0x10000) {
-                Oop hdr = memory_.fetchPointer(0, chainMeth);
-                if (hdr.isSmallInteger()) {
-                    int nl = hdr.asSmallInteger() & 0x7FFF;
-                    if (nl >= 2 && nl < 100) {
-                        Oop sel = memory_.fetchPointer(nl - 1, chainMeth);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* sh = sel.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 50)
-                                cmn = std::string((char*)sh->bytes(), sh->byteSize());
-                        }
-                    }
-                }
-            }
+            cmn = memory_.selectorOf(chainMeth);
             Oop sender = memory_.fetchPointer(0, chainCtx);
             fprintf(stderr, "    [%d] ctx=0x%llx method=#%s\n", ci,
                     (unsigned long long)chainCtx.rawBits(), cmn.c_str());
@@ -596,20 +525,7 @@ void Interpreter::dumpProcessQueues() {
                 ObjectHeader* ch = ctx.asObjectPtr();
                 if (ch->slotCount() >= 6) {
                     Oop meth = memory_.fetchPointer(3, ctx);
-                    if (meth.isObject() && meth.rawBits() > 0x10000) {
-                        Oop hdr = memory_.fetchPointer(0, meth);
-                        if (hdr.isSmallInteger()) {
-                            int nl = hdr.asSmallInteger() & 0x7FFF;
-                            if (nl >= 2 && nl < 100) {
-                                Oop sel = memory_.fetchPointer(nl - 1, meth);
-                                if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                    ObjectHeader* sh = sel.asObjectPtr();
-                                    if (sh->isBytesObject() && sh->byteSize() < 50)
-                                        mname = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
+                    mname = memory_.selectorOf(meth);
                 }
             }
             fprintf(stderr, "  proc=0x%llx pri=%lld ctx=#%s\n",
@@ -2293,145 +2209,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 }
 
 
-// ===== STACK OPERATIONS =====
-
-void Interpreter::push(Oop value) {
-    if (stackPointer_ >= stack_.data() + MaxStackDepth) {
-        stopVM("Stack overflow in push()");
-        return;
-    }
-    *stackPointer_++ = value;
-}
-
-Oop Interpreter::pop() {
-    if (stackPointer_ <= stackBase_) {
-        return memory_.nil();  // Stack underflow
-    }
-    return *--stackPointer_;
-}
-
-Oop Interpreter::stackTop() const {
-    if (stackPointer_ <= stackBase_) {
-        return memory_.nil();
-    }
-    return *(stackPointer_ - 1);
-}
-
-Oop Interpreter::stackValue(size_t offset) const {
-    if (stackPointer_ - offset <= stackBase_) {
-        return memory_.nil();
-    }
-    return *(stackPointer_ - 1 - offset);
-}
-
-void Interpreter::stackValuePut(size_t offset, Oop value) {
-    *(stackPointer_ - 1 - offset) = value;
-}
-
-void Interpreter::popN(size_t n) {
-    stackPointer_ -= n;
-    if (stackPointer_ < stackBase_) {
-        stackPointer_ = stackBase_;
-    }
-}
+// push/pop/stackTop/stackValue/stackValuePut/popN/fetchByte/fetchTwoBytes
+// are defined inline in Interpreter.hpp for performance.
 
 // ===== BYTECODE IMPLEMENTATIONS =====
 
-uint8_t Interpreter::fetchByte() {
-    // Bounds check: detect when IP is past bytecodeEnd_
-    if (instructionPointer_ >= bytecodeEnd_) {
-        // Return 0x5C (returnTop) to try to recover gracefully
-        return 0x5C;
-    }
-    return *instructionPointer_++;
-}
-
-uint16_t Interpreter::fetchTwoBytes() {
-    uint8_t hi = fetchByte();
-    uint8_t lo = fetchByte();
-    return (hi << 8) | lo;
-}
-
 void Interpreter::pushReceiverVariable(int index) {
-
-    // Trace ALL instance variable reads to debug SessionManager default
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        static FILE* civLog = nullptr;
-        static int civCount = 0;
-        if (!civLog) civLog = nullptr;
-
-        // Check if receiver is SessionManager - trace bytecodes
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            Oop cls = memory_.classOf(receiver_);
-            if (cls.isObject()) {
-                Oop clsName = memory_.fetchPointer(6, cls);
-                if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                    ObjectHeader* cnHdr = clsName.asObjectPtr();
-                    if (cnHdr->isBytesObject() && cnHdr->byteSize() == 14) {
-                        std::string n((char*)cnHdr->bytes(), 14);
-                        if (n == "SessionManager") {
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also log when we read nil from any object at index > 10 (likely class instvar)
-        Oop result = memory_.fetchPointer(index, receiver_);
-        Oop nilObj = memory_.nil();
-
-        if (civLog && civCount < 200) {
-            bool shouldLog = false;
-            std::string rcvrName = "<unknown>";
-
-            // Check if receiver is a class object
-            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-
-                // Get class name for classes, or instance class name for others
-                if (rcvrHdr->slotCount() >= 7) {
-                    Oop nameOop = memory_.fetchPointer(6, receiver_);
-                    if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                        ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                        if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                            rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                            shouldLog = true;
-                        }
-                    }
-                }
-
-                // Also get instance class name if above didn't work
-                if (rcvrName == "<unknown>") {
-                    Oop cls = memory_.classOf(receiver_);
-                    if (cls.isObject()) {
-                        Oop clsName = memory_.fetchPointer(6, cls);
-                        if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                            ObjectHeader* cnHdr = clsName.asObjectPtr();
-                            if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                                rcvrName = "[" + std::string((char*)cnHdr->bytes(), cnHdr->byteSize()) + " instance]";
-                            }
-                        }
-                    }
-                }
-
-                // Log if: reading from class object at high index OR reading nil from any index > 10
-                // OR if name contains "Session"
-                bool isHighIndex = (index >= 11);
-                bool isNilResult = (result.rawBits() == nilObj.rawBits());
-                bool isSessionRelated = (rcvrName.find("Session") != std::string::npos);
-
-                if (isSessionRelated || (isHighIndex && shouldLog) || civCount < 30) {
-                    civCount++;
-                    fprintf(civLog, "[INSTVAR #%d] %s slot[%d] = 0x%llx%s (receiver=0x%llx)\n",
-                            civCount, rcvrName.c_str(), index,
-                            (unsigned long long)result.rawBits(),
-                            isNilResult ? " [NIL!]" : "",
-                            (unsigned long long)receiver_.rawBits());
-                    fflush(civLog);
-                }
-            }
-        }
-    }
     Oop result = memory_.fetchPointer(index, receiver_);
     push(result);
 }
@@ -2447,24 +2230,7 @@ void Interpreter::pushTemporary(int index) {
             if (!nilTempLog) nilTempLog = nullptr;
             if (nilTempLog && nilTempCount < 100) {
                 nilTempCount++;
-                // Get method selector for context
-                std::string methodSel = "<unknown>";
-                if (method_.isObject() && method_.rawBits() > 0x10000) {
-                    ObjectHeader* mHdr = method_.asObjectPtr();
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* selHdr = sel.asObjectPtr();
-                                if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                    methodSel = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
+                std::string methodSel = memory_.selectorOf(method_);
                 fprintf(nilTempLog, "[NIL-TEMP #%d] pushTemporary(%d) = nil in %s frameDepth=%zu\n",
                         nilTempCount, index, methodSel.c_str(), frameDepth_);
                 // Dump first few temps
@@ -2531,25 +2297,7 @@ void Interpreter::storeTemporary(int index) {
         static int snapStoreCount = 0;
         if (!snapStoreLog) snapStoreLog = nullptr;
         if (snapStoreLog && snapStoreCount < 100) {
-            std::string methodSel = "<unknown>";
-            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                ObjectHeader* mHdr = method_.asObjectPtr();
-                if (mHdr->isCompiledMethod()) {
-                    Oop hdr = memory_.fetchPointer(0, method_);
-                    if (hdr.isSmallInteger()) {
-                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                        if (numLits >= 2) {
-                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                ObjectHeader* slHdr = selLit.asObjectPtr();
-                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            std::string methodSel = memory_.selectorOf(method_);
             if (methodSel.find("snapshot") != std::string::npos ||
                 methodSel.find("Session") != std::string::npos ||
                 snapStoreCount < 30) {
@@ -2947,65 +2695,15 @@ terminate_process:
         static int methodChangeCount = 0;
         if (!methodChangeLog) methodChangeLog = nullptr;
 
-        // Get method name BEFORE popFrame
-        std::string beforeMethod = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, method_);
-            if (mHdr.isSmallInteger()) {
-                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            beforeMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
+        std::string beforeMethod = memory_.selectorOf(method_);
 
-        // Get method that WILL be restored
         std::string willBeRestoredTo = "<none>";
-        if (frameDepth_ > 0) {
-            const auto& frame = savedFrames_[frameDepth_ - 1];
-            if (frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
-                Oop mHdr = memory_.fetchPointer(0, frame.savedMethod);
-                if (mHdr.isSmallInteger()) {
-                    size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                    if (numLits >= 2) {
-                        Oop sel = memory_.fetchPointer(numLits - 1, frame.savedMethod);
-                        if (sel.isObject() && sel.rawBits() > 0x10000) {
-                            ObjectHeader* selHdr = sel.asObjectPtr();
-                            if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                                willBeRestoredTo = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        if (frameDepth_ > 0)
+            willBeRestoredTo = memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod);
 
-        // Pop frame and push result
         popFrame();
 
-        // Get method name AFTER popFrame
-        std::string afterMethod = "<unknown>";
-        if (method_.isObject() && method_.rawBits() > 0x10000) {
-            Oop mHdr = memory_.fetchPointer(0, method_);
-            if (mHdr.isSmallInteger()) {
-                size_t numLits = mHdr.asSmallInteger() & 0x7FFF;
-                if (numLits >= 2) {
-                    Oop sel = memory_.fetchPointer(numLits - 1, method_);
-                    if (sel.isObject() && sel.rawBits() > 0x10000) {
-                        ObjectHeader* selHdr = sel.asObjectPtr();
-                        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                            afterMethod = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
+        std::string afterMethod = memory_.selectorOf(method_);
 
         // Log transitions involving fullCheck - get IP offset AFTER popFrame (where we'll resume)
         if (methodChangeLog && methodChangeCount < 5000) {
@@ -3722,49 +3420,8 @@ void Interpreter::arithmeticSend(int which) {
                                                   "*", "/", "\\\\", "@", "bitShift:", "//", "bitAnd:", "bitOr:"};
                 const char* op = (which >= 0 && which < 16) ? opNames[which] : "?";
 
-                // Get receiver class
-                std::string rcvrClass = "SmallInt";
-                if (!rcvr.isSmallInteger()) {
-                    if (rcvr.isSmallFloat()) rcvrClass = "SmallFloat";
-                    else if (rcvr.isCharacter()) rcvrClass = "Character";
-                    else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                        Oop cls = memory_.classOf(rcvr);
-                        if (cls.isObject()) {
-                            ObjectHeader* clsHdr = cls.asObjectPtr();
-                            if (clsHdr->slotCount() >= 7) {
-                                Oop nm = clsHdr->slotAt(6);
-                                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                                    ObjectHeader* nmHdr = nm.asObjectPtr();
-                                    if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
-                                        rcvrClass = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Get arg class
-                std::string argClass = "SmallInt";
-                if (!arg.isSmallInteger()) {
-                    if (arg.isSmallFloat()) argClass = "SmallFloat";
-                    else if (arg.isCharacter()) argClass = "Character";
-                    else if (arg.isObject() && arg.rawBits() > 0x10000) {
-                        Oop cls = memory_.classOf(arg);
-                        if (cls.isObject()) {
-                            ObjectHeader* clsHdr = cls.asObjectPtr();
-                            if (clsHdr->slotCount() >= 7) {
-                                Oop nm = clsHdr->slotAt(6);
-                                if (nm.isObject() && nm.rawBits() > 0x10000) {
-                                    ObjectHeader* nmHdr = nm.asObjectPtr();
-                                    if (nmHdr->isBytesObject() && nmHdr->byteSize() < 50) {
-                                        argClass = std::string((char*)nmHdr->bytes(), nmHdr->byteSize());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                std::string rcvrClass = memory_.classNameOf(rcvr);
+                std::string argClass = memory_.classNameOf(arg);
 
                 fprintf(arithLog2, "[ARITH #%d] %s %s %s (fd=%zu)",
                         arithCount2, rcvrClass.c_str(), op, argClass.c_str(), frameDepth_);
@@ -4446,56 +4103,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     if (!actLog) actLog = nullptr;
     if (actLog && actCount < 200) {
         // TRACE: Inside actLog && actCount condition
-        // Get method selector for logging
-        std::string selStr = "<unknown>";
-        // TRACE: Getting selStr
-        if (method.isObject()) {
-            ObjectHeader* mHdr = method.asObjectPtr();
-            if (mHdr->slotCount() > 1) {
-                Oop selector = memory_.fetchPointer(1, method);
-                if (selector.isObject() && selector.rawBits() > 0x10000) {
-                    ObjectHeader* selHdr = selector.asObjectPtr();
-                    if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-                        selStr = std::string((char*)selHdr->bytes(), selHdr->byteSize());
-                    }
-                }
-            }
-        }
-        // TRACE: Got selStr
-        // Check if receiver is SessionManager
-        std::string rcvrName = "<unknown>";
-        // TRACE: Getting rcvrName
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            ObjectHeader* rcvrHdr = receiver_.asObjectPtr();
-            // TRACE: rcvrHdr info
-            if (rcvrHdr->slotCount() >= 7) {
-                // TRACE: Fetching slot 6
-                Oop nameOop = memory_.fetchPointer(6, receiver_);
-                // TRACE: Got slot 6
-                // Validate nameOop is in valid heap range before dereferencing
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000 &&
-                    memory_.isValidObject(nameOop)) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 50) {
-                        rcvrName = std::string((char*)nameHdr->bytes(), nameHdr->byteSize());
-                    }
-                }
-            }
-            // Also get class name for non-class receivers
-            if (rcvrName == "<unknown>") {
-                // TRACE: Getting class name
-                Oop cls = memory_.classOf(receiver_);
-                if (cls.isObject()) {
-                    Oop clsName = memory_.fetchPointer(6, cls);
-                    if (clsName.isObject() && clsName.rawBits() > 0x10000) {
-                        ObjectHeader* cnHdr = clsName.asObjectPtr();
-                        if (cnHdr->isBytesObject() && cnHdr->byteSize() < 50) {
-                            rcvrName = std::string((char*)cnHdr->bytes(), cnHdr->byteSize());
-                        }
-                    }
-                }
-            }
-        }
+        std::string selStr = memory_.selectorOf(method);
+        std::string rcvrName = memory_.classNameOf(receiver_);
         // Log class method activations - focus on 'default' and Session-related
         bool shouldLog = (selStr == "default" || selStr == "current" || selStr == "currentSession" ||
                           rcvrName == "SessionManager" || rcvrName.find("Session") != std::string::npos ||
@@ -5000,25 +4609,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         fprintf(crashLog, "  recent frames:\n");
         for (size_t fi = frameDepth_; fi > 0 && fi > frameDepth_ - 8; --fi) {
             SavedFrame& sf = savedFrames_[fi - 1];
-            std::string selStr = "?";
-            if (sf.savedMethod.isObject() && sf.savedMethod.rawBits() > 0x10000) {
-                ObjectHeader* sm = sf.savedMethod.asObjectPtr();
-                if (sm->isCompiledMethod()) {
-                    Oop mh = sm->slotAt(0);
-                    if (mh.isSmallInteger()) {
-                        size_t nl = mh.asSmallInteger() & 0x7FFF;
-                        if (nl >= 2 && nl < sm->slotCount()) {
-                            Oop sel = sm->slotAt(nl - 1);
-                            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                                ObjectHeader* sh = sel.asObjectPtr();
-                                if (sh->isBytesObject() && sh->byteSize() < 80) {
-                                    selStr = std::string((char*)sh->bytes(), sh->byteSize());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            std::string selStr = memory_.selectorOf(sf.savedMethod);
             fprintf(crashLog, "    frame[%zu] #%s method=0x%llx\n",
                     fi-1, selStr.c_str(), (unsigned long long)sf.savedMethod.rawBits());
         }
@@ -8560,37 +8151,8 @@ void Interpreter::logCurrentMethod(FILE* out) {
                 (unsigned long long)method_.rawBits());
         return;
     }
-    // Extract selector from method (last literal before association)
-    Oop methodHeader = memory_.fetchPointer(0, method_);
-    std::string selName = "?";
-    if (methodHeader.isSmallInteger()) {
-        int numLiterals = methodHeader.asSmallInteger() & 0x7FFF;
-        if (numLiterals >= 2) {
-            Oop sel = memory_.fetchPointer(numLiterals - 1, method_);
-            if (sel.isObject() && sel.rawBits() > 0x10000) {
-                ObjectHeader* selH = sel.asObjectPtr();
-                if (selH->isBytesObject() && selH->byteSize() < 100) {
-                    selName = std::string((char*)selH->bytes(), selH->byteSize());
-                }
-            }
-        }
-    }
-    // Get receiver class name
-    std::string rcvrClassName = "?";
-    if (receiver_.isSmallInteger()) rcvrClassName = "SmallInteger";
-    else if (receiver_.isNil()) rcvrClassName = "nil";
-    else if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-        Oop cls = memory_.classOf(receiver_);
-        if (cls.isObject() && cls.rawBits() > 0x10000 && memory_.slotCountOf(cls) > 6) {
-            Oop nameOop = memory_.fetchPointer(6, cls);
-            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                ObjectHeader* nh = nameOop.asObjectPtr();
-                if (nh->isBytesObject() && nh->byteSize() < 80) {
-                    rcvrClassName = std::string((char*)nh->bytes(), nh->byteSize());
-                }
-            }
-        }
-    }
+    std::string selName = memory_.selectorOf(method_);
+    std::string rcvrClassName = memory_.classNameOf(receiver_);
     int pc = 0;
     if (instructionPointer_ && method_.isObject()) {
         pc = (int)(instructionPointer_ - method_.asObjectPtr()->bytes());

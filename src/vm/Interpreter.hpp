@@ -275,24 +275,49 @@ public:
     Oop receiver() const { return receiver_; }
 
     // ===== STACK ACCESS (for primitives) =====
+    // These are inline for performance — called millions of times per second.
 
     /// Push a value onto the stack
-    void push(Oop value);
+    inline void push(Oop value) {
+        if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
+            stopVM("Stack overflow in push()");
+            return;
+        }
+        *stackPointer_++ = value;
+    }
 
     /// Pop a value from the stack
-    Oop pop();
+    inline Oop pop() {
+        if (__builtin_expect(stackPointer_ <= stackBase_, 0))
+            return memory_.nil();
+        return *--stackPointer_;
+    }
 
     /// Peek at stack top without popping
-    Oop stackTop() const;
+    inline Oop stackTop() const {
+        if (__builtin_expect(stackPointer_ <= stackBase_, 0))
+            return memory_.nil();
+        return *(stackPointer_ - 1);
+    }
 
     /// Get stack value at offset from top (0 = top)
-    Oop stackValue(size_t offset) const;
+    inline Oop stackValue(size_t offset) const {
+        if (__builtin_expect(stackPointer_ - offset <= stackBase_, 0))
+            return memory_.nil();
+        return *(stackPointer_ - 1 - offset);
+    }
 
     /// Write stack value at offset from top (0 = top)
-    void stackValuePut(size_t offset, Oop value);
+    inline void stackValuePut(size_t offset, Oop value) {
+        *(stackPointer_ - 1 - offset) = value;
+    }
 
     /// Pop multiple values
-    void popN(size_t n);
+    inline void popN(size_t n) {
+        stackPointer_ -= n;
+        if (__builtin_expect(stackPointer_ < stackBase_, 0))
+            stackPointer_ = stackBase_;
+    }
 
     /// Number of arguments in current activation
     int argumentCount() const { return argCount_; }
@@ -1839,10 +1864,18 @@ private:
     // ===== HELPER METHODS =====
 
     /// Fetch next bytecode
-    uint8_t fetchByte();
+    inline uint8_t fetchByte() {
+        if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0))
+            return 0x5C;  // returnTop — graceful recovery
+        return *instructionPointer_++;
+    }
 
     /// Fetch next 2 bytes as big-endian uint16
-    uint16_t fetchTwoBytes();
+    inline uint16_t fetchTwoBytes() {
+        uint8_t hi = fetchByte();
+        uint8_t lo = fetchByte();
+        return (hi << 8) | lo;
+    }
 
     /// Check if value is true/false
     bool isTrue(Oop value) const;

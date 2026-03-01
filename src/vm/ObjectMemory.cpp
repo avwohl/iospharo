@@ -967,6 +967,67 @@ size_t ObjectMemory::fixedFieldCountOf(Oop obj) const {
     return fixedFieldCountOf(obj.asObjectPtr());
 }
 
+std::string ObjectMemory::oopToString(Oop obj) const {
+    if (!obj.isObject()) return "";
+    ObjectHeader* hdr = obj.asObjectPtr();
+    if (!hdr->isBytesObject()) return "";
+    return std::string(reinterpret_cast<const char*>(hdr->bytes()), hdr->byteSize());
+}
+
+size_t ObjectMemory::numLiteralsOf(Oop method) const {
+    if (!method.isObject()) return 0;
+    ObjectHeader* hdr = method.asObjectPtr();
+    if (hdr->slotCount() < 1) return 0;
+    Oop header = hdr->slotAt(0);
+    if (!header.isSmallInteger()) return 0;
+    return static_cast<size_t>(header.asSmallInteger() & 0x7FFF);
+}
+
+std::string ObjectMemory::selectorOf(Oop method) const {
+    size_t numLits = numLiteralsOf(method);
+    if (numLits < 2) return "?";
+    // Selector is the penultimate literal (slot numLiterals - 1, 0-based from slot 1)
+    Oop sel = fetchPointer(numLits - 1, method);
+    std::string name = oopToString(sel);
+    return name.empty() ? "?" : name;
+}
+
+std::string ObjectMemory::nameOfClass(Oop classObj) const {
+    if (!classObj.isObject()) return "?";
+    ObjectHeader* clsHdr = classObj.asObjectPtr();
+    size_t clsSlots = clsHdr->slotCount();
+
+    Oop nameOop;
+    if (clsSlots == 6) {
+        // Metaclass — get thisClass from slot 5, then name from slot 6
+        Oop thisClass = clsHdr->slotAt(5);
+        if (!thisClass.isObject()) return "?";
+        ObjectHeader* tcHdr = thisClass.asObjectPtr();
+        if (tcHdr->slotCount() < 7) return "?";
+        nameOop = tcHdr->slotAt(6);
+    } else if (clsSlots >= 7) {
+        nameOop = clsHdr->slotAt(6);
+    } else {
+        return "?";
+    }
+
+    std::string name = oopToString(nameOop);
+    if (name.empty()) return "?";
+    if (clsSlots == 6) return name + " class";
+    return name;
+}
+
+std::string ObjectMemory::classNameOf(Oop obj) const {
+    if (obj.isNil()) return "nil";
+    if (!obj.isObject()) {
+        if (obj.isSmallInteger()) return "SmallInteger";
+        if (obj.isCharacter()) return "Character";
+        if (obj.isSmallFloat()) return "SmallFloat64";
+        return "?";
+    }
+    return nameOfClass(classOf(obj));
+}
+
 size_t ObjectMemory::byteSizeOf(Oop obj) const {
     if (!obj.isObject()) return 0;
     return obj.asObjectPtr()->byteSize();
