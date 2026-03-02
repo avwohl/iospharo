@@ -130,6 +130,25 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         textureWidth = width
         textureHeight = height
 
+        // Fill with grey matching the view's clear color to prevent garbage flash.
+        // GPU texture memory is uninitialized and may contain stale data from
+        // previous operations, which appears as random colored pixels.
+        if let texture = displayTexture {
+            let count = width * height
+            let grey = [UInt32](repeating: 0xFFEBEBEB, count: count)
+            grey.withUnsafeBufferPointer { buf in
+                texture.replace(
+                    region: MTLRegion(
+                        origin: MTLOrigin(x: 0, y: 0, z: 0),
+                        size: MTLSize(width: width, height: height, depth: 1)
+                    ),
+                    mipmapLevel: 0,
+                    withBytes: buf.baseAddress!,
+                    bytesPerRow: width * 4
+                )
+            }
+        }
+
         #if DEBUG
         NSLog("[METAL] Created texture \(width)x\(height)")
         #endif

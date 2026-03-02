@@ -296,6 +296,17 @@ class PharoCanvasViewController: UIViewController {
         mtkView.enableSetNeedsDisplay = false
         mtkView.preferredFramesPerSecond = 30
 
+        // Grey background prevents uninitialized GPU memory (random colored pixels)
+        // from flashing before Metal's first draw presents the clear color.
+        mtkView.backgroundColor = UIColor(white: 0.92, alpha: 1.0)
+
+        // Set up the Metal renderer BEFORE adding to the view hierarchy.
+        // This ensures the delegate catches the very first display-link callback
+        // instead of exposing uninitialized CAMetalLayer drawable content.
+        if let bridge = bridge {
+            renderer = MetalRenderer(metalView: mtkView, bridge: bridge)
+        }
+
         view.addSubview(mtkView)
         #if targetEnvironment(macCatalyst)
         // Mac Catalyst: use safe area for top (title bar / traffic lights)
@@ -316,10 +327,6 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #endif
-
-        if let bridge = bridge {
-            renderer = MetalRenderer(metalView: mtkView, bridge: bridge)
-        }
 
         setupGestureRecognizers()
 
