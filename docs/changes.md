@@ -1,3 +1,41 @@
+# What's New in Build 44
+
+Build 44 — 2026-03-01
+
+## Code Quality
+
+### Codebase Simplification (Round 1)
+Full review of ~55K lines of C++ and ~3.7K lines of Swift. Removed dead
+code, deduplicated logic, and improved efficiency:
+
+  - Removed ~670 lines of dead code (unused diagnostics, commented-out
+    debug blocks, unreachable methods, dead Smalltalk scripts)
+  - Deduplicated identity hash primitives (fixed 30-bit vs 22-bit mask
+    inconsistency between primitiveIdentityHash and SmallInteger variant)
+  - Consolidated fixedFieldCountOf, bitwise primitives (BitAnd/Or/Xor),
+    and version label formatting into shared helpers
+  - Replaced per-pixel display copy with memcpy in syncDisplayToSurface
+  - Changed passThroughEvents_ from vector to deque for O(1) front removal
+  - Deduplicated build-third-party.sh platform setup (5 functions to 1)
+    and meson cross-file generation
+  - Added script safety (set -euo pipefail, timeout on app launch)
+
+### Codebase Simplification (Round 2)
+Added ObjectMemory utility functions and inlined hot-path operations:
+
+  - Inlined push/pop/stackTop/stackValue/fetchByte into Interpreter.hpp
+    with __builtin_expect branch hints for better codegen
+  - Added oopToString, nameOfClass, classNameOf, numLiteralsOf, selectorOf
+    utilities — replaced ~30 inline string/header extraction patterns
+  - Deduplicated keyboard event processing between MTKView and
+    ViewController (postKeyDown/postKeyUp + shouldHandleKeyInPresses)
+  - Gated recentBytecodes_ recording behind ENABLE_DEBUG_LOGGING flag
+    to remove a per-bytecode write from the release hot path
+
+Net result: ~810 lines removed across both rounds.
+
+---
+
 # What's New in Build 42
 
 Build 42 — 2026-03-01
