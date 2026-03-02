@@ -257,9 +257,31 @@ struct ModifierStrip: View {
 
     private var isIPad: Bool { bridge.isIPad }
 
-    private var buttonSize: CGFloat { isIPad ? 28 : 32 }
     private var buttonSpacing: CGFloat { isIPad ? 3 : 4 }
     private var stripWidth: CGFloat { isIPad ? 38 : 40 }
+
+    /// Full-size buttons (modifiers at top, iPad buttons)
+    private var buttonSize: CGFloat { isIPad ? 28 : 32 }
+    /// Smaller size for iPhone action buttons at the bottom of the strip
+    private var actionButtonSize: CGFloat { 26 }
+
+    /// Top padding for iPhone strip to clear the Dynamic Island / notch.
+    /// The parent HStack ignores horizontal safe areas so the strip extends
+    /// under the notch.  We read the window's actual leading safe area inset
+    /// (which reflects the notch depth) and use it as top padding so buttons
+    /// start just below the camera cutout.
+    private var iPhoneTopPadding: CGFloat {
+        guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene }).first,
+              let window = windowScene.windows.first else { return 6 }
+        let insets = window.safeAreaInsets
+        // In landscape the notch side has a large left or right inset
+        let notchInset = max(insets.left, insets.right)
+        // If notch inset > 40pt we're on a notch/DI device in landscape —
+        // use it as top padding to clear the camera area.  Otherwise just
+        // use minimal padding.
+        return notchInset > 40 ? notchInset : 6
+    }
 
     var body: some View {
         if isIPad {
@@ -276,20 +298,30 @@ struct ModifierStrip: View {
             }
             .frame(width: stripWidth)
         } else {
-            // iPhone: when keyboard is showing, hide action buttons to save space
+            // iPhone: top buttons pushed below Dynamic Island,
+            // action buttons use smaller size, hidden when keyboard is showing
             VStack(spacing: buttonSpacing) {
                 keyboardButton
                 ctrlButton
                 cmdButton
                 Spacer()
                 if !keyboardVisible {
-                    backspaceButton
-                    doItButton
-                    printButton
-                    inspectButton
+                    iPhoneActionButton(icon: "delete.left", tooltip: "Backspace") {
+                        bridge.sendRawKey(8, keyCode: 8)
+                    }
+                    iPhoneActionButton(icon: "play.fill", tooltip: "DoIt (Cmd+D)") {
+                        bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
+                    }
+                    iPhoneActionButton(icon: "text.append", tooltip: "PrintIt (Cmd+P)") {
+                        bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
+                    }
+                    iPhoneActionButton(icon: "eyeglasses", tooltip: "InspectIt (Cmd+I)") {
+                        bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+                    }
                 }
             }
-            .padding(.vertical, 6)
+            .padding(.top, iPhoneTopPadding)
+            .padding(.bottom, 6)
             .padding(.horizontal, 2)
             .frame(width: stripWidth)
             .background(Color(.systemGray6).opacity(0.95))
@@ -408,6 +440,12 @@ struct ModifierStrip: View {
                 }
             }
         }
+    }
+
+    /// Smaller action button for the iPhone strip bottom section
+    private func iPhoneActionButton(icon: String, tooltip: String,
+                                     action: @escaping () -> Void) -> some View {
+        StripButton(icon: icon, size: actionButtonSize, tooltip: tooltip, action: action)
     }
 
     private var stripDivider: some View {
