@@ -28,8 +28,12 @@ except ImportError:
 # Device database (from device-geometry skill Part 1 + Part 4)
 # ---------------------------------------------------------------------------
 
-# Each entry: (portrait_w_pt, portrait_h_pt, scale, R, SA_top, SA_bottom,
+# Each entry: (name, w_pt, h_pt, scale, R, SA_top, SA_lead, SA_bot,
 #              cutout_type, cutout_info)
+#   w_pt, h_pt: landscape dimensions in points
+#   SA_top:  top safe area in landscape (status bar for iPads; 0 for iPhones)
+#   SA_lead: leading/trailing safe area in landscape (DI/notch for iPhones; 0 for iPads)
+#   SA_bot:  bottom safe area (home indicator)
 # cutout_type: "di", "notch_wide", "notch_narrow", "none"
 # cutout_info for DI: (width_pt=126, height_pt=37, corner_r=18.5, gap_from_edge=11)
 # cutout_info for notch: (depth_pt, span_pt)
@@ -39,24 +43,41 @@ NOTCH_WIDE = (30, 209)    # X/XS/12-era
 NOTCH_NARROW = (32, 166)  # 13/14/16e-era
 
 DEVICES = {
-    # (landscape_w_px, landscape_h_px): (name, w_pt, h_pt, scale, R, SA_lead, SA_bot, cutout_type, cutout_info)
+    # (landscape_w_px, landscape_h_px): (name, w_pt, h_pt, scale, R, SA_top, SA_lead, SA_bot, cutout_type, cutout_info)
 
-    # Dynamic Island phones
-    (2556, 1179): ("iPhone 14P/15/15P/16",       852, 393, 3, 55.0,  59, 21, "di", DI_INFO),
-    (2796, 1290): ("iPhone 14PM/15+/15PM/16+",   932, 430, 3, 55.0,  59, 21, "di", DI_INFO),
-    (2622, 1206): ("iPhone 16 Pro",               874, 402, 3, 62.0,  62, 21, "di", DI_INFO),
-    (2868, 1320): ("iPhone 16 Pro Max",           956, 440, 3, 62.0,  62, 21, "di", DI_INFO),
+    # ── iPhones: Dynamic Island ──────────────────────────────────────────
+    #  SA_top=0 (status bar merges with DI area on sides in landscape)
+    (2556, 1179): ("iPhone 14P/15/15P/16",       852, 393, 3, 55.0, 0, 59, 21, "di", DI_INFO),
+    (2796, 1290): ("iPhone 14PM/15+/15PM/16+",   932, 430, 3, 55.0, 0, 59, 21, "di", DI_INFO),
+    (2622, 1206): ("iPhone 16 Pro",               874, 402, 3, 62.0, 0, 62, 21, "di", DI_INFO),
+    (2868, 1320): ("iPhone 16 Pro Max",           956, 440, 3, 62.0, 0, 62, 21, "di", DI_INFO),
 
-    # Notch phones
-    (2436, 1125): ("iPhone X/XS/11 Pro",          812, 375, 3, 39.0,  44, 21, "notch_wide",   NOTCH_WIDE),
-    (2688, 1242): ("iPhone XS Max/11 Pro Max",    896, 414, 3, 39.0,  44, 21, "notch_wide",   NOTCH_WIDE),
-    (1792,  828): ("iPhone XR/11",                896, 414, 2, 41.5,  48, 21, "notch_wide",   NOTCH_WIDE),
-    (2340, 1080): ("iPhone 12 mini/13 mini",      812, 375, 3, 44.0,  50, 21, "notch_narrow", NOTCH_NARROW),
-    (2532, 1170): ("iPhone 12/13/14/16e",         844, 390, 3, 47.33, 47, 21, "notch_narrow", NOTCH_NARROW),
-    (2778, 1284): ("iPhone 12PM/13PM/14 Plus",    926, 428, 3, 53.33, 47, 21, "notch_narrow", NOTCH_NARROW),
+    # ── iPhones: Notch ───────────────────────────────────────────────────
+    (2436, 1125): ("iPhone X/XS/11 Pro",          812, 375, 3, 39.0, 0, 44, 21, "notch_wide",   NOTCH_WIDE),
+    (2688, 1242): ("iPhone XS Max/11 Pro Max",    896, 414, 3, 39.0, 0, 44, 21, "notch_wide",   NOTCH_WIDE),
+    (1792,  828): ("iPhone XR/11",                896, 414, 2, 41.5, 0, 48, 21, "notch_wide",   NOTCH_WIDE),
+    (2340, 1080): ("iPhone 12 mini/13 mini",      812, 375, 3, 44.0, 0, 50, 21, "notch_narrow", NOTCH_NARROW),
+    (2532, 1170): ("iPhone 12/13/14/16e",         844, 390, 3, 47.33,0, 47, 21, "notch_narrow", NOTCH_NARROW),
+    (2778, 1284): ("iPhone 12PM/13PM/14 Plus",    926, 428, 3, 53.33,0, 47, 21, "notch_narrow", NOTCH_NARROW),
 
-    # No cutout
-    (1334,  750): ("iPhone SE 2/3",               667, 375, 2, 0,     20,  0, "none", None),
+    # ── iPhones: No cutout ───────────────────────────────────────────────
+    (1334,  750): ("iPhone SE 2/3",               667, 375, 2, 0,    20, 0,  0, "none", None),
+
+    # ── iPads: Rounded corners (no home button) ──────────────────────────
+    # All rounded-corner iPads: R=18pt, @2x, SA_top=24, SA_lead=0, SA_bot=20
+    # No cutout (no DI, no notch) on any iPad
+    (2752, 2064): ("iPad Pro 13\" M4/M5",        1376, 1032, 2, 18.0, 24, 0, 20, "none", None),
+    (2732, 2048): ("iPad Pro 12.9\"/Air 13\"",   1366, 1024, 2, 18.0, 24, 0, 20, "none", None),
+    (2420, 1668): ("iPad Pro 11\" M4/M5",        1210,  834, 2, 18.0, 24, 0, 20, "none", None),
+    (2388, 1668): ("iPad Pro 11\" (1st-4th)",    1194,  834, 2, 18.0, 24, 0, 20, "none", None),
+    (2360, 1640): ("iPad Air 11\"/10th/11th",    1180,  820, 2, 18.0, 24, 0, 20, "none", None),
+    (2266, 1488): ("iPad mini 6/7",              1133,  744, 2, 18.0, 24, 0, 20, "none", None),
+
+    # ── iPads: Rectangular (home button) ─────────────────────────────────
+    # R=0, SA_top=20, SA_lead=0, SA_bot=0, @2x
+    (2224, 1668): ("iPad Air 3/Pro 10.5\"",      1112,  834, 2, 0,    20, 0,  0, "none", None),
+    (2160, 1620): ("iPad 7th/8th/9th",           1080,  810, 2, 0,    20, 0,  0, "none", None),
+    (2048, 1536): ("iPad mini 5/Air 2/Pro 9.7\"", 1024, 768, 2, 0,    20, 0,  0, "none", None),
 }
 
 
@@ -151,7 +172,7 @@ def draw_notch(mask, w_pt, h_pt, scale, orientation, notch_info):
         draw.rectangle([x0, y0, x1, y1], fill=(0, 0, 0, 255))
 
 
-def draw_safe_areas(img, w_pt, h_pt, scale, sa_lead, sa_bot, orientation):
+def draw_safe_areas(img, w_pt, h_pt, scale, sa_top, sa_lead, sa_bot, orientation):
     """Draw safe area boundary lines on the image."""
     draw = ImageDraw.Draw(img)
     w_px = int(w_pt * scale)
@@ -161,20 +182,27 @@ def draw_safe_areas(img, w_pt, h_pt, scale, sa_lead, sa_bot, orientation):
     green = (0, 200, 0, 180)
 
     if orientation == "landscape":
-        # Leading safe area (left, for DI/notch)
-        x = int(sa_lead * scale)
-        draw.line([(x, 0), (x, h_px)], fill=blue, width=2)
-        # Trailing safe area (right, symmetric)
-        x2 = w_px - int(sa_lead * scale)
-        draw.line([(x2, 0), (x2, h_px)], fill=blue, width=2)
+        # Top safe area (status bar — iPads have this; iPhones don't in landscape)
+        if sa_top > 0:
+            y = int(sa_top * scale)
+            draw.line([(0, y), (w_px, y)], fill=red, width=2)
+        # Leading safe area (left, for DI/notch — iPhones only)
+        if sa_lead > 0:
+            x = int(sa_lead * scale)
+            draw.line([(x, 0), (x, h_px)], fill=blue, width=2)
+            # Trailing safe area (right, symmetric)
+            x2 = w_px - int(sa_lead * scale)
+            draw.line([(x2, 0), (x2, h_px)], fill=blue, width=2)
         # Bottom safe area (home indicator)
         if sa_bot > 0:
             y = h_px - int(sa_bot * scale)
             draw.line([(0, y), (w_px, y)], fill=green, width=2)
     else:
-        # Top safe area
-        y = int(sa_lead * scale)  # SA_top = SA_lead in portrait for notch/DI
-        draw.line([(0, y), (w_px, y)], fill=red, width=2)
+        # Top safe area (use sa_lead for iPhones in portrait, sa_top for iPads)
+        top = sa_lead if sa_lead > 0 else sa_top
+        if top > 0:
+            y = int(top * scale)
+            draw.line([(0, y), (w_px, y)], fill=red, width=2)
         # Bottom safe area
         if sa_bot > 0:
             y2 = h_px - int(sa_bot * scale)
@@ -215,18 +243,12 @@ def apply_mask(screenshot_path, output_path, device_override=None,
             print(f"  {lw}x{lh}  {dev[0]}", file=sys.stderr)
         sys.exit(1)
 
-    name, w_pt, h_pt, scale, R, sa_lead, sa_bot, cutout_type, cutout_info = dev_info
+    name, w_pt, h_pt, scale, R, sa_top, sa_lead, sa_bot, cutout_type, cutout_info = dev_info
 
-    # In landscape, the image is w_pt x h_pt; in portrait it's h_pt x w_pt...
-    # Actually w_pt and h_pt in our table are portrait dimensions.
-    # Swap for landscape.
+    # Table stores landscape dimensions (w_pt > h_pt). Swap for portrait.
     if orientation == "landscape":
-        disp_w_pt, disp_h_pt = w_pt, h_pt  # already landscape in our table
+        disp_w_pt, disp_h_pt = w_pt, h_pt
     else:
-        disp_w_pt, disp_h_pt = h_pt, w_pt  # our table has landscape; swap for portrait
-        # Actually our table stores landscape w x h. For portrait, swap.
-        # Wait — the table says "Screen (landscape pt)" so w_pt is landscape width.
-        # Portrait: width = h_pt, height = w_pt
         disp_w_pt, disp_h_pt = h_pt, w_pt
 
     expected_w = int(disp_w_pt * scale)
@@ -267,7 +289,7 @@ def apply_mask(screenshot_path, output_path, device_override=None,
 
     # Step 4: Safe area lines
     if show_safe_areas:
-        draw_safe_areas(img, disp_w_pt, disp_h_pt, scale, sa_lead, sa_bot, orientation)
+        draw_safe_areas(img, disp_w_pt, disp_h_pt, scale, sa_top, sa_lead, sa_bot, orientation)
 
     # Save
     img.save(output_path)

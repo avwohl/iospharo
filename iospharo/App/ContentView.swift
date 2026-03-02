@@ -48,6 +48,14 @@ struct ContentView: View {
             imageManager.load()
             guard !bridge.isRunning else { return }
 
+            // Priority 0: PHARO_AUTO_LAUNCH env var (simulator testing)
+            // Set SIMCTL_CHILD_PHARO_AUTO_LAUNCH=1 before simctl launch
+            if ProcessInfo.processInfo.environment["PHARO_AUTO_LAUNCH"] != nil,
+               let image = imageManager.images.first {
+                launchImage(image)
+                return
+            }
+
             // Priority 1: CLI --image flag (immediate launch, no splash)
             if let cliPath = Self.parseCommandLineImagePath() {
                 if bridge.loadImage(at: cliPath) {
