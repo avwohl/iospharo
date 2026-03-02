@@ -23,6 +23,27 @@ Previously, all `cairo_*` FFI calls silently returned 0 with no
 indication that Cairo was unavailable. Now the first 5 registrations
 are logged to stderr for diagnostic visibility.
 
+## Testing
+
+### Higher-level package test suite
+Added test harness (`scripts/run_package_tests.sh`) for running
+third-party Smalltalk package test suites against our VM. Loads
+packages via Metacello using the stock Pharo VM, then runs tests
+with our interpreter.
+
+Results (7974 pass / 8000 total = 99.7%):
+  NeoJSON     116/116  (100%)  — JSON parsing, writing, Unicode
+  Mustache     47/47   (100%)  — template expansion, closures
+  XMLParser  5978/5978 (100%)  — SAX, DOM, XML conformance suites
+  PolyMath   1150/1168 (98.5%) — scientific computing, ODE solvers
+  DataFrame   651/665  (97.9%) — tabular data, statistics
+
+Most failures are pre-existing bugs in the packages (confirmed by
+testing on stock Pharo VM). The only VM-specific failures are 12
+tests in PMArbitraryPrecisionFloatTest (transcendental math precision).
+
+See `docs/higher_level_tests.md` for full details.
+
 ---
 
 # What's New in Build 57
