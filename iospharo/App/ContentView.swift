@@ -279,19 +279,15 @@ struct ModifierStrip: View {
 
     var body: some View {
         if isIPad {
-            // iPad: dark gap above (matches canvas behind Pharo menu bar),
-            // gray background only on the button area below.
-            VStack(spacing: 0) {
-                Color.black
-                    .frame(width: stripWidth, height: 28)
-                VStack(spacing: buttonSpacing) {
-                    iPadStrip
-                }
-                .padding(.vertical, 6)
-                .padding(.horizontal, 2)
-                .frame(width: stripWidth)
-                .background(Color(.systemGray6).opacity(0.95))
+            // iPad: strip starts below Pharo menu bar
+            VStack(spacing: buttonSpacing) {
+                iPadStrip
             }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 2)
+            .frame(width: stripWidth)
+            .background(Color(.systemGray6).opacity(0.95))
+            .padding(.top, 28)
         } else {
             // iPhone: full-height gray strip, buttons split around camera
             VStack(spacing: buttonSpacing) {
