@@ -1,8 +1,20 @@
-# What's New in Build 65
+# What's New in Build 66
 
-Build 65 — 2026-03-02
+Build 66 — 2026-03-02
 
-(No user-visible changes yet)
+## Bug Fixes
+
+### Fix startup garbage flash on iPhone
+Random colored pixels appeared briefly on iPhone startup before the
+Pharo desktop rendered. Three causes:
+  - CAMetalLayer drawable textures contain uninitialized GPU memory
+    before the first present(). Fixed by setting the MTKView background
+    color to grey so an opaque background shows before Metal starts.
+  - MetalRenderer delegate was set after the view was added to the
+    hierarchy, allowing 1-2 orphaned frames. Fixed by creating the
+    renderer before addSubview.
+  - Metal textures created in createTexture() had undefined contents.
+    Fixed by immediately filling new textures with grey (0xFFEBEBEB).
 
 ---
 
