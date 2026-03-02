@@ -262,38 +262,66 @@ struct ModifierStrip: View {
 
     /// Full-size buttons (modifiers at top, iPad buttons)
     private var buttonSize: CGFloat { isIPad ? 28 : 32 }
-    /// Smaller size for iPhone action buttons at the bottom of the strip
-    private var actionButtonSize: CGFloat { 26 }
 
-    /// Top padding for iPhone strip to clear the rounded screen corner.
-    /// The DI is centered vertically (~196pt from corner) so it doesn't
-    /// affect the top buttons — only the corner radius matters here.
-    /// A squircle corner with R=55-62pt extends ~15-20pt down at the
-    /// strip's center (x≈20pt).  We use a third of the leading safe area
-    /// inset which tracks the corner radius closely across devices.
-    private var iPhoneTopPadding: CGFloat {
-        guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene }).first,
-              let window = windowScene.windows.first else { return 6 }
-        let insets = window.safeAreaInsets
-        // In landscape the notch side has a large left or right inset
-        let notchInset = max(insets.left, insets.right)
-        // Only need enough to clear the corner radius at the strip's
-        // horizontal center, not the full DI exclusion zone.
-        return notchInset > 40 ? ceil(notchInset * 0.45) : 6
+    /// Action buttons: smaller on DI iPhones so the bottom group fits
+    /// below the Dynamic Island without overlap.
+    private var actionButtonSize: CGFloat { hasDynamicIsland ? 20 : 26 }
+
+    // MARK: - Squircle Corner Math
+    //
+    // Apple's continuous corners are a superellipse with n=5.
+    // See .claude/skills/device-geometry.md for the full algorithm.
+
+    /// Squircle corner intrusion: minimum y to clear the corner at distance x.
+    private func squircleIntrusion(R: CGFloat, x: CGFloat) -> CGFloat {
+        guard x > 0, x < R else { return x <= 0 ? R : 0 }
+        let r5 = pow(R, 5)
+        let d5 = pow(R - x, 5)
+        return R - pow(r5 - d5, 0.2)
     }
 
-    /// Bottom padding to clear the home indicator and rounded bottom corner.
-    /// The parent HStack ignores bottom safe area so we must account for it.
+    /// Estimate the display corner radius from the safe area leading inset.
+    /// Maps: SA 59→R55, SA 62→R62, SA 47-50→R47, SA 44→R39.
+    private var estimatedCornerRadius: CGFloat {
+        guard let window = mainWindow else { return 0 }
+        let leading = max(window.safeAreaInsets.left, window.safeAreaInsets.right)
+        if leading >= 60 { return 62 }    // iPhone 16 Pro / Pro Max
+        if leading >= 55 { return 55 }    // iPhone 14 Pro, 15 series, 16
+        if leading >= 48 { return 47.33 } // iPhone XR, 11
+        if leading >= 47 { return 47.33 } // iPhone 12-14, 16e
+        if leading >= 44 { return 39 }    // iPhone X, XS, 11 Pro
+        return 0                          // iPhone SE
+    }
+
+    /// True if the device has a Dynamic Island (vs notch or home button).
+    private var hasDynamicIsland: Bool {
+        guard let window = mainWindow else { return false }
+        return max(window.safeAreaInsets.left, window.safeAreaInsets.right) > 55
+    }
+
+    private var mainWindow: UIWindow? {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }.first?
+            .windows.first
+    }
+
+    /// X coordinate of button's left edge (for squircle calculation).
+    private var buttonLeftX: CGFloat { (stripWidth - buttonSize) / 2 }
+
+    /// Top padding: clear the squircle corner at the button's left edge.
+    private var iPhoneTopPadding: CGFloat {
+        let R = estimatedCornerRadius
+        guard R > 0 else { return 6 }
+        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 2)
+    }
+
+    /// Bottom padding: clear the squircle corner + home indicator zone.
     private var iPhoneBottomPadding: CGFloat {
-        guard let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene }).first,
-              let window = windowScene.windows.first else { return 6 }
-        let bottom = window.safeAreaInsets.bottom          // 21pt home indicator
-        let notchInset = max(window.safeAreaInsets.left, window.safeAreaInsets.right)
-        // Corner clearance same as top, plus home indicator zone
-        let cornerClear = notchInset > 40 ? ceil(notchInset * 0.45) : CGFloat(6)
-        return cornerClear + bottom
+        guard let window = mainWindow else { return 6 }
+        let R = estimatedCornerRadius
+        let bottom = window.safeAreaInsets.bottom  // 21pt home indicator
+        guard R > 0 else { return max(bottom, 6) }
+        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 2) + bottom
     }
 
     var body: some View {

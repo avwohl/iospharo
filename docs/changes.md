@@ -16,6 +16,17 @@ math test failures (ln, exp, sin, cos, tan, sinh, cosh, tanh, arcsin,
 artanh, IEEEArithmeticVersusIntegerAndFraction). The bug cascaded through
 Newton refinement division, AGM computation, and the Salamin ln algorithm.
 
+### Fix iPhone strip button hidden behind Dynamic Island
+The Backspace button in the modifier strip was completely occluded by
+the Dynamic Island on all DI iPhones. The Spacer-based layout pushed
+the bottom button group into the DI zone. Fixed by:
+  - Using the exact squircle (superellipse n=5) formula for corner
+    padding instead of the heuristic `notchInset * 0.45`
+  - Reducing action button size from 26pt to 20pt on DI phones so the
+    bottom group fits entirely below the DI
+All 7 buttons now visible on every DI iPhone (verified: 16, 16 Pro,
+16 Plus, 16 Pro Max). Non-DI phones keep 26pt action buttons.
+
 ### Fix WarpBlt quad edge interpolation (sideways thumbnails)
 `primitiveWarpBits` had the quad corner interpolation order swapped.
 The left edge walked p1→p4 (horizontal) instead of p1→p2 (vertical),
