@@ -207,8 +207,17 @@ It only matters for elements near the vertical center of the screen.
 
 ## Part 4: Generating a Pixel Bitmask Image
 
-For the mask overlay tool (`scripts/apply_device_mask.py`) or any other
-visualization that needs a device-shaped mask.
+For the mask overlay tool (`tools/apply_device_mask.py` in the claude-skills
+repo) or any other visualization that needs a device-shaped mask.
+
+The tool auto-detects the device from screenshot pixel dimensions and renders
+squircle corners, Dynamic Island / notch cutout, and safe area lines:
+
+    python3 tools/apply_device_mask.py screenshot.png              # basic mask
+    python3 tools/apply_device_mask.py --safe-areas screenshot.png # + safe area lines
+    python3 tools/apply_device_mask.py --device iphone16pro screenshot.png
+
+Requires: `pip3 install Pillow numpy`
 
 ### Inputs
 
