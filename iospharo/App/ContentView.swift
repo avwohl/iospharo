@@ -261,6 +261,20 @@ struct ModifierStrip: View {
     private var buttonSpacing: CGFloat { isIPad ? 5 : 4 }
     private var stripWidth: CGFloat { isIPad ? 44 : 40 }
 
+    private var safeInsets: UIEdgeInsets {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.windows.first?.safeAreaInsets ?? .zero
+    }
+
+    private var topPadding: CGFloat {
+        if isIPad {
+            return safeInsets.top + 28  // status bar + Pharo menu bar height
+        } else {
+            return safeInsets.top       // status bar / Dynamic Island
+        }
+    }
+
     var body: some View {
         VStack(spacing: buttonSpacing) {
             if isIPad {
@@ -272,6 +286,8 @@ struct ModifierStrip: View {
         .padding(.vertical, 6)
         .padding(.horizontal, 2)
         .frame(width: stripWidth)
+        .padding(.leading, safeInsets.left)
+        .padding(.top, topPadding)
         .background(Color(.systemGray6).opacity(0.95))
     }
 

@@ -1,3 +1,17 @@
+# What's New in Build 46
+
+Build 46 — 2026-03-01
+
+## Bug Fixes
+
+### ModifierStrip safe area positioning (iPhone & iPad)
+The left-side modifier strip now respects device safe area insets.
+On iPhone landscape, buttons no longer render behind the Dynamic Island
+or camera cutout. On iPad, the strip starts below the status bar and
+Pharo menu bar instead of at the very top of the screen.
+
+---
+
 # What's New in Build 45
 
 Build 45 — 2026-03-01
