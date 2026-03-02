@@ -1,3 +1,11 @@
+# What's New in Build 65
+
+Build 65 — 2026-03-02
+
+(No user-visible changes yet)
+
+---
+
 # What's New in Build 64
 
 Build 64 — 2026-03-02
