@@ -360,6 +360,30 @@ instead of `0xFFFF0000`.
 
 ---
 
+## VM Limitation: PMArbitraryPrecisionFloat transcendental math failures
+
+**Not an image bug — a limitation of our VM.**
+
+The PolyMath package's `PMArbitraryPrecisionFloatTest` has 12 tests (of 58)
+that pass on the stock Pharo VM but fail on ours. The failing tests all
+involve transcendental functions (sin, cos, tan, exp, ln, sinh, cosh, tanh,
+arcsin, artanh) computed on `ArbitraryPrecisionFloat` values.
+
+These tests exercise heavy large-integer arithmetic paths and deep
+recursion in the Smalltalk number tower. The root cause is likely a
+precision issue in our LargeInteger or Float primitive implementations,
+or a subtle difference in how we handle extended-precision intermediate
+results.
+
+Failing tests:
+  testVeryLargeTan, testVeryLargeSin, testVeryLargeCos, testArcSin,
+  testArTanh, testLn, testExp, testSinh, testCosh, testTanh,
+  testIEEEArithmeticVersusIntegerAndFraction, testPrintAndEvaluate
+
+See `docs/higher_level_tests.md` for full context.
+
+---
+
 ## Note: Cairo/Athens not available
 
 Cairo (`libcairo`) is not included in the iospharo VM. All `cairo_*` FFI
