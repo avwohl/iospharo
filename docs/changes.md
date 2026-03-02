@@ -1,3 +1,24 @@
+# What's New in Build 67
+
+Build 67 — 2026-03-02
+
+## Improvements
+
+### Device mask script now covers all iPads
+The `apply_device_mask.py` geometry overlay tool now supports all iPad
+screen sizes (9 entries from iPad mini 5 through iPad Pro 13" M5).
+Added SA_top field to correctly render iPad safe areas (top status bar
+at 24pt, no side insets) vs iPhone safe areas (side DI/notch insets).
+Verified control strip layout on all 6 rounded-corner iPad sizes via
+masked simulator screenshots, both with and without keyboard.
+
+### PHARO_AUTO_LAUNCH environment variable
+New env var for automated simulator testing. Set
+SIMCTL_CHILD_PHARO_AUTO_LAUNCH=1 before `simctl launch` to auto-open
+the first available image without user interaction.
+
+---
+
 # What's New in Build 66
 
 Build 66 — 2026-03-02
