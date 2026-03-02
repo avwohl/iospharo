@@ -2,6 +2,23 @@
 
 Build 44 — 2026-03-01
 
+## UI Improvements
+
+### Strip Button Icons
+Replaced text labels (DoIt, Print, Inspect, Debug, Expand, Accept, Cancel)
+with SF Symbol icons on both iPhone and iPad. Fixes the "Inspect" label
+wrapping on small screens and the confusing "Print" name (now play triangle,
+text-append, eyeglasses, ant icons etc.). All buttons now have `.help()`
+tooltips visible on Mac Catalyst hover.
+
+### Bottom Safe Area Fix
+Canvas now extends to the bottom edge on iPhone and iPad (no gap for the
+home indicator). Changed `.ignoresSafeArea(.keyboard)` to `.ignoresSafeArea()`.
+
+### iPhone Strip Cleanup
+Removed dividers from the iPhone button strip to save vertical space when
+the keyboard is shown.
+
 ## Code Quality
 
 ### Codebase Simplification (Round 1)

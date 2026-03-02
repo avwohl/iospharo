@@ -106,7 +106,7 @@ struct ContentView: View {
                 )
                 PharoCanvasView(bridge: bridge)
             }
-            .ignoresSafeArea(.keyboard)
+            .ignoresSafeArea()
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -283,10 +283,10 @@ struct ModifierStrip: View {
             cmdButton
 
             // --- Direct keys ---
-            StripButton(label: "Tab", size: buttonSize) {
+            StripButton(label: "Tab", size: buttonSize, tooltip: "Tab") {
                 bridge.sendKeyShortcut("\t", modifiers: 0)
             }
-            StripButton(label: "Esc", size: buttonSize) {
+            StripButton(label: "Esc", size: buttonSize, tooltip: "Escape") {
                 bridge.sendRawKey(27)
             }
             backspaceButton
@@ -297,29 +297,29 @@ struct ModifierStrip: View {
             doItButton
             printButton
             inspectButton
-            StripButton(label: "Debug", size: buttonSize) {
+            StripButton(icon: "ant.fill", size: buttonSize, tooltip: "Debug (Cmd+Shift+D)") {
                 bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY | IOS_SHIFT_KEY)
             }
 
             stripDivider
 
             // --- Clipboard & editing ---
-            StripButton(icon: "scissors", size: buttonSize) {
+            StripButton(icon: "scissors", size: buttonSize, tooltip: "Cut") {
                 bridge.sendKeyShortcut("x", modifiers: IOS_CMD_KEY)
             }
-            StripButton(icon: "doc.on.doc", size: buttonSize) {
+            StripButton(icon: "doc.on.doc", size: buttonSize, tooltip: "Copy") {
                 bridge.sendKeyShortcut("c", modifiers: IOS_CMD_KEY)
             }
-            StripButton(icon: "doc.on.clipboard", size: buttonSize) {
+            StripButton(icon: "doc.on.clipboard", size: buttonSize, tooltip: "Paste") {
                 bridge.sendKeyShortcut("v", modifiers: IOS_CMD_KEY)
             }
-            StripButton(label: "Expand", size: buttonSize) {
+            StripButton(icon: "arrow.up.left.and.arrow.down.right", size: buttonSize, tooltip: "Expand (Cmd+2)") {
                 bridge.sendKeyShortcut("2", modifiers: IOS_CMD_KEY)
             }
-            StripButton(label: "Accept", size: buttonSize) {
+            StripButton(icon: "checkmark.circle", size: buttonSize, tooltip: "Accept (Cmd+S)") {
                 bridge.sendKeyShortcut("s", modifiers: IOS_CMD_KEY)
             }
-            StripButton(label: "Cancel", size: buttonSize) {
+            StripButton(icon: "xmark.circle", size: buttonSize, tooltip: "Cancel (Cmd+L)") {
                 bridge.sendKeyShortcut("l", modifiers: IOS_CMD_KEY)
             }
 
@@ -327,7 +327,7 @@ struct ModifierStrip: View {
 
             // --- Utility ---
             keyboardButton
-            StripButton(icon: "questionmark", size: buttonSize) {
+            StripButton(icon: "questionmark", size: buttonSize, tooltip: "Help") {
                 showHelp = true
             }
         }
@@ -339,11 +339,9 @@ struct ModifierStrip: View {
         Group {
             // Keyboard at TOP so it's not covered when keyboard shows
             keyboardButton
-            stripDivider
             ctrlButton
             cmdButton
             backspaceButton
-            stripDivider
             doItButton
             printButton
             inspectButton
@@ -355,44 +353,47 @@ struct ModifierStrip: View {
 
     private var ctrlButton: some View {
         StripButton(icon: "control",
-                    isActive: bridge.ctrlModifierActive, size: buttonSize) {
+                    isActive: bridge.ctrlModifierActive, size: buttonSize,
+                    tooltip: "Toggle Ctrl modifier") {
             bridge.ctrlModifierActive.toggle()
         }
     }
 
     private var cmdButton: some View {
         StripButton(icon: "command",
-                    isActive: bridge.cmdModifierActive, size: buttonSize) {
+                    isActive: bridge.cmdModifierActive, size: buttonSize,
+                    tooltip: "Toggle Cmd modifier") {
             bridge.cmdModifierActive.toggle()
         }
     }
 
     private var backspaceButton: some View {
-        StripButton(icon: "delete.left", size: buttonSize) {
+        StripButton(icon: "delete.left", size: buttonSize, tooltip: "Backspace") {
             bridge.sendRawKey(8, keyCode: 8)
         }
     }
 
     private var doItButton: some View {
-        StripButton(label: "DoIt", size: buttonSize) {
+        StripButton(icon: "play.fill", size: buttonSize, tooltip: "DoIt (Cmd+D)") {
             bridge.sendKeyShortcut("d", modifiers: IOS_CMD_KEY)
         }
     }
 
     private var printButton: some View {
-        StripButton(label: "Print", size: buttonSize) {
+        StripButton(icon: "text.append", size: buttonSize, tooltip: "PrintIt (Cmd+P)") {
             bridge.sendKeyShortcut("p", modifiers: IOS_CMD_KEY)
         }
     }
 
     private var inspectButton: some View {
-        StripButton(label: "Inspect", size: buttonSize) {
+        StripButton(icon: "eyeglasses", size: buttonSize, tooltip: "InspectIt (Cmd+I)") {
             bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
         }
     }
 
     private var keyboardButton: some View {
-        StripButton(icon: "keyboard", isActive: keyboardVisible, size: buttonSize) {
+        StripButton(icon: "keyboard", isActive: keyboardVisible, size: buttonSize,
+                    tooltip: "Show/hide keyboard") {
             keyboardVisible.toggle()
             if let view = gPharoMTKView {
                 if keyboardVisible {
@@ -416,14 +417,16 @@ struct StripButton: View {
     let icon: String?
     let isActive: Bool
     let size: CGFloat
+    let tooltip: String?
     let action: () -> Void
 
     init(label: String? = nil, icon: String? = nil, isActive: Bool = false,
-         size: CGFloat = 34, action: @escaping () -> Void) {
+         size: CGFloat = 34, tooltip: String? = nil, action: @escaping () -> Void) {
         self.label = label
         self.icon = icon
         self.isActive = isActive
         self.size = size
+        self.tooltip = tooltip
         self.action = action
     }
 
@@ -443,6 +446,7 @@ struct StripButton: View {
             .background(isActive ? Color.blue : Color.gray.opacity(0.2))
             .cornerRadius(size * 0.22)
         }
+        .help(tooltip ?? "")
     }
 }
 
@@ -483,8 +487,8 @@ struct GestureHelpOverlay: View {
                             .foregroundColor(.white.opacity(0.7))
                         HStack(spacing: 12) {
                             shortcutLabel("DoIt", "Cmd+D")
-                            shortcutLabel("Print", "Cmd+P")
-                            shortcutLabel("Inspect", "Cmd+I")
+                            shortcutLabel("PrintIt", "Cmd+P")
+                            shortcutLabel("InspectIt", "Cmd+I")
                         }
                         HStack(spacing: 12) {
                             shortcutLabel("Debug", "Cmd+Shift+D")
