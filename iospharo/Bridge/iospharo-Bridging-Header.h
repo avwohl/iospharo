@@ -76,6 +76,9 @@ void vm_setTextInputCallback(TextInputFunc func);
 /* SDL2 readiness flag */
 bool ffi_isSDLRenderingActive(void);     // True after first SDL_RenderPresent (Pharo drew a frame)
 
+/* Core Motion shared data */
+#include "../../src/platform/MotionData.h"
+
 /* iOS utility functions */
 int iosIsIPad(void);
 const char* iosGetDeviceModel(void);

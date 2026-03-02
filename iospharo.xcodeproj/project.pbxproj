@@ -11,6 +11,7 @@
 		A10001 /* iosparoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* iosparoApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
 		A10003 /* PharoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* PharoBridge.swift */; };
+		A1001A /* CoreMotionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001A /* CoreMotionManager.swift */; };
 		A10004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004 /* MetalRenderer.swift */; };
 		A10005 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = A20005 /* Shaders.metal */; };
 		A10006 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006 /* PharoCanvasView.swift */; };
@@ -32,6 +33,7 @@
 		A20001 /* iosparoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iosparoApp.swift; sourceTree = "<group>"; };
 		A20002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A20003 /* PharoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoBridge.swift; sourceTree = "<group>"; };
+		A2001A /* CoreMotionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreMotionManager.swift; sourceTree = "<group>"; };
 		A20004 /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		A20005 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		A20006 /* PharoCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoCanvasView.swift; sourceTree = "<group>"; };
@@ -105,6 +107,7 @@
 			isa = PBXGroup;
 			children = (
 				A20003 /* PharoBridge.swift */,
+				A2001A /* CoreMotionManager.swift */,
 				A2000C /* iospharo-Bridging-Header.h */,
 			);
 			path = Bridge;
@@ -284,6 +287,7 @@
 				A10001 /* iosparoApp.swift in Sources */,
 				A10002 /* ContentView.swift in Sources */,
 				A10003 /* PharoBridge.swift in Sources */,
+				A1001A /* CoreMotionManager.swift in Sources */,
 				A10004 /* MetalRenderer.swift in Sources */,
 				A10005 /* Shaders.metal in Sources */,
 				A10006 /* PharoCanvasView.swift in Sources */,

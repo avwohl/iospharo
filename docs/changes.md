@@ -2,6 +2,36 @@
 
 Build 45 — 2026-03-01
 
+## New Features
+
+### Core Motion Plugin
+Added a CoreMotionPlugin that exposes real device sensor data to Pharo
+via named primitives. Accelerometer, gyroscope, magnetometer, and
+device attitude (roll/pitch/yaw) are all available at 60 Hz.
+
+Four named primitives under `CoreMotionPlugin`:
+  - `primitiveMotionStart` — start sensor updates
+  - `primitiveMotionStop` — stop sensor updates
+  - `primitiveMotionData` — read latest sample (Array of 13 Floats)
+  - `primitiveMotionAvailable` — hardware availability bitmask
+
+The existing numbered sensor primitives (420-429) now return real data
+from the same Core Motion backend instead of zeros.
+
+Usage from Smalltalk:
+
+    <primitive: 'primitiveMotionStart' module: 'CoreMotionPlugin'>
+    data := <primitive: 'primitiveMotionData' module: 'CoreMotionPlugin'>.
+    "data: accelX,Y,Z gyroX,Y,Z magX,Y,Z roll,pitch,yaw timestamp"
+    <primitive: 'primitiveMotionStop' module: 'CoreMotionPlugin'>
+
+On Mac (no sensors), all values read as zero and the availability
+bitmask is 0.
+
+### README: TestFlight Installation Instructions
+Added a "Installing the Beta" section to README.md with step-by-step
+TestFlight instructions, device requirements, and storage estimates.
+
 # What's New in Build 44
 
 Build 44 — 2026-03-01

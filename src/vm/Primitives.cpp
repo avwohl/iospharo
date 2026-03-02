@@ -19454,9 +19454,92 @@ PrimitiveResult Interpreter::primitiveSystemDiskSpace(int argCount) {
     return PrimitiveResult::Failure;
 }
 
+// ===== CORE MOTION PLUGIN (named primitives) =====
+
+#include "../platform/MotionData.h"
+
+// Helper: box a double as a Smalltalk Float (SmallFloat64 if it fits, else boxed)
+static Oop boxDouble(Interpreter& interp, double value) {
+    Oop result;
+    if (Oop::tryFromSmallFloat(value, result)) return result;
+
+    auto& mem = interp.memory();
+    Oop floatClass = mem.specialObject(SpecialObjectIndex::ClassFloat);
+    uint32_t classIndex = mem.indexOfClass(floatClass);
+    result = mem.allocateSlots(classIndex, 1, ObjectFormat::Indexable32);
+    if (result.isNil()) return result;
+    uint64_t bits;
+    std::memcpy(&bits, &value, sizeof(double));
+    mem.storeWord64(0, result, bits);
+    return result;
+}
+
+// primitiveMotionData: returns an Array of 13 boxed Floats
+// Elements: accelX,Y,Z (1-3), gyroX,Y,Z (4-6), magX,Y,Z (7-9),
+//           roll,pitch,yaw (10-12), timestamp (13)
+PrimitiveResult Interpreter::primitiveMotionData(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    MotionData md;
+    motion_getData(&md);
+
+    double values[13] = {
+        md.accelerometerX, md.accelerometerY, md.accelerometerZ,
+        md.gyroX, md.gyroY, md.gyroZ,
+        md.magnetometerX, md.magnetometerY, md.magnetometerZ,
+        md.roll, md.pitch, md.yaw,
+        md.timestamp
+    };
+
+    uint32_t arrayClassIdx = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+    Oop array = memory_.allocateSlots(arrayClassIdx, 13, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    for (int i = 0; i < 13; i++) {
+        Oop floatObj = boxDouble(*this, values[i]);
+        if (floatObj.isNil()) return PrimitiveResult::Failure;
+        memory_.storePointer(static_cast<size_t>(i), array, floatObj);
+    }
+
+    pop();  // receiver
+    push(array);
+    return PrimitiveResult::Success;
+}
+
+// primitiveMotionAvailable: returns SmallInteger bitmask
+PrimitiveResult Interpreter::primitiveMotionAvailable(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    int avail = motion_isAvailable();
+    pop();
+    push(Oop::fromSmallInteger(avail));
+    return PrimitiveResult::Success;
+}
+
+// primitiveMotionStart: request Core Motion updates
+PrimitiveResult Interpreter::primitiveMotionStart(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    motion_requestStart();
+    pop();
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
+// primitiveMotionStop: stop Core Motion updates
+PrimitiveResult Interpreter::primitiveMotionStop(int argCount) {
+    if (argCount != 0) return PrimitiveResult::Failure;
+
+    motion_requestStop();
+    pop();
+    push(memory_.trueObject());
+    return PrimitiveResult::Success;
+}
+
 // ===== HARDWARE/SENSOR PRIMITIVES (420-429) =====
 
-// Sensor state
+// Sensor state (these now delegate to the shared MotionData)
 static bool accelerometerRunning = false;
 static bool gyroscopeRunning = false;
 static bool magnetometerRunning = false;
@@ -19466,8 +19549,8 @@ static bool magnetometerRunning = false;
 PrimitiveResult Interpreter::primitiveAccelerometerStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
-    // Not implemented
     accelerometerRunning = true;
+    motion_requestStart();
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19478,6 +19561,7 @@ PrimitiveResult Interpreter::primitiveAccelerometerStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     accelerometerRunning = false;
+    if (!gyroscopeRunning && !magnetometerRunning) motion_requestStop();
     pop();
     return PrimitiveResult::Success;
 }
@@ -19493,15 +19577,22 @@ PrimitiveResult Interpreter::primitiveAccelerometerRead(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Return default values (no acceleration, device at rest)
+    MotionData md;
+    motion_getData(&md);
+
     Oop array = memory_.allocateSlots(
         memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
         3, ObjectFormat::Indexable);
     if (array.isNil()) return PrimitiveResult::Failure;
 
-    memory_.storePointer(0, array, Oop::fromSmallInteger(0));  // x
-    memory_.storePointer(1, array, Oop::fromSmallInteger(0));  // y
-    memory_.storePointer(2, array, Oop::fromSmallInteger(-1000)); // z (gravity, scaled)
+    Oop x = boxDouble(*this, md.accelerometerX);
+    Oop y = boxDouble(*this, md.accelerometerY);
+    Oop z = boxDouble(*this, md.accelerometerZ);
+    if (x.isNil() || y.isNil() || z.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, x);
+    memory_.storePointer(1, array, y);
+    memory_.storePointer(2, array, z);
 
     pop();
     push(array);
@@ -19514,6 +19605,7 @@ PrimitiveResult Interpreter::primitiveGyroscopeStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     gyroscopeRunning = true;
+    motion_requestStart();
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19524,6 +19616,7 @@ PrimitiveResult Interpreter::primitiveGyroscopeStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     gyroscopeRunning = false;
+    if (!accelerometerRunning && !magnetometerRunning) motion_requestStop();
     pop();
     return PrimitiveResult::Success;
 }
@@ -19539,14 +19632,22 @@ PrimitiveResult Interpreter::primitiveGyroscopeRead(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    MotionData md;
+    motion_getData(&md);
+
     Oop array = memory_.allocateSlots(
         memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
         3, ObjectFormat::Indexable);
     if (array.isNil()) return PrimitiveResult::Failure;
 
-    memory_.storePointer(0, array, Oop::fromSmallInteger(0));
-    memory_.storePointer(1, array, Oop::fromSmallInteger(0));
-    memory_.storePointer(2, array, Oop::fromSmallInteger(0));
+    Oop x = boxDouble(*this, md.gyroX);
+    Oop y = boxDouble(*this, md.gyroY);
+    Oop z = boxDouble(*this, md.gyroZ);
+    if (x.isNil() || y.isNil() || z.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, x);
+    memory_.storePointer(1, array, y);
+    memory_.storePointer(2, array, z);
 
     pop();
     push(array);
@@ -19559,6 +19660,7 @@ PrimitiveResult Interpreter::primitiveMagnetometerStart(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
     magnetometerRunning = true;
+    motion_requestStart();
     popN(1);
     return PrimitiveResult::Success;
 }
@@ -19569,6 +19671,7 @@ PrimitiveResult Interpreter::primitiveMagnetometerStop(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     magnetometerRunning = false;
+    if (!accelerometerRunning && !gyroscopeRunning) motion_requestStop();
     pop();
     return PrimitiveResult::Success;
 }
@@ -19584,14 +19687,22 @@ PrimitiveResult Interpreter::primitiveMagnetometerRead(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    MotionData md;
+    motion_getData(&md);
+
     Oop array = memory_.allocateSlots(
         memory_.indexOfClass(memory_.specialObject(SpecialObjectIndex::ClassArray)),
         3, ObjectFormat::Indexable);
     if (array.isNil()) return PrimitiveResult::Failure;
 
-    memory_.storePointer(0, array, Oop::fromSmallInteger(0));
-    memory_.storePointer(1, array, Oop::fromSmallInteger(0));
-    memory_.storePointer(2, array, Oop::fromSmallInteger(0));
+    Oop x = boxDouble(*this, md.magnetometerX);
+    Oop y = boxDouble(*this, md.magnetometerY);
+    Oop z = boxDouble(*this, md.magnetometerZ);
+    if (x.isNil() || y.isNil() || z.isNil()) return PrimitiveResult::Failure;
+
+    memory_.storePointer(0, array, x);
+    memory_.storePointer(1, array, y);
+    memory_.storePointer(2, array, z);
 
     pop();
     push(array);
@@ -19599,13 +19710,40 @@ PrimitiveResult Interpreter::primitiveMagnetometerRead(int argCount) {
 }
 
 // Primitive 429: Read combined device motion
-// primitiveDeviceMotionRead -> array or nil
+// primitiveDeviceMotionRead -> array of 13 Floats (same as primitiveMotionData) or nil
 PrimitiveResult Interpreter::primitiveDeviceMotionRead(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Not implemented
+    MotionData md;
+    motion_getData(&md);
+
+    if (!md.active) {
+        pop();
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
+    double values[13] = {
+        md.accelerometerX, md.accelerometerY, md.accelerometerZ,
+        md.gyroX, md.gyroY, md.gyroZ,
+        md.magnetometerX, md.magnetometerY, md.magnetometerZ,
+        md.roll, md.pitch, md.yaw,
+        md.timestamp
+    };
+
+    uint32_t arrayClassIdx = memory_.indexOfClass(
+        memory_.specialObject(SpecialObjectIndex::ClassArray));
+    Oop array = memory_.allocateSlots(arrayClassIdx, 13, ObjectFormat::Indexable);
+    if (array.isNil()) return PrimitiveResult::Failure;
+
+    for (int i = 0; i < 13; i++) {
+        Oop floatObj = boxDouble(*this, values[i]);
+        if (floatObj.isNil()) return PrimitiveResult::Failure;
+        memory_.storePointer(static_cast<size_t>(i), array, floatObj);
+    }
+
     pop();
-    push(memory_.nil());
+    push(array);
     return PrimitiveResult::Success;
 }
 

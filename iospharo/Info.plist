@@ -23,6 +23,8 @@
 	<integer>1</integer>
 	<key>PharoMaxOldSpaceSize</key>
 	<integer>536870912</integer>
+	<key>NSMotionUsageDescription</key>
+	<string>Pharo uses device motion sensors (accelerometer, gyroscope, magnetometer) for interactive programs and experiments.</string>
 	<key>UIUserInterfaceStyle</key>
 	<string>Light</string>
 	<key>UIFileSharingEnabled</key>

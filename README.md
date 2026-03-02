@@ -25,6 +25,21 @@ standard Pharo test suite.
 - Hardware keyboard support with modifier keys
 - Image library with download, import, and catalog management
 
+## Installing the Beta (TestFlight)
+
+1. Install **TestFlight** from the App Store (free, ~30 MB)
+2. Open this invite link on your iPad or iPhone: [link TBD]
+3. Tap "Accept" then "Install" — the app appears on your home screen
+4. Pharo images are downloaded in-app (no separate download needed)
+
+**Requirements:**
+- iPad (5th gen / 2017 or newer) or iPhone (6s / 2015 or newer)
+- iOS / iPadOS 15.0 or later
+- ~150 MB free storage (app + image + sources)
+
+TestFlight builds expire after 90 days but auto-update when new builds
+are published.
+
 ## Prerequisites
 
 Install these before building:
@@ -149,11 +164,9 @@ mouse events (tap=left-click, long-press=right-click, two-finger tap=right-click
 
 VM parameters are set in `PharoBridge.swift` when calling `vm_init()`:
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| `maxOldSpaceSize` | 2 GB | Max heap (virtual, lazy commit) |
-| `edenSize` | 10 MB | Young generation size |
-| `maxCodeSize` | 0 | JIT code space (unused) |
+  maxOldSpaceSize   2 GB    Max heap (virtual, lazy commit)
+  edenSize          10 MB   Young generation size
+  maxCodeSize       0       JIT code space (unused)
 
 ## License
 

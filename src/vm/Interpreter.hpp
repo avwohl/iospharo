@@ -1252,6 +1252,12 @@ private:
     PrimitiveResult primitiveLocaleTimezoneOffset(int argCount);    // 398
     PrimitiveResult primitiveLocaleDaylightSaving(int argCount);    // 399
 
+    // CoreMotionPlugin named primitives
+    PrimitiveResult primitiveMotionData(int argCount);
+    PrimitiveResult primitiveMotionAvailable(int argCount);
+    PrimitiveResult primitiveMotionStart(int argCount);
+    PrimitiveResult primitiveMotionStop(int argCount);
+
     // SecurityPlugin named primitives
     PrimitiveResult primitiveCanWriteImage(int argCount);
     PrimitiveResult primitiveDisableImageWrite(int argCount);

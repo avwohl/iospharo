@@ -37,6 +37,10 @@ class PharoBridge: ObservableObject {
 
     private var displayCallback: IOSDisplayUpdateCallback?
 
+    /// Core Motion manager — polls CMMotionManager and writes to shared C struct
+    private let motionManager = CoreMotionManager()
+    private var motionTimer: Timer?
+
     private init() {
         setupDisplayCallback()
         setupClipboardCallbacks()
@@ -193,6 +197,12 @@ class PharoBridge: ObservableObject {
             #if DEBUG
             NSLog("[BRIDGE] VM initialized, starting interpreter on background thread")
             #endif
+
+            // Poll Core Motion start/stop requests from the VM thread.
+            // The timer runs on the main run loop at ~10 Hz.
+            motionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+                self?.motionManager.pollRequests()
+            }
 
             // Start the interpreter on a background thread.
             // This returns immediately, leaving the main thread free for
@@ -434,6 +444,9 @@ class PharoBridge: ObservableObject {
         #if DEBUG
         NSLog("[BRIDGE] VM exited, cleaning up")
         #endif
+        motionTimer?.invalidate()
+        motionTimer = nil
+        motionManager.stop()
         vm_stop()  // Join threads, stop heartbeat (idempotent)
         isRunning = false
         isInitialized = false
@@ -453,6 +466,9 @@ class PharoBridge: ObservableObject {
         #if DEBUG
         NSLog("[BRIDGE] Stopping VM...")
         #endif
+        motionTimer?.invalidate()
+        motionTimer = nil
+        motionManager.stop()
         vm_stop()
         #if DEBUG
         NSLog("[BRIDGE] VM stopped")

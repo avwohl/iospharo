@@ -45,6 +45,7 @@ set(VM_SOURCES
     src/platform/EventQueue.cpp
     src/platform/PlatformBridge.cpp
     src/platform/iOSBridge.cpp
+    src/platform/MotionData.cpp
     src/vm/ObjCExceptionGuard.m
 )
 
@@ -178,6 +179,7 @@ if(APPLE)
             "-framework CoreHaptics"
             "-framework ForceFeedback"
             "-framework Carbon"
+            "-framework CoreMotion"
             "-framework CoreMIDI"
             "-liconv"
         )

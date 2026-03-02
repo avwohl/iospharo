@@ -7877,6 +7877,12 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("LargeIntegers", "primMontgomeryDigitLength", &Interpreter::primMontgomeryDigitLength);
     registerNamedPrimitive("LargeIntegers", "primMontgomeryTimesModulo", &Interpreter::primMontgomeryTimesModulo);
 
+    // CoreMotionPlugin — accelerometer, gyroscope, magnetometer, attitude
+    registerNamedPrimitive("CoreMotionPlugin", "primitiveMotionData", &Interpreter::primitiveMotionData);
+    registerNamedPrimitive("CoreMotionPlugin", "primitiveMotionAvailable", &Interpreter::primitiveMotionAvailable);
+    registerNamedPrimitive("CoreMotionPlugin", "primitiveMotionStart", &Interpreter::primitiveMotionStart);
+    registerNamedPrimitive("CoreMotionPlugin", "primitiveMotionStop", &Interpreter::primitiveMotionStop);
+
     // SDL2 input semaphore - enables SDL2 event polling
     // The image calls this to register a semaphore for SDL2 event notification
     registerNamedPrimitive("", "primitiveSetVMSDL2Input:", &Interpreter::primitiveSetVMSDL2Input);
