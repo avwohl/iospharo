@@ -305,23 +305,66 @@ struct ModifierStrip: View {
             .windows.first
     }
 
-    /// X coordinate of button's left edge (for squircle calculation).
-    private var buttonLeftX: CGFloat { (stripWidth - buttonSize) / 2 }
+    // MARK: - DI Zone Centering
+    //
+    // On Dynamic Island iPhones in landscape, the strip is divided into zones:
+    //   Top zone:    squircle corner  →  DI top edge
+    //   Bottom zone: DI bottom edge   →  bottom squircle corner − home indicator
+    // Each button group is centered in its zone for balanced spacing.
+    // The squircle is evaluated at x=2 (strip padding edge, not button edge)
+    // so the clipped background doesn't crowd the buttons visually.
 
-    /// Top padding: clear the squircle corner at the button's left edge.
+    /// Landscape height = portrait screen width (the shorter native dimension).
+    private var landscapeHeight: CGFloat {
+        UIScreen.main.nativeBounds.width / UIScreen.main.nativeScale
+    }
+
+    /// All DI iPhones have a 126.9pt-wide Dynamic Island (= vertical extent in landscape).
+    private static let diLandscapeExtent: CGFloat = 126.9
+
+    /// Top edge of the DI in landscape coordinates (DI is vertically centered).
+    private var diTopY: CGFloat { landscapeHeight / 2 - Self.diLandscapeExtent / 2 }
+
+    /// Bottom edge of the DI in landscape coordinates.
+    private var diBottomY: CGFloat { landscapeHeight / 2 + Self.diLandscapeExtent / 2 }
+
+    /// Height of the top button group (keyboard + ctrl + cmd).
+    private var topGroupHeight: CGFloat { 3 * buttonSize + 2 * buttonSpacing }
+
+    /// Height of the bottom action button group (4 small buttons).
+    private var bottomGroupHeight: CGFloat { 4 * actionButtonSize + 3 * buttonSpacing }
+
+    /// Top padding: center top group in the zone above the DI.
     private var iPhoneTopPadding: CGFloat {
         let R = estimatedCornerRadius
         guard R > 0 else { return 6 }
-        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 6)
+        let intrusion = squircleIntrusion(R: R, x: 2)
+        guard hasDynamicIsland else {
+            // Notch/older phones: intrusion + proportional margin
+            return ceil(intrusion + R * 0.15)
+        }
+        // Center top group in [intrusion, diTopY]
+        let zone = diTopY - intrusion
+        let extra = max(0, zone - topGroupHeight)
+        return ceil(intrusion + extra / 2)
     }
 
-    /// Bottom padding: clear the squircle corner + home indicator zone.
+    /// Bottom padding: center bottom group in the zone below the DI.
     private var iPhoneBottomPadding: CGFloat {
         guard let window = mainWindow else { return 6 }
         let R = estimatedCornerRadius
-        let bottom = window.safeAreaInsets.bottom  // 21pt home indicator
-        guard R > 0 else { return max(bottom, 6) }
-        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 6) + bottom
+        let home = window.safeAreaInsets.bottom
+        guard R > 0 else { return max(home, 6) }
+        let intrusion = squircleIntrusion(R: R, x: 2)
+        guard !keyboardVisible, hasDynamicIsland else {
+            // No action buttons or not a DI phone: just clear corner + home
+            return ceil(intrusion) + home
+        }
+        // Center bottom group in [diBottomY, landscapeHeight − intrusion − home]
+        let zoneEnd = landscapeHeight - intrusion - home
+        let zone = zoneEnd - diBottomY
+        let extra = max(0, zone - bottomGroupHeight)
+        return ceil(intrusion + home + extra / 2)
     }
 
     var body: some View {

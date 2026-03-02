@@ -24,11 +24,14 @@ the bottom button group into the DI zone. Fixed by:
     padding instead of the heuristic `notchInset * 0.45`
   - Reducing action button size from 26pt to 20pt on DI phones so the
     bottom group fits entirely below the DI
-Increased squircle clearance margin from 2pt to 6pt after visual
-verification with the device mask overlay showed the keyboard button
-was clipped by the top-left corner on iPhone 16.
-All 7 buttons now visible on every DI iPhone (verified on iPhone 16
-simulator with device mask overlay). Non-DI phones keep 26pt action buttons.
+Replaced the fixed-margin approach (squircle intrusion + 6pt) with
+zone-centering: each button group is centered in its available zone
+(top group between corner and DI, bottom group between DI and
+bottom corner). Uses squircle intrusion at x=2 (strip padding edge)
+for more conservative clearance than x=4 (button edge).
+All 7 buttons now visible on every DI iPhone with generous margins
+(verified on iPhone 16 simulator with device mask overlay).
+Non-DI phones keep 26pt action buttons.
 
 ### Fix WarpBlt quad edge interpolation (sideways thumbnails)
 `primitiveWarpBits` had the quad corner interpolation order swapped.
