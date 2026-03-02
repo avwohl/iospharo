@@ -369,12 +369,26 @@ struct ModifierStrip: View {
 
     var body: some View {
         if isIPad {
-            // iPad: strip starts at safe area top (SwiftUI handles that),
-            // then 28pt gap clears the Pharo menu bar
+            // iPad: 28pt gap clears the Pharo menu bar, then buttons.
+            // Keyboard toggle at top so it's always accessible.
+            // When keyboard is showing, collapse to just toggle + modifiers.
             VStack(spacing: 0) {
                 Color.clear.frame(height: 28)
                 VStack(spacing: buttonSpacing) {
-                    iPadStrip
+                    keyboardButton
+                    ctrlButton
+                    cmdButton
+
+                    if !keyboardVisible {
+                        iPadExtraButtons
+                    }
+
+                    Spacer()
+
+                    if !keyboardVisible {
+                        StripButton(icon: "questionmark", size: buttonSize,
+                                    tooltip: "Help") { showHelp = true }
+                    }
                 }
                 .padding(.vertical, 4)
                 .padding(.horizontal, 2)
@@ -412,13 +426,10 @@ struct ModifierStrip: View {
         }
     }
 
-    // MARK: - iPad Layout (16 buttons)
+    // MARK: - iPad Extra Buttons (shown when keyboard is hidden)
 
-    private var iPadStrip: some View {
+    private var iPadExtraButtons: some View {
         Group {
-            ctrlButton
-            cmdButton
-
             // --- Direct keys ---
             StripButton(label: "Tab", size: buttonSize, tooltip: "Tab") {
                 bridge.sendKeyShortcut("\t", modifiers: 0)
@@ -458,14 +469,6 @@ struct ModifierStrip: View {
             }
             StripButton(icon: "xmark.circle", size: buttonSize, tooltip: "Cancel (Cmd+L)") {
                 bridge.sendKeyShortcut("l", modifiers: IOS_CMD_KEY)
-            }
-
-            Spacer()
-
-            // --- Utility ---
-            keyboardButton
-            StripButton(icon: "questionmark", size: buttonSize, tooltip: "Help") {
-                showHelp = true
             }
         }
     }
