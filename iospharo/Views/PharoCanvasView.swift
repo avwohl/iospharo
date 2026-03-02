@@ -307,13 +307,13 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #else
-        // iOS: respect safe area to avoid rendering under rounded corners / Dynamic Island
-        let guide = view.safeAreaLayoutGuide
+        // iOS: fill hosting view completely — SwiftUI handles safe area positioning
+        // via .ignoresSafeArea(edges:) on the parent HStack
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: guide.topAnchor),
-            mtkView.bottomAnchor.constraint(equalTo: guide.bottomAnchor),
-            mtkView.leadingAnchor.constraint(equalTo: guide.leadingAnchor),
-            mtkView.trailingAnchor.constraint(equalTo: guide.trailingAnchor)
+            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
+            mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #endif
 
