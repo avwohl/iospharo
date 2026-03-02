@@ -1,3 +1,28 @@
+# What's New in Build 57
+
+Build 57 — 2026-03-02
+
+## Bug Fixes
+
+### iPad ModifierStrip no longer overlaps Pharo menu bar
+Changed safe area handling so the HStack respects the top safe area
+(.ignoresSafeArea only on bottom and horizontal edges). The strip now
+naturally starts below the status bar, with a 28pt spacer clearing
+the Pharo menu bar. No more UIKit safe area hacks.
+
+### Pharo canvas extends to bottom edge on iOS
+The Metal view was double-handling safe area (SwiftUI + UIKit constraints).
+Now that SwiftUI manages safe area positioning, the Metal view fills its
+hosting view completely — no more gap at the bottom of the screen.
+
+### iPhone strip hides action buttons when keyboard is showing
+When the soft keyboard is visible on iPhone, backspace/doIt/printIt/
+inspectIt buttons are hidden to prevent them from being pushed off
+screen. Keyboard toggle, Ctrl, and Cmd remain visible for typing.
+Buttons restore when the keyboard is dismissed.
+
+---
+
 # What's New in Build 46
 
 Build 46 — 2026-03-01
