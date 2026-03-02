@@ -265,11 +265,12 @@ struct ModifierStrip: View {
     /// Smaller size for iPhone action buttons at the bottom of the strip
     private var actionButtonSize: CGFloat { 26 }
 
-    /// Top padding for iPhone strip to clear the Dynamic Island / notch.
-    /// The parent HStack ignores horizontal safe areas so the strip extends
-    /// under the notch.  We read the window's actual leading safe area inset
-    /// (which reflects the notch depth) and use it as top padding so buttons
-    /// start just below the camera cutout.
+    /// Top padding for iPhone strip to clear the rounded screen corner.
+    /// The DI is centered vertically (~196pt from corner) so it doesn't
+    /// affect the top buttons — only the corner radius matters here.
+    /// A squircle corner with R=55-62pt extends ~15-20pt down at the
+    /// strip's center (x≈20pt).  We use a third of the leading safe area
+    /// inset which tracks the corner radius closely across devices.
     private var iPhoneTopPadding: CGFloat {
         guard let windowScene = UIApplication.shared.connectedScenes
                 .compactMap({ $0 as? UIWindowScene }).first,
@@ -277,10 +278,9 @@ struct ModifierStrip: View {
         let insets = window.safeAreaInsets
         // In landscape the notch side has a large left or right inset
         let notchInset = max(insets.left, insets.right)
-        // If notch inset > 40pt we're on a notch/DI device in landscape —
-        // use it as top padding to clear the camera area.  Otherwise just
-        // use minimal padding.
-        return notchInset > 40 ? notchInset : 6
+        // Only need enough to clear the corner radius at the strip's
+        // horizontal center, not the full DI exclusion zone.
+        return notchInset > 40 ? ceil(notchInset / 3.0) : 6
     }
 
     var body: some View {

@@ -1,3 +1,18 @@
+# What's New in Build 60
+
+Build 60 — 2026-03-02
+
+## UI Improvements
+
+### iPhone strip top icons no longer pushed too far down
+The modifier strip top padding used the full Dynamic Island safe area inset
+(59-62pt) as vertical padding, but the DI is centered vertically on screen
+and doesn't affect the top buttons — only the rounded corner matters.
+Reduced to one-third of the inset (~20pt), which clears the squircle corner
+without wasting vertical space.
+
+---
+
 # What's New in Build 59
 
 Build 59 — 2026-03-02
