@@ -98,15 +98,18 @@ struct ContentView: View {
             PharoCanvasView(bridge: bridge)
                 .ignoresSafeArea()
             #else
-            HStack(spacing: 0) {
-                ModifierStrip(
-                    bridge: bridge,
-                    keyboardVisible: $bridge.keyboardVisible,
-                    showHelp: $showingHelp
-                )
-                PharoCanvasView(bridge: bridge)
+            GeometryReader { geo in
+                HStack(spacing: 0) {
+                    ModifierStrip(
+                        bridge: bridge,
+                        keyboardVisible: $bridge.keyboardVisible,
+                        showHelp: $showingHelp,
+                        safeAreaTop: geo.safeAreaInsets.top
+                    )
+                    PharoCanvasView(bridge: bridge)
+                }
+                .ignoresSafeArea()
             }
-            .ignoresSafeArea()
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -254,6 +257,7 @@ struct ModifierStrip: View {
     @ObservedObject var bridge: PharoBridge
     @Binding var keyboardVisible: Bool
     @Binding var showHelp: Bool
+    var safeAreaTop: CGFloat = 0
 
     private var isIPad: Bool { bridge.isIPad }
 
@@ -261,33 +265,27 @@ struct ModifierStrip: View {
     private var buttonSpacing: CGFloat { isIPad ? 5 : 4 }
     private var stripWidth: CGFloat { isIPad ? 44 : 40 }
 
-    private var safeInsets: UIEdgeInsets {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .first?.windows.first?.safeAreaInsets ?? .zero
-    }
-
-    private var topPadding: CGFloat {
-        if isIPad {
-            return safeInsets.top + 28  // status bar + Pharo menu bar height
-        } else {
-            return safeInsets.top       // status bar / Dynamic Island
-        }
-    }
-
     var body: some View {
         VStack(spacing: buttonSpacing) {
             if isIPad {
+                // Push below status bar + Pharo menu bar
+                Spacer().frame(height: safeAreaTop + 28)
                 iPadStrip
             } else {
-                iPhoneStrip
+                // Buttons above camera, gap, buttons below camera
+                keyboardButton
+                ctrlButton
+                cmdButton
+                Spacer()
+                backspaceButton
+                doItButton
+                printButton
+                inspectButton
             }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 2)
         .frame(width: stripWidth)
-        .padding(.leading, safeInsets.left)
-        .padding(.top, topPadding)
         .background(Color(.systemGray6).opacity(0.95))
     }
 
@@ -346,22 +344,6 @@ struct ModifierStrip: View {
             StripButton(icon: "questionmark", size: buttonSize, tooltip: "Help") {
                 showHelp = true
             }
-        }
-    }
-
-    // MARK: - iPhone Layout (8 buttons)
-
-    private var iPhoneStrip: some View {
-        Group {
-            // Keyboard at TOP so it's not covered when keyboard shows
-            keyboardButton
-            ctrlButton
-            cmdButton
-            backspaceButton
-            doItButton
-            printButton
-            inspectButton
-            Spacer()
         }
     }
 

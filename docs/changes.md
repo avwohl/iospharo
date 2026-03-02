@@ -5,10 +5,11 @@ Build 46 — 2026-03-01
 ## Bug Fixes
 
 ### ModifierStrip safe area positioning (iPhone & iPad)
-The left-side modifier strip now respects device safe area insets.
-On iPhone landscape, buttons no longer render behind the Dynamic Island
-or camera cutout. On iPad, the strip starts below the status bar and
-Pharo menu bar instead of at the very top of the screen.
+On iPhone landscape, the strip stays flush to the left edge but splits
+buttons into two groups above and below the Dynamic Island / camera
+cutout, keeping the strip thin without wasting space. On iPad, the
+strip starts below the status bar and Pharo menu bar instead of at the
+very top of the screen.
 
 ---
 
