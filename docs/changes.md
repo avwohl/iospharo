@@ -1,3 +1,29 @@
+# What's New in Build 62
+
+Build 62 — 2026-03-02
+
+## Bug Fixes
+
+### Fix primitiveBitShift overflow for large left shifts
+`4 bitShift: 126` (= 2^128) returned 0 instead of the correct
+LargePositiveInteger. The __int128 fast path overflowed for shifts where
+the result exceeded 2^127-1 (signed __int128 max). Now computes the
+magnitude bit-width and only uses the __int128 path when the result fits.
+Falls back to the existing magnitude-based shift for larger results.
+
+This was the root cause of all 11 PMArbitraryPrecisionFloat transcendental
+math test failures (ln, exp, sin, cos, tan, sinh, cosh, tanh, arcsin,
+artanh, IEEEArithmeticVersusIntegerAndFraction). The bug cascaded through
+Newton refinement division, AGM computation, and the Salamin ln algorithm.
+
+### Make primitiveAsFloat SmallInteger-only
+Removed the C++ LargeInteger-to-double conversion path from primitive 40
+(asFloat). LargeIntegers now fall back to Smalltalk's
+`LargePositiveInteger>>asFloat` which produces correctly-rounded IEEE 754
+doubles matching the reference VM exactly.
+
+---
+
 # What's New in Build 61
 
 Build 61 — 2026-03-02

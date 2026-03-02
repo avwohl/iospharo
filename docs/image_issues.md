@@ -360,27 +360,13 @@ instead of `0xFFFF0000`.
 
 ---
 
-## VM Limitation: PMArbitraryPrecisionFloat transcendental math failures
+## Fixed (Build 62): PMArbitraryPrecisionFloat transcendental math
 
-**Not an image bug — a limitation of our VM.**
-
-The PolyMath package's `PMArbitraryPrecisionFloatTest` has 12 tests (of 58)
-that pass on the stock Pharo VM but fail on ours. The failing tests all
-involve transcendental functions (sin, cos, tan, exp, ln, sinh, cosh, tanh,
-arcsin, artanh) computed on `ArbitraryPrecisionFloat` values.
-
-These tests exercise heavy large-integer arithmetic paths and deep
-recursion in the Smalltalk number tower. The root cause is likely a
-precision issue in our LargeInteger or Float primitive implementations,
-or a subtle difference in how we handle extended-precision intermediate
-results.
-
-Failing tests:
-  testVeryLargeTan, testVeryLargeSin, testVeryLargeCos, testArcSin,
-  testArTanh, testLn, testExp, testSinh, testCosh, testTanh,
-  testIEEEArithmeticVersusIntegerAndFraction, testPrintAndEvaluate
-
-See `docs/higher_level_tests.md` for full context.
+Previously 12 of 58 tests failed. Root cause was `primitiveBitShift`
+overflow: `4 bitShift: 126` returned 0 instead of 2^128 because the
+`__int128` fast path overflowed. Fixed by checking magnitude bit-width
+before using `__int128`. Now 57 pass, 0 fail, 1 error (testPrintAndEvaluate
+times out on both our VM and the reference VM — not a correctness bug).
 
 ---
 

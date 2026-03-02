@@ -3,18 +3,18 @@
 Pure-Smalltalk packages loadable via Metacello that provide substantial
 test suites for VM validation beyond the built-in Kernel-Tests.
 
-## Results (2026-03-02)
+## Results (2026-03-02, Build 62)
 
   Package      Tests   Pass   Fail  Error  Rate    Notes
   NeoJSON        116    116      0      0  100%    JSON parsing, writing, Unicode
   Mustache        47     47      0      0  100%    Template expansion, closures
   XMLParser     5978   5978      0      0  100%    SAX, DOM, conformance suites
   Grease           0      -      -      -    -     No test packages in baseline
-  PolyMath      1168   1150     12      6  98.5%   See failures below
+  PolyMath      1168   1162      5      1  99.5%   See failures below
   DataFrame      665    651     14      0  97.9%   See failures below
   Fuel             -      -      -      -    -     Timed out (too slow for interpreter)
 
-  Total tested: 7974 pass / 8000 total = 99.7% pass rate
+  Total tested: 7986 pass / 8000 total = 99.8% pass rate
 
 ### PolyMath failures
 
@@ -22,15 +22,12 @@ Pre-existing bugs (also fail on stock Pharo VM):
   PMMatrixTest >> testMatrixCloseTo
   PMVectorTest >> testVectorCloseTo
   PMQRTest >> testDecompositionOfMatrixCausingErraticFailure
+  PMClusterFinderTest >> testClusterEuclidean (flaky convergence)
+  PMClusterFinderTest >> testClusterCovariance (flaky convergence)
 
-VM-specific failures (pass on stock Pharo VM, fail on ours):
-  PMArbitraryPrecisionFloatTest — 7 fail + 5 error (12 of 58 tests)
-    Likely: transcendental math precision in large-number arithmetic
-    testVeryLargeTan, testVeryLargeSin, testVeryLargeCos, testArcSin,
-    testArTanh, testLn, testExp, testSinh, testCosh, testTanh,
-    testIEEEArithmeticVersusIntegerAndFraction, testPrintAndEvaluate
-  PMClusterFinderTest — 2 fail (algorithm convergence, may be flaky)
-  PMDataTreeTest >> testDataTree — 1 error
+Timeout (also times out on reference VM):
+  PMArbitraryPrecisionFloatTest >> testPrintAndEvaluate
+    Iterates ~32K compiler evaluations, exceeds 50s timeout on both VMs
 
 ### DataFrame failures
 

@@ -1345,8 +1345,13 @@ PrimitiveResult Interpreter::primitiveBitShift(int argCount) {
             return PrimitiveResult::Success;
         }
 
-        // For shifts within __int128 range, use it for exact computation
-        if (shift < 127) {
+        // For shifts within __int128 range, use it for exact computation.
+        // We must ensure value << shift fits in signed __int128 (max 2^127-1).
+        // Compute magnitude bits of value to check.
+        uint64_t absVal = (value > 0) ? (uint64_t)value
+                                      : (uint64_t)(-(value + 1)) + 1;
+        int valueBits = 64 - __builtin_clzll(absVal);
+        if (valueBits + shift <= 127) {
             __int128 wide = (__int128)value << shift;
             if (wide >= Oop::smallIntegerMin() && wide <= Oop::smallIntegerMax()) {
                 primitiveSuccess(Oop::fromSmallInteger((int64_t)wide));
@@ -4587,44 +4592,14 @@ static Oop makeFloat(ObjectMemory& memory, double value) {
 }
 
 // Primitive 40: Convert integer to Float
+// Only handles SmallIntegers — LargeIntegers fall back to Smalltalk's
+// LargePositiveInteger>>asFloat which produces correctly-rounded IEEE 754 doubles.
 PrimitiveResult Interpreter::primitiveAsFloat(int argCount) {
     Oop rcvr = stackTop();
-
-    double value;
-    if (rcvr.isSmallInteger()) {
-        value = static_cast<double>(rcvr.asSmallInteger());
-    } else if (rcvr.isObject()) {
-        // Check if LargeInteger
-        Oop largePositiveClass = memory_.specialObject(SpecialObjectIndex::ClassLargePositiveInteger);
-        Oop largeNegativeClass = memory_.specialObject(SpecialObjectIndex::ClassLargeNegativeInteger);
-        Oop objClass = memory_.classOf(rcvr);
-
-        bool isNegative;
-        if (objClass.rawBits() == largePositiveClass.rawBits()) {
-            isNegative = false;
-        } else if (objClass.rawBits() == largeNegativeClass.rawBits()) {
-            isNegative = true;
-        } else {
-            return PrimitiveResult::Failure;
-        }
-
-        // Convert magnitude bytes (little-endian) to double
-        size_t byteSize = memory_.byteSizeOf(rcvr);
-        value = 0.0;
-        double multiplier = 1.0;
-        for (size_t i = 0; i < byteSize; i++) {
-            uint8_t byte = memory_.fetchByte(i, rcvr);
-            value += static_cast<double>(byte) * multiplier;
-            multiplier *= 256.0;
-        }
-
-        if (isNegative) {
-            value = -value;
-        }
-    } else {
+    if (!rcvr.isSmallInteger())
         return PrimitiveResult::Failure;
-    }
 
+    double value = static_cast<double>(rcvr.asSmallInteger());
     Oop resultOop = makeFloat(memory_, value);
     if (resultOop.isNil()) return PrimitiveResult::Failure;
 
