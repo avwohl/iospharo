@@ -257,21 +257,23 @@ struct ModifierStrip: View {
 
     private var isIPad: Bool { bridge.isIPad }
 
-    private var buttonSize: CGFloat { isIPad ? 34 : 32 }
-    private var buttonSpacing: CGFloat { isIPad ? 5 : 4 }
-    private var stripWidth: CGFloat { isIPad ? 44 : 40 }
+    private var buttonSize: CGFloat { isIPad ? 28 : 32 }
+    private var buttonSpacing: CGFloat { isIPad ? 3 : 4 }
+    private var stripWidth: CGFloat { isIPad ? 38 : 40 }
 
     var body: some View {
         if isIPad {
-            // iPad: strip starts below Pharo menu bar
-            VStack(spacing: buttonSpacing) {
-                iPadStrip
+            // iPad: clear gap at top aligns strip below Pharo menu bar
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 28)
+                VStack(spacing: buttonSpacing) {
+                    iPadStrip
+                }
+                .padding(.vertical, 4)
+                .padding(.horizontal, 2)
+                .background(Color(.systemGray6).opacity(0.95))
             }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 2)
             .frame(width: stripWidth)
-            .background(Color(.systemGray6).opacity(0.95))
-            .padding(.top, 28)
         } else {
             // iPhone: full-height gray strip, buttons split around camera
             VStack(spacing: buttonSpacing) {
