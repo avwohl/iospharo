@@ -1,3 +1,35 @@
+# What's New in Build 64
+
+Build 64 — 2026-03-02
+
+## Bug Fixes
+
+### Fix iPhone strip button clipping with zone-centered layout
+The keyboard button was still being clipped by the top-left squircle
+corner despite the +6pt margin fix in Build 63. Replaced the fixed-margin
+approach with zone-centering: each button group is now centered in its
+available zone (top group between corner and DI, bottom group between DI
+and bottom corner + home indicator). Uses squircle intrusion at x=2 (strip
+padding edge) for more conservative clearance. iPhone 16 top padding goes
+from 18pt to 24pt. Verified on iPhone 16 simulator with device mask overlay.
+
+### Enable treat-warnings-as-errors
+Added SWIFT_TREAT_WARNINGS_AS_ERRORS and GCC_TREAT_WARNINGS_AS_ERRORS to
+both Debug and Release configurations.
+
+### Fix Swift concurrency warnings
+Resolved Main actor isolation warnings in PharoBridge.swift (motionManager
+capture), PharoCanvasView.swift (keyboardVisible mutation), and
+UITextInputTraits conformance ("nearly matches" warnings).
+
+## Internal
+
+- Added test package discovery script (scripts/discover_test_packages.st)
+- Added addon test runner (scripts/run_addon_tests.st) for 15 priority
+  test packages beyond the core suite
+
+---
+
 # What's New in Build 63
 
 Build 63 — 2026-03-02
