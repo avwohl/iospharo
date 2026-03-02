@@ -278,13 +278,23 @@ struct ModifierStrip: View {
     private var stripWidth: CGFloat { isIPad ? 44 : 40 }
 
     var body: some View {
-        VStack(spacing: buttonSpacing) {
-            if isIPad {
-                // Push below Pharo menu bar (safe area handled by parent layout)
-                Spacer().frame(height: 28)
-                iPadStrip
-            } else {
-                // Buttons above camera, gap, buttons below camera
+        if isIPad {
+            // iPad: dark gap above (matches canvas behind Pharo menu bar),
+            // gray background only on the button area below.
+            VStack(spacing: 0) {
+                Color.black
+                    .frame(width: stripWidth, height: 28)
+                VStack(spacing: buttonSpacing) {
+                    iPadStrip
+                }
+                .padding(.vertical, 6)
+                .padding(.horizontal, 2)
+                .frame(width: stripWidth)
+                .background(Color(.systemGray6).opacity(0.95))
+            }
+        } else {
+            // iPhone: full-height gray strip, buttons split around camera
+            VStack(spacing: buttonSpacing) {
                 keyboardButton
                 ctrlButton
                 cmdButton
@@ -294,11 +304,11 @@ struct ModifierStrip: View {
                 printButton
                 inspectButton
             }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 2)
+            .frame(width: stripWidth)
+            .background(Color(.systemGray6).opacity(0.95))
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 2)
-        .frame(width: stripWidth)
-        .background(Color(.systemGray6).opacity(0.95))
     }
 
     // MARK: - iPad Layout (16 buttons)
