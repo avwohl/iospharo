@@ -359,6 +359,12 @@ void* lookupFunction(const std::string& moduleName, const std::string& funcName)
         return func;
     }
     if (funcName.compare(0, 6, "cairo_") == 0) {
+        static int cairoStubCount = 0;
+        if (++cairoStubCount <= 5) {
+            fprintf(stderr, "[CAIRO] stub registered: %s (returns 0, cairo not available)\n", funcName.c_str());
+        } else if (cairoStubCount == 6) {
+            fprintf(stderr, "[CAIRO] ... further cairo stub registrations suppressed\n");
+        }
         static auto genericCairoNull = +[]() -> intptr_t { return 0; };
         func = reinterpret_cast<void*>(genericCairoNull);
         sFunctionCache[funcName] = func;

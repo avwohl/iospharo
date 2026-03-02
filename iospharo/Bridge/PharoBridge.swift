@@ -271,6 +271,37 @@ class PharoBridge: ObservableObject {
             at: #Ctrl put: 'Ctrl+';
             at: #Shift put: 'Shift+';
             at: #Enter put: 'Enter'].
+        "Fix: WarpBlt Smalltalk fallback drops alpha channel in mixPix:"
+        "mixPix:sourceMap:destMap: averages R,G,B but ignores alpha (bits 24-31)."
+        "This causes Color inspector swatch to be transparent (gray) instead of colored."
+        (Smalltalk hasClassNamed: #WarpBlt) ifTrue: [
+          WarpBlt compile: 'mixPix: pix sourceMap: sourceMap destMap: destMap
+            | r g b a rgb nPix bitsPerColor d |
+            nPix := pix size.
+            r := 0. g := 0. b := 0. a := 0.
+            1 to: nPix do: [ :i |
+              rgb := sourceForm depth <= 8
+                ifTrue: [ sourceMap at: (pix at: i) + 1 ]
+                ifFalse: [ sourceForm depth = 32
+                    ifTrue: [ pix at: i ]
+                    ifFalse: [ self rgbMap: (pix at: i) from: 5 to: 8 ] ].
+              a := a + ((rgb bitShift: -24) bitAnd: 255).
+              r := r + ((rgb bitShift: -16) bitAnd: 255).
+              g := g + ((rgb bitShift: -8) bitAnd: 255).
+              b := b + ((rgb bitShift: 0) bitAnd: 255) ].
+            destMap
+              ifNil: [ bitsPerColor := 3.
+                destForm depth = 16 ifTrue: [ bitsPerColor := 5 ].
+                destForm depth = 32 ifTrue: [ bitsPerColor := 8 ] ]
+              ifNotNil: [ destMap size = 512 ifTrue: [ bitsPerColor := 3 ].
+                destMap size = 4096 ifTrue: [ bitsPerColor := 4 ].
+                destMap size = 32768 ifTrue: [ bitsPerColor := 5 ] ].
+            d := bitsPerColor - 8.
+            rgb := ((a // nPix bitShift: d) bitShift: bitsPerColor * 3)
+              + ((r // nPix bitShift: d) bitShift: bitsPerColor * 2)
+              + ((g // nPix bitShift: d) bitShift: bitsPerColor)
+              + ((b // nPix bitShift: d) bitShift: 0).
+            ^ destMap ifNil: [ rgb ] ifNotNil: [ destMap at: rgb + 1 ]'].
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [

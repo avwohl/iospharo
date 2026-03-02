@@ -17456,13 +17456,239 @@ PrimitiveResult Interpreter::primitivePixelValueAtPut(int argCount) {
 // Primitive 299: Warp bits (texture mapping/rotation)
 // aBitBlt primitiveWarpBits -> aBitBlt
 // Advanced BitBlt with arbitrary quadrilateral source mapping
+// Used for rotation, scaling, texture mapping, and smoothed morph rendering.
+// WarpBlt fields (0-based): 15=p1x 16=p1y 17=p1z 18=p2x 19=p2y 20=p2z
+//   21=p3x 22=p3y 23=p3z 24=p4x 25=p4y 26=p4z 27=cellSize
+// Arguments: n (smoothing level), sourceMap (color map or nil)
 PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
-    if (argCount != 0) return PrimitiveResult::Failure;
+    if (argCount != 2) return PrimitiveResult::Failure;
 
-    // WarpBlt is complex - it does arbitrary quadrilateral-to-rectangle mapping
-    // Used for rotation, scaling, and texture mapping
-    // For now, fail to Smalltalk fallback
-    return PrimitiveResult::Failure;
+    Oop sourceMapOop = stackTop();       // arg 2: sourceMap
+    Oop nOop = stackValue(1);            // arg 1: smoothing level n
+    Oop warpBlt = stackValue(2);         // receiver (WarpBlt)
+
+    if (!nOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int n = static_cast<int>(nOop.asSmallInteger());
+    if (n < 1 || n > 4) return PrimitiveResult::Failure;
+
+    if (!warpBlt.isObject()) return PrimitiveResult::Failure;
+
+    // WarpBlt field indices (0-based)
+    enum WarpFields {
+        WBP1X = 15, WBP1Y = 16, WBP1Z = 17,
+        WBP2X = 18, WBP2Y = 19, WBP2Z = 20,
+        WBP3X = 21, WBP3Y = 22, WBP3Z = 23,
+        WBP4X = 24, WBP4Y = 25, WBP4Z = 26,
+        WBCellSize = 27
+    };
+
+    // Extract standard BitBlt fields
+    Oop destForm = memory_.fetchPointer(BBDestForm, warpBlt);
+    Oop sourceForm = memory_.fetchPointer(BBSourceForm, warpBlt);
+    intptr_t combinationRule = bitBltField(memory_, warpBlt, BBCombinationRule);
+    intptr_t destX = bitBltField(memory_, warpBlt, BBDestX);
+    intptr_t destY = bitBltField(memory_, warpBlt, BBDestY);
+    intptr_t width = bitBltField(memory_, warpBlt, BBWidth);
+    intptr_t height = bitBltField(memory_, warpBlt, BBHeight);
+    intptr_t clipX = bitBltField(memory_, warpBlt, BBClipX);
+    intptr_t clipY = bitBltField(memory_, warpBlt, BBClipY);
+    intptr_t clipW = bitBltField(memory_, warpBlt, BBClipWidth);
+    intptr_t clipH = bitBltField(memory_, warpBlt, BBClipHeight);
+
+    if (!destForm.isObject() || !sourceForm.isObject()) return PrimitiveResult::Failure;
+    if (width < 1 || height < 1) {
+        popN(2); // pop args, leave receiver
+        return PrimitiveResult::Success;
+    }
+
+    // Extract quad corners (fixed-point, 14 bits fractional: 1.0 = 16384)
+    auto warpField = [&](int idx) -> intptr_t {
+        Oop f = memory_.fetchPointer(idx, warpBlt);
+        if (f.isSmallInteger()) return f.asSmallInteger();
+        return 0;
+    };
+
+    intptr_t p1x = warpField(WBP1X), p1y = warpField(WBP1Y);
+    intptr_t p2x = warpField(WBP2X), p2y = warpField(WBP2Y);
+    intptr_t p3x = warpField(WBP3X), p3y = warpField(WBP3Y);
+    intptr_t p4x = warpField(WBP4X), p4y = warpField(WBP4Y);
+
+    // Dest form setup
+    Oop dstBits = memory_.fetchPointer(FormBits, destForm);
+    intptr_t dstWidth = bitBltField(memory_, destForm, FormWidth);
+    intptr_t dstHeight = bitBltField(memory_, destForm, FormHeight);
+    intptr_t dstDepth = bitBltField(memory_, destForm, FormDepth);
+
+    // Source form setup
+    Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
+    intptr_t srcWidth = bitBltField(memory_, sourceForm, FormWidth);
+    intptr_t srcHeight = bitBltField(memory_, sourceForm, FormHeight);
+    intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
+
+    // Only support 32-bit for now (most common case)
+    if (dstDepth != 32 || srcDepth != 32) return PrimitiveResult::Failure;
+
+    if (!dstBits.isObject() || dstBits.isNil()) return PrimitiveResult::Failure;
+    if (!srcBits.isObject() || srcBits.isNil()) return PrimitiveResult::Failure;
+
+    ObjectHeader* dstHdr = dstBits.asObjectPtr();
+    ObjectHeader* srcHdr = srcBits.asObjectPtr();
+    uint32_t* dstPixels = reinterpret_cast<uint32_t*>(dstHdr->bytes());
+    uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcHdr->bytes());
+    size_t dstBitsSize = dstHdr->byteSize();
+    size_t srcBitsSize = srcHdr->byteSize();
+
+    // Clip destination rectangle
+    intptr_t cx0 = std::max(destX, clipX);
+    intptr_t cy0 = std::max(destY, clipY);
+    intptr_t cx1 = std::min(destX + width, std::min(clipX + clipW, dstWidth));
+    intptr_t cy1 = std::min(destY + height, std::min(clipY + clipH, dstHeight));
+    if (cx0 >= cx1 || cy0 >= cy1) {
+        popN(2);
+        return PrimitiveResult::Success;
+    }
+
+    // Bounds check destination
+    if (static_cast<size_t>((cy1 - 1) * dstWidth + cx1) * 4 > dstBitsSize)
+        return PrimitiveResult::Failure;
+
+    // Fixed-point constants
+    const intptr_t FP_ONE = 16384; // 1.0 in fixed-point (14 bits)
+
+    // Compute deltas for scanning
+    intptr_t nStepsH = std::max(height - 1, (intptr_t)1);
+    intptr_t nStepsW = std::max(width - 1, (intptr_t)1);
+
+    // Edge interpolation: p1→p2 (left edge to right edge, top)
+    //                     p4→p3 (left edge to right edge, bottom)
+    // For each row y: pA = lerp(p1, p4, y/h), pB = lerp(p2, p3, y/h)
+    // For each col x: sp = lerp(pA, pB, x/w)
+
+    auto clampSrc = [&](intptr_t sx, intptr_t sy) -> uint32_t {
+        if (sx < 0) sx = 0;
+        if (sy < 0) sy = 0;
+        if (sx >= srcWidth) sx = srcWidth - 1;
+        if (sy >= srcHeight) sy = srcHeight - 1;
+        size_t idx = static_cast<size_t>(sy * srcWidth + sx);
+        if (idx * 4 + 4 > srcBitsSize) return 0;
+        return srcPixels[idx];
+    };
+
+    // Combination rule helper for writing pixels
+    auto writePixel = [&](uint32_t* dst, uint32_t src) {
+        switch (combinationRule) {
+            case 3:  *dst = src; break; // store
+            case 34: { // alphaBlendScaled (premultiplied source-over)
+                uint32_t sa = (src >> 24) & 0xFF;
+                if (sa == 255) { *dst = src; }
+                else if (sa > 0) {
+                    uint32_t invSa = 255 - sa;
+                    uint32_t d = *dst;
+                    uint32_t dAlpha = (d >> 24) & 0xFF;
+                    uint32_t srcRB = src & 0xFF00FF, srcG = src & 0x00FF00;
+                    uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
+                    uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                    uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
+                    uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                    uint32_t rb = (srcRB + dst_rb) & 0xFF00FF;
+                    uint32_t g = (srcG + dst_g) & 0x00FF00;
+                    uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                    *dst = rb | g | (outAlpha << 24);
+                }
+                break;
+            }
+            case 24: { // alpha blend (non-premultiplied)
+                uint32_t sa = (src >> 24) & 0xFF;
+                if (sa == 255) { *dst = src; }
+                else if (sa > 0) {
+                    uint32_t invSa = 255 - sa;
+                    uint32_t d = *dst;
+                    uint32_t dAlpha = (d >> 24) & 0xFF;
+                    uint32_t srcRB = src & 0xFF00FF, srcG = src & 0x00FF00;
+                    uint32_t t_rb = srcRB * sa + (d & 0xFF00FF) * invSa + 0x800080;
+                    uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                    uint32_t t_g = srcG * sa + (d & 0x00FF00) * invSa + 0x008000;
+                    uint32_t g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
+                    uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
+                    *dst = rb | g | (outAlpha << 24);
+                }
+                break;
+            }
+            case 25: // pixPaint
+                if (src != 0) *dst = src;
+                break;
+            case 7:  *dst |= src; break; // OR
+            case 0:  *dst &= src; break; // AND
+            case 6:  *dst ^= src; break; // XOR
+            default: *dst = src; break;  // fallback: store
+        }
+    };
+
+    // Average n*n source pixels with proper alpha handling
+    auto sampleSmoothed = [&](intptr_t spx, intptr_t spy,
+                              intptr_t dspx, intptr_t dspy,
+                              intptr_t depy, intptr_t depx) -> uint32_t {
+        uint32_t sumA = 0, sumR = 0, sumG = 0, sumB = 0;
+        int nn = n * n;
+        for (int dy = 0; dy < n; dy++) {
+            for (int dx = 0; dx < n; dx++) {
+                intptr_t ssx = (spx + dspx * dx / n + depy * dy / n) / FP_ONE;
+                intptr_t ssy = (spy + dspy * dx / n + depx * dy / n) / FP_ONE;
+                uint32_t pix = clampSrc(ssx, ssy);
+                sumA += (pix >> 24) & 0xFF;
+                sumR += (pix >> 16) & 0xFF;
+                sumG += (pix >> 8)  & 0xFF;
+                sumB +=  pix        & 0xFF;
+            }
+        }
+        return ((sumA / nn) << 24) | ((sumR / nn) << 16) |
+               ((sumG / nn) << 8)  |  (sumB / nn);
+    };
+
+    for (intptr_t y = cy0; y < cy1; y++) {
+        // Interpolation along y: fraction within dest rect
+        intptr_t fy = y - destY;
+
+        // Left edge source point at this row: lerp(p1, p4, fy/nStepsH)
+        intptr_t pAx = p1x + (p4x - p1x) * fy / nStepsH;
+        intptr_t pAy = p1y + (p4y - p1y) * fy / nStepsH;
+        // Right edge source point at this row: lerp(p2, p3, fy/nStepsH)
+        intptr_t pBx = p2x + (p3x - p2x) * fy / nStepsH;
+        intptr_t pBy = p2y + (p3y - p2y) * fy / nStepsH;
+
+        // Delta per column step
+        intptr_t dPx = (pBx - pAx) / nStepsW;
+        intptr_t dPy = (pBy - pAy) / nStepsW;
+
+        // Vertical delta (for smoothing subsampling)
+        intptr_t dVx = (p4x - p1x) / nStepsH;
+        intptr_t dVy = (p4y - p1y) / nStepsH;
+
+        uint32_t* dstRow = dstPixels + y * dstWidth;
+
+        for (intptr_t x = cx0; x < cx1; x++) {
+            intptr_t fx = x - destX;
+            // Source point in fixed-point
+            intptr_t spx = pAx + dPx * fx;
+            intptr_t spy = pAy + dPy * fx;
+
+            if (n == 1) {
+                // No smoothing — just sample one pixel
+                intptr_t sx = spx / FP_ONE;
+                intptr_t sy = spy / FP_ONE;
+                uint32_t pix = clampSrc(sx, sy);
+                writePixel(&dstRow[x], pix);
+            } else {
+                // Smoothed: average n*n samples
+                uint32_t pix = sampleSmoothed(spx, spy, dPx, dPy, dVx, dVy);
+                writePixel(&dstRow[x], pix);
+            }
+        }
+    }
+
+    showDisplayBits(destForm, cx0, cy0, cx1, cy1);
+    popN(2); // pop args, leave receiver
+    return PrimitiveResult::Success;
 }
 
 // ===== SOUND PRIMITIVES (300-329) =====

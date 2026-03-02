@@ -7751,6 +7751,7 @@ void Interpreter::initializeNamedPrimitives() {
     // BitBlt plugin
     registerNamedPrimitive("BitBltPlugin", "primitiveCopyBits", &Interpreter::primitiveCopyBits);
     registerNamedPrimitive("BitBltPlugin", "primitiveDrawLoop", &Interpreter::primitiveDrawLoop);
+    registerNamedPrimitive("BitBltPlugin", "primitiveWarpBits", &Interpreter::primitiveWarpBits);
 
     // FloatArrayPlugin
     registerNamedPrimitive("FloatArrayPlugin", "primitiveAt", &Interpreter::primitiveFloatArrayAt);

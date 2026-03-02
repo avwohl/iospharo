@@ -21,6 +21,25 @@ inspectIt buttons are hidden to prevent them from being pushed off
 screen. Keyboard toggle, Ctrl, and Cmd remain visible for typing.
 Buttons restore when the keyboard is dismissed.
 
+### Color inspector swatch now shows correct color
+`Color red inspect` (and other colors) showed a gray box in the
+inspector's Color tab instead of the expected colored rectangle.
+
+Root cause: the Color swatch path uses `Morph >> asFormOfSize:` which
+calls WarpBlt for scaled/smoothed rendering. Our VM did not implement
+`primitiveWarpBits`, so the Smalltalk fallback ran — but that fallback
+has a bug where `mixPix:` averages R/G/B without preserving the alpha
+channel, producing transparent pixels (alpha=0).
+
+Fix: implemented `primitiveWarpBits` in C++ for 32-bit depth (covers
+the common case), and patched the Smalltalk `mixPix:` fallback via
+startup.st to preserve alpha as a safety net.
+
+### Cairo stub functions now log on registration
+Previously, all `cairo_*` FFI calls silently returned 0 with no
+indication that Cairo was unavailable. Now the first 5 registrations
+are logged to stderr for diagnostic visibility.
+
 ---
 
 # What's New in Build 46

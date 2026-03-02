@@ -299,3 +299,78 @@ Morphic's event model assumes mouse input. On a touchscreen:
   - Shows selection handles on text selections
   - Supports pinch-to-zoom on text panes (scaling the font size
     or using a viewport transform)
+
+---
+
+## Bug 5: WarpBlt Smalltalk fallback drops alpha channel
+
+**Class**: `WarpBlt` (package Graphics-Primitives)
+**Method**: `mixPix:sourceMap:destMap:`
+
+When the `primitiveWarpBits` C primitive is unavailable (as in our VM
+prior to this fix), `WarpBlt >> warpBitsSmoothing:sourceMap:` falls back
+to a Smalltalk pixel-by-pixel implementation. The `mixPix:` method
+averages N×N source pixels for anti-aliasing but only averages the R, G,
+B channels — it ignores the alpha channel (bits 24-31). The result has
+alpha=0 (fully transparent).
+
+This manifests when inspecting a Color (`Color red inspect`): the Color
+tab shows a gray box instead of a colored rectangle. The inspector path
+is:
+
+    Morph new color: Color red; asFormOfSize: 50@50
+
+`asFormOfSize:` calls `transformBy:clippingTo:during:smoothing: 2` which
+uses WarpBlt with smoothing=2. The morph is drawn correctly onto a
+sub-canvas (BitBlt fill, works fine), but the WarpBlt copy from
+sub-canvas to the target form drops all alpha, producing `0x00FF0000`
+instead of `0xFFFF0000`.
+
+**Steps to reproduce** (any VM without primitiveWarpBits):
+
+    1. `Color red inspect`
+    2. Click the "Color" tab in the inspector
+    3. The swatch rectangle is gray/transparent instead of red
+
+**Root cause in code** (`mixPix:sourceMap:destMap:`):
+
+    "Only R, G, B are summed — alpha is ignored"
+    r := r + ((rgb bitShift: -16) bitAnd: 255).
+    g := g + ((rgb bitShift: -8) bitAnd: 255).
+    b := b + ((rgb bitShift: 0) bitAnd: 255).
+    "...reassembled without alpha:"
+    rgb := ((r // nPix bitShift: d) bitShift: bitsPerColor * 2)
+         + ((g // nPix bitShift: d) bitShift: bitsPerColor)
+         + ...
+
+**Suggested fix**: Add alpha channel averaging:
+
+    a := a + ((rgb bitShift: -24) bitAnd: 255).
+    "...include in reassembly:"
+    rgb := ((a // nPix bitShift: d) bitShift: bitsPerColor * 3) + ...
+
+**Our fixes** (two-pronged):
+
+  1. Implemented `primitiveWarpBits` in the C++ VM for 32-bit depth,
+     so the buggy Smalltalk fallback is never reached.
+
+  2. Patched `mixPix:sourceMap:destMap:` via startup.st to preserve
+     alpha, as a safety net for any other code path that might hit
+     the Smalltalk fallback.
+
+---
+
+## Note: Cairo/Athens not available
+
+Cairo (`libcairo`) is not included in the iospharo VM. All `cairo_*` FFI
+calls resolve to a stub that returns 0. This means:
+
+  - Athens (the Cairo-based canvas) silently fails — any rendering that
+    goes through Athens produces no output.
+  - The standard Pharo display pipeline uses OSSDL2Driver → BitBlt →
+    FormCanvas, which does NOT use Cairo, so normal rendering is fine.
+  - Some packages (e.g., Roassal visualizations) use Athens and will
+    not render correctly.
+
+The stub now logs the first 5 `cairo_*` function registrations to
+stderr for diagnostic visibility.
