@@ -409,6 +409,12 @@ that side equals the portrait top inset:
   5. Only 11 unique iPhone screen geometries exist (see quick-reference
      table).  Many "different" models share the exact same layout.
 
+  6. The bitmask includes the camera cutout (notch or Dynamic Island),
+     not just rounded corners.  This eliminates guesswork when
+     positioning UI elements near rounded screen edges -- the mask
+     shows exactly which pixels are visible and which are occluded
+     by hardware.
+
 ---
 
 ## Mask Overlay Project
