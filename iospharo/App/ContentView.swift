@@ -280,7 +280,20 @@ struct ModifierStrip: View {
         let notchInset = max(insets.left, insets.right)
         // Only need enough to clear the corner radius at the strip's
         // horizontal center, not the full DI exclusion zone.
-        return notchInset > 40 ? ceil(notchInset / 3.0) : 6
+        return notchInset > 40 ? ceil(notchInset * 0.45) : 6
+    }
+
+    /// Bottom padding to clear the home indicator and rounded bottom corner.
+    /// The parent HStack ignores bottom safe area so we must account for it.
+    private var iPhoneBottomPadding: CGFloat {
+        guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene }).first,
+              let window = windowScene.windows.first else { return 6 }
+        let bottom = window.safeAreaInsets.bottom          // 21pt home indicator
+        let notchInset = max(window.safeAreaInsets.left, window.safeAreaInsets.right)
+        // Corner clearance same as top, plus home indicator zone
+        let cornerClear = notchInset > 40 ? ceil(notchInset * 0.45) : CGFloat(6)
+        return cornerClear + bottom
     }
 
     var body: some View {
@@ -321,7 +334,7 @@ struct ModifierStrip: View {
                 }
             }
             .padding(.top, iPhoneTopPadding)
-            .padding(.bottom, 6)
+            .padding(.bottom, iPhoneBottomPadding)
             .padding(.horizontal, 2)
             .frame(width: stripWidth)
             .background(Color(.systemGray6).opacity(0.95))

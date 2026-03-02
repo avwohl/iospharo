@@ -1,3 +1,18 @@
+# What's New in Build 61
+
+Build 61 — 2026-03-02
+
+## UI Improvements
+
+### iPhone strip button positioning refined
+Top buttons (keyboard, Ctrl, Cmd) moved slightly further down to fully
+clear the squircle corner (45% of leading safe area inset, ~27pt).
+Bottom action buttons now properly clear the home indicator and bottom
+rounded corner — previously sat at 6pt from the screen edge, now uses
+corner clearance + bottom safe area inset (~48pt).
+
+---
+
 # What's New in Build 60
 
 Build 60 — 2026-03-02
