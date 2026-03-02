@@ -1,3 +1,7 @@
+# What's New in Build 45
+
+Build 45 — 2026-03-01
+
 # What's New in Build 44
 
 Build 44 — 2026-03-01
