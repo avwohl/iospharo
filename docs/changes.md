@@ -1,3 +1,17 @@
+# What's New in Build 59
+
+Build 59 — 2026-03-02
+
+## UI Improvements
+
+### iPhone strip buttons no longer clipped by rounded corner / Dynamic Island
+The top modifier buttons (keyboard, Ctrl, Cmd) are now pushed below the
+screen's rounded corner and camera cutout area using the device's actual
+safe area insets.  Bottom action buttons (backspace, DoIt, PrintIt,
+InspectIt) reduced from 32pt to 26pt to fit the available space.
+
+---
+
 # What's New in Build 58
 
 Build 58 — 2026-03-02
