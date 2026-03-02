@@ -106,7 +106,7 @@ struct ContentView: View {
                 )
                 PharoCanvasView(bridge: bridge)
             }
-            .ignoresSafeArea()
+            .ignoresSafeArea(edges: [.bottom, .horizontal])
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -263,7 +263,8 @@ struct ModifierStrip: View {
 
     var body: some View {
         if isIPad {
-            // iPad: clear gap at top aligns strip below Pharo menu bar
+            // iPad: strip starts at safe area top (SwiftUI handles that),
+            // then 28pt gap clears the Pharo menu bar
             VStack(spacing: 0) {
                 Color.clear.frame(height: 28)
                 VStack(spacing: buttonSpacing) {
