@@ -276,16 +276,18 @@ struct ModifierStrip: View {
             }
             .frame(width: stripWidth)
         } else {
-            // iPhone: full-height gray strip, buttons split around camera
+            // iPhone: when keyboard is showing, hide action buttons to save space
             VStack(spacing: buttonSpacing) {
                 keyboardButton
                 ctrlButton
                 cmdButton
                 Spacer()
-                backspaceButton
-                doItButton
-                printButton
-                inspectButton
+                if !keyboardVisible {
+                    backspaceButton
+                    doItButton
+                    printButton
+                    inspectButton
+                }
             }
             .padding(.vertical, 6)
             .padding(.horizontal, 2)
