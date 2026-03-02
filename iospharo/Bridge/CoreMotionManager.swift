@@ -9,7 +9,7 @@
 import CoreMotion
 import Foundation
 
-class CoreMotionManager {
+class CoreMotionManager: @unchecked Sendable {
 
     private let manager = CMMotionManager()
     private let queue = OperationQueue()

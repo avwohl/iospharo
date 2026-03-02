@@ -200,8 +200,9 @@ class PharoBridge: ObservableObject {
 
             // Poll Core Motion start/stop requests from the VM thread.
             // The timer runs on the main run loop at ~10 Hz.
-            motionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-                self?.motionManager.pollRequests()
+            let mgr = motionManager
+            motionTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { _ in
+                mgr.pollRequests()
             }
 
             // Start the interpreter on a background thread.

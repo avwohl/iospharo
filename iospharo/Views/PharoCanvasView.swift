@@ -329,7 +329,9 @@ class PharoCanvasViewController: UIViewController {
         NotificationCenter.default.addObserver(
             forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.bridge?.keyboardVisible = false
+            MainActor.assumeIsolated {
+                self?.bridge?.keyboardVisible = false
+            }
         }
         #endif
 
@@ -626,13 +628,13 @@ extension PharoMTKView: UIKeyInput {
     // Disable autocorrect/prediction — it buffers characters instead of
     // delivering them to insertText() immediately, making regular typing
     // appear broken. Also disable smart quotes/dashes which mangle code.
-    var autocorrectionType: UITextAutocorrectionType { .no }
-    var autocapitalizationType: UITextAutocapitalizationType { .none }
-    var spellCheckingType: UITextSpellCheckingType { .no }
-    var smartQuotesType: UITextSmartQuotesType { .no }
-    var smartDashesType: UITextSmartDashesType { .no }
-    var smartInsertDeleteType: UITextSmartInsertDeleteType { .no }
-    var keyboardType: UIKeyboardType { .asciiCapable }
+    @objc var autocorrectionType: UITextAutocorrectionType { get { .no } set {} }
+    @objc var autocapitalizationType: UITextAutocapitalizationType { get { .none } set {} }
+    @objc var spellCheckingType: UITextSpellCheckingType { get { .no } set {} }
+    @objc var smartQuotesType: UITextSmartQuotesType { get { .no } set {} }
+    @objc var smartDashesType: UITextSmartDashesType { get { .no } set {} }
+    @objc var smartInsertDeleteType: UITextSmartInsertDeleteType { get { .no } set {} }
+    @objc var keyboardType: UIKeyboardType { get { .asciiCapable } set {} }
 
     func insertText(_ text: String) {
         // Include virtual modifier keys when active
