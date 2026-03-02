@@ -312,7 +312,7 @@ struct ModifierStrip: View {
     private var iPhoneTopPadding: CGFloat {
         let R = estimatedCornerRadius
         guard R > 0 else { return 6 }
-        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 2)
+        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 6)
     }
 
     /// Bottom padding: clear the squircle corner + home indicator zone.
@@ -321,7 +321,7 @@ struct ModifierStrip: View {
         let R = estimatedCornerRadius
         let bottom = window.safeAreaInsets.bottom  // 21pt home indicator
         guard R > 0 else { return max(bottom, 6) }
-        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 2) + bottom
+        return ceil(squircleIntrusion(R: R, x: buttonLeftX) + 6) + bottom
     }
 
     var body: some View {
