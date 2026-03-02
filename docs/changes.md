@@ -16,6 +16,19 @@ math test failures (ln, exp, sin, cos, tan, sinh, cosh, tanh, arcsin,
 artanh, IEEEArithmeticVersusIntegerAndFraction). The bug cascaded through
 Newton refinement division, AGM computation, and the Salamin ln algorithm.
 
+### Fix WarpBlt quad edge interpolation (sideways thumbnails)
+`primitiveWarpBits` had the quad corner interpolation order swapped.
+The left edge walked p1→p4 (horizontal) instead of p1→p2 (vertical),
+causing WarpBlt output to be rotated 90 degrees. This affected window
+thumbnails, `asFormOfSize:`, and any scaled/rotated morph rendering.
+Normal BitBlt display was not affected.
+
+### Fix bullet characters in doc browser showing as "?"
+Same root cause as the menu shortcut symbol issue (Bug 4 in
+image_issues.md): the embedded Source Sans Pro v2.020 font doesn't
+include U+2022 BULLET. Startup.st now patches `bulletForLevel:` in
+`MicRichTextComposer` to use ASCII `*` and `-` instead.
+
 ### Make primitiveAsFloat SmallInteger-only
 Removed the C++ LargeInteger-to-double conversion path from primitive 40
 (asFloat). LargeIntegers now fall back to Smalltalk's

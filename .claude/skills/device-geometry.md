@@ -5,9 +5,8 @@ description: iPhone/iPad screen geometry and the exact algorithm for computing s
 
 # Device Screen Geometry & Mask Computation
 
-Full device data: `docs/device-screen-geometry.md`
-
-This skill defines the **exact algorithm** for computing screen-edge
+This skill is the **single source of truth** for iOS device screen geometry
+and the **exact algorithm** for computing screen-edge
 visibility.  Every Claude session MUST use these formulas — no heuristics,
 no "about 45%", no guessing.
 
@@ -408,7 +407,6 @@ pure math with no device-specific constants.
 
 ## Sources
 
-  docs/device-screen-geometry.md         (full device data, all models)
   docs/TODO-device-masks.md              (mask overlay tool spec)
   kylebashour.com/posts/finding-the-real-iphone-x-corner-radius
   Superellipse: en.wikipedia.org/wiki/Superellipse

@@ -360,6 +360,38 @@ instead of `0xFFFF0000`.
 
 ---
 
+## Bug 6: Doc browser bullet chars render as "?" (same font issue as Bug 4)
+
+**Class**: `MicRichTextComposer` (package Microdown-RichTextComposer)
+**Method**: `bulletForLevel:`
+
+Stock source:
+
+    bulletForLevel: level
+        ^ ('•-' at: (level - 1 \\ 2) + 1) asText
+
+The bullet character U+2022 (BULLET) is not in the embedded Source Sans
+Pro v2.020 font (same root cause as Bug 4). FreeType renders `.notdef`
+which shows as "?" at body text sizes.
+
+**Steps to reproduce** (stock Pharo 13, any VM):
+
+    1. Open Help > Microdown Document Browser
+    2. Expand any document with unordered lists
+    3. Bullet points show "?" instead of a bullet symbol
+
+**Suggested fix**: Update the embedded Source Sans Pro font to v3.052
+(same as Bug 4 — one fix resolves both).
+
+**Our workaround** (startup.st):
+
+    MicRichTextComposer compile: 'bulletForLevel: level
+        ^ (''*-'' at: (level - 1 \\ 2) + 1) asText'.
+
+Replaces the Unicode bullet with ASCII `*` for level 1, `-` for level 2.
+
+---
+
 ## Fixed (Build 62): PMArbitraryPrecisionFloat transcendental math
 
 Previously 12 of 58 tests failed. Root cause was `primitiveBitShift`

@@ -143,6 +143,13 @@ Key directories:
 - `scripts/` - Build and transformation scripts
 - `docs/` - Documentation
 
+## iOS Screen Layout
+For any work involving iOS device screen geometry (safe areas, corner radii,
+squircle math, Dynamic Island positioning, strip button layout, mask overlays),
+use the `device-geometry` skill (`.claude/skills/device-geometry.md`).  It
+contains all device data, the exact superellipse formula, and worked examples.
+Source repo: `../claude-skills`
+
 ## Bytecode Reference
 The Sista V1 bytecode spec (used by Pharo 10+) is notoriously hard to find online.
 A local copy is at: `docs/SistaV1-Bytecode-Spec.md`

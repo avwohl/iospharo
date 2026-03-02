@@ -271,6 +271,11 @@ class PharoBridge: ObservableObject {
             at: #Ctrl put: 'Ctrl+';
             at: #Shift put: 'Shift+';
             at: #Enter put: 'Enter'].
+        "Fix: bullet chars (U+2022) in learning docs show as ? — not in embedded Source Sans Pro"
+        "Patch the bulletForLevel: renderer to use ASCII * and - instead of Unicode bullet."
+        (Smalltalk hasClassNamed: #MicRichTextComposer) ifTrue: [
+          MicRichTextComposer compile: 'bulletForLevel: level
+            ^ (''*-'' at: (level - 1 \\\\ 2) + 1) asText'].
         "Fix: WarpBlt Smalltalk fallback drops alpha channel in mixPix:"
         "mixPix:sourceMap:destMap: averages R,G,B but ignores alpha (bits 24-31)."
         "This causes Color inspector swatch to be transparent (gray) instead of colored."

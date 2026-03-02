@@ -17534,10 +17534,10 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
     intptr_t nStepsH = std::max(height - 1, (intptr_t)1);
     intptr_t nStepsW = std::max(width - 1, (intptr_t)1);
 
-    // Edge interpolation: p1→p2 (left edge to right edge, top)
-    //                     p4→p3 (left edge to right edge, bottom)
-    // For each row y: pA = lerp(p1, p4, y/h), pB = lerp(p2, p3, y/h)
-    // For each col x: sp = lerp(pA, pB, x/w)
+    // WarpBlt quad corners: p1=TL, p2=BL, p3=BR, p4=TR (CCW from top-left)
+    // Left edge:  lerp(p1, p2, y/h)  — top-left to bottom-left
+    // Right edge: lerp(p4, p3, y/h)  — top-right to bottom-right
+    // Each scanline: lerp(pA, pB, x/w)
 
     auto clampSrc = [&](intptr_t sx, intptr_t sy) -> uint32_t {
         if (sx < 0) sx = 0;
@@ -17624,20 +17624,20 @@ PrimitiveResult Interpreter::primitiveWarpBits(int argCount) {
         // Interpolation along y: fraction within dest rect
         intptr_t fy = y - destY;
 
-        // Left edge source point at this row: lerp(p1, p4, fy/nStepsH)
-        intptr_t pAx = p1x + (p4x - p1x) * fy / nStepsH;
-        intptr_t pAy = p1y + (p4y - p1y) * fy / nStepsH;
-        // Right edge source point at this row: lerp(p2, p3, fy/nStepsH)
-        intptr_t pBx = p2x + (p3x - p2x) * fy / nStepsH;
-        intptr_t pBy = p2y + (p3y - p2y) * fy / nStepsH;
+        // Left edge source point at this row: lerp(p1, p2, fy/nStepsH)
+        intptr_t pAx = p1x + (p2x - p1x) * fy / nStepsH;
+        intptr_t pAy = p1y + (p2y - p1y) * fy / nStepsH;
+        // Right edge source point at this row: lerp(p4, p3, fy/nStepsH)
+        intptr_t pBx = p4x + (p3x - p4x) * fy / nStepsH;
+        intptr_t pBy = p4y + (p3y - p4y) * fy / nStepsH;
 
         // Delta per column step
         intptr_t dPx = (pBx - pAx) / nStepsW;
         intptr_t dPy = (pBy - pAy) / nStepsW;
 
-        // Vertical delta (for smoothing subsampling)
-        intptr_t dVx = (p4x - p1x) / nStepsH;
-        intptr_t dVy = (p4y - p1y) / nStepsH;
+        // Vertical delta (for smoothing subsampling — down the left edge)
+        intptr_t dVx = (p2x - p1x) / nStepsH;
+        intptr_t dVy = (p2y - p1y) / nStepsH;
 
         uint32_t* dstRow = dstPixels + y * dstWidth;
 

@@ -18,7 +18,8 @@ the actual visible area is clear.  The mask blacks out:
 ## Reference Data
 
 All device dimensions, safe area insets, corner radii, and Dynamic Island
-positions are documented in `docs/device-screen-geometry.md`.
+positions are in the `device-geometry` skill (`.claude/skills/device-geometry.md`).
+The skill also contains the squircle formula and bitmask generation algorithm.
 
 Key values:
   iPhone 16:          393x852 pt, 55pt corners, DI yes, safe area 59pt
@@ -62,7 +63,7 @@ Only for iPhones.  In portrait, the DI is a rounded rectangle centered
 horizontally near the top of the screen.  In landscape, it rotates to
 the near edge (left or right) centered vertically.
 
-Dimensions (from pixel measurements, see device-screen-geometry.md):
+Dimensions (from the device-geometry skill):
   iPhone 16:       ~126 x 37 pt (portrait W x H)
   iPhone 16 Pro:   ~162 x 36 pt
   Pro Max:         ~256 x 36 pt
