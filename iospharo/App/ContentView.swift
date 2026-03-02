@@ -98,15 +98,31 @@ struct ContentView: View {
             PharoCanvasView(bridge: bridge)
                 .ignoresSafeArea()
             #else
-            HStack(spacing: 0) {
-                ModifierStrip(
-                    bridge: bridge,
-                    keyboardVisible: $bridge.keyboardVisible,
-                    showHelp: $showingHelp
-                )
-                PharoCanvasView(bridge: bridge)
+            if bridge.isIPad {
+                // iPad: HStack respects top safe area (status bar), strip
+                // naturally positioned below it. Canvas extends to full screen.
+                HStack(spacing: 0) {
+                    ModifierStrip(
+                        bridge: bridge,
+                        keyboardVisible: $bridge.keyboardVisible,
+                        showHelp: $showingHelp
+                    )
+                    PharoCanvasView(bridge: bridge)
+                        .ignoresSafeArea()
+                }
+                .ignoresSafeArea(.container, edges: [.bottom, .leading, .trailing])
+            } else {
+                // iPhone: full-screen layout, strip handles camera positioning
+                HStack(spacing: 0) {
+                    ModifierStrip(
+                        bridge: bridge,
+                        keyboardVisible: $bridge.keyboardVisible,
+                        showHelp: $showingHelp
+                    )
+                    PharoCanvasView(bridge: bridge)
+                }
+                .ignoresSafeArea()
             }
-            .ignoresSafeArea()
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
@@ -257,14 +273,6 @@ struct ModifierStrip: View {
 
     private var isIPad: Bool { bridge.isIPad }
 
-    /// Read safe area from UIKit window directly — GeometryReader reports 0
-    /// when .ignoresSafeArea() is applied to the parent HStack.
-    private var systemSafeAreaTop: CGFloat {
-        guard let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-              let window = scene.windows.first else { return 24 }
-        return window.safeAreaInsets.top
-    }
-
     private var buttonSize: CGFloat { isIPad ? 34 : 32 }
     private var buttonSpacing: CGFloat { isIPad ? 5 : 4 }
     private var stripWidth: CGFloat { isIPad ? 44 : 40 }
@@ -272,8 +280,8 @@ struct ModifierStrip: View {
     var body: some View {
         VStack(spacing: buttonSpacing) {
             if isIPad {
-                // Push below status bar + Pharo menu bar
-                Spacer().frame(height: systemSafeAreaTop + 28)
+                // Push below Pharo menu bar (safe area handled by parent layout)
+                Spacer().frame(height: 28)
                 iPadStrip
             } else {
                 // Buttons above camera, gap, buttons below camera
