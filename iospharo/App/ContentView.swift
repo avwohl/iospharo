@@ -98,31 +98,15 @@ struct ContentView: View {
             PharoCanvasView(bridge: bridge)
                 .ignoresSafeArea()
             #else
-            if bridge.isIPad {
-                // iPad: HStack respects top safe area (status bar), strip
-                // naturally positioned below it. Canvas extends to full screen.
-                HStack(spacing: 0) {
-                    ModifierStrip(
-                        bridge: bridge,
-                        keyboardVisible: $bridge.keyboardVisible,
-                        showHelp: $showingHelp
-                    )
-                    PharoCanvasView(bridge: bridge)
-                        .ignoresSafeArea()
-                }
-                .ignoresSafeArea(.container, edges: [.bottom, .leading, .trailing])
-            } else {
-                // iPhone: full-screen layout, strip handles camera positioning
-                HStack(spacing: 0) {
-                    ModifierStrip(
-                        bridge: bridge,
-                        keyboardVisible: $bridge.keyboardVisible,
-                        showHelp: $showingHelp
-                    )
-                    PharoCanvasView(bridge: bridge)
-                }
-                .ignoresSafeArea()
+            HStack(spacing: 0) {
+                ModifierStrip(
+                    bridge: bridge,
+                    keyboardVisible: $bridge.keyboardVisible,
+                    showHelp: $showingHelp
+                )
+                PharoCanvasView(bridge: bridge)
             }
+            .ignoresSafeArea()
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
