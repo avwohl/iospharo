@@ -38,6 +38,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <fstream>
 #include <iostream>
 #include <sys/stat.h>
+#include <sys/statvfs.h>
 #include <sys/socket.h>
 #include <sys/utsname.h>
 #include <netdb.h>
@@ -3691,6 +3692,63 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
         log(buf);
     }
 
+    // 1b. Diagnostics: disk space, heap size, screen, device
+    {
+        size_t heapBytes = static_cast<size_t>(memory_.oldSpaceFree() - memory_.oldSpaceStart());
+        char buf[512];
+
+        // Available disk space on the volume containing the image
+        std::string dir = savePath;
+        auto slash = dir.rfind('/');
+        if (slash != std::string::npos) dir = dir.substr(0, slash);
+        else dir = ".";
+
+        struct statvfs vfs;
+        uint64_t availBytes = 0;
+        if (statvfs(dir.c_str(), &vfs) == 0) {
+            availBytes = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
+            snprintf(buf, sizeof(buf), "[SNAPSHOT] Disk: %lluMB available, heap=%zuMB, ratio=%.1fx",
+                     (unsigned long long)(availBytes / (1024*1024)),
+                     heapBytes / (1024*1024),
+                     heapBytes > 0 ? (double)availBytes / heapBytes : 0.0);
+        } else {
+            snprintf(buf, sizeof(buf), "[SNAPSHOT] Disk: statvfs failed (errno=%d), heap=%zuMB",
+                     errno, heapBytes / (1024*1024));
+        }
+        log(buf);
+
+        // Screen dimensions
+        snprintf(buf, sizeof(buf), "[SNAPSHOT] Screen: %dx%d", screenWidth_, screenHeight_);
+        log(buf);
+
+        // Device info
+        struct utsname uts;
+        if (uname(&uts) == 0) {
+            snprintf(buf, sizeof(buf), "[SNAPSHOT] Device: %s %s", uts.machine, uts.sysname);
+            log(buf);
+        }
+
+        // Existing image file size
+        struct stat st;
+        if (stat(savePath.c_str(), &st) == 0) {
+            snprintf(buf, sizeof(buf), "[SNAPSHOT] Existing image: %lldMB",
+                     (long long)(st.st_size / (1024*1024)));
+            log(buf);
+        }
+
+        // Disk space check: need room for heap + .tmp file simultaneously
+        uint64_t needed = static_cast<uint64_t>(heapBytes) * 2;  // .tmp + final
+        if (availBytes > 0 && availBytes < needed) {
+            snprintf(buf, sizeof(buf),
+                     "[SNAPSHOT] ERROR: Insufficient disk space! Need %lluMB, have %lluMB",
+                     (unsigned long long)(needed / (1024*1024)),
+                     (unsigned long long)(availBytes / (1024*1024)));
+            log(buf);
+            if (logFile) fclose(logFile);
+            return PrimitiveResult::Failure;
+        }
+    }
+
     // 2. Materialize C++ frame stack → Smalltalk context objects
     //    Protect activeProcess across GC using gcTempOop_.
     log("[SNAPSHOT] Phase 2: Materializing frame stack...");
@@ -3764,11 +3822,32 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
                                     memory_.lastHash(), screenWidth_, screenHeight_);
     auto writeEnd = std::chrono::steady_clock::now();
     {
-        char buf[256];
+        char buf[512];
         snprintf(buf, sizeof(buf), "[SNAPSHOT] Phase 6: Write %s (%lldms)",
                  result.success ? "OK" : "FAILED",
                  std::chrono::duration_cast<std::chrono::milliseconds>(writeEnd - writeStart).count());
         log(buf);
+
+        // Post-write diagnostics
+        if (result.success) {
+            struct stat st;
+            if (stat(savePath.c_str(), &st) == 0) {
+                snprintf(buf, sizeof(buf), "[SNAPSHOT] Saved image: %lldMB",
+                         (long long)(st.st_size / (1024*1024)));
+                log(buf);
+            }
+            std::string dir = savePath;
+            auto sl = dir.rfind('/');
+            if (sl != std::string::npos) dir = dir.substr(0, sl);
+            else dir = ".";
+            struct statvfs vfs;
+            if (statvfs(dir.c_str(), &vfs) == 0) {
+                uint64_t avail = static_cast<uint64_t>(vfs.f_bavail) * vfs.f_frsize;
+                snprintf(buf, sizeof(buf), "[SNAPSHOT] Disk after save: %lluMB available",
+                         (unsigned long long)(avail / (1024*1024)));
+                log(buf);
+            }
+        }
     }
 
     // 7. Restore for the live VM: stack top = false (= "just saved, not resuming")

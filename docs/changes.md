@@ -2,6 +2,15 @@
 
 Build 68 — 2026-03-04
 
+## Bug Fixes
+
+### Image library "Last Modified" column now shows actual file date
+Previously the column always showed "in 0 seconds" on launch because the
+date decoder didn't match the encoder (ISO 8601 vs default). The catalog
+silently failed to load, re-creating all entries with the current time.
+Fixed the decoder and changed the column to show the actual .image file
+modification date from disk instead of an internal tracking date.
+
 ## Improvements
 
 ### iPad strip: more buttons visible when keyboard is showing
@@ -19,9 +28,12 @@ Added two new buttons to the iPad strip:
 
 ### Image save diagnostic logging
 Added phase-by-phase timing logs to the snapshot primitive to help
-diagnose reported image save hangs. Logs appear in stderr with
-[SNAPSHOT] prefix showing: frame materialization, GC timing, write
-timing, and total elapsed time.
+diagnose reported save/reload issues. The snapshot.log file (written
+next to the image) now includes: available disk space, heap size,
+screen dimensions, device info, and file sizes before/after save.
+Also added a pre-save disk space check — if the volume doesn't have
+enough free space for the save, the primitive fails early with a
+clear error instead of writing a potentially truncated image.
 
 ---
 

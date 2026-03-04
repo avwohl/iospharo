@@ -84,6 +84,12 @@ struct PharoImage: Codable, Identifiable, Equatable {
         }
     }
 
+    /// File modification date of the .image file on disk
+    var fileModificationDate: Date? {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: imagePath)
+        return attrs?[.modificationDate] as? Date
+    }
+
     /// Human-readable file size
     var formattedSize: String? {
         guard let bytes = imageSizeBytes else { return nil }

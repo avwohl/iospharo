@@ -101,8 +101,10 @@ class ImageManager: ObservableObject {
         }
 
         // Load catalog JSON
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
         if let data = try? Data(contentsOf: catalogURL),
-           let saved = try? JSONDecoder().decode([PharoImage].self, from: data) {
+           let saved = try? decoder.decode([PharoImage].self, from: data) {
             images = saved
             #if DEBUG
             fputs("[LIB] loaded \(saved.count) images from catalog\n", stderr)

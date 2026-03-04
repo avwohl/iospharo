@@ -54,10 +54,10 @@ struct ImageRow: View {
     }
 
     private var lastModifiedText: String {
-        if let date = image.lastLaunchedAt {
+        if let date = image.fileModificationDate {
             return relativeDate(date)
         }
-        return relativeDate(image.createdAt)
+        return "—"
     }
 
     private func relativeDate(_ date: Date) -> String {

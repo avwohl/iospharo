@@ -212,6 +212,9 @@ bool Interpreter::initialize() {
         std::string rcvrClassName = memory_.classNameOf(receiver);
         std::string methodSelector = memory_.selectorOf(method);
 
+        fprintf(stderr, "[RESUME] ctx[%d]: %s>>%s\n", depth,
+                rcvrClassName.c_str(), methodSelector.c_str());
+
         // Check if we're in snapshot-related code
         if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
             rcvrClassName == "SmalltalkImage" || methodSelector == "snapshot:andQuit:" ||
@@ -228,6 +231,7 @@ bool Interpreter::initialize() {
         currentCtx = sender;
         depth++;
     }
+    fprintf(stderr, "[RESUME] inSnapshotCode=%d chain depth=%d\n", inSnapshotCode, depth);
 
     // If we detected snapshot code, we're resuming from a saved image.
     // The Pharo snapshot code checks the return value:
@@ -239,10 +243,6 @@ bool Interpreter::initialize() {
         // Patch the snapshot context's stack top to true so Smalltalk
         // interprets this as "resuming from saved image" instead of
         // "save succeeded, now quit".
-        // Context slot 2 = stackp (1-based index of top of stack)
-        // Context slot 6+ = temps and stack values
-        // The stack top value (return from snapshot primitive) is at
-        // slot (6 + stackp - 1) where stackp is 1-based.
         ObjectHeader* ctxHdr = context.asObjectPtr();
         Oop stackpOop = memory_.fetchPointer(2, context);
         if (stackpOop.isSmallInteger()) {
@@ -251,12 +251,21 @@ bool Interpreter::initialize() {
                 size_t stackTopSlot = 6 + static_cast<size_t>(stackp) - 1;
                 if (stackTopSlot < ctxHdr->slotCount()) {
                     Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+                    Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
                     Oop oldVal = memory_.fetchPointer(stackTopSlot, context);
+                    const char* oldDesc = "unknown";
+                    if (oldVal.rawBits() == trueObj.rawBits()) oldDesc = "true";
+                    else if (oldVal.rawBits() == falseObj.rawBits()) oldDesc = "false";
+                    else if (oldVal.isNil()) oldDesc = "nil";
+                    else if (oldVal.isSmallInteger()) oldDesc = "SmallInteger";
+                    fprintf(stderr, "[RESUME] stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx)\n",
+                            stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
                     memory_.storePointer(stackTopSlot, context, trueObj);
-                    (void)oldVal;
                 }
             }
         }
+    } else {
+        fprintf(stderr, "[RESUME] Not in snapshot code — resuming as-is\n");
     }
 
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
@@ -6498,65 +6507,29 @@ bool Interpreter::bootstrapStartup() {
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
 
-    // Approach 1: Look for any ready-to-run process in the scheduler's queues
+    // Approach 1 (standard VM behavior): Resume the scheduler's active process.
+    // This is the process that called primitiveSnapshot. Its suspendedContext
+    // holds the return point where the snapshot method checks true/false to
+    // decide whether to fire session startup. If we skip this and run a random
+    // queued process instead, session startup never fires and the display is
+    // never reinitialized — causing corrupted/frozen screen on reload.
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-    if (schedulerAssoc.rawBits() != nilObj.rawBits() && schedulerAssoc.isObject()) {
+    if (schedulerAssoc.isObject()) {
         Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
         if (scheduler.isObject()) {
-            // ProcessScheduler slot 0 = quiescentProcessLists (array of LinkedLists)
-            Oop queues = memory_.fetchPointer(0, scheduler);
-            if (queues.isObject()) {
-                ObjectHeader* queuesHeader = queues.asObjectPtr();
-                size_t numQueues = queuesHeader->slotCount();
-                (void)numQueues;
+            Oop activeProcess = memory_.fetchPointer(1, scheduler);
+            if (activeProcess.isObject()) {
+                ObjectHeader* procHeader = activeProcess.asObjectPtr();
 
-                // Search from highest to lowest priority for a runnable process
-                for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
-                    Oop queue = queuesHeader->slotAt(i);
-                    if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
+                if (procHeader->slotCount() > 1) {
+                    Oop suspendedCtx = procHeader->slotAt(1);
 
-                    ObjectHeader* queueHeader = queue.asObjectPtr();
-                    (void)queueHeader;
-
-                    // LinkedList layout: slot 0 = firstLink, slot 1 = lastLink
-                    Oop firstProcess = memory_.fetchPointer(0, queue);
-
-                    if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
-
-                    ObjectHeader* procHeader = firstProcess.asObjectPtr();
-                              // << " slots=" << procHeader->slotCount();
-
-                    // Dump first 5 slots of process
-                    for (size_t j = 0; j < std::min(procHeader->slotCount(), (size_t)5); j++) {
-                        Oop slot = procHeader->slotAt(j);
-                        // if (slot.rawBits() == nilObj.rawBits()) std::cerr << " (NIL)";
-                        // else if (slot.isSmallInteger()) std::cerr << " (SmallInt: " << slot.asSmallInteger() << ")";
-                        // else if (slot.isObject()) {
-                        //     ObjectHeader* h = slot.asObjectPtr();
-                        //     std::cerr << " (obj: slots=" << h->slotCount() << " cls=" << h->classIndex() << ")";
-                        // }
-                        // std::cerr; // DEBUG
-                    }
-
-                    // Check if this process has a valid context
-                    // Modern Pharo Process layout:
-                    //   slot 0 = nextLink (for LinkedList)
-                    //   slot 1 = suspendedContext
-                    //   slot 2 = priority
-                    Oop context = memory_.fetchPointer(1, firstProcess);  // suspendedContext is at slot 1
-
-                    if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
-                        ObjectHeader* ctxHeader = context.asObjectPtr();
-
-
-                        // Only try to execute if it looks like a Context (not a Process)
-                        // Context format is usually 3 (indexable with fixed), Process format is 1
-                        if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
-                            // Found valid context
+                    if (!suspendedCtx.isNil() && suspendedCtx.isObject()) {
+                        ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
+                        if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
+                            fprintf(stderr, "[BOOTSTRAP] Resuming active process (standard path)\n");
                             imageBooted = true;
-                            return executeFromContext(context);
-                        } else {
-                            // Not a context — format doesn't match
+                            return executeFromContext(suspendedCtx);
                         }
                     }
                 }
@@ -6564,31 +6537,30 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
-    // Approach 2: Try to resume from where the image was saved
-    // The saved active process might have a context embedded deeper
-
-    Oop schedulerAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-    if (schedulerAssoc2.isObject()) {
-        Oop scheduler = memory_.fetchPointer(1, schedulerAssoc2);  // Get scheduler
+    // Approach 2 (fallback): Scan scheduler queues for a runnable process.
+    // Only reached if the active process has no valid suspendedContext.
+    if (schedulerAssoc.rawBits() != nilObj.rawBits() && schedulerAssoc.isObject()) {
+        Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
         if (scheduler.isObject()) {
-            Oop activeProcess = memory_.fetchPointer(1, scheduler);  // Get activeProcess
-            if (activeProcess.isObject()) {
-                ObjectHeader* procHeader = activeProcess.asObjectPtr();
-                (void)procHeader;
+            Oop queues = memory_.fetchPointer(0, scheduler);
+            if (queues.isObject()) {
+                ObjectHeader* queuesHeader = queues.asObjectPtr();
+                size_t numQueues = queuesHeader->slotCount();
 
-                // Check suspendedContext (slot 1) of active process
-                if (procHeader->slotCount() > 1) {
-                    Oop suspendedCtx = procHeader->slotAt(1);
+                for (int i = static_cast<int>(numQueues) - 1; i >= 0; i--) {
+                    Oop queue = queuesHeader->slotAt(i);
+                    if (queue.rawBits() == nilObj.rawBits() || !queue.isObject()) continue;
 
-                    if (suspendedCtx.isNil()) {
-                        // nil - no context
-                    } else if (suspendedCtx.isObject()) {
-                        ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
-                        // Try to resume from this context if it looks valid
-                        if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
-                            // Resuming from active process context
+                    Oop firstProcess = memory_.fetchPointer(0, queue);
+                    if (firstProcess.rawBits() == nilObj.rawBits() || !firstProcess.isObject()) continue;
+
+                    Oop context = memory_.fetchPointer(1, firstProcess);
+                    if (context.rawBits() != nilObj.rawBits() && context.isObject()) {
+                        ObjectHeader* ctxHeader = context.asObjectPtr();
+                        if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
+                            fprintf(stderr, "[BOOTSTRAP] Resuming from queue (fallback path)\n");
                             imageBooted = true;
-                            return executeFromContext(suspendedCtx);
+                            return executeFromContext(context);
                         }
                     }
                 }

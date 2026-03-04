@@ -48,7 +48,7 @@ struct ImageLibraryView: View {
             case .dateCreated:
                 result = a.createdAt < b.createdAt
             case .lastUsed:
-                result = (a.lastLaunchedAt ?? .distantPast) < (b.lastLaunchedAt ?? .distantPast)
+                result = (a.fileModificationDate ?? .distantPast) < (b.fileModificationDate ?? .distantPast)
             case .size:
                 result = (a.imageSizeBytes ?? 0) < (b.imageSizeBytes ?? 0)
             }
@@ -434,6 +434,9 @@ struct ImageLibraryView: View {
                     if let totalSize = imageManager.totalSizeForImage(image) {
                         let formatter = ByteCountFormatter()
                         detailRow("Total size", value: formatter.string(fromByteCount: totalSize))
+                    }
+                    if let modified = image.fileModificationDate {
+                        detailRow("Last modified", value: formatDate(modified))
                     }
                     detailRow("Created", value: formatDate(image.createdAt))
                     if let launched = image.lastLaunchedAt {
