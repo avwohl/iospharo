@@ -621,6 +621,7 @@ public:
             classTablePages_.resize(pageNum + 1);
         classTablePages_[pageNum] = pageOop;
     }
+    const std::vector<Oop>& classTablePages() const { return classTablePages_; }
 private:
 
     // Identity hash counter (must be non-zero for LCG to work)

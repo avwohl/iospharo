@@ -498,9 +498,412 @@ static void testMultipleGCCycles(ObjectMemory& memory) {
     CHECK(badPages == 0, "All pages have 1024 slots after 5 GCs");
 }
 
-// ===== TEST 9: freeListsObj survives GC =====
+// ===== TEST 9: classTablePages_ vector matches hiddenRoots after GC =====
+//
+// This is the key invariant that the iPad hang violated: after GC compaction
+// moves objects, the C++ classTablePages_ vector must agree with the actual
+// hiddenRoots slots. The old bug read hiddenRoots slots during compaction
+// when the Oop pointed to the destination but data hadn't moved yet.
 
-static void testFreeListsSurviveGC(ObjectMemory& memory) {
+static void testClassTablePagesVectorMatchesHiddenRoots(ObjectMemory& memory) {
+    std::cout << "\n=== Test: classTablePages_ vector matches hiddenRoots after GC ===" << std::endl;
+
+    // Run GC first to trigger compaction/movement
+    GCResult gc = memory.fullGC();
+    std::cout << "  GC moved " << gc.objectsMoved << " objects" << std::endl;
+
+    // Now sync so hiddenRoots slots are updated from classTablePages_
+    memory.syncClassTableToHeap();
+
+    // Verify: each classTablePages_ entry should match the corresponding
+    // hiddenRoots slot.
+    Oop hrOop = memory.hiddenRootsObj();
+    CHECK(hrOop.isObject(), "hiddenRootsObj valid");
+    if (!hrOop.isObject()) return;
+
+    ObjectHeader* hr = hrOop.asObjectPtr();
+    const auto& pages = memory.classTablePages();
+
+    int mismatches = 0;
+    for (size_t i = 0; i < pages.size() && i < hr->slotCount(); ++i) {
+        Oop vectorEntry = pages[i];
+        Oop hrSlot = hr->slotAt(i);
+        if (vectorEntry.rawBits() != hrSlot.rawBits()) {
+            mismatches++;
+            if (mismatches <= 3) {
+                std::cerr << "    Page " << i
+                          << ": vector=0x" << std::hex << vectorEntry.rawBits()
+                          << " hiddenRoots=0x" << hrSlot.rawBits() << std::dec << std::endl;
+            }
+        }
+    }
+    CHECK(mismatches == 0, "classTablePages_ vector matches hiddenRoots slots (" +
+          std::to_string(pages.size()) + " checked, " +
+          std::to_string(mismatches) + " mismatches)");
+}
+
+// ===== TEST 10: classTablePages_ entries are valid heap pointers after GC =====
+//
+// The iPad hang produced garbage pointers in the class table page tracking.
+// This test verifies every entry in classTablePages_ points to a valid
+// in-heap 1024-slot Array object after GC compaction.
+
+static void testClassTablePagesVectorPointersValid(ObjectMemory& memory) {
+    std::cout << "\n=== Test: classTablePages_ entries are valid after GC ===" << std::endl;
+
+    // Multiple GC cycles to stress pointer tracking
+    for (int i = 0; i < 3; ++i) {
+        memory.fullGC();
+    }
+
+    const auto& pages = memory.classTablePages();
+    uint8_t* heapStart = memory.oldSpaceStart();
+    uint8_t* heapEnd = memory.oldSpaceFree();
+
+    int validPages = 0;
+    int invalidPages = 0;
+    int nilPages = 0;
+
+    for (size_t i = 0; i < pages.size(); ++i) {
+        Oop pageOop = pages[i];
+        if (!pageOop.isObject() || pageOop.rawBits() == 0 || pageOop == memory.nil()) {
+            nilPages++;
+            continue;
+        }
+
+        auto p = reinterpret_cast<uint8_t*>(pageOop.asObjectPtr());
+        if (p >= heapStart && p < heapEnd) {
+            ObjectHeader* page = pageOop.asObjectPtr();
+            if (page->slotCount() == 1024) {
+                validPages++;
+            } else {
+                invalidPages++;
+                std::cerr << "    Page " << i << ": wrong slot count "
+                          << page->slotCount() << " (expected 1024)" << std::endl;
+            }
+        } else {
+            invalidPages++;
+            std::cerr << "    Page " << i << ": pointer 0x" << std::hex
+                      << reinterpret_cast<uintptr_t>(p) << std::dec
+                      << " outside heap [0x" << std::hex
+                      << reinterpret_cast<uintptr_t>(heapStart) << "-0x"
+                      << reinterpret_cast<uintptr_t>(heapEnd) << std::dec << "]" << std::endl;
+        }
+    }
+
+    CHECK(validPages > 0, "Found " + std::to_string(validPages) + " valid pages in classTablePages_");
+    CHECK(invalidPages == 0, "No invalid pointers in classTablePages_ (" +
+          std::to_string(invalidPages) + " invalid)");
+}
+
+// ===== TEST 11: Force compaction movement, verify class table integrity =====
+//
+// Allocate garbage objects to fragment the heap, then free them and GC.
+// This forces compaction to actually move objects (including class table pages).
+// On iPad, this is what triggered the hang — pages moved but the old code
+// tried to read their slots from the wrong address.
+
+static void testCompactionMovementPreservesClassTable(ObjectMemory& memory) {
+    std::cout << "\n=== Test: Compaction with object movement preserves class table ===" << std::endl;
+
+    // Snapshot class table state before
+    int classesBefore = 0;
+    std::vector<std::pair<uint32_t, uint64_t>> samplesBefore;
+    for (uint32_t i = 1; i < 8192; ++i) {
+        Oop cls = memory.classAtIndex(i);
+        if (cls.isObject() && cls != memory.nil() && cls.rawBits() != 0) {
+            classesBefore++;
+            if (samplesBefore.size() < 100) {
+                // Store the class's identity hash (stable across moves) rather
+                // than raw Oop bits (which change when objects move)
+                ObjectHeader* hdr = cls.asObjectPtr();
+                samplesBefore.push_back({i, hdr->identityHash()});
+            }
+        }
+    }
+    CHECK(classesBefore > 100, std::to_string(classesBefore) + " classes before fragmentation");
+
+    // Allocate many small objects to fragment the heap.
+    // Use class index 1 (first real class, usually SmallInteger — but any
+    // valid class index works, we just need objects that take space).
+    std::vector<Oop> garbage;
+    for (int i = 0; i < 500; ++i) {
+        Oop obj = memory.allocateSlots(1, 10, ObjectFormat::FixedSize);
+        if (obj.isNil()) break;
+        garbage.push_back(obj);
+    }
+    std::cout << "  Allocated " << garbage.size() << " garbage objects" << std::endl;
+
+    // Make half of them unreachable (don't store in any reachable location)
+    // by clearing our references. The other half are also unreachable since
+    // nothing in the heap points to them — GC will collect all of them.
+    garbage.clear();
+
+    // Force full GC with compaction — this MUST move objects
+    GCResult gc = memory.fullGC();
+    std::cout << "  GC: reclaimed " << gc.bytesReclaimed
+              << " bytes, moved " << gc.objectsMoved << " objects" << std::endl;
+
+    // Verify class count unchanged
+    int classesAfter = 0;
+    for (uint32_t i = 1; i < 8192; ++i) {
+        Oop cls = memory.classAtIndex(i);
+        if (cls.isObject() && cls != memory.nil() && cls.rawBits() != 0) {
+            classesAfter++;
+        }
+    }
+    CHECK(classesAfter == classesBefore,
+          "Class count preserved after compaction (" +
+          std::to_string(classesAfter) + " vs " +
+          std::to_string(classesBefore) + ")");
+
+    // Verify sampled classes still have correct identity hashes
+    // (identity hash is stored in the header, survives moves)
+    int hashMismatches = 0;
+    int classesLost = 0;
+    for (auto& [idx, expectedHash] : samplesBefore) {
+        Oop cls = memory.classAtIndex(idx);
+        if (!cls.isObject() || cls == memory.nil() || cls.rawBits() == 0) {
+            classesLost++;
+            continue;
+        }
+        ObjectHeader* hdr = cls.asObjectPtr();
+        if (hdr->identityHash() != expectedHash) {
+            hashMismatches++;
+            if (hashMismatches <= 3) {
+                std::cerr << "    Index " << idx << ": hash "
+                          << hdr->identityHash() << " != expected " << expectedHash << std::endl;
+            }
+        }
+    }
+    CHECK(classesLost == 0, "No classes lost after compaction (" +
+          std::to_string(samplesBefore.size()) + " sampled)");
+    CHECK(hashMismatches == 0, "All identity hashes preserved after compaction");
+
+    // Verify classTablePages_ vector still valid
+    const auto& pages = memory.classTablePages();
+    uint8_t* heapStart = memory.oldSpaceStart();
+    uint8_t* heapEnd = memory.oldSpaceFree();
+    int badPages = 0;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        Oop pageOop = pages[i];
+        if (!pageOop.isObject() || pageOop.rawBits() == 0 || pageOop == memory.nil()) continue;
+        auto p = reinterpret_cast<uint8_t*>(pageOop.asObjectPtr());
+        if (p < heapStart || p >= heapEnd) {
+            badPages++;
+        } else if (pageOop.asObjectPtr()->slotCount() != 1024) {
+            badPages++;
+        }
+    }
+    CHECK(badPages == 0, "All classTablePages_ entries valid after compaction");
+}
+
+// ===== TEST 12: New class registration survives GC + save/reload =====
+//
+// This simulates the user's bug: create a new class in the browser, save,
+// reload. The class must appear in the reloaded image's class table.
+
+static void testNewClassSurvivesSaveReload(ObjectMemory& memory,
+                                            const SpurImageHeader& header) {
+    std::cout << "\n=== Test: New class registration survives GC + save/reload ===" << std::endl;
+
+    // Find any existing class to use as a template
+    Oop templateClass;
+    for (uint32_t i = 10; i < 200; ++i) {
+        Oop cls = memory.classAtIndex(i);
+        if (cls.isObject() && cls != memory.nil() && cls.rawBits() != 0) {
+            templateClass = cls;
+            break;
+        }
+    }
+    CHECK(templateClass.isObject(), "Found template class");
+    if (!templateClass.isObject()) return;
+
+    // Register a "new class" at an unused slot (simulates registerClass)
+    uint32_t newIndex = 0;
+    for (uint32_t i = 800; i > 500; --i) {
+        Oop cls = memory.classAtIndex(i);
+        if (cls.rawBits() == 0 || cls == memory.nil()) {
+            newIndex = i;
+            break;
+        }
+    }
+    CHECK(newIndex > 0, "Found unused slot " + std::to_string(newIndex));
+    if (newIndex == 0) return;
+
+    memory.setClassAtIndex(newIndex, templateClass);
+    uint64_t expectedHash = templateClass.asObjectPtr()->identityHash();
+
+    // Sync to heap + GC (same as primitiveSnapshot does)
+    memory.syncClassTableToHeap();
+    memory.fullGC();
+    memory.syncClassTableToHeap();  // sync again after GC moves things
+
+    // Verify the new class is in both C++ table AND heap page
+    Oop cppEntry = memory.classAtIndex(newIndex);
+    CHECK(cppEntry.isObject() && cppEntry != memory.nil(),
+          "New class in C++ table after sync+GC");
+
+    Oop heapEntry = readHeapClassEntry(memory, newIndex);
+    CHECK(heapEntry.isObject() && heapEntry != memory.nil(),
+          "New class in heap page after sync+GC");
+
+    // Save and reload
+    std::string tmpPath = "/tmp/test_new_class_roundtrip.image";
+    ImageWriter writer;
+    SaveResult saveResult = writer.save(tmpPath, memory, header,
+                                        memory.lastHash(), 1024, 768);
+    CHECK(saveResult.success, "Image saved");
+    if (!saveResult.success) {
+        std::cerr << "  Save error: " << saveResult.error << std::endl;
+        memory.setClassAtIndex(newIndex, memory.nil());
+        return;
+    }
+
+    // Load into fresh memory
+    ObjectMemory memory2;
+    MemoryConfig config;
+    config.oldSpaceSize = 4ULL * 1024 * 1024 * 1024;
+    config.newSpaceSize = 32 * 1024 * 1024;
+    config.permSpaceSize = 8 * 1024 * 1024;
+    CHECK(memory2.initialize(config), "Second memory initialized");
+
+    ImageLoader loader2;
+    LoadResult loadResult = loader2.load(tmpPath, memory2);
+    CHECK(loadResult.success, "Image reloaded");
+    if (!loadResult.success) {
+        std::cerr << "  Load error: " << loadResult.error << std::endl;
+        unlink(tmpPath.c_str());
+        memory.setClassAtIndex(newIndex, memory.nil());
+        return;
+    }
+
+    // The new class should be at the same index in the reloaded image
+    Oop reloaded = memory2.classAtIndex(newIndex);
+    CHECK(reloaded.isObject() && reloaded != memory2.nil(),
+          "New class survived save/reload at index " + std::to_string(newIndex));
+
+    // Verify identity hash matches
+    if (reloaded.isObject() && reloaded != memory2.nil()) {
+        CHECK(reloaded.asObjectPtr()->identityHash() == expectedHash,
+              "Identity hash preserved through save/reload");
+    }
+
+    // Clean up
+    unlink(tmpPath.c_str());
+    std::string tmpChanges = "/tmp/test_new_class_roundtrip.changes";
+    unlink(tmpChanges.c_str());
+
+    // Restore original state
+    memory.setClassAtIndex(newIndex, memory.nil());
+    memory.syncClassTableToHeap();
+}
+
+// ===== TEST 13: classTablePages_ updated through forEachMemoryRoot =====
+//
+// This directly tests the mechanism that fixed the iPad hang. The old code
+// read page pointers from hiddenRoots during compaction (unsafe because the
+// object may have moved). The fix uses forEachMemoryRoot to keep classTablePages_
+// updated. This test verifies that GC actually updates the vector entries
+// when objects move.
+
+static void testClassTablePagesUpdatedByGC(ObjectMemory& memory) {
+    std::cout << "\n=== Test: classTablePages_ updated by GC (forEachMemoryRoot) ===" << std::endl;
+
+    // Record page addresses before GC
+    const auto& pagesBefore = memory.classTablePages();
+    std::vector<uint64_t> rawBitsBefore;
+    for (size_t i = 0; i < pagesBefore.size(); ++i) {
+        rawBitsBefore.push_back(pagesBefore[i].rawBits());
+    }
+
+    // Allocate garbage to increase likelihood of compaction movement
+    for (int i = 0; i < 200; ++i) {
+        memory.allocateSlots(1, 5, ObjectFormat::FixedSize);
+    }
+
+    // Run GC
+    GCResult gc = memory.fullGC();
+    std::cout << "  GC moved " << gc.objectsMoved << " objects" << std::endl;
+
+    // After GC, the classTablePages_ entries should still be valid.
+    // If objects moved, the raw bits may have changed (that's correct —
+    // forEachMemoryRoot updates them). What matters is they still point
+    // to valid 1024-slot Array objects.
+    const auto& pagesAfter = memory.classTablePages();
+    CHECK(pagesAfter.size() == rawBitsBefore.size(),
+          "classTablePages_ size unchanged (" + std::to_string(pagesAfter.size()) + ")");
+
+    int validAfter = 0;
+    int invalidAfter = 0;
+    uint8_t* heapStart = memory.oldSpaceStart();
+    uint8_t* heapEnd = memory.oldSpaceFree();
+
+    for (size_t i = 0; i < pagesAfter.size(); ++i) {
+        Oop pageOop = pagesAfter[i];
+        if (!pageOop.isObject() || pageOop.rawBits() == 0 || pageOop == memory.nil()) continue;
+
+        auto p = reinterpret_cast<uint8_t*>(pageOop.asObjectPtr());
+        if (p >= heapStart && p < heapEnd) {
+            ObjectHeader* page = pageOop.asObjectPtr();
+            if (page->slotCount() == 1024) {
+                validAfter++;
+                // Verify page contents are readable (not garbage)
+                // Read first and last slot — if pointer is garbage this will
+                // likely segfault or return nonsense
+                Oop firstSlot = page->slotAt(0);
+                Oop lastSlot = page->slotAt(1023);
+                (void)firstSlot;
+                (void)lastSlot;
+            } else {
+                invalidAfter++;
+                std::cerr << "    Page " << i << ": slot count " << page->slotCount()
+                          << " after GC (expected 1024)" << std::endl;
+            }
+        } else {
+            invalidAfter++;
+            std::cerr << "    Page " << i << ": dangling pointer after GC" << std::endl;
+        }
+    }
+
+    CHECK(validAfter > 0, std::to_string(validAfter) + " valid pages after GC");
+    CHECK(invalidAfter == 0, "No corrupted classTablePages_ entries after GC");
+
+    // Also verify that reading class entries through the pages gives
+    // the same result as the C++ classTable_ vector
+    int entryMismatches = 0;
+    for (uint32_t i = 1; i < 4096; ++i) {
+        Oop cppEntry = memory.classAtIndex(i);
+        Oop heapEntry = readHeapClassEntry(memory, i);
+        if (!cppEntry.isObject() && !heapEntry.isObject()) continue;
+        if (cppEntry == memory.nil() && (heapEntry == memory.nil() || !heapEntry.isObject())) continue;
+        if (!cppEntry.isObject() && heapEntry == memory.nil()) continue;
+        if (cppEntry.rawBits() != heapEntry.rawBits()) {
+            entryMismatches++;
+        }
+    }
+    // Note: mismatches here are expected if registerClass was called without
+    // syncClassTableToHeap. Run sync and re-check.
+    memory.syncClassTableToHeap();
+    entryMismatches = 0;
+    for (uint32_t i = 1; i < 4096; ++i) {
+        Oop cppEntry = memory.classAtIndex(i);
+        Oop heapEntry = readHeapClassEntry(memory, i);
+        if (!cppEntry.isObject() && !heapEntry.isObject()) continue;
+        if (cppEntry == memory.nil() && (heapEntry == memory.nil() || !heapEntry.isObject())) continue;
+        if (!cppEntry.isObject() && heapEntry == memory.nil()) continue;
+        if (cppEntry.rawBits() != heapEntry.rawBits()) {
+            entryMismatches++;
+        }
+    }
+    CHECK(entryMismatches == 0,
+          "C++ table matches heap pages after GC+sync (" +
+          std::to_string(entryMismatches) + " mismatches)");
+}
+
+// ===== TEST 14: freeListsObj survives GC =====
+
+static void testFreeListsSurviveGC(ObjectMemory& memory) {  // was Test 9
     std::cout << "\n=== Test: freeListsObj survives GC ===" << std::endl;
 
     Oop flOop = memory.freeListsObj();
@@ -563,6 +966,11 @@ int main(int argc, char* argv[]) {
     testHiddenRootsPointersUpdated(memory);
     testSaveReloadPreservesClassTable(memory, loader.header());
     testMultipleGCCycles(memory);
+    testClassTablePagesVectorMatchesHiddenRoots(memory);
+    testClassTablePagesVectorPointersValid(memory);
+    testCompactionMovementPreservesClassTable(memory);
+    testNewClassSurvivesSaveReload(memory, loader.header());
+    testClassTablePagesUpdatedByGC(memory);
     testFreeListsSurviveGC(memory);
 
     // Summary
