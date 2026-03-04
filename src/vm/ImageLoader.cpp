@@ -363,6 +363,9 @@ bool ImageLoader::buildClassTable(ObjectMemory& memory, LoadResult& result) {
         size_t pageSlots = pageHdr->slotCount();
         numPages++;
 
+        // Register page in C++ side structure so GC keeps it updated
+        memory.setClassTablePage(pageNum, pageOop);
+
         // Each slot in the page is a class object pointer
         for (size_t i = 0; i < pageSlots && i < PageSize; i++) {
             Oop classOop = pageHdr->slotAt(i);

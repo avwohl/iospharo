@@ -595,6 +595,11 @@ private:
     std::vector<Oop> classTable_;
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
 
+    // In-heap class table page Oops (populated during image load).
+    // These are the Array objects inside hiddenRootsObj that hold class pointers.
+    // Stored as C++ Oops so forEachMemoryRoot keeps them updated through GC.
+    std::vector<Oop> classTablePages_;  // index = page number
+
     // Special objects
     Oop specialObjectsArray_;
     Oop nilObject_;
@@ -611,6 +616,11 @@ public:
     void setHiddenRootsObj(Oop obj) { hiddenRootsObj_ = obj; }
     Oop freeListsObj() const { return freeListsObj_; }
     Oop hiddenRootsObj() const { return hiddenRootsObj_; }
+    void setClassTablePage(size_t pageNum, Oop pageOop) {
+        if (pageNum >= classTablePages_.size())
+            classTablePages_.resize(pageNum + 1);
+        classTablePages_[pageNum] = pageOop;
+    }
 private:
 
     // Identity hash counter (must be non-zero for LCG to work)
@@ -775,6 +785,14 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
     // Hidden heap roots needed for image saving
     if (freeListsObj_.isObject()) visitor(freeListsObj_);
     if (hiddenRootsObj_.isObject()) visitor(hiddenRootsObj_);
+
+    // In-heap class table page objects (kept updated through GC so
+    // syncClassTableToHeap can find them at their current addresses)
+    for (auto& pageOop : classTablePages_) {
+        if (pageOop.isObject() && pageOop.rawBits() != 0) {
+            visitor(pageOop);
+        }
+    }
 
     // Class table entries (skip index 0 which is reserved for free chunks)
     for (size_t i = 1; i < classTable_.size(); ++i) {

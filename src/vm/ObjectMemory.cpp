@@ -2247,41 +2247,40 @@ void ObjectMemory::fireAllEphemerons() {
 
 void ObjectMemory::markClassTablePages() {
     // Equivalent of Spur's markAndTraceHiddenRoots.
-    // The hiddenRootsObj contains 4096 class table page pointers (slots 0..4095)
-    // plus 8 extra root slots. Each page is an Array of 1024 class pointers.
-    // These page objects live in the heap but are only referenced from hiddenRoots
-    // (format 9 = Indexable64, whose slots are NOT traced by scanPointerFields).
-    // Without explicit marking, compaction treats them as dead and overwrites them.
-
-    if (!hiddenRootsObj_.isObject()) return;
-    ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
+    // Class table page objects live in the heap but are only referenced from
+    // hiddenRootsObj (format 9 = Indexable64, whose slots are NOT traced by
+    // scanPointerFields). Without explicit marking, compaction treats them
+    // as dead and overwrites them.
+    //
+    // We use classTablePages_ (the C++ side structure populated at load time
+    // and kept current by forEachMemoryRoot) rather than reading from
+    // hiddenRootsObj directly, since hiddenRoots is format 9 and its slots
+    // aren't managed by the GC's pointer update machinery.
 
     // Mark hiddenRootsObj itself
-    hr->setMarked(true);
+    if (hiddenRootsObj_.isObject()) {
+        hiddenRootsObj_.asObjectPtr()->setMarked(true);
+    }
 
     // Mark freeListsObj (it's also format 9 and must survive)
     if (freeListsObj_.isObject()) {
         freeListsObj_.asObjectPtr()->setMarked(true);
     }
 
-    constexpr size_t MaxPages = 4096;
-    size_t hrSlots = hr->slotCount();
-    size_t numPages = std::min(hrSlots, MaxPages);
-
-    for (size_t i = 0; i < numPages; ++i) {
-        Oop pageOop = hr->slotAt(i);
-        if (!pageOop.isObject()) continue;
+    // Mark class table page objects
+    for (size_t i = 0; i < classTablePages_.size(); ++i) {
+        Oop pageOop = classTablePages_[i];
+        if (!pageOop.isObject() || pageOop.rawBits() == 0) continue;
         if (pageOop == nilObject_) continue;
 
         ObjectHeader* page = pageOop.asObjectPtr();
-        // Validate it's within old space
         auto p = reinterpret_cast<uint8_t*>(page);
         if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
 
         if (i == 0) {
-            // Page 0 contains classes for immediate types (SmallInteger at index 1,
-            // Character at 2, SmallFloat at 4). Fully trace it so those classes
-            // and everything they reference stays alive.
+            // Page 0 contains classes for immediate types (SmallInteger at 1,
+            // Character at 2, SmallFloat at 4). Fully trace it so those
+            // classes and everything they reference stays alive.
             if (!page->isMarked()) {
                 page->setMarked(true);
                 markStack_.push_back(page);
@@ -2292,18 +2291,6 @@ void ObjectMemory::markClassTablePages() {
             page->setMarked(true);
         }
     }
-
-    // Also mark any extra root objects in slots 4096..4103
-    for (size_t i = MaxPages; i < hrSlots && i < MaxPages + 8; ++i) {
-        Oop rootOop = hr->slotAt(i);
-        if (rootOop.isObject() && rootOop != nilObject_) {
-            ObjectHeader* rootObj = rootOop.asObjectPtr();
-            auto p = reinterpret_cast<uint8_t*>(rootObj);
-            if (p >= oldSpaceStart_ && p < oldSpaceFree_ && !rootObj->isMarked()) {
-                rootObj->setMarked(true);
-            }
-        }
-    }
 }
 
 void ObjectMemory::syncClassTableToHeap() {
@@ -2311,23 +2298,30 @@ void ObjectMemory::syncClassTableToHeap() {
     // is saved from the in-heap class table pages inside hiddenRootsObj.
     // When registerClass() adds a new class, it only updates the C++ vector.
     // This method writes the vector back to the heap pages before save.
+    // It also updates hiddenRootsObj's page pointer slots, since GC compaction
+    // may have moved the page objects (classTablePages_ tracks their current
+    // addresses but hiddenRoots slots may be stale).
 
     if (!hiddenRootsObj_.isObject()) return;
     ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
 
     constexpr size_t PageSize = 1024;
-    constexpr size_t MaxPages = 4096;
-    size_t hrSlots = hr->slotCount();
-    size_t numPages = std::min(hrSlots, MaxPages);
 
+    // Step 1: Update hiddenRoots page pointer slots from classTablePages_
+    for (size_t p = 0; p < classTablePages_.size(); ++p) {
+        if (p < hr->slotCount()) {
+            hr->slotAtPut(p, classTablePages_[p]);
+        }
+    }
+
+    // Step 2: Write class entries from C++ vector into heap pages
     for (size_t i = 1; i < classTable_.size(); ++i) {
         size_t pageNum = i / PageSize;
         size_t slotNum = i % PageSize;
 
-        if (pageNum >= numPages) break;
-
-        Oop pageOop = hr->slotAt(pageNum);
-        if (!pageOop.isObject() || pageOop == nilObject_) continue;
+        if (pageNum >= classTablePages_.size()) break;
+        Oop pageOop = classTablePages_[pageNum];
+        if (!pageOop.isObject() || pageOop.rawBits() == 0 || pageOop == nilObject_) continue;
 
         ObjectHeader* page = pageOop.asObjectPtr();
         auto p = reinterpret_cast<uint8_t*>(page);
@@ -2640,20 +2634,11 @@ void ObjectMemory::updatePointersAfterCompact() {
         interpreter_->forEachRoot(updateOop);
     }
 
-    // Update pointers inside hiddenRootsObj (class table page pointers).
-    // hiddenRootsObj is format 9 (Indexable64) so pointerSlotsOf returns 0
-    // and the main loop above skips its slots. But its slots ARE object pointers
-    // (to class table page objects) that may have moved during compaction.
-    if (hiddenRootsObj_.isObject()) {
-        ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
-        size_t hrSlots = hr->slotCount();
-        for (size_t i = 0; i < hrSlots; ++i) {
-            Oop slot = hr->slotAt(i);
-            if (slot.isObject() && slot != nilObject_) {
-                hr->slotAtPut(i, resolveForward(slot));
-            }
-        }
-    }
+    // Note: hiddenRootsObj page pointer slots are NOT updated here.
+    // They are format-9 slots (not traced by pointerSlotsOf), and at this point
+    // hiddenRootsObj_ may point to its destination address (data not yet moved).
+    // Instead, classTablePages_ (in forEachMemoryRoot) tracks page Oops and
+    // syncClassTableToHeap writes them back to hiddenRoots before save.
 }
 
 void ObjectMemory::copyAndUnmark() {
