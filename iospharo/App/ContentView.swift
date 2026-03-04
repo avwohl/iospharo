@@ -379,7 +379,8 @@ struct ModifierStrip: View {
         if isIPad {
             // iPad: 28pt gap clears the Pharo menu bar, then buttons.
             // Keyboard toggle at top so it's always accessible.
-            // When keyboard is showing, collapse to just toggle + modifiers.
+            // When keyboard is showing, keep essential coding buttons visible
+            // but hide less-used ones (Tab, Esc, clipboard, etc.).
             VStack(spacing: 0) {
                 Color.clear.frame(height: 28)
                 VStack(spacing: buttonSpacing) {
@@ -387,7 +388,17 @@ struct ModifierStrip: View {
                     ctrlButton
                     cmdButton
 
-                    if !keyboardVisible {
+                    if keyboardVisible {
+                        // Essential buttons for typing: backspace, actions, search
+                        stripDivider
+                        backspaceButton
+                        doItButton
+                        printButton
+                        inspectButton
+                        stripDivider
+                        spotterButton
+                        refactorButton
+                    } else {
                         iPadExtraButtons
                     }
 
@@ -459,6 +470,12 @@ struct ModifierStrip: View {
 
             stripDivider
 
+            // --- Search & refactoring ---
+            spotterButton
+            refactorButton
+
+            stripDivider
+
             // --- Clipboard & editing ---
             StripButton(icon: "scissors", size: buttonSize, tooltip: "Cut") {
                 bridge.sendKeyShortcut("x", modifiers: IOS_CMD_KEY)
@@ -520,6 +537,18 @@ struct ModifierStrip: View {
     private var inspectButton: some View {
         StripButton(icon: "eyeglasses", size: buttonSize, tooltip: "InspectIt (Cmd+I)") {
             bridge.sendKeyShortcut("i", modifiers: IOS_CMD_KEY)
+        }
+    }
+
+    private var spotterButton: some View {
+        StripButton(icon: "magnifyingglass", size: buttonSize, tooltip: "Spotter (Shift+Enter)") {
+            bridge.sendRawKey(13, keyCode: 13, modifiers: Int32(IOS_SHIFT_KEY))
+        }
+    }
+
+    private var refactorButton: some View {
+        StripButton(icon: "wrench", size: buttonSize, tooltip: "Refactor (Cmd+T)") {
+            bridge.sendKeyShortcut("t", modifiers: IOS_CMD_KEY)
         }
     }
 

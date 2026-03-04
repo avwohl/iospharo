@@ -3657,6 +3657,9 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     // Primitive 97: Save the image to disk.
     // Returns true in the RESUMED image (isImageStarting), false in the LIVE VM.
 
+    fprintf(stderr, "[SNAPSHOT] primitiveSnapshot called (argCount=%d)\n", argCount);
+    auto snapshotStart = std::chrono::steady_clock::now();
+
     // 1. Extract save path
     std::string savePath;
     if (argCount == 0) {
@@ -3667,26 +3670,36 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
     } else {
         return PrimitiveResult::Failure;
     }
+    fprintf(stderr, "[SNAPSHOT] Saving to: %s\n", savePath.c_str());
 
     // 2. Materialize C++ frame stack → Smalltalk context objects
     //    Protect activeProcess across GC using gcTempOop_.
+    fprintf(stderr, "[SNAPSHOT] Phase 2: Materializing frame stack...\n");
     Oop savedGcTemp = gcTempOop_;
     gcTempOop_ = getActiveProcess();
     Oop activeCtx = materializeFrameStack();
     Oop activeProcess = gcTempOop_;
     gcTempOop_ = savedGcTemp;
+    fprintf(stderr, "[SNAPSHOT] Phase 2: Done (ctx=0x%llx)\n", activeCtx.rawBits());
 
     // 3. Save active process's suspendedContext so the saved image can resume
     memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, activeCtx);
 
     // 4. Full GC (tenures new space → old space, compacts old space)
     //    Protect activeCtx across GC using gcTempOop_.
+    fprintf(stderr, "[SNAPSHOT] Phase 4: Full GC (heap=%zuMB)...\n",
+            (memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
     savedGcTemp = gcTempOop_;
     gcTempOop_ = activeCtx;
+    auto gcStart = std::chrono::steady_clock::now();
     memory_.fullGC();
+    auto gcEnd = std::chrono::steady_clock::now();
     activeCtx = gcTempOop_;
     gcTempOop_ = savedGcTemp;
     activeProcess = getActiveProcess();
+    fprintf(stderr, "[SNAPSHOT] Phase 4: GC done (%lldms, heap=%zuMB)\n",
+            std::chrono::duration_cast<std::chrono::milliseconds>(gcEnd - gcStart).count(),
+            (memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
 
     // 5. Manipulate the materialized context's stack for the saved image.
     //    Context layout: slot 0=sender, 1=pc, 2=stackp, 3=method, 4=closure, 5=receiver, 6+=temps+stack
@@ -3695,7 +3708,7 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
 
     Oop stackpOop = memory_.fetchPointer(ContextStackPointerSlot, activeCtx);
     if (!stackpOop.isSmallInteger()) {
-        fprintf(stderr, "[ImageWriter] Bad stackp in active context\n");
+        fprintf(stderr, "[SNAPSHOT] Bad stackp in active context\n");
         // Restore and fail gracefully
         memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, memory_.nil());
         executeFromContext(activeCtx);
@@ -3716,9 +3729,15 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
                          memory_.specialObject(SpecialObjectIndex::TrueObject));
 
     // 6. Write image to disk
+    fprintf(stderr, "[SNAPSHOT] Phase 6: Writing image...\n");
+    auto writeStart = std::chrono::steady_clock::now();
     ImageWriter writer;
     SaveResult result = writer.save(savePath, memory_, originalImageHeader_,
                                     memory_.lastHash(), screenWidth_, screenHeight_);
+    auto writeEnd = std::chrono::steady_clock::now();
+    fprintf(stderr, "[SNAPSHOT] Phase 6: Write %s (%lldms)\n",
+            result.success ? "OK" : "FAILED",
+            std::chrono::duration_cast<std::chrono::milliseconds>(writeEnd - writeStart).count());
 
     // 7. Restore for the live VM: stack top = false (= "just saved, not resuming")
     memory_.storePointer(topSlot, activeCtx,
@@ -3726,11 +3745,16 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
 
     // 8. Resume execution: nil out suspendedContext and restart from context
     memory_.storePointer(ProcessSuspendedContextIndex, activeProcess, memory_.nil());
+    fprintf(stderr, "[SNAPSHOT] Phase 8: Resuming execution...\n");
     executeFromContext(activeCtx);
 
     if (!result.success) {
-        fprintf(stderr, "[ImageWriter] Save failed: %s\n", result.error.c_str());
+        fprintf(stderr, "[SNAPSHOT] Save failed: %s\n", result.error.c_str());
     }
+
+    auto snapshotEnd = std::chrono::steady_clock::now();
+    fprintf(stderr, "[SNAPSHOT] Total time: %lldms\n",
+            std::chrono::duration_cast<std::chrono::milliseconds>(snapshotEnd - snapshotStart).count());
     return PrimitiveResult::Success;
 }
 

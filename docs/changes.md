@@ -1,3 +1,30 @@
+# What's New in Build 68
+
+Build 68 — 2026-03-04
+
+## Improvements
+
+### iPad strip: more buttons visible when keyboard is showing
+Previously the iPad strip collapsed to just keyboard toggle, Ctrl, and Cmd
+when the software keyboard was up. Now it also shows Backspace, DoIt,
+PrintIt, InspectIt, Spotter (Shift+Enter), and Refactor (Cmd+T) — the
+buttons you actually need while typing code.
+
+### New strip buttons: Spotter and Refactor
+Added two new buttons to the iPad strip:
+  - Spotter (magnifying glass) — sends Shift+Enter to open the Spotter
+    search tool. Essential for quick class/method navigation.
+  - Refactor (wrench) — sends Cmd+T to open the refactoring menu.
+    Much faster than navigating menus for common refactoring operations.
+
+### Image save diagnostic logging
+Added phase-by-phase timing logs to the snapshot primitive to help
+diagnose reported image save hangs. Logs appear in stderr with
+[SNAPSHOT] prefix showing: frame materialization, GC timing, write
+timing, and total elapsed time.
+
+---
+
 # What's New in Build 67
 
 Build 67 — 2026-03-02
