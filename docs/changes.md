@@ -1,3 +1,25 @@
+# What's New in Build 69
+
+Build 69 — 2026-03-04
+
+## Bug Fixes
+
+### Image library date and rename persistence fixed
+Previously the "Last Modified" column showed "in 0 seconds" on launch and
+image renames were lost across restarts. Root cause: the date decoder
+didn't match the encoder (ISO 8601 vs default), so the catalog silently
+failed to load every time. Now shows actual .image file modification date.
+
+## Improvements
+
+### Snapshot disk space check and diagnostics
+The snapshot.log file now records available disk space, heap size, screen
+dimensions, device model, and image file sizes before/after save. If the
+volume lacks sufficient free space, the save fails early with a clear
+error instead of risking a truncated image file.
+
+---
+
 # What's New in Build 68
 
 Build 68 — 2026-03-04
