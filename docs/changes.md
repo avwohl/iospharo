@@ -1,3 +1,28 @@
+# What's New in Build 71
+
+Build 71 — 2026-03-04
+
+## Bug Fixes
+
+### Fixed iPad startup hang from Build 70
+The class table fix in Build 70 read hiddenRoots object slots during GC
+compaction after the Oop had been updated to point to its destination address
+but before the data was actually moved there. On Mac this worked by luck
+(hiddenRoots didn't move), but on iPad it read garbage and hung at startup.
+
+Fix: track class table page Oops in a C++ vector (`classTablePages_`) that GC
+updates automatically via `forEachMemoryRoot`, avoiding any reads from
+in-heap objects during the fragile compaction phase.
+
+## Tests
+
+Added 5 new class table integrity tests (14 total, 51 checks) specifically
+targeting the compaction bug: vector/hiddenRoots consistency, valid heap
+pointers after GC, forced fragmentation + compaction, new class save/reload
+roundtrip, and forEachMemoryRoot update verification.
+
+---
+
 # What's New in Build 70
 
 Build 70 — 2026-03-04
