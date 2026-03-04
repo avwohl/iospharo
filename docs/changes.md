@@ -1,38 +1,14 @@
-# What's New in Build 71
+# What's New in Build 72
 
-Build 71 — 2026-03-04
-
-## Bug Fixes
-
-### Fixed iPad startup hang from Build 70
-The class table fix in Build 70 read hiddenRoots object slots during GC
-compaction after the Oop had been updated to point to its destination address
-but before the data was actually moved there. On Mac this worked by luck
-(hiddenRoots didn't move), but on iPad it read garbage and hung at startup.
-
-Fix: track class table page Oops in a C++ vector (`classTablePages_`) that GC
-updates automatically via `forEachMemoryRoot`, avoiding any reads from
-in-heap objects during the fragile compaction phase.
-
-## Tests
-
-Added 5 new class table integrity tests (14 total, 51 checks) specifically
-targeting the compaction bug: vector/hiddenRoots consistency, valid heap
-pointers after GC, forced fragmentation + compaction, new class save/reload
-roundtrip, and forEachMemoryRoot update verification.
-
----
-
-# What's New in Build 70
-
-Build 70 — 2026-03-04
+Build 72 — 2026-03-04
 
 ## Bug Fixes
 
 ### Save-and-reload after creating new classes now works
-Creating a new Smalltalk class, saving the image, and reopening it would
-either crash, show a corrupted screen, or silently lose the new class.
-Three related bugs in the garbage collector and image writer:
+Creating a new Smalltalk class (e.g. in the System Browser), saving the
+image, and reopening it previously either crashed, showed a corrupted
+screen, froze, or silently lost the new class. Three related bugs in the
+garbage collector and image writer were fixed:
 
 1. **Class table pages not marked during GC** — The in-heap class table
    page objects (Arrays inside hiddenRootsObj) were never marked, so the
@@ -45,6 +21,25 @@ Three related bugs in the garbage collector and image writer:
 3. **New classes never written to in-heap pages** — `registerClass()` only
    updated the C++ vector, never the actual heap pages that get saved to
    disk. Classes created at runtime existed only in memory.
+
+The fix tracks class table page Oops in a C++ vector (`classTablePages_`)
+populated during image load and maintained through `forEachMemoryRoot`,
+so GC compaction automatically keeps page addresses current without ever
+reading from in-heap objects during the fragile compaction phase.
+
+## Tests
+
+New class table integrity test suite (14 tests, 51 checks):
+  - Class table pages exist and are consistent after image load
+  - C++ classTable matches in-heap pages
+  - Pages and classes survive fullGC, sync, and multiple GC cycles
+  - hiddenRoots page pointers valid after compaction
+  - Save/reload roundtrip preserves all classes
+  - classTablePages_ vector matches hiddenRoots after GC
+  - classTablePages_ entries are valid heap pointers after GC
+  - Forced heap fragmentation + compaction preserves class table
+  - New class registration survives GC + save/reload
+  - freeListsObj survives GC
 
 ---
 
