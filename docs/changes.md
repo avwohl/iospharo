@@ -1,3 +1,28 @@
+# What's New in Build 70
+
+Build 70 — 2026-03-04
+
+## Bug Fixes
+
+### Save-and-reload after creating new classes now works
+Creating a new Smalltalk class, saving the image, and reopening it would
+either crash, show a corrupted screen, or silently lose the new class.
+Three related bugs in the garbage collector and image writer:
+
+1. **Class table pages not marked during GC** — The in-heap class table
+   page objects (Arrays inside hiddenRootsObj) were never marked, so the
+   compacting GC treated them as dead and overwrote them.
+
+2. **Class table page pointers not updated after compaction** — Even if
+   pages survived, the hiddenRootsObj slots pointing to them weren't
+   updated when compaction moved objects to new addresses.
+
+3. **New classes never written to in-heap pages** — `registerClass()` only
+   updated the C++ vector, never the actual heap pages that get saved to
+   disk. Classes created at runtime existed only in memory.
+
+---
+
 # What's New in Build 69
 
 Build 69 — 2026-03-04

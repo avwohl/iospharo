@@ -3770,6 +3770,12 @@ PrimitiveResult Interpreter::primitiveSnapshot(int argCount) {
                  (memory_.oldSpaceFree() - memory_.oldSpaceStart()) / (1024*1024));
         log(buf);
     }
+    // Sync C++ classTable_ back to in-heap class table pages so new classes
+    // (registered at runtime) appear in the saved image.
+    log("[SNAPSHOT] Phase 3: Syncing class table to heap...");
+    memory_.syncClassTableToHeap();
+    log("[SNAPSHOT] Phase 3: Done");
+
     savedGcTemp = gcTempOop_;
     gcTempOop_ = activeCtx;
     auto gcStart = std::chrono::steady_clock::now();

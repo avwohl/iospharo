@@ -2245,6 +2245,100 @@ void ObjectMemory::fireAllEphemerons() {
     ephemeronList_.clear();
 }
 
+void ObjectMemory::markClassTablePages() {
+    // Equivalent of Spur's markAndTraceHiddenRoots.
+    // The hiddenRootsObj contains 4096 class table page pointers (slots 0..4095)
+    // plus 8 extra root slots. Each page is an Array of 1024 class pointers.
+    // These page objects live in the heap but are only referenced from hiddenRoots
+    // (format 9 = Indexable64, whose slots are NOT traced by scanPointerFields).
+    // Without explicit marking, compaction treats them as dead and overwrites them.
+
+    if (!hiddenRootsObj_.isObject()) return;
+    ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
+
+    // Mark hiddenRootsObj itself
+    hr->setMarked(true);
+
+    // Mark freeListsObj (it's also format 9 and must survive)
+    if (freeListsObj_.isObject()) {
+        freeListsObj_.asObjectPtr()->setMarked(true);
+    }
+
+    constexpr size_t MaxPages = 4096;
+    size_t hrSlots = hr->slotCount();
+    size_t numPages = std::min(hrSlots, MaxPages);
+
+    for (size_t i = 0; i < numPages; ++i) {
+        Oop pageOop = hr->slotAt(i);
+        if (!pageOop.isObject()) continue;
+        if (pageOop == nilObject_) continue;
+
+        ObjectHeader* page = pageOop.asObjectPtr();
+        // Validate it's within old space
+        auto p = reinterpret_cast<uint8_t*>(page);
+        if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
+
+        if (i == 0) {
+            // Page 0 contains classes for immediate types (SmallInteger at index 1,
+            // Character at 2, SmallFloat at 4). Fully trace it so those classes
+            // and everything they reference stays alive.
+            if (!page->isMarked()) {
+                page->setMarked(true);
+                markStack_.push_back(page);
+            }
+        } else {
+            // Pages 1..N: just set the mark bit. The class objects themselves
+            // are already marked via classTable_ in forEachMemoryRoot.
+            page->setMarked(true);
+        }
+    }
+
+    // Also mark any extra root objects in slots 4096..4103
+    for (size_t i = MaxPages; i < hrSlots && i < MaxPages + 8; ++i) {
+        Oop rootOop = hr->slotAt(i);
+        if (rootOop.isObject() && rootOop != nilObject_) {
+            ObjectHeader* rootObj = rootOop.asObjectPtr();
+            auto p = reinterpret_cast<uint8_t*>(rootObj);
+            if (p >= oldSpaceStart_ && p < oldSpaceFree_ && !rootObj->isMarked()) {
+                rootObj->setMarked(true);
+            }
+        }
+    }
+}
+
+void ObjectMemory::syncClassTableToHeap() {
+    // The C++ classTable_ vector is the runtime source of truth, but the image
+    // is saved from the in-heap class table pages inside hiddenRootsObj.
+    // When registerClass() adds a new class, it only updates the C++ vector.
+    // This method writes the vector back to the heap pages before save.
+
+    if (!hiddenRootsObj_.isObject()) return;
+    ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
+
+    constexpr size_t PageSize = 1024;
+    constexpr size_t MaxPages = 4096;
+    size_t hrSlots = hr->slotCount();
+    size_t numPages = std::min(hrSlots, MaxPages);
+
+    for (size_t i = 1; i < classTable_.size(); ++i) {
+        size_t pageNum = i / PageSize;
+        size_t slotNum = i % PageSize;
+
+        if (pageNum >= numPages) break;
+
+        Oop pageOop = hr->slotAt(pageNum);
+        if (!pageOop.isObject() || pageOop == nilObject_) continue;
+
+        ObjectHeader* page = pageOop.asObjectPtr();
+        auto p = reinterpret_cast<uint8_t*>(page);
+        if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
+
+        if (slotNum < page->slotCount()) {
+            page->slotAtPut(slotNum, classTable_[i]);
+        }
+    }
+}
+
 size_t ObjectMemory::markPhase() {
     // Reserve space for mark stack to avoid frequent reallocations
     markStack_.clear();
@@ -2281,6 +2375,11 @@ size_t ObjectMemory::markPhase() {
             markAndTrace(oop);
         });
     }
+
+    // 2b. Mark in-heap class table pages (hiddenRoots + page Arrays).
+    // These are format 9 objects not traced by scanPointerFields, so without
+    // this they'd be treated as dead and destroyed by compaction.
+    markClassTablePages();
 
     // 3. Drain mark stack
     processMarkStack();
@@ -2539,6 +2638,21 @@ void ObjectMemory::updatePointersAfterCompact() {
 
     if (interpreter_) {
         interpreter_->forEachRoot(updateOop);
+    }
+
+    // Update pointers inside hiddenRootsObj (class table page pointers).
+    // hiddenRootsObj is format 9 (Indexable64) so pointerSlotsOf returns 0
+    // and the main loop above skips its slots. But its slots ARE object pointers
+    // (to class table page objects) that may have moved during compaction.
+    if (hiddenRootsObj_.isObject()) {
+        ObjectHeader* hr = hiddenRootsObj_.asObjectPtr();
+        size_t hrSlots = hr->slotCount();
+        for (size_t i = 0; i < hrSlots; ++i) {
+            Oop slot = hr->slotAt(i);
+            if (slot.isObject() && slot != nilObject_) {
+                hr->slotAtPut(i, resolveForward(slot));
+            }
+        }
     }
 }
 

@@ -722,6 +722,17 @@ private:
     /// queue as mourners, mark all their fields so values stay alive for mourning.
     void fireAllEphemerons();
 
+    /// Mark hiddenRootsObj and all in-heap class table page objects.
+    /// Without this, compaction treats the pages as dead and destroys them,
+    /// corrupting the class table on save/reload.
+    void markClassTablePages();
+
+public:
+    /// Sync the C++ classTable_ vector back to the in-heap class table pages
+    /// inside hiddenRootsObj so that changes (new classes) are saved to disk.
+    void syncClassTableToHeap();
+private:
+
     /// Complete mark phase: mark from all roots, drain mark stack,
     /// process ephemerons, process weaklings.
     /// Returns the count of marked objects.
