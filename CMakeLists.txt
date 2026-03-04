@@ -248,6 +248,9 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         -Wl,-u,_simple_callback_f_size_t
     )
 
+    add_executable(test_class_table src/vm/test_class_table.cpp)
+    target_link_libraries(test_class_table PharoVMCore)
+
     add_executable(test_platform src/platform/test_platform.cpp)
     target_link_libraries(test_platform PharoVMCore)
 
