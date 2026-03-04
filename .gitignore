@@ -1,6 +1,8 @@
 # Local configuration (team ID, signing)
 Local.xcconfig
 
+*.pyc
+
 # Build outputs
 *.o
 *.a
