@@ -428,7 +428,7 @@ struct ImageLibraryView: View {
     private var detailPanel: some View {
         VStack(alignment: .leading, spacing: 8) {
             if let image = selectedImage {
-                // Info bar
+                // Info bar + action buttons (buttons first so they're always visible)
                 Text("\(image.name), \(image.imageFileName)")
                     .font(.caption)
                     .foregroundColor(.white)
@@ -438,29 +438,7 @@ struct ImageLibraryView: View {
                     .padding(.vertical, 6)
                     .background(Color.gray)
 
-                // Details grid
-                VStack(alignment: .leading, spacing: 4) {
-                    detailRow("Image file", value: image.imageFileName)
-                    detailRow("Location", value: image.directoryURL.path)
-                    if image.pharoVersion != nil {
-                        detailRow("Pharo version", value: image.versionLabel)
-                    }
-                    if let totalSize = imageManager.totalSizeForImage(image) {
-                        let formatter = ByteCountFormatter()
-                        detailRow("Total size", value: formatter.string(fromByteCount: totalSize))
-                    }
-                    if let modified = image.fileModificationDate {
-                        detailRow("Last modified", value: formatDate(modified))
-                    }
-                    detailRow("Created", value: formatDate(image.createdAt))
-                    if let launched = image.lastLaunchedAt {
-                        detailRow("Last launched", value: formatDate(launched))
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
-
-                // Action buttons
+                // Action buttons — above details so they're never pushed off screen
                 HStack(spacing: 16) {
                     Button {
                         launchImage(image)
@@ -526,6 +504,28 @@ struct ImageLibraryView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 4)
+
+                // Details grid (below buttons — scrollable on small screens)
+                VStack(alignment: .leading, spacing: 4) {
+                    detailRow("Image file", value: image.imageFileName)
+                    detailRow("Location", value: image.directoryURL.path)
+                    if image.pharoVersion != nil {
+                        detailRow("Pharo version", value: image.versionLabel)
+                    }
+                    if let totalSize = imageManager.totalSizeForImage(image) {
+                        let formatter = ByteCountFormatter()
+                        detailRow("Total size", value: formatter.string(fromByteCount: totalSize))
+                    }
+                    if let modified = image.fileModificationDate {
+                        detailRow("Last modified", value: formatDate(modified))
+                    }
+                    detailRow("Created", value: formatDate(image.createdAt))
+                    if let launched = image.lastLaunchedAt {
+                        detailRow("Last launched", value: formatDate(launched))
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
             } else {
                 Text("Select an image to see details, or right-click for options")
                     .font(.caption)
@@ -535,6 +535,7 @@ struct ImageLibraryView: View {
             }
         }
         .background(Color(.secondarySystemBackground))
+        .layoutPriority(1)
     }
 
     private func detailRow(_ label: String, value: String) -> some View {

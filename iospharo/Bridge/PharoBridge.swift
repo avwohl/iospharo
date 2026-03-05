@@ -169,11 +169,22 @@ class PharoBridge: ObservableObject {
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 
-        // Don't pre-set display size from UIScreen.main.bounds — on Mac Catalyst
-        // it returns the full screen size, not the window size. The default 1024x768
-        // from vm_init() is used initially. drawableSizeWillChange fires once the
-        // Metal view is laid out and provides the actual view dimensions, triggering
-        // a single clean resize + redraw.
+        // Pre-set display size from the current window bounds (UIKit coordinates).
+        // This ensures the Pharo Display Form is created at the correct size before
+        // the Welcome window opens during startup. drawableSizeWillChange will refine
+        // the size once the Metal view is laid out.
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
+           let window = scene.windows.first {
+            let bounds = window.bounds
+            let w = Int(bounds.width)
+            let h = Int(bounds.height)
+            if w > 0 && h > 0 {
+                ios_setDisplaySize(Int32(w), Int32(h))
+                #if DEBUG
+                fputs("[BRIDGE] pre-set display size from window bounds: \(w)x\(h)\n", stderr)
+                #endif
+            }
+        }
 
         // Change working directory to image's directory so Pharo's
         // StartupPreferencesLoader finds startup.st alongside the image
