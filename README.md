@@ -28,7 +28,7 @@ standard Pharo test suite.
 ## Installing the Beta (TestFlight)
 
 1. Install **TestFlight** from the App Store (free, ~30 MB)
-2. Open this invite link on your iPad or iPhone: [link TBD]
+2. Open this invite link on your iPad or iPhone: [Join the Beta](https://testflight.apple.com/join/kGmPQFr9)
 3. Tap "Accept" then "Install" — the app appears on your home screen
 4. Pharo images are downloaded in-app (no separate download needed)
 
