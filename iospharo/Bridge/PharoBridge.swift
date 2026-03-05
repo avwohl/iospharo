@@ -169,27 +169,30 @@ class PharoBridge: ObservableObject {
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 
-        // Pre-set display size from the current window bounds (UIKit coordinates).
-        // On Mac Catalyst, the window size is stable so this gives the correct
-        // initial Display Form dimensions before the Welcome window opens.
-        // On iOS, do NOT pre-set: window.bounds at launch time may be portrait
-        // or include the modifier strip area, giving wrong initial dimensions.
-        // The default 1024x768 from vm_init() works fine; drawableSizeWillChange
-        // corrects it once the Metal view is laid out.
-        #if targetEnvironment(macCatalyst)
+        // Pre-set display size so Pharo creates the Welcome window at the
+        // correct dimensions from the start. Without this, the default 1024x768
+        // makes Pharo lay out for a large screen, then the resize to the actual
+        // Metal view size cuts off content that doesn't auto-shrink.
         if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = scene.windows.first {
             let bounds = window.bounds
+            #if targetEnvironment(macCatalyst)
+            // Mac Catalyst: no modifier strip, use window bounds directly
             let w = Int(bounds.width)
             let h = Int(bounds.height)
+            #else
+            // iOS: subtract the ModifierStrip width from the canvas dimension
+            let stripWidth = UIDevice.current.userInterfaceIdiom == .pad ? 38 : 40
+            let w = Int(bounds.width) - stripWidth
+            let h = Int(bounds.height)
+            #endif
             if w > 0 && h > 0 {
                 ios_setDisplaySize(Int32(w), Int32(h))
                 #if DEBUG
-                fputs("[BRIDGE] pre-set display size from window bounds: \(w)x\(h)\n", stderr)
+                fputs("[BRIDGE] pre-set display size: \(w)x\(h) (window=\(Int(bounds.width))x\(Int(bounds.height)))\n", stderr)
                 #endif
             }
         }
-        #endif
 
         // Change working directory to image's directory so Pharo's
         // StartupPreferencesLoader finds startup.st alongside the image

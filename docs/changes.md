@@ -2,12 +2,19 @@
 
 Build 75 — 2026-03-05
 
-## Bug Fix: iOS display size and image library layout
+## Bug Fix: iOS Welcome window cut off on iPhone
 
-Fixed two regressions from Build 74: the display size pre-set from window
-bounds was giving wrong initial dimensions on iOS (now only applies on Mac
-Catalyst), and the image library detail panel was stealing space from the
-image table on small screens (detail rows now scroll within a capped area).
+The Pharo Welcome window was cut off at the bottom on iPhone because the
+initial Display Form was created at the default 1024x768 — too large for the
+actual screen. Now the display size is pre-set from window bounds on both
+platforms, subtracting the ModifierStrip width on iOS so the initial form
+matches the Metal canvas exactly. Verified on iPhone simulator (812x393).
+
+## Bug Fix: Image library detail panel layout
+
+The image library detail panel was stealing space from the image table on
+small screens. Detail rows now scroll within a capped area, and buttons are
+placed above the details so they're always reachable.
 
 ---
 
