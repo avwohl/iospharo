@@ -1,3 +1,16 @@
+# What's New in Build 75
+
+Build 75 — 2026-03-05
+
+## Bug Fix: iOS display size and image library layout
+
+Fixed two regressions from Build 74: the display size pre-set from window
+bounds was giving wrong initial dimensions on iOS (now only applies on Mac
+Catalyst), and the image library detail panel was stealing space from the
+image table on small screens (detail rows now scroll within a capped area).
+
+---
+
 # What's New in Build 74
 
 Build 74 — 2026-03-05
