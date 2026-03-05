@@ -503,8 +503,13 @@ public:
 
     /// Visit every Oop root in ObjectMemory (special objects, class table, etc.)
     /// Visitor signature: void(Oop&)
+    /// If includeClassTable is false, class table entries are skipped
+    /// (used during mark phase where class table entries should NOT be strong roots).
     template<typename Visitor>
-    void forEachMemoryRoot(Visitor&& visitor);
+    void forEachMemoryRoot(Visitor&& visitor, bool includeClassTable = true);
+
+    /// Sweep the class table after mark phase: nil entries for unmarked classes.
+    void sweepClassTable();
 
     /// Iterate over all objects in the heap
     void allObjectsDo(std::function<void(Oop)> callback);
@@ -776,7 +781,7 @@ private:
 // ===== TEMPLATE IMPLEMENTATIONS =====
 
 template<typename Visitor>
-void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
+void ObjectMemory::forEachMemoryRoot(Visitor&& visitor, bool includeClassTable) {
     // Special objects
     visitor(specialObjectsArray_);
     visitor(nilObject_);
@@ -795,10 +800,16 @@ void ObjectMemory::forEachMemoryRoot(Visitor&& visitor) {
         }
     }
 
-    // Class table entries (skip index 0 which is reserved for free chunks)
-    for (size_t i = 1; i < classTable_.size(); ++i) {
-        if (classTable_[i].isObject()) {
-            visitor(classTable_[i]);
+    // Class table entries — only during compaction (pointer updates),
+    // NOT during mark phase. In Spur, class table entries are NOT strong
+    // roots — anonymous/transient classes can be collected when unreachable.
+    // During mark phase, classes survive only if referenced from live objects
+    // (via classIndex in headers of live objects, or from other live references).
+    if (includeClassTable) {
+        for (size_t i = 1; i < classTable_.size(); ++i) {
+            if (classTable_[i].isObject()) {
+                visitor(classTable_[i]);
+            }
         }
     }
 

@@ -2120,6 +2120,16 @@ void ObjectMemory::processMarkStack() {
 }
 
 void ObjectMemory::scanPointerFields(ObjectHeader* obj) {
+    // Mark the class of this object via classIndex.
+    // In Spur, the class is NOT a pointer slot — it's encoded as an index in
+    // the object header.  The standard VM's scanPointerFieldsOfMaybeFiredEphemeron:
+    // calls markAndTraceClassOf: here to keep metaclasses (and any class only
+    // reachable via classIndex) alive while instances exist.
+    uint32_t classIdx = obj->classIndex();
+    if (classIdx > 0 && classIdx < classTable_.size()) {
+        markAndTrace(classTable_[classIdx]);
+    }
+
     size_t numPointers = pointerSlotsOf(obj);
     Oop* slots = obj->slots();
     currentScanParent_ = obj;
@@ -2293,6 +2303,26 @@ void ObjectMemory::markClassTablePages() {
     }
 }
 
+void ObjectMemory::sweepClassTable() {
+    // After mark phase: clear class table entries whose class objects were not
+    // marked (unreachable). This allows anonymous/transient classes to be GC'd.
+    // Matches standard Spur behavior where class table pages 1+ are only marked
+    // (kept alive as containers) but their entries are not strong roots.
+    //
+    // Skip indices 0-7: these are reserved for immediate types and special
+    // class index puns (free chunks, forwarding pointers, etc.).
+    for (size_t i = 8; i < classTable_.size(); ++i) {
+        Oop entry = classTable_[i];
+        if (!entry.isObject()) continue;
+        ObjectHeader* obj = entry.asObjectPtr();
+        auto p = reinterpret_cast<uint8_t*>(obj);
+        if (p < oldSpaceStart_ || p >= oldSpaceFree_) continue;
+        if (!obj->isMarked()) {
+            classTable_[i] = nilObject_;
+        }
+    }
+}
+
 void ObjectMemory::syncClassTableToHeap() {
     // The C++ classTable_ vector is the runtime source of truth, but the image
     // is saved from the in-heap class table pages inside hiddenRootsObj.
@@ -2358,10 +2388,12 @@ size_t ObjectMemory::markPhase() {
 
     size_t markedCount = 0;
 
-    // 1. Mark from memory roots (special objects, class table)
+    // 1. Mark from memory roots (special objects — NOT class table entries).
+    // In Spur, class table entries are NOT strong roots. Anonymous/transient
+    // classes can be collected when no live object references them.
     forEachMemoryRoot([this](Oop& oop) {
         markAndTrace(oop);
-    });
+    }, /* includeClassTable */ false);
 
     // 2. Mark from interpreter roots
     if (interpreter_) {
@@ -2392,6 +2424,10 @@ size_t ObjectMemory::markPhase() {
 
     // 5. Process weak objects (nil dead references, queue mourners)
     processWeaklings();
+
+    // 5b. Sweep the class table: nil entries for classes that were not marked.
+    // This allows anonymous/transient classes to be collected.
+    sweepClassTable();
 
     // 6. Count marked objects
     ObjectScanner scanner(oldSpaceStart_, oldSpaceFree_);

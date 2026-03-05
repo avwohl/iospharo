@@ -19,6 +19,22 @@ a standalone Xcode project. The exported project:
 Images saved on iPad are in standard Spur format and can be exported on Mac.
 Workflow: develop on iPad, transfer image, export as standalone app.
 
+## Bug Fix: Weak references to anonymous classes now collected by GC
+
+Anonymous classes (used by Reflectivity metalinks, among others) were never
+garbage collected because the class table treated all entries as strong GC
+roots. Two fixes:
+
+- Class table entries are no longer strong roots during the mark phase.
+  A new `sweepClassTable()` pass nils entries for unmarked (dead) classes.
+- `scanPointerFields()` now marks the class of each live object via its
+  classIndex (matching the standard Spur VM's `markAndTraceClassOf:` call).
+  This keeps metaclasses alive while instances exist.
+
+The `MetaLinkAnonymousClassBuilderTest >> testWeakMigratedObjectsRegistry`
+test now passes — weak references to anonymous classes and their ephemeron
+keys are properly collected after GC.
+
 ---
 
 # What's New in Build 72
