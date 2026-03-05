@@ -1,3 +1,26 @@
+# What's New in Build 73
+
+Build 73 — 2026-03-05
+
+## New Feature: Export as App
+
+Right-click any image in the library and choose "Export as App..." to generate
+a standalone Xcode project. The exported project:
+
+- Embeds the Pharo image and all required frameworks (PharoVMCore, SDL2,
+  FreeType, OpenSSL, etc.)
+- Boots directly into the Pharo canvas — no image library or splash screen
+- Supports both macOS (Mac Catalyst) and iOS targets
+- Includes a Kiosk mode option that hides the taskbar, menu bar, and World
+  menu so your app fills the screen
+- Generates a valid .xcodeproj with no external tool dependencies
+- Opens in Xcode where you build, sign, and archive
+
+Images saved on iPad are in standard Spur format and can be exported on Mac.
+Workflow: develop on iPad, transfer image, export as standalone app.
+
+---
+
 # What's New in Build 72
 
 Build 72 — 2026-03-04
