@@ -31,6 +31,7 @@ struct ImageLibraryView: View {
     @State private var imageToShare: PharoImage?
     @State private var filterText: String = ""
     @State private var selectedImageID: UUID?
+    @State private var imageToExport: PharoImage?
     @AppStorage("autoLaunchImageID") private var autoLaunchImageID: String?
 
     private var filteredImages: [PharoImage] {
@@ -216,6 +217,11 @@ struct ImageLibraryView: View {
             .sheet(item: $imageToShare) { image in
                 ShareSheet(activityItems: [image.directoryURL])
             }
+            #if targetEnvironment(macCatalyst)
+            .sheet(item: $imageToExport) { image in
+                ExportAppSheet(image: image)
+            }
+            #endif
         }
         .navigationViewStyle(.stack)
         // Error banner
@@ -391,6 +397,14 @@ struct ImageLibraryView: View {
                             } label: {
                                 Label("Show in Files", systemImage: "folder")
                             }
+
+                            #if targetEnvironment(macCatalyst)
+                            Button {
+                                imageToExport = image
+                            } label: {
+                                Label("Export as App...", systemImage: "shippingbox")
+                            }
+                            #endif
 
                             Divider()
 

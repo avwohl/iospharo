@@ -27,6 +27,10 @@
 		A10016 /* DownloadProgressRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20016 /* DownloadProgressRow.swift */; };
 		A10017 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20017 /* SettingsView.swift */; };
 		A10019 /* AutoLaunchSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20019 /* AutoLaunchSplashView.swift */; };
+		A1001B /* ExportAppSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001B /* ExportAppSheet.swift */; };
+		A1001C /* AppExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001C /* AppExporter.swift */; };
+		A1001D /* AppTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001D /* AppTemplates.swift */; };
+		A1001E /* XcodeProjGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001E /* XcodeProjGenerator.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -53,6 +57,10 @@
 		A20017 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20018 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		A20019 /* AutoLaunchSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoLaunchSplashView.swift; sourceTree = "<group>"; };
+		A2001B /* ExportAppSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportAppSheet.swift; sourceTree = "<group>"; };
+		A2001C /* AppExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppExporter.swift; sourceTree = "<group>"; };
+		A2001D /* AppTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTemplates.swift; sourceTree = "<group>"; };
+		A2001E /* XcodeProjGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XcodeProjGenerator.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -88,6 +96,7 @@
 				A40005 /* Metal */,
 				A40006 /* Views */,
 				A40007 /* Image */,
+				A4000A /* Export */,
 				A20008 /* Assets.xcassets */,
 				A2000E /* Info.plist */,
 			);
@@ -143,6 +152,17 @@
 				A20012 /* PharoImage.swift */,
 			);
 			path = Image;
+			sourceTree = "<group>";
+		};
+		A4000A /* Export */ = {
+			isa = PBXGroup;
+			children = (
+				A2001B /* ExportAppSheet.swift */,
+				A2001C /* AppExporter.swift */,
+				A2001D /* AppTemplates.swift */,
+				A2001E /* XcodeProjGenerator.swift */,
+			);
+			path = Export;
 			sourceTree = "<group>";
 		};
 		A40008 /* Frameworks */ = {
@@ -299,6 +319,10 @@
 				A10016 /* DownloadProgressRow.swift in Sources */,
 				A10017 /* SettingsView.swift in Sources */,
 				A10019 /* AutoLaunchSplashView.swift in Sources */,
+				A1001B /* ExportAppSheet.swift in Sources */,
+				A1001C /* AppExporter.swift in Sources */,
+				A1001D /* AppTemplates.swift in Sources */,
+				A1001E /* XcodeProjGenerator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
