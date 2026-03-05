@@ -70,10 +70,9 @@ class XcodeProjGenerator {
 
         let metalFiles = ["Shaders.metal"]
 
+        // PharoVMCore.a has all third-party libs merged in except SDL2 and libffi
         let frameworks = [
-            "PharoVMCore", "SDL2", "freetype", "harfbuzz", "cairo",
-            "pixman", "libpng16", "libffi", "libssl", "libcrypto",
-            "libssh2", "libgit2",
+            "PharoVMCore", "SDL2", "libffi",
         ]
 
         var lines = [String]()
@@ -371,7 +370,7 @@ class XcodeProjGenerator {
         ln("\t\t\t\tTARGETED_DEVICE_FAMILY = \"1,2,6\";")
         ln("\t\t\t\tFRAMEWORK_SEARCH_PATHS = (\"$(inherited)\", \"$(PROJECT_DIR)/Frameworks\");")
         ln("\t\t\t\tHEADER_SEARCH_PATHS = (\"$(inherited)\", \"$(PROJECT_DIR)/Headers\");")
-        ln("\t\t\t\tOTHER_LDFLAGS = (\"$(inherited)\", \"-framework\", CoreAudio, \"-framework\", AudioToolbox, \"-framework\", CoreMIDI, \"-framework\", CoreGraphics, \"-framework\", CoreText, \"-framework\", QuartzCore, \"-framework\", Security);")
+        ln("\t\t\t\tOTHER_LDFLAGS = (\"$(inherited)\", \"-lc++\", \"-framework\", CoreAudio, \"-framework\", AudioToolbox, \"-framework\", CoreMIDI, \"-framework\", CoreGraphics, \"-framework\", CoreText, \"-framework\", QuartzCore, \"-framework\", Security);")
         ln("\t\t\t};")
         ln("\t\t\tname = Debug;")
         ln("\t\t};")
@@ -398,7 +397,7 @@ class XcodeProjGenerator {
         ln("\t\t\t\tTARGETED_DEVICE_FAMILY = \"1,2,6\";")
         ln("\t\t\t\tFRAMEWORK_SEARCH_PATHS = (\"$(inherited)\", \"$(PROJECT_DIR)/Frameworks\");")
         ln("\t\t\t\tHEADER_SEARCH_PATHS = (\"$(inherited)\", \"$(PROJECT_DIR)/Headers\");")
-        ln("\t\t\t\tOTHER_LDFLAGS = (\"$(inherited)\", \"-framework\", CoreAudio, \"-framework\", AudioToolbox, \"-framework\", CoreMIDI, \"-framework\", CoreGraphics, \"-framework\", CoreText, \"-framework\", QuartzCore, \"-framework\", Security);")
+        ln("\t\t\t\tOTHER_LDFLAGS = (\"$(inherited)\", \"-lc++\", \"-framework\", CoreAudio, \"-framework\", AudioToolbox, \"-framework\", CoreMIDI, \"-framework\", CoreGraphics, \"-framework\", CoreText, \"-framework\", QuartzCore, \"-framework\", Security);")
         ln("\t\t\t};")
         ln("\t\t\tname = Release;")
         ln("\t\t};")

@@ -158,19 +158,13 @@ class AppExporter {
         let fwDstDir = projectDir.appendingPathComponent("Frameworks")
         try fm.createDirectory(at: fwDstDir, withIntermediateDirectories: true)
 
+        // PharoVMCore.a already has cairo, freetype, harfbuzz, pixman, libpng16,
+        // libssl, libcrypto, libssh2, libgit2 merged in via build-xcframework.sh.
+        // Only PharoVMCore, SDL2, and libffi need separate xcframeworks.
         let requiredFrameworks = [
             "PharoVMCore",
             "SDL2",
-            "freetype",
-            "harfbuzz",
-            "cairo",
-            "pixman",
-            "libpng16",
             "libffi",
-            "libssl",
-            "libcrypto",
-            "libssh2",
-            "libgit2",
         ]
 
         // Frameworks are in the iospharo source tree under Frameworks/
