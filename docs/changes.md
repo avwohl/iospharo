@@ -8,14 +8,14 @@ The Pharo Welcome window would extend beyond the visible window area on Mac
 Catalyst because the initial Display Form was created at a default 1024x768
 before the Metal view reported the actual window size. Now the display size is
 pre-set from the current window bounds before the VM starts, so the Welcome
-window is correctly sized from the beginning.
+window is correctly sized from the beginning. (Mac Catalyst only — on iOS the
+default is used and drawableSizeWillChange corrects it.)
 
-## Bug Fix: Launch button cut off on iOS image library
+## Bug Fix: Image library layout on iOS
 
-On smaller iOS screens, the action buttons (Launch, Rename, Share, etc.) in the
-image library detail panel were pushed off-screen by the detail info rows. The
-buttons are now displayed above the detail info so they're always visible when
-an image is selected.
+Action buttons (Launch, Rename, Share, etc.) are now above the detail info rows
+so they're always visible. Detail rows scroll within a capped area so the image
+table keeps enough space on small iOS screens.
 
 ---
 

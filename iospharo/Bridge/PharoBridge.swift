@@ -170,9 +170,13 @@ class PharoBridge: ObservableObject {
         parameters.maxCodeSize = 0
 
         // Pre-set display size from the current window bounds (UIKit coordinates).
-        // This ensures the Pharo Display Form is created at the correct size before
-        // the Welcome window opens during startup. drawableSizeWillChange will refine
-        // the size once the Metal view is laid out.
+        // On Mac Catalyst, the window size is stable so this gives the correct
+        // initial Display Form dimensions before the Welcome window opens.
+        // On iOS, do NOT pre-set: window.bounds at launch time may be portrait
+        // or include the modifier strip area, giving wrong initial dimensions.
+        // The default 1024x768 from vm_init() works fine; drawableSizeWillChange
+        // corrects it once the Metal view is laid out.
+        #if targetEnvironment(macCatalyst)
         if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = scene.windows.first {
             let bounds = window.bounds
@@ -185,6 +189,7 @@ class PharoBridge: ObservableObject {
                 #endif
             }
         }
+        #endif
 
         // Change working directory to image's directory so Pharo's
         // StartupPreferencesLoader finds startup.st alongside the image
