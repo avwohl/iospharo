@@ -9,6 +9,9 @@ It is a from-scratch interpreter implementation — not a port of the Cog JIT VM
 with full support for the Sista V1 bytecode set, FFI with callbacks, and the
 standard Pharo test suite.
 
+**Note:** Only Pharo 13 images are currently supported. Pharo 12 and earlier
+use a different class table layout that the VM does not yet handle.
+
 ## Status
 
 **VM core (solid):**
