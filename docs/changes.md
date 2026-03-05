@@ -1,6 +1,6 @@
-# What's New in Build 75
+# What's New in Build 76
 
-Build 75 — 2026-03-05
+Build 76 — 2026-03-05
 
 ## Bug Fix: iOS Welcome window cut off on iPhone
 
