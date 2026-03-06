@@ -11,7 +11,6 @@
 		A10001 /* iosparoApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20001 /* iosparoApp.swift */; };
 		A10002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20002 /* ContentView.swift */; };
 		A10003 /* PharoBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20003 /* PharoBridge.swift */; };
-		A1001A /* CoreMotionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001A /* CoreMotionManager.swift */; };
 		A10004 /* MetalRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20004 /* MetalRenderer.swift */; };
 		A10005 /* Shaders.metal in Sources */ = {isa = PBXBuildFile; fileRef = A20005 /* Shaders.metal */; };
 		A10006 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006 /* PharoCanvasView.swift */; };
@@ -19,7 +18,7 @@
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008 /* Assets.xcassets */; };
 		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009 /* Metal.framework */; };
 		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A /* MetalKit.framework */; };
-		A1000C /* libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* libffi.xcframework */; };
+		A1000C /* Frameworks/libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* Frameworks/libffi.xcframework */; };
 		A10012 /* PharoImage.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20012 /* PharoImage.swift */; };
 		A10013 /* ImageLibraryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20013 /* ImageLibraryView.swift */; };
 		A10014 /* ImageRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20014 /* ImageRow.swift */; };
@@ -27,6 +26,7 @@
 		A10016 /* DownloadProgressRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20016 /* DownloadProgressRow.swift */; };
 		A10017 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20017 /* SettingsView.swift */; };
 		A10019 /* AutoLaunchSplashView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20019 /* AutoLaunchSplashView.swift */; };
+		A1001A /* CoreMotionManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001A /* CoreMotionManager.swift */; };
 		A1001B /* ExportAppSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001B /* ExportAppSheet.swift */; };
 		A1001C /* AppExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001C /* AppExporter.swift */; };
 		A1001D /* AppTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001D /* AppTemplates.swift */; };
@@ -37,7 +37,6 @@
 		A20001 /* iosparoApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = iosparoApp.swift; sourceTree = "<group>"; };
 		A20002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A20003 /* PharoBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoBridge.swift; sourceTree = "<group>"; };
-		A2001A /* CoreMotionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreMotionManager.swift; sourceTree = "<group>"; };
 		A20004 /* MetalRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalRenderer.swift; sourceTree = "<group>"; };
 		A20005 /* Shaders.metal */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.metal; path = Shaders.metal; sourceTree = "<group>"; };
 		A20006 /* PharoCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoCanvasView.swift; sourceTree = "<group>"; };
@@ -48,7 +47,7 @@
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
-		A2000F /* libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/libffi.xcframework; sourceTree = SOURCE_ROOT; };
+		A2000F /* Frameworks/libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/libffi.xcframework; sourceTree = SOURCE_ROOT; };
 		A20012 /* PharoImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoImage.swift; sourceTree = "<group>"; };
 		A20013 /* ImageLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLibraryView.swift; sourceTree = "<group>"; };
 		A20014 /* ImageRow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageRow.swift; sourceTree = "<group>"; };
@@ -57,6 +56,7 @@
 		A20017 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		A20018 /* Config.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Config.xcconfig; sourceTree = "<group>"; };
 		A20019 /* AutoLaunchSplashView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoLaunchSplashView.swift; sourceTree = "<group>"; };
+		A2001A /* CoreMotionManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreMotionManager.swift; sourceTree = "<group>"; };
 		A2001B /* ExportAppSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExportAppSheet.swift; sourceTree = "<group>"; };
 		A2001C /* AppExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppExporter.swift; sourceTree = "<group>"; };
 		A2001D /* AppTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTemplates.swift; sourceTree = "<group>"; };
@@ -71,7 +71,7 @@
 				4E4B3BEE2F0859030064396B /* ZIPFoundation in Frameworks */,
 				A10009 /* Metal.framework in Frameworks */,
 				A1000A /* MetalKit.framework in Frameworks */,
-				A1000C /* libffi.xcframework in Frameworks */,
+				A1000C /* Frameworks/libffi.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -154,23 +154,12 @@
 			path = Image;
 			sourceTree = "<group>";
 		};
-		A4000A /* Export */ = {
-			isa = PBXGroup;
-			children = (
-				A2001B /* ExportAppSheet.swift */,
-				A2001C /* AppExporter.swift */,
-				A2001D /* AppTemplates.swift */,
-				A2001E /* XcodeProjGenerator.swift */,
-			);
-			path = Export;
-			sourceTree = "<group>";
-		};
 		A40008 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
 				A20009 /* Metal.framework */,
 				A2000A /* MetalKit.framework */,
-				A2000F /* libffi.xcframework */,
+				A2000F /* Frameworks/libffi.xcframework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -181,6 +170,17 @@
 				A2000D /* iospharo.app */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		A4000A /* Export */ = {
+			isa = PBXGroup;
+			children = (
+				A2001B /* ExportAppSheet.swift */,
+				A2001C /* AppExporter.swift */,
+				A2001D /* AppTemplates.swift */,
+				A2001E /* XcodeProjGenerator.swift */,
+			);
+			path = Export;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -215,7 +215,7 @@
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 1500;
+				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					A50001 = {
 						CreatedOnToolsVersion = 15.0;
@@ -365,6 +365,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 644N5FNKG2;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
@@ -376,12 +377,12 @@
 					"DEBUG=1",
 					"$(inherited)",
 				);
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
@@ -389,6 +390,7 @@
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
@@ -431,23 +433,25 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 644N5FNKG2;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
-				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 				VALIDATE_PRODUCT = YES;
@@ -463,7 +467,11 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 78;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pharo Smalltalk";
@@ -517,7 +525,11 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 78;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_INCOMING_NETWORK_CONNECTIONS = YES;
+				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = iospharo/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = "Pharo Smalltalk";
