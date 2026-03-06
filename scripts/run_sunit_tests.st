@@ -433,6 +433,36 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "=== Dynamic discovery: add ALL remaining TestCase subclasses ==="
+  "After the hand-curated tiers above, discover every non-abstract TestCase
+   subclass in the image and add any we haven't already included. This ensures
+   new tests added to the Pharo image are automatically picked up.
+   Skip list: classes known to hang, require UI, or have infrastructure issues."
+  [| skipNames allTC |
+   skipNames := #(
+     "UI/Morphic tests that hang in headless mode"
+     ClyBrowserToolValidityTest ClyDataSourcePaginationTest
+     ClyMethodCalledFromBrowserTest ClyMethodCalledFromMessageBrowserTest
+     MorphTest MorphicEventHandlerTest MorphicUIManagerTest
+     TextMorphTest SystemWindowTest PluggableTextMorphTest
+     WorldMorphTest DisplayScreenTest HandMorphTest PasteUpMorphTest
+     SpAbstractWidgetPresenterTest SpApplicationTest
+     "Spec2 backend tests (need Morphic/display)"
+     SpBoxLayoutTest SpGridLayoutTest SpDropListPresenterTest
+     SpListPresenterTest SpTablePresenterTest SpTreeTablePresenterTest
+     SpButtonPresenterTest SpTextPresenterTest SpTextInputFieldPresenterTest
+     SpWindowPresenterTest SpSliderPresenterTest SpRadioButtonPresenterTest
+     SpCheckBoxPresenterTest SpTabPresenterTest SpProgressBarPresenterTest
+     SpToolbarPresenterTest SpMenuPresenterTest SpNotebookPresenterTest
+   ) asSet.
+   allTC := (TestCase allSubclasses reject: [:c |
+     [c isAbstract] on: Error do: [:e | true]])
+     asSortedCollection: [:a :b | a name <= b name].
+   allTC do: [:cls |
+     (skipNames includes: cls name) ifFalse: [
+       addOnce value: cls]]]
+  on: Error do: [:e |].
+
   "Read batch range from /tmp/sunit_batch.txt (format: 'startIndex endIndex')
    OR class names from /tmp/sunit_class_names.txt (one class name per line).
    If class names file exists, it takes priority. If neither, run all classes."
