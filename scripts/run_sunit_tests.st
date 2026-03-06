@@ -410,7 +410,7 @@ runAllTests
     "Misc"
     DocCommentsReleaseTest PharoDocCommentTest
     ObjectWithPrintingRaisingHaltTest
-    EFFFICallTest BitBltTest
+    EFFFICallTest BitBltTest BitBltTranslucentTest
     FastStepThroughTest StepThroughTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
