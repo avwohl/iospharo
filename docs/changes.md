@@ -12,8 +12,16 @@ source code at https://github.com/avwohl/iospharo. Injected via startup.st.
 
 Ran all 2,046 test classes (100% of image) with a 30-second per-test
 watchdog. Zero timeouts. 27,510 pass / 39 fail / 391 error / 131 skip.
-76% of failures caused by a single Trait "selector changed!" bug (480 errors).
-Without Trait + ProcessTest infrastructure issues: 99.64% pass rate.
+76% of failures initially attributed to Trait "selector changed!" bug turned out
+to be a Pharo 13 image issue (`on:do:on:do:` method missing), NOT a VM bug.
+TraitTest (54/54) and ClassTraitTest (5/5) pass on our VM via `buildSuite run`.
+
+## Bug Fix: WriteBarrier for FFI store primitives (615-629)
+
+All 15 FFI byte-store primitives now check `isImmutable()` before writing.
+Previously storing into an immutable ByteArray via FFI would silently succeed.
+Fixes WriteBarrierTest `testMutateByteArrayUsingDoubleAtPut` and
+`testMutateByteArrayUsingFloatAtPut`.
 
 ## Bug Fix: BitBlt 8→1 and 16→1 depth conversion (iPad world menu red X)
 

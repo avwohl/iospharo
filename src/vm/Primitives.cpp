@@ -2010,7 +2010,9 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
     // Primitive 62: Return the indexable size of an object
     // Per official VM: fails for non-indexable objects (format < 2)
     // Returns: indexable size = totalSlots - fixedFields
-    Oop rcvr = stackValue(argCount);
+    // Note: stackTop() works for both object-side (argCount=0, receiver at top)
+    // and mirror-side (argCount=1, target object at top, mirror class below)
+    Oop rcvr = stackTop();
 
     if (!rcvr.isObject()) {
         return PrimitiveResult::Failure;  // Immediates fail
@@ -2524,7 +2526,8 @@ PrimitiveResult Interpreter::primitiveShallowCopy(int argCount) {
 // ===== IDENTITY PRIMITIVES =====
 
 PrimitiveResult Interpreter::primitiveIdentityHash(int argCount) {
-    Oop rcvr = stackValue(argCount);  // Receiver is under arguments
+    // stackTop() works for both object-side (argCount=0) and mirror-side (argCount=1)
+    Oop rcvr = stackTop();
 
     // Follow forwarding pointers for heap objects (created by become:)
     if (rcvr.isObject()) {
@@ -2555,6 +2558,9 @@ PrimitiveResult Interpreter::primitiveClass(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
+    // Object-side (argCount=1): receiver == arg
+    // Mirror-side (argCount=2): MirrorPrimitives check: a identicalTo: b
+    // In both cases: arg at stackValue(0), object-to-compare at stackValue(1)
     Oop arg = stackValue(0);   // otherObject
     Oop rcvr = stackValue(1);  // thisObject
 
@@ -2564,8 +2570,8 @@ PrimitiveResult Interpreter::primitiveIdentical(int argCount) {
 
     bool result = (rcvr == arg);
 
-    pop();
-    pop();
+    // Pop all entries (receiver + args), push result
+    popN(argCount + 1);
     push(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -2579,8 +2585,7 @@ PrimitiveResult Interpreter::primitiveNotIdentical(int argCount) {
     rcvr = memory_.followForwarded(rcvr);
 
     bool result = (rcvr != arg);
-    pop();
-    pop();
+    popN(argCount + 1);
     push(result ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -9732,8 +9737,11 @@ PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
 // Primitive 100: perform:withArguments:inSuperclass:
 // Sends a message to self but starts lookup from a specified superclass
 PrimitiveResult Interpreter::primitivePerformInSuperclass(int argCount) {
-    // Stack: receiver, selector, argsArray, lookupClass
-    if (argCount != 3) {
+    // Stack layout (object-side, argCount=3): receiver, selector, argsArray, lookupClass
+    // Stack layout (mirror-side, argCount=4): MirrorPrimitives, target, selector, argsArray, lookupClass
+    // In both cases: lookupClass=stackValue(0), argsArray=stackValue(1),
+    //                selector=stackValue(2), receiver/target=stackValue(3)
+    if (argCount < 3) {
         return PrimitiveResult::Failure;
     }
 
