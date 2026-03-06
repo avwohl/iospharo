@@ -22322,6 +22322,13 @@ PrimitiveResult Interpreter::primitiveLoadFloat64FromBytes(int argCount) {
 
 // ===== STORE INTO BYTES (615-629) =====
 
+// Helper: check if a byte object is writable (not immutable)
+static bool isBytesWritable(Oop obj) {
+    if (!obj.isObject()) return false;
+    ObjectHeader* hdr = obj.asObjectPtr();
+    return hdr && !hdr->isImmutable();
+}
+
 // Primitive 615: Store boolean8 into bytes
 PrimitiveResult Interpreter::primitiveStoreBoolean8IntoBytes(int argCount) {
     if (argCount != 2) return PrimitiveResult::Failure;
@@ -22333,6 +22340,7 @@ PrimitiveResult Interpreter::primitiveStoreBoolean8IntoBytes(int argCount) {
     if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t index = indexOop.asSmallInteger();
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22369,6 +22377,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt8IntoBytes(int argCount) {
 
     if (value < 0 || value > 255) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22395,6 +22404,7 @@ PrimitiveResult Interpreter::primitiveStoreInt8IntoBytes(int argCount) {
 
     if (value < -128 || value > 127) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22421,6 +22431,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt16IntoBytes(int argCount) {
 
     if (value < 0 || value > 65535) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22448,6 +22459,7 @@ PrimitiveResult Interpreter::primitiveStoreInt16IntoBytes(int argCount) {
 
     if (value < -32768 || value > 32767) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22475,6 +22487,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt32IntoBytes(int argCount) {
 
     if (value < 0 || value > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22502,6 +22515,7 @@ PrimitiveResult Interpreter::primitiveStoreInt32IntoBytes(int argCount) {
 
     if (value < INT32_MIN || value > INT32_MAX) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22530,6 +22544,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt64IntoBytes(int argCount) {
     // For now, only support positive values that fit in SmallInteger
     if (value < 0) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22555,6 +22570,7 @@ PrimitiveResult Interpreter::primitiveStoreInt64IntoBytes(int argCount) {
     int64_t index = indexOop.asSmallInteger();
     int64_t value = valueOop.asSmallInteger();
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22585,6 +22601,7 @@ PrimitiveResult Interpreter::primitiveStorePointerIntoBytes(int argCount) {
         valueBytes = nullptr;
     }
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22617,6 +22634,7 @@ PrimitiveResult Interpreter::primitiveStoreChar8IntoBytes(int argCount) {
 
     if (charValue > 255) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22644,6 +22662,7 @@ PrimitiveResult Interpreter::primitiveStoreChar16IntoBytes(int argCount) {
 
     if (charValue > 65535) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22670,6 +22689,7 @@ PrimitiveResult Interpreter::primitiveStoreChar32IntoBytes(int argCount) {
     int64_t index = indexOop.asSmallInteger();
     uint32_t charValue = valueOop.asCharacter();
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22696,6 +22716,7 @@ PrimitiveResult Interpreter::primitiveStoreFloat32IntoBytes(int argCount) {
     double dvalue;
     if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22722,6 +22743,7 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoBytes(int argCount) {
     double dvalue;
     if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
 
+    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
