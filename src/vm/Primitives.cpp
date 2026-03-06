@@ -15731,7 +15731,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         // Surface handle — resolve via SurfacePlugin table
         destSurfaceID = static_cast<int>(destBits.asSmallInteger());
         ManualSurface* s = lookupSurface(destSurfaceID);
-        if (!s) return PrimitiveResult::Failure;
+        if (!s) {
+            fprintf(stderr, "[BITBLT-DIAG] dest surface not found: id=%d\n", destSurfaceID);
+            return PrimitiveResult::Failure;
+        }
 
         if (s->dispatch) {
             // Dispatch-based surface (Cairo/Athens)
@@ -15767,7 +15770,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     gotData = true;
                 }
             }
-            if (!gotData || !gotFormat) return PrimitiveResult::Failure;
+            if (!gotData || !gotFormat) {
+                fprintf(stderr, "[BITBLT-DIAG] dest dispatch surface failed: gotData=%d gotFormat=%d\n", gotData, gotFormat);
+                return PrimitiveResult::Failure;
+            }
 
             destBitsSize = static_cast<size_t>(pitch) * s->height;
             destPitch = pitch / 4;
@@ -16078,7 +16084,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         // Source is a surface handle
         int srcSurfID = static_cast<int>(srcBits.asSmallInteger());
         ManualSurface* ss = lookupSurface(srcSurfID);
-        if (!ss) return PrimitiveResult::Failure;
+        if (!ss) {
+            fprintf(stderr, "[BITBLT-DIAG] src surface not found: id=%d\n", srcSurfID);
+            return PrimitiveResult::Failure;
+        }
 
         if (ss->dispatch) {
             // Dispatch-based surface (Cairo/Athens)
