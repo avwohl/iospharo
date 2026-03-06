@@ -3940,6 +3940,9 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
     // the Display global (some code may depend on displayForm_ being set).
     bool skipPixelCopy = ffi_isSDLRenderingActive();
 
+    // Mark that the image has drawn at least once
+    displayFormReady_ = true;
+
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
         Oop display = memory_.findGlobal("Display");
@@ -12176,6 +12179,9 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
     }
 
     if (!pharo::gDisplaySurface) return PrimitiveResult::Success;
+
+    // Mark that the image has drawn at least once
+    displayFormReady_ = true;
 
     // Always refresh Display form (Pharo may change it, GC may move it)
     {

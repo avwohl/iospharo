@@ -416,6 +416,10 @@ void Interpreter::syncDisplayToSurface() {
         return;
     }
 
+    // Don't copy until the image has drawn at least once (primitiveForceDisplayUpdate).
+    // Before that, the Display Form bits are uninitialized heap memory (garbage pixels).
+    if (!displayFormReady_) return;
+
     // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
     if (displayForm_.isNil()) {
         worldRenderer_.render();

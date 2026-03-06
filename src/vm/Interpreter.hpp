@@ -495,6 +495,7 @@ private:
 
     // Display Form (the Smalltalk Form that represents the screen)
     Oop displayForm_ = Oop::nil();
+    bool displayFormReady_ = false;  // Set true on first primitiveForceDisplayUpdate
 
 
     // Pending world menu invocation (queued to avoid reentrant execution)
