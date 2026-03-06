@@ -2,6 +2,15 @@
 
 Build 78 — 2026-03-06
 
+## Bug Fix: BitBlt 8→1 and 16→1 depth conversion (iPad world menu red X)
+
+Added support for 8-bit and 16-bit source to 1-bit destination BitBlt operations.
+The shadow drawing canvas uses a 1-bit mask form, and menu icons are 8-bit depth.
+Our BitBlt primitive only handled 32→1 and 1→1 dest conversions, causing
+`unsupported destDepth=1 srcDepth=8 rule=25` failures on every menu item icon
+in the stencil/shadow path. This was the root cause of the red X draw errors
+in the iPad world menu.
+
 ## Diagnostic: Draw error text visible in red X boxes
 
 When a morph's drawing fails, the red X box now shows the actual error text:

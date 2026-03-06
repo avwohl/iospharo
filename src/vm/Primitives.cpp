@@ -16233,6 +16233,95 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         BITBLT_SUCCESS;
     }
 
+    // 8-bit source to 1-bit dest (shadow mask/stencil operations)
+    if (destDepth == 1 && srcDepth == 8) {
+        intptr_t destWordsPerRow = (destWidth + 31) / 32;
+        intptr_t srcBytesPerRow = ((srcWidth + 3) / 4) * 4; // word-aligned
+        uint32_t* destWords = destPixels;
+
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcBytesPerRow + sourceX + width);
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint8_t* srcRow = srcBytes + (sourceY + y) * srcBytesPerRow + sourceX;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t dx = destX + x;
+                uint32_t bitMask = 0x80000000u >> (dx % 32);
+                // Non-zero 8-bit pixel → 1, zero → 0
+                uint32_t srcBit = (srcRow[x] != 0) ? bitMask : 0;
+                switch (combinationRule) {
+                    case 3: case 34: // store
+                        destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
+                        break;
+                    case 0: // AND
+                        if (!srcBit) destRow[dx / 32] &= ~bitMask;
+                        break;
+                    case 7: case 25: // OR / pixPaint
+                        if (srcBit) destRow[dx / 32] |= bitMask;
+                        break;
+                    case 6: // XOR
+                        if (srcBit) destRow[dx / 32] ^= bitMask;
+                        break;
+                    case 1: // AND complement
+                        if (srcBit) destRow[dx / 32] &= ~bitMask;
+                        break;
+                    default:
+                        destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        BITBLT_SUCCESS;
+    }
+
+    // 16-bit source to 1-bit dest (shadow mask/stencil operations)
+    if (destDepth == 1 && srcDepth == 16) {
+        intptr_t destWordsPerRow = (destWidth + 31) / 32;
+        intptr_t srcPixelsPerRow = ((srcWidth * 2 + 3) / 4) * 2; // word-aligned pixel count
+        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
+        uint32_t* destWords = destPixels;
+
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height) * srcPixelsPerRow * 2);
+        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint16_t* srcRow = srcPixels16 + (sourceY + y) * srcPixelsPerRow + sourceX;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t dx = destX + x;
+                uint32_t bitMask = 0x80000000u >> (dx % 32);
+                uint32_t srcBit = (srcRow[x] != 0) ? bitMask : 0;
+                switch (combinationRule) {
+                    case 3: case 34:
+                        destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
+                        break;
+                    case 0:
+                        if (!srcBit) destRow[dx / 32] &= ~bitMask;
+                        break;
+                    case 7: case 25:
+                        if (srcBit) destRow[dx / 32] |= bitMask;
+                        break;
+                    case 6:
+                        if (srcBit) destRow[dx / 32] ^= bitMask;
+                        break;
+                    default:
+                        destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        BITBLT_SUCCESS;
+    }
+
     // Depth-8 destinations (cursor forms, grayscale operations)
     if (destDepth == 8 && srcDepth == 32) {
         intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
