@@ -15652,7 +15652,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (sourceAlpha < 0 || sourceAlpha > 255) return PrimitiveResult::Failure;
     }
 
-    #if DEBUG
     static int bitbltFailCount = 0;
     auto logFailure = [&](int rule, int srcD, int dstD, const char* reason) {
         bitbltFailCount++;
@@ -15662,9 +15661,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         }
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
-    #else
-    #define BITBLT_FAIL(rule, srcD, dstD, reason) return PrimitiveResult::Failure
-    #endif
 
     // On success, pop any extra arguments (alpha for copyBitsTranslucent:)
     // leaving receiver on the stack. primitiveSuccess() handles its own stack.
@@ -16801,6 +16797,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         dstRow[x] = rb | g | (outAlpha << 24);
                         break;
                     }
+                    case 30: { // alphaBlendConst
+                        if (sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
+                    case 31: { // alphaPaintConst
+                        if (srcPixel == 0 || sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
                     default: {
                         BITBLT_FAIL(combinationRule, 8, 32, "8to32-rule");
                     }
@@ -16833,6 +16853,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
                     case 7: dstRow[x] |= srcPixel; break;
                     case 25: if (srcPixel != 0) dstRow[x] = srcPixel; break;
+                    case 30: { // alphaBlendConst
+                        if (sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
+                    case 31: { // alphaPaintConst
+                        if (srcPixel == 0 || sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
                     default: {
                         BITBLT_FAIL(combinationRule, 16, 32, "16to32-rule");
                     }
@@ -16903,6 +16947,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         uint32_t g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
                         uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
                         dstRow[x] = rb | g | (outAlpha << 24);
+                        break;
+                    }
+                    case 30: { // alphaBlendConst
+                        if (sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
+                    case 31: { // alphaPaintConst
+                        if (srcPixel == 0 || sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
                         break;
                     }
                     default: {

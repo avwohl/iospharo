@@ -327,6 +327,25 @@ class PharoBridge: ObservableObject {
               + ((g // nPix bitShift: d) bitShift: bitsPerColor)
               + ((b // nPix bitShift: d) bitShift: 0).
             ^ destMap ifNil: [ rgb ] ifNotNil: [ destMap at: rgb + 1 ]'].
+        "Debug: log draw errors to stderr for diagnosis"
+        Morph compile: 'drawErrorOn: aCanvas
+            self valueOfProperty: #drawError ifPresentDo: [ :error |
+                Stdio stderr
+                    nextPutAll: ''[DRAW-ERROR] '';
+                    nextPutAll: self class name;
+                    nextPutAll: '': '';
+                    nextPutAll: error messageText;
+                    lf.
+                error signalerContext ifNotNil: [ :ctx |
+                    Stdio stderr nextPutAll: (String streamContents: [:s | ctx shortDebugStackOn: s]); lf ].
+                Stdio stderr flush ].
+            aCanvas
+                frameAndFillRectangle: bounds
+                fillColor: Color red
+                borderWidth: 1
+                borderColor: Color yellow.
+            aCanvas line: bounds topLeft to: bounds bottomRight width: 1 color: Color yellow.
+            aCanvas line: bounds topRight to: bounds bottomLeft width: 1 color: Color yellow'.
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
