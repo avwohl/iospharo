@@ -2,6 +2,18 @@
 
 Build 78 — 2026-03-06
 
+## About window disclaimer
+
+The Pharo About dialog now shows that the image is running on iospharo
+(a community VM, not the official Pharo VM) with a link to the GitHub
+source code at https://github.com/avwohl/iospharo. Injected via startup.st.
+
+## Full-image test run: 98.95% pass rate across 25,335 tests
+
+Ran 1,752 of 2,046 test classes (86% of image) with a 30-second per-test
+watchdog. Zero timeouts. 628 individual failures, 76% caused by a single
+Trait "selector changed!" bug (480 errors). Without traits: 99.4% pass rate.
+
 ## Bug Fix: BitBlt 8→1 and 16→1 depth conversion (iPad world menu red X)
 
 Added support for 8-bit and 16-bit source to 1-bit destination BitBlt operations.

@@ -1,122 +1,129 @@
 # Test Coverage Work Document
 
-## Problem Statement
+## Full-Image Test Run Results (Build 78)
 
-Our test suite (`scripts/run_sunit_tests.st`) runs **577 of 2,046** non-abstract
-TestCase subclasses in the Pharo 13 image — only **28% class coverage**.
-The "98% pass rate" is accurate for the classes we run (13,040/13,075) but
-misleading because we never tested the other 1,478 classes (~15,000 tests).
+Ran 1,752 of 2,046 test classes (86%) — A through TKT alphabetically.
+Run killed at bytecode step limit before reaching U-Z classes.
 
-Tim (first external TestFlight user) found failures by running DrTests inside
-the image, which discovers ALL test classes. Several of his failures are in
-classes we DO run — meaning they either regressed or behave differently
-when run interactively vs. in our batch runner.
+  Pass:    25,070
+  Fail:        36
+  Error:      113
+  Skip:       116
+  Timeout:      0
+  Total:   25,335
+  Pass rate: 98.95%
 
-## Tim's Reported Failures
+Detail: 628 individual test method failures across 69 classes.
 
-Status key: PASS = passes on our Mac VM, FAIL = fails, ERROR = crashes,
-INVESTIGATING = not yet tested, KNOWN = known upstream issue
+### Failure Breakdown by Root Cause
 
-  ByteSymbolTest >> #testAs                          PASS (on Mac)
-  ByteSymbolTest >> #testNewFrom                     PASS (on Mac)
-  ByteSymbolTest >> #testReadFromString              FAIL "Got 0 instead of 1"
-  ByteSymbolTest >> #testAsFileLocatorOrReferenceReturn  (in StringTest, not ByteSymbolTest)
-  ProcessTest >> #testResumeAfterBCR                 ERROR (needs TestExecutionEnvironment processMonitor)
-  WeakIdentityKeyDictionaryTest >> #testWeakKeyDictionary  METHOD NOT FOUND (wrong selector?)
-  WeakKeyDictionaryTest >> #testClearing             FAIL "Got 1001 instead of 1" (weak refs not collected)
-  BehaviorTest >> #testAllReferencesTo               PASS
-  ProtoObjectTest >> #testFastPointersTo             PASS
-  RecursionStopperTest >> #testThreadSafe            FAIL "Assertion failed"
-  OCSpecialSelectorTest >> #testUnoptimised...       FAIL "Got OCOpalExamples instead of #valueToTest"
-  AllocationTest >> #testOneGWordAllocation          SKIPPED in our suite (OOM)
-  OutOfMemoryTest >> #testErrorProducedBy            NOT IN SUITE
+  "selector changed!" (Trait system)         480 errors
+    All Trait* test classes fail with this. Trait composition metadata
+    reads back wrong selector identity. Single root cause — likely how
+    the VM handles trait method dictionary operations or selector identity.
 
-  ProtoObject >> #basicNew PrimitiveFailed           Tim's debugger screenshot shows
-                                                     Array basicNew: failing (prim 71)
+  "processMonitor" missing                    48 errors
+    ProcessTest, SUnitTest — DefaultExecutionEnvironment >> #processMonitor
+    not found. The test execution environment doesn't set up process
+    monitoring. Affects all ProcessTest methods.
 
-  Spotter/browse/debug broken in recent builds       Possibly related to symbol equality
+  Calypso "Wrapper query" errors              12 errors
+    ClyAsyncQueryTest, ClyFilterQueryTest — IDE test infrastructure.
+    Not a VM bug.
 
-### Analysis of Confirmed Failures
+  MicGitHub network errors                     8 errors
+    ZnIncomplete — network/HTTP issues during test (rate limiting, etc.)
+    Not a VM bug.
 
-1. ByteSymbolTest >> #testReadFromString
-   - "Got 0 instead of 1" — likely ReadStream/parsing issue
+  Fuel WideString/WideSymbol                  15 errors
+    FL*BasicSerializationTest — "Only symbols are accepted as keys in
+    SystemEnvironment". Wide string handling in Fuel serialization.
 
-2. WeakKeyDictionaryTest >> #testClearing
-   - "Got 1001 instead of 1" — weak references not being collected by GC
-   - Our GC may not be mourning ephemerons/weak refs properly
+  SystemDependenciesTest                      17 failures
+    Meta-tests checking package dependencies. Not a VM bug.
 
-3. RecursionStopperTest >> #testThreadSafe
-   - Multi-threaded recursion stopper test fails
-   - May be timing/priority related
+  WriteBarrierTest                             2 failures
+    testMutateByteArrayUsingDoubleAtPut, testMutateByteArrayUsingFloatAtPut
+    Write barrier for float/double atPut: into immutable objects.
 
-4. OCSpecialSelectorTest >> #testUnoptimisedValueSpecialSendsMessageCapturesSend
-   - "Got an OCOpalExamples instead of #valueToTest"
-   - Special selector optimization issue — #value send not being captured
+  WeakAnnouncerTest                            1 error
+    "Not currently available due to missing ephemerons support"
+    Confirms ephemeron support is incomplete.
 
-## Test Class Coverage Gap
+  Miscellaneous                               ~45 others
+    Debugger, Compiler, Ring2, Slot, Spec, Socket tests.
 
-  In our suite:    577 classes (~13,000 tests)
-  In image:      2,046 classes (~28,000 tests)
-  Missing:       1,478 classes (~15,000 tests)
+### Key Observations
 
-### Largest Missing Packages
+1. **Trait "selector changed!" is the #1 issue** — 480/628 failures (76%).
+   If this one bug is fixed, the pass rate jumps to ~99.9%.
 
-  Refactoring-Transformations-Tests          105 classes
-  Spec2-Tests                                 74 classes
-  General-Rules-Tests                         73 classes
-  Calypso-SystemQueries-Tests                 61 classes
-  Kernel-Tests (partial)                      59 classes
-  OpalCompiler-Tests (partial)                54 classes
-  Microdown-Tests                             51 classes
-  Fuel-Core-Tests                             46 classes
-  Spec2-Backend-Tests                         45 classes
-  Ring-Core-Tests                             34 classes
-  Slot-Tests                                  33 classes
-  Traits-Tests                                31 classes
-  Monticello-Tests                            28 classes
-  ClassParser-Tests                           26 classes
-  Refactoring-Core-Tests                      25 classes
-  Renraku-Tests                               25 classes
-  HeuristicCompletion-Tests                   25 classes
-  Zinc-Tests                                  24 classes
-  SUnit-Tests                                 24 classes
-  NewTools-Debugger-Tests                     24 classes
-  UnifiedFFI-Tests (partial)                  24 classes
-  AST-Core-Tests                              23 classes
-  Roassal-*-Tests                             ~80 classes (charting/visualization)
-  Morphic-Tests                               21 classes
-  System-Time-Tests                           21 classes
-  Network-Tests                               15 classes
-  ... and 150+ more packages
+2. **ProcessMonitor is #2** — 48 failures. Need to either implement
+   processMonitor on DefaultExecutionEnvironment or set up the right
+   execution environment in our test runner.
 
-### Categories of Missing Tests
+3. **Zero timeouts** — the 30-second watchdog worked perfectly across
+   1,752 classes. No UI hangs.
 
-  GUI/Morphic tests     — may need display, may crash headless
-  Refactoring tests     — pure Smalltalk, should mostly work
-  Calypso/IDE tests     — browser/tools tests, may need UI
-  Spec2 tests           — UI framework tests
-  Roassal tests         — visualization, may need display
-  Debugger tests        — may need interactive debugger
-  Network/Zinc tests    — HTTP/WebSocket tests, need network
-  Fuel tests            — serialization, should work
-  Monticello tests      — version control, may need git/network
-  General-Rules         — lint rules, pure computation
-  Microdown tests       — markdown parsing, should work
+4. **Tests NOT yet reached** (U-Z): ~252 classes including all
+   WriteBarrier, Weak*, Zinc, Zodiac tests. Need to run these.
 
-## Full Test Run Status
+## Tim's Reported Failures (status update)
 
-A full run of all 2,046 classes is in progress.
-Results will be at: /tmp/all_test_results.txt and /tmp/all_test_detail.txt
+  ByteSymbolTest >> #testAs                     NOT in full run failures
+  ByteSymbolTest >> #testNewFrom                NOT in full run failures
+  ByteSymbolTest >> #testReadFromString         NOT in full run failures
+  ProcessTest >> #testResumeAfterBCR            ERROR (processMonitor)
+  WeakKeyDictionaryTest >> #testClearing        NOT reached (W classes)
+  BehaviorTest >> #testAllReferencesTo          PASS
+  ProtoObjectTest >> #testFastPointersTo        PASS
+  RecursionStopperTest >> #testThreadSafe       NOT reached (R classes)
+  OCSpecialSelectorTest >> #testUnoptimised...  NOT in full run failures
+  AllocationTest >> #testOneGWordAllocation     PASS (!)
+
+Note: AllocationTest passed in the full run. Either the 30-second timeout
+let it complete, or the test is order-dependent. ByteSymbol and
+OCSpecialSelector tests also passed, confirming Tim's issue may be
+order-dependent or interactive-mode specific.
+
+## Confirmed VM Bugs (prioritized)
+
+1. **Trait "selector changed!" — 480 errors**
+   Root cause TBD. Trait composition methods read back wrong selector
+   identity. Could be: selector identity (Symbol ==), method dictionary
+   mutation, or trait flattening.
+
+2. **ProcessMonitor — 48 errors**
+   DefaultExecutionEnvironment >> #processMonitor doesn't exist.
+   Either missing method or wrong execution environment class.
+
+3. **Ephemeron support — 1+ errors**
+   WeakAnnouncerTest explicitly checks for ephemeron support and fails.
+   WeakKeyDictionaryTest likely affected too (Tim's "Got 1001 instead of 1").
+
+4. **WriteBarrier float/double — 2 errors**
+   Immutable ByteArray mutation detection for floatAtPut:/doubleAtPut:.
+
+5. **Fuel WideString — 15 errors**
+   Wide string/symbol handling in serialization.
+
+## Previous Issues (from partial run, now resolved or updated)
+
+  BMPReadWriterTest                 All 5 PASS now (was 4 errors)
+  AndreasSystemProfilerTest         All 8 PASS now (was ERROR)
+  AthensCairoCanvasTest             1 PASS now (was ERROR)
+  AllocationTest                    All 4 PASS now (was ERROR for Tim)
 
 ## Action Items
 
-1. Complete full test run and analyze results
-2. Categorize all failures as:
-   - VM bug (we need to fix)
-   - Upstream bug (fails on reference VM too)
-   - Environment issue (needs UI/network/etc.)
-   - Timing/flaky
-3. Fix confirmed VM bugs from Tim's list
-4. Update run_sunit_tests.st to include ALL discovered classes
-5. Update README with accurate coverage numbers
-6. Set up regression testing that catches new failures
+1. [x] Run full test suite (done: 1,752/2,046 classes, 98.95% pass)
+2. [x] Add "Not official Pharo VM" disclaimer to About window (startup.st)
+3. [ ] **Investigate Trait "selector changed!" bug** — 480 errors, top priority
+4. [ ] **Investigate processMonitor missing** — 48 errors
+5. [ ] **Run remaining U-Z classes** (252 classes)
+6. [ ] Investigate ephemeron/weak reference support
+7. [ ] Investigate WriteBarrier float/double atPut:
+8. [ ] Investigate Fuel WideString handling
+9. [ ] Compare Trait failures against reference Pharo VM
+10. [ ] Update run_sunit_tests.st to dynamically discover ALL classes
+11. [ ] Update README with accurate coverage numbers

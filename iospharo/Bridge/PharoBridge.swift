@@ -384,6 +384,23 @@ class PharoBridge: ObservableObject {
                     stringBounds top < (bounds bottom - 4) ifTrue: [
                         aCanvas drawString: aString in: stringBounds.
                         stringBounds := stringBounds top: stringBounds top + lineH ] ] ]'.
+        "About window: add iospharo VM disclaimer and source link"
+        SmalltalkImage compile: 'systemInformationString
+            | s |
+            s := String streamContents: [ :stream |
+                stream
+                    nextPutAll: ''Pharo '';
+                    nextPutAll: SystemVersion current dottedMajorMinorPatch; cr; cr;
+                    nextPutAll: ''Running on iospharo — a community VM for iOS and macOS.''; cr;
+                    nextPutAll: ''This is NOT the official Pharo VM.''; cr; cr;
+                    nextPutAll: ''Source code: https://github.com/avwohl/iospharo''; cr; cr;
+                    nextPutAll: ''VM image format: ''; nextPutAll: Smalltalk imageFormatVersion printString; cr;
+                    nextPutAll: ''Built from: '';
+                    nextPutAll: SystemVersion current commitHash; cr;
+                    nextPutAll: ''Last update: '';
+                    nextPutAll: SystemVersion current date printString; cr; cr;
+                    nextPutAll: Smalltalk license ].
+            ^ s'.
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
