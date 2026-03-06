@@ -2,6 +2,29 @@
 
 Build 78 — 2026-03-06
 
+## Bug Fix: allInstances/allObjects premature GC (ByteSymbolTest)
+
+Fixed primitiveAllInstances and primitiveAllObjects calling fullGC() before
+scanning, which collected recently-created objects that Smalltalk code expects
+to still exist. Our flat operand stack only scans live entries during GC
+(stackBase_ to stackPointer_), unlike the reference VM where Context objects
+retain all slots including dead ones. The fix removes the upfront fullGC() and
+instead retries with GC only on OOM. Also fixed primitiveFindRoots (prim 216).
+
+Fixes ByteSymbolTest: 4/4 pass (was 1/4). Tests testNewFrom, testAs, and
+testReadFromString all create symbols without storing references, then expect
+allInstances to find them — the premature GC was collecting them first.
+
+## Bug Fix: Mirror primitives stack handling (MirrorPrimitivesTest)
+
+Fixed four primitives for mirror-mode calls where MirrorPrimitives class is
+an extra stack entry. primitiveSize and primitiveIdentityHash used
+stackValue(argCount) which read the wrong object in mirror mode. primitiveIdentical
+and primitiveNotIdentical used pop()/pop()/push() which leaked a stack entry.
+primitivePerformInSuperclass rejected mirror calls (argCount=4 vs expected 3).
+
+Fixes MirrorPrimitivesTest: 40/40 pass (was 27/40).
+
 ## About window disclaimer
 
 The Pharo About dialog now shows that the image is running on iospharo

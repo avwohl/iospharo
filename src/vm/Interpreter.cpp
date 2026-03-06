@@ -4009,7 +4009,7 @@ void Interpreter::handleStackOverflow(int argCount) {
     // This is correct VM behavior: a runaway process should not kill the
     // entire VM. The scheduler continues with other processes.
     // Pop args+receiver that the send bytecode already pushed
-    for (int i = 0; i < argCount + 1; i++) pop();
+    popN(argCount + 1);
 
     terminateAndSwitchProcess();
 }
