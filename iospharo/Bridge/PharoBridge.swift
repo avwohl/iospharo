@@ -327,25 +327,63 @@ class PharoBridge: ObservableObject {
               + ((g // nPix bitShift: d) bitShift: bitsPerColor)
               + ((b // nPix bitShift: d) bitShift: 0).
             ^ destMap ifNil: [ rgb ] ifNotNil: [ destMap at: rgb + 1 ]'].
-        "Debug: log draw errors to stderr for diagnosis"
-        Morph compile: 'drawErrorOn: aCanvas
-            self valueOfProperty: #drawError ifPresentDo: [ :error |
+        "Debug: patch fullDrawOn: to log errors to stderr AND to a file"
+        Morph compile: 'fullDrawOn: aCanvas
+            self visible ifFalse: [ ^ self ].
+            (aCanvas isVisible: self fullBounds) ifFalse: [ ^ self ].
+            (self hasProperty: #errorOnDraw) ifTrue: [ ^ self drawErrorOn: aCanvas ].
+            [
+                self hasDropShadow ifTrue: [ self drawDropShadowOn: aCanvas ].
+                aCanvas roundCornersOf: self during: [
+                    (aCanvas isVisible: self bounds) ifTrue: [ aCanvas drawMorph: self ].
+                    self drawSubmorphsOn: aCanvas.
+                    self drawDropHighlightOn: aCanvas.
+                    self drawMouseDownHighlightOn: aCanvas ]
+            ] on: Error do: [ :err |
+                | errText stackText |
+                errText := self class name , '': '' , err messageText.
+                stackText := err signalerContext
+                    ifNotNil: [ :ctx | String streamContents: [:s | ctx shortDebugStackOn: s] ]
+                    ifNil: [ '''' ].
                 Stdio stderr
                     nextPutAll: ''[DRAW-ERROR] '';
-                    nextPutAll: self class name;
-                    nextPutAll: '': '';
-                    nextPutAll: error messageText;
-                    lf.
-                error signalerContext ifNotNil: [ :ctx |
-                    Stdio stderr nextPutAll: (String streamContents: [:s | ctx shortDebugStackOn: s]); lf ].
-                Stdio stderr flush ].
+                    nextPutAll: errText; lf;
+                    nextPutAll: stackText; lf;
+                    flush.
+                [ (FileSystem workingDirectory / ''draw_errors.txt'')
+                    writeStreamDo: [ :f |
+                        f setToEnd.
+                        f nextPutAll: DateAndTime now printString; nextPutAll: '' '';
+                          nextPutAll: errText; cr;
+                          nextPutAll: stackText; cr; cr ] ]
+                    on: Error do: [ :e | "ignore file errors" ].
+                self setProperty: #errorOnDraw toValue: true.
+                self setProperty: #drawError toValue: err freeze.
+                self drawErrorOn: aCanvas ]'.
+        "Debug: override drawErrorOn: to show error text visibly in the red box"
+        Morph compile: 'drawErrorOn: aCanvas
+            | stringBounds lineH |
             aCanvas
                 frameAndFillRectangle: bounds
-                fillColor: Color red
-                borderWidth: 1
+                fillColor: (Color red alpha: 0.3)
+                borderWidth: 2
                 borderColor: Color yellow.
-            aCanvas line: bounds topLeft to: bounds bottomRight width: 1 color: Color yellow.
-            aCanvas line: bounds topRight to: bounds bottomLeft width: 1 color: Color yellow'.
+            lineH := TextStyle defaultFont pixelSize * 1.2.
+            stringBounds := bounds insetBy: 4.
+            "Show class name"
+            aCanvas drawString: self class name in: stringBounds.
+            stringBounds := stringBounds top: stringBounds top + lineH.
+            "Show error message and stack trace"
+            self valueOfProperty: #drawError ifPresentDo: [ :error |
+                | trace |
+                aCanvas drawString: error messageText in: stringBounds.
+                stringBounds := stringBounds top: stringBounds top + lineH.
+                trace := String streamContents: [ :s |
+                    error signalerContext shortDebugStackOn: s ].
+                trace linesDo: [ :aString |
+                    stringBounds top < (bounds bottom - 4) ifTrue: [
+                        aCanvas drawString: aString in: stringBounds.
+                        stringBounds := stringBounds top: stringBounds top + lineH ] ] ]'.
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [

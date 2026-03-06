@@ -1,3 +1,17 @@
+# What's New in Build 78
+
+Build 78 — 2026-03-06
+
+## Diagnostic: Draw error text visible in red X boxes
+
+When a morph's drawing fails, the red X box now shows the actual error text:
+class name, error message, and stack trace — instead of just an opaque yellow X.
+This helps identify the root cause of the iPad world menu red X errors (Build 77's
+BitBlt fix was necessary but not sufficient). Errors are also logged to stderr
+and appended to `draw_errors.txt` in the image directory.
+
+---
+
 # What's New in Build 77
 
 Build 77 — 2026-03-06
