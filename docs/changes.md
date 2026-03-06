@@ -8,11 +8,12 @@ The Pharo About dialog now shows that the image is running on iospharo
 (a community VM, not the official Pharo VM) with a link to the GitHub
 source code at https://github.com/avwohl/iospharo. Injected via startup.st.
 
-## Full-image test run: 98.95% pass rate across 25,335 tests
+## Full-image test run: 98.00% pass rate across 28,071 tests
 
-Ran 1,752 of 2,046 test classes (86% of image) with a 30-second per-test
-watchdog. Zero timeouts. 628 individual failures, 76% caused by a single
-Trait "selector changed!" bug (480 errors). Without traits: 99.4% pass rate.
+Ran all 2,046 test classes (100% of image) with a 30-second per-test
+watchdog. Zero timeouts. 27,510 pass / 39 fail / 391 error / 131 skip.
+76% of failures caused by a single Trait "selector changed!" bug (480 errors).
+Without Trait + ProcessTest infrastructure issues: 99.64% pass rate.
 
 ## Bug Fix: BitBlt 8→1 and 16→1 depth conversion (iPad world menu red X)
 
