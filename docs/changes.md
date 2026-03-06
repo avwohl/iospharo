@@ -1,3 +1,29 @@
+# What's New in Build 77
+
+Build 77 — 2026-03-06
+
+## Bug Fix: BitBlt rules 30/31 (alphaBlendConst/alphaPaintConst)
+
+Fixed red X "graphport errors" on menu items when double-tapping or spamming
+clicks on iPad/iPhone. Three bugs in primitiveCopyBits:
+
+- copyBitsTranslucent: (argCount=1) was rejected — primitive only accepted 0
+- Rules 30/31 were incorrectly routed to the counting code path (rule 32)
+- Rules 30/31 were missing from all depth combination switches (32->32, 1->32,
+  8->32, 16->32, 2/4->32, and no-source fill)
+
+ShadowDrawingCanvas uses these rules for translucent menu shadows. When the
+primitive failed, Pharo raised "Bad BitBlt arg" which fullDrawOn: caught and
+displayed as a red X on the affected morph.
+
+## Tests: BitBltTranslucentTest (16 tests)
+
+New test class exercising copyBitsTranslucent: with rules 30/31 across all
+depth combinations, alpha values (0/128/255), clipping, and edge cases.
+All 16 pass on both the reference Pharo VM and our custom VM.
+
+---
+
 # What's New in Build 76
 
 Build 76 — 2026-03-05
