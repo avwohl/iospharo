@@ -15640,7 +15640,17 @@ enum FormFields {
 // Combination rules: 0=AND 1=AND+NOT 2=NOT+AND 3=STORE 4=NOT+OR 5=DEST 6=XOR 7=OR
 // 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
-    if (argCount != 0) { return PrimitiveResult::Failure; }
+    if (argCount > 1) { return PrimitiveResult::Failure; }
+
+    // Extract constant alpha for translucent operations (rules 30-31).
+    // copyBitsTranslucent: passes alpha as argument; plain copyBits defaults to 0.
+    int sourceAlpha = 0;
+    if (argCount == 1) {
+        Oop alphaArg = stackValue(0);
+        if (!alphaArg.isSmallInteger()) return PrimitiveResult::Failure;
+        sourceAlpha = static_cast<int>(alphaArg.asSmallInteger());
+        if (sourceAlpha < 0 || sourceAlpha > 255) return PrimitiveResult::Failure;
+    }
 
     #if DEBUG
     static int bitbltFailCount = 0;
@@ -15656,7 +15666,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     #define BITBLT_FAIL(rule, srcD, dstD, reason) return PrimitiveResult::Failure
     #endif
 
-    Oop bitBlt = stackTop();
+    // On success, pop any extra arguments (alpha for copyBitsTranslucent:)
+    // leaving receiver on the stack. primitiveSuccess() handles its own stack.
+    #define BITBLT_SUCCESS do { popN(argCount); return PrimitiveResult::Success; } while(0)
+
+    Oop bitBlt = stackValue(argCount);
     if (!bitBlt.isObject()) { return PrimitiveResult::Failure; }
 
     // Extract BitBlt parameters
@@ -15771,22 +15785,22 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (destY + height > destHeight) height = destHeight - destY;
 
     if (width <= 0 || height <= 0) {
-        // For counting rules, return 0 when nothing to count
-        if (combinationRule >= 30 && combinationRule <= 32) {
+        // For counting rule 32, return 0 when nothing to count
+        if (combinationRule == 32) {
             primitiveSuccess(Oop::fromSmallInteger(0));
             return PrimitiveResult::Success;
         }
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
-    // Counting modes (rules 30-32): count pixels, return count as SmallInteger
-    // Rule 30: count dest pixels != 0
-    // Rule 31: count dest pixels == 0
-    // Rule 32: count source pixels != 0 (tally)
-    if (combinationRule >= 30 && combinationRule <= 32) {
+    // Counting mode (rule 32): count source pixels != 0 (tally)
+    // NOTE: Rules 30-31 are NOT counting rules. They are alpha-blend/paint
+    // drawing rules (alphaBlendConst, alphaPaintConst) used by
+    // ShadowDrawingCanvas and copyBitsTranslucent:.
+    if (combinationRule == 32) {
         intptr_t count = 0;
 
-        if (combinationRule == 32 && !sourceForm.isNil() && sourceForm.isObject()) {
+        if (!sourceForm.isNil() && sourceForm.isObject()) {
             // Rule 32: count non-zero source pixels
             Oop srcBits = memory_.fetchPointer(FormBits, sourceForm);
             intptr_t srcDepth = bitBltField(memory_, sourceForm, FormDepth);
@@ -15829,37 +15843,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         for (intptr_t x = 0; x < width; x++) {
                             if (row[x] != 0) count++;
                         }
-                    }
-                }
-            }
-        } else if (combinationRule == 30 || combinationRule == 31) {
-            // Rules 30/31: count dest pixels that are non-zero/zero
-            if (destDepth == 32) {
-                for (intptr_t y = 0; y < height; y++) {
-                    uint32_t* row = destPixels + (destY + y) * destPitch + destX;
-                    for (intptr_t x = 0; x < width; x++) {
-                        bool nonZero = (row[x] != 0);
-                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
-                    }
-                }
-            } else if (destDepth == 8) {
-                intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4;
-                uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
-                for (intptr_t y = 0; y < height; y++) {
-                    uint8_t* row = destBytes8 + (destY + y) * destBytesPerRow + destX;
-                    for (intptr_t x = 0; x < width; x++) {
-                        bool nonZero = (row[x] != 0);
-                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
-                    }
-                }
-            } else if (destDepth == 1) {
-                intptr_t destWordsPerRow = (destWidth + 31) / 32;
-                for (intptr_t y = 0; y < height; y++) {
-                    uint32_t* row = destPixels + (destY + y) * destWordsPerRow;
-                    for (intptr_t x = 0; x < width; x++) {
-                        intptr_t dx = destX + x;
-                        bool nonZero = (row[dx / 32] >> (31 - dx % 32)) & 1;
-                        if (combinationRule == 30 ? nonZero : !nonZero) count++;
                     }
                 }
             }
@@ -15933,7 +15916,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
             showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-            return PrimitiveResult::Success;
+            BITBLT_SUCCESS;
         }
         if (destDepth != 32) {
 #if DEBUG
@@ -16020,13 +16003,34 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     // sa == 0: fully transparent, nothing to do
                     break;
                 }
+                case 30: // alphaBlendConst fill
+                case 31: { // alphaPaintConst fill
+                    if (sourceAlpha == 0) break; // fully transparent
+                    if (combinationRule == 31 && fill == 0) break; // paint: skip zero fill
+                    if (sourceAlpha == 255) {
+                        for (intptr_t x = 0; x < width; x++) row[x] = fill;
+                    } else {
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t fillRB = fill & 0xFF00FF;
+                        uint32_t fillAG = (fill >> 8) & 0xFF00FF;
+                        for (intptr_t x = 0; x < width; x++) {
+                            uint32_t d = row[x];
+                            uint32_t t_rb = fillRB * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                            uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                            uint32_t t_ag = fillAG * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                            uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                            row[x] = (ag << 8) | rb;
+                        }
+                    }
+                    break;
+                }
                 default: {
                     BITBLT_FAIL(combinationRule, 0, destDepth, "no-src-fill-rule");
                 }
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // --- Source operations ---
@@ -16112,7 +16116,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (sourceY < 0) { intptr_t d = -sourceY; height -= d; destY += d; sourceY = 0; }
     if (sourceX + width > srcWidth) width = srcWidth - sourceX;
     if (sourceY + height > srcHeight) height = srcHeight - sourceY;
-    if (width <= 0 || height <= 0) return PrimitiveResult::Success;
+    if (width <= 0 || height <= 0) BITBLT_SUCCESS;
 
     // Color map extraction
     Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
@@ -16157,7 +16161,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
         if (sourceY + height > srcActualHeight) height = srcActualHeight - sourceY;
         if (sourceX + width > srcWidth) width = srcWidth - sourceX;
-        if (height <= 0 || width <= 0) return PrimitiveResult::Success;
+        if (height <= 0 || width <= 0) BITBLT_SUCCESS;
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
@@ -16191,7 +16195,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // Depth-8 destinations (cursor forms, grayscale operations)
@@ -16208,7 +16212,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
         if (sourceY + height > srcActualHeight) height = srcActualHeight - sourceY;
         if (sourceX + width > srcWidth) width = srcWidth - sourceX;
-        if (height <= 0 || width <= 0) return PrimitiveResult::Success;
+        if (height <= 0 || width <= 0) BITBLT_SUCCESS;
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
@@ -16231,7 +16235,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // Depth-8 dest with 1-bit source (cursor form rendering)
@@ -16275,7 +16279,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // Depth-8 source to depth-8 dest (used by Bitmap>>copyFromByteArray: via hackBits:)
@@ -16319,7 +16323,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // Depth-1 source to depth-1 dest (common for mask operations)
@@ -16360,7 +16364,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // Unsupported depth combinations
@@ -16393,7 +16397,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (height <= 0 || width <= 0) {
             // Nothing to copy after clipping
             showDisplayBits(destForm, destX, destY, destX, destY);
-            return PrimitiveResult::Success;
+            BITBLT_SUCCESS;
         }
 
         for (intptr_t y = 0; y < height; y++) {
@@ -16554,6 +16558,37 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     }
                     break;
                 }
+                case 30: { // alphaBlendConst: blend source with dest using constant alpha
+                    if (sourceAlpha == 0) break;
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        if (sourceAlpha == 255) { dstRow[x] = s; continue; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (s & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((s >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                    }
+                    break;
+                }
+                case 31: { // alphaPaintConst: same as 30 but skip where source == 0
+                    if (sourceAlpha == 0) break;
+                    for (intptr_t x = 0; x < width; x++) {
+                        uint32_t s = srcRow[x] & ht;
+                        if (s == 0) continue; // paint mode: skip transparent source
+                        if (sourceAlpha == 255) { dstRow[x] = s; continue; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (s & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((s >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                    }
+                    break;
+                }
                 case 41: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
                     // On Retina/non-LCD displays, sub-pixel rendering creates visible color fringing.
                     // Convert per-channel alpha to uniform grayscale alpha for correct appearance.
@@ -16583,7 +16618,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // 1-bit source to 32-bit dest (used for strike font text rendering)
@@ -16664,6 +16699,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                         dstRow[x] = rb | g | (outAlpha << 24);
                         break;
                     }
+                    case 30: { // alphaBlendConst
+                        if (sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
+                    case 31: { // alphaPaintConst
+                        if (srcPixel == 0 || sourceAlpha == 0) break;
+                        if (sourceAlpha == 255) { dstRow[x] = srcPixel; break; }
+                        uint32_t d = dstRow[x];
+                        uint32_t invAlpha = 255 - sourceAlpha;
+                        uint32_t t_rb = (srcPixel & 0xFF00FF) * sourceAlpha + (d & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        uint32_t t_ag = ((srcPixel >> 8) & 0xFF00FF) * sourceAlpha + ((d >> 8) & 0xFF00FF) * invAlpha + 0x800080;
+                        uint32_t ag = ((t_ag + ((t_ag >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
+                        dstRow[x] = (ag << 8) | rb;
+                        break;
+                    }
                     default: {
                         BITBLT_FAIL(combinationRule, 1, 32, "1to32-rule");
                     }
@@ -16671,7 +16730,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // 8-bit source to 32-bit dest (used for grayscale forms)
@@ -16749,7 +16808,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // 16-bit source to 32-bit dest
@@ -16781,7 +16840,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     // 2-bit and 4-bit sources to 32-bit dest
@@ -16853,10 +16912,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
-        return PrimitiveResult::Success;
+        BITBLT_SUCCESS;
     }
 
     return PrimitiveResult::Failure;
+
+    #undef BITBLT_SUCCESS
+    #undef BITBLT_FAIL
 }
 
 // ===== SurfacePlugin Named Primitives =====
