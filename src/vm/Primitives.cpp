@@ -7840,7 +7840,12 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
-    // No fullGC() before scanning — see primitiveAllInstances comment for why.
+    // Unlike primitiveAllInstances, allObjects DOES need fullGC() to match
+    // reference VM behavior. Image code (e.g. pointersToExcept:among:) calls
+    // select: on the result, then removeAllSuchThat: on the Array. Without GC,
+    // dead stack entries create false pointer matches, producing a non-empty
+    // Array that removeAllSuchThat: can't modify (Array doesn't support remove:).
+    memory_.fullGC();
 
     // Collect all visible objects using allObjectsDo
     // Skip classIdx=0 objects — these are hidden VM objects (free chunks,
@@ -7866,25 +7871,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     Oop result = memory_.allocateSlots(arrayClassIndex, objects.size(), ObjectFormat::Indexable);
 
     if (result.isNil()) {
-        // OOM — do GC, re-scan, and retry
-        memory_.fullGC();
-        objects.clear();
-        memory_.allObjectsDo([&](Oop obj) {
-            if (obj.isObject()) {
-                ObjectHeader* hdr = obj.asObjectPtr();
-                uint32_t cls = hdr->classIndex();
-                if (cls != 0) {
-                    Oop classOop = memory_.classAtIndex(cls);
-                    if (classOop.isObject() && !classOop.isNil()) {
-                        objects.push_back(obj);
-                    }
-                }
-            }
-        });
-        result = memory_.allocateSlots(arrayClassIndex, objects.size(), ObjectFormat::Indexable);
-        if (result.isNil()) {
-            return PrimitiveResult::Failure;
-        }
+        return PrimitiveResult::Failure;
     }
 
     // Fill the array
@@ -13269,7 +13256,10 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     Oop targetObject = stackTop();
 
-    // No fullGC() before scanning — see primitiveAllInstances comment for why.
+    // fullGC before scanning: findRoots results feed into pointersToExcept:among:
+    // which calls removeAllSuchThat: on the Array. Without GC, dead stack entries
+    // create false pointer matches that cause shouldNotImplement errors.
+    memory_.fullGC();
 
     // Collect all objects that point to target
     std::vector<Oop> roots;
@@ -13303,30 +13293,7 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     Oop result = memory_.allocateSlots(arrayClassIndex, roots.size(), ObjectFormat::Indexable);
     if (result.isNil()) {
-        // OOM — do GC, re-scan, and retry
-        memory_.fullGC();
-        roots.clear();
-        memory_.allObjectsDo([&](Oop obj) {
-            if (obj.isImmediate()) return;
-            if (!obj.isObject()) return;
-            ObjectHeader* hdr = obj.asObjectPtr();
-            uint32_t cls = hdr->classIndex();
-            if (cls == 0) return;
-            Oop classOop = memory_.classAtIndex(cls);
-            if (!classOop.isObject() || classOop.isNil()) return;
-            size_t slotCount = memory_.slotCountOf(obj);
-            for (size_t i = 0; i < slotCount; i++) {
-                Oop slot = memory_.fetchPointer(i, obj);
-                if (slot == targetObject) {
-                    roots.push_back(obj);
-                    break;
-                }
-            }
-        });
-        result = memory_.allocateSlots(arrayClassIndex, roots.size(), ObjectFormat::Indexable);
-        if (result.isNil()) {
-            return PrimitiveResult::Failure;
-        }
+        return PrimitiveResult::Failure;
     }
 
     // Fill result array
