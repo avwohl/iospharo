@@ -105,7 +105,7 @@ runAllTests
     IdentityDictionaryTest StackTest
     DoubleLinkedListTest ByteArrayTest RunArrayTest
     AssociationTest ReduceTest "CollectionRootTest is abstract"
-    WideStringTest "ByteSymbolTest - Pharo OCParser infinite loop bug") do: [:name |
+    WideStringTest ByteSymbolTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
@@ -150,7 +150,7 @@ runAllTests
     SystemVersionTest SmalltalkImageTest VeryDeepCopyTest
     CompiledMethodTest UnicodeTest SizeInMemoryTest
     AdditionalMethodStateTest InstructionStreamTest
-    MutexTest WriteBarrierTest ProcessTest) do: [:name |
+    MutexTest WriteBarrierTest ProcessTest MirrorPrimitivesTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
