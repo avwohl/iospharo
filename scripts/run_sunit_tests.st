@@ -443,8 +443,8 @@ runAllTests
      RBRealizeClassParametrizedTest
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
-     "DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest — filesystem tests all timeout in headless"
-     DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest
+     "DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest DeleteVisitorTest — filesystem tests timeout in headless"
+     DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest DeleteVisitorTest
      "ObsoleteTest — testTraitObsolete modifies traits, hangs"
      ObsoleteTest
      "DrTests*Test — test runner meta-tests hang/timeout in headless mode"
@@ -486,6 +486,7 @@ runAllTests
      EpHasImpactFilterTest EpLostChangesDetectorTest
      EpLogBrowserOperationFactoryTest EpLogBrowserRefreshTest
      EpRewriterTest EpRollbackTest EpStashTest
+     EpTriggeringIntegrationTest EpMonitorIntegrationTest
      "FL*Test — Fuel serialization tests all timeout writing to disk in headless"
      FLBinaryFileStreamBasicSerializationTest
      FLBlockClosureSerializationTest FLCompiledMethodSerializationTest

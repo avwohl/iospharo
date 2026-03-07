@@ -17,6 +17,7 @@
 #include <cstring>
 #include <csignal>
 #include <csetjmp>
+#include <sys/stat.h>
 #include <execinfo.h>
 #include <libgen.h>   // dirname
 #include <unistd.h>   // chdir
@@ -698,6 +699,23 @@ int main(int argc, char* argv[]) {
                 heartbeatStarted = true;
             }
             bool result = interpreter.step();
+
+            // Stall detection: check test results file every 100M steps.
+            // If the file hasn't been modified in 300s, the test runner is stuck
+            // (e.g., Delay scheduler died). Exit so the timeout wrapper can restart.
+            if (i > 0 && i % 100000000 == 0) {
+                struct stat st;
+                if (stat("/tmp/sunit_test_results.txt", &st) == 0) {
+                    auto fileAge = std::chrono::system_clock::now() -
+                        std::chrono::system_clock::from_time_t(st.st_mtime);
+                    auto ageSecs = std::chrono::duration_cast<std::chrono::seconds>(fileAge).count();
+                    if (ageSecs > 300) {
+                        std::cout << "[STALL] Test results file unchanged for " << ageSecs
+                                  << "s, stopping." << std::endl;
+                        break;
+                    }
+                }
+            }
 
             // Progress report every 10M steps
             if (i > 0 && i % 10000000 == 0) {
