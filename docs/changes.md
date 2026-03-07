@@ -1,3 +1,38 @@
+# What's New in Build 79
+
+Build 79 — 2026-03-07
+
+## Bug Fix: BitBlt 8-bit Form endianness (BMPReadWriterTest)
+
+Fixed 8→8 BitBlt path to use word-based pixel access instead of flat byte
+addressing. Pharo Forms store 8-bit pixels MSB-first in 32-bit words (pixel 0
+in bits 24-31). On little-endian ARM, flat byte addressing (`dstRow[dx]`)
+put pixels in wrong byte positions, causing pixelValueAt: to return
+0xF9000000 instead of 249 for an 8-bit palette index.
+
+Fixes BMPReadWriterTest testBmp4Bit and testBmp8Bit (both are actually 8-bit
+BMPs). Root cause of SubscriptOutOfBounds: 4177526785 error.
+
+## Bug Fix: BitBlt ColorMap shift/mask support (BMPReadWriterTest)
+
+Added support for ColorMap objects with shifts and masks arrays in 32→32
+BitBlt. The BMP reader uses these to reorder pixel channels (BGRA→ARGB)
+after loading raw BMP data. Previously our VM ignored ColorMap objects
+entirely, causing color channels to be in wrong positions.
+
+Fixes BMPReadWriterTest testBmp32Bit ("Got Color green instead of Color red").
+
+## New: BitBlt 4→4 and 2→2 depth paths
+
+Added same-depth copy support for 4-bit and 2-bit Forms. Used by
+bitPeekerFromForm: for extracting individual pixel values from indexed-color
+Forms. Handles MSB-first pixel packing within 32-bit words.
+
+## New: BitBlt 16→16 depth path
+
+Added 16-bit to 16-bit copy support with basic combination rules (AND, OR,
+XOR, store, paint). Used by BMP reader for 16-bit Form operations.
+
 # What's New in Build 78
 
 Build 78 — 2026-03-06
