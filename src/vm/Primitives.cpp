@@ -12089,8 +12089,9 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // 2. Optionally sleep for the requested time
     // 3. Allow process scheduler to run other processes
 
-    // Cap sleep time to avoid blocking event loop (10ms = 10000 microseconds max)
-    const int64_t MAX_SLEEP_US = 10000;  // 10ms in microseconds
+    // Cap sleep time. In GUI mode (relinquishCallback_ set), cap at 10ms to avoid
+    // blocking the event loop. In headless/CLI mode, allow up to 1s for watchdog spin-waits.
+    const int64_t MAX_SLEEP_US = relinquishCallback_ ? 10000 : 1000000;
     int64_t sleepUs = std::min(microSeconds, MAX_SLEEP_US);
 
     // Pop microseconds argument FIRST, before any process switch can happen.

@@ -822,7 +822,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
    relinquishProcessorForMicroseconds: to yield, checking elapsed time each cycle.
    The heartbeat forceYield (1s) preempts the test back to the watchdog.
    Timeout: 30s primary, 60s backup."
-  | result testProcess doneSem watchdog backupWatchdog testDone |
+  | result testProcess doneSem watchdog backupWatchdog "unused" testDone |
   result := nil. "nil means pass"
   testDone := false.
   doneSem := Semaphore new.
@@ -862,43 +862,24 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      error during unwinding that escapes the on: Error handler."
     ensure: [testDone := true. doneSem signal]] forkAt: priority.
 
-  "Two-tier watchdog:
-   1. P79 Delay-based (efficient, fires when Delay scheduler works)
-   2. P40 spin-wait backup (fires when Delay scheduler is dead/hung, 2x timeout)
-   Whichever fires first signals doneSem."
-  watchdog := [
-    (Delay forMilliseconds: seconds * 1000) wait.
-    "Timeout elapsed — check if test already finished (testDone flag)."
-    testDone ifFalse: [
-      result := #timeout.
-      testDone := true.
-      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
-      s flush.
-      doneSem signal.
-      "Terminate after signaling — best effort cleanup"
-      [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
-  "Backup: spin-wait at P10 using relinquishProcessorForMicroseconds: (1s sleep).
-   2x timeout gives primary watchdog time to fire first.
-   Uses relinquish instead of Processor yield because yield at P10 causes the
-   VM to enter idle mode (0% CPU) when all higher-priority processes are blocked,
-   preventing the backup watchdog from ever firing.
-   relinquish sleeps the entire VM for 1s then wakes it — backup watchdog at P10
-   runs when no P10+ processes are ready (test blocked, primary watchdog blocked)."
-  backupWatchdog := [| startMs elapsed |
+  "Single watchdog using relinquishProcessorForMicroseconds: — doesn't depend on
+   Delay scheduler, so it works even when Delay dies. Sleeps 1s between checks
+   at P79, giving the P40 test ~99% of CPU time."
+  watchdog := [| startMs elapsed |
    startMs := Time millisecondClockValue.
    [testDone not and: [
      elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
-     elapsed < (seconds * 2000)]]
+     elapsed < (seconds * 1000)]]
        whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 1000000 "1s"].
    testDone ifFalse: [
      result := #timeout.
      testDone := true.
-     s nextPutAll: '  TIMEOUT(backup): '; nextPutAll: sel;
-       nextPutAll: ' (exceeded '; print: seconds * 2; nextPutAll: 's)'; lf.
+     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
      s flush.
      doneSem signal.
-     [testProcess terminate] on: Error do: [:e |]]] forkAt: 10.
+     [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
+  backupWatchdog := nil.
 
   "Wait for test completion or watchdog timeout.
    Catch TestTookTooMuchTime — the TestExecutionEnvironment watchdog at P79 may
