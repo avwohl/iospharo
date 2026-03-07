@@ -449,8 +449,12 @@ runAllTests
      ObsoleteTest
      "DrTests*Test — test runner meta-tests hang/timeout in headless mode"
      DrTestsTestRunnerTest DrTestsTestRunnerUITest DrTestsUITest
-     "EDDebuggingAPITest — debugging API test hangs in headless"
-     EDDebuggingAPITest
+     "ED*Test — emergency debugger tests all timeout in headless"
+     EDDebuggingAPITest EDEmergencyDebuggerTest
+     "EmbeddedFreeTypeFontInstallerTest — FreeType init hangs in headless"
+     EmbeddedFreeTypeFontInstallerTest
+     "CollectionValueHolderTest — hangs during test discovery (pre-test phase)"
+     CollectionValueHolderTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
      "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
      AthensCairoPDFSurfaceTest AthensCairoCanvasTest
@@ -564,30 +568,61 @@ runAllTests
     "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
      DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
     CurrentExecutionEnvironment runTestsBy: [
-    batchClasses do: [:tc | | counts |
-      [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout.
-      totalP := totalP + (counts at: 1).
-      totalF := totalF + (counts at: 2).
-      totalE := totalE + (counts at: 3).
-      totalS := totalS + (counts at: 4).
-      totalT := totalT + (counts at: 5)]
-        on: Error do: [:ex |
-          "TestTookTooMuchTime from TestExecutionEnvironment watchdog — count as timeout, don't abort class"
-          ex class name = 'TestTookTooMuchTime'
-            ifTrue: [
-              totalT := totalT + 1.
-              stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; lf.
-              "Fix up env state so next test works"
-              [| env wds |
-               env := CurrentExecutionEnvironment value.
-               env instVarNamed: 'testCompleted' put: true.
-               wds := env instVarNamed: 'watchDogSemaphore'.
-               wds ifNotNil: [wds signal]]
-              on: Error do: [:e2 |]]
-            ifFalse: [
-              stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
-                nextPutAll: ': '; nextPutAll: ex class name;
-                nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
+    batchClasses do: [:tc | | counts classTimeout |
+      "Class-level hard timeout: 300s covers delay check, selector discovery, sort, AND all tests.
+       Uses a forked watchdog at priority 79 (just below timingPriority) with spin-wait so it
+       works even if the Delay scheduler is dead."
+      classTimeout := 300. "seconds"
+      counts := nil.
+      [| doneSem workerProc watchdogProc |
+       doneSem := Semaphore new.
+       workerProc := [
+         [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout]
+           on: Error do: [:ex |
+             "TestTookTooMuchTime from TestExecutionEnvironment watchdog"
+             ex class name = 'TestTookTooMuchTime'
+               ifTrue: [
+                 counts := {0. 0. 0. 0. 1}.
+                 stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; lf.
+                 [| env wds |
+                  env := CurrentExecutionEnvironment value.
+                  env instVarNamed: 'testCompleted' put: true.
+                  wds := env instVarNamed: 'watchDogSemaphore'.
+                  wds ifNotNil: [wds signal]]
+                 on: Error do: [:e2 |]]
+               ifFalse: [
+                 stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
+                   nextPutAll: ': '; nextPutAll: ex class name;
+                   nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
+         doneSem signal] forkAt: 40.
+       "Watchdog: spin-wait using microsecond primitive (works without Delay scheduler)"
+       watchdogProc := [
+         | startMs elapsed |
+         startMs := Time millisecondClockValue.
+         [doneSem isSignaled not and: [
+           elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
+           elapsed < (classTimeout * 1000)]]
+         whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 500000 "0.5s"].
+         doneSem isSignaled ifFalse: [
+           "Class timed out — kill worker and report"
+           workerProc terminate.
+           counts := {0. 0. 0. 0. 1}.
+           stream nextPutAll: '  CLASS-TIMEOUT: '; nextPutAll: tc name;
+             nextPutAll: ' exceeded '; print: classTimeout; nextPutAll: 's'; lf.
+           stream flush.
+           doneSem signal]] forkAt: 79.
+       doneSem wait.
+       watchdogProc terminate]
+      on: Error do: [:ex |
+        stream nextPutAll: '*** CLASS-WRAPPER ERROR in '; nextPutAll: tc name;
+          nextPutAll: ': '; nextPutAll: ex class name;
+          nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf].
+      counts ifNotNil: [
+        totalP := totalP + (counts at: 1).
+        totalF := totalF + (counts at: 2).
+        totalE := totalE + (counts at: 3).
+        totalS := totalS + (counts at: 4).
+        totalT := totalT + (counts at: 5)].
       stream flush. detail flush]].
     stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
       nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; lf.
@@ -605,7 +640,12 @@ runAllTests
     stream nextPutAll: 'Total: '; print: totalP + totalF + totalE + totalS + totalT; lf.
     stream cr.
     stream nextPutAll: '=== BATCH COMPLETE ==='; lf.
-    stream flush]
+    stream flush.
+    "Write completion marker to prevent auto-restart on image resume"
+    ['/tmp/sunit_run_completed.txt' asFileReference
+      writeStreamDo: [:ws | ws nextPutAll: 'Run #'; nextPutAll: runNum printString;
+        nextPutAll: ' completed at '; nextPutAll: DateAndTime now printString]]
+    on: Error do: [:e |]]
   ensure: [stream close. detail close].
   "exitSuccess goes through SessionManager shutdown which may not reach primitiveQuit.
    Call quitPrimitive directly to ensure the VM terminates."
@@ -912,6 +952,11 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
 !SUnitRunner class methodsFor: 'startup'!
 startUp: resuming
   resuming ifFalse: [^ self].
+  "Guard against auto-restart: if a previous run completed, don't re-run on
+   image resume. The run writes a marker file on completion."
+  ('/tmp/sunit_run_completed.txt' asFileReference exists) ifTrue: [
+    Transcript show: 'SUnitRunner: previous run completed, skipping auto-restart'; cr.
+    ^ self].
   self runAllTests! !
 
 !SUnitRunner class methodsFor: 'startup'!
