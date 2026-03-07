@@ -411,7 +411,8 @@ runAllTests
     DocCommentsReleaseTest PharoDocCommentTest
     ObjectWithPrintingRaisingHaltTest
     EFFFICallTest BitBltTest BitBltTranslucentTest
-    FastStepThroughTest StepThroughTest) do: [:name |
+    "FastStepThroughTest removed — hangs headless (see skip list)"
+    StepThroughTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
@@ -428,8 +429,8 @@ runAllTests
     HistoryIteratorTest HistoryNodeTest HistorySlotTest
     "Commander"
     CmCommandDecoratorTest CmCommandsGroupTest CmCommandTest
-    "Epicea (change logging)"
-    EpFilterTest EpLogTest EpCommentTest) do: [:name |
+    "Epicea (change logging) — EpLogTest/EpCommentTest removed, they hang (see skip list)"
+    EpFilterTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
