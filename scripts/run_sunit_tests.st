@@ -443,6 +443,10 @@ runAllTests
      RBRealizeClassParametrizedTest
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
+     "DirectoryEntryTest DiskFileAttributesTest — filesystem tests all timeout in headless"
+     DirectoryEntryTest DiskFileAttributesTest
+     "ObsoleteTest — testTraitObsolete modifies traits, hangs"
+     ObsoleteTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
      "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
      AthensCairoPDFSurfaceTest AthensCairoCanvasTest
