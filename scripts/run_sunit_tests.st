@@ -576,8 +576,9 @@ runAllTests
        works even if the Delay scheduler is dead."
       classTimeout := 300. "seconds"
       counts := nil.
-      [| doneSem workerProc watchdogProc |
+      [| doneSem workerDone workerProc watchdogProc |
        doneSem := Semaphore new.
+       workerDone := false.
        workerProc := [
          [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout]
            on: Error do: [:ex |
@@ -596,30 +597,28 @@ runAllTests
                  stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
                    nextPutAll: ': '; nextPutAll: ex class name;
                    nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
+         workerDone := true.
          doneSem signal] forkAt: 40.
-       "Watchdog: spin-wait using microsecond primitive (works without Delay scheduler)"
+       "Watchdog: spin-wait using microsecond primitive (works without Delay scheduler).
+        Checks workerDone flag so it exits promptly when the worker finishes
+        (doneSem isSignaled is unreliable since the wait consumes the signal)."
        watchdogProc := [
          | startMs elapsed |
          startMs := Time millisecondClockValue.
-         [doneSem isSignaled not and: [
+         [workerDone not and: [
            elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
            elapsed < (classTimeout * 1000)]]
          whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 500000 "0.5s"].
-         doneSem isSignaled ifFalse: [
-           "Class timed out — report and signal FIRST, then try to kill worker.
-            Process>>terminate runs ensure blocks synchronously and can hang,
-            so we must unblock the main loop before attempting termination."
+         workerDone ifFalse: [
+           "Class timed out — report and signal semaphore to unblock main loop"
            counts := {0. 0. 0. 0. 1}.
            stream nextPutAll: '  CLASS-TIMEOUT: '; nextPutAll: tc name;
              nextPutAll: ' exceeded '; print: classTimeout; nextPutAll: 's'; lf.
            stream flush.
            doneSem signal.
-           "Try to suspend the worker (fast, no ensure blocks) rather than terminate"
+           "Suspend worker (fast, no ensure blocks)"
            [workerProc suspend] on: Error do: [:e |]]] forkAt: 79.
-       doneSem wait.
-       "Kill watchdog and worker (best-effort, don't hang)"
-       [watchdogProc terminate] on: Error do: [:e |].
-       [workerProc isTerminated ifFalse: [workerProc suspend]] on: Error do: [:e |]]
+       doneSem wait]
       on: Error do: [:ex |
         stream nextPutAll: '*** CLASS-WRAPPER ERROR in '; nextPutAll: tc name;
           nextPutAll: ': '; nextPutAll: ex class name;
