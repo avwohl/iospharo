@@ -16229,10 +16229,40 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
     uint32_t* cmTable = nullptr;
     size_t cmSize = 0;
+    // ColorMap shift/mask support (used by BMP reader for channel reordering)
+    bool hasShiftMask = false;
+    int32_t cmShifts[4] = {0, 0, 0, 0};
+    uint32_t cmMasks[4] = {0, 0, 0, 0};
     if (!colorMap.isNil() && colorMap.isObject()) {
         ObjectHeader* cmHdr = colorMap.asObjectPtr();
-        cmTable = reinterpret_cast<uint32_t*>(cmHdr->bytes());
-        cmSize = cmHdr->byteSize() / 4;
+        if (cmHdr->isPointersObject() && cmHdr->slotCount() >= 2) {
+            // ColorMap object with inst vars: shifts, masks, colors
+            Oop shiftsOop = memory_.fetchPointer(0, colorMap);
+            Oop masksOop = memory_.fetchPointer(1, colorMap);
+            if (shiftsOop.isObject() && !shiftsOop.isNil() &&
+                masksOop.isObject() && !masksOop.isNil()) {
+                ObjectHeader* shiftsHdr = shiftsOop.asObjectPtr();
+                ObjectHeader* masksHdr = masksOop.asObjectPtr();
+                // IntegerArray (signed 32-bit words) for shifts, WordArray for masks
+                size_t nShifts = shiftsHdr->byteSize() / 4;
+                size_t nMasks = masksHdr->byteSize() / 4;
+                if (nShifts >= 4 && nMasks >= 4) {
+                    for (int i = 0; i < 4; i++) {
+                        int32_t s;
+                        std::memcpy(&s, shiftsHdr->bytes() + i * 4, 4);
+                        cmShifts[i] = s;
+                        uint32_t m;
+                        std::memcpy(&m, masksHdr->bytes() + i * 4, 4);
+                        cmMasks[i] = m;
+                    }
+                    hasShiftMask = true;
+                }
+            }
+        } else {
+            // Word array (Bitmap) lookup table — used for indexed color maps
+            cmTable = reinterpret_cast<uint32_t*>(cmHdr->bytes());
+            cmSize = cmHdr->byteSize() / 4;
+        }
     }
 
     // Detect compressed source form (ByteArray bits that are too small for claimed dimensions)
@@ -16480,43 +16510,156 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         BITBLT_SUCCESS;
     }
 
-    // Depth-8 source to depth-8 dest (used by Bitmap>>copyFromByteArray: via hackBits:)
-    // With srcNeedsByteSwap, this handles the Form>>swapEndianness case (depth=-8 → 8)
+    // Depth-8 source to depth-8 dest (used by Bitmap>>copyFromByteArray: via hackBits:
+    // and by bitPeekerFromForm: for pixel value extraction)
+    // Pharo Forms store 8-bit pixels MSB-first in 32-bit words: pixel 0 in bits 24-31.
+    // On little-endian ARM, we must use word-based access to handle this correctly.
+    // srcNeedsByteSwap (depth=-8) means source is raw sequential bytes (ByteArray).
     if (destDepth == 8 && srcDepth == 8) {
-        intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
-        intptr_t srcBytesPerRow = ((srcWidth + 3) / 4) * 4;   // word-aligned
-        uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+        intptr_t srcWordsPerRow = (srcWidth + 3) / 4;
+        intptr_t destWordsPerRow = (destWidth + 3) / 4;
+        uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* destWords32 = destPixels;
 
-        size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
-        if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 3) / 4);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
 
-        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height - 1) * srcBytesPerRow + sourceX + width);
-        if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
+        size_t requiredSrcWords = static_cast<size_t>((sourceY + height - 1) * srcWordsPerRow + (sourceX + width + 3) / 4);
+        if (requiredSrcWords * 4 > srcBitsSize) return PrimitiveResult::Failure;
 
         for (intptr_t y = 0; y < height; y++) {
-            uint8_t* srcRow = srcBytes + (sourceY + y) * srcBytesPerRow;
-            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow;
+            uint32_t* srcRowW = srcWords + (sourceY + y) * srcWordsPerRow;
+            uint32_t* dstRowW = destWords32 + (destY + y) * destWordsPerRow;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t sx = sourceX + x;
                 uint8_t srcVal;
                 if (srcNeedsByteSwap) {
-                    // Byte-swap within 32-bit words: reverse byte order
-                    // Word index = sx / 4, byte within word = sx % 4
-                    // Swapped byte position = word_start + (3 - byte_offset)
-                    intptr_t wordStart = (sx / 4) * 4;
-                    intptr_t byteOffset = sx % 4;
-                    srcVal = srcRow[wordStart + (3 - byteOffset)];
+                    // Source is raw sequential bytes (ByteArray with depth=-8).
+                    // Read byte at flat offset (no word-based reordering).
+                    uint8_t* srcBytesFlat = reinterpret_cast<uint8_t*>(srcRowW);
+                    srcVal = srcBytesFlat[sx];
                 } else {
-                    srcVal = srcRow[sx];
+                    // Source is a Form Bitmap: pixels stored MSB-first in 32-bit words.
+                    // Pixel P is at bits ((3 - P%4) * 8) within word P/4.
+                    uint32_t srcWord = srcRowW[sx / 4];
+                    uint32_t srcShift = (3 - (sx % 4)) * 8;
+                    srcVal = (srcWord >> srcShift) & 0xFF;
                 }
                 intptr_t dx = destX + x;
+                // Dest is always a Form Bitmap: MSB-first pixel ordering.
+                uint32_t destShift = (3 - (dx % 4)) * 8;
+                uint32_t destMask = ~(0xFFu << destShift);
+                uint32_t& dstWord = dstRowW[dx / 4];
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[dx] = srcVal; break;
-                    case 0: dstRow[dx] &= srcVal; break;
-                    case 7: dstRow[dx] |= srcVal; break;
-                    case 25: if (srcVal != 0) dstRow[dx] = srcVal; break;
-                    case 6: dstRow[dx] ^= srcVal; break;
-                    default: dstRow[dx] = srcVal; break;
+                    case 3: case 34: // store
+                        dstWord = (dstWord & destMask) | (static_cast<uint32_t>(srcVal) << destShift);
+                        break;
+                    case 0: // AND
+                        dstWord &= destMask | (static_cast<uint32_t>(srcVal) << destShift);
+                        break;
+                    case 7: case 25: // OR / paint
+                        if (combinationRule == 25 && srcVal == 0) break;
+                        dstWord |= (static_cast<uint32_t>(srcVal) << destShift);
+                        break;
+                    case 6: // XOR
+                        dstWord ^= (static_cast<uint32_t>(srcVal) << destShift);
+                        break;
+                    default:
+                        dstWord = (dstWord & destMask) | (static_cast<uint32_t>(srcVal) << destShift);
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        BITBLT_SUCCESS;
+    }
+
+    // Depth-4 source to depth-4 dest (used by bitPeekerFromForm: for pixel extraction)
+    if (destDepth == 4 && srcDepth == 4) {
+        // 4-bit pixels: 8 pixels per 32-bit word, MSB first
+        // Pixel i within a word occupies bits (28 - i*4) to (31 - i*4)
+        intptr_t destWordsPerRow = (destWidth + 7) / 8;  // 8 pixels per word
+        intptr_t srcWordsPerRow = (srcWidth + 7) / 8;
+        uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* destWords = destPixels;
+
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 7) / 8);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                intptr_t dx = destX + x;
+                // Extract 4-bit source pixel (MSB first: pixel 0 in bits 28-31)
+                uint32_t srcWord = srcRow[sx / 8];
+                uint32_t srcShift = 28 - (sx % 8) * 4;
+                uint32_t srcPixel = (srcWord >> srcShift) & 0xF;
+                // Insert into dest
+                uint32_t destShift = 28 - (dx % 8) * 4;
+                uint32_t destMask = ~(0xFu << destShift);
+                switch (combinationRule) {
+                    case 3: case 34: // store
+                        destRow[dx / 8] = (destRow[dx / 8] & destMask) | (srcPixel << destShift);
+                        break;
+                    case 0: // AND
+                        destRow[dx / 8] &= destMask | (srcPixel << destShift);
+                        break;
+                    case 7: case 25: // OR / paint
+                        destRow[dx / 8] |= (srcPixel << destShift);
+                        break;
+                    case 6: // XOR
+                        destRow[dx / 8] ^= (srcPixel << destShift);
+                        break;
+                    default:
+                        destRow[dx / 8] = (destRow[dx / 8] & destMask) | (srcPixel << destShift);
+                        break;
+                }
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        BITBLT_SUCCESS;
+    }
+
+    // Depth-2 source to depth-2 dest (used by bitPeekerFromForm: for pixel extraction)
+    if (destDepth == 2 && srcDepth == 2) {
+        // 2-bit pixels: 16 pixels per 32-bit word, MSB first
+        intptr_t destWordsPerRow = (destWidth + 15) / 16;
+        intptr_t srcWordsPerRow = (srcWidth + 15) / 16;
+        uint32_t* srcWords = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* destWords = destPixels;
+
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 15) / 16);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t y = 0; y < height; y++) {
+            uint32_t* srcRow = srcWords + (sourceY + y) * srcWordsPerRow;
+            uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+            for (intptr_t x = 0; x < width; x++) {
+                intptr_t sx = sourceX + x;
+                intptr_t dx = destX + x;
+                uint32_t srcWord = srcRow[sx / 16];
+                uint32_t srcShift = 30 - (sx % 16) * 2;
+                uint32_t srcPixel = (srcWord >> srcShift) & 0x3;
+                uint32_t destShift = 30 - (dx % 16) * 2;
+                uint32_t destMask = ~(0x3u << destShift);
+                switch (combinationRule) {
+                    case 3: case 34:
+                        destRow[dx / 16] = (destRow[dx / 16] & destMask) | (srcPixel << destShift);
+                        break;
+                    case 0:
+                        destRow[dx / 16] &= destMask | (srcPixel << destShift);
+                        break;
+                    case 7: case 25:
+                        destRow[dx / 16] |= (srcPixel << destShift);
+                        break;
+                    case 6:
+                        destRow[dx / 16] ^= (srcPixel << destShift);
+                        break;
+                    default:
+                        destRow[dx / 16] = (destRow[dx / 16] & destMask) | (srcPixel << destShift);
+                        break;
                 }
             }
         }
@@ -16565,6 +16708,45 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         BITBLT_SUCCESS;
     }
 
+    // 16-bit destination support (for BMP reader, Form conversions)
+    if (destDepth == 16 && srcDepth == 16) {
+        size_t destPitch16 = static_cast<size_t>(destWidth);  // pixels per row
+        size_t srcPitch16 = static_cast<size_t>(srcWidth);
+        uint16_t* destPixels16 = reinterpret_cast<uint16_t*>(destPixels);
+        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
+
+        // Bounds check
+        size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 2;
+        if (requiredDestBytes16 > destBitsSize) return PrimitiveResult::Failure;
+        size_t requiredSrcBytes16 = static_cast<size_t>((sourceY + height - 1) * srcWidth + sourceX + width) * 2;
+        if (requiredSrcBytes16 > srcBitsSize) return PrimitiveResult::Failure;
+
+        for (intptr_t row = 0; row < height; row++) {
+            size_t di = static_cast<size_t>((destY + row) * destPitch16 + destX);
+            size_t si = static_cast<size_t>((sourceY + row) * srcPitch16 + sourceX);
+            for (intptr_t col = 0; col < width; col++) {
+                uint16_t srcPx = srcPixels16[si + col];
+                uint16_t dstPx = destPixels16[di + col];
+                uint16_t result;
+                switch (combinationRule) {
+                    case 0: result = srcPx & dstPx; break;      // AND
+                    case 1: result = srcPx & ~dstPx; break;     // AND NOT
+                    case 2: result = ~srcPx & dstPx; break;     // NOT AND
+                    case 3: result = srcPx; break;              // STORE
+                    case 4: result = srcPx | ~dstPx; break;     // OR NOT
+                    case 6: result = srcPx ^ dstPx; break;      // XOR
+                    case 7: result = srcPx | dstPx; break;      // OR
+                    case 25: result = (srcPx == 0) ? dstPx : srcPx; break;  // paint
+                    case 34: result = srcPx; break;             // sourceWord
+                    default: result = srcPx; break;             // default: STORE
+                }
+                destPixels16[di + col] = result;
+            }
+        }
+        showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+        BITBLT_SUCCESS;
+    }
+
     // Unsupported depth combinations
     if (destDepth != 32) {
         fprintf(stderr, "[BITBLT-DIAG] unsupported destDepth=%ld srcDepth=%ld rule=%ld\n",
@@ -16603,36 +16785,45 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             BITBLT_SUCCESS;
         }
 
+        // Helper: apply ColorMap shift/mask transform to a 32-bit pixel
+        auto applyShiftMask = [&](uint32_t px) -> uint32_t {
+            if (!hasShiftMask) return px;
+            uint32_t result = 0;
+            for (int i = 0; i < 4; i++) {
+                uint32_t component = px & cmMasks[i];
+                int32_t shift = cmShifts[i];
+                if (shift > 0) result |= (component << shift);
+                else if (shift < 0) result |= (component >> (-shift));
+                else result |= component;
+            }
+            return result;
+        };
+
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
             uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
             switch (combinationRule) {
                 case 3:  // store (source AND halftone)
-                    if (ht == 0xFFFFFFFF) {
+                    if (ht == 0xFFFFFFFF && !hasShiftMask) {
                         memcpy(dstRow, srcRow, width * 4);
                     } else {
-                        for (intptr_t x = 0; x < width; x++) dstRow[x] = srcRow[x] & ht;
+                        for (intptr_t x = 0; x < width; x++) dstRow[x] = applyShiftMask(srcRow[x]) & ht;
                     }
                     break;
                 case 34: { // alphaBlendScaled: premultiplied source-over compositing
-                    // result = source + dest * (1 - srcAlpha/255)
-                    // Source pixels are already premultiplied by alpha.
-                    // Background pixels (0x00000000) leave dest unchanged.
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         uint32_t sa = (s >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = s; continue; }
                         if (sa == 0) continue;
                         uint32_t invSa = 255 - sa;
                         uint32_t d = dstRow[x];
                         uint32_t dAlpha = (d >> 24) & 0xFF;
-                        // First: dest * (1 - alpha/255) per channel
                         uint32_t t_rb = (d & 0xFF00FF) * invSa + 0x800080;
                         uint32_t dst_rb = ((t_rb + ((t_rb >> 8) & 0xFF00FF)) >> 8) & 0xFF00FF;
                         uint32_t t_g = (d & 0x00FF00) * invSa + 0x008000;
                         uint32_t dst_g = ((t_g + ((t_g >> 8) & 0x00FF00)) >> 8) & 0x00FF00;
-                        // Then add premultiplied source
                         uint32_t rb = ((s & 0xFF00FF) + dst_rb) & 0xFF00FF;
                         uint32_t g = ((s & 0x00FF00) + dst_g) & 0x00FF00;
                         uint32_t outAlpha = sa + ((dAlpha * invSa + 127) / 255);
@@ -16641,30 +16832,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 case 0:  // AND: dest = dest AND (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= (srcRow[x] & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= (applyShiftMask(srcRow[x]) & ht);
                     break;
                 case 6:  // XOR: dest = dest XOR (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (srcRow[x] & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (applyShiftMask(srcRow[x]) & ht);
                     break;
                 case 7:  // OR: dest = dest OR (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= (srcRow[x] & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= (applyShiftMask(srcRow[x]) & ht);
                     break;
                 case 25: { // pixPaint: zero source → keep dest; non-zero → replace dest
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         if (s != 0) dstRow[x] = s;
                     }
                     break;
                 }
                 case 1:  // AND complement: dest = dest AND NOT(source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(srcRow[x] & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(applyShiftMask(srcRow[x]) & ht);
                     break;
                 case 4:  // OR NOT: dest = dest OR NOT(source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(srcRow[x] & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(applyShiftMask(srcRow[x]) & ht);
                     break;
                 case 24: { // alpha blend (source-over, non-premultiplied)
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x];
+                        uint32_t s = applyShiftMask(srcRow[x]);
                         uint32_t d = dstRow[x];
                         uint32_t sa = (s >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = s; continue; }
@@ -16683,7 +16874,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 20: { // rgbAdd: dest = colorMap(source AND halftone) + dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         // Apply colorMap to remap source pixels (used in two-pass font rendering)
                         // Standard BitBlt: rgbMapPixel extracts top 4 bits of R,G,B → 12-bit index
                         // Masks from setupColorMasksFrom:8 to:4:
@@ -16708,7 +16899,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 21: { // rgbSub: dest = (source AND halftone) - dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         uint32_t d = dstRow[x];
                         int rA = (int)((s >> 24) & 0xFF) - (int)((d >> 24) & 0xFF);
                         int rR = (int)((s >> 16) & 0xFF) - (int)((d >> 16) & 0xFF);
@@ -16723,7 +16914,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 27: { // rgbMax: dest = max(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rR = std::max((s >> 16) & 0xFF, (d >> 16) & 0xFF);
                         uint32_t rG = std::max((s >> 8) & 0xFF, (d >> 8) & 0xFF);
@@ -16735,7 +16926,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 28: { // rgbMin: dest = min(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rR = std::min((s >> 16) & 0xFF, (d >> 16) & 0xFF);
                         uint32_t rG = std::min((s >> 8) & 0xFF, (d >> 8) & 0xFF);
@@ -16746,12 +16937,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 case 26: { // erase: dest = dest AND NOT source
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~srcRow[x];
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~applyShiftMask(srcRow[x]);
                     break;
                 }
                 case 37: { // rgbMul: dest = (source AND halftone) * dest / 255 per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rA = (((s >> 24) & 0xFF) * ((d >> 24) & 0xFF) + 127) / 255;
                         uint32_t rR = (((s >> 16) & 0xFF) * ((d >> 16) & 0xFF) + 127) / 255;
@@ -16764,7 +16955,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 30: { // alphaBlendConst: blend source with dest using constant alpha
                     if (sourceAlpha == 0) break;
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         if (sourceAlpha == 255) { dstRow[x] = s; continue; }
                         uint32_t d = dstRow[x];
                         uint32_t invAlpha = 255 - sourceAlpha;
@@ -16779,7 +16970,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 31: { // alphaPaintConst: same as 30 but skip where source == 0
                     if (sourceAlpha == 0) break;
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x] & ht;
+                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
                         if (s == 0) continue; // paint mode: skip transparent source
                         if (sourceAlpha == 255) { dstRow[x] = s; continue; }
                         uint32_t d = dstRow[x];
@@ -16793,13 +16984,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 case 41: { // rgbComponentAlpha: source channels are per-channel alpha for halftone color
-                    // On Retina/non-LCD displays, sub-pixel rendering creates visible color fringing.
-                    // Convert per-channel alpha to uniform grayscale alpha for correct appearance.
                     uint32_t cR = (ht >> 16) & 0xFF;
                     uint32_t cG = (ht >> 8) & 0xFF;
                     uint32_t cB = ht & 0xFF;
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = srcRow[x];
+                        uint32_t s = applyShiftMask(srcRow[x]);
                         uint32_t d = dstRow[x];
                         uint32_t aR = (s >> 16) & 0xFF;
                         uint32_t aG = (s >> 8) & 0xFF;
