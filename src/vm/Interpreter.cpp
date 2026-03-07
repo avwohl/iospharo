@@ -2543,19 +2543,22 @@ void Interpreter::returnValue(Oop value) {
                     executeFromContext(nextEnsure);
                 } else {
                     // No more ensure: — complete the NLR directly
-                    // Kill contexts between senderOfCurrent and homeCtx
+                    // Kill contexts between senderOfCurrent and homeCtx.
+                    // Set PC to HasBeenReturnedFrom sentinel (SmallInteger -1)
+                    // so attempts to resume detect the returned-from state.
+                    Oop hasBeenReturnedPC = Oop::fromSmallInteger(-1);
                     Oop c = senderOfCurrent;
                     int safety = 0;
                     while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                            c.rawBits() != homeCtx.rawBits() && safety++ < 200) {
                         Oop next = memory_.fetchPointer(0, c);
                         memory_.storePointer(0, c, nilObj);
-                        memory_.storePointer(1, c, nilObj);
+                        memory_.storePointer(1, c, hasBeenReturnedPC);
                         c = next;
                     }
                     Oop homeSender = memory_.fetchPointer(0, homeCtx);
                     memory_.storePointer(0, homeCtx, nilObj);
-                    memory_.storePointer(1, homeCtx, nilObj);
+                    memory_.storePointer(1, homeCtx, hasBeenReturnedPC);
 
                     if (homeSender.isObject() && !homeSender.isNil() &&
                         memory_.isValidPointer(homeSender)) {
@@ -3251,15 +3254,17 @@ bool Interpreter::handleContextNLRUnwind(Oop value, Oop startCtx, Oop homeCtx) {
 
     Oop nilObj = memory_.nil();
 
-    // Step 1: Kill all contexts from startCtx up to (but not including) ensureCtx
+    // Step 1: Kill all contexts from startCtx up to (but not including) ensureCtx.
+    // Set PC to HasBeenReturnedFrom sentinel (SmallInteger -1) so resume detects it.
     {
+        Oop hasBeenReturnedPC = Oop::fromSmallInteger(-1);
         Oop c = startCtx;
         int safety = 0;
         while (c.isObject() && c.rawBits() != nilObj.rawBits() &&
                c.rawBits() != ensureCtx.rawBits() && safety++ < 200) {
             Oop nextSender = memory_.fetchPointer(0, c);
             memory_.storePointer(0, c, nilObj);  // sender = nil
-            memory_.storePointer(1, c, nilObj);  // pc = nil (dead)
+            memory_.storePointer(1, c, hasBeenReturnedPC);  // pc = sentinel
             c = nextSender;
         }
     }
@@ -7431,9 +7436,20 @@ bool Interpreter::executeFromContext(Oop context) {
     // Initial PC = (1 + numLiterals) * 8 + 1 = bytecodeStart + 1
     Oop savedPC = memory_.fetchPointer(1, context);
 
-    // Log context restoration details
-    if constexpr (ENABLE_DEBUG_LOGGING) {
+    // Check for HasBeenReturnedFrom sentinel: SmallInteger(-1) means this context
+    // has already returned and cannot be resumed. Send cannotReturn: per spec.
+    if (savedPC.isSmallInteger() && savedPC.asSmallInteger() == -1) {
+        // Context has been returned from — cannot resume.
+        // Push the context as receiver and the return value as argument,
+        // then send cannotReturn: to trigger proper error handling.
+        activeContext_ = context;
+        stackPointer_ = framePointer_ + 1;
+        push(context);
+        push(memory_.specialObject(SpecialObjectIndex::NilObject));
+        sendSelector(selectors_.cannotReturn, 1);
+        return true;  // context was activated (cannotReturn: handler will run)
     }
+
     int64_t pcOffset = 0;
     if (savedPC.isSmallInteger()) {
         pcOffset = savedPC.asSmallInteger();

@@ -203,7 +203,16 @@ class PharoBridge: ObservableObject {
         FileManager.default.changeCurrentDirectoryPath(imageDir)
 
         // Write startup.st with image patches (loaded by StartupPreferencesLoader)
-        Self.writeStartupScript(to: imageDir)
+        // Skip if --image flag was used and a startup.st already exists (user-provided)
+        let existingStartup = FileManager.default.fileExists(atPath: imageDir + "/startup.st")
+        let isCLILaunch = ProcessInfo.processInfo.arguments.contains("--image")
+        if isCLILaunch && existingStartup {
+            #if DEBUG
+            fputs("[BRIDGE] skipping writeStartupScript — --image flag with existing startup.st\n", stderr)
+            #endif
+        } else {
+            Self.writeStartupScript(to: imageDir)
+        }
         #if DEBUG
         fputs("[BRIDGE] after writeStartupScript, startup.st exists=\(FileManager.default.fileExists(atPath: imageDir + "/startup.st"))\n", stderr)
         #endif

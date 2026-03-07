@@ -31,16 +31,16 @@ nextRunNumber
 !SUnitRunner class methodsFor: 'running'!
 runDiagnostic: stream
   "Quick sanity check - verify basic forking and exception handling work"
-  stream nextPutAll: '=== DIAGNOSTICS ==='; cr. stream flush.
+  stream nextPutAll: '=== DIAGNOSTICS ==='; lf. stream flush.
   [| sem done |
    sem := Semaphore new. done := false.
    [[ 1/0 ] on: ZeroDivide do: [:e | done := true]. sem signal] fork.
-   (sem waitTimeoutSeconds: 3) ifTrue: [stream nextPutAll: 'DIAG: fork+exception TIMEOUT'; cr]
-   ifFalse: [stream nextPutAll: 'DIAG: fork+exception OK: '; nextPutAll: done printString; cr].
+   (sem waitTimeoutSeconds: 3) ifTrue: [stream nextPutAll: 'DIAG: fork+exception TIMEOUT'; lf]
+   ifFalse: [stream nextPutAll: 'DIAG: fork+exception OK: '; nextPutAll: done printString; lf].
    stream flush]
   on: Error do: [:e |
-   stream nextPutAll: 'DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; cr. stream flush].
-  stream nextPutAll: '=== END DIAGNOSTICS ==='; cr; cr. stream flush! !
+   stream nextPutAll: 'DIAG ERROR: '; nextPutAll: e class name; nextPutAll: ' - '; nextPutAll: e messageText; lf. stream flush].
+  stream nextPutAll: '=== END DIAGNOSTICS ==='; lf; lf. stream flush! !
 
 !SUnitRunner class methodsFor: 'running'!
 runAllTests
@@ -438,14 +438,9 @@ runAllTests
    "Classes known to hang or timeout excessively in headless mode"
    skipNames := #(FFICallbackParametersTest FFICallbackTest
      GlobalIdentifierWithDefaultConfigurationTest SystemNavigationTest
-     TextAnchorTest TextLineTest TextLineEndingsTest
      "TimespanDoTest TimespanDoSpanAYearTest — all tests timeout in headless"
      TimespanDoTest TimespanDoSpanAYearTest
-     "DeleteVisitorTest — testSymbolicLink hangs"
-     DeleteVisitorTest
      RBRealizeClassParametrizedTest
-     "FastStepThroughTest — context stepping hangs headless"
-     FastStepThroughTest
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
@@ -515,7 +510,7 @@ runAllTests
       nextPutAll: ' (batch '; print: batchStart;
       nextPutAll: '-'; print: batchEnd;
       nextPutAll: ' of '; print: testClasses size;
-      nextPutAll: ') ==='; cr; cr.
+      nextPutAll: ') ==='; lf; lf.
     self runDiagnostic: stream.
     "Check symbol table for Symbol class corruption"
     [| symCls count |
@@ -526,12 +521,12 @@ runAllTests
      (Symbol classVariableNamed: #NewSymbols) read do: [:each |
        each == symCls ifTrue: [count := count + 1]].
      stream nextPutAll: 'SYMTABLE-CHECK: Symbol class found '; print: count;
-       nextPutAll: ' times in symbol tables'; cr. stream flush.
+       nextPutAll: ' times in symbol tables'; lf. stream flush.
      count > 0 ifTrue: [
-       stream nextPutAll: 'WARNING: Symbol class IS in symbol table - this causes corruption!!'; cr.
+       stream nextPutAll: 'WARNING: Symbol class IS in symbol table - this causes corruption!!'; lf.
        stream flush]]
     on: Error do: [:e |
-     stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; cr. stream flush].
+     stream nextPutAll: 'SYMTABLE-CHECK error: '; nextPutAll: e messageText; lf. stream flush].
     "Patch test timeouts for non-JIT VM. Read scale from /tmp/sunit_timeout_scale.txt
      (default 10). Override TestCase>>defaultTimeLimit and remove per-class overrides
      so all tests inherit a generous scaled timeout instead of the 10s JIT default."
@@ -554,10 +549,10 @@ runAllTests
      stream nextPutAll: 'Timeout: scale='; print: timeoutScale;
        nextPutAll: 'x, defaultTimeLimit='; print: 10 * timeoutScale;
        nextPutAll: 's, watchdog='; print: watchdogTimeout;
-       nextPutAll: 's, '; print: patched; nextPutAll: ' class overrides removed'; cr.
+       nextPutAll: 's, '; print: patched; nextPutAll: ' class overrides removed'; lf.
      stream flush]
     on: Error do: [:e |
-     stream nextPutAll: 'Timeout patch error: '; nextPutAll: e messageText; cr. stream flush].
+     stream nextPutAll: 'Timeout patch error: '; nextPutAll: e messageText; lf. stream flush].
     "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
      DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
     CurrentExecutionEnvironment runTestsBy: [
@@ -573,7 +568,7 @@ runAllTests
           ex class name = 'TestTookTooMuchTime'
             ifTrue: [
               totalT := totalT + 1.
-              stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; cr.
+              stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; lf.
               "Fix up env state so next test works"
               [| env wds |
                env := CurrentExecutionEnvironment value.
@@ -584,24 +579,24 @@ runAllTests
             ifFalse: [
               stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
                 nextPutAll: ': '; nextPutAll: ex class name;
-                nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); cr]].
+                nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
       stream flush. detail flush]].
     stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
-      nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; cr.
+      nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; lf.
     stream flush.
     stream cr.
-    stream nextPutAll: '=== BATCH TOTAL ==='; cr.
-    stream nextPutAll: 'Run: #'; print: runNum; cr.
-    stream nextPutAll: 'Batch: '; print: batchStart; nextPutAll: '-'; print: batchEnd; cr.
-    stream nextPutAll: 'Classes: '; print: batchClasses size; cr.
-    stream nextPutAll: 'Pass: '; print: totalP; cr.
-    stream nextPutAll: 'Fail: '; print: totalF; cr.
-    stream nextPutAll: 'Error: '; print: totalE; cr.
-    stream nextPutAll: 'Skip: '; print: totalS; cr.
-    totalT > 0 ifTrue: [stream nextPutAll: 'Timeout: '; print: totalT; cr].
-    stream nextPutAll: 'Total: '; print: totalP + totalF + totalE + totalS + totalT; cr.
+    stream nextPutAll: '=== BATCH TOTAL ==='; lf.
+    stream nextPutAll: 'Run: #'; print: runNum; lf.
+    stream nextPutAll: 'Batch: '; print: batchStart; nextPutAll: '-'; print: batchEnd; lf.
+    stream nextPutAll: 'Classes: '; print: batchClasses size; lf.
+    stream nextPutAll: 'Pass: '; print: totalP; lf.
+    stream nextPutAll: 'Fail: '; print: totalF; lf.
+    stream nextPutAll: 'Error: '; print: totalE; lf.
+    stream nextPutAll: 'Skip: '; print: totalS; lf.
+    totalT > 0 ifTrue: [stream nextPutAll: 'Timeout: '; print: totalT; lf].
+    stream nextPutAll: 'Total: '; print: totalP + totalF + totalE + totalS + totalT; lf.
     stream cr.
-    stream nextPutAll: '=== BATCH COMPLETE ==='; cr.
+    stream nextPutAll: '=== BATCH COMPLETE ==='; lf.
     stream flush]
   ensure: [stream close. detail close].
   "exitSuccess goes through SessionManager shutdown which may not reach primitiveQuit.
@@ -616,10 +611,10 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
 
   "Skip genuinely abstract classes — use isAbstract instead of manual list"
   ([testClass isAbstract] on: Error do: [:e | false]) ifTrue: [
-    s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (abstract)'; cr. s flush.
+    s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' === SKIPPED (abstract)'; lf. s flush.
     ^ {0. 0. 0. 0. 0}].
 
-  s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; cr.
+  s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; lf.
   s flush.
   "Check if Delay scheduler is alive before this class"
   [| sem alive startMs |
@@ -634,7 +629,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
      whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
    alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
-     s nextPutAll: '  TIMEOUT:DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; cr.
+     s nextPutAll: '  TIMEOUT:DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; lf.
      [| proc ctx |
       proc := Delay scheduler schedulingProcess.
       s nextPutAll: '  DELAY-DIAG: proc='.
@@ -648,7 +643,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
           s nextPutAll: ' isTerminated='; nextPutAll: proc isTerminated printString;
             nextPutAll: ' isSuspended='; nextPutAll: proc isSuspended printString].
       s cr. s flush] on: Error do: [:e |
-        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; cr. s flush]]]
+        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; lf. s flush]]]
   on: Error do: [:e |].
   "Tests must run below timingPriority (80). Watchdog uses spin-wait
    (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
@@ -665,12 +660,12 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
    sels := sels sort: [:a :b |
      count := count + 1.
      count > 200000 ifTrue: [
-       s nextPutAll: '  SORT-ABORT: '; print: count; nextPutAll: ' comparisons exceeded limit'; cr. s flush.
+       s nextPutAll: '  SORT-ABORT: '; print: count; nextPutAll: ' comparisons exceeded limit'; lf. s flush.
        Error signal: 'Sort infinite loop detected'].
      a <= b].
-   s nextPutAll: '  SORT-OK: '; print: count; nextPutAll: ' comparisons for '; print: sels size; nextPutAll: ' items'; cr. s flush]
+   s nextPutAll: '  SORT-OK: '; print: count; nextPutAll: ' comparisons for '; print: sels size; nextPutAll: ' items'; lf. s flush]
   on: Error do: [:ex |
-    s nextPutAll: '  SORT-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; cr. s flush.
+    s nextPutAll: '  SORT-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; lf. s flush.
     sels := testClass allTestSelectors asArray "use unsorted on error"].
 
   sels do: [:sel |
@@ -702,21 +697,21 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
         anySatisfy: [:p | p selector = #expectedFailure]]
         on: Error do: [:e | false].
       isExpectedFailure ifTrue: [
-        s nextPutAll: '  RUN: '; nextPutAll: sel; nextPutAll: ' (expectedFailure)'; cr. s flush.
+        s nextPutAll: '  RUN: '; nextPutAll: sel; nextPutAll: ' (expectedFailure)'; lf. s flush.
         sk := sk + 1.
         d nextPutAll: runNum printString; nextPut: $	.
         d nextPutAll: testClass name; nextPut: $	.
         d nextPutAll: sel; nextPut: $	.
-        d nextPutAll: 'SKIP'; cr. d flush]
+        d nextPutAll: 'SKIP'; lf. d flush]
       ifFalse: [
-      s nextPutAll: '  RUN: '; nextPutAll: sel; cr. s flush.
+      s nextPutAll: '  RUN: '; nextPutAll: sel; lf. s flush.
       result := self runSingleTest: testClass selector: sel timeout: watchdogSecs priority: testPriority on: s.
       result ifNil: [
         p := p + 1. consecutiveTimeouts := 0.
         d nextPutAll: runNum printString; nextPut: $	.
         d nextPutAll: testClass name; nextPut: $	.
         d nextPutAll: sel; nextPut: $	.
-        d nextPutAll: 'PASS'; cr. d flush]
+        d nextPutAll: 'PASS'; lf. d flush]
       ifNotNil: [:kind |
         kind = #timeout
           ifTrue: [consecutiveTimeouts := consecutiveTimeouts + 1]
@@ -726,33 +721,33 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
           d nextPutAll: runNum printString; nextPut: $	.
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
-          d nextPutAll: 'FAIL'; cr].
+          d nextPutAll: 'FAIL'; lf].
         kind = #skip ifTrue: [
           sk := sk + 1.
           d nextPutAll: runNum printString; nextPut: $	.
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
-          d nextPutAll: 'SKIP'; cr].
+          d nextPutAll: 'SKIP'; lf].
         kind = #error ifTrue: [
           e := e + 1.
           d nextPutAll: runNum printString; nextPut: $	.
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
-          d nextPutAll: 'ERROR'; cr].
+          d nextPutAll: 'ERROR'; lf].
         kind = #timeout ifTrue: [
           t := t + 1.
           d nextPutAll: runNum printString; nextPut: $	.
           d nextPutAll: testClass name; nextPut: $	.
           d nextPutAll: sel; nextPut: $	.
-          d nextPutAll: 'TIMEOUT'; cr].
+          d nextPutAll: 'TIMEOUT'; lf].
         d flush.
         "Bail out of class after 5 consecutive timeouts to avoid wasting time"
         consecutiveTimeouts >= 5 ifTrue: [
-          s nextPutAll: '  BAIL: 5 consecutive timeouts, skipping rest of class'; cr.
+          s nextPutAll: '  BAIL: 5 consecutive timeouts, skipping rest of class'; lf.
           s nextPutAll: 'Total: '; print: sels size;
             nextPutAll: ' P:'; print: p; nextPutAll: ' F:'; print: f;
             nextPutAll: ' E:'; print: e; nextPutAll: ' S:'; print: sk;
-            nextPutAll: ' T:'; print: t; cr; cr. s flush.
+            nextPutAll: ' T:'; print: t; lf; lf. s flush.
           ^ {p. f. e. sk. t}]]]]].
 
   "Check if Delay scheduler is alive after this class"
@@ -766,7 +761,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
      whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
    alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
-     s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; cr.
+     s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; lf.
      [| proc ctx |
       proc := Delay scheduler schedulingProcess.
       s nextPutAll: '  DELAY-DIAG: proc='.
@@ -780,7 +775,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
           s nextPutAll: ' isTerminated='; nextPutAll: proc isTerminated printString;
             nextPutAll: ' isSuspended='; nextPutAll: proc isSuspended printString].
       s cr. s flush] on: Error do: [:e |
-        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; cr. s flush]]]
+        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; lf. s flush]]]
   on: Error do: [:e |].
   s nextPutAll: 'Total: '; print: sels size;
     nextPutAll: ' P:'; print: p;
@@ -788,7 +783,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
     nextPutAll: ' E:'; print: e;
     nextPutAll: ' S:'; print: sk.
   t > 0 ifTrue: [s nextPutAll: ' T:'; print: t].
-  s cr; cr.
+  s cr; lf.
   ^ {p. f. e. sk. t}! !
 
 !SUnitRunner class methodsFor: 'running'!
@@ -814,25 +809,25 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
       on: TestFailure do: [:ex |
         result := #fail.
         s nextPutAll: '  FAIL: '; nextPutAll: sel;
-          nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; cr]]
+          nextPutAll: ' ['; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 500)); nextPutAll: ']'; lf]]
       on: Deprecation do: [:ex |
         [ex shouldTransform ifTrue: [ex transform]] on: Error do: [:e | ].
         ex resume]]
       on: TestSkipped do: [:ex |
         result := #skip.
         s nextPutAll: '  SKIP: '; nextPutAll: sel;
-          nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr]]
+          nextPutAll: ' ('; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; lf]]
       on: Error do: [:ex |
         result := #error.
         s nextPutAll: '  ERROR: '; nextPutAll: sel;
           nextPutAll: ' ('; nextPutAll: ex class name;
-          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; cr.
+          nextPutAll: ': '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 100)); nextPutAll: ')'; lf.
         "Capture stack trace for diagnosis"
         [| ctx count |
          ctx := ex signalerContext.
          count := 0.
          [ctx notNil and: [count < 25]] whileTrue: [
-           s nextPutAll: '    >> '; nextPutAll: ctx printString; cr.
+           s nextPutAll: '    >> '; nextPutAll: ctx printString; lf.
            ctx := ctx sender. count := count + 1].
          s flush] on: Error do: [:e2 | "ignore trace errors"]]]
     "ensure: guarantees doneSem signal even if tearDown throws a second
@@ -850,7 +845,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
       result := #timeout.
       testDone := true.
       s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; cr.
+        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
       s flush.
       doneSem signal.
       "Terminate after signaling — best effort cleanup"
@@ -869,7 +864,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      result := #timeout.
      testDone := true.
      s nextPutAll: '  TIMEOUT(backup): '; nextPutAll: sel;
-       nextPutAll: ' (exceeded '; print: seconds * 2; nextPutAll: 's)'; cr.
+       nextPutAll: ' (exceeded '; print: seconds * 2; nextPutAll: 's)'; lf.
      s flush.
      doneSem signal.
      [testProcess terminate] on: Error do: [:e |]]] forkAt: 10.
@@ -883,7 +878,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
     ex class name = 'TestTookTooMuchTime'
       ifTrue: [
         result ifNil: [result := #timeout].
-        s nextPutAll: '  TIMEOUT(env-watchdog): '; nextPutAll: sel; cr. s flush.
+        s nextPutAll: '  TIMEOUT(env-watchdog): '; nextPutAll: sel; lf. s flush.
         "Terminate the test process if still running"
         [testProcess terminate] on: Error do: [:e2 |]]
       ifFalse: [ex pass]].

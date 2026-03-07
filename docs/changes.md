@@ -1,3 +1,36 @@
+# What's New in Build 80
+
+Build 80 — 2026-03-07
+
+## Bug Fix: BlockCannotReturn (BCR) resume handling
+
+Contexts that have already returned now store a HasBeenReturnedFrom sentinel
+(SmallInteger -1) in their PC slot instead of nil. When executeFromContext()
+encounters this sentinel, it sends cannotReturn: instead of resuming the
+dead context. This matches the standard Cog VM behavior.
+
+Fixes ProcessTest testResumeAfterBCR.
+
+## Improvement: Test runner LF line endings
+
+Fixed test runner output to use LF (Character lf) instead of CR (Character cr)
+on macOS. The CR-only output made result files appear as single-line to Unix
+tools (wc -l, grep, etc.).
+
+## Improvement: --image flag respects existing startup.st
+
+When launching with `--image`, PharoBridge no longer overwrites a user-provided
+startup.st next to the image. This allows custom test runners and startup
+scripts to be placed alongside CLI-launched images.
+
+## Test: Un-skipped display-dependent test classes
+
+Removed TextAnchorTest, TextLineTest, TextLineEndingsTest, FastStepThroughTest,
+and DeleteVisitorTest from the headless skip list. These now run normally with
+the per-test 130s timeout.
+
+---
+
 # What's New in Build 79
 
 Build 79 — 2026-03-07

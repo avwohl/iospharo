@@ -58,7 +58,15 @@ struct ContentView: View {
 
             // Priority 1: CLI --image flag (immediate launch, no splash)
             if let cliPath = Self.parseCommandLineImagePath() {
-                if bridge.loadImage(at: cliPath) {
+                #if DEBUG
+                fputs("[CLI] --image resolved to: \(cliPath)\n", stderr)
+                #endif
+                // Copy image + companions into sandbox so C++ fopen() can access them
+                let sandboxPath = Self.copyImageIntoSandbox(cliPath)
+                #if DEBUG
+                fputs("[CLI] sandbox path: \(sandboxPath)\n", stderr)
+                #endif
+                if bridge.loadImage(at: sandboxPath) {
                     bridge.start()
                 }
                 return
@@ -87,6 +95,56 @@ struct ContentView: View {
     }
 
     // MARK: - CLI Argument Parsing
+
+    /// Copy image + companion files (.changes, .sources, startup.st) into
+    /// the app's sandbox temp directory so C++ fopen() can access them.
+    /// Mac Catalyst sandbox blocks POSIX file access to arbitrary paths,
+    /// so we use NSData to read through the sandboxed API, then write
+    /// to the app's temp directory which C++ can access.
+    private static func copyImageIntoSandbox(_ sourcePath: String) -> String {
+        let fm = FileManager.default
+        let sourceDir = (sourcePath as NSString).deletingLastPathComponent
+        let baseName = ((sourcePath as NSString).lastPathComponent as NSString).deletingPathExtension
+        let tempDir = NSTemporaryDirectory() + "cli_image"
+
+        // Clean and create temp directory
+        try? fm.removeItem(atPath: tempDir)
+        try? fm.createDirectory(atPath: tempDir, withIntermediateDirectories: true)
+
+        // Helper: read via NSData (sandboxed) and write to temp dir
+        func sandboxCopy(_ src: String, _ dst: String) {
+            if let data = NSData(contentsOfFile: src) {
+                data.write(toFile: dst, atomically: true)
+                #if DEBUG
+                fputs("[CLI] copied \((src as NSString).lastPathComponent) (\(data.length) bytes)\n", stderr)
+                #endif
+            }
+        }
+
+        // Copy image and companion files
+        for ext in ["image", "changes"] {
+            let src = (sourceDir as NSString).appendingPathComponent("\(baseName).\(ext)")
+            let dst = (tempDir as NSString).appendingPathComponent("\(baseName).\(ext)")
+            sandboxCopy(src, dst)
+        }
+
+        // Copy .sources file (may have different name)
+        if let contents = try? fm.contentsOfDirectory(atPath: sourceDir) {
+            for file in contents where file.hasSuffix(".sources") {
+                sandboxCopy(
+                    (sourceDir as NSString).appendingPathComponent(file),
+                    (tempDir as NSString).appendingPathComponent(file))
+            }
+        }
+
+        // Copy startup.st if present (user-provided test runner)
+        let startupSrc = (sourceDir as NSString).appendingPathComponent("startup.st")
+        if fm.fileExists(atPath: startupSrc) {
+            sandboxCopy(startupSrc, (tempDir as NSString).appendingPathComponent("startup.st"))
+        }
+
+        return (tempDir as NSString).appendingPathComponent("\(baseName).image")
+    }
 
     /// Check for `--image /path/to/Pharo.image` in process arguments.
     /// Usage: `open /path/to/iospharo.app --args --image /tmp/Pharo.image`
