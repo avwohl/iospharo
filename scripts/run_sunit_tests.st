@@ -447,8 +447,10 @@ runAllTests
      DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest
      "ObsoleteTest — testTraitObsolete modifies traits, hangs"
      ObsoleteTest
-     "DrTestsTestRunnerTest — test runner meta-test hangs (tries to run full test suite?)"
-     DrTestsTestRunnerTest
+     "DrTests*Test — test runner meta-tests hang/timeout in headless mode"
+     DrTestsTestRunnerTest DrTestsTestRunnerUITest DrTestsUITest
+     "EDDebuggingAPITest — debugging API test hangs in headless"
+     EDDebuggingAPITest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
      "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
      AthensCairoPDFSurfaceTest AthensCairoCanvasTest
