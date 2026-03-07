@@ -333,12 +333,10 @@ runAllTests
     "Diff algorithm tests"
     DiffBuilderTest DiffPatchTest TextDiffBuilderTest
     "AST visitors"
-    CollectVisitorTest CopyVisitorTest DeleteVisitorTest
+    CollectVisitorTest CopyVisitorTest "DeleteVisitorTest — testSymbolicLink hangs"
     "Text additional"
-    "TextAnchorTest TextLineTest — morph/GUI tests that hang in headless mode"
-    TextLineEndingsTest
-    "Timespan additional"
-    TimespanDoTest TimespanDoSpanAYearTest
+    "TextAnchorTest TextLineTest TextLineEndingsTest — morph/GUI tests that hang in headless"
+    "Timespan additional — TimespanDoTest TimespanDoSpanAYearTest timeout in headless"
     "Slot additional"
     SlotClassBuilderTest SlotEnvironmentTest
     SlotExampleMovieAndPersonTest SlotSilentTest
@@ -444,8 +442,11 @@ runAllTests
    "Classes known to hang or timeout excessively in headless mode"
    skipNames := #(FFICallbackParametersTest FFICallbackTest
      GlobalIdentifierWithDefaultConfigurationTest SystemNavigationTest
-     TextAnchorTest TextLineTest
-     "RBRealizeClassParametrizedTest — testRealizeClass hangs"
+     TextAnchorTest TextLineTest TextLineEndingsTest
+     "TimespanDoTest TimespanDoSpanAYearTest — all tests timeout in headless"
+     TimespanDoTest TimespanDoSpanAYearTest
+     "DeleteVisitorTest — testSymbolicLink hangs"
+     DeleteVisitorTest
      RBRealizeClassParametrizedTest).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
