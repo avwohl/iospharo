@@ -1855,6 +1855,7 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
 
     ObjectHeader* header = rcvr.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -2134,6 +2135,7 @@ PrimitiveResult Interpreter::primitiveInstVarAtPut(int argCount) {
     ObjectHeader* header = rcvr.asObjectPtr();
 
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -2253,6 +2255,7 @@ PrimitiveResult Interpreter::primitiveObjectAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -4466,6 +4469,7 @@ PrimitiveResult Interpreter::primitiveStringAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -4539,6 +4543,7 @@ PrimitiveResult Interpreter::primitiveReplaceFromTo(int argCount) {
     ObjectHeader* replHeader = replacement.asObjectPtr();
 
     if (rcvrHeader->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -7656,6 +7661,7 @@ PrimitiveResult Interpreter::primitiveSlotAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -8252,6 +8258,7 @@ PrimitiveResult Interpreter::primitiveIntegerAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -8318,6 +8325,7 @@ PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
 
     // Check immutability
     if (rcvrHeader->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -8459,6 +8467,7 @@ PrimitiveResult Interpreter::primitiveShortAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -9219,6 +9228,7 @@ PrimitiveResult Interpreter::primitiveFloatAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -9360,6 +9370,7 @@ PrimitiveResult Interpreter::primitiveDigitAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -9561,6 +9572,7 @@ PrimitiveResult Interpreter::primitiveContextAtPut(int argCount) {
 
     // Check immutability
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10077,6 +10089,7 @@ PrimitiveResult Interpreter::primitiveSetSender(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10104,6 +10117,7 @@ PrimitiveResult Interpreter::primitiveSetInstructionPointer(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10133,6 +10147,7 @@ PrimitiveResult Interpreter::primitiveSetStackPointer(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10182,6 +10197,7 @@ PrimitiveResult Interpreter::primitiveSetMethod(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10209,6 +10225,7 @@ PrimitiveResult Interpreter::primitiveSetReceiver(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -10236,6 +10253,7 @@ PrimitiveResult Interpreter::primitiveSetClosureOrNil(int argCount) {
 
     ObjectHeader* header = context.asObjectPtr();
     if (header->isImmutable()) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -13234,6 +13252,7 @@ PrimitiveResult Interpreter::primitiveArraySwap(int argCount) {
 
     // Check immutability
     if (memory_.isImmutable(array1) || memory_.isImmutable(array2)) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -13707,6 +13726,7 @@ PrimitiveResult Interpreter::primitiveObjectSlotAtPut(int argCount) {
     }
 
     if (memory_.isImmutable(receiver)) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -14879,6 +14899,7 @@ PrimitiveResult Interpreter::primitiveStringReplace(int argCount) {
     }
 
     if (memory_.isImmutable(destOop)) {
+        primFailCode_ = PrimErrNoModification_;
         return PrimitiveResult::Failure;
     }
 
@@ -22366,7 +22387,7 @@ PrimitiveResult Interpreter::primitiveStoreBoolean8IntoBytes(int argCount) {
     if (!indexOop.isSmallInteger()) return PrimitiveResult::Failure;
     int64_t index = indexOop.asSmallInteger();
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22403,7 +22424,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt8IntoBytes(int argCount) {
 
     if (value < 0 || value > 255) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22430,7 +22451,7 @@ PrimitiveResult Interpreter::primitiveStoreInt8IntoBytes(int argCount) {
 
     if (value < -128 || value > 127) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22457,7 +22478,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt16IntoBytes(int argCount) {
 
     if (value < 0 || value > 65535) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22485,7 +22506,7 @@ PrimitiveResult Interpreter::primitiveStoreInt16IntoBytes(int argCount) {
 
     if (value < -32768 || value > 32767) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22513,7 +22534,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt32IntoBytes(int argCount) {
 
     if (value < 0 || value > static_cast<int64_t>(UINT32_MAX)) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22541,7 +22562,7 @@ PrimitiveResult Interpreter::primitiveStoreInt32IntoBytes(int argCount) {
 
     if (value < INT32_MIN || value > INT32_MAX) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22570,7 +22591,7 @@ PrimitiveResult Interpreter::primitiveStoreUInt64IntoBytes(int argCount) {
     // For now, only support positive values that fit in SmallInteger
     if (value < 0) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22596,7 +22617,7 @@ PrimitiveResult Interpreter::primitiveStoreInt64IntoBytes(int argCount) {
     int64_t index = indexOop.asSmallInteger();
     int64_t value = valueOop.asSmallInteger();
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22627,7 +22648,7 @@ PrimitiveResult Interpreter::primitiveStorePointerIntoBytes(int argCount) {
         valueBytes = nullptr;
     }
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22660,7 +22681,7 @@ PrimitiveResult Interpreter::primitiveStoreChar8IntoBytes(int argCount) {
 
     if (charValue > 255) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22688,7 +22709,7 @@ PrimitiveResult Interpreter::primitiveStoreChar16IntoBytes(int argCount) {
 
     if (charValue > 65535) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22715,7 +22736,7 @@ PrimitiveResult Interpreter::primitiveStoreChar32IntoBytes(int argCount) {
     int64_t index = indexOop.asSmallInteger();
     uint32_t charValue = valueOop.asCharacter();
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22742,7 +22763,7 @@ PrimitiveResult Interpreter::primitiveStoreFloat32IntoBytes(int argCount) {
     double dvalue;
     if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;
@@ -22769,7 +22790,7 @@ PrimitiveResult Interpreter::primitiveStoreFloat64IntoBytes(int argCount) {
     double dvalue;
     if (!extractFloat(memory_, valueOop, dvalue)) return PrimitiveResult::Failure;
 
-    if (!isBytesWritable(rcvr)) return PrimitiveResult::Failure;
+    if (!isBytesWritable(rcvr)) { primFailCode_ = PrimErrNoModification_; return PrimitiveResult::Failure; }
     size_t byteSize;
     uint8_t* bytes = getBytesPointer(memory_, rcvr, byteSize);
     if (!bytes) return PrimitiveResult::Failure;

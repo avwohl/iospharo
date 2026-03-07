@@ -7630,8 +7630,8 @@ void Interpreter::initializePrimitives() {
     primitiveTable_[625] = &Interpreter::primitiveBytesChar8Write;     // char8AtOffset:put:
     primitiveTable_[626] = &Interpreter::primitiveBytesChar16Write;    // char16AtOffset:put:
     primitiveTable_[627] = &Interpreter::primitiveBytesChar32Write;    // char32AtOffset:put:
-    primitiveTable_[628] = &Interpreter::primitiveFloat32Write;        // float32AtOffset:put:
-    primitiveTable_[629] = &Interpreter::primitiveFloat64Write;        // float64AtOffset:put:
+    primitiveTable_[628] = &Interpreter::primitiveStoreFloat32IntoBytes; // float32AtOffset:put:
+    primitiveTable_[629] = &Interpreter::primitiveStoreFloat64IntoBytes; // float64AtOffset:put:
 
     // ExternalAddress read primitives (numbered 631-639)
     // These read from external memory pointed to by ExternalAddress.

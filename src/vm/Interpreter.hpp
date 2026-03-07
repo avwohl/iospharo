@@ -400,6 +400,8 @@ private:
     };
     static constexpr size_t MaxFrameDepth = 65536;
     static constexpr size_t StackOverflowLimit = 4096;  // Graceful overflow limit — catch infinite recursion fast
+    // Primitive error codes (matching PrimErrTable indices in the image)
+    static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrOSError = 21;  // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
