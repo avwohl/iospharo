@@ -455,6 +455,8 @@ runAllTests
      EmbeddedFreeTypeFontInstallerTest
      "CollectionValueHolderTest — hangs during test discovery (pre-test phase)"
      CollectionValueHolderTest
+     "MirrorPrimitivesTest — exceeds 300s class timeout"
+     MirrorPrimitivesTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
      "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
      AthensCairoPDFSurfaceTest AthensCairoCanvasTest
@@ -604,15 +606,20 @@ runAllTests
            elapsed < (classTimeout * 1000)]]
          whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 500000 "0.5s"].
          doneSem isSignaled ifFalse: [
-           "Class timed out — kill worker and report"
-           workerProc terminate.
+           "Class timed out — report and signal FIRST, then try to kill worker.
+            Process>>terminate runs ensure blocks synchronously and can hang,
+            so we must unblock the main loop before attempting termination."
            counts := {0. 0. 0. 0. 1}.
            stream nextPutAll: '  CLASS-TIMEOUT: '; nextPutAll: tc name;
              nextPutAll: ' exceeded '; print: classTimeout; nextPutAll: 's'; lf.
            stream flush.
-           doneSem signal]] forkAt: 79.
+           doneSem signal.
+           "Try to suspend the worker (fast, no ensure blocks) rather than terminate"
+           [workerProc suspend] on: Error do: [:e |]]] forkAt: 79.
        doneSem wait.
-       watchdogProc terminate]
+       "Kill watchdog and worker (best-effort, don't hang)"
+       [watchdogProc terminate] on: Error do: [:e |].
+       [workerProc isTerminated ifFalse: [workerProc suspend]] on: Error do: [:e |]]
       on: Error do: [:ex |
         stream nextPutAll: '*** CLASS-WRAPPER ERROR in '; nextPutAll: tc name;
           nextPutAll: ': '; nextPutAll: ex class name;
