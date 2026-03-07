@@ -761,8 +761,9 @@ int main(int argc, char* argv[]) {
                         std::cout << "[CLI] Idle for " << idleSecs << "s wall-clock, stopping." << std::endl;
                         break;
                     }
-                    // In interactive mode, stop after 10s idle
-                    if (imageArgs.empty() && idleSecs > 10) {
+                    // In interactive mode, stop after 120s idle (test runners use
+                    // startup.st with Delay-based watchdogs that need time to fire)
+                    if (imageArgs.empty() && idleSecs > 120) {
                         break;
                     }
                 }
