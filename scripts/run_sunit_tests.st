@@ -661,26 +661,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
    Weak/finalization tests MUST run below mourn priority (51), also at 40."
   testPriority := 40.
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
-  "Get test selectors with a 30s timeout (some classes hang in allTestSelectors)"
-  sels := nil.
-  [| selSem selDone |
-   selSem := Semaphore new.
-   selDone := false.
-   [sels := testClass allTestSelectors asArray. selDone := true. selSem signal] forkAt: 39.
-   "Spin-wait at main priority for up to 30s"
-   [| startMs elapsed |
-    startMs := Time millisecondClockValue.
-    [selDone not and: [
-      elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
-      elapsed < 30000]]
-    whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 100000 "100ms"].
-    selDone ifFalse: [
-      s nextPutAll: '  SELECTORS-TIMEOUT: '; nextPutAll: testClass name; lf. s flush]]]
-  on: Error do: [:ex |
-    s nextPutAll: '  SELECTORS-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; lf. s flush].
-  sels ifNil: [
-    s nextPutAll: 'Total: 0 P:0 F:0 E:0 S:0'; lf. s flush.
-    ^ {0. 0. 0. 0. 1}]. "count as 1 timeout"
+  sels := testClass allTestSelectors asArray.
   "Sort with comparison counter to detect infinite loops"
   [| count |
    count := 0.
