@@ -570,65 +570,30 @@ runAllTests
     "Wrap in TestExecutionEnvironment so tests that need processMonitor etc. work.
      DefaultExecutionEnvironment>>runTestsBy: activates TestExecutionEnvironment."
     CurrentExecutionEnvironment runTestsBy: [
-    batchClasses do: [:tc | | counts classTimeout |
-      "Class-level hard timeout: 300s covers delay check, selector discovery, sort, AND all tests.
-       Uses a forked watchdog at priority 79 (just below timingPriority) with spin-wait so it
-       works even if the Delay scheduler is dead."
-      classTimeout := 300. "seconds"
-      counts := nil.
-      [| doneSem workerDone workerProc watchdogProc |
-       doneSem := Semaphore new.
-       workerDone := false.
-       workerProc := [
-         [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout]
-           on: Error do: [:ex |
-             "TestTookTooMuchTime from TestExecutionEnvironment watchdog"
-             ex class name = 'TestTookTooMuchTime'
-               ifTrue: [
-                 counts := {0. 0. 0. 0. 1}.
-                 stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; lf.
-                 [| env wds |
-                  env := CurrentExecutionEnvironment value.
-                  env instVarNamed: 'testCompleted' put: true.
-                  wds := env instVarNamed: 'watchDogSemaphore'.
-                  wds ifNotNil: [wds signal]]
-                 on: Error do: [:e2 |]]
-               ifFalse: [
-                 stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
-                   nextPutAll: ': '; nextPutAll: ex class name;
-                   nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
-         workerDone := true.
-         doneSem signal] forkAt: 40.
-       "Watchdog: spin-wait using microsecond primitive (works without Delay scheduler).
-        Checks workerDone flag so it exits promptly when the worker finishes
-        (doneSem isSignaled is unreliable since the wait consumes the signal)."
-       watchdogProc := [
-         | startMs elapsed |
-         startMs := Time millisecondClockValue.
-         [workerDone not and: [
-           elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
-           elapsed < (classTimeout * 1000)]]
-         whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 500000 "0.5s"].
-         workerDone ifFalse: [
-           "Class timed out — report and signal semaphore to unblock main loop"
-           counts := {0. 0. 0. 0. 1}.
-           stream nextPutAll: '  CLASS-TIMEOUT: '; nextPutAll: tc name;
-             nextPutAll: ' exceeded '; print: classTimeout; nextPutAll: 's'; lf.
-           stream flush.
-           doneSem signal.
-           "Suspend worker (fast, no ensure blocks)"
-           [workerProc suspend] on: Error do: [:e |]]] forkAt: 79.
-       doneSem wait]
-      on: Error do: [:ex |
-        stream nextPutAll: '*** CLASS-WRAPPER ERROR in '; nextPutAll: tc name;
-          nextPutAll: ': '; nextPutAll: ex class name;
-          nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf].
-      counts ifNotNil: [
-        totalP := totalP + (counts at: 1).
-        totalF := totalF + (counts at: 2).
-        totalE := totalE + (counts at: 3).
-        totalS := totalS + (counts at: 4).
-        totalT := totalT + (counts at: 5)].
+    batchClasses do: [:tc | | counts |
+      [counts := self runTestClass: tc run: runNum on: stream detail: detail timeout: watchdogTimeout.
+      totalP := totalP + (counts at: 1).
+      totalF := totalF + (counts at: 2).
+      totalE := totalE + (counts at: 3).
+      totalS := totalS + (counts at: 4).
+      totalT := totalT + (counts at: 5)]
+        on: Error do: [:ex |
+          "TestTookTooMuchTime from TestExecutionEnvironment watchdog — count as timeout, don't abort class"
+          ex class name = 'TestTookTooMuchTime'
+            ifTrue: [
+              totalT := totalT + 1.
+              stream nextPutAll: '  TIMEOUT(env-class): '; nextPutAll: tc name; lf.
+              "Fix up env state so next test works"
+              [| env wds |
+               env := CurrentExecutionEnvironment value.
+               env instVarNamed: 'testCompleted' put: true.
+               wds := env instVarNamed: 'watchDogSemaphore'.
+               wds ifNotNil: [wds signal]]
+              on: Error do: [:e2 |]]
+            ifFalse: [
+              stream nextPutAll: '*** RUNNER ERROR in '; nextPutAll: tc name;
+                nextPutAll: ': '; nextPutAll: ex class name;
+                nextPutAll: ' - '; nextPutAll: (ex messageText copyFrom: 1 to: (ex messageText size min: 200)); lf]].
       stream flush. detail flush]].
     stream nextPutAll: '*** BATCH COMPLETED for '; print: batchClasses size;
       nextPutAll: ' classes ('; print: batchStart; nextPutAll: '-'; print: batchEnd; nextPutAll: ')'; lf.
@@ -670,34 +635,23 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
 
   s nextPutAll: '=== '; nextPutAll: testClass name; nextPutAll: ' ==='; lf.
   s flush.
-  "Check if Delay scheduler is alive before this class"
-  [| sem alive startMs |
+  "Check if Delay scheduler is alive before this class.
+   Use relinquishProcessorForMicroseconds: (real CPU yield) instead of Processor yield
+   to avoid infinite spin when no other processes at our priority."
+  [| sem alive startMs elapsed |
    alive := false.
    sem := Semaphore new.
    [(Delay forMilliseconds: 50) wait. sem signal] fork.
-   "Spin-wait using wall-clock time (not yield count).
-    Processor yield is a no-op when no other process is at our priority,
-    so we must check real elapsed time. 5 second timeout."
    startMs := Time millisecondClockValue.
-   [alive not and: [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < 5000]]
-     whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
+   [alive not and: [
+     elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
+     elapsed < 5000]]
+   whileTrue: [
+     sem isSignaled ifTrue: [alive := true].
+     alive ifFalse: [Smalltalk vm relinquishProcessorForMicroseconds: 50000 "50ms"]].
    alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
-     s nextPutAll: '  TIMEOUT:DELAY-DEAD-BEFORE: '; nextPutAll: testClass name; lf.
-     [| proc ctx |
-      proc := Delay scheduler schedulingProcess.
-      s nextPutAll: '  DELAY-DIAG: proc='.
-      proc ifNil: [s nextPutAll: 'nil']
-        ifNotNil: [
-          s nextPutAll: proc class name; nextPutAll: ' pri='; print: proc priority;
-            nextPutAll: ' suspended='.
-          ctx := proc suspendedContext.
-          ctx ifNil: [s nextPutAll: 'nil (ACTIVE or DEAD)']
-            ifNotNil: [s nextPutAll: ctx printString].
-          s nextPutAll: ' isTerminated='; nextPutAll: proc isTerminated printString;
-            nextPutAll: ' isSuspended='; nextPutAll: proc isSuspended printString].
-      s cr. s flush] on: Error do: [:e |
-        s nextPutAll: '  DELAY-DIAG-ERROR: '; nextPutAll: e printString; lf. s flush]]]
+     s nextPutAll: '  DELAY-DEAD: '; nextPutAll: testClass name; lf. s flush]]
   on: Error do: [:e |].
   "Tests must run below timingPriority (80). Watchdog uses spin-wait
    (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
@@ -707,7 +661,26 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
    Weak/finalization tests MUST run below mourn priority (51), also at 40."
   testPriority := 40.
   p := 0. f := 0. e := 0. sk := 0. t := 0. consecutiveTimeouts := 0.
-  sels := testClass allTestSelectors asArray.
+  "Get test selectors with a 30s timeout (some classes hang in allTestSelectors)"
+  sels := nil.
+  [| selSem selDone |
+   selSem := Semaphore new.
+   selDone := false.
+   [sels := testClass allTestSelectors asArray. selDone := true. selSem signal] forkAt: 39.
+   "Spin-wait at main priority for up to 30s"
+   [| startMs elapsed |
+    startMs := Time millisecondClockValue.
+    [selDone not and: [
+      elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
+      elapsed < 30000]]
+    whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 100000 "100ms"].
+    selDone ifFalse: [
+      s nextPutAll: '  SELECTORS-TIMEOUT: '; nextPutAll: testClass name; lf. s flush]]]
+  on: Error do: [:ex |
+    s nextPutAll: '  SELECTORS-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; lf. s flush].
+  sels ifNil: [
+    s nextPutAll: 'Total: 0 P:0 F:0 E:0 S:0'; lf. s flush.
+    ^ {0. 0. 0. 0. 1}]. "count as 1 timeout"
   "Sort with comparison counter to detect infinite loops"
   [| count |
    count := 0.
@@ -720,7 +693,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
    s nextPutAll: '  SORT-OK: '; print: count; nextPutAll: ' comparisons for '; print: sels size; nextPutAll: ' items'; lf. s flush]
   on: Error do: [:ex |
     s nextPutAll: '  SORT-ERROR: '; nextPutAll: ex class name; nextPutAll: ' - '; nextPutAll: ex messageText; lf. s flush.
-    sels := testClass allTestSelectors asArray "use unsorted on error"].
+    sels := (testClass allTestSelectors asArray) "use unsorted on error"].
 
   sels do: [:sel |
     "Minimal skips: 1GB allocations (OOM) and inherited ClassTestCase lint tests
