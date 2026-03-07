@@ -12089,9 +12089,8 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // 2. Optionally sleep for the requested time
     // 3. Allow process scheduler to run other processes
 
-    // Cap sleep time. In GUI mode (relinquishCallback_ set), cap at 10ms to avoid
-    // blocking the event loop. In headless/CLI mode, allow up to 1s for watchdog spin-waits.
-    const int64_t MAX_SLEEP_US = relinquishCallback_ ? 10000 : 1000000;
+    // Cap sleep time to avoid blocking event loop (10ms max)
+    const int64_t MAX_SLEEP_US = 10000;  // 10ms in microseconds
     int64_t sleepUs = std::min(microSeconds, MAX_SLEEP_US);
 
     // Pop microseconds argument FIRST, before any process switch can happen.
@@ -12105,11 +12104,11 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processPendingSignals();
 
     // Short sleep if requested
-    // NOTE: Do NOT set relinquishSlept_ here. A process calling relinquish is
-    // actively running (just yielding briefly). Setting relinquishSlept_ causes
-    // step() to report "idle", and the test_load_image idle timeout (30s) kills
-    // the VM when the backup watchdog uses relinquish in its spin-wait loop.
+    // Set relinquishSlept_ so step() reports idle to the caller.
+    // This enables the test_load_image 30s idle timeout to kill the VM when
+    // all processes are genuinely stuck (e.g., Delay scheduler dead).
     if (sleepUs > 0) {
+        relinquishSlept_ = true;
         if (relinquishCallback_) {
             // Use platform callback (e.g., CFRunLoopRunInMode on main thread)
             relinquishCallback_(static_cast<int>(sleepUs));

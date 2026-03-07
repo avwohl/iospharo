@@ -862,23 +862,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      error during unwinding that escapes the on: Error handler."
     ensure: [testDone := true. doneSem signal]] forkAt: priority.
 
-  "Single watchdog using relinquishProcessorForMicroseconds: — doesn't depend on
-   Delay scheduler, so it works even when Delay dies. Sleeps 1s between checks
-   at P79, giving the P40 test ~99% of CPU time."
-  watchdog := [| startMs elapsed |
-   startMs := Time millisecondClockValue.
-   [testDone not and: [
-     elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
-     elapsed < (seconds * 1000)]]
-       whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 1000000 "1s"].
-   testDone ifFalse: [
-     result := #timeout.
-     testDone := true.
-     s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
-       nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
-     s flush.
-     doneSem signal.
-     [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
+  "Watchdog: P79 Delay-based. When Delay scheduler dies, all processes block
+   and the test_load_image 30s idle timeout kills the VM. On restart, the
+   SessionManager auto-restart guard prevents re-running with corrupted state."
+  watchdog := [
+    (Delay forMilliseconds: seconds * 1000) wait.
+    testDone ifFalse: [
+      result := #timeout.
+      testDone := true.
+      s nextPutAll: '  TIMEOUT: '; nextPutAll: sel;
+        nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
+      s flush.
+      doneSem signal.
+      [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
   backupWatchdog := nil.
 
   "Wait for test completion or watchdog timeout.
