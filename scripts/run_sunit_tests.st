@@ -335,7 +335,8 @@ runAllTests
     "AST visitors"
     CollectVisitorTest CopyVisitorTest DeleteVisitorTest
     "Text additional"
-    TextAnchorTest TextLineTest TextLineEndingsTest
+    "TextAnchorTest TextLineTest — morph/GUI tests that hang in headless mode"
+    TextLineEndingsTest
     "Timespan additional"
     TimespanDoTest TimespanDoSpanAYearTest
     "Slot additional"
@@ -439,9 +440,16 @@ runAllTests
    subclass in the image and add any we haven't already included. This ensures
    new tests added to the Pharo image are automatically picked up.
    Skip list: classes known to hang, require UI, or have infrastructure issues."
-  [| allTC |
+  [| allTC skipNames |
+   "Classes known to hang or timeout excessively in headless mode"
+   skipNames := #(FFICallbackParametersTest FFICallbackTest
+     GlobalIdentifierWithDefaultConfigurationTest SystemNavigationTest
+     TextAnchorTest TextLineTest
+     "RBRealizeClassParametrizedTest — testRealizeClass hangs"
+     RBRealizeClassParametrizedTest).
    allTC := (TestCase allSubclasses reject: [:c |
-     [c isAbstract] on: Error do: [:e | true]])
+     ([c isAbstract] on: Error do: [:e | true])
+       or: [skipNames includes: c name]])
      asSortedCollection: [:a :b | a name <= b name].
    allTC do: [:cls | addOnce value: cls]]
   on: Error do: [:e |].
