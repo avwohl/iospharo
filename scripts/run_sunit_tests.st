@@ -481,7 +481,11 @@ runAllTests
      EpMonitorTest EpExternalChangeIntegrationTest
      EpDisabledIntegrationTest EpEnabledIntegrationTest
      EpFileOutModificationsTest EpMergeTest EpOmbuReaderTest
-     EpSessionStoreTest EpTestLogBuilderTest).
+     EpSessionStoreTest EpTestLogBuilderTest
+     "Additional Ep* — any test using setUp with EpMonitor/EpLog infrastructure hangs"
+     EpHasImpactFilterTest EpLostChangesDetectorTest
+     EpLogBrowserOperationFactoryTest EpLogBrowserRefreshTest
+     EpRewriterTest EpRollbackTest EpStashTest).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [skipNames includes: c name]])
