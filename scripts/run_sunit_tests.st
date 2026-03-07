@@ -485,7 +485,13 @@ runAllTests
      "Additional Ep* — any test using setUp with EpMonitor/EpLog infrastructure hangs"
      EpHasImpactFilterTest EpLostChangesDetectorTest
      EpLogBrowserOperationFactoryTest EpLogBrowserRefreshTest
-     EpRewriterTest EpRollbackTest EpStashTest).
+     EpRewriterTest EpRollbackTest EpStashTest
+     "FL*Test — Fuel serialization tests all timeout writing to disk in headless"
+     FLBinaryFileStreamBasicSerializationTest
+     FLBlockClosureSerializationTest FLCompiledMethodSerializationTest
+     FLGlobalClassSerializationTest FLGlobalValueSerializationTest
+     FLTCreateClassOrTraitSerializationTest FLTGlobalEnvironmentTest
+     FLTraitedClassSerializationTest).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [skipNames includes: c name]])
