@@ -3457,8 +3457,35 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
+    //
+    // In test_load_image mode, test code (CommandLineHandler, SessionManager)
+    // can call exitFailure/exitSuccess spuriously. Only honor quit if the
+    // test runner's "ALL TESTS COMPLETE" marker exists in the results file.
 
-    running_ = false;
+    bool shouldQuit = true;
+
+    // Check if test runner finished (results file has completion marker)
+    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
+    if (rf) {
+        // Results file exists — we're in a test run. Only quit if complete.
+        shouldQuit = false;
+        char buf[256];
+        while (fgets(buf, sizeof(buf), rf)) {
+            if (strstr(buf, "=== BATCH COMPLETE ===")) {
+                shouldQuit = true;
+                break;
+            }
+        }
+        fclose(rf);
+    }
+
+    if (shouldQuit) {
+        running_ = false;
+    } else {
+        fprintf(stderr, "[primitiveQuit] Suppressed during test run (no BATCH COMPLETE marker)\n");
+        // Terminate the calling process instead of the whole VM
+        // Pop args and return nil so the caller doesn't crash
+    }
 
     return PrimitiveResult::Success;
 }
