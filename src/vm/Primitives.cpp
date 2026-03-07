@@ -7832,6 +7832,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     memory_.allObjectsDo([&](Oop obj) {
         if (obj.isObject()) {
             ObjectHeader* header = obj.asObjectPtr();
+            if (header->isForwarded()) return;  // Skip forwarded (become'd) objects
             if (header->classIndex() == targetClassIndex) {
                 instances.push_back(obj);
             }
@@ -7850,6 +7851,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
         memory_.allObjectsDo([&](Oop obj) {
             if (obj.isObject()) {
                 ObjectHeader* header = obj.asObjectPtr();
+                if (header->isForwarded()) return;  // Skip forwarded objects
                 if (header->classIndex() == targetClassIndex) {
                     instances.push_back(obj);
                 }
@@ -7887,6 +7889,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     memory_.allObjectsDo([&](Oop obj) {
         if (obj.isObject()) {
             ObjectHeader* hdr = obj.asObjectPtr();
+            if (hdr->isForwarded()) return;  // Skip forwarded (become'd) objects
             uint32_t cls = hdr->classIndex();
             if (cls != 0) {
                 // Also verify the class table has a valid entry
