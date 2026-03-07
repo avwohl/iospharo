@@ -443,10 +443,12 @@ runAllTests
      RBRealizeClassParametrizedTest
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
-     "DirectoryEntryTest DiskFileAttributesTest — filesystem tests all timeout in headless"
-     DirectoryEntryTest DiskFileAttributesTest
+     "DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest — filesystem tests all timeout in headless"
+     DirectoryEntryTest DiskFileAttributesTest DiskFileSystemTest
      "ObsoleteTest — testTraitObsolete modifies traits, hangs"
      ObsoleteTest
+     "DrTestsTestRunnerTest — test runner meta-test hangs (tries to run full test suite?)"
+     DrTestsTestRunnerTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
      "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
      AthensCairoPDFSurfaceTest AthensCairoCanvasTest
@@ -745,9 +747,9 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
           d nextPutAll: sel; nextPut: $	.
           d nextPutAll: 'TIMEOUT'; lf].
         d flush.
-        "Bail out of class after 5 consecutive timeouts to avoid wasting time"
-        consecutiveTimeouts >= 5 ifTrue: [
-          s nextPutAll: '  BAIL: 5 consecutive timeouts, skipping rest of class'; lf.
+        "Bail out of class after 5 consecutive timeouts OR 8 total to avoid wasting time"
+        (consecutiveTimeouts >= 5 or: [t >= 8]) ifTrue: [
+          s nextPutAll: '  BAIL: '; print: consecutiveTimeouts; nextPutAll: ' consecutive / '; print: t; nextPutAll: ' total timeouts, skipping rest of class'; lf.
           s nextPutAll: 'Total: '; print: sels size;
             nextPutAll: ' P:'; print: p; nextPutAll: ' F:'; print: f;
             nextPutAll: ' E:'; print: e; nextPutAll: ' S:'; print: sk;
