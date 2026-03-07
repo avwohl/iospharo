@@ -12104,8 +12104,11 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     processPendingSignals();
 
     // Short sleep if requested
+    // NOTE: Do NOT set relinquishSlept_ here. A process calling relinquish is
+    // actively running (just yielding briefly). Setting relinquishSlept_ causes
+    // step() to report "idle", and the test_load_image idle timeout (30s) kills
+    // the VM when the backup watchdog uses relinquish in its spin-wait loop.
     if (sleepUs > 0) {
-        relinquishSlept_ = true;  // Signal to test harness that VM is idle
         if (relinquishCallback_) {
             // Use platform callback (e.g., CFRunLoopRunInMode on main thread)
             relinquishCallback_(static_cast<int>(sleepUs));
