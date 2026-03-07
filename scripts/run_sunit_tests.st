@@ -766,14 +766,17 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
           ^ {p. f. e. sk. t}]]]]].
 
   "Check if Delay scheduler is alive after this class"
-  [| sem alive startMs |
+  [| sem alive startMs elapsed |
    alive := false.
    sem := Semaphore new.
    [(Delay forMilliseconds: 50) wait. sem signal] fork.
-   "Spin-wait using wall-clock time — same fix as BEFORE check"
    startMs := Time millisecondClockValue.
-   [alive not and: [((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < 5000]]
-     whileTrue: [sem isSignaled ifTrue: [alive := true]. Processor yield].
+   [alive not and: [
+     elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
+     elapsed < 5000]]
+   whileTrue: [
+     sem isSignaled ifTrue: [alive := true].
+     alive ifFalse: [Smalltalk vm relinquishProcessorForMicroseconds: 50000 "50ms"]].
    alive ifFalse: [sem isSignaled ifTrue: [alive := true]].
    alive ifFalse: [
      s nextPutAll: 'DELAY-DEAD-AFTER: '; nextPutAll: testClass name; lf.
@@ -865,16 +868,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
       doneSem signal.
       "Terminate after signaling — best effort cleanup"
       [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
-  "Backup: spin-wait at LOW priority (P10) using Processor yield.
+  "Backup: spin-wait at P10 using relinquishProcessorForMicroseconds: (1s sleep).
    2x timeout gives primary watchdog time to fire first.
-   Uses testDone flag (not result isNil) — result=nil means 'pass', not 'still running'.
-   MUST be below userBackgroundPriority (30) so it never starves test-forked
-   processes (MonitorTest forks at P30, SemaphoreTest at activePriority-1=P39)."
-  backupWatchdog := [| startMs |
+   Uses relinquish instead of Processor yield because yield at P10 causes the
+   VM to enter idle mode (0% CPU) when all higher-priority processes are blocked,
+   preventing the backup watchdog from ever firing.
+   relinquish sleeps the entire VM for 1s then wakes it — backup watchdog at P10
+   runs when no P10+ processes are ready (test blocked, primary watchdog blocked)."
+  backupWatchdog := [| startMs elapsed |
    startMs := Time millisecondClockValue.
    [testDone not and: [
-     ((Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF) < (seconds * 2000)]]
-       whileTrue: [Processor yield].
+     elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
+     elapsed < (seconds * 2000)]]
+       whileTrue: [Smalltalk vm relinquishProcessorForMicroseconds: 1000000 "1s"].
    testDone ifFalse: [
      result := #timeout.
      testDone := true.
