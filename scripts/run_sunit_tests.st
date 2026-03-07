@@ -474,7 +474,10 @@ runAllTests
      EpProtocolAdditionTest EpProtocolRemovalTest
      EpBehaviorNameChangeTest EpCategoryChangeTest
      EpEventTest EpHasImpactVisitorTest EpLatestCodeChangeTest
-     EpRenamePackageTest EpRevertTest EpCodeChangeIntegrationTest).
+     EpRenamePackageTest EpRevertTest EpCodeChangeIntegrationTest
+     "Ep*Test — additional Epicea tests that timeout on file watcher operations"
+     EpAnnouncementsTest EpApplyPreviewerTest EpApplyTest
+     EpMonitorTest EpExternalChangeIntegrationTest).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [skipNames includes: c name]])
