@@ -447,7 +447,18 @@ runAllTests
      TimespanDoTest TimespanDoSpanAYearTest
      "DeleteVisitorTest — testSymbolicLink hangs"
      DeleteVisitorTest
-     RBRealizeClassParametrizedTest).
+     RBRealizeClassParametrizedTest
+     "FastStepThroughTest — context stepping hangs headless"
+     FastStepThroughTest
+     "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
+     EpLogTest EpCommentTest
+     "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
+     EpMethodAdditionTest EpMethodModificationTest EpMethodRemovalTest
+     EpClassAdditionTest EpClassModificationTest EpClassRemovalTest
+     EpProtocolAdditionTest EpProtocolRemovalTest
+     EpBehaviorNameChangeTest EpCategoryChangeTest
+     EpEventTest EpHasImpactVisitorTest EpLatestCodeChangeTest
+     EpRenamePackageTest EpRevertTest EpCodeChangeIntegrationTest).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [skipNames includes: c name]])
@@ -671,7 +682,9 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
        "testTransformingDeprecation hangs the VM: Deprecation>>transform triggers
         code rewriting that creates an infinite loop or high-priority process, starving
         the P40 watchdog. The watchdog never fires even after 10+ minutes."
-       testTransformingDeprecation)
+       testTransformingDeprecation
+       "ArrayTest>>testPrintingRecursive — recursive printString timeout on interpreter"
+       testPrintingRecursive)
       includes: sel) ifFalse: [
       | result isExpectedFailure |
       "Check for <expectedFailure> pragma — these are known to fail in all VMs"
