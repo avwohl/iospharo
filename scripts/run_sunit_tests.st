@@ -454,6 +454,8 @@ runAllTests
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
+     "AthensCairoPDFSurfaceTest — hangs on Cairo PDF FFI call"
+     AthensCairoPDFSurfaceTest
      EpMethodAdditionTest EpMethodModificationTest EpMethodRemovalTest
      EpClassAdditionTest EpClassModificationTest EpClassRemovalTest
      EpProtocolAdditionTest EpProtocolRemovalTest
