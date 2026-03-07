@@ -455,8 +455,8 @@ runAllTests
      "EpLogTest — all tests timeout (file system watchers), EpCommentTest hangs in tearDown"
      EpLogTest EpCommentTest
      "EpMethodAdditionTest etc — Epicea tests that use EpTestLogBuilder with DeleteVisitor cleanup"
-     "AthensCairoPDFSurfaceTest — hangs on Cairo PDF FFI call"
-     AthensCairoPDFSurfaceTest
+     "Athens Cairo tests — FFI calls to Cairo library can hang or corrupt state"
+     AthensCairoPDFSurfaceTest AthensCairoCanvasTest
      "TraitPureBehaviorTest — testRemovingMethods hangs non-deterministically
       (trait composition changes can break Delay scheduler, killing watchdog)"
      TraitPureBehaviorTest
