@@ -1,3 +1,42 @@
+# What's New in Build 83
+
+Build 83 — 2026-03-08
+
+## Bug Fix: iPad context menu items do nothing after long-press
+
+After long-pressing to open a Pharo context menu on iPad, tapping any menu
+item (Browse, Debug, etc.) had no effect. Root cause: the `suppressNextTouchEnd`
+flag was set when the long-press began but never cleared. Because
+`cancelsTouchesInView=true` causes the touch to be *cancelled* (consuming
+`suppressNextTouchCancel`), `touchesEnded` never fires for the original touch —
+leaving the flag stuck. The next tap's `touchesEnded` was then suppressed,
+so Pharo never received the button-up needed to activate the menu item.
+
+Fix: clear both suppress flags in `handleLongPress` `.ended`/`.cancelled`.
+
+## Bug Fix: Spotter (Shift+Enter) unreliable on iPad hardware keyboard
+
+Pressing Shift+Enter on an iPad hardware keyboard did not reliably open the
+Spotter. `shouldHandleKeyInPresses` only routed Cmd/Ctrl combos and
+arrow/function keys through `pressesBegan`. Shift+Enter failed both checks,
+so the keystroke was dropped. `UIKeyInput.insertText("\n")` fired instead,
+but UIKeyInput strips modifier flags — Pharo saw a plain Enter, not
+Shift+Enter.
+
+Fix: also route Shift/Option + non-printable keys (Enter, Tab, Escape,
+Backspace, Delete) through `pressesBegan`, with a `handledInPressesBegan`
+flag to suppress the duplicate `insertText` from UIKeyInput.
+
+## Bug Fix: iPad trackpad/mouse right-click not detected
+
+`buttonMaskToPharo` only checked `event.buttonMask.secondary` inside
+`#if targetEnvironment(macCatalyst)`. On iPad with a Magic Keyboard trackpad
+or mouse, right-clicks were always treated as left-clicks.
+
+Fix: check `buttonMask` on all platforms (available since iOS 13.4).
+
+---
+
 # What's New in Build 82
 
 Build 82 — 2026-03-08
