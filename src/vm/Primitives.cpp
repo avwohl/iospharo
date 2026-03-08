@@ -15897,10 +15897,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (destY + height > destHeight) height = destHeight - destY;
 
     if (width <= 0 || height <= 0) {
-        // For counting rule 32, return 0 when nothing to count
+        // For counting rules 32/33, return 0 / dest bitmap when nothing to process
         if (combinationRule == 32) {
             primitiveSuccess(Oop::fromSmallInteger(0));
             return PrimitiveResult::Success;
+        }
+        if (combinationRule == 33) {
+            BITBLT_SUCCESS;
         }
         BITBLT_SUCCESS;
     }
@@ -15965,6 +15968,80 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Rule 33: tallyMap — build pixel value histogram in the colorMap
+    // Read DEST pixels, use pixel value as index into colorMap, increment.
+    // Source is specified == dest (for validation) but we read from dest.
+    // The colorMap serves as the tally/histogram table.
+    if (combinationRule == 33) {
+        // Read dest pixels
+        Oop dBits = memory_.fetchPointer(FormBits, destForm);
+        if (!dBits.isObject() || dBits.isNil()) return PrimitiveResult::Failure;
+        ObjectHeader* dHdr = dBits.asObjectPtr();
+        size_t dBitsSize = dHdr->byteSize();
+
+        // ColorMap is the tally table — must exist
+        Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
+        if (colorMap.isNil() || !colorMap.isObject()) return PrimitiveResult::Failure;
+        ObjectHeader* cmHdr = colorMap.asObjectPtr();
+        uint32_t* cmWords = reinterpret_cast<uint32_t*>(cmHdr->bytes());
+        size_t cmSize = cmHdr->byteSize() / 4;
+
+        intptr_t absDepth = destDepth < 0 ? -destDepth : destDepth;
+
+        auto tallyPixel = [&](uint32_t pixelValue) {
+            if (pixelValue < cmSize) cmWords[pixelValue]++;
+        };
+
+        if (absDepth == 32) {
+            uint32_t* pixels = reinterpret_cast<uint32_t*>(dHdr->bytes());
+            intptr_t pitch = destWidth;
+            for (intptr_t y = 0; y < height; y++) {
+                intptr_t dy = destY + y;
+                if (dy < 0 || static_cast<size_t>((dy + 1) * pitch) * 4 > dBitsSize) continue;
+                uint32_t* row = pixels + dy * pitch + destX;
+                for (intptr_t x = 0; x < width; x++) tallyPixel(row[x]);
+            }
+        } else if (absDepth == 8) {
+            intptr_t bytesPerRow = ((destWidth + 3) / 4) * 4;
+            uint8_t* bytes8 = dHdr->bytes();
+            for (intptr_t y = 0; y < height; y++) {
+                intptr_t dy = destY + y;
+                if (dy < 0 || static_cast<size_t>((dy + 1) * bytesPerRow) > dBitsSize) continue;
+                uint8_t* row = bytes8 + dy * bytesPerRow + destX;
+                for (intptr_t x = 0; x < width; x++) tallyPixel(row[x]);
+            }
+        } else if (absDepth == 16) {
+            intptr_t wordsPerRow = (destWidth + 1) / 2;
+            uint16_t* pixels16 = reinterpret_cast<uint16_t*>(dHdr->bytes());
+            for (intptr_t y = 0; y < height; y++) {
+                intptr_t dy = destY + y;
+                if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow) * 2 > dBitsSize) continue;
+                uint16_t* row = pixels16 + dy * wordsPerRow + destX;
+                for (intptr_t x = 0; x < width; x++) tallyPixel(row[x]);
+            }
+        } else if (absDepth == 1 || absDepth == 2 || absDepth == 4) {
+            intptr_t ppw = 32 / absDepth;
+            intptr_t wordsPerRow = (destWidth + ppw - 1) / ppw;
+            uint32_t* words = reinterpret_cast<uint32_t*>(dHdr->bytes());
+            uint32_t pixMask = (1u << absDepth) - 1;
+            for (intptr_t y = 0; y < height; y++) {
+                intptr_t dy = destY + y;
+                if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow) * 4 > dBitsSize) continue;
+                uint32_t* row = words + dy * wordsPerRow;
+                for (intptr_t x = 0; x < width; x++) {
+                    intptr_t dx = destX + x;
+                    intptr_t bitPos = (ppw - 1 - (dx % ppw)) * absDepth;
+                    tallyPixel((row[dx / ppw] >> bitPos) & pixMask);
+                }
+            }
+        } else {
+            return PrimitiveResult::Failure;
+        }
+
+        // Rule 33 returns the receiver (BitBlt object), not the tally
+        BITBLT_SUCCESS;
+    }
+
     // Halftone form extraction (used as fill color for no-source ops)
     Oop halftoneForm = memory_.fetchPointer(BBHalftoneForm, bitBlt);
     uint32_t halftoneWord = 0xFFFFFFFF;
@@ -16000,7 +16077,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // No-source operations (fill)
     if (sourceForm.isNil()) {
-        if (destDepth == 1) {
+        intptr_t absDestDepth = destDepth < 0 ? -destDepth : destDepth;
+        if (absDestDepth == 1) {
             // Fill 1-bit destination: halftone/fill word applied per bit
             intptr_t destWordsPerRow = (destWidth + 31) / 32;
             uint32_t* destWords = destPixels;
@@ -16030,11 +16108,49 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             showDisplayBits(destForm, destX, destY, destX + width, destY + height);
             BITBLT_SUCCESS;
         }
-        if (destDepth != 32) {
-#if DEBUG
-            fprintf(stderr, "[FILL-FAIL] unsupported destDepth=%d rule=%d dest=(%d,%d %dx%d)\n",
-                    (int)destDepth, (int)combinationRule, (int)destX, (int)destY, (int)width, (int)height);
-#endif
+        if (absDestDepth == 2 || absDestDepth == 4 || absDestDepth == 8 || absDestDepth == 16) {
+            // Fill packed-pixel destination (2/4/8/16-bit depths)
+            intptr_t ppw = 32 / absDestDepth; // pixels per word
+            intptr_t destWordsPerRow = (destWidth + ppw - 1) / ppw;
+            uint32_t* destWords = destPixels;
+            size_t requiredBytes = static_cast<size_t>((destY + height) * destWordsPerRow) * 4;
+            if (requiredBytes > destBitsSize) return PrimitiveResult::Failure;
+            uint32_t pixelMask = (1u << absDestDepth) - 1;
+            // Replicate fill value across all pixel slots in a word
+            uint32_t fillVal = halftoneWord & pixelMask;
+            uint32_t fillWord = 0;
+            for (intptr_t i = 0; i < ppw; i++)
+                fillWord |= fillVal << (i * absDestDepth);
+            for (intptr_t y = 0; y < height; y++) {
+                uint32_t fill = halftoneWords
+                    ? halftoneWords[(destY + y) % halftoneHeight]
+                    : fillWord;
+                uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
+                for (intptr_t x = 0; x < width; x++) {
+                    intptr_t dx = destX + x;
+                    intptr_t wordIdx = dx / ppw;
+                    intptr_t bitPos = (ppw - 1 - (dx % ppw)) * absDestDepth;
+                    uint32_t mask = pixelMask << bitPos;
+                    uint32_t fillPixel = (fill >> bitPos) & pixelMask;
+                    uint32_t fillShifted = fillPixel << bitPos;
+                    switch (combinationRule) {
+                        case 3: case 34:
+                            destRow[wordIdx] = (destRow[wordIdx] & ~mask) | fillShifted; break;
+                        case 0:
+                            destRow[wordIdx] &= ~mask | (destRow[wordIdx] & mask & fillShifted); break;
+                        case 7: case 25:
+                            destRow[wordIdx] |= fillShifted; break;
+                        case 6:
+                            destRow[wordIdx] ^= fillShifted; break;
+                        default:
+                            destRow[wordIdx] = (destRow[wordIdx] & ~mask) | fillShifted; break;
+                    }
+                }
+            }
+            showDisplayBits(destForm, destX, destY, destX + width, destY + height);
+            BITBLT_SUCCESS;
+        }
+        if (absDestDepth != 32) {
             return PrimitiveResult::Failure;
         }
         size_t requiredBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
@@ -25268,6 +25384,13 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
     // Squeak epoch offset: seconds from Jan 1 1901 to Jan 1 1970
     static const int64_t squeakEpochDelta = (int64_t)(52*365 + 17*366) * 24 * 60 * 60;
 
+    // Local timezone offset — Pharo internal time is local, not UTC
+    auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
+        struct tm local;
+        localtime_r(&unixTime, &local);
+        return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+    };
+
     switch (attrNum) {
         case 1: result = Oop::nil(); break; // fileName - nil for non-symlinks
         case 2: result = int64ToOop(memory_, static_cast<int64_t>(st.st_mode)); break;
@@ -25277,10 +25400,14 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         case 6: result = int64ToOop(memory_, static_cast<int64_t>(st.st_uid)); break;
         case 7: result = int64ToOop(memory_, static_cast<int64_t>(st.st_gid)); break;
         case 8: result = int64ToOop(memory_, static_cast<int64_t>(st.st_size)); break;
-        case 9: result = int64ToOop(memory_, static_cast<int64_t>(st.st_atime) + squeakEpochDelta); break;
-        case 10: result = int64ToOop(memory_, static_cast<int64_t>(st.st_mtime) + squeakEpochDelta); break;
-        case 11: result = int64ToOop(memory_, static_cast<int64_t>(st.st_ctime) + squeakEpochDelta); break;
-        case 12: result = Oop::nil(); break; // creationDate - not available on Unix
+        case 9: result = int64ToOop(memory_, toSqueakLocal(st.st_atime)); break;
+        case 10: result = int64ToOop(memory_, toSqueakLocal(st.st_mtime)); break;
+        case 11: result = int64ToOop(memory_, toSqueakLocal(st.st_ctime)); break;
+#ifdef __APPLE__
+        case 12: result = int64ToOop(memory_, toSqueakLocal(st.st_birthtimespec.tv_sec)); break;
+#else
+        case 12: result = Oop::nil(); break; // creationDate - not available on Linux
+#endif
         default: return PrimitiveResult::Failure;
     }
     if (result.isNil() && attrNum != 1 && attrNum != 12) return PrimitiveResult::Failure;
@@ -25601,6 +25728,11 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
 
     // Squeak epoch offset: seconds from Jan 1 1901 to Jan 1 1970
     static const int64_t squeakEpochDelta = (int64_t)(52*365 + 17*366) * 24 * 60 * 60;
+    auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
+        struct tm local;
+        localtime_r(&unixTime, &local);
+        return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+    };
 
     // Build stat array (12 elements) if mask & 1
     Oop statArray = memory_.nil();
@@ -25635,18 +25767,18 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         // Slot 7: size
         { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_size));
           statArray = stackTop(); memory_.storePointer(7, statArray, v); }
-        // Slot 8: atime (Squeak epoch)
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_atime) + squeakEpochDelta);
+        // Slot 8: atime (Squeak local time)
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_atime));
           statArray = stackTop(); memory_.storePointer(8, statArray, v); }
-        // Slot 9: mtime (Squeak epoch)
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_mtime) + squeakEpochDelta);
+        // Slot 9: mtime (Squeak local time)
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_mtime));
           statArray = stackTop(); memory_.storePointer(9, statArray, v); }
-        // Slot 10: ctime (Squeak epoch)
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_ctime) + squeakEpochDelta);
+        // Slot 10: ctime (Squeak local time)
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_ctime));
           statArray = stackTop(); memory_.storePointer(10, statArray, v); }
         // Slot 11: creation time (macOS has birthtime)
 #ifdef __APPLE__
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_birthtimespec.tv_sec) + squeakEpochDelta);
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_birthtimespec.tv_sec));
           statArray = stackTop(); memory_.storePointer(11, statArray, v); }
 #else
         statArray = stackTop();
