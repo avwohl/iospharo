@@ -5,6 +5,20 @@
   copy-pasted into email. Use indented plain-text columns or bullet lists instead.
   A fixed-width font can be assumed.
 
+## MANDATORY: Save Progress Every Hour
+
+**Update docs/*.md files and memory files at least once per hour during long-running tasks.**
+
+Long sessions (12+ hours) have crashed without leaving any notes, losing all progress.
+This is non-negotiable:
+
+1. **Every ~60 minutes**, update relevant docs/ files with current status, findings, and results
+2. **After completing any significant milestone** (test run finishes, bug fixed, etc.), immediately write results to docs/ and/or memory
+3. **Before starting a long operation** (full test suite, large build), save what you know so far
+4. **Commit work-in-progress** to git at least every 15 minutes (per existing rule below)
+5. Use `docs/non-passing-tests.md`, `docs/changes.md`, and memory files as appropriate
+6. A crash that loses 12 hours of work because nothing was written down is unacceptable
+
 ## GUI Testing: MANDATORY Timeouts
 
 **Every GUI test MUST have a hard timeout that actually kills the process.**
