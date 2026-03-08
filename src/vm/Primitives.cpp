@@ -15792,7 +15792,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     intptr_t clipHeight = bitBltField(memory_, bitBlt, BBClipHeight);
 
     // Validate destination form
-    if (destForm.isNil() || !destForm.isObject()) { return PrimitiveResult::Failure; }
+    if (destForm.isNil() || !destForm.isObject()) {
+        if (combinationRule == 33) fprintf(stderr, "[BITBLT-R33] destForm invalid\n");
+        return PrimitiveResult::Failure;
+    }
 
     Oop destBits = memory_.fetchPointer(FormBits, destForm);
     intptr_t destWidth = bitBltField(memory_, destForm, FormWidth);
@@ -15878,9 +15881,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
         destBitsSize = destBitsHdr->byteSize();
     } else {
-        fprintf(stderr, "[BITBLT-DIAG] destBits invalid: isNil=%d isObj=%d isSmi=%d raw=0x%llx\n",
+        fprintf(stderr, "[BITBLT-DIAG] destBits invalid: isNil=%d isObj=%d isSmi=%d raw=0x%llx rule=%ld depth=%ld\n",
                 destBits.isNil(), destBits.isObject(), destBits.isSmallInteger(),
-                (unsigned long long)destBits.rawBits());
+                (unsigned long long)destBits.rawBits(), (long)combinationRule, (long)destDepth);
         return PrimitiveResult::Failure;
     }
 
@@ -15975,13 +15978,21 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     if (combinationRule == 33) {
         // Read dest pixels
         Oop dBits = memory_.fetchPointer(FormBits, destForm);
-        if (!dBits.isObject() || dBits.isNil()) return PrimitiveResult::Failure;
+        if (!dBits.isObject() || dBits.isNil()) {
+            fprintf(stderr, "[BITBLT-R33] destBits invalid: isObj=%d isNil=%d\n",
+                    dBits.isObject(), dBits.isNil());
+            return PrimitiveResult::Failure;
+        }
         ObjectHeader* dHdr = dBits.asObjectPtr();
         size_t dBitsSize = dHdr->byteSize();
 
         // ColorMap is the tally table — must exist
         Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
-        if (colorMap.isNil() || !colorMap.isObject()) return PrimitiveResult::Failure;
+        if (colorMap.isNil() || !colorMap.isObject()) {
+            fprintf(stderr, "[BITBLT-R33] colorMap invalid: isNil=%d isObj=%d depth=%ld w=%ld h=%ld\n",
+                    colorMap.isNil(), colorMap.isObject(), (long)destDepth, (long)destWidth, (long)destHeight);
+            return PrimitiveResult::Failure;
+        }
         ObjectHeader* cmHdr = colorMap.asObjectPtr();
         uint32_t* cmWords = reinterpret_cast<uint32_t*>(cmHdr->bytes());
         size_t cmSize = cmHdr->byteSize() / 4;
@@ -16406,17 +16417,37 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 masksOop.isObject() && !masksOop.isNil()) {
                 ObjectHeader* shiftsHdr = shiftsOop.asObjectPtr();
                 ObjectHeader* masksHdr = masksOop.asObjectPtr();
-                // IntegerArray (signed 32-bit words) for shifts, WordArray for masks
-                size_t nShifts = shiftsHdr->byteSize() / 4;
-                size_t nMasks = masksHdr->byteSize() / 4;
+
+                // Extract shift/mask values — handle both word arrays and pointer arrays.
+                // In Pharo, ColorMap shifts: #(8 -8 0 0) stores an Array of SmallIntegers
+                // (pointer object), not an IntegerArray (word object).
+                auto readIntFrom = [&](Oop arrOop, ObjectHeader* arrHdr, size_t index) -> int32_t {
+                    if (arrHdr->isPointersObject()) {
+                        // Pointer array (Array of SmallIntegers)
+                        if (index < arrHdr->slotCount()) {
+                            Oop slot = memory_.fetchPointer(index, arrOop);
+                            if (slot.isSmallInteger()) return static_cast<int32_t>(slot.asSmallInteger());
+                        }
+                        return 0;
+                    } else {
+                        // Word/byte array (IntegerArray, WordArray)
+                        size_t byteOff = index * 4;
+                        if (byteOff + 4 <= arrHdr->byteSize()) {
+                            int32_t val;
+                            std::memcpy(&val, arrHdr->bytes() + byteOff, 4);
+                            return val;
+                        }
+                        return 0;
+                    }
+                };
+
+                size_t nShifts = shiftsHdr->isPointersObject() ? shiftsHdr->slotCount() : shiftsHdr->byteSize() / 4;
+                size_t nMasks = masksHdr->isPointersObject() ? masksHdr->slotCount() : masksHdr->byteSize() / 4;
+
                 if (nShifts >= 4 && nMasks >= 4) {
                     for (int i = 0; i < 4; i++) {
-                        int32_t s;
-                        std::memcpy(&s, shiftsHdr->bytes() + i * 4, 4);
-                        cmShifts[i] = s;
-                        uint32_t m;
-                        std::memcpy(&m, masksHdr->bytes() + i * 4, 4);
-                        cmMasks[i] = m;
+                        cmShifts[i] = readIntFrom(shiftsOop, shiftsHdr, i);
+                        cmMasks[i] = static_cast<uint32_t>(readIntFrom(masksOop, masksHdr, i));
                     }
                     hasShiftMask = true;
                 }
@@ -16589,12 +16620,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         BITBLT_SUCCESS;
     }
 
-    // Depth-8 destinations (cursor forms, grayscale operations)
+    // Depth-8 destinations with 32-bit source
     if (destDepth == 8 && srcDepth == 32) {
         intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
         uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
         intptr_t srcPitch = srcWidth;
-        uint32_t* srcPixels = reinterpret_cast<uint32_t*>(srcBytes);
+        uint32_t* srcPixels32 = reinterpret_cast<uint32_t*>(srcBytes);
 
         size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
         if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
@@ -16605,23 +16636,54 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (sourceX + width > srcWidth) width = srcWidth - sourceX;
         if (height <= 0 || width <= 0) BITBLT_SUCCESS;
 
+        // Determine colorMap-based pixel mapping
+        // If cmTable exists, use it as an rgbMap: compress 32-bit ARGB to a
+        // cmBitsPerColor-per-channel index, look up the mapped value.
+        // This is used by Form>>colorReduced for GIF/palette conversion.
+        int cmBitsPerColor = 0;
+        if (cmTable && cmSize > 0) {
+            // Determine bits per color channel from table size
+            // cmSize = 2^(3*bpc), so bpc = log2(cmSize)/3
+            size_t s = cmSize;
+            int totalBits = 0;
+            while (s > 1) { s >>= 1; totalBits++; }
+            cmBitsPerColor = totalBits / 3;
+        }
+
         for (intptr_t y = 0; y < height; y++) {
-            uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
+            uint32_t* srcRow = srcPixels32 + (sourceY + y) * srcPitch + sourceX;
             uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
             for (intptr_t x = 0; x < width; x++) {
-                // Convert 32-bit ARGB to 8-bit grayscale (luminance)
                 uint32_t s = srcRow[x];
-                uint8_t r = (s >> 16) & 0xFF;
-                uint8_t g = (s >> 8) & 0xFF;
-                uint8_t b = s & 0xFF;
-                uint8_t gray = static_cast<uint8_t>((r * 77 + g * 150 + b * 29) >> 8);
+                uint8_t pixel;
+                if (cmTable && cmBitsPerColor > 0) {
+                    // rgbMap compression: extract R,G,B, compress to cmBitsPerColor
+                    uint32_t r = (s >> 16) & 0xFF;
+                    uint32_t g = (s >> 8) & 0xFF;
+                    uint32_t b = s & 0xFF;
+                    int rShift = 8 - cmBitsPerColor;
+                    uint32_t idx = ((r >> rShift) << (2 * cmBitsPerColor))
+                                 | ((g >> rShift) << cmBitsPerColor)
+                                 | (b >> rShift);
+                    if (idx < cmSize) {
+                        pixel = static_cast<uint8_t>(cmTable[idx] & 0xFF);
+                    } else {
+                        pixel = 0;
+                    }
+                } else {
+                    // No colorMap: grayscale conversion (luminance)
+                    uint8_t r = (s >> 16) & 0xFF;
+                    uint8_t g = (s >> 8) & 0xFF;
+                    uint8_t b = s & 0xFF;
+                    pixel = static_cast<uint8_t>((r * 77 + g * 150 + b * 29) >> 8);
+                }
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = gray; break;
-                    case 0: dstRow[x] &= gray; break;
-                    case 7: dstRow[x] |= gray; break;
-                    case 25: if (gray != 0) dstRow[x] = gray; break;
-                    case 6: dstRow[x] ^= gray; break;
-                    default: dstRow[x] = gray; break;
+                    case 3: case 34: dstRow[x] = pixel; break;
+                    case 0: dstRow[x] &= pixel; break;
+                    case 7: dstRow[x] |= pixel; break;
+                    case 25: if (pixel != 0) dstRow[x] = pixel; break;
+                    case 6: dstRow[x] ^= pixel; break;
+                    default: dstRow[x] = pixel; break;
                 }
             }
         }
