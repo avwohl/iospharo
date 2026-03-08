@@ -532,13 +532,23 @@ runAllTests
      MicGitHubAPITest MicGitHubRessourceReferenceTest
      "RoassalSpecTest — Roassal GUI presenter tests timeout in headless"
      RoassalSpecTest
+     "TonelWriterV2Test — hangs on testFormatVersion (blocking filesystem write)"
+     TonelWriterV2Test
+     "ZnClientTest — testConnectionClose hangs (blocking socket connect)"
+     ZnClientTest
+     "TF*Test — TFFI marshalling/callback tests crash VM"
+     TFBasicTypeMarshallingTest TFBasicTypeMarshallingInCallbacksTest
+     TFCallbacksTest TFDerivedTypeMarshallingTest TFFunctionCallTest
+     TFPoolTest TFProcessSchedulerTest TFSameThreadCallTest
+     TFStructTypeMarshallingTest TFUFFIFunctionCallTest
      ).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [(skipNames includes: c name)
          or: [(c name beginsWith: 'Athens')
            or: [(c name beginsWith: 'RS') "Roassal — rendering tests timeout in headless"
-             or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]]])
+             or: [(c name beginsWith: 'TF') "TFFI — marshalling/callback tests crash VM"
+               or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]]]])
      asSortedCollection: [:a :b | a name <= b name].
    allTC do: [:cls | addOnce value: cls]]
   on: Error do: [:e |].

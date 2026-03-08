@@ -1,3 +1,31 @@
+# What's New in Build 82
+
+Build 82 — 2026-03-08
+
+## Bug Fix: ColorMap shift/mask extraction for pointer Arrays
+
+The BitBlt ColorMap extraction assumed shifts and masks were stored in
+IntegerArray/WordArray (raw 32-bit words). In Pharo 13, `ColorMap shifts:`
+stores a regular Array of SmallIntegers (pointer object). Reading raw oop
+bytes as int32 values produced garbage shift/mask values.
+
+Now handles both pointer arrays (Array of SmallIntegers) and word arrays
+(IntegerArray, WordArray) via runtime format detection.
+
+Fixes: BMPReadWriterTest testBmp16Bit.
+
+## Feature: 32-to-8-bit depth conversion with colorMap (rgbMap)
+
+The 32→8 pixel copy path now uses the colorMap as an rgbMap when available.
+Compresses 32-bit ARGB to N-bit-per-channel index and looks up the mapped
+palette value. Previously always did hardcoded grayscale conversion, which
+broke color palette reduction (GIF, FormSet).
+
+Used by: Form>>colorReduced, GIFReadWriter>>prepareToPut:,
+FormSet>>asForm.
+
+---
+
 # What's New in Build 81
 
 Build 81 — 2026-03-08
