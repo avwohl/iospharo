@@ -564,6 +564,13 @@ private:
     int64_t nextWakeupTime_ = 0;  // 0 means no timer set (in ioMSecs units)
     int64_t nextWakeupUsec_ = INT64_MAX;  // UTC microsecond wakeup (for primitive 242)
 
+    // Delay scheduler death detector and recovery
+    Oop lastKnownTimerSemaphore_ = Oop::nil();  // saved for recovery when scheduler dies
+    std::chrono::steady_clock::time_point lastTimerSignalTime_{};
+    bool timerWasArmed_ = false;  // true after primitive 136/242 arms the timer
+    bool schedulerDeathLogged_ = false;  // only log once
+    int schedulerRecoveryAttempts_ = 0;  // count recovery attempts
+
     // GC-safe temporary storage for Oops that need to survive allocation.
     // Used in transferTo() to protect newProcess across materializeFrameStack().
     Oop gcTempOop_ = Oop::nil();
@@ -2004,6 +2011,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // VM state Oops
     visitor(displayForm_);
     visitor(timerSemaphore_);
+    visitor(lastKnownTimerSemaphore_);
     visitor(gcTempOop_);
     visitor(pendingWorldMenuMethod_);
     visitor(pendingWorldMenuReceiver_);

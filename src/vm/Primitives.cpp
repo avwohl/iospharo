@@ -4414,7 +4414,11 @@ PrimitiveResult Interpreter::primitiveSignalAtMilliseconds(int argCount) {
 
     // Store the timer info (in ioMSecs units, 30-bit wrapping)
     timerSemaphore_ = semaphore;
+    lastKnownTimerSemaphore_ = semaphore;
     nextWakeupTime_ = targetMs & 0x3FFFFFFF;  // Ensure 30-bit
+    timerWasArmed_ = true;
+    schedulerDeathLogged_ = false;
+    schedulerRecoveryAttempts_ = 0;
 
     primitiveSuccess(semaphore);  // Return receiver
     return PrimitiveResult::Success;
@@ -12143,10 +12147,14 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                 ObjectHeader* queuesHdr = schedLists.asObjectPtr();
                 size_t numQueues = queuesHdr->slotCount();
 
-                // Search from highest priority down to priority 1 (include ALL priorities)
-                // relinquishProcessor means "give up CPU" - any runnable process should get a turn
-                // NOTE: Priority is 1-based, but array indices are 0-based
+                // Search from highest priority down to priority 1, but SKIP the
+                // active process's own priority. Without this, multiple processes
+                // at the same priority (e.g., P79 spin-wait watchdog + Pharo's env
+                // watchdog) bounce between each other and starve lower-priority
+                // processes. Same-priority round-robin is handled separately by
+                // checkForPreemption() in the periodic step check.
                 for (int pri = static_cast<int>(numQueues); pri >= 1; pri--) {
+                    if (pri == activePriority) continue;  // skip same priority
                     int index = pri - 1;  // Convert 1-based priority to 0-based index
                     Oop queue = memory_.fetchPointer(index, schedLists);
                     if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
@@ -12154,16 +12162,11 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                     Oop firstProcess = memory_.fetchPointer(LinkedListFirstLinkIndex, queue);
                     if (firstProcess.isObject() && firstProcess.rawBits() != nilObj.rawBits() &&
                         firstProcess.rawBits() != activeProcess.rawBits()) {
-                        // Found a higher priority process - yield to it
-                        // Remove the process from queue
                         Oop nextProcess = removeFirstLinkOfList(queue);
                         if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
-                            // Arg already popped above before signal processing.
-                            // Put current process back in its queue
                             putToSleep(activeProcess);
-                            // Switch to the new process
                             transferTo(nextProcess);
-                            return PrimitiveResult::Success;  // Don't pop again below
+                            return PrimitiveResult::Success;
                         }
                     }
                 }
@@ -14566,7 +14569,11 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     } else {
         // Schedule the timer
         timerSemaphore_ = sema;
+        lastKnownTimerSemaphore_ = sema;
         nextWakeupUsec_ = usecs;
+        timerWasArmed_ = true;
+        schedulerDeathLogged_ = false;
+        schedulerRecoveryAttempts_ = 0;
     }
 
     popN(2);  // Pop both arguments, leave receiver

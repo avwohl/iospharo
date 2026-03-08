@@ -667,8 +667,12 @@ void Interpreter::checkTimerSemaphore() {
 
         if (currentUsec >= nextWakeupUsec_) {
             Oop semaphore = timerSemaphore_;
+            lastKnownTimerSemaphore_ = semaphore;  // save for recovery
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
+            lastTimerSignalTime_ = std::chrono::steady_clock::now();
+            timerWasArmed_ = false;
+            schedulerDeathLogged_ = false;
             synchronousSignal(semaphore);
             return;
         }
@@ -676,6 +680,33 @@ void Interpreter::checkTimerSemaphore() {
 
     // Check millisecond timer (primitive 136 - legacy)
     if (nextWakeupTime_ == 0 || timerSemaphore_.isNil()) {
+        // Delay scheduler death detection and recovery
+        if (lastTimerSignalTime_.time_since_epoch().count() > 0 && !timerWasArmed_) {
+            auto elapsed = std::chrono::steady_clock::now() - lastTimerSignalTime_;
+            auto secs = std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+
+            if (secs >= 5 && !schedulerDeathLogged_) {
+                schedulerDeathLogged_ = true;
+                std::cout << "[DELAY-DEATH] Timer semaphore signaled " << secs
+                          << "s ago but scheduler never re-armed."
+                          << " Recovery attempt #" << (schedulerRecoveryAttempts_ + 1)
+                          << std::endl;
+
+                // Recovery: re-signal the last known timer semaphore.
+                // If the scheduler process is still alive but stuck waiting,
+                // this will wake it up so it can re-arm the timer.
+                if (!lastKnownTimerSemaphore_.isNil() && schedulerRecoveryAttempts_ < 10) {
+                    schedulerRecoveryAttempts_++;
+                    std::cout << "[DELAY-RECOVERY] Re-signaling timer semaphore 0x"
+                              << std::hex << lastKnownTimerSemaphore_.rawBits()
+                              << std::dec << std::endl;
+                    synchronousSignal(lastKnownTimerSemaphore_);
+                    // Give it 5 more seconds to re-arm
+                    lastTimerSignalTime_ = std::chrono::steady_clock::now();
+                    schedulerDeathLogged_ = false;
+                }
+            }
+        }
         return;
     }
 
@@ -686,8 +717,12 @@ void Interpreter::checkTimerSemaphore() {
 
     if (timerElapsed) {
         Oop semaphore = timerSemaphore_;
+        lastKnownTimerSemaphore_ = semaphore;  // save for recovery
         timerSemaphore_ = Oop::nil();
         nextWakeupTime_ = 0;
+        lastTimerSignalTime_ = std::chrono::steady_clock::now();
+        timerWasArmed_ = false;
+        schedulerDeathLogged_ = false;
         synchronousSignal(semaphore);
     }
 }
@@ -702,10 +737,25 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
                             Oop::fromSmallInteger(excess + 1));
     } else {
-        // Wake the first waiting process
+        // Validate priority BEFORE removing from semaphore to avoid losing processes
+        Oop firstProcess = firstLink;
+        int processPriority = safeProcessPriority(firstProcess);
+        if (processPriority < 0) {
+            // Process priority is corrupted — increment excessSignals instead of
+            // removing and losing the process. This preserves the semaphore's wait
+            // list so the process isn't orphaned (which kills the Delay scheduler).
+            fprintf(stderr, "[SIGNAL-SKIP] Skipping corrupted process 0x%llx on semaphore 0x%llx\n",
+                    (unsigned long long)firstProcess.rawBits(),
+                    (unsigned long long)semaphore.rawBits());
+            Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+            int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+            memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                Oop::fromSmallInteger(excess + 1));
+            return;
+        }
+
+        // Safe to remove — priority is valid
         Oop process = removeFirstLinkOfList(semaphore);
-        int processPriority = safeProcessPriority(process);
-        if (processPriority < 0) return;  // Corrupted process - abandon signal
 
         Oop activeProcess = getActiveProcess();
         int activePriority = safeProcessPriority(activeProcess);
@@ -1121,17 +1171,16 @@ bool Interpreter::step() {
             processPendingSignals();
         }
 
-        // VM-level process timeout: detect when the Delay scheduler (pri>=80)
-        // hasn't run for > 30 seconds. When the Delay scheduler dies,
-        // Smalltalk-level timeouts stop working and stuck tests run forever.
-        // This is a VM safety net that terminates the current process.
-        // Note: we don't check timerSemaphore_ because after the Delay
-        // scheduler dies, the timer fires one last time clearing it to nil,
-        // and nobody re-arms it. So timerSemaphore_ being nil doesn't mean
-        // the system is healthy — it means the scheduler is dead.
+        // VM-level stuck process termination: track cumulative time a
+        // low-priority process runs. If any process below P79 accumulates
+        // > 90 seconds, terminate it. Uses cumulative time (not continuous)
+        // to handle cases where context switches to the Delay scheduler
+        // briefly interrupt the stuck process.
         {
-            static std::chrono::steady_clock::time_point lastHighPriTime =
-                std::chrono::steady_clock::now();
+            static Oop trackedProcess = Oop::nil();
+            static std::chrono::steady_clock::time_point trackStartTime;
+            static int64_t cumulativeMs = 0;
+            static std::chrono::steady_clock::time_point lastResumeTime;
             static bool startupGracePeriod = true;
 
             Oop currentActive = getActiveProcess();
@@ -1139,24 +1188,52 @@ bool Interpreter::step() {
             int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
 
             if (prio >= 80) {
-                // A high-priority process is running — timer system is alive
-                lastHighPriTime = std::chrono::steady_clock::now();
-                startupGracePeriod = false; // Delay scheduler has run at least once
-            } else if (!startupGracePeriod) {
-                // After startup: check if Delay scheduler has been absent too long.
-                // Reset timer to avoid stale state but don't terminate — the
-                // Smalltalk test runner handles its own timeouts via spin-wait.
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                    now - lastHighPriTime).count();
-                if (elapsed >= 15) {
-                    lastHighPriTime = std::chrono::steady_clock::now();
-                    return running_;
+                startupGracePeriod = false;
+                // High-priority process running — if we were tracking a low-pri
+                // process, pause cumulative timer (don't reset)
+                if (trackedProcess.rawBits() == currentActive.rawBits()) {
+                    trackedProcess = Oop::nil();  // stop tracking
+                }
+            } else if (!startupGracePeriod && prio < 79) {
+                if (currentActive.rawBits() != trackedProcess.rawBits()) {
+                    // New low-priority process — start fresh tracking
+                    trackedProcess = currentActive;
+                    cumulativeMs = 0;
+                    lastResumeTime = std::chrono::steady_clock::now();
+                    trackStartTime = lastResumeTime;
+                } else {
+                    // Same process still running
+                    auto now = std::chrono::steady_clock::now();
+                    auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - trackStartTime).count();
+                    // Use wall time (simpler, accounts for all elapsed time)
+                    if (wallMs >= 90000) {
+                        fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
+                                (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
+                        trackedProcess = Oop::nil();
+                        // Mark process as terminated (clear suspendedContext)
+                        memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
+                        // Try to find another process to run
+                        Oop nextProc = wakeHighestPriority();
+                        if (!nextProc.isNil() && nextProc.isObject()) {
+                            transferTo(nextProc);
+                        }
+                    }
                 }
             }
         }
 
         g_watchdogSubphase = 12;
+
+        // Preemption check: if a higher-priority process is waiting in the
+        // scheduler queues, switch to it. Run at lower frequency (every 64K
+        // steps, ~65ms) to avoid excessive context switching when a spin-wait
+        // watchdog is on the ready queue. Timer/signal checks still run every
+        // 1024 steps for responsiveness.
+        if ((stepCheckCounter & 0xFFFF) == 0) {
+            checkForPreemption();
+        }
+
         // Signal finalization periodically for auto-GC mourners (not handled by the
         // one-shot flag which only fires after explicit GC primitives 130/131).
         signalFinalizationIfNeeded();
@@ -6336,9 +6413,10 @@ void Interpreter::checkForPreemption() {
 
     // Log periodically
 
-    // Check for runnable processes at SAME or higher priority (round-robin).
+    // Check for runnable processes at STRICTLY higher priority only.
+    // Same-priority round-robin is handled by relinquishProcessor/yield.
     // Priorities are 1-based, queue indices are 0-based: queue[p-1] = priority p.
-    size_t startIdx = (activePriority > 0) ? static_cast<size_t>(activePriority - 1) : 0;
+    size_t startIdx = (activePriority > 0) ? static_cast<size_t>(activePriority) : 0;
     for (size_t i = startIdx; i < numQueues; i++) {
         Oop queue = queuesHeader->slotAt(i);
         if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
@@ -6349,7 +6427,14 @@ void Interpreter::checkForPreemption() {
         // Skip if it's the current process
         if (firstProcess.rawBits() == activeProcess.rawBits()) continue;
 
-        // Found a runnable process - preempt!
+        // Found a higher-priority runnable process - preempt!
+        static int preemptCount = 0;
+        if (++preemptCount <= 5) {
+            fprintf(stderr, "[PREEMPT] P%d→P%zu (active=0x%llx → 0x%llx)\n",
+                    activePriority, i + 1,
+                    (unsigned long long)activeProcess.rawBits(),
+                    (unsigned long long)firstProcess.rawBits());
+        }
 
         // Remove process from ready queue using the proper helper
         // (removeFirstLinkOfList clears both nextLink and myList)
