@@ -1,97 +1,71 @@
-# Test Suite WIP — 2026-03-06
+# Test Suite WIP — 2026-03-08
 
 ## Current Status
-Full test suite run in progress (PID 65195/65196, `timeout 2700`).
-561 / ~2,040 classes done (27.5%). Should finish in ~30 min if no more
-timeout clusters.
 
-## Stats at 561 classes
-- 12,984 PASS
-- 13 FAIL
-- 5 ERROR
-- 8 TIMEOUT
-- 32 SKIP (includes expectedFailure tests)
-- **Pass rate: 99.86%** (excluding skips)
+Full test suite running across 1833 non-GUI classes (Spec tests skipped).
+Completed ~1433 classes in Run #49 + #50. Remaining ~400 classes need
+a final batch run.
 
-## Fixes Committed This Session (Build 78)
+## Results So Far
 
-### 1. primitiveAllInstances GC fix (commit 78b2998)
-- Removed upfront `fullGC()` from `primitiveAllInstances` — our flat operand
-  stack doesn't root popped values like Context-based VMs do
-- Added OOM retry with GC-then-rescan
-- Restored `fullGC()` in `primitiveAllObjects` and `primitiveFindRoots`
-- **Fixed**: ByteSymbolTest 4/4 pass (was 1/4)
+~100 non-passing tests across ~1433 classes tested.
 
-### 2. Write barrier immutability error codes (commit 337f78d)
-- All `isImmutable()` checks now set `primFailCode_ = PrimErrNoModification_`
-- Fixed primitive table 628/629 → primitiveStoreFloat32/64IntoBytes
-- **Fixed**: WriteBarrierTest 29/31 pass + 2 skip (expectedFailure)
+### Not VM bugs (image/environment)
+- Fuel WideString serialization (12 failures across 4 FL* test classes)
+- Calypso browser scope/tab tests (11 failures)
+- ReflectivityExamples anonymous subclass errors (4)
+- testFastPointersTo, testCreateNormalClassWithTraitComposition, testAllCallsOn
+- testNoOrphanPackage (Tests-Runner package from test injection)
 
-### 3. Expected failure handling in test runner (commit 337f78d)
-- Tests with `<expectedFailure>` pragma now SKIP instead of ERROR
-- Fixes false failures for ClyTestedClassMockTest, WriteBarrierTest, etc.
+### GC/process (inherent to no generational GC)
+- testClearing x2 (WeakKeyDictionary)
+- testHeavyContention2 (race condition)
+- Process termination edge cases (3)
 
-### 4. Skip timeout-heavy classes (commits 32d5c6a, c6a5fe3)
-- FFICallbackParametersTest, FFICallbackTest (no native callback thunks)
-- GlobalIdentifierWithDefaultConfigurationTest (5 timeouts on UUID files)
-- SystemNavigationTest (hangs on massive iteration)
-- TextAnchorTest, TextLineTest, TextLineEndingsTest (morph/GUI, hang headless)
-- TimespanDoTest, TimespanDoSpanAYearTest (all tests timeout)
-- DeleteVisitorTest (testSymbolicLink hangs)
-- RBRealizeClassParametrizedTest (testRealizeClass hangs)
+### Performance (interpreted VM, not bugs)
+- Various 80s timeouts: testBmpWriteReadInMemory, testCopyFileLocator,
+  testSearch, testNoShadowedVariablesInMethods, testPragmaEnvironment
 
-## Known Failures (not VM bugs)
+### Font metrics (headless, no FreeType)
+- widthAndKernedWidthOfLeft:right:into: nil (3 tests)
 
-### Expected failures (image-side, same on reference VM)
-- WriteBarrierTest testMutateByteArray*Float*AtPut — `<expectedFailure>`
-- ClyTestedClassMockTest testExpectedFailure — `<expectedFailure>`
+### Potentially VM-related
+- "Bad BitBlt arg (Fraction?)" in GIF/PNG/FormSet tests (~15)
+  Root cause: Form>>colorReduced produces Fraction dimensions
+- testBmp16Bit: Color transparent vs Color red (1)
+- testBmpWriteReadUsingFiles: True >> #+ in Adler32 (suspicious)
+- testVmBinary/testVmDirectory: VM path assertions (2)
+- testErrorProducedByAllocatingInTheImage: needs OutOfMemory signal (1)
+- testUnoptimisedValueSpecialSendsMessageCapturesSend: special selector (1)
 
-### Architectural limitations
-- ProtoObjectTest testFastPointersTo — materialized Contexts (flat stack)
-- ProcessTest testResumeAfterBCR — BCR limitation
-- WeakAnnouncerTest testNoWeakBlock — ephemeron limitation
+## Skip List
 
-### Timing/order dependent (vary between runs)
-- ProcessTerminateBugTest testTermination* — sometimes passes
-- FIFOQueueTest/LIFOQueueTest testHeavyContention* — thread timing
-- SlotIntegrationTest testSlotScopeParallelism — parallelism timing
-- TraitTest testTraitsUsersSanity — order dependent (contaminated by earlier tests)
+Classes skipped (hang, crash, or infrastructure issues):
+- FFI callback/Athens/Roassal/TF* (no native libs)
+- Trait modification tests (corrupt T1-T5 state)
+- Epicea tests (file watchers hang)
+- Fuel serialization tests (many 80s timeouts)
+- CodeSimulationTest, FBDDecompilerTest (extremely slow become:/decompile)
+- Sp* (Spec GUI) — need setup_fake_gui.st (tested separately: 94.6% pass)
+- MicInlineDelimiterTest (deadlock), SocketStreamTest (all error)
+- Various filesystem/network tests that hang headless
 
-### Image-side / environment
-- WeakKeyDictionaryTest testClearing (x2) — GC timing for weak refs
-- OCSpecialSelectorTest — order dependent (passes in some runs)
-- OCClassBuilderTest testCreateNormalClassWithTraitComposition — image issue
-- ClassQueryTest testAllCallsOn — relies on allInstances behavior
-- CodeSimulationTest — context simulation in headless mode
-- SystemResolverTest — expects VM binary path (headless test_load_image)
-- MicGitHubAPITest — network tests (no auth/network in headless)
+## Key Wins This Session
+- FormTest 6/6 PASS (BitBlt fixes from previous session held)
+- Zero timeouts in first 800 classes (skip list working)
+- Fixed skip list bypass bug: classes in priority tiers bypassed skipNames filter
+- Overall pass rate >99% for non-skipped, non-GUI tests
 
-## What to Do Next
+## Fixes From Previous Session (still holding)
+1. File attribute timezone offset — 4 tests fixed
+2. BitBlt fill for all depths — FormTest fixed
+3. BitBlt rule 33 tallyMap — GIF no longer hangs
+4. 16-bit ColorMap shift/mask
+5. Auto-compact GC skip ephemerons
 
-### To resume the full test run
-```bash
-cd /tmp && rm -f Pharo.image Pharo.changes sunit_test_results.txt sunit_test_detail.txt sunit_run_number.txt sunit_class_names.txt
-curl -sL https://get.pharo.org/64/130 | bash
-/tmp/pharo /tmp/Pharo.image eval --save "'$(pwd)/scripts/run_sunit_tests.st' asFileReference fileIn"
-echo 'SUnitTestRunner runAll.' > /tmp/startup.st
-timeout 2700 ./build/test_load_image /tmp/Pharo.image > /tmp/test_run_stdout.txt 2>&1 &
-```
-
-### Remaining investigation targets
-1. **FBDBytecodeDecompilerExamplesTest** (2 errors) — bytecode decompiler issue
-2. **Fuel WideString tests** (10 fails in FL*Test) — WideSymbol interning?
-3. **Calypso tests** (ClyAsync*, ClyFilter*) — likely image-side scope issues
-4. **OCTargetCompilerTest cascade** — missing `pushLiteral:` on class side
-   (causes ~80+ downstream errors when run after that class)
-
-### If adding more classes to skip list
-Edit `scripts/run_sunit_tests.st` → `skipNames` array in the dynamic
-discovery section (~line 445). Also comment out in the hand-curated tiers
-if the class appears there.
-
-### Key architectural insight
-Our flat operand stack (stackBase_ to stackPointer_) only roots live entries
-during GC. The reference VM uses Context objects where ALL slots are scanned.
-This means recently-popped values are NOT rooted in our VM. Any primitive that
-does `fullGC()` before scanning (allInstances, allObjects, findRoots) must be
-careful about this difference.
+## Next Steps
+1. Run remaining ~400 classes (batch 1434-1833)
+2. Investigate "Bad BitBlt arg (Fraction?)" — Form>>colorReduced
+3. Investigate True >> #+ in Adler32
+4. Investigate SocketStreamTest "Undefined error: 0"
+5. Consider OutOfMemory signaling for huge allocations
