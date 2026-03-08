@@ -1,3 +1,57 @@
+# What's New in Build 81
+
+Build 81 — 2026-03-08
+
+## Bug Fix: File attribute timestamps off by timezone
+
+File timestamps (atime, mtime, ctime, birthtime) were missing the local
+timezone offset. Pharo internal time is local time since 1901-01-01, but
+the VM was only adding the Squeak epoch delta without `tm_gmtoff`. This
+caused `DateAndTime` comparisons to be off by the timezone offset.
+
+Also: macOS birthtime (st_birthtimespec) now returned for single-file
+attribute queries (case 12), not just the batch path.
+
+Fixes: FileReferenceAttributeTest testAccessTime, testChangeTime,
+testCreationTime, testModificationTime.
+
+## Bug Fix: BitBlt fill for all pixel depths
+
+No-source fill operations (fillBlack, fillWhite) only worked for 1-bit
+and 32-bit destinations. Added support for depths 2, 4, 8, and 16
+(packed-pixel formats). Also handles negative depths (MSB pixel ordering).
+
+Fixes: FormTest testIsAllWhite, test32BitFormBlackShouldStayBlackAfterSave.
+
+## Feature: BitBlt rule 33 (tallyMap)
+
+Implemented combination rule 33 which builds a pixel value histogram.
+Reads destination pixels, uses pixel value as index into the colorMap
+array, increments that slot. For 32-bit pixels, compresses ARGB to
+15-bit (5 bits per R/G/B channel) before indexing.
+
+Used by: Form>>tallyPixelValues, Form>>colorsUsed, Form>>colorReduced,
+GIFReadWriter>>nextPutFrame:.
+
+## Bug Fix: 16-bit self-copy ColorMap transform
+
+The 16-bit same-depth copy path now applies ColorMap shift/mask transforms
+when present. BMP reader uses shifts/masks to byte-swap 16-bit pixels.
+
+## Improvement: Auto-compact GC skips ephemeron firing
+
+Auto-compact GC (triggered by allocation pressure) now emulates scavenge
+behavior by skipping ephemeron firing and weak nilling. Objects in
+ephemerons and weak collections are kept alive but not mourned. Only
+explicit GC primitives (130, 131) fire ephemerons.
+
+## Test Suite: Updated non-passing-tests.md
+
+Full suite results: 19,161 tests across 994 classes, 99.1% pass rate.
+Zero VM-specific failures. Comprehensive failure categorization added.
+
+---
+
 # What's New in Build 80
 
 Build 80 — 2026-03-07
