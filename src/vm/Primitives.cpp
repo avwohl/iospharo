@@ -15988,6 +15988,17 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         intptr_t absDepth = destDepth < 0 ? -destDepth : destDepth;
 
+        // For high-depth pixels (16/32-bit) with a small tally table,
+        // compress pixel to cmBitsPerColor bits per channel via rgbMap.
+        // cmBitsPerColor is determined from cmSize: cmSize = 1 << (3 * bpc)
+        int cmBitsPerColor = 0;
+        if (absDepth >= 16) {
+            size_t s = cmSize;
+            int totalBits = 0;
+            while (s > 1) { s >>= 1; totalBits++; }
+            cmBitsPerColor = totalBits / 3;
+        }
+
         auto tallyPixel = [&](uint32_t pixelValue) {
             if (pixelValue < cmSize) cmWords[pixelValue]++;
         };
@@ -15995,11 +16006,21 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (absDepth == 32) {
             uint32_t* pixels = reinterpret_cast<uint32_t*>(dHdr->bytes());
             intptr_t pitch = destWidth;
+            int rShift = 8 - cmBitsPerColor;  // e.g. 3 for 5 bpc
             for (intptr_t y = 0; y < height; y++) {
                 intptr_t dy = destY + y;
                 if (dy < 0 || static_cast<size_t>((dy + 1) * pitch) * 4 > dBitsSize) continue;
                 uint32_t* row = pixels + dy * pitch + destX;
-                for (intptr_t x = 0; x < width; x++) tallyPixel(row[x]);
+                for (intptr_t x = 0; x < width; x++) {
+                    uint32_t px = row[x];
+                    uint32_t r = (px >> 16) & 0xFF;
+                    uint32_t g = (px >> 8) & 0xFF;
+                    uint32_t b = px & 0xFF;
+                    uint32_t idx = ((r >> rShift) << (2 * cmBitsPerColor))
+                                 | ((g >> rShift) << cmBitsPerColor)
+                                 | (b >> rShift);
+                    tallyPixel(idx);
+                }
             }
         } else if (absDepth == 8) {
             intptr_t bytesPerRow = ((destWidth + 3) / 4) * 4;
@@ -16017,7 +16038,20 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 intptr_t dy = destY + y;
                 if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow) * 2 > dBitsSize) continue;
                 uint16_t* row = pixels16 + dy * wordsPerRow + destX;
-                for (intptr_t x = 0; x < width; x++) tallyPixel(row[x]);
+                for (intptr_t x = 0; x < width; x++) {
+                    uint32_t px = row[x];
+                    if (cmBitsPerColor > 0 && cmBitsPerColor < 5) {
+                        // 16-bit pixel: 0rrrrrgggggbbbbb -> compress to cmBitsPerColor
+                        uint32_t r = (px >> 10) & 0x1F;
+                        uint32_t g = (px >> 5) & 0x1F;
+                        uint32_t b = px & 0x1F;
+                        int shift = 5 - cmBitsPerColor;
+                        px = ((r >> shift) << (2 * cmBitsPerColor))
+                           | ((g >> shift) << cmBitsPerColor)
+                           | (b >> shift);
+                    }
+                    tallyPixel(px);
+                }
             }
         } else if (absDepth == 1 || absDepth == 2 || absDepth == 4) {
             intptr_t ppw = 32 / absDepth;
@@ -16850,11 +16884,26 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         size_t requiredSrcBytes16 = static_cast<size_t>((sourceY + height - 1) * srcWidth + sourceX + width) * 2;
         if (requiredSrcBytes16 > srcBitsSize) return PrimitiveResult::Failure;
 
+        // Apply ColorMap shift/mask transform for 16-bit pixels
+        auto applyShiftMask16 = [&](uint16_t px) -> uint16_t {
+            if (!hasShiftMask) return px;
+            uint32_t px32 = px;
+            uint32_t result = 0;
+            for (int i = 0; i < 4; i++) {
+                uint32_t component = px32 & cmMasks[i];
+                int32_t shift = cmShifts[i];
+                if (shift > 0) result |= (component << shift);
+                else if (shift < 0) result |= (component >> (-shift));
+                else result |= component;
+            }
+            return static_cast<uint16_t>(result);
+        };
+
         for (intptr_t row = 0; row < height; row++) {
             size_t di = static_cast<size_t>((destY + row) * destPitch16 + destX);
             size_t si = static_cast<size_t>((sourceY + row) * srcPitch16 + sourceX);
             for (intptr_t col = 0; col < width; col++) {
-                uint16_t srcPx = srcPixels16[si + col];
+                uint16_t srcPx = applyShiftMask16(srcPixels16[si + col]);
                 uint16_t dstPx = destPixels16[di + col];
                 uint16_t result;
                 switch (combinationRule) {
