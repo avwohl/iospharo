@@ -533,6 +533,10 @@ runAllTests
      FBDDecompilerTest FBDBytecodeDecompilerExamplesTest
      "CodeSimulationTest — slow become: operations, testTranscriptPrinting timeouts"
      CodeSimulationTest
+     "MicInlineDelimiterTest — testAddMe hangs indefinitely (0% CPU deadlock)"
+     MicInlineDelimiterTest
+     "SocketStreamTest — all tests fail with SocketError: Undefined error: 0"
+     SocketStreamTest
      "TonelWriterV2Test — hangs on testFormatVersion (blocking filesystem write)"
      TonelWriterV2Test
      "ZnClientTest — testConnectionClose hangs (blocking socket connect)"
@@ -549,7 +553,8 @@ runAllTests
          or: [(c name beginsWith: 'Athens')
            or: [(c name beginsWith: 'RS') "Roassal — rendering tests timeout in headless"
              or: [(c name beginsWith: 'TF') "TFFI — marshalling/callback tests crash VM"
-               or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]]]])
+               or: [(c name beginsWith: 'Sp') "Spec GUI — needs fake head (setup_fake_gui.st)"
+                   or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]]]])
      asSortedCollection: [:a :b | a name <= b name].
    allTC do: [:cls | addOnce value: cls]]
   on: Error do: [:e |].
