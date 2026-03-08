@@ -90,6 +90,9 @@ class PharoMTKView: MTKView {
     private var currentButton: Int = IOS_RED_BUTTON
     var suppressNextTouchCancel = false
     var suppressNextTouchEnd = false
+    /// Set in pressesBegan when a modified key (Shift+Enter etc.) is handled
+    /// there, to suppress the duplicate insertText call from UIKeyInput.
+    var handledInPressesBegan = false
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
@@ -159,6 +162,9 @@ class PharoMTKView: MTKView {
             // Without this guard, every key fires BOTH here AND in UIKeyInput,
             // causing enter/backspace to be doubled.
             if !shouldHandleKeyInPresses(key) { continue }
+            // Suppress the duplicate insertText that UIKeyInput will also fire
+            // for this key (e.g. Shift+Enter → insertText("\n")).
+            handledInPressesBegan = true
             #endif
 
             postKeyDown(key)
@@ -179,12 +185,28 @@ class PharoMTKView: MTKView {
 
             postKeyUp(key)
         }
+        #if !targetEnvironment(macCatalyst)
+        handledInPressesBegan = false
+        #endif
     }
 
     /// Whether a key should be processed in pressesBegan/Ended on iOS (vs UIKeyInput)
     private func shouldHandleKeyInPresses(_ key: UIKey) -> Bool {
         let hasCommandOrControl = key.modifierFlags.contains(.command) || key.modifierFlags.contains(.control)
         if hasCommandOrControl { return true }
+
+        // Shift/Option + non-printable keys need modifier info that UIKeyInput
+        // strips. Handle them here (e.g. Shift+Enter = Spotter).
+        let hasShiftOrOption = key.modifierFlags.contains(.shift) || key.modifierFlags.contains(.alternate)
+        if hasShiftOrOption {
+            let code = key.keyCode
+            if code == .keyboardReturnOrEnter || code == .keyboardTab ||
+               code == .keyboardEscape || code == .keyboardDeleteOrBackspace ||
+               code == .keyboardDeleteForward {
+                return true
+            }
+        }
+
         let code = key.keyCode
         return code == .keyboardUpArrow || code == .keyboardDownArrow ||
                code == .keyboardLeftArrow || code == .keyboardRightArrow ||
@@ -256,13 +278,12 @@ class PharoMTKView: MTKView {
 
     func buttonMaskToPharo(_ event: UIEvent?) -> Int {
         guard let event = event else { return IOS_RED_BUTTON }
-        #if targetEnvironment(macCatalyst)
-        if #available(macCatalyst 13.4, *) {
+        // Check buttonMask for trackpad/mouse right-click (iPad + Mac Catalyst)
+        if #available(iOS 13.4, macCatalyst 13.4, *) {
             let mask = event.buttonMask
             if mask.contains(.secondary) { return IOS_YELLOW_BUTTON }
             if mask.rawValue & 0x4 != 0 { return IOS_BLUE_BUTTON }
         }
-        #endif
         // Ctrl+click/tap = right-click on both Mac Catalyst and iPad with hardware keyboard
         if event.modifierFlags.contains(.control) { return IOS_YELLOW_BUTTON }
         return IOS_RED_BUTTON
@@ -546,6 +567,13 @@ class PharoCanvasViewController: UIViewController {
             bridge.sendTouchMoved(to: point, buttons: IOS_YELLOW_BUTTON)
         case .ended, .cancelled:
             bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
+            // Clear suppress flags. cancelsTouchesInView=true means the original
+            // touch was cancelled (consuming suppressNextTouchCancel) but
+            // touchesEnded never fires — leaving suppressNextTouchEnd stuck.
+            // If not cleared, the NEXT tap (e.g. on a menu item) has its
+            // touchesEnded suppressed and Pharo never gets the button-up.
+            mtkView.suppressNextTouchEnd = false
+            mtkView.suppressNextTouchCancel = false
         default:
             break
         }
@@ -644,6 +672,12 @@ extension PharoMTKView: UIKeyInput {
     @objc var keyboardType: UIKeyboardType { get { .asciiCapable } set {} }
 
     func insertText(_ text: String) {
+        // If pressesBegan already handled this key (e.g. Shift+Enter for Spotter),
+        // suppress the duplicate insertText from UIKeyInput which strips modifiers.
+        if handledInPressesBegan {
+            handledInPressesBegan = false
+            return
+        }
         // Include virtual modifier keys when active
         var mods: Int32 = 0
         if bridge?.ctrlModifierActive == true { mods |= Int32(IOS_CTRL_KEY) }
