@@ -1321,7 +1321,7 @@ void ObjectMemory::sweepGC() {
     totalGCTime_ += ms;
 }
 
-GCResult ObjectMemory::fullGC() {
+GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     auto start = std::chrono::steady_clock::now();
     GCResult result{0, 0, 0};
 
@@ -1347,7 +1347,7 @@ GCResult ObjectMemory::fullGC() {
     }
 
     // 3. Mark phase
-    size_t markedCount = markPhase();
+    size_t markedCount = markPhase(skipEphemerons);
 
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
@@ -2363,7 +2363,7 @@ void ObjectMemory::syncClassTableToHeap() {
     }
 }
 
-size_t ObjectMemory::markPhase() {
+size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // Reserve space for mark stack to avoid frequent reallocations
     markStack_.clear();
     markStack_.reserve(100000);
@@ -2413,17 +2413,43 @@ size_t ObjectMemory::markPhase() {
     // 4. Ephemeron fixed-point iteration
     // Some ephemerons' keys may have become reachable through other marking.
     // Iterate until no more ephemerons become inactive, then fire the rest.
-    {
+    // Skip during auto-compact GC to emulate scavenge behavior — a real
+    // generational GC scavenge wouldn't fire old-space ephemerons.
+    if (!skipEphemerons) {
         size_t fired = 0;
         if (!ephemeronList_.empty()) {
             while (markInactiveEphemerons()) {}
             fired = ephemeronList_.size();
             fireAllEphemerons();
         }
-    }
 
-    // 5. Process weak objects (nil dead references, queue mourners)
-    processWeaklings();
+        // 5. Process weak objects (nil dead references, queue mourners)
+        processWeaklings();
+    } else {
+        // Still need to mark ephemeron contents so they survive compaction,
+        // but don't fire them or process weak nilling.
+        for (ObjectHeader* eph : ephemeronList_) {
+            // Mark all slots (key + values) to keep them alive
+            for (size_t i = 0; i < eph->slotCount(); i++) {
+                Oop slot = Oop::fromRawBits(reinterpret_cast<uintptr_t*>(eph + 1)[i]);
+                if (slot.isObject() && !slot.isNil()) {
+                    markAndTrace(slot);
+                }
+            }
+        }
+        processMarkStack();
+        // Don't nil weak refs — those objects are alive, just uncollectable this cycle
+        // Mark weak object contents to keep them alive
+        for (ObjectHeader* weak : weakList_) {
+            for (size_t i = 0; i < weak->slotCount(); i++) {
+                Oop slot = Oop::fromRawBits(reinterpret_cast<uintptr_t*>(weak + 1)[i]);
+                if (slot.isObject() && !slot.isNil()) {
+                    markAndTrace(slot);
+                }
+            }
+        }
+        processMarkStack();
+    }
 
     // 5b. Sweep the class table: nil entries for classes that were not marked.
     // This allows anonymous/transient classes to be collected.

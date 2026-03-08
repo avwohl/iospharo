@@ -462,7 +462,9 @@ public:
     GCResult incrementalGC();
 
     /// Run a full compacting GC (only safe at known safe points, NOT from allocation)
-    GCResult fullGC();
+    /// skipEphemerons: if true, skip ephemeron firing and weak processing.
+    /// Used by auto-compact GC to emulate scavenge behavior (don't mourn old-space objects).
+    GCResult fullGC(bool skipEphemerons = false);
 
     /// Run a non-compacting mark-sweep GC (safe to call from allocations)
     void sweepGC();
@@ -752,7 +754,7 @@ private:
     /// Complete mark phase: mark from all roots, drain mark stack,
     /// process ephemerons, process weaklings.
     /// Returns the count of marked objects.
-    size_t markPhase();
+    size_t markPhase(bool skipEphemerons = false);
 
     // ===== COMPACT PHASE =====
 

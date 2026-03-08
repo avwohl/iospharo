@@ -1125,12 +1125,13 @@ bool Interpreter::step() {
     g_watchdogSubphase = 10;
     if (memory_.needsCompactGC()) {
         memory_.clearCompactGCFlag();
-        memory_.fullGC();
+        // Skip ephemeron firing and weak processing during auto-compact GC.
+        // This emulates scavenge behavior — a real generational GC wouldn't
+        // fire old-space ephemerons during a minor collection. Without this,
+        // auto-GC mourns weak key dictionary entries before tests can check
+        // the dictionary size (WeakKeyDictionaryTest>>testClearing).
+        memory_.fullGC(/* skipEphemerons */ true);
         flushMethodCache();
-        // Do NOT set finalizationCheckAfterGC_ here — auto-compact GC during normal
-        // allocation would create a cycle: alloc → GC → mourn → alloc → GC → mourn...
-        // Only explicit GC primitives (130, 131) set the one-shot flag. The periodic
-        // event check (every 1024 steps) handles auto-GC mourners.
     }
 
     // Signal finalization promptly after GC. This one-shot flag fires on the step
