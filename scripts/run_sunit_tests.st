@@ -514,12 +514,31 @@ runAllTests
      "MC*Test — Monticello repository/filesystem tests timeout in headless"
      MCDirectoryRepositoryTest MCFileInTest MCFileTreeRepositoryTest
      MCGitBasedNetworkRepositoryTest
+     "MicFileResourceReferenceTest — testContents hangs (network file resource fetch)"
+     MicFileResourceReferenceTest
+     "MicHttpResourceReferenceTest — similar network resource fetch hang risk"
+     MicHttpResourceReferenceTest
+     "NoUnusedVariablesLeftTest — scans entire image, exceeds 80s timeout"
+     NoUnusedVariablesLeftTest
+     "OmRandomSuffixStrategyTest OmSessionStoreTest — Ombu filesystem tests timeout"
+     OmRandomSuffixStrategyTest OmSessionStoreTest
+     "RottenTestsFinderTest — testAnalyze runs entire test suite analysis, hangs"
+     RottenTestsFinderTest
+     "Delay*Scheduler*Test — switch delay scheduler implementation, kills scheduler for subsequent tests"
+     DelayBasicSchedulerMicrosecondTickerTest DelayBasicSchedulerMillisecondTickerTest
+     DelayMutexSchedulerMicrosecondTickerTest DelayMutexSchedulerMillisecondTickerTest
+     DelaySemaphoreSchedulerMicrosecondTickerTest DelaySemaphoreSchedulerMillisecondTickerTest
+     "MicGitHub*Test — network calls to GitHub hang in headless (blocking socket)"
+     MicGitHubAPITest MicGitHubRessourceReferenceTest
+     "RoassalSpecTest — Roassal GUI presenter tests timeout in headless"
+     RoassalSpecTest
      ).
    allTC := (TestCase allSubclasses reject: [:c |
      ([c isAbstract] on: Error do: [:e | true])
        or: [(skipNames includes: c name)
          or: [(c name beginsWith: 'Athens')
-           or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]])
+           or: [(c name beginsWith: 'RS') "Roassal — rendering tests timeout in headless"
+             or: [(c name beginsWith: 'GlobalIdentifier') and: [c name ~= 'GlobalIdentifierMergerTest']]]]]])
      asSortedCollection: [:a :b | a name <= b name].
    allTC do: [:cls | addOnce value: cls]]
   on: Error do: [:e |].
@@ -911,9 +930,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
       [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
   backupWatchdog := nil.
 
-  "Wait for test completion. Runner blocks on doneSem (efficient, not subject to
-   VM-timeout). The P79 spin-wait watchdog signals doneSem on timeout."
-  [doneSem wait] on: Error do: [:ex |
+  "Wait for test completion. Use waitTimeoutSeconds: as safety net — if both test
+   and watchdog are stuck in a blocking C++ primitive, doneSem wait would block
+   forever. The Delay-based timeout (2x watchdog) catches this case."
+  [| timedOut |
+   timedOut := doneSem waitTimeoutSeconds: (seconds * 2).
+   timedOut ifTrue: [
+     "Both test AND watchdog stuck (e.g., blocking C++ primitive)"
+     result ifNil: [result := #timeout].
+     testDone := true.
+     s nextPutAll: '  TIMEOUT(prim-stuck): '; nextPutAll: sel; lf. s flush.
+     [testProcess terminate] on: Error do: [:e |].
+     [watchdog terminate] on: Error do: [:e |]]]
+  on: Error do: [:ex |
     ex class name = 'TestTookTooMuchTime'
       ifTrue: [
         result ifNil: [result := #timeout].

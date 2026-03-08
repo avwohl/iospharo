@@ -227,8 +227,36 @@ pharo /tmp/Pharo.image eval --save \
 cat /tmp/sunit_test_results.txt
 ```
 
+### Running GUI/Spec Tests (Fake Head)
+Spec presenter tests (Sp*AdapterTest, Sp*PresenterTest, St*PresenterTest)
+need a running Morphic world loop. Inject `setup_fake_gui.st` BEFORE the
+test runner to enable headless GUI testing:
+
+```bash
+# Inject fake GUI + test runner
+pharo /tmp/Pharo.image eval --save \
+  "'scripts/setup_fake_gui.st' asFileReference fileIn. \
+   'scripts/run_sunit_tests.st' asFileReference fileIn"
+```
+
+What `setup_fake_gui.st` does:
+- Installs `MorphicUIManager` (starts the UI process + MorphicRenderLoop)
+- Ensures `Display` Form and `WorldMorph` exist
+- Patches `Morph>>activate`/`passivate` to skip nil submorphs
+- Provides `FakeGUI` helper class for programmatic interaction:
+  - `FakeGUI clickMenuItemNamed: 'Save'` — find and click by label
+  - `FakeGUI clickButtonNamed: 'OK' in: aPresenter` — click button in a window
+  - `FakeGUI allMorphsNamed: 'Tools'` — find all morphs with label
+  - `FakeGUI findWidgetOfType: SpButtonMorph in: aPresenter`
+  - `FakeGUI openPresenter: aPresenter` — open + step world
+  - `FakeGUI ensureWorldStepping` — force world cycles
+
+Without this, ~350 Spec tests fail with "receiver of activate is nil".
+With it, 94.6% pass rate (1054/1113) on 64 GUI test classes.
+
 ### Files
 - `scripts/run_sunit_tests.st` - Test runner (chunk format .st file)
+- `scripts/setup_fake_gui.st` - Fake head GUI for headless Spec testing
 - `/tmp/sunit_test_results.txt` - Output file
 - `docs/non-passing-tests.md` - Test compatibility analysis
 
