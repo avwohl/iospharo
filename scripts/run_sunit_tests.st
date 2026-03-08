@@ -532,6 +532,10 @@ runAllTests
      MicGitHubAPITest MicGitHubRessourceReferenceTest
      "RoassalSpecTest — Roassal GUI presenter tests timeout in headless"
      RoassalSpecTest
+     "FBDDecompilerTest — 160 tests, many timeout at 80s (slow bytecode decompilation)"
+     FBDDecompilerTest
+     "CodeSimulationTest — slow become: operations, testTranscriptPrinting timeouts"
+     CodeSimulationTest
      "TonelWriterV2Test — hangs on testFormatVersion (blocking filesystem write)"
      TonelWriterV2Test
      "ZnClientTest — testConnectionClose hangs (blocking socket connect)"
