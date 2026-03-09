@@ -14,7 +14,7 @@ Last updated: 2026-03-09
     Zero VM-specific failures.
 
 Trait tests (previously 480 "failures") now pass: 217/217.
-Without the ProcessTest processMonitor issue (48 errors, test infrastructure):
+Without the ProcessTest processMonitor issue (46 errors, Pharo 13 image bug):
 
     Adjusted pass rate: 99.82%
 
@@ -26,7 +26,7 @@ Without the ProcessTest processMonitor issue (48 errors, test infrastructure):
 
   Root cause                               Failures   Pct
   Trait "selector changed!" errors          RESOLVED   --   (217/217 pass, moved to Tier 17)
-  ProcessTest processMonitor missing             48    32%
+  ProcessTest processMonitor missing             46    31%   (same on official Pharo VM)
   SystemDependenciesTest                         17    11%
   Fuel WideString/WideSymbol                     15    10%
   Calypso IDE query tests                        14     9%
@@ -45,11 +45,13 @@ tests could corrupt state. All 217 tests pass on our VM when run as a
 standalone group or when placed last (Tier 17) in the batch runner.
 TraitPackagingTest was renamed upstream and no longer exists.
 
-### ProcessTest processMonitor (48 errors)
+### ProcessTest processMonitor (46 errors)
 
-`DefaultExecutionEnvironment >> #processMonitor` not found. All
-ProcessTest methods fail. Test execution environment setup issue in
-batch runner.
+`DefaultExecutionEnvironment >> #processMonitor` not found. All 46
+ProcessTest methods fail identically on both our VM and the official
+Pharo VM (P=0 F=0 E=46). Confirmed: this is a Pharo 13 image bug,
+not a VM issue. The `processMonitor` method is missing from
+`DefaultExecutionEnvironment` in the stock image.
 
 ### Not VM bugs
 
@@ -118,7 +120,7 @@ Classes skipped (hang, crash, or infrastructure issues in headless):
 
   Item                                   Resolution
   Trait "selector changed!" (480)        FIXED: 217/217 pass. Re-enabled, moved to run last (Tier 17)
-  ProcessTest processMonitor (48)        Test infrastructure, not VM
+  ProcessTest processMonitor (46)        Pharo 13 image bug — identical on official VM (P=0 F=0 E=46)
   Ephemeron finalization (1)             FIXED: removed priority guard in signalFinalizationIfNeeded()
   WriteBarrier float/double (2)          31/31 PASS — was never a bug
   MirrorPrimitives tryPrimitive (1)      expectedFailure that passes — our VM is correct
