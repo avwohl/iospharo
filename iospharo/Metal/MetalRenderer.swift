@@ -156,10 +156,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - MTKViewDelegate
 
-    /// Height reported to Pharo before any keyboard-induced shrinking.
-    /// Updated only when no docked keyboard is showing, so keyboard avoidance
-    /// (which may bypass .ignoresSafeArea(.keyboard)) doesn't resize the Pharo world.
-    private var preKeyboardHeight: Int = 0
+    /// Display size reported to Pharo before any keyboard-induced change.
+    /// Updated only when no keyboard is visible, so keyboard avoidance
+    /// (which SwiftUI may not fully suppress) doesn't resize the Pharo world.
+    private var preKeyboardSize: (width: Int, height: Int) = (0, 0)
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // Use logical points (view.bounds) not physical pixels (size parameter).
@@ -170,19 +170,19 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         let height = Int(view.bounds.size.height)
 
         #if !targetEnvironment(macCatalyst)
-        // iOS keyboard avoidance may resize the view despite .ignoresSafeArea(.keyboard).
-        // When a docked keyboard is showing, maintain the pre-keyboard height so the
-        // Pharo display doesn't shrink — the keyboard overlaps instead.
+        // iOS keyboard events can resize the view (both docked keyboards shrinking it
+        // and floating keyboards expanding it past the status bar). Freeze the Pharo
+        // display size while any keyboard is visible — it will update when dismissed.
         if let bridge = bridge {
-            if !bridge.keyboardDocked {
-                // No docked keyboard — this is a real size change (rotation, Stage Manager)
-                preKeyboardHeight = height
-            } else if preKeyboardHeight > 0 && height < preKeyboardHeight {
-                // Docked keyboard caused the view to shrink — use pre-keyboard height
+            if !bridge.keyboardVisible {
+                // No keyboard — this is a real size change (rotation, Stage Manager, etc.)
+                preKeyboardSize = (width, height)
+            } else if preKeyboardSize.height > 0 && (width, height) != preKeyboardSize {
+                // Keyboard is visible and size changed — use the pre-keyboard size
                 #if DEBUG
-                NSLog("[METAL] Ignoring keyboard shrink: %dx%d → using %dx%d", width, height, width, preKeyboardHeight)
+                NSLog("[METAL] Ignoring keyboard resize: %dx%d → using %dx%d", width, height, preKeyboardSize.width, preKeyboardSize.height)
                 #endif
-                bridge.setDisplaySize(width: width, height: preKeyboardHeight)
+                bridge.setDisplaySize(width: preKeyboardSize.width, height: preKeyboardSize.height)
                 return
             }
         }

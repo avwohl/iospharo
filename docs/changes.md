@@ -23,8 +23,20 @@ Fixes:
   which fires for ALL keyboard state changes (dock, undock, float, show, hide).
 - Keyboard button handler no longer sets `keyboardDocked` — only the notification
   handler can. Button handler only sets `keyboardVisible` for the highlight state.
-- MetalRenderer now tracks pre-keyboard display height and refuses to shrink the
-  Pharo display when a docked keyboard triggers view resizing.
+- MetalRenderer now tracks pre-keyboard display size and freezes the Pharo display
+  while any keyboard is visible (prevents both shrinking and expanding).
+
+## Fix: Floating keyboard causing canvas to grow past status bar (build 89 update)
+
+Tim confirmed sidebar fix works but canvas still grows when floating keyboard appears.
+The `.ignoresSafeArea(.keyboard)` modifier (with implicit `edges: .all`) was causing
+SwiftUI to expand the view past the top safe area (status bar) during keyboard-related
+layout recalculations. This is redundant because `.ignoresSafeArea(edges: [.bottom, .horizontal])`
+already ignores ALL safe area regions (including keyboard) on the bottom edge.
+
+Removed `.ignoresSafeArea(.keyboard)`. Also broadened the MetalRenderer guard to freeze
+the Pharo display size during ANY keyboard visibility (not just docked), preventing both
+shrinking and expansion.
 
 # What's New in Build 87
 

@@ -173,7 +173,10 @@ struct ContentView: View {
                 PharoCanvasView(bridge: bridge)
             }
             .ignoresSafeArea(edges: [.bottom, .horizontal])
-            .ignoresSafeArea(.keyboard)
+            // Note: .ignoresSafeArea(edges: [.bottom, ...]) already ignores ALL safe
+            // area regions (container + keyboard) on the bottom edge. Adding a separate
+            // .ignoresSafeArea(.keyboard) caused the view to expand past the TOP safe
+            // area (status bar) during keyboard-related layout recalculations on iPad.
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
