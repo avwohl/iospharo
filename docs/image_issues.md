@@ -5,6 +5,9 @@ We work around the bugs via `startup.st` (auto-loaded by
 `StartupPreferencesLoader`). Ideally these would be fixed upstream so
 the patches can be removed.
 
+For the upstream-ready write-ups (to share with the Pharo team), see
+`docs/upstream-proposals.md`.
+
 Tested against:
 
     Pharo-13.1.0+SNAPSHOT.build.729.sha.f201357
@@ -215,90 +218,9 @@ display as "Cmd+D", "Cmd+S", etc.
 
 ---
 
-## Feature Request: Portrait layout / small-screen support
+## Feature Requests (portrait layout, touch interaction, shortcut discoverability)
 
-On an iPhone in portrait orientation (or any narrow window < ~500pt),
-the Pharo menu bar does not adapt:
-
-    Pharo | Browse | Debug | Sources | System | Library | Windows | Help
-
-All 8 items render in a single row. On a 393pt-wide iPhone 16 screen,
-the last 3-4 items are clipped. There is no wrapping, truncation, or
-overflow menu. Standard tool windows (System Browser, Inspector,
-Workspace) are designed for ~800pt minimum width and are unusable in
-portrait.
-
-This is the single biggest obstacle to using Pharo on a phone.
-
-**Concrete suggestions** (from least to most effort):
-
-  1. **Menu bar overflow**: If world width < 600pt, collapse the menu
-     bar into a single button that opens a vertical list of all menus.
-     This is a Morphic-only change — no VM or platform work needed.
-
-  2. **Narrow window layouts for tools**: The System Browser currently
-     uses a 4-pane horizontal layout (packages | classes | protocols |
-     methods) with source below. In a narrow window, stack these as a
-     drill-down navigation: tap a package to see its classes full-width,
-     tap a class to see methods full-width, etc. Similar to how Xcode's
-     navigator works on a narrow iPad split.
-
-  3. **Size-class-aware layout engine**: Expose a `compactWidth` flag
-     (true when world width < 600pt) to the Morphic layout system.
-     Morphic layouts could query this and choose between horizontal and
-     vertical arrangements. The VM already provides window dimensions
-     via `SDL_GetWindowSize`; this just needs to be surfaced as a
-     Morphic preference.
-
-  4. **Full adaptive layout**: Adopt a constraint-based or responsive
-     layout system (like iOS Auto Layout or CSS Flexbox) where panes
-     specify minimum widths and the system automatically reflows.
-
-Even just suggestion 1 (menu overflow button) would make portrait
-orientation functional.
-
----
-
-## Feature Request: Keyboard shortcut discoverability
-
-Pharo relies on keyboard shortcuts that are invisible on touch devices:
-
-    Cmd+D (Do It)    Cmd+P (Print It)    Cmd+I (Inspect It)
-    Cmd+S (Accept)   Cmd+L (Cancel)      Cmd+B (Browse It)
-
-Without a physical keyboard, there is no way to discover or invoke
-these. iospharo adds a floating toolbar with Ctrl/Cmd modifier buttons,
-but this only helps if you already know the shortcuts exist.
-
-**Suggestion**: Add a context-sensitive action bar or long-press
-radial menu that surfaces the 5-6 most common actions for the
-current selection (Do It, Print It, Inspect It, Accept, Cancel,
-Browse) as labeled tap targets. This could be a standard Morphic
-widget that appears above any text editor morph.
-
----
-
-## Feature Request: Touch-friendly scroll and selection
-
-Morphic's event model assumes mouse input. On a touchscreen:
-
-  - **Scrolling**: Drag gestures conflict with Morphic's morph-drag
-    and text-selection handlers. Two-finger scroll works (via our VM's
-    gesture recognizer), but single-finger scroll is natural on touch.
-
-  - **Text selection**: Requires precise drag with no visible handles.
-    iOS/Android text selection uses drag handles at both ends of the
-    selection and a magnifier loupe. Morphic provides none of these.
-
-  - **Zoom**: No pinch-to-zoom on code panes. On a phone-sized screen,
-    code is too small to read without zooming.
-
-**Suggestion**: A `TouchInputMode` preference that, when enabled:
-
-  - Delegates scroll to the platform's native scroll physics
-  - Shows selection handles on text selections
-  - Supports pinch-to-zoom on text panes (scaling the font size
-    or using a viewport transform)
+Moved to `docs/upstream-proposals.md` items 7-9.
 
 ---
 

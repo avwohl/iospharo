@@ -16,7 +16,7 @@ This is non-negotiable:
 2. **After completing any significant milestone** (test run finishes, bug fixed, etc.), immediately write results to docs/ and/or memory
 3. **Before starting a long operation** (full test suite, large build), save what you know so far
 4. **Commit work-in-progress** to git at least every 15 minutes (per existing rule below)
-5. Use `docs/non-passing-tests.md`, `docs/changes.md`, and memory files as appropriate
+5. Use `docs/test-results.md`, `docs/changes.md`, and memory files as appropriate
 6. A crash that loses 12 hours of work because nothing was written down is unacceptable
 
 ## GUI Testing: MANDATORY Timeouts
@@ -272,7 +272,7 @@ With it, 94.6% pass rate (1054/1113) on 64 GUI test classes.
 - `scripts/run_sunit_tests.st` - Test runner (chunk format .st file)
 - `scripts/setup_fake_gui.st` - Fake head GUI for headless Spec testing
 - `/tmp/sunit_test_results.txt` - Output file
-- `docs/non-passing-tests.md` - Test compatibility analysis
+- `docs/test-results.md` - Test results and compatibility analysis
 
 ## Primitive Table Reference
 The **one true source** for the primitive table is in VMMaker:

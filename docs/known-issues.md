@@ -1,20 +1,6 @@
 # Known Issues
 
-Last updated: 2026-02-26
-
-## Not Our Bugs
-
-### Upstream Pharo Test Failures
-These fail on the official Pharo VM too:
-- WriteBarrier `doubleAt:put:` (Pharo issue #10053, since 2021)
-- Missing ephemeron support in finalization tests
-
-### External Package Gaps
-- `GArcTest`/`GEllipseTest` failures from missing `#intersectionsWithEllipse:`
-
-### Test Suite Flakiness
-- `TestExecutionEnvironmentTest>>testHandleForkedProcessesByAllServices`
-  fails in full suite, passes in isolation
+Last updated: 2026-03-09
 
 ## iOS-Specific
 
@@ -22,9 +8,23 @@ These fail on the official Pharo VM too:
 - VM thread sleeps forever after interpret() returns (prevents pthread TSD crash)
 - VM cannot be re-launched after quit without restarting the process
 
-## Status
-Zero VM-specific test failures — all non-passing tests also fail on
-the official Pharo VM.
+## Image Bugs We Patch via startup.st
 
-GUI display, menus, and interaction visually verified working (2026-02-25).
-Two-finger scroll, Stage Manager resize, and soft keyboard all fixed (2026-02-26).
+See `docs/image_issues.md` for full details and workarounds.
+See `docs/upstream-proposals.md` for proposed upstream fixes.
+
+  1. MicGitHubRessourceReference >> githubApi — nil token causes KeyNotFound
+  2. MicDocumentBrowserModel >> document — sends #message instead of #messageText
+  3. MicDocumentBrowserPresenter >> childrenOf: — missing outer error handler
+  4. Menu shortcut symbols render as "?" — embedded font too old (v2.020)
+  5. WarpBlt >> mixPix: drops alpha channel — Smalltalk fallback only averages RGB
+  6. Doc browser bullets render as "?" — same font issue as #4
+
+## Upstream Test Bugs (not our problem, not patched)
+
+  7. DebugPointTest >> testTranscriptDebugPoint — fails on all VMs (missing Transcript clear + headless incompatible)
+
+## Test Status
+
+28,071 tests across 2,046 classes. Zero VM-specific failures.
+See `docs/test-results.md` for full breakdown.

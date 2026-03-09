@@ -3,7 +3,9 @@
 Bugs that shipped without being caught by our test suites, and Pharo
 packages with test suites we should be running but aren't yet.
 
-Last updated: 2026-03-02
+Last updated: 2026-03-09
+
+For current test results see `docs/test-results.md`.
 
 ---
 
@@ -74,30 +76,9 @@ KMShortcutPrinter symbolTable.
 
 ## What We Test Today
 
-### Core SUnit suite (577 classes, 13,075 tests)
-  13,040 pass, 6 fail, 7 error, 22 skip
-  Zero VM-specific failures.
-  See: docs/non-passing-tests.md
-
-### Higher-level Metacello packages (8,000 tests)
-  NeoJSON, Mustache, XMLParser, PolyMath, DataFrame
-  99.8% pass rate, all failures pre-existing on stock Pharo.
-  See: docs/higher_level_tests.md
-
-### Custom VM integration tests (scripts/vm_integration_tests.st)
-  VMSocketTCPTest, VMSocketUDPTest, VMDNSTest, VMLocaleTest,
-  VMSecurityTest, VMClipboardTest, VMSoundTest, VMMIDITest,
-  VMInterpreterProxyTest, VMFileAttributesTest, VMPrimitiveErrorTest,
-  VMTimerTest, VMSurfacePluginTest
-
-### Specialized scripts
-  scripts/run_callback_tests.st     — FFI callback via qsort
-  scripts/run_callback_suite.st     — all *callback* test classes
-  scripts/run_regression_tests.st   — focused subset after changes
-  scripts/leak_test_windows.st      — open/close 8 window types x10
-  scripts/test_menu_items.st        — exercise all worldMenu pragma items
-  scripts/test_network.st           — DNS, TCP, UDP smoke test
-  scripts/arb_precision_diag.st     — PMArbitraryPrecisionFloat deep dive
+Full suite: 28,071 tests across 2,046 classes (98.00% pass, zero VM-specific failures).
+Higher-level packages: 7,974 tests across 6 packages (99.8% pass).
+See `docs/test-results.md` and `docs/higher_level_tests.md`.
 
 ---
 
