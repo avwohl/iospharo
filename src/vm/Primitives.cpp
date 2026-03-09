@@ -47,6 +47,23 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <unistd.h>
 #include <vector>
 
+// Pharo packs 16-bit pixels MSB-first in 32-bit words (Bitmap):
+// pixel 0 (even) in HIGH 16 bits, pixel 1 (odd) in LOW 16 bits.
+// Direct uint16_t* casting gives wrong order on little-endian machines.
+static inline uint16_t read16(uint32_t* words, intptr_t pixelIndex) {
+    uint32_t word = words[pixelIndex / 2];
+    return (pixelIndex & 1) ? (word & 0xFFFF) : ((word >> 16) & 0xFFFF);
+}
+static inline void write16(uint32_t* words, intptr_t pixelIndex, uint16_t value) {
+    uint32_t& word = words[pixelIndex / 2];
+    if (pixelIndex & 1) {
+        word = (word & 0xFFFF0000) | value;
+    } else {
+        word = (word & 0x0000FFFF) | (static_cast<uint32_t>(value) << 16);
+    }
+}
+
+
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 
@@ -4072,12 +4089,11 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
                     memcpy(dstPixels + y * dstWidth, srcPixels + y * srcWidth, copyWidth * sizeof(uint32_t));
                 }
             } else if (srcDepth == 16) {
-                uint16_t* src16 = reinterpret_cast<uint16_t*>(srcPixels);
                 for (int y = 0; y < copyHeight; y++) {
                     for (int x = 0; x < copyWidth; x++) {
-                        uint16_t pixel = src16[y * srcWidth + x];
-                        uint8_t r = ((pixel >> 11) & 0x1F) << 3;
-                        uint8_t g = ((pixel >> 5) & 0x3F) << 2;
+                        uint16_t pixel = read16(srcPixels, y * srcWidth + x);
+                        uint8_t r = ((pixel >> 10) & 0x1F) << 3;  // 5-5-5 format
+                        uint8_t g = ((pixel >> 5) & 0x1F) << 3;
                         uint8_t b = (pixel & 0x1F) << 3;
                         dstPixels[y * dstWidth + x] = (255 << 24) | (r << 16) | (g << 8) | b;
                     }
@@ -16113,13 +16129,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             }
         } else if (absDepth == 16) {
             intptr_t wordsPerRow = (destWidth + 1) / 2;
-            uint16_t* pixels16 = reinterpret_cast<uint16_t*>(dHdr->bytes());
+            uint32_t* words16 = reinterpret_cast<uint32_t*>(dHdr->bytes());
             for (intptr_t y = 0; y < height; y++) {
                 intptr_t dy = destY + y;
-                if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow) * 2 > dBitsSize) continue;
-                uint16_t* row = pixels16 + dy * wordsPerRow + destX;
+                if (dy < 0 || static_cast<size_t>((dy + 1) * wordsPerRow * 4) > dBitsSize) continue;
                 for (intptr_t x = 0; x < width; x++) {
-                    uint32_t px = row[x];
+                    intptr_t pixIdx = dy * destWidth + destX + x;
+                    uint32_t px = read16(words16, pixIdx);
                     if (cmBitsPerColor > 0 && cmBitsPerColor < 5) {
                         // 16-bit pixel: 0rrrrrgggggbbbbb -> compress to cmBitsPerColor
                         uint32_t r = (px >> 10) & 0x1F;
@@ -16680,23 +16696,22 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // 16-bit source to 1-bit dest (shadow mask/stencil operations)
     if (destDepth == 1 && srcDepth == 16) {
         intptr_t destWordsPerRow = (destWidth + 31) / 32;
-        intptr_t srcPixelsPerRow = ((srcWidth * 2 + 3) / 4) * 2; // word-aligned pixel count
-        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
+        uint32_t* srcWords16 = reinterpret_cast<uint32_t*>(srcBytes);
         uint32_t* destWords = destPixels;
 
         size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + 31) / 32);
         if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
 
-        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height) * srcPixelsPerRow * 2);
+        size_t requiredSrcBytes = static_cast<size_t>((sourceY + height) * ((srcWidth + 1) / 2)) * 4;
         if (requiredSrcBytes > srcBitsSize) return PrimitiveResult::Failure;
 
         for (intptr_t y = 0; y < height; y++) {
-            uint16_t* srcRow = srcPixels16 + (sourceY + y) * srcPixelsPerRow + sourceX;
             uint32_t* destRow = destWords + (destY + y) * destWordsPerRow;
             for (intptr_t x = 0; x < width; x++) {
                 intptr_t dx = destX + x;
+                intptr_t srcPixIdx = (sourceY + y) * srcWidth + sourceX + x;
                 uint32_t bitMask = 0x80000000u >> (dx % 32);
-                uint32_t srcBit = (srcRow[x] != 0) ? bitMask : 0;
+                uint32_t srcBit = (read16(srcWords16, srcPixIdx) != 0) ? bitMask : 0;
                 switch (combinationRule) {
                     case 3: case 34:
                         destRow[dx / 32] = (destRow[dx / 32] & ~bitMask) | srcBit;
@@ -16957,8 +16972,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // 32-bit source to 16-bit dest (depth reduction)
     if (destDepth == 16 && srcDepth == 32) {
-        size_t destPitch16 = static_cast<size_t>(destWidth);
-        uint16_t* destPixels16 = reinterpret_cast<uint16_t*>(destPixels);
+        uint32_t* destWords16 = destPixels;  // 32-bit words containing packed 16-bit pixels
         intptr_t srcPitch = srcWidth;
         uint32_t* srcPixels32 = reinterpret_cast<uint32_t*>(srcBytes);
 
@@ -16982,7 +16996,6 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels32 + (sourceY + y) * srcPitch + sourceX;
-            size_t di = static_cast<size_t>((destY + y) * destPitch16 + destX);
             for (intptr_t x = 0; x < width; x++) {
                 uint32_t s = srcRow[x];
                 uint16_t pixel;
@@ -17021,13 +17034,15 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     pixel = static_cast<uint16_t>(((r >> 3) << 10) | ((g >> 3) << 5) | (b >> 3));
                     if (s & 0xFF000000) pixel |= 0x8000; // preserve alpha as MSB
                 }
+                intptr_t destPixIdx = (destY + y) * destWidth + destX + x;
+                uint16_t prev = read16(destWords16, destPixIdx);
                 switch (combinationRule) {
-                    case 3: case 34: destPixels16[di + x] = pixel; break;
-                    case 0: destPixels16[di + x] &= pixel; break;
-                    case 7: destPixels16[di + x] |= pixel; break;
-                    case 25: if (pixel != 0) destPixels16[di + x] = pixel; break;
-                    case 6: destPixels16[di + x] ^= pixel; break;
-                    default: destPixels16[di + x] = pixel; break;
+                    case 3: case 34: write16(destWords16, destPixIdx, pixel); break;
+                    case 0: write16(destWords16, destPixIdx, prev & pixel); break;
+                    case 7: write16(destWords16, destPixIdx, prev | pixel); break;
+                    case 25: if (pixel != 0) write16(destWords16, destPixIdx, pixel); break;
+                    case 6: write16(destWords16, destPixIdx, prev ^ pixel); break;
+                    default: write16(destWords16, destPixIdx, pixel); break;
                 }
             }
         }
@@ -17359,10 +17374,8 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // 16-bit destination support (for BMP reader, Form conversions)
     if (destDepth == 16 && srcDepth == 16) {
-        size_t destPitch16 = static_cast<size_t>(destWidth);  // pixels per row
-        size_t srcPitch16 = static_cast<size_t>(srcWidth);
-        uint16_t* destPixels16 = reinterpret_cast<uint16_t*>(destPixels);
-        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
+        uint32_t* destWords16 = destPixels;
+        uint32_t* srcWords16 = reinterpret_cast<uint32_t*>(srcBytes);
 
         // Bounds check
         size_t requiredDestBytes16 = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 2;
@@ -17386,11 +17399,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         };
 
         for (intptr_t row = 0; row < height; row++) {
-            size_t di = static_cast<size_t>((destY + row) * destPitch16 + destX);
-            size_t si = static_cast<size_t>((sourceY + row) * srcPitch16 + sourceX);
             for (intptr_t col = 0; col < width; col++) {
-                uint16_t srcPx = applyShiftMask16(srcPixels16[si + col]);
-                uint16_t dstPx = destPixels16[di + col];
+                intptr_t srcPixIdx = (sourceY + row) * srcWidth + sourceX + col;
+                intptr_t dstPixIdx = (destY + row) * destWidth + destX + col;
+                uint16_t srcPx = applyShiftMask16(read16(srcWords16, srcPixIdx));
+                uint16_t dstPx = read16(destWords16, dstPixIdx);
                 uint16_t result;
                 switch (combinationRule) {
                     case 0: result = srcPx & dstPx; break;      // AND
@@ -17404,7 +17417,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     case 34: result = srcPx; break;             // sourceWord
                     default: result = srcPx; break;             // default: STORE
                 }
-                destPixels16[di + col] = result;
+                write16(destWords16, dstPixIdx, result);
             }
         }
         showDisplayBits(destForm, destX, destY, destX + width, destY + height);
@@ -17901,19 +17914,24 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
         if (requiredSrcBytes > srcBitsSize) { return PrimitiveResult::Failure; }
 
-        uint16_t* srcPixels16 = reinterpret_cast<uint16_t*>(srcBytes);
-        intptr_t srcPitch16 = srcPitchBytes / 2;
+        uint32_t* srcWords16 = reinterpret_cast<uint32_t*>(srcBytes);
 
         for (intptr_t y = 0; y < height; y++) {
-            uint16_t* srcRow = srcPixels16 + (sourceY + y) * srcPitch16 + sourceX;
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
             for (intptr_t x = 0; x < width; x++) {
-                uint16_t s16 = srcRow[x];
+                intptr_t srcPixIdx = (sourceY + y) * srcWidth + sourceX + x;
+                uint16_t s16 = read16(srcWords16, srcPixIdx);
                 // Convert 5-5-5 to 8-8-8-8 (ARGB)
-                uint32_t r = ((s16 >> 10) & 0x1F) * 255 / 31;
-                uint32_t g = ((s16 >> 5) & 0x1F) * 255 / 31;
-                uint32_t b = (s16 & 0x1F) * 255 / 31;
-                uint32_t srcPixel = 0xFF000000 | (r << 16) | (g << 8) | b;
+                // Pixel value 0 = transparent (no alpha)
+                uint32_t srcPixel;
+                if (s16 == 0) {
+                    srcPixel = 0;  // transparent
+                } else {
+                    uint32_t r = ((s16 >> 10) & 0x1F) * 255 / 31;
+                    uint32_t g = ((s16 >> 5) & 0x1F) * 255 / 31;
+                    uint32_t b = (s16 & 0x1F) * 255 / 31;
+                    srcPixel = 0xFF000000 | (r << 16) | (g << 8) | b;
+                }
                 switch (combinationRule) {
                     case 3: case 34: dstRow[x] = srcPixel; break;
                     case 7: dstRow[x] |= srcPixel; break;
