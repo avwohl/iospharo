@@ -323,6 +323,13 @@ struct ModifierStrip: View {
 
     private var isIPad: Bool { bridge.isIPad }
 
+    /// True when the keyboard is docked (not floating) and visible.
+    /// When the keyboard is floating, keep the full button set since
+    /// it doesn't cover the bottom of the screen.
+    private var keyboardDockedVisible: Bool {
+        keyboardVisible && !bridge.keyboardFloating
+    }
+
     private var buttonSpacing: CGFloat { isIPad ? 3 : 4 }
     private var stripWidth: CGFloat { isIPad ? 38 : 40 }
 
@@ -422,7 +429,7 @@ struct ModifierStrip: View {
         let home = window.safeAreaInsets.bottom
         guard R > 0 else { return max(home, 6) }
         let intrusion = squircleIntrusion(R: R, x: 2)
-        guard !keyboardVisible, hasDynamicIsland else {
+        guard !keyboardDockedVisible, hasDynamicIsland else {
             // No action buttons or not a DI phone: just clear corner + home
             return ceil(intrusion) + home
         }
@@ -446,7 +453,7 @@ struct ModifierStrip: View {
                     ctrlButton
                     cmdButton
 
-                    if keyboardVisible {
+                    if keyboardDockedVisible {
                         // Essential buttons for typing: backspace, actions, search
                         stripDivider
                         backspaceButton
@@ -462,7 +469,7 @@ struct ModifierStrip: View {
 
                     Spacer()
 
-                    if !keyboardVisible {
+                    if !keyboardDockedVisible {
                         StripButton(icon: "questionmark", size: buttonSize,
                                     tooltip: "Help") { showHelp = true }
                     }
@@ -480,7 +487,7 @@ struct ModifierStrip: View {
                 ctrlButton
                 cmdButton
                 Spacer()
-                if !keyboardVisible {
+                if !keyboardDockedVisible {
                     iPhoneActionButton(icon: "delete.left", tooltip: "Backspace") {
                         bridge.sendRawKey(8, keyCode: 8)
                     }

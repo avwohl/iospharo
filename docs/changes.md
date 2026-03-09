@@ -2,6 +2,19 @@
 
 Build 85 — 2026-03-09
 
+## Fix: Floating keyboard corrupts sidebar strip on iPad
+
+When using the iPad floating (undocked) keyboard, the sidebar strip
+unnecessarily switched to the reduced button set. After switching apps and
+returning, iOS would fire keyboardWillHide (clearing our state) then
+keyboardWillShow (re-showing the floating keyboard), leaving the strip in a
+corrupted state where the keyboard toggle was out of sync.
+
+Fix: Listen for keyboardWillShowNotification and detect floating vs docked
+by checking if the keyboard frame reaches the screen bottom. When the keyboard
+is floating, the strip keeps its full button set. The keyboardWillShow listener
+also re-syncs keyboardVisible on app resume, preventing state desync.
+
 ## Fix: Duplicate "Pharo 13 (latest)" names in image library
 
 When downloading a new image from the same template, the previous image kept

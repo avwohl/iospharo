@@ -380,6 +380,27 @@ class PharoCanvasViewController: UIViewController {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.bridge?.keyboardVisible = false
+                self?.bridge?.keyboardFloating = false
+            }
+        }
+
+        // Sync keyboardVisible when the keyboard reappears (e.g. after app
+        // resume with a floating keyboard, or system-initiated show).
+        // Also detect floating vs docked: a floating keyboard's frame doesn't
+        // reach the bottom of the screen.
+        NotificationCenter.default.addObserver(
+            forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main
+        ) { [weak self] notification in
+            MainActor.assumeIsolated {
+                self?.bridge?.keyboardVisible = true
+
+                // Detect floating keyboard: its endFrame doesn't touch the
+                // screen bottom edge.  Docked keyboards have maxY == screen height.
+                if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
+                    let screenHeight = UIScreen.main.bounds.height
+                    let floating = frame.maxY < screenHeight - 1
+                    self?.bridge?.keyboardFloating = floating
+                }
             }
         }
         #endif

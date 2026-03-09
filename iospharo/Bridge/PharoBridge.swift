@@ -33,6 +33,11 @@ class PharoBridge: ObservableObject {
     /// Soft keyboard visibility toggle (iOS only)
     @Published var keyboardVisible = false
 
+    /// True when the iPad floating (undocked) keyboard is active.
+    /// When floating, the strip keeps its full button set since the
+    /// keyboard doesn't cover the bottom of the screen.
+    @Published var keyboardFloating = false
+
     private var imagePath: String?
 
     private var displayCallback: IOSDisplayUpdateCallback?
