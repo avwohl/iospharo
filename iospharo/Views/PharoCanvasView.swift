@@ -108,6 +108,19 @@ class PharoMTKView: MTKView {
             }
         }
 
+        // Clear stale suppress flags from previous gesture interactions.
+        // These flags protect against delayed touchesCancelled/touchesEnded from a
+        // completed long-press gesture. By the time a NEW touch begins, any delayed
+        // callbacks from the old touch have either been consumed or are irrelevant.
+        // Previously these were cleared in handleLongPress .ended, but on iPad UIKit
+        // can deliver the delayed touch callback AFTER .ended, bypassing the suppression
+        // and sending a spurious button-up that closes popup menus.
+        suppressNextTouchEnd = false
+        suppressNextTouchCancel = false
+
+        #if DEBUG
+        fputs("[TOUCH] began (\(Int(point.x)),\(Int(point.y))) btn=\(buttons)\n", stderr)
+        #endif
         currentButton = buttons
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
@@ -120,6 +133,10 @@ class PharoMTKView: MTKView {
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        let pt = touches.first.map { $0.location(in: self) } ?? .zero
+        fputs("[TOUCH] ended (\(Int(pt.x)),\(Int(pt.y))) btn=\(currentButton) suppress=\(suppressNextTouchEnd)\n", stderr)
+        #endif
         // When UIContextMenuInteraction handles a right-click, UIKit still fires
         // touchesEnded for the original touch. Skip the spurious RED button-up
         // since contextMenuInteraction already sent the correct YELLOW events.
@@ -133,6 +150,10 @@ class PharoMTKView: MTKView {
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
+        #if DEBUG
+        let pt = touches.first.map { $0.location(in: self) } ?? .zero
+        fputs("[TOUCH] cancelled (\(Int(pt.x)),\(Int(pt.y))) btn=\(currentButton) suppress=\(suppressNextTouchCancel)\n", stderr)
+        #endif
         // When UIContextMenuInteraction handles a right-click, UIKit cancels
         // the touch. Skip the spurious button-up since contextMenuInteraction
         // already sent the correct right-click events to Pharo.
@@ -552,6 +573,9 @@ class PharoCanvasViewController: UIViewController {
     @objc func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
+        #if DEBUG
+        fputs("[LONGPRESS] state=\(gesture.state.rawValue) (\(Int(point.x)),\(Int(point.y)))\n", stderr)
+        #endif
         switch gesture.state {
         case .began:
             // touchesBegan already sent RED button down. Clean it up before
@@ -567,13 +591,11 @@ class PharoCanvasViewController: UIViewController {
             bridge.sendTouchMoved(to: point, buttons: IOS_YELLOW_BUTTON)
         case .ended, .cancelled:
             bridge.sendTouchUp(at: point, buttons: IOS_YELLOW_BUTTON)
-            // Clear suppress flags. cancelsTouchesInView=true means the original
-            // touch was cancelled (consuming suppressNextTouchCancel) but
-            // touchesEnded never fires — leaving suppressNextTouchEnd stuck.
-            // If not cleared, the NEXT tap (e.g. on a menu item) has its
-            // touchesEnded suppressed and Pharo never gets the button-up.
-            mtkView.suppressNextTouchEnd = false
-            mtkView.suppressNextTouchCancel = false
+            // Don't clear suppress flags here. They will be cleared at the start
+            // of the next touchesBegan. On iPad, UIKit can deliver a delayed
+            // touchesCancelled/touchesEnded for the original touch AFTER this
+            // .ended callback. If we clear the flags here, that delayed callback
+            // sends a spurious button-up that closes popup menus.
         default:
             break
         }

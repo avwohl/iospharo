@@ -1,8 +1,34 @@
+# What's New in Build 84
+
+Build 84 — 2026-03-08
+
+## Bug Fix: iPad context menu items still not activating (revised)
+
+Build 83's fix (clearing suppress flags in .ended) was insufficient — Tim
+reported menus still close without activating on iPad. Root cause: on iPad,
+UIKit can deliver a delayed `touchesCancelled`/`touchesEnded` for the original
+long-press touch AFTER the gesture recognizer's `.ended` callback fires.
+Build 83 cleared the suppress flags in `.ended`, so the delayed callback was
+no longer suppressed — sending a spurious button-up at the original long-press
+position (outside the popup menu). `MenuMorph >> mouseUp:` interprets a
+mouseUp outside the menu as "click outside to dismiss" and closes the popup.
+
+Fix: don't clear suppress flags in `.ended`. Instead, clear them at the start
+of the next `touchesBegan` — by then any delayed callbacks from the old touch
+have either been consumed by the flag or are irrelevant.
+
+## Cleanup: Remove temporary debug logging
+
+Removed `[EVT-POST]` fprintf from PlatformBridge.cpp and `[SDL-POLL]` fprintf
+from FFI.cpp that were added during iPad event investigation.
+
+---
+
 # What's New in Build 83
 
 Build 83 — 2026-03-08
 
-## Bug Fix: iPad context menu items do nothing after long-press
+## Bug Fix: iPad context menu items do nothing after long-press (first attempt)
 
 After long-pressing to open a Pharo context menu on iPad, tapping any menu
 item (Browse, Debug, etc.) had no effect. Root cause: the `suppressNextTouchEnd`
@@ -13,6 +39,8 @@ leaving the flag stuck. The next tap's `touchesEnded` was then suppressed,
 so Pharo never received the button-up needed to activate the menu item.
 
 Fix: clear both suppress flags in `handleLongPress` `.ended`/`.cancelled`.
+
+NOTE: This fix was insufficient — see Build 84 for the complete fix.
 
 ## Bug Fix: Spotter (Shift+Enter) unreliable on iPad hardware keyboard
 

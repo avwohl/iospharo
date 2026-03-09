@@ -1054,6 +1054,7 @@ nextEvent:
 int stub_SDL_WaitEvent(void* event) {
     // Used by modal event loops (menu dropdown grab loops).
     // Without this, menu dropdowns open and close immediately.
+    fprintf(stderr, "[SDL-WAIT] WaitEvent called\n");
     int result = stub_SDL_PollEvent(event);
     if (result != 0) return result;
 
