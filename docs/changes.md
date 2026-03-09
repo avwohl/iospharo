@@ -1,3 +1,24 @@
+# What's New in Build 90
+
+Build 90 — 2026-03-09
+
+## Fix: Floating keyboard canvas expansion — GeometryReader size lock (5th attempt)
+
+Tim confirmed sidebar buttons now work correctly (build 89), but canvas still grows
+when floating keyboard appears (status bar disappears, gap at bottom). The MetalRenderer
+guard from build 89 caused a visible flicker (texture rendered at old size in new-size view).
+
+Root cause: when keyboard @Published properties trigger a SwiftUI re-render, the layout
+re-evaluates safe areas. On iPad with a floating keyboard, this causes the view to expand
+past the status bar area. Neither `.ignoresSafeArea(.keyboard)` nor MetalRenderer guards
+can cleanly prevent this — the view is already resized by SwiftUI before our code runs.
+
+Fix: wrapped the HStack in a `GeometryReader` that captures the pre-keyboard size and
+locks the HStack to it while any keyboard is visible. Width changes still propagate
+(for orientation/Stage Manager). Removed the MetalRenderer guard (no longer needed since
+the view itself doesn't resize). Removed `.ignoresSafeArea(.keyboard)` (was causing
+expansion in previous attempt).
+
 # What's New in Build 89
 
 Build 89 — 2026-03-09

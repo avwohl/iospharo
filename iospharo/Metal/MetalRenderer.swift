@@ -156,11 +156,6 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - MTKViewDelegate
 
-    /// Display size reported to Pharo before any keyboard-induced change.
-    /// Updated only when no keyboard is visible, so keyboard avoidance
-    /// (which SwiftUI may not fully suppress) doesn't resize the Pharo world.
-    private var preKeyboardSize: (width: Int, height: Int) = (0, 0)
-
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // Use logical points (view.bounds) not physical pixels (size parameter).
         // The Metal renderer stretches the texture to fill the drawable, handling
@@ -168,25 +163,6 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         // text microscopic on 2x/3x retina displays.
         let width = Int(view.bounds.size.width)
         let height = Int(view.bounds.size.height)
-
-        #if !targetEnvironment(macCatalyst)
-        // iOS keyboard events can resize the view (both docked keyboards shrinking it
-        // and floating keyboards expanding it past the status bar). Freeze the Pharo
-        // display size while any keyboard is visible — it will update when dismissed.
-        if let bridge = bridge {
-            if !bridge.keyboardVisible {
-                // No keyboard — this is a real size change (rotation, Stage Manager, etc.)
-                preKeyboardSize = (width, height)
-            } else if preKeyboardSize.height > 0 && (width, height) != preKeyboardSize {
-                // Keyboard is visible and size changed — use the pre-keyboard size
-                #if DEBUG
-                NSLog("[METAL] Ignoring keyboard resize: %dx%d → using %dx%d", width, height, preKeyboardSize.width, preKeyboardSize.height)
-                #endif
-                bridge.setDisplaySize(width: preKeyboardSize.width, height: preKeyboardSize.height)
-                return
-            }
-        }
-        #endif
 
         #if DEBUG
         NSLog("[METAL] drawableSizeWillChange: drawable=\(Int(size.width))x\(Int(size.height)), bounds=\(width)x\(height)")
