@@ -590,6 +590,40 @@ private:
     uint8_t gcVerifyBytecodeAtIP_ = 0xFF;
     uint64_t gcVerifyMethodOop_ = 0;
 
+    // ===== STEP / PERIODIC CHECK STATE =====
+    // (Members, not static locals, so delete+new resets them for VM relaunch)
+    int stepCheckCounter_ = 0;
+    bool deferredPeriodicCheck_ = false;
+    Oop trackedProcess_ = Oop::nil();
+    std::chrono::steady_clock::time_point trackStartTime_{};
+    int64_t cumulativeMs_ = 0;
+    std::chrono::steady_clock::time_point lastResumeTime_{};
+    bool startupGracePeriod_ = true;
+    uint64_t stepCountForDriver_ = 0;
+    uint64_t bytecodeCount_ = 0;
+    int sendCount_ = 0;
+    int dnuDepth_ = 0;
+    int wakeLowerCount_ = 0;
+    long long lastHeartbeatSteps_ = -1;
+
+    // ===== BOOTSTRAP STARTUP STATE =====
+    bool imageBooted_ = false;
+    int startupAttempt_ = 0;
+    bool startupSucceeded_ = false;
+    bool displayInitialized_ = false;
+    bool uiManagerStarted_ = false;
+    bool sensorStartAttempted_ = false;
+    bool selectorsInitialized_ = false;
+
+    // ===== STDIO / FFI INIT GATES =====
+    bool stdioInitialized_ = false;
+    int stdinId_ = 0, stdoutId_ = 1, stderrId_ = 2;
+    bool ffiInitialized_ = false;
+
+    // ===== DIAGNOSTIC COUNTERS =====
+    int preemptCount_ = 0;
+    int bitbltFailCount_ = 0;
+
     // Clipboard (simple in-memory storage for headless mode)
     std::string clipboardText_;
 

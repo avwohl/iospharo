@@ -11535,16 +11535,11 @@ PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
 PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
     // Register stdin, stdout, stderr if not already registered
     // Use actual POSIX fd numbers so primitiveFileDescriptorType can fstat() them
-    static bool stdioInitialized = false;
-    static int stdinId = 0;
-    static int stdoutId = 1;
-    static int stderrId = 2;
-
-    if (!stdioInitialized) {
+    if (!stdioInitialized_) {
         openFiles_[0] = stdin;
         openFiles_[1] = stdout;
         openFiles_[2] = stderr;
-        stdioInitialized = true;
+        stdioInitialized_ = true;
     }
 
     // Create result array with 3 elements
@@ -11559,9 +11554,9 @@ PrimitiveResult Interpreter::primitiveFileStdioHandles(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    memory_.storePointer(0, resultArray, Oop::fromSmallInteger(stdinId));
-    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(stdoutId));
-    memory_.storePointer(2, resultArray, Oop::fromSmallInteger(stderrId));
+    memory_.storePointer(0, resultArray, Oop::fromSmallInteger(stdinId_));
+    memory_.storePointer(1, resultArray, Oop::fromSmallInteger(stdoutId_));
+    memory_.storePointer(2, resultArray, Oop::fromSmallInteger(stderrId_));
 
     pop();  // pop receiver
     push(resultArray);
@@ -12663,12 +12658,11 @@ PrimitiveResult Interpreter::primitiveCalloutToFFI(int argCount) {
     }
 
     // --- Legacy SDL2-specific FFI callout path ---
-    static bool ffiInitialized = false;
 
     // Initialize FFI on first call
-    if (!ffiInitialized) {
-        ffiInitialized = ffi::initializeFFI();
-        if (!ffiInitialized) {
+    if (!ffiInitialized_) {
+        ffiInitialized_ = ffi::initializeFFI();
+        if (!ffiInitialized_) {
             return PrimitiveResult::Failure;
         }
     }
@@ -15837,12 +15831,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (sourceAlpha < 0 || sourceAlpha > 255) return PrimitiveResult::Failure;
     }
 
-    static int bitbltFailCount = 0;
     auto logFailure = [&](int rule, int srcD, int dstD, const char* reason) {
-        bitbltFailCount++;
-        if (bitbltFailCount <= 50 || bitbltFailCount % 500 == 0) {
+        bitbltFailCount_++;
+        if (bitbltFailCount_ <= 50 || bitbltFailCount_ % 500 == 0) {
             fprintf(stderr, "[BITBLT-FAIL] #%d rule=%d src=%d dst=%d reason=%s\n",
-                    bitbltFailCount, rule, srcD, dstD, reason);
+                    bitbltFailCount_, rule, srcD, dstD, reason);
         }
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)

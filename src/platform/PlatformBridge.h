@@ -19,6 +19,7 @@ bool vm_loadImage(const char* imagePath);
 void vm_run(void);           // Runs interpreter on a background thread
 void vm_runOnMainThread(void); // Runs interpreter on the current (main) thread
 void vm_stop(void);
+void vm_destroy(void);       // Delete all VM objects, reset state for relaunch
 bool vm_isRunning(void);
 
 // Display

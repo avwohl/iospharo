@@ -9,6 +9,7 @@
 #include "../vm/ImageLoader.hpp"
 #include "../vm/Interpreter.hpp"
 #include "../vm/FFI.hpp"
+#include "../vm/InterpreterProxy.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -457,6 +458,30 @@ void vm_stop(void) {
     if (gInterpreter) {
         gInterpreter->stopHeartbeat();
     }
+}
+
+void vm_destroy(void) {
+    // Delete all VM objects and reset state so vm_initialize()/vm_loadImage()/vm_run()
+    // can be called again for a fresh launch. The old VM thread (if any) is detached
+    // and sleeping — it uses negligible resources and dies with the process.
+
+    delete gInterpreter;
+    gInterpreter = nullptr;
+
+    delete gMemory;
+    gMemory = nullptr;
+
+    delete gDisplay;
+    gDisplay = nullptr;
+    pharo::gDisplaySurface = nullptr;
+
+    // Reset subsystems
+    pharo::ffi::shutdownFFI();
+    pharo::gEventQueue.reset();
+    resetInterpreterProxy();
+
+    // Note: gPendingCallback, gClipboardGet/Set, gTextInputFunc are Swift-side
+    // callbacks that persist across VM instances — do NOT reset them.
 }
 
 bool vm_isRunning(void) {

@@ -17,7 +17,8 @@
 int vm_init(VMParameters* parameters);
 void vm_run(void);  // Start interpreter on background thread (returns immediately)
 bool vm_isRunning(void);  // Check if interpreter is running
-void vm_stop(void);  // Must be called before app exit to prevent crash
+void vm_stop(void);     // Must be called before app exit to prevent crash
+void vm_destroy(void);  // Delete all VM objects, reset state for relaunch
 void vm_parameters_init(VMParameters* parameters);
 void vm_parameters_destroy(VMParameters* parameters);
 

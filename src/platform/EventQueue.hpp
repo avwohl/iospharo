@@ -59,6 +59,7 @@ public:
     bool isEmpty() const;
     size_t size() const;
     void clear();
+    void reset();  // Clear events + reset callbacks/indices for VM relaunch
 
     /// Set callback to be invoked when events are pushed
     void setEventCallback(EventCallback callback, void* context);

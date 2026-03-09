@@ -1395,6 +1395,15 @@ extern "C" {
     sqInt primitiveSetOffset(void);
 }
 
+// Reset interpreter proxy for VM relaunch
+void resetInterpreterProxy() {
+    gInterp = nullptr;
+    gMem = nullptr;
+    gFailed = false;
+    gFailureCode = 0;
+    gRemappableTop = 0;
+}
+
 // Helper to reset the failure state before each primitive call
 void resetProxyFailure() {
     gFailed = false;

@@ -591,17 +591,12 @@ class PharoBridge: ObservableObject {
         motionTimer?.invalidate()
         motionTimer = nil
         motionManager.stop()
-        vm_stop()  // Join threads, stop heartbeat (idempotent)
+        vm_stop()     // Wait for thread, detach it, stop heartbeat
+        vm_destroy()  // Delete all C++ objects, reset state for relaunch
         isRunning = false
         isInitialized = false
-
-        // Exit the app after a brief delay to let SwiftUI settle.
-        // The VM cannot be re-launched without restarting the process
-        // (global memory/thread state is not fully resettable yet).
-        // This matches the Cmd+Q behavior on Mac Catalyst.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            exit(0)
-        }
+        imagePath = nil
+        // SwiftUI will transition back to the image library since isRunning = false
     }
 
     /// Stop the VM - MUST be called before app exit to prevent crash

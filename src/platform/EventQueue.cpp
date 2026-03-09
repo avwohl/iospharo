@@ -47,6 +47,16 @@ void EventQueue::clear() {
     while (!events_.empty()) events_.pop();
 }
 
+void EventQueue::reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    while (!events_.empty()) events_.pop();
+    callback_ = nullptr;
+    callbackContext_ = nullptr;
+    inputSemaphoreIndex_ = 0;
+    sdl2InputSemaphoreIndex_ = 0;
+    sdl2EventPollingActive_ = false;
+}
+
 void EventQueue::setEventCallback(EventCallback callback, void* context) {
     std::lock_guard<std::mutex> lock(mutex_);
     callback_ = callback;

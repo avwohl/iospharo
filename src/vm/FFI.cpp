@@ -189,9 +189,12 @@ bool initializeFFI() {
     return true;
 }
 
+static void resetAllFFIState();  // Forward declaration — defined after all statics
+
 void shutdownFFI() {
     sFunctionCache.clear();
     sInitialized = false;
+    resetAllFFIState();
 }
 
 bool isModuleLoaded(const std::string& moduleName) {
@@ -433,6 +436,29 @@ static int sMouseX = 0;
 static int sMouseY = 0;
 static uint32_t sMouseButtons = 0;  // SDL button mask (bit 0=left, bit 1=middle, bit 2=right)
 static uint32_t sKeyModState = 0;   // SDL keyboard modifier state
+static bool sTextInputActive = false;  // Text input state (declared here for resetSDL2State)
+
+static void resetAllFFIState() {
+    sModuleHandleCache.clear();
+    sAppFrameworksPath.clear();
+    sSDL2Initialized = false;
+    sNextHandle = 0x10000;
+    sWindows.clear();
+    sTextures.clear();
+    sRenderers.clear();
+    sMainRenderer = nullptr;
+    sMainWindow = nullptr;
+    sSDLRenderingActive = false;
+    while (!sPendingWindowEvents.empty()) sPendingWindowEvents.pop();
+    sWindowCreated = false;
+    sPollCountdown = 0;
+    g_firstExposedDelivered = false;
+    sMouseX = 0;
+    sMouseY = 0;
+    sMouseButtons = 0;
+    sKeyModState = 0;
+    sTextInputActive = false;
+}
 
 extern "C" {
 
@@ -1098,7 +1124,6 @@ void stub_SDL_free(void* mem) {
 // Text input — delegates to platform bridge for iOS keyboard show/hide
 extern "C" void vm_startTextInput(void);
 extern "C" void vm_stopTextInput(void);
-static bool sTextInputActive = false;
 
 void stub_SDL_StartTextInput() {
     sTextInputActive = true;

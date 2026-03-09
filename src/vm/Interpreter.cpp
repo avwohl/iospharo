@@ -848,8 +848,7 @@ void Interpreter::startHeartbeat() {
             // Watchdog: check for stuck VM every 5 seconds
             if (tickCount % 5000 == 0) {
                 long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
-                static long long lastSteps = -1;
-                bool stuck = (steps == lastSteps);
+                bool stuck = (steps == lastHeartbeatSteps_);
                 if (stuck) {
                     int ticks = stuckTicks_.fetch_add(1, std::memory_order_relaxed) + 1;
                     if (ticks >= 3) {
@@ -859,7 +858,7 @@ void Interpreter::startHeartbeat() {
                 } else {
                     stuckTicks_.store(0, std::memory_order_relaxed);
                 }
-                lastSteps = steps;
+                lastHeartbeatSteps_ = steps;
             }
         }
 
@@ -1142,21 +1141,19 @@ bool Interpreter::step() {
     // The forceYield handler already checks inExtension_, but timer/signal/preemption
     // checks did NOT — causing the non-deterministic "factorial returns receiver" bug.
     {
-    static int stepCheckCounter = 0;
-    static bool deferredPeriodicCheck = false;
-    stepCheckCounter++;
-    bool periodicCheckDue = (stepCheckCounter & 0x3FF) == 0;  // every 1024 steps
+    stepCheckCounter_++;
+    bool periodicCheckDue = (stepCheckCounter_ & 0x3FF) == 0;  // every 1024 steps
 
     if (periodicCheckDue && inExtension_) {
         // Can't run periodic checks now — defer to next non-extension step.
         // Without this, tight loops whose bytecode count divides evenly into 1024
         // (e.g. `[] repeat` = 2-byte ExtendB+Jump) permanently align the check
         // with extension bytes, starving timer and signal checks forever.
-        deferredPeriodicCheck = true;
+        deferredPeriodicCheck_ = true;
     }
 
-    if ((periodicCheckDue || deferredPeriodicCheck) && !inExtension_) {
-        deferredPeriodicCheck = false;
+    if ((periodicCheckDue || deferredPeriodicCheck_) && !inExtension_) {
+        deferredPeriodicCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
         if (hasPendingSignals()) {
@@ -1169,40 +1166,34 @@ bool Interpreter::step() {
         // to handle cases where context switches to the Delay scheduler
         // briefly interrupt the stuck process.
         {
-            static Oop trackedProcess = Oop::nil();
-            static std::chrono::steady_clock::time_point trackStartTime;
-            static int64_t cumulativeMs = 0;
-            static std::chrono::steady_clock::time_point lastResumeTime;
-            static bool startupGracePeriod = true;
-
             Oop currentActive = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
             int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
 
             if (prio >= 80) {
-                startupGracePeriod = false;
+                startupGracePeriod_ = false;
                 // High-priority process running — if we were tracking a low-pri
                 // process, pause cumulative timer (don't reset)
-                if (trackedProcess.rawBits() == currentActive.rawBits()) {
-                    trackedProcess = Oop::nil();  // stop tracking
+                if (trackedProcess_.rawBits() == currentActive.rawBits()) {
+                    trackedProcess_ = Oop::nil();  // stop tracking
                 }
-            } else if (!startupGracePeriod && prio < 79) {
-                if (currentActive.rawBits() != trackedProcess.rawBits()) {
+            } else if (!startupGracePeriod_ && prio < 79) {
+                if (currentActive.rawBits() != trackedProcess_.rawBits()) {
                     // New low-priority process — start fresh tracking
-                    trackedProcess = currentActive;
-                    cumulativeMs = 0;
-                    lastResumeTime = std::chrono::steady_clock::now();
-                    trackStartTime = lastResumeTime;
+                    trackedProcess_ = currentActive;
+                    cumulativeMs_ = 0;
+                    lastResumeTime_ = std::chrono::steady_clock::now();
+                    trackStartTime_ = lastResumeTime_;
                 } else {
                     // Same process still running
                     auto now = std::chrono::steady_clock::now();
                     auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now - trackStartTime).count();
+                        now - trackStartTime_).count();
                     // Use wall time (simpler, accounts for all elapsed time)
                     if (wallMs >= 90000) {
                         fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
                                 (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
-                        trackedProcess = Oop::nil();
+                        trackedProcess_ = Oop::nil();
                         // Mark process as terminated (clear suspendedContext)
                         memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
                         // Try to find another process to run
@@ -1222,7 +1213,7 @@ bool Interpreter::step() {
         // steps, ~65ms) to avoid excessive context switching when a spin-wait
         // watchdog is on the ready queue. Timer/signal checks still run every
         // 1024 steps for responsiveness.
-        if ((stepCheckCounter & 0xFFFF) == 0) {
+        if ((stepCheckCounter_ & 0xFFFF) == 0) {
             checkForPreemption();
         }
 
@@ -1273,8 +1264,7 @@ bool Interpreter::step() {
     }
 
 
-    static uint64_t stepCountForDriver = 0;
-    stepCountForDriver++;
+    stepCountForDriver_++;
 
     // Process any pending external semaphore signals (from heartbeat/events).
     // Skip if in extension byte sequence to protect extA_/extB_.
@@ -1285,9 +1275,8 @@ bool Interpreter::step() {
     // Periodic preemption check - every 10000 bytecodes, check if we should
     // yield to a higher-priority or same-priority runnable process.
     // Skip if in extension byte sequence to protect extA_/extB_.
-    static uint64_t bytecodeCount = 0;
-    bytecodeCount++;
-    if (bytecodeCount % 10000 == 0 && !inExtension_) {
+    bytecodeCount_++;
+    if (bytecodeCount_ % 10000 == 0 && !inExtension_) {
         checkForPreemption();
     }
 
@@ -3842,8 +3831,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Record watchdog info periodically (every 1024 sends) for timer summary
     {
-        static int sendCount = 0;
-        if ((++sendCount & 0x3FF) == 0) {
+        if ((++sendCount_ & 0x3FF) == 0) {
             if (selBytes && selLen > 0 && selLen < 63) {
                 memcpy(g_watchdogSelector, selBytes, selLen);
                 g_watchdogSelector[selLen] = '\0';
@@ -4939,17 +4927,16 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 // ===== SPECIAL SENDS =====
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
-    static int dnuDepth = 0;
     const int MAX_DNU_DEPTH = 10;
 
-        dnuDepth++;
+        dnuDepth_++;
 
     // If the selector IS doesNotUnderstand:, we're in a recursive DNU cascade.
     // The standard VM terminates the process in this case — there's no way to recover
     // because the receiver's class doesn't implement doesNotUnderstand: itself.
     {
         if (selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
-            dnuDepth--;
+            dnuDepth_--;
             // Standard VM behavior: terminate the active process, not the whole VM.
             // The process has an unrecoverable error (its receiver's class hierarchy
             // doesn't include doesNotUnderstand:). Other processes should continue.
@@ -4965,8 +4952,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     }
 
     // Depth limit — stop VM if stuck in DNU recursion
-    if (dnuDepth > MAX_DNU_DEPTH) {
-        dnuDepth--;
+    if (dnuDepth_ > MAX_DNU_DEPTH) {
+        dnuDepth_--;
         stopVM("DNU recursion depth exceeded — infinite doesNotUnderstand: loop");
         return;
     }
@@ -4987,7 +4974,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     if (message.rawBits() == memory_.nil().rawBits()) {
         pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
-        dnuDepth--;
+        dnuDepth_--;
         stopVM("DNU: Failed to allocate Message object");
         return;
     }
@@ -5007,7 +4994,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         pop();  // message
         pop();  // selector
         for (int i = 0; i < argCount + 1; i++) pop();
-        dnuDepth--;
+        dnuDepth_--;
         stopVM("DNU: Failed to allocate args Array");
         return;
     }
@@ -5036,7 +5023,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
     sendSelector(selectors_.doesNotUnderstand, 1);
 
-    dnuDepth--;
+    dnuDepth_--;
 }
 
 void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount) {
@@ -5710,9 +5697,8 @@ Oop Interpreter::wakeLowerPriorityProcess(int currentPriority) {
 
     // Every 5th call, specifically try lowIOPriority (10) first to prevent starvation
     // lowIOPriority is where the event loop runs
-    static int wakeLowerCount = 0;
-    wakeLowerCount++;
-    if (wakeLowerCount % 5 == 0 && maxPriorityIndex >= 9) {
+    wakeLowerCount_++;
+    if (wakeLowerCount_ % 5 == 0 && maxPriorityIndex >= 9) {
         int lowIOIndex = 9;  // Priority 10 = index 9
         Oop processList = memory_.fetchPointer(lowIOIndex, schedLists);
         Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
@@ -6420,8 +6406,7 @@ void Interpreter::checkForPreemption() {
         if (firstProcess.rawBits() == activeProcess.rawBits()) continue;
 
         // Found a higher-priority runnable process - preempt!
-        static int preemptCount = 0;
-        if (++preemptCount <= 5) {
+        if (++preemptCount_ <= 5) {
             fprintf(stderr, "[PREEMPT] P%d→P%zu (active=0x%llx → 0x%llx)\n",
                     activePriority, i + 1,
                     (unsigned long long)activeProcess.rawBits(),
@@ -6588,7 +6573,6 @@ bool Interpreter::executePendingDriverInstall() {
 // autoLoadDriver removed — was a dead no-op called from hardcoded selector matching
 
 bool Interpreter::bootstrapStartup() {
-    static bool imageBooted = false;  // true once we've ever found a runnable process
 
     // In Spur, nil is an actual object at heap start, not 0
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
@@ -6614,7 +6598,7 @@ bool Interpreter::bootstrapStartup() {
                         ObjectHeader* ctxHdr = suspendedCtx.asObjectPtr();
                         if (ctxHdr->format() == ObjectFormat::IndexableWithFixed) {
                             fprintf(stderr, "[BOOTSTRAP] Resuming active process (standard path)\n");
-                            imageBooted = true;
+                            imageBooted_ = true;
                             return executeFromContext(suspendedCtx);
                         }
                     }
@@ -6645,7 +6629,7 @@ bool Interpreter::bootstrapStartup() {
                         ObjectHeader* ctxHeader = context.asObjectPtr();
                         if (ctxHeader->format() == ObjectFormat::IndexableWithFixed) {
                             fprintf(stderr, "[BOOTSTRAP] Resuming from queue (fallback path)\n");
-                            imageBooted = true;
+                            imageBooted_ = true;
                             return executeFromContext(context);
                         }
                     }
@@ -6656,31 +6640,28 @@ bool Interpreter::bootstrapStartup() {
 
     // Once the image has booted, don't retry Approach 3 startup methods.
     // The caller's idle loop handles the "nothing to run" case properly.
-    if (imageBooted) {
+    if (imageBooted_) {
         return false;
     }
 
     // Approach 3: Try to find and call a startup method directly
     // Use static tracking to prevent infinite loops
-    static int startupAttempt = 0;
-    static bool startupSucceeded = false;
-    static bool displayInitialized = false;
 
-    startupAttempt++;
+    startupAttempt_++;
     // Log every startup attempt to verify the code is being reached
     if constexpr (ENABLE_DEBUG_LOGGING) {
-        fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+        fprintf(stderr, "[BOOTSTRAP] Attempt #%d\n", startupAttempt_);
         static FILE* startupLog = nullptr;
         if (startupLog) {
-            fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt);
+            fprintf(startupLog, "[BOOTSTRAP] Attempt #%d\n", startupAttempt_);
             fflush(startupLog);
         }
     }
 
     // Initialize the platform display ONCE with a test pattern
     // Skip Smalltalk Form creation - just write directly to platform buffer
-    if (!displayInitialized && pharo::gDisplaySurface) {
-        displayInitialized = true;
+    if (!displayInitialized_ && pharo::gDisplaySurface) {
+        displayInitialized_ = true;
 
         uint32_t* pixels = pharo::gDisplaySurface->pixels();
         int width = pharo::gDisplaySurface->width();
@@ -6762,7 +6743,7 @@ bool Interpreter::bootstrapStartup() {
 
     // If we've already completed all initial startup steps, just return false.
     // The caller's idle loop handles the "nothing to run" case properly.
-    if (startupAttempt > 100) {
+    if (startupAttempt_ > 100) {
         return false;
     }
 
@@ -6811,7 +6792,7 @@ bool Interpreter::bootstrapStartup() {
     };
 
     // First try: SmalltalkImage >> recordStartupStamp
-    if (startupAttempt == 1) {
+    if (startupAttempt_ == 1) {
         // SmalltalkImage is the class; we need to find "Smalltalk" which is the instance
         Oop smalltalk = memory_.findGlobal("Smalltalk");
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
@@ -6849,7 +6830,7 @@ bool Interpreter::bootstrapStartup() {
     }
 
     // Second try: restartMethods
-    if (startupAttempt == 2) {
+    if (startupAttempt_ == 2) {
         // Find Smalltalk instance and SmalltalkImage class
         Oop smalltalk = memory_.findGlobal("Smalltalk");
         Oop smalltalkImageClass = memory_.findGlobal("SmalltalkImage");
@@ -6877,13 +6858,12 @@ bool Interpreter::bootstrapStartup() {
     // Attempt 3: Ensure UIManager is initialized (spawns UI process)
     // This is needed because UIManager may not be registered as a startup handler
     // in some Pharo images, preventing the Morphic event loop from starting.
-    if (startupAttempt == 3) {
-        static bool uiManagerStarted = false;
+    if (startupAttempt_ == 3) {
         if constexpr (ENABLE_DEBUG_LOGGING) {
         }
 
-        if (!uiManagerStarted) {
-            uiManagerStarted = true;
+        if (!uiManagerStarted_) {
+            uiManagerStarted_ = true;
 
 
             // Find UIManager class
@@ -6918,11 +6898,10 @@ bool Interpreter::bootstrapStartup() {
     }
 
     // Fourth try and beyond: Keep calling World>>doOneCycle for UI loop
-    if (startupAttempt >= 4 && startupAttempt <= 100) {
+    if (startupAttempt_ >= 4 && startupAttempt_ <= 100) {
         // One-time: Try to start InputEventSensor's event loop
-        static bool sensorStartAttempted = false;
-        if (!sensorStartAttempted) {
-            sensorStartAttempted = true;
+        if (!sensorStartAttempted_) {
+            sensorStartAttempted_ = true;
 
 
             // Find the Sensor global (InputEventSensor instance)
@@ -6989,7 +6968,7 @@ bool Interpreter::bootstrapStartup() {
     }
 
     // Last resort: Try Object >> yourself just to prove basic execution works
-    if (startupAttempt == 4) {
+    if (startupAttempt_ == 4) {
         Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
         if (arrayClass.isObject()) {
             Oop selector = findSelector("yourself");
@@ -7016,7 +6995,7 @@ bool Interpreter::bootstrapStartup() {
     // Note: This is normal for headless images - the startup methods executed
     // successfully in earlier attempts, but the Smalltalk code returned because
     // there's no GUI event loop to run.
-              // << startupAttempt << ")";
+              // << startupAttempt_ << ")";
     return false;
 }
 
@@ -7642,10 +7621,9 @@ bool Interpreter::executeFromContext(Oop context) {
     argCount_ = 0;  // We're resuming a context, not calling a method
 
     // Only initialize selectors once (not on every executeFromContext call)
-    static bool selectorsInitialized = false;
-    if (!selectorsInitialized) {
+    if (!selectorsInitialized_) {
         initializeSelectors();
-        selectorsInitialized = true;
+        selectorsInitialized_ = true;
     }
     running_ = true;
 

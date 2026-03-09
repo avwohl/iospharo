@@ -37,6 +37,9 @@ void initializeSocketPlugin(pharo::Interpreter* interp);
 void initializeSqueakSSL(pharo::Interpreter* interp);
 #endif
 
+// Reset the proxy for VM relaunch (clears interpreter/memory pointers)
+void resetInterpreterProxy();
+
 // Reset the proxy failure flag before calling external primitives
 void resetProxyFailure();
 

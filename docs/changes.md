@@ -1,3 +1,28 @@
+# What's New in Build 87
+
+Build 87 — 2026-03-09
+
+## VM relaunch support
+
+The VM can now be stopped and restarted without calling `exit(0)`. When the
+Pharo image quits (primitiveQuit), the app tears down all C++ objects
+(Interpreter, ObjectMemory, DisplaySurface) and resets FFI, event queue,
+and InterpreterProxy state. The user is returned to the image library and
+can launch a new image without restarting the app.
+
+Implementation:
+  - All functional `static` locals in Interpreter.cpp and Primitives.cpp
+    converted to member variables (reset automatically on delete+new)
+  - `vm_destroy()` added to PlatformBridge — deletes all C++ objects
+  - `ffi::shutdownFFI()` expanded to reset SDL2 stubs, module cache,
+    mouse/keyboard state, poll countdown, text input state
+  - `EventQueue::reset()` clears events and resets semaphore indices
+  - `resetInterpreterProxy()` clears plugin proxy pointers
+  - PharoBridge.swift: `handleVMExit()` calls `vm_destroy()` and sets
+    `isRunning = false` instead of `exit(0)`, returning to image library
+
+---
+
 # What's New in Build 85
 
 Build 85 — 2026-03-09
