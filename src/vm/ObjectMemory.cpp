@@ -1109,7 +1109,25 @@ bool ObjectMemory::become(Oop obj1, Oop obj2) {
     allObjectsDo([&](Oop obj) {
         if (!obj.isObject()) return;
         ObjectHeader* header = obj.asObjectPtr();
+        ObjectFormat format = header->format();
+
+        // Skip non-pointer objects (byte/word/short arrays) - their slots are raw data, not Oops
+        if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
+        if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return;
+        if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
+        if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;
+
         size_t slots = header->slotCount();
+
+        // For CompiledMethods, only scan the literal frame (pointer part)
+        if (header->isCompiledMethod() && slots > 0) {
+            Oop methodHeader = header->slotAt(0);
+            if (methodHeader.isSmallInteger()) {
+                size_t numLits = methodHeader.asSmallInteger() & 0x7FFF;
+                slots = std::min(slots, numLits + 1);
+            }
+        }
+
         for (size_t i = 0; i < slots; ++i) {
             Oop slot = header->slotAt(i);
             if (slot == obj1) {
@@ -1135,7 +1153,7 @@ bool ObjectMemory::becomeForward(Oop obj1, Oop obj2) {
 
         // Skip non-pointer objects (byte/word/short arrays) - their slots are raw data, not Oops
         if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
-        if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
+        if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return; // 9, 10, 11
         if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
         // Skip reserved formats
         if (format >= ObjectFormat::Reserved6 && format <= ObjectFormat::Reserved8) return;

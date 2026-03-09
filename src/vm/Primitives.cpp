@@ -8061,7 +8061,7 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
 
         // Skip non-pointer objects (byte/word arrays)
         if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) return;
-        if (format >= ObjectFormat::Indexable32 && format <= ObjectFormat::Indexable64) return;
+        if (format >= ObjectFormat::Indexable64 && format <= ObjectFormat::Indexable32Odd) return; // 9, 10, 11
         // Also skip 16-bit arrays (format 12-15)
         if (format >= ObjectFormat::Indexable16 && format <= ObjectFormat::Indexable16_3) return;
 
@@ -15691,20 +15691,27 @@ static intptr_t bitBltField(ObjectMemory& memory, Oop bitBlt, size_t index) {
             // (numerator might be LargeInteger, denominator SmallInteger)
             if (den.isSmallInteger()) {
                 intptr_t d = den.asSmallInteger();
-                if (d == 1) {
-                    // x/1 = x, try to extract numerator
-                    if (num.isSmallInteger()) return num.asSmallInteger();
-                    if (num.isObject() && !num.isNil()) {
+                if (d != 0) {
+                    // Try to extract numerator as integer, then divide
+                    int64_t n = 0;
+                    bool gotNum = false;
+                    if (num.isSmallInteger()) {
+                        n = num.asSmallInteger();
+                        gotNum = true;
+                    } else if (num.isObject() && !num.isNil()) {
                         ObjectHeader* numHdr = num.asObjectPtr();
                         if (numHdr->isBytesObject()) {
-                            // LargeInteger — extract value
                             size_t byteSize = numHdr->byteSize();
                             if (byteSize <= 8) {
-                                int64_t val = 0;
-                                std::memcpy(&val, numHdr->bytes(), byteSize);
-                                return static_cast<intptr_t>(val);
+                                std::memcpy(&n, numHdr->bytes(), byteSize);
+                                gotNum = true;
                             }
                         }
+                    }
+                    if (gotNum) {
+                        intptr_t result = static_cast<intptr_t>(n / d);
+                        memory.storePointer(index, bitBlt, Oop::fromSmallInteger(result));
+                        return result;
                     }
                 }
             }
