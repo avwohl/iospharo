@@ -156,6 +156,11 @@ class MetalRenderer: NSObject, MTKViewDelegate {
 
     // MARK: - MTKViewDelegate
 
+    /// Height reported to Pharo before any keyboard-induced shrinking.
+    /// Updated only when no docked keyboard is showing, so keyboard avoidance
+    /// (which may bypass .ignoresSafeArea(.keyboard)) doesn't resize the Pharo world.
+    private var preKeyboardHeight: Int = 0
+
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {
         // Use logical points (view.bounds) not physical pixels (size parameter).
         // The Metal renderer stretches the texture to fill the drawable, handling
@@ -163,6 +168,26 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         // text microscopic on 2x/3x retina displays.
         let width = Int(view.bounds.size.width)
         let height = Int(view.bounds.size.height)
+
+        #if !targetEnvironment(macCatalyst)
+        // iOS keyboard avoidance may resize the view despite .ignoresSafeArea(.keyboard).
+        // When a docked keyboard is showing, maintain the pre-keyboard height so the
+        // Pharo display doesn't shrink — the keyboard overlaps instead.
+        if let bridge = bridge {
+            if !bridge.keyboardDocked {
+                // No docked keyboard — this is a real size change (rotation, Stage Manager)
+                preKeyboardHeight = height
+            } else if preKeyboardHeight > 0 && height < preKeyboardHeight {
+                // Docked keyboard caused the view to shrink — use pre-keyboard height
+                #if DEBUG
+                NSLog("[METAL] Ignoring keyboard shrink: %dx%d → using %dx%d", width, height, width, preKeyboardHeight)
+                #endif
+                bridge.setDisplaySize(width: width, height: preKeyboardHeight)
+                return
+            }
+        }
+        #endif
+
         #if DEBUG
         NSLog("[METAL] drawableSizeWillChange: drawable=\(Int(size.width))x\(Int(size.height)), bounds=\(width)x\(height)")
         #endif

@@ -1,8 +1,36 @@
+# What's New in Build 89
+
+Build 89 — 2026-03-09
+
+## Fix: Floating keyboard on iPad — sidebar buttons and canvas shift (3rd attempt)
+
+Rewrote keyboard handling based on Tim's detailed bug report (build 88).
+
+Root causes:
+1. Sidebar button hiding was driven by `keyboardVisible` which the button handler
+   set immediately, BEFORE the keyboard notification could detect floating vs docked.
+   For floating keyboards, `keyboardWillShow` often doesn't fire at all on iPad,
+   so the sidebar permanently thought the keyboard was docked.
+2. iOS keyboard avoidance was resizing the canvas (Metal view) despite
+   `.ignoresSafeArea(.keyboard)`, shifting the entire view upward and creating a
+   gap at the bottom.
+
+Fixes:
+- Replaced `keyboardFloating` with `keyboardDocked` — sidebar hides buttons ONLY
+  when we have positive confirmation of a docked keyboard from the notification.
+  Default is "not docked" so floating/missing notifications keep all buttons visible.
+- Switched from `keyboardWillShow`/`keyboardWillHide` to `keyboardWillChangeFrame`
+  which fires for ALL keyboard state changes (dock, undock, float, show, hide).
+- Keyboard button handler no longer sets `keyboardDocked` — only the notification
+  handler can. Button handler only sets `keyboardVisible` for the highlight state.
+- MetalRenderer now tracks pre-keyboard display height and refuses to shrink the
+  Pharo display when a docked keyboard triggers view resizing.
+
 # What's New in Build 87
 
 Build 87 — 2026-03-09
 
-## Fix: Floating keyboard still hiding sidebar buttons and pushing canvas
+## Fix: Floating keyboard still hiding sidebar buttons and pushing canvas (obsoleted by build 89)
 
 Two issues with the floating keyboard fix in build 85:
 

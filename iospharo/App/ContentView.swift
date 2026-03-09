@@ -324,11 +324,11 @@ struct ModifierStrip: View {
 
     private var isIPad: Bool { bridge.isIPad }
 
-    /// True when the keyboard is docked (not floating) and visible.
-    /// When the keyboard is floating, keep the full button set since
-    /// it doesn't cover the bottom of the screen.
+    /// True when a docked keyboard is confirmed showing (from notification).
+    /// Floating/undocked keyboards don't set this, so the full button set
+    /// stays visible since they don't cover the bottom of the screen.
     private var keyboardDockedVisible: Bool {
-        keyboardVisible && !bridge.keyboardFloating
+        bridge.keyboardDocked
     }
 
     private var buttonSpacing: CGFloat { isIPad ? 3 : 4 }
@@ -621,12 +621,21 @@ struct ModifierStrip: View {
     private var keyboardButton: some View {
         StripButton(icon: "keyboard", isActive: keyboardVisible, size: buttonSize,
                     tooltip: "Show/hide keyboard") {
-            keyboardVisible.toggle()
             if let view = gPharoMTKView {
-                if keyboardVisible {
-                    view.becomeFirstResponder()
-                } else {
+                if view.isFirstResponder {
                     view.resignFirstResponder()
+                    // Set immediately for responsive button state;
+                    // notification will confirm.
+                    bridge.keyboardVisible = false
+                    bridge.keyboardDocked = false
+                } else {
+                    view.becomeFirstResponder()
+                    // Set visible immediately for button highlight.
+                    // Do NOT set keyboardDocked — let the notification
+                    // confirm whether the keyboard is docked or floating.
+                    // This prevents incorrectly hiding sidebar buttons
+                    // when a floating keyboard appears.
+                    bridge.keyboardVisible = true
                 }
             }
         }

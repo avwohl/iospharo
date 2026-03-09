@@ -373,35 +373,31 @@ class PharoCanvasViewController: UIViewController {
         setupGestureRecognizers()
 
         #if !targetEnvironment(macCatalyst)
-        // Sync keyboardVisible when the user dismisses the keyboard via the
-        // system close button (the globe/dismiss key) rather than our toggle.
-        // Don't clear keyboardFloating here — preserve it so the next show
-        // (from our toggle) immediately knows the keyboard type. The show
-        // notification will update it if the type changes.
+        // Use keyboardWillChangeFrame for ALL keyboard state changes (show, hide,
+        // dock, undock, float). This is more reliable than keyboardWillShow/Hide
+        // which may not fire for floating keyboards on iPad.
         NotificationCenter.default.addObserver(
-            forName: UIResponder.keyboardWillHideNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.bridge?.keyboardVisible = false
-            }
-        }
-
-        // Sync keyboardVisible when the keyboard reappears (e.g. after app
-        // resume with a floating keyboard, or system-initiated show).
-        // Detect floating vs docked using BOTH width and position:
-        //  - Floating keyboards are narrower than the screen
-        //  - Undocked keyboards may be full-width but don't touch the bottom
-        NotificationCenter.default.addObserver(
-            forName: UIResponder.keyboardWillShowNotification, object: nil, queue: .main
+            forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
         ) { [weak self] notification in
             MainActor.assumeIsolated {
-                if let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect {
-                    let screen = UIScreen.main.bounds
-                    let narrowerThanScreen = frame.width < screen.width * 0.9
-                    let notAtBottom = frame.maxY < screen.height - 1
-                    self?.bridge?.keyboardFloating = narrowerThanScreen || notAtBottom
-                }
-                self?.bridge?.keyboardVisible = true
+                guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                      frame.width > 0 else { return }
+                let screen = UIScreen.main.bounds
+
+                // Keyboard is hidden when its top edge is at or below screen bottom
+                let isHidden = frame.origin.y >= screen.height - 1
+
+                // Keyboard is docked when it spans full width at the screen bottom
+                let isDocked = !isHidden &&
+                               frame.width >= screen.width * 0.9 &&
+                               frame.maxY >= screen.height - 1
+
+                #if DEBUG
+                fputs("[KB] frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height))) screen=\(Int(screen.width))x\(Int(screen.height)) hidden=\(isHidden) docked=\(isDocked)\n", stderr)
+                #endif
+
+                self?.bridge?.keyboardDocked = isDocked
+                self?.bridge?.keyboardVisible = !isHidden
             }
         }
         #endif
