@@ -1,3 +1,23 @@
+# What's New in Build 85
+
+Build 85 — 2026-03-09
+
+## Bug Fix: Finalization process never received signals
+
+The finalization process (P50) was never getting signaled after GC because
+`signalFinalizationIfNeeded()` had a priority guard (`if (activePri >= 51) return`)
+that was always true — the active process during GC is typically at P79/P80
+(startup handlers). This meant weak reference cleanup, ephemeron finalization,
+and FinalizationRegistry callbacks never ran.
+
+Fix: removed the priority guard entirely. The Cog VM signals the finalization
+semaphore unconditionally and lets the scheduler handle preemption. The P50
+finalization process now properly wakes up and processes mourners.
+
+Verified: FinalizationRegistryTest 6/6 pass, WeakAnnouncerTest 34/34 pass.
+
+---
+
 # What's New in Build 84
 
 Build 84 — 2026-03-08

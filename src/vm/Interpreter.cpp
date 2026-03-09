@@ -780,24 +780,15 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 }
 
 void Interpreter::signalFinalizationIfNeeded() {
-    // Standard approach: signal the finalization semaphore when GC has fired
-    // ephemerons. The finalization process wakes up and processes mourners
-    // according to normal priority scheduling.
+    // Signal the finalization semaphore when GC has queued mourners (dead weak
+    // objects / fired ephemerons). The finalization process wakes up and reads
+    // mourners via primitive 172 (primitiveFetchNextMourner).
     //
-    // DO NOT forcibly transfer to the finalization process — that violates
-    // the priority scheduler and disrupts in-progress mourning by creating
-    // duplicate mournLoop processes.
+    // This is called from step() after GC primitives and periodically.
+    // No priority guard — the Cog VM signals regardless of caller priority.
+    // The woken finalization process (P50) will preempt only if the active
+    // process has lower priority; otherwise it waits in the ready queue.
     if (memory_.pendingFinalizationSignals() <= 0) return;
-
-    // Don't signal if the finalization process is already running (pri >= 51).
-    // Without this guard, auto-GC during mourning queues more mourners, which
-    // get signaled at the next periodic check, keeping the P51 process in an
-    // infinite mourn-GC-mourn cycle that starves the P40 test and watchdog.
-    // The mourning process will pick up any remaining mourners when it loops.
-    Oop activeProc = getActiveProcess();
-    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProc);
-    int activePri = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : 0;
-    if (activePri >= 51) return;  // Already at/above finalization priority
 
     memory_.clearPendingFinalizationSignals();
 

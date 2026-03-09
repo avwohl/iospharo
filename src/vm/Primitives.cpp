@@ -7184,7 +7184,7 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     }
 
     // Signal finalization on the very next step (not inside the primitive).
-    // The finalization process at P51 can then preempt and mourn dead weak keys.
+    // The finalization process at P50 can then preempt and mourn dead weak keys.
     if (memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
     }
