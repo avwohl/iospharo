@@ -408,13 +408,32 @@ class PharoBridge: ObservableObject {
                     nextPutAll: ''Running on iospharo — a community VM for iOS and macOS.''; cr;
                     nextPutAll: ''This is NOT the official Pharo VM.''; cr; cr;
                     nextPutAll: ''Source code: https://github.com/avwohl/iospharo''; cr; cr;
-                    nextPutAll: ''VM image format: ''; nextPutAll: Smalltalk imageFormatVersion printString; cr;
                     nextPutAll: ''Built from: '';
                     nextPutAll: SystemVersion current commitHash; cr;
                     nextPutAll: ''Last update: '';
                     nextPutAll: SystemVersion current date printString; cr; cr;
                     nextPutAll: Smalltalk license ].
             ^ s'.
+        "Fix: prevent windows from opening under the Pharo menu bar"
+        "Override openInWorld: to bump windows below the MenubarMorph"
+        SystemWindow compile: 'openInWorld: aWorld
+            super openInWorld: aWorld.
+            aWorld submorphsDo: [ :m |
+                (m class name = ''MenubarMorph'' and: [ self top < m bottom ])
+                    ifTrue: [ self position: self position x @ m bottom ] ]'.
+        "Fix: reposition any existing windows that overlap the menu bar"
+        [
+          (Delay forMilliseconds: 500) wait.
+          | menuBarBottom |
+          menuBarBottom := 0.
+          World submorphsDo: [ :m |
+              (m class name = 'MenubarMorph') ifTrue: [ menuBarBottom := m bottom ] ].
+          menuBarBottom > 0 ifTrue: [
+              World submorphsDo: [ :m |
+                  (m isKindOf: SystemWindow) ifTrue: [
+                      m top < menuBarBottom ifTrue: [
+                          m position: m position x @ menuBarBottom ] ] ] ].
+        ] fork.
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
