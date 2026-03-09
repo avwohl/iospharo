@@ -1,3 +1,26 @@
+# What's New in Build 93
+
+Build 93 — 2026-03-09
+
+## Fix: iPhone side gaps + freeze canvas height against floating keyboard
+
+Based on Tim's build 92 feedback:
+
+1. iPhone horizontal safe areas: The sidebar was pushed inward by notch/Dynamic Island
+   safe areas, eating horizontal space. Added `.ignoresSafeArea(.container, edges: .horizontal)`
+   so the sidebar extends to the screen edges. Bottom safe area (home indicator) and
+   top safe area (status bar) are still respected.
+
+2. Floating keyboard canvas resize: Replaced the bottom anchor constraint with a frozen
+   height constraint. The MTKView height is captured on first layout and only updated
+   when the width changes (indicating a real user resize — rotation, Stage Manager).
+   Keyboard-triggered SwiftUI re-renders that change only height are ignored.
+   Previously, the bottom anchor followed the hosting view, so keyboard events could
+   resize the MTKView and trigger a Pharo framebuffer resize via drawableSizeWillChange.
+
+3. Bottom gray bar: Kept as-is — Tim confirms it's useful for preventing accidental
+   home indicator swipes. Already minimal (system home indicator height).
+
 # What's New in Build 92
 
 Build 92 — 2026-03-09

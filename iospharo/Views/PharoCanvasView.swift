@@ -322,7 +322,12 @@ class PharoCanvasViewController: UIViewController {
     /// Once set, this never changes — preventing keyboard events from shifting
     /// the Metal view when SwiftUI triggers a layout pass.
     private var topConstraint: NSLayoutConstraint?
-    private var topInsetFrozen = false
+    /// Fixed height constraint — prevents keyboard-triggered SwiftUI re-renders
+    /// from changing the MTKView height (which would resize the Pharo framebuffer).
+    /// Updated only when width changes (real user resize), not for keyboard events.
+    private var heightConstraint: NSLayoutConstraint?
+    private var layoutFrozen = false
+    private var frozenWidth: CGFloat = 0
 
     override func loadView() {
         view = UIView()
@@ -366,17 +371,20 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #else
-        // iOS: use a fixed-constant top constraint instead of safeAreaLayoutGuide.
-        // The constant is set in viewSafeAreaInsetsDidChange() to the initial top
-        // inset and then frozen. This prevents keyboard events from shifting the
-        // Metal view — safeAreaLayoutGuide can change during keyboard events even
-        // when SwiftUI uses .ignoresSafeArea(.keyboard), because the @Published
-        // keyboard state change triggers a SwiftUI re-render that re-evaluates
-        // the hosting controller's safe area propagation.
+        // iOS: freeze layout after first pass to prevent keyboard events from
+        // resizing or shifting the Metal view. SwiftUI's .ignoresSafeArea(.keyboard)
+        // SHOULD prevent this, but @Published keyboard state changes trigger
+        // re-renders that can re-evaluate the hosting controller's safe area
+        // propagation, especially on iPad with floating keyboards.
+        //
+        // Strategy: fixed top offset + fixed height (no bottom anchor).
+        // Width is unconstrained so Stage Manager / orientation changes still work.
+        // Height is only updated when width changes (indicates real user resize).
         topConstraint = mtkView.topAnchor.constraint(equalTo: view.topAnchor, constant: 0)
+        heightConstraint = mtkView.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
             topConstraint!,
-            mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            heightConstraint!,
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
@@ -435,20 +443,28 @@ class PharoCanvasViewController: UIViewController {
     #if !targetEnvironment(macCatalyst)
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
-        // Capture the top safe area inset after the FIRST layout pass and freeze it.
-        // With .ignoresSafeArea(.keyboard) at the SwiftUI level, the hosting controller
-        // may still re-propagate safe areas during keyboard-triggered SwiftUI re-renders.
-        // Freezing after the first layout ensures the MTKView position is locked to the
-        // initial status bar offset and can't shift during keyboard events.
-        // NOTE: on iPad the status bar height is the same in all orientations (24pt),
-        // so freezing is safe. If multitasking support needs dynamic top inset, revisit.
-        if !topInsetFrozen {
-            topConstraint?.constant = view.safeAreaInsets.top
-            topInsetFrozen = true
+        let topInset = view.safeAreaInsets.top
+        let availableHeight = view.bounds.height - topInset
+
+        if !layoutFrozen {
+            // First layout: capture top inset, height, and width, then freeze.
+            topConstraint?.constant = topInset
+            heightConstraint?.constant = availableHeight
+            frozenWidth = view.bounds.width
+            layoutFrozen = true
             #if DEBUG
-            fputs("[LAYOUT] Froze top inset at \(view.safeAreaInsets.top)pt\n", stderr)
+            fputs("[LAYOUT] Froze: top=\(topInset)pt height=\(availableHeight)pt width=\(frozenWidth)pt\n", stderr)
+            #endif
+        } else if view.bounds.width != frozenWidth {
+            // Width changed → real resize (rotation, Stage Manager, split view).
+            // Update height to match new available space.
+            heightConstraint?.constant = availableHeight
+            frozenWidth = view.bounds.width
+            #if DEBUG
+            fputs("[LAYOUT] Resize: height=\(availableHeight)pt width=\(frozenWidth)pt\n", stderr)
             #endif
         }
+        // Width unchanged but height changed → keyboard event, ignore.
     }
     #endif
 

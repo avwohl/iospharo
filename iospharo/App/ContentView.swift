@@ -177,6 +177,10 @@ struct ContentView: View {
             // (status bar, home indicator) are still respected so the system
             // draws the correct status bar background.
             .ignoresSafeArea(.keyboard)
+            // Extend horizontally to screen edges — prevents the sidebar from
+            // being pushed inward by notch/Dynamic Island safe areas on iPhone,
+            // which wastes horizontal space in landscape.
+            .ignoresSafeArea(.container, edges: .horizontal)
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
