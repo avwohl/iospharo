@@ -13515,9 +13515,8 @@ PrimitiveResult Interpreter::primitiveGrowMemoryByAtLeastByAtLeast(int argCount)
 PrimitiveResult Interpreter::primitiveImageFormatVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    // Return Spur 64-bit format (68002 is typical Spur 64-bit)
-    // We support the iOS-specific format with low-bit encoding
-    int64_t formatVersion = 68002;
+    // Return Spur 64-bit format (68021 per standard Pharo VM)
+    int64_t formatVersion = 68021;
 
     pop();  // receiver
     push(Oop::fromSmallInteger(formatVersion));

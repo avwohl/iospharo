@@ -7791,6 +7791,9 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("SurfacePlugin", "primitiveRegisterSurface", &Interpreter::primitiveRegisterSurface);
     registerNamedPrimitive("SurfacePlugin", "primitiveUnregisterSurface", &Interpreter::primitiveUnregisterSurface);
 
+    // VM info primitives (called with empty module name)
+    registerNamedPrimitive("", "primitiveImageFormatVersion", &Interpreter::primitiveImageFormatVersion);
+
     // Display primitives (called with empty module name)
     registerNamedPrimitive("", "primitiveForceDisplayUpdate", &Interpreter::primitiveForceDisplayUpdate);
     registerNamedPrimitive("", "primitiveShowDisplayRect", &Interpreter::primitiveShowDisplayRect);
