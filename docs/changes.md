@@ -2,6 +2,27 @@
 
 Build 87 — 2026-03-09
 
+## Fix: Floating keyboard still hiding sidebar buttons and pushing canvas
+
+Two issues with the floating keyboard fix in build 85:
+
+1. When the keyboard was shown via the sidebar toggle, `keyboardVisible` was
+   set to `true` before the `keyboardWillShowNotification` had a chance to
+   set `keyboardFloating`. This caused a render frame where `keyboardDockedVisible`
+   was true, hiding the extra sidebar buttons. Fix: don't clear `keyboardFloating`
+   on hide (preserve it for the next show), and update `keyboardFloating` BEFORE
+   `keyboardVisible` in the show notification so both change atomically.
+
+2. The floating detection (`frame.maxY < screenHeight`) was unreliable on iPad
+   because a floating keyboard can sit at the bottom of the screen. Now also
+   checks keyboard width — floating keyboards are narrower than 90% of screen
+   width.
+
+3. SwiftUI's built-in keyboard avoidance was pushing the entire HStack (strip +
+   canvas) upward when the keyboard appeared, hiding the Pharo menu bar. Added
+   `.ignoresSafeArea(.keyboard)` to prevent this — the canvas should never move
+   for the keyboard.
+
 ## VM relaunch support
 
 The VM can now be stopped and restarted without calling `exit(0)`. When the

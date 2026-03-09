@@ -173,6 +173,7 @@ struct ContentView: View {
                 PharoCanvasView(bridge: bridge)
             }
             .ignoresSafeArea(edges: [.bottom, .horizontal])
+            .ignoresSafeArea(.keyboard)
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
