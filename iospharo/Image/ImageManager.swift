@@ -456,6 +456,11 @@ class ImageManager: ObservableObject {
 
             // Find the extracted .image file
             if let imageFileName = findFirstImageFile(in: destDir) {
+                // Demote any existing images that still carry this template label.
+                // E.g., if you download "Pharo 13 (latest)" again, the previous one
+                // reverts to its actual image filename so you don't get duplicates.
+                demoteMatchingNames(label)
+
                 var entry = PharoImage.create(
                     name: label,
                     directoryName: slug,
@@ -520,6 +525,16 @@ class ImageManager: ObservableObject {
             }
         }
         return nil
+    }
+
+    /// Rename any existing images whose name matches `label` to their actual
+    /// image filename (minus extension). Called before adding a new download so
+    /// that only the newest entry keeps the template label like "Pharo 13 (latest)".
+    private func demoteMatchingNames(_ label: String) {
+        for i in images.indices where images[i].name == label {
+            let baseName = (images[i].imageFileName as NSString).deletingPathExtension
+            images[i].name = baseName
+        }
     }
 
     /// Create a filesystem-safe slug from a name

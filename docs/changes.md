@@ -2,6 +2,15 @@
 
 Build 85 — 2026-03-09
 
+## Fix: Duplicate "Pharo 13 (latest)" names in image library
+
+When downloading a new image from the same template, the previous image kept
+its "Pharo 13 (latest)" display name, producing two identically-named entries.
+Now the old entry reverts to its actual image filename (e.g.,
+"Pharo13.1-64bit-f201357") and only the newest download keeps the template
+label. Manually renamed images are unaffected since their name no longer
+matches the template label.
+
 ## Bug Fix: Finalization process never received signals
 
 The finalization process (P50) was never getting signaled after GC because
