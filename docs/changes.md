@@ -1,3 +1,29 @@
+# What's New in Build 92
+
+Build 92 — 2026-03-09
+
+## Fix: Restore status bar background + stabilize keyboard layout (7th attempt)
+
+Tim reported build 91 lost the gray status bar (black gap at top) and floating keyboard
+still caused some upward shift (less than build 90, but still present).
+
+Root cause: `.ignoresSafeArea()` on ALL edges made the SwiftUI view extend behind the
+status bar, but the MTKView was constrained to `safeAreaLayoutGuide.topAnchor` — creating
+an undrawn black gap. When the floating keyboard triggered a SwiftUI re-render (via
+@Published keyboard state), the safe area was re-evaluated and the top anchor shifted.
+
+Fix (two-part):
+1. Changed `.ignoresSafeArea()` → `.ignoresSafeArea(.keyboard)` — only prevents keyboard
+   safe area from affecting layout. Container safe areas (status bar, home indicator) are
+   still respected, so the system draws the proper gray status bar background.
+2. Froze the MTKView top constraint after the first layout pass. Instead of using the
+   dynamic `safeAreaLayoutGuide.topAnchor`, the top offset is captured once in
+   `viewDidLayoutSubviews()` and locked. Subsequent safe area changes (from keyboard events
+   or SwiftUI re-renders) cannot shift the Metal view.
+
+Verified in iPad Pro 13" simulator: status bar visible, docked keyboard shows/hides
+without canvas movement, canvas returns to exact initial state after keyboard dismiss.
+
 # What's New in Build 91
 
 Build 91 — 2026-03-09

@@ -172,13 +172,11 @@ struct ContentView: View {
                 )
                 PharoCanvasView(bridge: bridge)
             }
-            // Ignore ALL safe area regions on ALL edges. This prevents the keyboard
-            // from affecting layout on ANY edge. Previous attempts with selective
-            // edge ignoring (.bottom, .horizontal) still allowed the TOP safe area
-            // to change during keyboard events on iPad, causing the view to expand
-            // upward past the status bar. The PharoCanvasViewController handles
-            // status bar positioning internally via safeAreaLayoutGuide.topAnchor.
-            .ignoresSafeArea()
+            // Ignore keyboard safe area so SwiftUI doesn't resize the view when
+            // the keyboard appears (docked or floating). Container safe areas
+            // (status bar, home indicator) are still respected so the system
+            // draws the correct status bar background.
+            .ignoresSafeArea(.keyboard)
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {

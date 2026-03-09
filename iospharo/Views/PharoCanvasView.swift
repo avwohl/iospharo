@@ -318,6 +318,12 @@ class PharoCanvasViewController: UIViewController {
     var renderer: MetalRenderer?
     weak var bridge: PharoBridge?
 
+    /// Fixed top offset for the MTKView, captured from the initial safe area.
+    /// Once set, this never changes — preventing keyboard events from shifting
+    /// the Metal view when SwiftUI triggers a layout pass.
+    private var topConstraint: NSLayoutConstraint?
+    private var topInsetFrozen = false
+
     override func loadView() {
         view = UIView()
         #if targetEnvironment(macCatalyst)
@@ -360,12 +366,16 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #else
-        // iOS: the parent HStack uses .ignoresSafeArea() to fill the entire screen,
-        // preventing keyboard events from resizing the view. Use safeAreaLayoutGuide
-        // for the top (status bar) so Pharo content starts below it. Other edges
-        // extend to the screen edges.
+        // iOS: use a fixed-constant top constraint instead of safeAreaLayoutGuide.
+        // The constant is set in viewSafeAreaInsetsDidChange() to the initial top
+        // inset and then frozen. This prevents keyboard events from shifting the
+        // Metal view — safeAreaLayoutGuide can change during keyboard events even
+        // when SwiftUI uses .ignoresSafeArea(.keyboard), because the @Published
+        // keyboard state change triggers a SwiftUI re-render that re-evaluates
+        // the hosting controller's safe area propagation.
+        topConstraint = mtkView.topAnchor.constraint(equalTo: view.topAnchor, constant: 0)
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
+            topConstraint!,
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
@@ -419,6 +429,26 @@ class PharoCanvasViewController: UIViewController {
     @objc func handleQuit(_ sender: Any?) {
         PharoBridge.shared.stop()
         exit(0)
+    }
+    #endif
+
+    #if !targetEnvironment(macCatalyst)
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        // Capture the top safe area inset after the FIRST layout pass and freeze it.
+        // With .ignoresSafeArea(.keyboard) at the SwiftUI level, the hosting controller
+        // may still re-propagate safe areas during keyboard-triggered SwiftUI re-renders.
+        // Freezing after the first layout ensures the MTKView position is locked to the
+        // initial status bar offset and can't shift during keyboard events.
+        // NOTE: on iPad the status bar height is the same in all orientations (24pt),
+        // so freezing is safe. If multitasking support needs dynamic top inset, revisit.
+        if !topInsetFrozen {
+            topConstraint?.constant = view.safeAreaInsets.top
+            topInsetFrozen = true
+            #if DEBUG
+            fputs("[LAYOUT] Froze top inset at \(view.safeAreaInsets.top)pt\n", stderr)
+            #endif
+        }
     }
     #endif
 
