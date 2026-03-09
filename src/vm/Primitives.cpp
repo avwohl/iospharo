@@ -16736,14 +16736,19 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // Depth-8 destinations with 32-bit source
+    // Pharo stores 8-bit pixels MSB-first within 32-bit words:
+    //   pixel 0 at bits 31-24, pixel 1 at bits 23-16, pixel 2 at bits 15-8, pixel 3 at bits 7-0
+    // Must use word-based addressing, not raw byte addressing (which reverses
+    // pixel order on little-endian).
     if (destDepth == 8 && srcDepth == 32) {
-        intptr_t destBytesPerRow = ((destWidth + 3) / 4) * 4; // word-aligned
-        uint8_t* destBytes8 = reinterpret_cast<uint8_t*>(destPixels);
+        intptr_t ppw = 4;  // 8-bit: 4 pixels per 32-bit word
+        intptr_t destWordsPerRow = (destWidth + ppw - 1) / ppw;
+        uint32_t* destWords8 = destPixels;
         intptr_t srcPitch = srcWidth;
         uint32_t* srcPixels32 = reinterpret_cast<uint32_t*>(srcBytes);
 
-        size_t requiredDestBytes8 = static_cast<size_t>((destY + height - 1) * destBytesPerRow + destX + width);
-        if (requiredDestBytes8 > destBitsSize) return PrimitiveResult::Failure;
+        size_t requiredDestWords = static_cast<size_t>((destY + height - 1) * destWordsPerRow + (destX + width + ppw - 1) / ppw);
+        if (requiredDestWords * 4 > destBitsSize) return PrimitiveResult::Failure;
 
         intptr_t srcMaxPixels = static_cast<intptr_t>(srcBitsSize / 4);
         intptr_t srcActualHeight = (srcPitch > 0) ? (srcMaxPixels / srcPitch) : 0;
@@ -16767,7 +16772,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels32 + (sourceY + y) * srcPitch + sourceX;
-            uint8_t* dstRow = destBytes8 + (destY + y) * destBytesPerRow + destX;
+            uint32_t* dstRowW = destWords8 + (destY + y) * destWordsPerRow;
             for (intptr_t x = 0; x < width; x++) {
                 uint32_t s = srcRow[x];
                 uint8_t pixel;
@@ -16800,13 +16805,29 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     uint8_t b = s & 0xFF;
                     pixel = static_cast<uint8_t>((r * 77 + g * 150 + b * 29) >> 8);
                 }
+                // MSB-first word addressing: pixel at destX+x goes to
+                // bits ((3 - (dx%4)) * 8) within word dx/4
+                intptr_t dx = destX + x;
+                uint32_t destShift = (3 - (dx % 4)) * 8;
+                uint32_t destMask = ~(0xFFu << destShift);
+                uint32_t& dstWord = dstRowW[dx / 4];
                 switch (combinationRule) {
-                    case 3: case 34: dstRow[x] = pixel; break;
-                    case 0: dstRow[x] &= pixel; break;
-                    case 7: dstRow[x] |= pixel; break;
-                    case 25: if (pixel != 0) dstRow[x] = pixel; break;
-                    case 6: dstRow[x] ^= pixel; break;
-                    default: dstRow[x] = pixel; break;
+                    case 3: case 34: // store
+                        dstWord = (dstWord & destMask) | (static_cast<uint32_t>(pixel) << destShift);
+                        break;
+                    case 0: // AND
+                        dstWord &= destMask | (static_cast<uint32_t>(pixel) << destShift);
+                        break;
+                    case 7: case 25: // OR / paint
+                        if (combinationRule == 25 && pixel == 0) break;
+                        dstWord |= (static_cast<uint32_t>(pixel) << destShift);
+                        break;
+                    case 6: // XOR
+                        dstWord ^= (static_cast<uint32_t>(pixel) << destShift);
+                        break;
+                    default:
+                        dstWord = (dstWord & destMask) | (static_cast<uint32_t>(pixel) << destShift);
+                        break;
                 }
             }
         }
@@ -17476,21 +17497,47 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             return result;
         };
 
+        // Helper: apply Bitmap-based colormap (rgbMap) to a 32-bit pixel.
+        // Used by mapColor:to: which creates a 32768-entry Bitmap lookup table
+        // indexed by 15-bit RGB5 (5 bits per channel from the top of each byte).
+        // Also handles 4096-entry tables (4 bits per channel, 12-bit index).
+        auto applyBitmapColorMap = [&](uint32_t px) -> uint32_t {
+            if (!cmTable) return px;
+            if (cmSize >= 32768) {
+                // 15-bit RGB5 index: 5 bits from each of R, G, B
+                uint32_t r = (px >> 19) & 0x1F;  // bits 23-19
+                uint32_t g = (px >> 11) & 0x1F;  // bits 15-11
+                uint32_t b = (px >> 3)  & 0x1F;  // bits 7-3
+                uint32_t idx = (r << 10) | (g << 5) | b;
+                return cmTable[idx];
+            } else if (cmSize >= 4096) {
+                // 12-bit index: 4 bits from each of R, G, B
+                uint32_t idx = ((px >> 12) & 0xF00) |
+                               ((px >> 8)  & 0x0F0) |
+                               ((px >> 4)  & 0x00F);
+                return cmTable[idx];
+            }
+            return px;
+        };
+
+        // Check if we have a Bitmap colormap (not shift/mask, but table-based)
+        bool hasBitmapCM = (cmTable != nullptr && cmSize >= 4096);
+
         for (intptr_t y = 0; y < height; y++) {
             uint32_t* srcRow = srcPixels + (sourceY + y) * srcPitch + sourceX;
             uint32_t* dstRow = destPixels + (destY + y) * destPitch + destX;
             uint32_t ht = halftoneWords ? halftoneWords[(destY + y) % halftoneHeight] : 0xFFFFFFFF;
             switch (combinationRule) {
                 case 3:  // store (source AND halftone)
-                    if (ht == 0xFFFFFFFF && !hasShiftMask) {
+                    if (ht == 0xFFFFFFFF && !hasShiftMask && !hasBitmapCM) {
                         memcpy(dstRow, srcRow, width * 4);
                     } else {
-                        for (intptr_t x = 0; x < width; x++) dstRow[x] = applyShiftMask(srcRow[x]) & ht;
+                        for (intptr_t x = 0; x < width; x++) dstRow[x] = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                     }
                     break;
                 case 34: { // alphaBlendScaled: premultiplied source-over compositing
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t sa = (s >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = s; continue; }
                         if (sa == 0) continue;
@@ -17509,30 +17556,30 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 case 0:  // AND: dest = dest AND (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= (applyShiftMask(srcRow[x]) & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= (applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht);
                     break;
                 case 6:  // XOR: dest = dest XOR (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (applyShiftMask(srcRow[x]) & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] ^= (applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht);
                     break;
                 case 7:  // OR: dest = dest OR (source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= (applyShiftMask(srcRow[x]) & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= (applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht);
                     break;
                 case 25: { // pixPaint: zero source → keep dest; non-zero → replace dest
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         if (s != 0) dstRow[x] = s;
                     }
                     break;
                 }
                 case 1:  // AND complement: dest = dest AND NOT(source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(applyShiftMask(srcRow[x]) & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~(applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht);
                     break;
                 case 4:  // OR NOT: dest = dest OR NOT(source AND halftone)
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(applyShiftMask(srcRow[x]) & ht);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] |= ~(applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht);
                     break;
                 case 24: { // alpha blend (source-over, non-premultiplied)
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]);
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x]));
                         uint32_t d = dstRow[x];
                         uint32_t sa = (s >> 24) & 0xFF;
                         if (sa == 255) { dstRow[x] = s; continue; }
@@ -17551,19 +17598,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 20: { // rgbAdd: dest = colorMap(source AND halftone) + dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
-                        // Apply colorMap to remap source pixels (used in two-pass font rendering)
-                        // Standard BitBlt: rgbMapPixel extracts top 4 bits of R,G,B → 12-bit index
-                        // Masks from setupColorMasksFrom:8 to:4:
-                        //   Red:   (pixel & 0x00F00000) >> 12  → bits 11-8 of index
-                        //   Green: (pixel & 0x0000F000) >> 8   → bits 7-4 of index
-                        //   Blue:  (pixel & 0x000000F0) >> 4   → bits 3-0 of index
-                        if (cmTable && cmSize == 4096) {
-                            uint32_t idx = ((s >> 12) & 0xF00) |
-                                           ((s >> 8)  & 0x0F0) |
-                                           ((s >> 4)  & 0x00F);
-                            s = cmTable[idx];
-                        }
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t d = dstRow[x];
                         // partitionedAdd: add each byte lane with saturation at 255
                         uint32_t rA = std::min(((s >> 24) & 0xFF) + ((d >> 24) & 0xFF), 255u);
@@ -17576,7 +17611,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 21: { // rgbSub: dest = (source AND halftone) - dest, clamped per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t d = dstRow[x];
                         int rA = (int)((s >> 24) & 0xFF) - (int)((d >> 24) & 0xFF);
                         int rR = (int)((s >> 16) & 0xFF) - (int)((d >> 16) & 0xFF);
@@ -17591,7 +17626,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 27: { // rgbMax: dest = max(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rR = std::max((s >> 16) & 0xFF, (d >> 16) & 0xFF);
                         uint32_t rG = std::max((s >> 8) & 0xFF, (d >> 8) & 0xFF);
@@ -17603,7 +17638,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
                 case 28: { // rgbMin: dest = min(source, dest) per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rR = std::min((s >> 16) & 0xFF, (d >> 16) & 0xFF);
                         uint32_t rG = std::min((s >> 8) & 0xFF, (d >> 8) & 0xFF);
@@ -17614,12 +17649,12 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                     break;
                 }
                 case 26: { // erase: dest = dest AND NOT source
-                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~applyShiftMask(srcRow[x]);
+                    for (intptr_t x = 0; x < width; x++) dstRow[x] &= ~applyBitmapColorMap(applyShiftMask(srcRow[x]));
                     break;
                 }
                 case 37: { // rgbMul: dest = (source AND halftone) * dest / 255 per component
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         uint32_t d = dstRow[x];
                         uint32_t rA = (((s >> 24) & 0xFF) * ((d >> 24) & 0xFF) + 127) / 255;
                         uint32_t rR = (((s >> 16) & 0xFF) * ((d >> 16) & 0xFF) + 127) / 255;
@@ -17632,7 +17667,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 30: { // alphaBlendConst: blend source with dest using constant alpha
                     if (sourceAlpha == 0) break;
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         if (sourceAlpha == 255) { dstRow[x] = s; continue; }
                         uint32_t d = dstRow[x];
                         uint32_t invAlpha = 255 - sourceAlpha;
@@ -17647,7 +17682,7 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 case 31: { // alphaPaintConst: same as 30 but skip where source == 0
                     if (sourceAlpha == 0) break;
                     for (intptr_t x = 0; x < width; x++) {
-                        uint32_t s = applyShiftMask(srcRow[x]) & ht;
+                        uint32_t s = applyBitmapColorMap(applyShiftMask(srcRow[x])) & ht;
                         if (s == 0) continue; // paint mode: skip transparent source
                         if (sourceAlpha == 255) { dstRow[x] = s; continue; }
                         uint32_t d = dstRow[x];
