@@ -402,6 +402,78 @@ times out on both our VM and the reference VM — not a correctness bug).
 
 ---
 
+## Bug 7: DebugPointTest >> testTranscriptDebugPoint fails on all VMs
+
+**Class**: `DebugPointTest` (package NewTools-Debugger-Breakpoints-Tools-Tests)
+**Method**: `testTranscriptDebugPoint`
+
+Stock source:
+
+    testTranscriptDebugPoint
+        self skipOnPharoCITestingEnvironment.
+        dp := DebugPointManager
+              installNew: DebugPoint
+              on: node
+              withBehaviors: { TranscriptBehavior }.
+        dp text: 'string'.
+        dp hitWithContext: context.
+        self assert: Transcript contents equals: 'string'
+
+Two bugs:
+
+  1. **Missing Transcript clear**: The test asserts `Transcript contents`
+     equals exactly `'string'`, but never clears Transcript first. By the
+     time the test runs in a suite, Transcript has accumulated output from
+     session startup, image loading, etc. The assertion sees
+     `'Using authentification for Github API...<more stuff>string'`
+     instead of `'string'`.
+
+  2. **Fails headless**: In CLI/headless mode, `Transcript` is a
+     `NonInteractiveTranscript` which does not implement `#contents`.
+     The test gets `MessageNotUnderstood: NonInteractiveTranscript >> #contents`
+     (ERROR, not FAIL). The `skipOnPharoCITestingEnvironment` guard only
+     skips on CI, not all headless runs.
+
+**Reproduction** (stock Pharo 13, official VM):
+
+    Headless:
+    $ pharo Pharo.image test DebugPointTest
+    → testTranscriptDebugPoint: ERROR (NonInteractiveTranscript >> #contents)
+
+    Interactive (with other tests already run):
+    → testTranscriptDebugPoint: FAIL (Transcript has prior content)
+
+**Result on our VM**: FAIL (we always run with interactive Transcript)
+**Result on standard VM headless**: ERROR (NonInteractiveTranscript)
+
+**Suggested fix** (either or both):
+
+  (a) Add `Transcript clear` at the start of the test method:
+
+      testTranscriptDebugPoint
+          self skipOnPharoCITestingEnvironment.
+          Transcript clear.
+          dp := DebugPointManager
+                installNew: DebugPoint
+                on: node
+                withBehaviors: { TranscriptBehavior }.
+          dp text: 'string'.
+          dp hitWithContext: context.
+          self assert: Transcript contents equals: 'string'
+
+  (b) Use `assert: includes:` instead of exact equality:
+
+      self assert: (Transcript contents endsWith: 'string')
+
+  (c) Guard against headless mode by checking
+      `Transcript respondsTo: #contents` or skipping when Transcript
+      is a `NonInteractiveTranscript`.
+
+**No workaround needed** — this is a test bug, not a behavior bug.
+It does not affect runtime behavior.
+
+---
+
 ## Note: Cairo/Athens not available
 
 Cairo (`libcairo`) is not included in the iospharo VM. All `cairo_*` FFI
