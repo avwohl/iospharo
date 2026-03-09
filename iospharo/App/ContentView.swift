@@ -18,9 +18,6 @@ struct ContentView: View {
     @State private var showingHelp = false
     @State private var showingSplash = false
     @State private var splashImage: PharoImage?
-    /// Stable canvas size captured before keyboard appeared.
-    /// Prevents keyboard-related SwiftUI relayouts from resizing the canvas.
-    @State private var stableCanvasSize: CGSize = .zero
 
     var body: some View {
         ZStack {
@@ -167,31 +164,21 @@ struct ContentView: View {
             PharoCanvasView(bridge: bridge)
                 .ignoresSafeArea()
             #else
-            // GeometryReader captures the available size and locks the HStack to it
-            // while a keyboard is visible. Without this, iPad floating keyboards cause
-            // SwiftUI to re-evaluate safe areas during @Published-triggered relayouts,
-            // expanding the view past the status bar and creating a gap at the bottom.
-            GeometryReader { geo in
-                let size = stableCanvasSize.height > 0 ? stableCanvasSize : geo.size
-                HStack(spacing: 0) {
-                    ModifierStrip(
-                        bridge: bridge,
-                        keyboardVisible: $bridge.keyboardVisible,
-                        showHelp: $showingHelp
-                    )
-                    PharoCanvasView(bridge: bridge)
-                }
-                .frame(width: size.width, height: size.height)
-                .onAppear { stableCanvasSize = geo.size }
-                .onChange(of: geo.size) { newSize in
-                    // Update stable size only when keyboard is NOT visible,
-                    // OR when width changed (orientation / Stage Manager resize).
-                    if !bridge.keyboardVisible || newSize.width != stableCanvasSize.width {
-                        stableCanvasSize = newSize
-                    }
-                }
+            HStack(spacing: 0) {
+                ModifierStrip(
+                    bridge: bridge,
+                    keyboardVisible: $bridge.keyboardVisible,
+                    showHelp: $showingHelp
+                )
+                PharoCanvasView(bridge: bridge)
             }
-            .ignoresSafeArea(edges: [.bottom, .horizontal])
+            // Ignore ALL safe area regions on ALL edges. This prevents the keyboard
+            // from affecting layout on ANY edge. Previous attempts with selective
+            // edge ignoring (.bottom, .horizontal) still allowed the TOP safe area
+            // to change during keyboard events on iPad, causing the view to expand
+            // upward past the status bar. The PharoCanvasViewController handles
+            // status bar positioning internally via safeAreaLayoutGuide.topAnchor.
+            .ignoresSafeArea()
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {

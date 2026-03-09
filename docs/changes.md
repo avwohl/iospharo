@@ -1,8 +1,28 @@
+# What's New in Build 91
+
+Build 91 — 2026-03-09
+
+## Fix: Floating keyboard canvas expansion — full safe area ignore (6th attempt)
+
+Tim reported build 90's GeometryReader approach still didn't work — the entire app's
+top coordinate shifts when the floating keyboard appears, which is above what any
+SwiftUI child view can control. GeometryReader itself moves when the window grows.
+
+Root cause: `.ignoresSafeArea(edges: [.bottom, .horizontal])` still respected the TOP
+safe area. When a floating keyboard triggers a safe area recalculation on iPad, the top
+safe area changes, causing the window/scene to expand upward past the status bar.
+
+Fix: changed to `.ignoresSafeArea()` (ALL regions, ALL edges). This prevents the
+keyboard from affecting layout on ANY edge — the view fills the entire screen and
+keyboard events cannot change it. The PharoCanvasViewController now uses
+`safeAreaLayoutGuide.topAnchor` (UIKit-level, independent of SwiftUI's `.ignoresSafeArea`)
+to position the MTKView below the status bar. Removed the GeometryReader (no longer needed).
+
 # What's New in Build 90
 
 Build 90 — 2026-03-09
 
-## Fix: Floating keyboard canvas expansion — GeometryReader size lock (5th attempt)
+## Fix: Floating keyboard canvas expansion — GeometryReader size lock (5th attempt, obsoleted by build 91)
 
 Tim confirmed sidebar buttons now work correctly (build 89), but canvas still grows
 when floating keyboard appears (status bar disappears, gap at bottom). The MetalRenderer

@@ -360,10 +360,12 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #else
-        // iOS: fill hosting view completely — SwiftUI handles safe area positioning
-        // via .ignoresSafeArea(edges:) on the parent HStack
+        // iOS: the parent HStack uses .ignoresSafeArea() to fill the entire screen,
+        // preventing keyboard events from resizing the view. Use safeAreaLayoutGuide
+        // for the top (status bar) so Pharo content starts below it. Other edges
+        // extend to the screen edges.
         NSLayoutConstraint.activate([
-            mtkView.topAnchor.constraint(equalTo: view.topAnchor),
+            mtkView.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor),
             mtkView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             mtkView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
