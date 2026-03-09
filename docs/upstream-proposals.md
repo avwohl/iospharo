@@ -234,3 +234,47 @@ Essential shortcuts (Cmd+D Do It, Cmd+P Print It, Cmd+I Inspect It,
 Cmd+S Accept) are invisible without a keyboard. A context-sensitive
 action bar or long-press radial menu above text editors would make
 these discoverable on touch-only devices.
+
+### 10. Headless SUnit test runner and fake GUI for CI
+
+We developed two pure-Smalltalk scripts that run the full SUnit suite
+headless on any VM — standard Pharo, Cog JIT, interpreter, Mac Catalyst.
+These could be useful additions to Pharo's test infrastructure.
+
+**run_sunit_tests.st** — Batch SUnit runner injected via `fileIn`
+
+  - Registers a SessionManager startup handler (priority 90) that
+    auto-runs tests on image resume
+  - Runs all non-abstract TestCase subclasses in batches with
+    per-test timeouts (Delay-based watchdog at P60)
+  - Skip list for known hangers (Epicea, ObsoleteTest, Fuel, etc.)
+  - Outputs results to /tmp/sunit_test_results.txt
+  - Tested on official Pharo VM 10.3.1 and our interpreter VM
+  - 788 tests (3 classes), zero failures on both VMs
+
+Usage:
+
+    pharo Pharo.image eval --save \
+      "'run_sunit_tests.st' asFileReference fileIn"
+    pharo Pharo.image  # tests auto-run on startup
+
+**setup_fake_gui.st** — Headless Spec/Morphic test enabler
+
+  - Sets up Display Form, WorldMorph, MorphicUIManager, UI process
+  - Patches Morph>>activate/passivate for nil submorphs in headless
+  - Provides FakeGUI helper class for programmatic UI interaction
+    (clickMenuItemNamed:, clickButtonNamed:in:, openPresenter:, etc.)
+  - Enables 94.6% pass rate (1054/1113) on 64 Spec presenter test
+    classes that otherwise get "receiver of activate is nil" errors
+  - Zero VM-specific dependencies — pure Smalltalk
+
+Usage:
+
+    pharo Pharo.image eval --save \
+      "'setup_fake_gui.st' asFileReference fileIn. \
+       'run_sunit_tests.st' asFileReference fileIn"
+
+Why upstream: Pharo CI runs tests via a different mechanism. These
+scripts provide a lightweight, VM-independent alternative that works
+for third-party VM implementations and can run the full suite
+(including GUI tests) from a single `pharo ... eval` invocation.

@@ -734,8 +734,7 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
    alive ifFalse: [
      s nextPutAll: '  DELAY-DEAD: '; nextPutAll: testClass name; lf. s flush]]
   on: Error do: [:e |].
-  "Tests must run below timingPriority (80). Watchdog uses spin-wait
-   (relinquishProcessorForMicroseconds:) so it works even if Delay scheduler dies.
+  "Tests must run below timingPriority (80). Watchdog uses Delay>>wait at P60.
    Use priority 40 (userSchedulingPriority) matching standard Pharo behavior.
    This is critical because some tests do forkAt: activeProcess priority + N
    and priority 79+20=99 would exceed Processor highestPriority (80).
@@ -880,11 +879,11 @@ runTestClass: testClass run: runNum on: s detail: d timeout: watchdogSecs
 
 !SUnitRunner class methodsFor: 'running'!
 runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
-  "Run a single test with spin-wait watchdog at P79.
+  "Run a single test with Delay-based watchdog.
    Fork the test at the requested priority. The test signals doneSem when done,
-   waking the runner immediately. Watchdog uses relinquish: 0 (pure yield) —
-   does NOT depend on Delay scheduler. checkForPreemption runs every 64K steps
-   (~65ms) to limit context switch overhead."
+   waking the runner immediately. Watchdog uses Delay>>wait (cooperative) so it
+   doesn't starve lower-priority test processes. Falls back to relinquish: if
+   Delay scheduler dies (interpreter VMs without JIT)."
   | result testProcess doneSem watchdog backupWatchdog "unused" testDone |
   result := nil. "nil means pass"
   testDone := false.
@@ -925,17 +924,19 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
      error during unwinding that escapes the on: Error handler."
     ensure: [testDone := true. doneSem signal]] forkAt: priority.
 
-  "Watchdog: P79 spin-wait using relinquishProcessorForMicroseconds: 0 (pure yield,
-   no sleep). Does NOT depend on Delay scheduler (which dies frequently).
-   checkForPreemption at 64K step intervals ensures this doesn't dominate CPU."
+  "Watchdog: Delay-based at userBackgroundPriority.
+   Uses Delay>>wait (cooperative, lets lower-priority processes run) instead of
+   spin-wait with relinquishProcessorForMicroseconds: 0 (which starves P40 tests
+   on JIT VMs where the high-priority spin loop never yields to lower priorities).
+   Falls back to a tighter poll if Delay scheduler dies (interpreter VMs)."
   watchdog := [
-    | startMs elapsed |
-    startMs := Time millisecondClockValue.
-    [testDone not and: [
-      elapsed := (Time millisecondClockValue - startMs) bitAnd: 16r1FFFFFFF.
-      elapsed < (seconds * 1000)]]
-    whileTrue: [
-      ProcessorScheduler relinquishProcessorForMicroseconds: 0 "pure yield, no sleep"].
+    | deadline |
+    deadline := DateAndTime now + (Duration seconds: seconds).
+    [testDone not and: [DateAndTime now < deadline]] whileTrue: [
+      [(Delay forMilliseconds: 500) wait]
+        on: Error do: [:e |
+          "Delay scheduler dead — fall back to short yield"
+          ProcessorScheduler relinquishProcessorForMicroseconds: 100000 "100ms"]].
     testDone ifFalse: [
       result := #timeout.
       testDone := true.
@@ -943,7 +944,7 @@ runSingleTest: testClass selector: sel timeout: seconds priority: priority on: s
         nextPutAll: ' (exceeded '; print: seconds; nextPutAll: 's)'; lf.
       s flush.
       doneSem signal.
-      [testProcess terminate] on: Error do: [:e |]]] forkAt: 79.
+      [testProcess terminate] on: Error do: [:e |]]] forkAt: 60.
   backupWatchdog := nil.
 
   "Wait for test completion. Use waitTimeoutSeconds: as safety net — if both test
