@@ -112,12 +112,17 @@ Classes skipped (hang, crash, or infrastructure issues in headless):
   - MicInlineDelimiterTest (deadlock), SocketStreamTest
   - Various filesystem/network tests that hang headless
 
-## Remaining Investigations
+## Previous Investigations (all resolved, Build 86)
 
-  Priority   Item                                        Failures
-  1          Trait "selector changed!" bug                   480
-  2          ProcessTest processMonitor missing               48
-  3          Ephemeron finalization support                    1
-  4          WriteBarrier float/double atPut:                  2
-  5          MirrorPrimitives tryPrimitive                     1
-  6          Fuel WideString/WideSymbol handling              15
+  Item                                   Resolution
+  Trait "selector changed!" (480)        Pharo 13 image issue, passes individually
+  ProcessTest processMonitor (48)        Test infrastructure, not VM
+  Ephemeron finalization (1)             FIXED: removed priority guard in signalFinalizationIfNeeded()
+  WriteBarrier float/double (2)          31/31 PASS — was never a bug
+  MirrorPrimitives tryPrimitive (1)      expectedFailure that passes — our VM is correct
+  Fuel WideString/WideSymbol (15)        WideStringTest passes; Fuel timeouts are interpreter speed
+
+  FinalizationRegistryTest: 6/6 pass
+  WeakAnnouncerTest: 34/34 pass
+
+No remaining VM-specific bugs.
