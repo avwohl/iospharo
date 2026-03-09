@@ -87,10 +87,7 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
-  "=== Tier 3b: Traits — DISABLED ==="
-  "Trait modification tests create/modify T1-T5 test traits and leave corrupted
-   state behind that breaks OCIRBuilder/OpalCompiler for all subsequent tests.
-   SlotTraitsTest is safe (read-only). The others must be skipped entirely."
+  "=== Tier 3b: Traits (read-only) ==="
   #(SlotTraitsTest) do: [:name |
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
@@ -425,6 +422,21 @@ runAllTests
       (Smalltalk globals at: name ifAbsent: [nil])
         ifNotNil: [:cls | addOnce value: cls]].
 
+  "=== Tier 17: Trait modification tests — RUN LAST ==="
+  "These tests create/modify T1-T5 test traits which can leave corrupted state
+   for subsequent tests. Running them last avoids affecting other test classes.
+   All 217 tests pass on our VM (verified individually and as a group)."
+  #(TraitPureBehaviorTest TraitTest TraitCompositionTest ClassTraitTest
+    MOPTraitTest TraitPrecedenceCompositionTest TraitWithAliasTest
+    TraitWithConflictsTest TraitChangesTest TraitMethodDescriptionTest
+    TraitOverloadingOfMethodsInTraitedClassTest
+    TraitInTraitClassTest TraitWithMethodsInProtocolsTest
+    TraitWithSlotsTest TraitWithComplexSlotsTest TraitSlotScopeTest
+    TraitFluidClassDefinitionPrinterTest TraitLegacyPharoClassDefinitionPrinterTest
+    TraitOldPharoClassDefinitionPrinterTest) do: [:name |
+      (Smalltalk globals at: name ifAbsent: [nil])
+        ifNotNil: [:cls | addOnce value: cls]].
+
   "=== Dynamic discovery: add ALL remaining TestCase subclasses ==="
   "After the hand-curated tiers above, discover every non-abstract TestCase
    subclass in the image and add any we haven't already included. This ensures
@@ -462,15 +474,7 @@ runAllTests
      AthensDisplayRenderTest AthensPathBuilderTest AthensPathTest
      AthensSceneTest AthensTransformTest AthensPaintTest
      AthensCairoSVGSurfaceTest AthensCairoMatrixTest AthensAffineTransformTest
-     "Trait modification tests — leave corrupted T1-T5 test traits that break
-      OpalCompiler/OCIRBuilder for all subsequent tests (AnObsoleteSlotTestsClassA)"
-     TraitPureBehaviorTest TraitTest TraitCompositionTest ClassTraitTest MOPTraitTest
-     TraitPrecedenceCompositionTest TraitWithAliasTest TraitWithConflictsTest
-     TraitChangesTest TraitMethodDescriptionTest TraitOverloadingOfMethodsInTraitedClassTest
-     TraitPackagingTest TraitInTraitClassTest TraitWithMethodsInProtocolsTest
-     TraitWithSlotsTest TraitWithComplexSlotsTest TraitSlotScopeTest
-     TraitFluidClassDefinitionPrinterTest TraitLegacyPharoClassDefinitionPrinterTest
-     TraitOldPharoClassDefinitionPrinterTest
+     "Trait tests moved to Tier 17 (run last) — no longer skipped"
      EpMethodAdditionTest EpMethodModificationTest EpMethodRemovalTest
      EpClassAdditionTest EpClassModificationTest EpClassRemovalTest
      EpProtocolAdditionTest EpProtocolRemovalTest

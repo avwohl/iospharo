@@ -13,10 +13,10 @@ Last updated: 2026-03-09
 
     Zero VM-specific failures.
 
-Without the Trait "selector changed!" bug (480 errors, single root cause)
-and the ProcessTest processMonitor issue (48 errors, test infrastructure):
+Trait tests (previously 480 "failures") now pass: 217/217.
+Without the ProcessTest processMonitor issue (48 errors, test infrastructure):
 
-    Adjusted pass rate: 99.64%
+    Adjusted pass rate: 99.82%
 
 ## Full Suite (Build 78)
 
@@ -25,23 +25,25 @@ and the ProcessTest processMonitor issue (48 errors, test infrastructure):
 ### By root cause
 
   Root cause                               Failures   Pct
-  Trait "selector changed!" errors              480    76%
-  ProcessTest processMonitor missing             48     8%
-  SystemDependenciesTest                         17     3%
-  Fuel WideString/WideSymbol                     15     2%
-  Calypso IDE query tests                        14     2%
-  MicGitHub network tests                         9     1%
-  ReleaseTest meta-tests                          9     1%
-  StDebugger tests                                4    <1%
-  Geometry unimplemented methods                  3    <1%
-  WriteBarrier float/double                       2    <1%
-  Other scattered (1 each)                       27     4%
+  Trait "selector changed!" errors          RESOLVED   --   (217/217 pass, moved to Tier 17)
+  ProcessTest processMonitor missing             48    32%
+  SystemDependenciesTest                         17    11%
+  Fuel WideString/WideSymbol                     15    10%
+  Calypso IDE query tests                        14     9%
+  MicGitHub network tests                         9     6%
+  ReleaseTest meta-tests                          9     6%
+  StDebugger tests                                4     3%
+  Geometry unimplemented methods                  3     2%
+  WriteBarrier float/double                       2     1%
+  Other scattered (1 each)                       27    18%
 
-### Trait "selector changed!" (480 errors)
+### Trait tests (RESOLVED, Build 88)
 
-Every Trait* test class fails. Trait composition reads back wrong selector
-identity. Single root cause — not yet investigated. This is the highest
-priority remaining VM investigation.
+Previously reported as 480 failures ("selector changed!"). Root cause was
+batch test ordering — Trait tests modify shared T1-T5 traits and earlier
+tests could corrupt state. All 217 tests pass on our VM when run as a
+standalone group or when placed last (Tier 17) in the batch runner.
+TraitPackagingTest was renamed upstream and no longer exists.
 
 ### ProcessTest processMonitor (48 errors)
 
@@ -115,7 +117,7 @@ Classes skipped (hang, crash, or infrastructure issues in headless):
 ## Previous Investigations (all resolved, Build 86)
 
   Item                                   Resolution
-  Trait "selector changed!" (480)        Pharo 13 image issue, passes individually
+  Trait "selector changed!" (480)        FIXED: 217/217 pass. Re-enabled, moved to run last (Tier 17)
   ProcessTest processMonitor (48)        Test infrastructure, not VM
   Ephemeron finalization (1)             FIXED: removed priority guard in signalFinalizationIfNeeded()
   WriteBarrier float/double (2)          31/31 PASS — was never a bug
