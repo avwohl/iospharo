@@ -100,3 +100,14 @@ PharoDebug.log
 
 # Crash dumps
 *.dmp
+
+# Pharo debugger artifacts
+Debugger-Stack-*
+serialized-stack
+*.fuel
+
+# Pharo FileTree metadata
+.filetree
+
+# Test leftovers
+test.txt
