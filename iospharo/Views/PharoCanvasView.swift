@@ -322,15 +322,12 @@ class PharoCanvasViewController: UIViewController {
     /// Once set, this never changes — preventing keyboard events from shifting
     /// the Metal view when SwiftUI triggers a layout pass.
     private var topConstraint: NSLayoutConstraint?
-    /// Height constraint managed manually: full height minus docked keyboard overlap.
-    /// Floating keyboards don't affect height (they overlay the canvas).
+    /// Fixed height constraint — prevents keyboard-triggered SwiftUI re-renders
+    /// from changing the MTKView height (which would resize the Pharo framebuffer).
+    /// Updated only when width changes (real user resize), not for keyboard events.
     private var heightConstraint: NSLayoutConstraint?
     private var layoutFrozen = false
     private var frozenWidth: CGFloat = 0
-    /// Full canvas height (status bar to home indicator) without any keyboard.
-    private var frozenFullHeight: CGFloat = 0
-    /// How much the docked keyboard overlaps the canvas. 0 for hidden/floating.
-    private var keyboardOverlap: CGFloat = 0
 
     override func loadView() {
         view = UIView()
@@ -374,12 +371,15 @@ class PharoCanvasViewController: UIViewController {
             mtkView.trailingAnchor.constraint(equalTo: view.trailingAnchor)
         ])
         #else
-        // iOS: top offset is frozen after first layout (prevents keyboard-triggered
-        // SwiftUI re-renders from shifting the Metal view). Height is managed manually:
-        //   - Full height when no keyboard or floating keyboard
-        //   - Reduced height when docked keyboard is visible (so Pharo redraws above it
-        //     and the cursor/editing area stays visible)
-        // Width tracks the hosting view (Stage Manager / rotation).
+        // iOS: freeze layout after first pass to prevent keyboard events from
+        // resizing or shifting the Metal view. SwiftUI's .ignoresSafeArea(.keyboard)
+        // SHOULD prevent this, but @Published keyboard state changes trigger
+        // re-renders that can re-evaluate the hosting controller's safe area
+        // propagation, especially on iPad with floating keyboards.
+        //
+        // Strategy: fixed top offset + fixed height (no bottom anchor).
+        // Width is unconstrained so Stage Manager / orientation changes still work.
+        // Height is only updated when width changes (indicates real user resize).
         topConstraint = mtkView.topAnchor.constraint(equalTo: view.topAnchor, constant: 0)
         heightConstraint = mtkView.heightAnchor.constraint(equalToConstant: 0)
         NSLayoutConstraint.activate([
@@ -400,8 +400,7 @@ class PharoCanvasViewController: UIViewController {
             forName: UIResponder.keyboardWillChangeFrameNotification, object: nil, queue: .main
         ) { [weak self] notification in
             MainActor.assumeIsolated {
-                guard let self = self,
-                      let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
+                guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect,
                       frame.width > 0 else { return }
                 let screen = UIScreen.main.bounds
 
@@ -413,31 +412,12 @@ class PharoCanvasViewController: UIViewController {
                                frame.width >= screen.width * 0.9 &&
                                frame.maxY >= screen.height - 1
 
-                // For docked keyboards, shrink the canvas so Pharo redraws above
-                // the keyboard and the cursor stays visible. Floating keyboards
-                // overlay the canvas without resizing — user can drag them around.
-                if isDocked && self.layoutFrozen {
-                    let kbInView = self.view.convert(frame, from: nil)
-                    let topInset = self.topConstraint?.constant ?? 0
-                    self.keyboardOverlap = max(0, self.frozenFullHeight - (kbInView.origin.y - topInset))
-                } else {
-                    self.keyboardOverlap = 0
-                }
-                self.applyHeightConstraint()
-
-                // Animate height change in sync with the keyboard animation
-                let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? TimeInterval ?? 0.25
-                let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? UInt ?? 7
-                UIView.animate(withDuration: duration, delay: 0, options: UIView.AnimationOptions(rawValue: curve << 16)) {
-                    self.view.layoutIfNeeded()
-                }
-
-                self.bridge?.keyboardDocked = isDocked
-                self.bridge?.keyboardVisible = !isHidden
-
                 #if DEBUG
-                fputs("[KB] frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height))) screen=\(Int(screen.width))x\(Int(screen.height)) hidden=\(isHidden) docked=\(isDocked) overlap=\(Int(self.keyboardOverlap))\n", stderr)
+                fputs("[KB] frame=(\(Int(frame.origin.x)),\(Int(frame.origin.y)),\(Int(frame.width)),\(Int(frame.height))) screen=\(Int(screen.width))x\(Int(screen.height)) hidden=\(isHidden) docked=\(isDocked)\n", stderr)
                 #endif
+
+                self?.bridge?.keyboardDocked = isDocked
+                self?.bridge?.keyboardVisible = !isHidden
             }
         }
         #endif
@@ -461,36 +441,30 @@ class PharoCanvasViewController: UIViewController {
     #endif
 
     #if !targetEnvironment(macCatalyst)
-    /// Set heightConstraint = frozenFullHeight − keyboardOverlap (min 100pt).
-    private func applyHeightConstraint() {
-        heightConstraint?.constant = max(100, frozenFullHeight - keyboardOverlap)
-    }
-
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
         let topInset = view.safeAreaInsets.top
+        let availableHeight = view.bounds.height - topInset
 
         if !layoutFrozen {
-            // First layout: capture top inset, full height, and width, then freeze.
+            // First layout: capture top inset, height, and width, then freeze.
             topConstraint?.constant = topInset
-            frozenFullHeight = view.bounds.height - topInset
+            heightConstraint?.constant = availableHeight
             frozenWidth = view.bounds.width
             layoutFrozen = true
-            applyHeightConstraint()
             #if DEBUG
-            fputs("[LAYOUT] Froze: top=\(topInset)pt fullHeight=\(frozenFullHeight)pt width=\(frozenWidth)pt\n", stderr)
+            fputs("[LAYOUT] Froze: top=\(topInset)pt height=\(availableHeight)pt width=\(frozenWidth)pt\n", stderr)
             #endif
         } else if view.bounds.width != frozenWidth {
             // Width changed → real resize (rotation, Stage Manager, split view).
-            // Update full height and re-apply keyboard overlap.
-            frozenFullHeight = view.bounds.height - topInset
+            // Update height to match new available space.
+            heightConstraint?.constant = availableHeight
             frozenWidth = view.bounds.width
-            applyHeightConstraint()
             #if DEBUG
-            fputs("[LAYOUT] Resize: fullHeight=\(frozenFullHeight)pt width=\(frozenWidth)pt overlap=\(keyboardOverlap)pt\n", stderr)
+            fputs("[LAYOUT] Resize: height=\(availableHeight)pt width=\(frozenWidth)pt\n", stderr)
             #endif
         }
-        // Width unchanged but height changed → floating keyboard SwiftUI re-render, ignore.
+        // Width unchanged but height changed → keyboard event, ignore.
     }
     #endif
 
