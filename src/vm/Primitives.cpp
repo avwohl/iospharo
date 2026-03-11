@@ -15833,8 +15833,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     auto logFailure = [&](int rule, int srcD, int dstD, const char* reason) {
         bitbltFailCount_++;
         if (bitbltFailCount_ <= 50 || bitbltFailCount_ % 500 == 0) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-FAIL] #%d rule=%d src=%d dst=%d reason=%s\n",
                     bitbltFailCount_, rule, srcD, dstD, reason);
+            #endif
         }
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
@@ -15863,7 +15865,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Validate destination form
     if (destForm.isNil() || !destForm.isObject()) {
+        #ifdef DEBUG
         if (combinationRule == 33) fprintf(stderr, "[BITBLT-R33] destForm invalid\n");
+        #endif
         return PrimitiveResult::Failure;
     }
 
@@ -15892,7 +15896,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         destSurfaceID = static_cast<int>(destBits.asSmallInteger());
         ManualSurface* s = lookupSurface(destSurfaceID);
         if (!s) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-DIAG] dest surface not found: id=%d\n", destSurfaceID);
+            #endif
             return PrimitiveResult::Failure;
         }
 
@@ -15931,7 +15937,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
                 }
             }
             if (!gotData || !gotFormat) {
+                #ifdef DEBUG
                 fprintf(stderr, "[BITBLT-DIAG] dest dispatch surface failed: gotData=%d gotFormat=%d\n", gotData, gotFormat);
+                #endif
                 return PrimitiveResult::Failure;
             }
 
@@ -15951,9 +15959,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         destPixels = reinterpret_cast<uint32_t*>(destBitsHdr->bytes());
         destBitsSize = destBitsHdr->byteSize();
     } else {
+        #ifdef DEBUG
         fprintf(stderr, "[BITBLT-DIAG] destBits invalid: isNil=%d isObj=%d isSmi=%d raw=0x%llx rule=%ld depth=%ld\n",
                 destBits.isNil(), destBits.isObject(), destBits.isSmallInteger(),
                 (unsigned long long)destBits.rawBits(), (long)combinationRule, (long)destDepth);
+        #endif
         return PrimitiveResult::Failure;
     }
 
@@ -16049,8 +16059,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         // Read dest pixels
         Oop dBits = memory_.fetchPointer(FormBits, destForm);
         if (!dBits.isObject() || dBits.isNil()) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-R33] destBits invalid: isObj=%d isNil=%d\n",
                     dBits.isObject(), dBits.isNil());
+            #endif
             return PrimitiveResult::Failure;
         }
         ObjectHeader* dHdr = dBits.asObjectPtr();
@@ -16059,8 +16071,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         // ColorMap is the tally table — must exist
         Oop colorMap = memory_.fetchPointer(BBColorMap, bitBlt);
         if (colorMap.isNil() || !colorMap.isObject()) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-R33] colorMap invalid: isNil=%d isObj=%d depth=%ld w=%ld h=%ld\n",
                     colorMap.isNil(), colorMap.isObject(), (long)destDepth, (long)destWidth, (long)destHeight);
+            #endif
             return PrimitiveResult::Failure;
         }
         ObjectHeader* cmHdr = colorMap.asObjectPtr();
@@ -16385,9 +16399,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // --- Source operations ---
     if (!sourceForm.isObject()) {
+        #ifdef DEBUG
         fprintf(stderr, "[BITBLT-DIAG] sourceForm not object: isNil=%d isSmi=%d isFloat=%d raw=0x%llx\n",
                 sourceForm.isNil(), sourceForm.isSmallInteger(), sourceForm.isSmallFloat(),
                 (unsigned long long)sourceForm.rawBits());
+        #endif
         return PrimitiveResult::Failure;
     }
 
@@ -16410,7 +16426,9 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         int srcSurfID = static_cast<int>(srcBits.asSmallInteger());
         ManualSurface* ss = lookupSurface(srcSurfID);
         if (!ss) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-DIAG] src surface not found: id=%d\n", srcSurfID);
+            #endif
             return PrimitiveResult::Failure;
         }
 
@@ -16460,8 +16478,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
             return PrimitiveResult::Failure;
         }
     } else if (srcBits.isNil() || !srcBits.isObject() || srcBits.rawBits() < 0x10000) {
+        #ifdef DEBUG
         fprintf(stderr, "[BITBLT-DIAG] srcBits invalid: isNil=%d isObj=%d raw=0x%llx\n",
                 srcBits.isNil(), srcBits.isObject(), (unsigned long long)srcBits.rawBits());
+        #endif
         return PrimitiveResult::Failure;
     } else {
         ObjectHeader* srcBitsHdr = srcBits.asObjectPtr();
@@ -16545,8 +16565,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
         if (isByteArray && srcDepth == 32) {
             size_t expectedBytes = static_cast<size_t>(srcWidth) * srcHeight * 4;
             if (srcBitsSize < expectedBytes) {
+                #ifdef DEBUG
                 fprintf(stderr, "[BITBLT-DIAG] compressed src: expected=%zu actual=%zu srcW=%ld srcH=%ld\n",
                         expectedBytes, srcBitsSize, (long)srcWidth, (long)srcHeight);
+                #endif
                 return PrimitiveResult::Failure;
             }
         }
@@ -17439,15 +17461,19 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
     // Unsupported depth combinations
     if (destDepth != 32) {
+        #ifdef DEBUG
         fprintf(stderr, "[BITBLT-DIAG] unsupported destDepth=%ld srcDepth=%ld rule=%ld\n",
                 (long)destDepth, (long)srcDepth, (long)combinationRule);
+        #endif
         return PrimitiveResult::Failure;
     }
     size_t requiredDestBytes = static_cast<size_t>((destY + height - 1) * destWidth + destX + width) * 4;
     if (requiredDestBytes > destBitsSize) {
+        #ifdef DEBUG
         fprintf(stderr, "[BITBLT-DIAG] dest bounds: required=%zu available=%zu dstW=%ld dstH=%ld dstX=%ld dstY=%ld w=%ld h=%ld\n",
                 requiredDestBytes, destBitsSize, (long)destWidth, (long)destHeight,
                 (long)destX, (long)destY, (long)width, (long)height);
+        #endif
         return PrimitiveResult::Failure;
     }
 
@@ -17729,9 +17755,11 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
 
         size_t requiredSrcBytes = static_cast<size_t>(sourceY + height) * srcPitchBytes;
         if (requiredSrcBytes > srcBitsSize) {
+            #ifdef DEBUG
             fprintf(stderr, "[BITBLT-DIAG] 1bit src bounds: req=%zu avail=%zu srcW=%ld srcH=%ld sY=%ld h=%ld pitch=%ld\n",
                     requiredSrcBytes, srcBitsSize, (long)srcWidth, (long)srcHeight,
                     (long)sourceY, (long)height, (long)srcPitchBytes);
+            #endif
             return PrimitiveResult::Failure;
         }
 
@@ -18094,12 +18122,14 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     }
 
     // If we reach here, no depth handler matched
+    #ifdef DEBUG
     fprintf(stderr, "[BITBLT-DIAG] unhandled depths: src=%ld dst=%ld rule=%ld "
             "srcW=%ld srcH=%ld dstW=%ld dstH=%ld srcBitsSize=%zu destBitsSize=%zu "
             "argCount=%d sourceAlpha=%d\n",
             (long)srcDepth, (long)destDepth, (long)combinationRule,
             (long)srcWidth, (long)srcHeight, (long)destWidth, (long)destHeight,
             srcBitsSize, destBitsSize, argCount, sourceAlpha);
+    #endif
     return PrimitiveResult::Failure;
 
     #undef BITBLT_SUCCESS

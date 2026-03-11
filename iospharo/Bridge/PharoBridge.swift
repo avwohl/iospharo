@@ -423,8 +423,8 @@ class PharoBridge: ObservableObject {
                     ifTrue: [ self position: self position x @ m bottom ] ]'.
         "Fix: reposition any existing windows that overlap the menu bar"
         [
-          (Delay forMilliseconds: 500) wait.
           | menuBarBottom |
+          (Delay forMilliseconds: 500) wait.
           menuBarBottom := 0.
           World submorphsDo: [ :m |
               (m class name = 'MenubarMorph') ifTrue: [ menuBarBottom := m bottom ] ].

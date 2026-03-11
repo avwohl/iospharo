@@ -212,8 +212,10 @@ bool Interpreter::initialize() {
         std::string rcvrClassName = memory_.classNameOf(receiver);
         std::string methodSelector = memory_.selectorOf(method);
 
+#ifdef DEBUG
         fprintf(stderr, "[RESUME] ctx[%d]: %s>>%s\n", depth,
                 rcvrClassName.c_str(), methodSelector.c_str());
+#endif
 
         // Check if we're in snapshot-related code
         if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
@@ -231,7 +233,9 @@ bool Interpreter::initialize() {
         currentCtx = sender;
         depth++;
     }
+#ifdef DEBUG
     fprintf(stderr, "[RESUME] inSnapshotCode=%d chain depth=%d\n", inSnapshotCode, depth);
+#endif
 
     // If we detected snapshot code, we're resuming from a saved image.
     // The Pharo snapshot code checks the return value:
@@ -258,14 +262,18 @@ bool Interpreter::initialize() {
                     else if (oldVal.rawBits() == falseObj.rawBits()) oldDesc = "false";
                     else if (oldVal.isNil()) oldDesc = "nil";
                     else if (oldVal.isSmallInteger()) oldDesc = "SmallInteger";
+#ifdef DEBUG
                     fprintf(stderr, "[RESUME] stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx)\n",
                             stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
+#endif
                     memory_.storePointer(stackTopSlot, context, trueObj);
                 }
             }
         }
     } else {
+#ifdef DEBUG
         fprintf(stderr, "[RESUME] Not in snapshot code — resuming as-is\n");
+#endif
     }
 
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
