@@ -2,6 +2,29 @@
 
 Build 99 — 2026-03-20
 
+## Export: watchOS companion app
+
+New "watchOS (Companion)" toggle in the Export as App sheet. When enabled, the
+generated Xcode project includes a second target for Apple Watch. Building the
+iOS target automatically builds and embeds the watch app. The watch companion
+is a placeholder SwiftUI app (Pharo does not run on watchOS yet) that shows
+the app name and "Open on iPhone or iPad". The watch app shares the app icon
+and gets its own bundle ID (main ID + ".watchapp"). Requires watchOS 10.0+.
+
+## Export: Strip Development Tools option
+
+New "Strip Development Tools" toggle in the Export as App sheet. When enabled,
+the exported app's startup.st removes IDE packages (Calypso, NewTools, Iceberg,
+debugger, tests, Metacello, etc.) on first launch, then runs Smalltalk cleanUp
+and garbage collection. Reduces image size by ~30-40 MB. Enabled by default.
+
+## Export: Custom App Icon picker
+
+New "App Icon" section in the Export as App sheet. Pick a PNG or JPEG image file
+to use as the app icon. The selected image is bundled into Assets.xcassets and
+referenced at all required sizes (Xcode handles scaling). Shows a preview
+thumbnail in the export sheet. Replaces the previous placeholder-only behavior.
+
 ## Fix: Strip buttons hidden behind notch on iPhone (Issue #1)
 
 On all notch iPhones (X through 14, 16e, mini models), the modifier strip

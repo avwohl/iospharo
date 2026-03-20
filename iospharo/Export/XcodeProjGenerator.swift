@@ -9,6 +9,7 @@
  *   - Compiles Swift sources with a bridging header
  *   - Copies Resources/ (Pharo image, startup.st) into the bundle
  *   - Supports both iOS and Mac Catalyst targets
+ *   - Optionally includes a watchOS companion app target
  */
 
 import Foundation
@@ -17,10 +18,12 @@ class XcodeProjGenerator {
 
     let config: ExportConfig
     let projectDir: URL
+    private let watchOS: Bool
 
     init(config: ExportConfig, projectDir: URL) {
         self.config = config
         self.projectDir = projectDir
+        self.watchOS = config.exportWatchOS
     }
 
     func generate() throws {
@@ -70,6 +73,8 @@ class XcodeProjGenerator {
 
         let metalFiles = ["Shaders.metal"]
 
+        let watchSourceFiles = ["WatchApp.swift", "ContentView.swift"]
+
         // PharoVMCore.a has all third-party libs merged in except SDL2 and libffi
         let frameworks = [
             "PharoVMCore", "SDL2", "libffi",
@@ -90,6 +95,7 @@ class XcodeProjGenerator {
         // === PBXBuildFile ===
         ln("")
         ln("/* Begin PBXBuildFile section */")
+        // Main target sources
         for f in sourceFiles {
             ln("\t\t\(id("build_\(f)")) /* \(f) in Sources */ = {isa = PBXBuildFile; fileRef = \(id("file_\(f)")); };")
         }
@@ -102,11 +108,35 @@ class XcodeProjGenerator {
             ln("\t\t\(id("build_fw_\(fw)")) /* \(fw).xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = \(id("file_fw_\(fw)")); };")
             ln("\t\t\(id("embed_fw_\(fw)")) /* \(fw).xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = \(id("file_fw_\(fw)")); settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };")
         }
+        // Watch target sources
+        if watchOS {
+            for f in watchSourceFiles {
+                ln("\t\t\(id("watch_build_\(f)")) /* \(f) in Sources */ = {isa = PBXBuildFile; fileRef = \(id("watch_file_\(f)")); };")
+            }
+            ln("\t\t\(id("watch_build_assets")) /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = \(id("watch_file_assets")); };")
+            // Embed watch app in iOS target
+            ln("\t\t\(id("embed_watch_product")) /* \(appName) Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = \(id("watch_product")); settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };")
+        }
         ln("/* End PBXBuildFile section */")
 
-        // === PBXCopyFilesBuildPhase (Embed Frameworks) ===
+        // === PBXContainerItemProxy (watch dependency) ===
+        if watchOS {
+            ln("")
+            ln("/* Begin PBXContainerItemProxy section */")
+            ln("\t\t\(id("watch_proxy")) /* PBXContainerItemProxy */ = {")
+            ln("\t\t\tisa = PBXContainerItemProxy;")
+            ln("\t\t\tcontainerPortal = \(id("project")) /* Project object */;")
+            ln("\t\t\tproxyType = 1;")
+            ln("\t\t\tremoteGlobalIDString = \(id("watch_target"));")
+            ln("\t\t\tremoteInfo = \"\(appName) Watch\";")
+            ln("\t\t};")
+            ln("/* End PBXContainerItemProxy section */")
+        }
+
+        // === PBXCopyFilesBuildPhase (Embed Frameworks + Embed Watch Content) ===
         ln("")
         ln("/* Begin PBXCopyFilesBuildPhase section */")
+        // Embed Frameworks
         ln("\t\t\(id("embed_phase")) /* Embed Frameworks */ = {")
         ln("\t\t\tisa = PBXCopyFilesBuildPhase;")
         ln("\t\t\tbuildActionMask = 2147483647;")
@@ -120,12 +150,28 @@ class XcodeProjGenerator {
         ln("\t\t\tname = \"Embed Frameworks\";")
         ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
         ln("\t\t};")
+        // Embed Watch Content
+        if watchOS {
+            ln("\t\t\(id("embed_watch_phase")) /* Embed Watch Content */ = {")
+            ln("\t\t\tisa = PBXCopyFilesBuildPhase;")
+            ln("\t\t\tbuildActionMask = 2147483647;")
+            ln("\t\t\tdstPath = \"$(CONTENTS_FOLDER_PATH)/Watch\";")
+            ln("\t\t\tdstSubfolderSpec = 16;")
+            ln("\t\t\tfiles = (")
+            ln("\t\t\t\t\(id("embed_watch_product")) /* \(appName) Watch.app */,")
+            ln("\t\t\t);")
+            ln("\t\t\tname = \"Embed Watch Content\";")
+            ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
+            ln("\t\t};")
+        }
         ln("/* End PBXCopyFilesBuildPhase section */")
 
         // === PBXFileReference ===
         ln("")
         ln("/* Begin PBXFileReference section */")
+        // Main target product
         ln("\t\t\(id("product")) /* \(appName).app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = \"\(appName).app\"; sourceTree = BUILT_PRODUCTS_DIR; };")
+        // Main sources
         for f in sourceFiles {
             ln("\t\t\(id("file_\(f)")) /* \(f) */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = \"\(f)\"; sourceTree = \"<group>\"; };")
         }
@@ -143,6 +189,15 @@ class XcodeProjGenerator {
         // Headers
         ln("\t\t\(id("file_vmparams")) /* VMParameters.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = \"VMParameters.h\"; sourceTree = \"<group>\"; };")
         ln("\t\t\(id("file_motiondata")) /* MotionData.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = \"MotionData.h\"; sourceTree = \"<group>\"; };")
+        // Watch target
+        if watchOS {
+            ln("\t\t\(id("watch_product")) /* \(appName) Watch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = \"\(appName) Watch.app\"; sourceTree = BUILT_PRODUCTS_DIR; };")
+            for f in watchSourceFiles {
+                ln("\t\t\(id("watch_file_\(f)")) /* \(f) */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = \"\(f)\"; sourceTree = \"<group>\"; };")
+            }
+            ln("\t\t\(id("watch_file_assets")) /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\"; };")
+            ln("\t\t\(id("watch_file_infoplist")) /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = \"<group>\"; };")
+        }
         ln("/* End PBXFileReference section */")
 
         // === PBXFrameworksBuildPhase ===
@@ -158,6 +213,16 @@ class XcodeProjGenerator {
         ln("\t\t\t);")
         ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
         ln("\t\t};")
+        // Watch target has no frameworks phase (pure SwiftUI, no xcframeworks)
+        if watchOS {
+            ln("\t\t\(id("watch_frameworks_phase")) /* Frameworks */ = {")
+            ln("\t\t\tisa = PBXFrameworksBuildPhase;")
+            ln("\t\t\tbuildActionMask = 2147483647;")
+            ln("\t\t\tfiles = (")
+            ln("\t\t\t);")
+            ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
+            ln("\t\t};")
+        }
         ln("/* End PBXFrameworksBuildPhase section */")
 
         // === PBXGroup ===
@@ -174,6 +239,9 @@ class XcodeProjGenerator {
         ln("\t\t\t\t\(id("file_resources")) /* Resources */,")
         ln("\t\t\t\t\(id("file_infoplist")) /* Info.plist */,")
         ln("\t\t\t\t\(id("file_entitlements")) /* \(appName).entitlements */,")
+        if watchOS {
+            ln("\t\t\t\t\(id("group_watchapp")) /* WatchApp */,")
+        }
         ln("\t\t\t\t\(id("group_products")) /* Products */,")
         ln("\t\t\t);")
         ln("\t\t\tsourceTree = \"<group>\";")
@@ -218,11 +286,30 @@ class XcodeProjGenerator {
         ln("\t\t\tsourceTree = \"<group>\";")
         ln("\t\t};")
 
+        // WatchApp group
+        if watchOS {
+            ln("\t\t\(id("group_watchapp")) /* WatchApp */ = {")
+            ln("\t\t\tisa = PBXGroup;")
+            ln("\t\t\tchildren = (")
+            for f in watchSourceFiles {
+                ln("\t\t\t\t\(id("watch_file_\(f)")) /* \(f) */,")
+            }
+            ln("\t\t\t\t\(id("watch_file_assets")) /* Assets.xcassets */,")
+            ln("\t\t\t\t\(id("watch_file_infoplist")) /* Info.plist */,")
+            ln("\t\t\t);")
+            ln("\t\t\tpath = WatchApp;")
+            ln("\t\t\tsourceTree = \"<group>\";")
+            ln("\t\t};")
+        }
+
         // Products group
         ln("\t\t\(id("group_products")) /* Products */ = {")
         ln("\t\t\tisa = PBXGroup;")
         ln("\t\t\tchildren = (")
         ln("\t\t\t\t\(id("product")) /* \(appName).app */,")
+        if watchOS {
+            ln("\t\t\t\t\(id("watch_product")) /* \(appName) Watch.app */,")
+        }
         ln("\t\t\t);")
         ln("\t\t\tname = Products;")
         ln("\t\t\tsourceTree = \"<group>\";")
@@ -232,6 +319,7 @@ class XcodeProjGenerator {
         // === PBXNativeTarget ===
         ln("")
         ln("/* Begin PBXNativeTarget section */")
+        // Main iOS/Mac target
         ln("\t\t\(id("target")) /* \(appName) */ = {")
         ln("\t\t\tisa = PBXNativeTarget;")
         ln("\t\t\tbuildConfigurationList = \(id("target_config_list")) /* Build configuration list for PBXNativeTarget */;")
@@ -240,16 +328,42 @@ class XcodeProjGenerator {
         ln("\t\t\t\t\(id("frameworks_phase")) /* Frameworks */,")
         ln("\t\t\t\t\(id("resources_phase")) /* Resources */,")
         ln("\t\t\t\t\(id("embed_phase")) /* Embed Frameworks */,")
+        if watchOS {
+            ln("\t\t\t\t\(id("embed_watch_phase")) /* Embed Watch Content */,")
+        }
         ln("\t\t\t);")
         ln("\t\t\tbuildRules = (")
         ln("\t\t\t);")
         ln("\t\t\tdependencies = (")
+        if watchOS {
+            ln("\t\t\t\t\(id("watch_dependency")) /* PBXTargetDependency */,")
+        }
         ln("\t\t\t);")
         ln("\t\t\tname = \"\(appName)\";")
         ln("\t\t\tproductName = \"\(appName)\";")
         ln("\t\t\tproductReference = \(id("product")) /* \(appName).app */;")
         ln("\t\t\tproductType = \"com.apple.product-type.application\";")
         ln("\t\t};")
+        // Watch target
+        if watchOS {
+            ln("\t\t\(id("watch_target")) /* \(appName) Watch */ = {")
+            ln("\t\t\tisa = PBXNativeTarget;")
+            ln("\t\t\tbuildConfigurationList = \(id("watch_config_list")) /* Build configuration list for watch target */;")
+            ln("\t\t\tbuildPhases = (")
+            ln("\t\t\t\t\(id("watch_sources_phase")) /* Sources */,")
+            ln("\t\t\t\t\(id("watch_frameworks_phase")) /* Frameworks */,")
+            ln("\t\t\t\t\(id("watch_resources_phase")) /* Resources */,")
+            ln("\t\t\t);")
+            ln("\t\t\tbuildRules = (")
+            ln("\t\t\t);")
+            ln("\t\t\tdependencies = (")
+            ln("\t\t\t);")
+            ln("\t\t\tname = \"\(appName) Watch\";")
+            ln("\t\t\tproductName = \"\(appName) Watch\";")
+            ln("\t\t\tproductReference = \(id("watch_product")) /* \(appName) Watch.app */;")
+            ln("\t\t\tproductType = \"com.apple.product-type.application\";")
+            ln("\t\t};")
+        }
         ln("/* End PBXNativeTarget section */")
 
         // === PBXProject ===
@@ -268,6 +382,9 @@ class XcodeProjGenerator {
         ln("\t\t\tprojectRoot = \"\";")
         ln("\t\t\ttargets = (")
         ln("\t\t\t\t\(id("target")) /* \(appName) */,")
+        if watchOS {
+            ln("\t\t\t\t\(id("watch_target")) /* \(appName) Watch */,")
+        }
         ln("\t\t\t);")
         ln("\t\t};")
         ln("/* End PBXProject section */")
@@ -275,6 +392,7 @@ class XcodeProjGenerator {
         // === PBXResourcesBuildPhase ===
         ln("")
         ln("/* Begin PBXResourcesBuildPhase section */")
+        // Main target
         ln("\t\t\(id("resources_phase")) /* Resources */ = {")
         ln("\t\t\tisa = PBXResourcesBuildPhase;")
         ln("\t\t\tbuildActionMask = 2147483647;")
@@ -284,11 +402,23 @@ class XcodeProjGenerator {
         ln("\t\t\t);")
         ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
         ln("\t\t};")
+        // Watch target
+        if watchOS {
+            ln("\t\t\(id("watch_resources_phase")) /* Resources */ = {")
+            ln("\t\t\tisa = PBXResourcesBuildPhase;")
+            ln("\t\t\tbuildActionMask = 2147483647;")
+            ln("\t\t\tfiles = (")
+            ln("\t\t\t\t\(id("watch_build_assets")) /* Assets.xcassets */,")
+            ln("\t\t\t);")
+            ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
+            ln("\t\t};")
+        }
         ln("/* End PBXResourcesBuildPhase section */")
 
         // === PBXSourcesBuildPhase ===
         ln("")
         ln("/* Begin PBXSourcesBuildPhase section */")
+        // Main target
         ln("\t\t\(id("sources_phase")) /* Sources */ = {")
         ln("\t\t\tisa = PBXSourcesBuildPhase;")
         ln("\t\t\tbuildActionMask = 2147483647;")
@@ -302,7 +432,32 @@ class XcodeProjGenerator {
         ln("\t\t\t);")
         ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
         ln("\t\t};")
+        // Watch target
+        if watchOS {
+            ln("\t\t\(id("watch_sources_phase")) /* Sources */ = {")
+            ln("\t\t\tisa = PBXSourcesBuildPhase;")
+            ln("\t\t\tbuildActionMask = 2147483647;")
+            ln("\t\t\tfiles = (")
+            for f in watchSourceFiles {
+                ln("\t\t\t\t\(id("watch_build_\(f)")) /* \(f) */,")
+            }
+            ln("\t\t\t);")
+            ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
+            ln("\t\t};")
+        }
         ln("/* End PBXSourcesBuildPhase section */")
+
+        // === PBXTargetDependency ===
+        if watchOS {
+            ln("")
+            ln("/* Begin PBXTargetDependency section */")
+            ln("\t\t\(id("watch_dependency")) /* PBXTargetDependency */ = {")
+            ln("\t\t\tisa = PBXTargetDependency;")
+            ln("\t\t\ttarget = \(id("watch_target")) /* \(appName) Watch */;")
+            ln("\t\t\ttargetProxy = \(id("watch_proxy")) /* PBXContainerItemProxy */;")
+            ln("\t\t};")
+            ln("/* End PBXTargetDependency section */")
+        }
 
         // === XCBuildConfiguration ===
         ln("")
@@ -348,7 +503,7 @@ class XcodeProjGenerator {
         ln("\t\t\tname = Release;")
         ln("\t\t};")
 
-        // Target-level Debug
+        // Main target Debug
         ln("\t\t\(id("target_debug")) /* Debug */ = {")
         ln("\t\t\tisa = XCBuildConfiguration;")
         ln("\t\t\tbuildSettings = {")
@@ -375,7 +530,7 @@ class XcodeProjGenerator {
         ln("\t\t\tname = Debug;")
         ln("\t\t};")
 
-        // Target-level Release
+        // Main target Release
         ln("\t\t\(id("target_release")) /* Release */ = {")
         ln("\t\t\tisa = XCBuildConfiguration;")
         ln("\t\t\tbuildSettings = {")
@@ -401,6 +556,53 @@ class XcodeProjGenerator {
         ln("\t\t\t};")
         ln("\t\t\tname = Release;")
         ln("\t\t};")
+
+        // Watch target Debug
+        if watchOS {
+            ln("\t\t\(id("watch_debug")) /* Debug */ = {")
+            ln("\t\t\tisa = XCBuildConfiguration;")
+            ln("\t\t\tbuildSettings = {")
+            ln("\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;")
+            ln("\t\t\t\tASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;")
+            ln("\t\t\t\tCODE_SIGN_STYLE = Automatic;")
+            if !teamID.isEmpty {
+                ln("\t\t\t\tDEVELOPMENT_TEAM = \(teamID);")
+            }
+            ln("\t\t\t\tINFOPLIST_FILE = \"WatchApp/Info.plist\";")
+            ln("\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = \"\(config.watchBundleID)\";")
+            ln("\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";")
+            ln("\t\t\t\tSDKROOT = watchos;")
+            ln("\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;")
+            ln("\t\t\t\tSWIFT_VERSION = 5.0;")
+            ln("\t\t\t\tTARGETED_DEVICE_FAMILY = 4;")
+            ln("\t\t\t\tWATCHOS_DEPLOYMENT_TARGET = 10.0;")
+            ln("\t\t\t};")
+            ln("\t\t\tname = Debug;")
+            ln("\t\t};")
+
+            // Watch target Release
+            ln("\t\t\(id("watch_release")) /* Release */ = {")
+            ln("\t\t\tisa = XCBuildConfiguration;")
+            ln("\t\t\tbuildSettings = {")
+            ln("\t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;")
+            ln("\t\t\t\tASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;")
+            ln("\t\t\t\tCODE_SIGN_STYLE = Automatic;")
+            if !teamID.isEmpty {
+                ln("\t\t\t\tDEVELOPMENT_TEAM = \(teamID);")
+            }
+            ln("\t\t\t\tINFOPLIST_FILE = \"WatchApp/Info.plist\";")
+            ln("\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = \"\(config.watchBundleID)\";")
+            ln("\t\t\t\tPRODUCT_NAME = \"$(TARGET_NAME)\";")
+            ln("\t\t\t\tSDKROOT = watchos;")
+            ln("\t\t\t\tSWIFT_EMIT_LOC_STRINGS = YES;")
+            ln("\t\t\t\tSWIFT_VERSION = 5.0;")
+            ln("\t\t\t\tTARGETED_DEVICE_FAMILY = 4;")
+            ln("\t\t\t\tVALIDATE_PRODUCT = YES;")
+            ln("\t\t\t\tWATCHOS_DEPLOYMENT_TARGET = 10.0;")
+            ln("\t\t\t};")
+            ln("\t\t\tname = Release;")
+            ln("\t\t};")
+        }
         ln("/* End XCBuildConfiguration section */")
 
         // === XCConfigurationList ===
@@ -424,6 +626,17 @@ class XcodeProjGenerator {
         ln("\t\t\tdefaultConfigurationIsVisible = 0;")
         ln("\t\t\tdefaultConfigurationName = Release;")
         ln("\t\t};")
+        if watchOS {
+            ln("\t\t\(id("watch_config_list")) /* Build configuration list for watch target */ = {")
+            ln("\t\t\tisa = XCConfigurationList;")
+            ln("\t\t\tbuildConfigurations = (")
+            ln("\t\t\t\t\(id("watch_debug")) /* Debug */,")
+            ln("\t\t\t\t\(id("watch_release")) /* Release */,")
+            ln("\t\t\t);")
+            ln("\t\t\tdefaultConfigurationIsVisible = 0;")
+            ln("\t\t\tdefaultConfigurationName = Release;")
+            ln("\t\t};")
+        }
         ln("/* End XCConfigurationList section */")
 
         ln("")

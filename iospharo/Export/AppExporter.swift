@@ -19,9 +19,15 @@ struct ExportConfig {
     let teamID: String?
     let exportMacOS: Bool
     let exportIOS: Bool
+    let exportWatchOS: Bool
     let kioskMode: Bool
+    let stripImage: Bool
+    let appIconURL: URL?
     let outputDirectory: URL
     let sourceImage: PharoImage
+
+    /// Bundle ID for the watch companion app
+    var watchBundleID: String { bundleID + ".watchapp" }
 }
 
 enum ExportError: LocalizedError {
@@ -104,7 +110,7 @@ class AppExporter {
 
         // Write startup.st (kiosk mode stripping or plain patches)
         progress("Writing startup script...")
-        let startupScript = AppTemplates.startupScript(kioskMode: config.kioskMode)
+        let startupScript = AppTemplates.startupScript(kioskMode: config.kioskMode, stripImage: config.stripImage)
         try startupScript.write(
             to: resourcesDir.appendingPathComponent("startup.st"),
             atomically: true, encoding: .utf8)
@@ -196,9 +202,64 @@ class AppExporter {
 
         let iconDir = assetsDir.appendingPathComponent("AppIcon.appiconset")
         try fm.createDirectory(at: iconDir, withIntermediateDirectories: true)
-        try AppTemplates.appIconJSON().write(
-            to: iconDir.appendingPathComponent("Contents.json"),
-            atomically: true, encoding: .utf8)
+        if let iconURL = config.appIconURL, fm.fileExists(atPath: iconURL.path) {
+            let iconFilename = "AppIcon.png"
+            try fm.copyItem(at: iconURL, to: iconDir.appendingPathComponent(iconFilename))
+            try AppTemplates.appIconJSONWithImage(filename: iconFilename).write(
+                to: iconDir.appendingPathComponent("Contents.json"),
+                atomically: true, encoding: .utf8)
+        } else {
+            try AppTemplates.appIconJSON().write(
+                to: iconDir.appendingPathComponent("Contents.json"),
+                atomically: true, encoding: .utf8)
+        }
+
+        // Watch companion app (if enabled)
+        if config.exportWatchOS {
+            progress("Generating Watch companion app...")
+            let watchDir = projectDir.appendingPathComponent("WatchApp")
+            try fm.createDirectory(at: watchDir, withIntermediateDirectories: true)
+
+            let watchFiles: [(String, String)] = [
+                ("WatchApp.swift", AppTemplates.watchAppSwift(appName: config.appName)),
+                ("ContentView.swift", AppTemplates.watchContentViewSwift(appName: config.appName)),
+            ]
+            for (filename, content) in watchFiles {
+                try content.write(to: watchDir.appendingPathComponent(filename),
+                                atomically: true, encoding: .utf8)
+            }
+
+            try AppTemplates.watchInfoPlist(appName: config.appName).write(
+                to: watchDir.appendingPathComponent("Info.plist"),
+                atomically: true, encoding: .utf8)
+
+            // Watch asset catalog
+            let watchAssetsDir = watchDir.appendingPathComponent("Assets.xcassets")
+            try fm.createDirectory(at: watchAssetsDir, withIntermediateDirectories: true)
+            try AppTemplates.assetsContentsJSON().write(
+                to: watchAssetsDir.appendingPathComponent("Contents.json"),
+                atomically: true, encoding: .utf8)
+
+            let watchAccentDir = watchAssetsDir.appendingPathComponent("AccentColor.colorset")
+            try fm.createDirectory(at: watchAccentDir, withIntermediateDirectories: true)
+            try AppTemplates.colorSetJSON().write(
+                to: watchAccentDir.appendingPathComponent("Contents.json"),
+                atomically: true, encoding: .utf8)
+
+            let watchIconDir = watchAssetsDir.appendingPathComponent("AppIcon.appiconset")
+            try fm.createDirectory(at: watchIconDir, withIntermediateDirectories: true)
+            if let iconURL = config.appIconURL, fm.fileExists(atPath: iconURL.path) {
+                let iconFilename = "AppIcon.png"
+                try fm.copyItem(at: iconURL, to: watchIconDir.appendingPathComponent(iconFilename))
+                try AppTemplates.watchAppIconJSONWithImage(filename: iconFilename).write(
+                    to: watchIconDir.appendingPathComponent("Contents.json"),
+                    atomically: true, encoding: .utf8)
+            } else {
+                try AppTemplates.watchAppIconJSON().write(
+                    to: watchIconDir.appendingPathComponent("Contents.json"),
+                    atomically: true, encoding: .utf8)
+            }
+        }
 
         // Write project config files
         progress("Generating Xcode project configuration...")

@@ -951,7 +951,7 @@ enum AppTemplates {
 
     // MARK: - Startup Script
 
-    static func startupScript(kioskMode: Bool) -> String {
+    static func startupScript(kioskMode: Bool, stripImage: Bool) -> String {
         var script = """
         "Auto-generated startup script for exported app"
         "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
@@ -960,6 +960,41 @@ enum AppTemplates {
             ^ MicGitHubAPI new beAnonymous'].
         """
 
+        if stripImage {
+            script += """
+
+            "Strip development tools to reduce image size"
+            | packagesToRemove |
+            packagesToRemove := #(
+              'Iceberg' 'Iceberg-*' 'LibGit-*'
+              'Calypso-*'
+              'NewTools-*'
+              'Spec2-Tools*' 'Spec2-Backend-Tests*'
+              'GT-*' 'Tool-*'
+              '*-Tests' '*-Tests-*' '*Test' '*Tests*'
+              'MonticelloMocks' 'ReleaseTests'
+              'SUnit-*'
+              'Reflectivity-Tools*'
+              'Debugger-*' 'DebugPoints*'
+              'HelpSystem-*'
+              'Metacello-*'
+              'Ring-Definitions-Tests*'
+              'DrTests*'
+            ).
+            (RPackageOrganizer default packages
+              select: [ :pkg |
+                packagesToRemove anySatisfy: [ :pattern |
+                  pattern includesSubstring: '*'
+                    ifTrue: [ pkg name matchPattern: pattern ]
+                    ifFalse: [ pkg name = pattern ] ] ])
+              do: [ :pkg |
+                [ pkg removeFromSystem ]
+                  on: Error do: [ :e | "skip packages with removal errors" ] ].
+            Smalltalk cleanUp: true except: {} confirming: false.
+            3 timesRepeat: [ Smalltalk garbageCollect ].
+            """
+        }
+
         if kioskMode {
             script += """
 
@@ -967,10 +1002,15 @@ enum AppTemplates {
             TaskbarMorph showTaskbar: false.
             MenubarMorph showMenubar: false.
             WorldState desktopMenuPragmaKeyword: ''.
-            "Clean caches"
-            Smalltalk cleanUp: true except: {} confirming: false.
-            3 timesRepeat: [ Smalltalk garbageCollect ].
             """
+            if !stripImage {
+                script += """
+
+                "Clean caches"
+                Smalltalk cleanUp: true except: {} confirming: false.
+                3 timesRepeat: [ Smalltalk garbageCollect ].
+                """
+            }
         }
 
         return script
@@ -1037,6 +1077,110 @@ enum AppTemplates {
         """
     }
 
+    // MARK: - Watch Companion App
+
+    static func watchAppSwift(appName: String) -> String {
+        """
+        import SwiftUI
+
+        @main
+        struct \(appName)WatchApp: App {
+            var body: some Scene {
+                WindowGroup {
+                    ContentView()
+                }
+            }
+        }
+        """
+    }
+
+    static func watchContentViewSwift(appName: String) -> String {
+        """
+        import SwiftUI
+
+        struct ContentView: View {
+            var body: some View {
+                VStack(spacing: 12) {
+                    Image(systemName: "apps.iphone")
+                        .font(.system(size: 40))
+                        .foregroundColor(.accentColor)
+                    Text("\(appName)")
+                        .font(.headline)
+                    Text("Open on iPhone or iPad")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .padding()
+            }
+        }
+        """
+    }
+
+    static func watchInfoPlist(appName: String) -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>CFBundleDevelopmentRegion</key>
+            <string>en</string>
+            <key>CFBundleExecutable</key>
+            <string>$(EXECUTABLE_NAME)</string>
+            <key>CFBundleIdentifier</key>
+            <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+            <key>CFBundleName</key>
+            <string>\(appName) Watch</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>1.0</string>
+            <key>CFBundleVersion</key>
+            <string>1</string>
+            <key>WKApplication</key>
+            <true/>
+        </dict>
+        </plist>
+        """
+    }
+
+    static func watchAppIconJSON() -> String {
+        """
+        {
+          "images" : [
+            {
+              "idiom" : "universal",
+              "platform" : "watchos",
+              "size" : "1024x1024"
+            }
+          ],
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        """
+    }
+
+    static func watchAppIconJSONWithImage(filename: String) -> String {
+        """
+        {
+          "images" : [
+            {
+              "filename" : "\(filename)",
+              "idiom" : "universal",
+              "platform" : "watchos",
+              "size" : "1024x1024"
+            }
+          ],
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        """
+    }
+
     // MARK: - Assets
 
     static func assetsContentsJSON() -> String {
@@ -1056,6 +1200,85 @@ enum AppTemplates {
           "colors" : [
             {
               "idiom" : "universal"
+            }
+          ],
+          "info" : {
+            "author" : "xcode",
+            "version" : 1
+          }
+        }
+        """
+    }
+
+    static func appIconJSONWithImage(filename: String) -> String {
+        """
+        {
+          "images" : [
+            {
+              "filename" : "\(filename)",
+              "idiom" : "universal",
+              "platform" : "ios",
+              "size" : "1024x1024"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "1x",
+              "size" : "16x16"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "2x",
+              "size" : "16x16"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "1x",
+              "size" : "32x32"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "2x",
+              "size" : "32x32"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "1x",
+              "size" : "128x128"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "2x",
+              "size" : "128x128"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "1x",
+              "size" : "256x256"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "2x",
+              "size" : "256x256"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "1x",
+              "size" : "512x512"
+            },
+            {
+              "filename" : "\(filename)",
+              "idiom" : "mac",
+              "scale" : "2x",
+              "size" : "512x512"
             }
           ],
           "info" : {

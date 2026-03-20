@@ -205,8 +205,11 @@ The project already has an "Export as App" feature (added build 73, 2026-03-05).
 
 - Right-click image in library -> "Export as App..." (Mac Catalyst only)
 - Generates a complete standalone Xcode project
-- User configures: app name, bundle ID, team ID, platform (iOS/Mac/both), kiosk mode
+- User configures: app name, bundle ID, team ID, platforms (iOS/Mac/watchOS), kiosk mode
 - Generated project includes: Swift sources, Metal shaders, xcframeworks, embedded image
+- Custom app icon picker (PNG/JPEG, Xcode auto-scales to all sizes)
+- Strip Development Tools option removes IDE packages on first launch (~30-40 MB savings)
+- watchOS companion target: iOS build embeds a watch app automatically
 
 **What gets bundled:**
 
@@ -216,7 +219,8 @@ The project already has an "Export as App" feature (added build 73, 2026-03-05).
                      SDL2.xcframework
                      libffi.xcframework
     Resources/       Pharo.image, Pharo.changes, Pharo.sources, startup.st
-    Assets.xcassets/ Placeholder app icon
+    Assets.xcassets/ User-provided app icon (or placeholder)
+    WatchApp/        (optional) SwiftUI companion app for Apple Watch
     Info.plist       Bundle config (iOS 16.0+ deployment target)
     .entitlements    Sandbox + network permissions
     .pbxproj         Hand-generated (no xcodegen dependency)
@@ -225,8 +229,14 @@ The project already has an "Export as App" feature (added build 73, 2026-03-05).
 **Kiosk mode** hides TaskbarMorph, MenubarMorph, and World menu pragmas via
 startup.st, then garbage-collects 3x to reduce memory.
 
-**No image stripping.** The full Pharo image is bundled as-is. No dead code
-elimination, no class/method removal, no reachability analysis.
+**Image stripping** (optional, on by default): startup.st removes Iceberg,
+Calypso, NewTools, tests, debugger, Metacello, and other dev packages on
+first launch, then runs `Smalltalk cleanUp: true` and 3x GC.
+
+**watchOS companion** (optional): A second Xcode target builds a simple
+SwiftUI watch app. The iOS target has a dependency on it and embeds it
+via "Embed Watch Content". Pharo does not run on watchOS — the companion
+is a placeholder that could be extended with WatchConnectivity later.
 
 
 ## 5. Platform Support: iOS, Mac, and watchOS
@@ -484,22 +494,27 @@ class library. A Swift transpiler would be a multi-year research project.
 
 ### Recommended next steps
 
-1. **Image cleanup in export** (low effort, high impact):
-   Add a pre-export step that runs `Smalltalk cleanUp: true` and
-   unloads development packages (Iceberg, IDE tools, tests, debugger,
-   code browser). This could halve image size with minimal risk.
+1. **Image cleanup in export** -- DONE (build 99):
+   "Strip Development Tools" toggle in Export sheet. When enabled,
+   startup.st unloads Iceberg, Calypso, NewTools, tests, debugger,
+   Metacello, and other dev packages on first launch, then runs
+   `Smalltalk cleanUp: true` and 3x GC. Estimated savings: ~30-40 MB.
 
-2. **Package-level stripping UI** (medium effort):
+2. **Package-level stripping UI** (medium effort, future):
    Let users select which packages to keep in the export sheet.
-   Show package sizes and dependency warnings.
+   Show package sizes and dependency warnings. Currently the strip
+   toggle is all-or-nothing; finer control would let users keep
+   specific tools they need.
 
-3. **Minimal image export** (medium effort):
+3. **Minimal image export** (medium effort, future):
    Start from a Pharo minimal image instead of the full IDE image.
    Load only the packages the app needs. This mirrors Cuis's philosophy.
 
-4. **Custom app icon** (low effort, nice to have):
-   Let users pick an icon image in the export sheet instead of
-   requiring manual Assets.xcassets editing.
+4. **Custom app icon** -- DONE (build 99):
+   "App Icon" section in Export sheet with a file picker for PNG/JPEG.
+   Selected icon is copied into Assets.xcassets/AppIcon.appiconset with
+   all required size entries pointing to the single file (Xcode scales).
+   Preview shown in the export sheet.
 
 5. **watchOS target** (high effort, experimental):
    Add a watchOS slice to the xcframework, create a minimal

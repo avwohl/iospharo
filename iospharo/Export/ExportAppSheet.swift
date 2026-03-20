@@ -16,7 +16,12 @@ struct ExportAppSheet: View {
     @State private var teamID: String = ""
     @State private var exportMacOS = true
     @State private var exportIOS = true
+    @State private var exportWatchOS = false
     @State private var kioskMode = true
+    @State private var stripImage = true
+    @State private var appIconURL: URL?
+    @State private var appIconImage: UIImage?
+    @State private var showingIconPicker = false
     @State private var outputURL: URL?
     @State private var showingFolderPicker = false
 
@@ -68,6 +73,12 @@ struct ExportAppSheet: View {
                 Section("Platform") {
                     Toggle("macOS (Mac Catalyst)", isOn: $exportMacOS)
                     Toggle("iOS", isOn: $exportIOS)
+                    Toggle("watchOS (Companion)", isOn: $exportWatchOS)
+                    if exportWatchOS {
+                        Text("Adds a Watch companion app. The Watch app is installed automatically when the iOS app is installed. Pharo does not run on the Watch — this is a placeholder companion.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
 
                 Section("Image Options") {
@@ -81,6 +92,58 @@ struct ExportAppSheet: View {
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
+
+                    Toggle("Strip Development Tools", isOn: $stripImage)
+                    if stripImage {
+                        Text("Removes IDE, Iceberg, tests, debugger, and code browser on first launch. Reduces image size by ~30-40 MB.")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    } else {
+                        Text("Bundles the full Pharo image as-is (~56 MB).")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Section("App Icon") {
+                    HStack {
+                        if let iconImage = appIconImage {
+                            Image(uiImage: iconImage)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 60, height: 60)
+                                .cornerRadius(12)
+                        } else {
+                            RoundedRectangle(cornerRadius: 12)
+                                .fill(Color.gray.opacity(0.2))
+                                .frame(width: 60, height: 60)
+                                .overlay(
+                                    Image(systemName: "app.dashed")
+                                        .font(.title2)
+                                        .foregroundColor(.secondary)
+                                )
+                        }
+                        VStack(alignment: .leading, spacing: 4) {
+                            if appIconURL != nil {
+                                Text("Custom icon selected")
+                                Button("Remove") {
+                                    appIconURL = nil
+                                    appIconImage = nil
+                                }
+                                .font(.caption)
+                            } else {
+                                Text("No icon (placeholder)")
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        Spacer()
+                        Button("Choose...") {
+                            showingIconPicker = true
+                        }
+                    }
+                    Text("Recommended: 1024x1024 PNG. Xcode will generate all required sizes.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 Section("Output") {
@@ -185,6 +248,14 @@ struct ExportAppSheet: View {
                     outputURL = url
                 }
             }
+            .sheet(isPresented: $showingIconPicker) {
+                ImagePicker { url in
+                    appIconURL = url
+                    if let url = url, let data = try? Data(contentsOf: url) {
+                        appIconImage = UIImage(data: data)
+                    }
+                }
+            }
         }
     }
 
@@ -201,7 +272,10 @@ struct ExportAppSheet: View {
             teamID: teamID.isEmpty ? nil : teamID,
             exportMacOS: exportMacOS,
             exportIOS: exportIOS,
+            exportWatchOS: exportWatchOS,
             kioskMode: kioskMode,
+            stripImage: stripImage,
+            appIconURL: appIconURL,
             outputDirectory: outputURL ?? desktopURL,
             sourceImage: image
         )
@@ -273,6 +347,54 @@ struct FolderPicker: UIViewControllerRepresentable {
             if let url = urls.first {
                 onPick(url)
             }
+        }
+    }
+}
+
+// MARK: - Image Picker
+
+import UniformTypeIdentifiers
+
+struct ImagePicker: UIViewControllerRepresentable {
+    let onPick: (URL?) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.png, .jpeg])
+        picker.delegate = context.coordinator
+        return picker
+    }
+
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL?) -> Void
+        init(onPick: @escaping (URL?) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let sourceURL = urls.first else {
+                onPick(nil)
+                return
+            }
+            // Copy to a temporary location so the security-scoped resource isn't needed later
+            let tempDir = FileManager.default.temporaryDirectory
+            let destURL = tempDir.appendingPathComponent("AppIcon_\(UUID().uuidString).png")
+            do {
+                _ = sourceURL.startAccessingSecurityScopedResource()
+                defer { sourceURL.stopAccessingSecurityScopedResource() }
+                if FileManager.default.fileExists(atPath: destURL.path) {
+                    try FileManager.default.removeItem(at: destURL)
+                }
+                try FileManager.default.copyItem(at: sourceURL, to: destURL)
+                onPick(destURL)
+            } catch {
+                onPick(nil)
+            }
+        }
+
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            // Don't clear existing selection on cancel
         }
     }
 }
