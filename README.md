@@ -28,17 +28,26 @@ use a different class table layout that the VM does not yet handle.
 - Hardware keyboard support with modifier keys
 - Image library with download, import, and catalog management
 
-## Installing the Beta (TestFlight)
+## Install from the App Store
+
+Available for iPad, iPhone, and Mac:
+
+[Download on the App Store](https://apps.apple.com/us/app/pharosmalltalk/id6759073615)
+
+**Requirements:**
+- iPad (5th gen / 2017 or newer) or iPhone (6s / 2015 or newer) or Mac (Apple Silicon or Intel)
+- iOS / iPadOS 15.0 or later, macOS 14.0 or later
+- ~150 MB free storage (app + image + sources)
+
+Pharo images are downloaded in-app (no separate download needed).
+
+## Beta Testing (TestFlight)
+
+There may be a newer pre-release version available via TestFlight:
 
 1. Install **TestFlight** from the App Store (free, ~30 MB)
 2. Open this invite link on your iPad or iPhone: [Join the Beta](https://testflight.apple.com/join/kGmPQFr9)
 3. Tap "Accept" then "Install" — the app appears on your home screen
-4. Pharo images are downloaded in-app (no separate download needed)
-
-**Requirements:**
-- iPad (5th gen / 2017 or newer) or iPhone (6s / 2015 or newer)
-- iOS / iPadOS 15.0 or later
-- ~150 MB free storage (app + image + sources)
 
 TestFlight builds expire after 90 days but auto-update when new builds
 are published.
