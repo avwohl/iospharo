@@ -161,13 +161,34 @@ struct ContentView: View {
 
     // MARK: - Views
 
-    /// Determine which side the camera/Dynamic Island is on and put the strip opposite.
-    /// In landscapeRight the camera is on the LEFT edge → strip on RIGHT.
-    /// In landscapeLeft  the camera is on the RIGHT edge → strip on LEFT.
+    /// Put the strip on the side opposite the camera/Dynamic Island.
+    /// UIDevice.orientation reports physical device orientation:
+    ///   .landscapeLeft  → device top (camera) points LEFT  → strip on RIGHT
+    ///   .landscapeRight → device top (camera) points RIGHT → strip on LEFT
+    /// Falls back to UIWindowScene.interfaceOrientation if device orientation
+    /// is unknown/flat (note: interface and device "left"/"right" are swapped).
     private func updateStripSide() {
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first else { return }
-        stripOnRight = scene.interfaceOrientation == .landscapeRight
+        let devOrientation = UIDevice.current.orientation
+        if devOrientation == .landscapeLeft {
+            // Camera on LEFT → strip on RIGHT
+            fputs("[STRIP] device=landscapeLeft → stripOnRight=true\n", stderr)
+            stripOnRight = true
+            return
+        }
+        if devOrientation == .landscapeRight {
+            // Camera on RIGHT → strip on LEFT
+            fputs("[STRIP] device=landscapeRight → stripOnRight=false\n", stderr)
+            stripOnRight = false
+            return
+        }
+        // Device orientation is portrait/unknown/flat — use interface orientation as fallback
+        if let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first {
+            let iface = scene.interfaceOrientation
+            let newValue = iface == .landscapeRight  // interface landscapeRight = camera LEFT
+            fputs("[STRIP] device=\(devOrientation.rawValue) fallback iface=\(iface.rawValue) → stripOnRight=\(newValue)\n", stderr)
+            stripOnRight = newValue
+        }
     }
 
     private var pharoCanvas: some View {
