@@ -1,3 +1,17 @@
+# What's New in Build 99
+
+Build 99 — 2026-03-20
+
+## Fix: Strip buttons hidden behind notch on iPhone (Issue #1)
+
+On all notch iPhones (X through 14, 16e, mini models), the modifier strip
+buttons were partially or fully hidden behind the notch in landscape. The
+strip is now placed on the opposite side of the screen from the notch/Dynamic
+Island, so buttons are always fully visible regardless of device or orientation.
+
+Affected devices: iPhone X, XS, XS Max, XR, 11 series, 12/13 mini,
+12/13/14, 16e — up to 64pt of button overlap on iPhone X.
+
 # What's New in Build 93
 
 Build 93 — 2026-03-09

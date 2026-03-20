@@ -158,6 +158,15 @@ struct ContentView: View {
 
     // MARK: - Views
 
+    /// True when the notch/Dynamic Island is on the left edge (landscape-left).
+    /// The strip goes on the opposite side so buttons aren't hidden behind it.
+    private var notchOnLeft: Bool {
+        guard let window = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first?
+            .windows.first else { return false }
+        return window.safeAreaInsets.left > window.safeAreaInsets.right
+    }
+
     private var pharoCanvas: some View {
         ZStack {
             #if targetEnvironment(macCatalyst)
@@ -165,19 +174,28 @@ struct ContentView: View {
                 .ignoresSafeArea()
             #else
             HStack(spacing: 0) {
-                ModifierStrip(
-                    bridge: bridge,
-                    keyboardVisible: $bridge.keyboardVisible,
-                    showHelp: $showingHelp
-                )
-                PharoCanvasView(bridge: bridge)
+                if notchOnLeft {
+                    PharoCanvasView(bridge: bridge)
+                    ModifierStrip(
+                        bridge: bridge,
+                        keyboardVisible: $bridge.keyboardVisible,
+                        showHelp: $showingHelp
+                    )
+                } else {
+                    ModifierStrip(
+                        bridge: bridge,
+                        keyboardVisible: $bridge.keyboardVisible,
+                        showHelp: $showingHelp
+                    )
+                    PharoCanvasView(bridge: bridge)
+                }
             }
             // Ignore keyboard safe area so SwiftUI doesn't resize the view when
             // the keyboard appears (docked or floating). Container safe areas
             // (status bar, home indicator) are still respected so the system
             // draws the correct status bar background.
             .ignoresSafeArea(.keyboard)
-            // Extend horizontally to screen edges — prevents the sidebar from
+            // Extend horizontally to screen edges — prevents the strip from
             // being pushed inward by notch/Dynamic Island safe areas on iPhone,
             // which wastes horizontal space in landscape.
             .ignoresSafeArea(.container, edges: .horizontal)
@@ -321,7 +339,7 @@ struct DiagnosticsView: View {
     }
 }
 
-// MARK: - Left-Side Modifier Strip (iOS only)
+// MARK: - Modifier Strip (iOS only)
 
 #if !targetEnvironment(macCatalyst)
 struct ModifierStrip: View {
