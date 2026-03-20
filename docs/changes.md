@@ -1,3 +1,17 @@
+# What's New in Build 100
+
+Build 100 — 2026-03-20
+
+## Control strip follows device orientation
+
+The control strip now correctly moves to the side opposite the front
+camera/Dynamic Island when the device is rotated. Previously it was stuck
+on the left because safe area insets are symmetrical on Dynamic Island
+iPhones; now uses UIWindowScene.interfaceOrientation to detect which
+landscape the device is in.
+
+---
+
 # What's New in Build 99
 
 Build 99 — 2026-03-20

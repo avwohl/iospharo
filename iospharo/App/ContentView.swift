@@ -18,6 +18,9 @@ struct ContentView: View {
     @State private var showingHelp = false
     @State private var showingSplash = false
     @State private var splashImage: PharoImage?
+    /// Tracks whether the notch/Dynamic Island is on the left edge so the strip
+    /// moves to the opposite side.  Updated on orientation change.
+    @State private var stripOnRight = false
 
     var body: some View {
         ZStack {
@@ -158,13 +161,13 @@ struct ContentView: View {
 
     // MARK: - Views
 
-    /// True when the notch/Dynamic Island is on the left edge (landscape-left).
-    /// The strip goes on the opposite side so buttons aren't hidden behind it.
-    private var notchOnLeft: Bool {
-        guard let window = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first?
-            .windows.first else { return false }
-        return window.safeAreaInsets.left > window.safeAreaInsets.right
+    /// Determine which side the camera/Dynamic Island is on and put the strip opposite.
+    /// In landscapeRight the camera is on the LEFT edge → strip on RIGHT.
+    /// In landscapeLeft  the camera is on the RIGHT edge → strip on LEFT.
+    private func updateStripSide() {
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first else { return }
+        stripOnRight = scene.interfaceOrientation == .landscapeRight
     }
 
     private var pharoCanvas: some View {
@@ -174,7 +177,7 @@ struct ContentView: View {
                 .ignoresSafeArea()
             #else
             HStack(spacing: 0) {
-                if notchOnLeft {
+                if stripOnRight {
                     PharoCanvasView(bridge: bridge)
                     ModifierStrip(
                         bridge: bridge,
@@ -199,6 +202,18 @@ struct ContentView: View {
             // being pushed inward by notch/Dynamic Island safe areas on iPhone,
             // which wastes horizontal space in landscape.
             .ignoresSafeArea(.container, edges: .horizontal)
+            .onAppear {
+                UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+                updateStripSide()
+            }
+            .onReceive(NotificationCenter.default.publisher(
+                for: UIDevice.orientationDidChangeNotification
+            )) { _ in
+                // Insets update slightly after the notification fires
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    updateStripSide()
+                }
+            }
 
             // Gesture help overlay — shown on first launch or when help tapped
             if showingHelp || !hasSeenGestureHelp {
