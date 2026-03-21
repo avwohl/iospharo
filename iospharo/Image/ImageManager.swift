@@ -30,12 +30,6 @@ struct ImageTemplate: Identifiable {
             version: "140",
             url: URL(string: "https://files.pharo.org/get-files/140/pharoImage-arm64.zip")!
         ),
-        ImageTemplate(
-            id: "120",
-            label: "Pharo 12",
-            version: "120",
-            url: URL(string: "https://files.pharo.org/get-files/120/pharoImage-arm64.zip")!
-        ),
     ]
 }
 
