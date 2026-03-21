@@ -169,8 +169,11 @@ class PharoBridge: ObservableObject {
         parameters.isInteractiveSession = true
         parameters.isWorker = false
 
-        // Memory: 2GB virtual (mmap lazy commit, no physical RAM until touched)
-        parameters.maxOldSpaceSize = 2 * 1024 * 1024 * 1024
+        // Memory: cap heap at half of physical RAM (iPhone 8 has only 2 GB
+        // and iOS rejects a 2 GB mmap reservation on low-memory devices)
+        let totalRAM = ProcessInfo.processInfo.physicalMemory
+        let maxHeap: UInt64 = min(2 * 1024 * 1024 * 1024, totalRAM / 2)
+        parameters.maxOldSpaceSize = Int64(maxHeap)
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 

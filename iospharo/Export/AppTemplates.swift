@@ -241,7 +241,9 @@ enum AppTemplates {
                 parameters.imageFileName = strdup(imagePath)
                 parameters.isInteractiveSession = true
                 parameters.isWorker = false
-                parameters.maxOldSpaceSize = 2 * 1024 * 1024 * 1024
+                let totalRAM = ProcessInfo.processInfo.physicalMemory
+                let maxHeap: UInt64 = min(2 * 1024 * 1024 * 1024, totalRAM / 2)
+                parameters.maxOldSpaceSize = Int64(maxHeap)
                 parameters.edenSize = 10 * 1024 * 1024
                 parameters.maxCodeSize = 0
 
