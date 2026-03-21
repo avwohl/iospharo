@@ -232,7 +232,7 @@ cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
 
 # 2. Inject test runner (uses chunk format for fileIn)
 pharo /tmp/Pharo.image eval --save \
-  "'scripts/run_sunit_tests.st' asFileReference fileIn"
+  "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
 
 # 3. Run with custom VM
 ./build/test_load_image /tmp/Pharo.image
@@ -249,8 +249,8 @@ test runner to enable headless GUI testing:
 ```bash
 # Inject fake GUI + test runner
 pharo /tmp/Pharo.image eval --save \
-  "'scripts/setup_fake_gui.st' asFileReference fileIn. \
-   'scripts/run_sunit_tests.st' asFileReference fileIn"
+  "'scripts/pharo-headless-test/setup_fake_gui.st' asFileReference fileIn. \
+   'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
 ```
 
 What `setup_fake_gui.st` does:
@@ -264,13 +264,14 @@ What `setup_fake_gui.st` does:
   - `FakeGUI findWidgetOfType: SpButtonMorph in: aPresenter`
   - `FakeGUI openPresenter: aPresenter` — open + step world
   - `FakeGUI ensureWorldStepping` — force world cycles
+  - `FakeGUI screenshotToFile: '/tmp/screenshot.png'` — save display as PNG
+  - `FakeGUI screenshotOf: aMorph toFile: '/tmp/m.png'` — capture one morph
 
 Without this, ~350 Spec tests fail with "receiver of activate is nil".
 With it, 94.6% pass rate (1054/1113) on 64 GUI test classes.
 
 ### Files
-- `scripts/run_sunit_tests.st` - Test runner (chunk format .st file)
-- `scripts/setup_fake_gui.st` - Fake head GUI for headless Spec testing
+- `scripts/pharo-headless-test/` - Submodule: https://github.com/avwohl/pharo-headless-test
 - `/tmp/sunit_test_results.txt` - Output file
 - `docs/test-results.md` - Test results and compatibility analysis
 

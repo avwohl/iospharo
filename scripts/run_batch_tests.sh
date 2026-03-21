@@ -9,7 +9,7 @@ TOTAL_CLASSES=600  # approximate
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJ_DIR="$(dirname "$SCRIPT_DIR")"
 VM="$PROJ_DIR/build/test_load_image"
-SCRIPT="$PROJ_DIR/scripts/run_sunit_tests.st"
+SCRIPT="$PROJ_DIR/scripts/pharo-headless-test/run_sunit_tests.st"
 COMBINED="/tmp/sunit_test_combined.txt"
 
 # Clear previous results

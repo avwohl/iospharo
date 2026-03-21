@@ -1,0 +1,3 @@
+[submodule "scripts/pharo-headless-test"]
+	path = scripts/pharo-headless-test
+	url = https://github.com/avwohl/pharo-headless-test.git

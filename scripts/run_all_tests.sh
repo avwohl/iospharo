@@ -9,7 +9,7 @@
 set -e
 
 VM="./build/test_load_image"
-SCRIPT="scripts/run_sunit_tests.st"
+SCRIPT="scripts/pharo-headless-test/run_sunit_tests.st"
 RESULTS="/tmp/sunit_test_results_combined.txt"
 DETAILS="/tmp/sunit_test_detail_combined.txt"
 BATCH_TIMEOUT=600  # 10 minutes per batch of 100 classes

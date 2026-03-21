@@ -6,7 +6,7 @@
 - `build-third-party.sh` — Build cairo, freetype, harfbuzz, pixman, libpng, OpenSSL, libssh2, libgit2
 
 ## Test Running
-- `run_sunit_tests.st` — Main SUnit test runner, injected into fresh images via fileIn
+- `pharo-headless-test/` — Submodule: headless test runner + fake GUI (https://github.com/avwohl/pharo-headless-test)
 - `run_batch_tests.sh` — Shell wrapper that runs tests in batches of 50 classes
 - `run_regression_tests.st` — Regression test runner
 - `run_callback_suite.st` — FFI callback test suite
