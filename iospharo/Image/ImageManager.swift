@@ -20,21 +20,21 @@ struct ImageTemplate: Identifiable {
     static let builtIn: [ImageTemplate] = [
         ImageTemplate(
             id: "130",
-            label: "Pharo 13 (latest)",
+            label: "Pharo 13 (stable)",
             version: "130",
             url: URL(string: "https://files.pharo.org/get-files/130/pharoImage-arm64.zip")!
         ),
         ImageTemplate(
-            id: "120",
-            label: "Pharo 12 (stable)",
-            version: "120",
-            url: URL(string: "https://files.pharo.org/get-files/120/pharoImage-arm64.zip")!
+            id: "140",
+            label: "Pharo 14 (dev)",
+            version: "140",
+            url: URL(string: "https://files.pharo.org/get-files/140/pharoImage-arm64.zip")!
         ),
         ImageTemplate(
-            id: "110",
-            label: "Pharo 11",
-            version: "110",
-            url: URL(string: "https://files.pharo.org/get-files/110/pharoImage-arm64.zip")!
+            id: "120",
+            label: "Pharo 12",
+            version: "120",
+            url: URL(string: "https://files.pharo.org/get-files/120/pharoImage-arm64.zip")!
         ),
     ]
 }

@@ -76,6 +76,7 @@ struct PharoImage: Codable, Identifiable, Equatable {
     var versionLabel: String {
         guard let version = pharoVersion else { return "—" }
         switch version {
+        case "140": return "Pharo 14"
         case "130": return "Pharo 13"
         case "120": return "Pharo 12"
         case "110": return "Pharo 11"

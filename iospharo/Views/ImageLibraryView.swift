@@ -314,7 +314,7 @@ struct ImageLibraryView: View {
                         imageManager.downloadTemplate(template)
                     }
                 } label: {
-                    Label("Download Pharo 13", systemImage: "arrow.down.circle.fill")
+                    Label("Download \(ImageTemplate.builtIn.first?.label ?? "Pharo")", systemImage: "arrow.down.circle.fill")
                         .font(.headline)
                         .frame(maxWidth: 280)
                 }
