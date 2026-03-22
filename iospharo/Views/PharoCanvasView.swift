@@ -269,29 +269,28 @@ class PharoMTKView: MTKView {
     /// Post key down + keystroke events for a UIKey
     func postKeyDown(_ key: UIKey) {
         let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
-        if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+        // Check special keys first — on Mac Catalyst, key.characters for
+        // backspace/arrows/etc. may contain Apple Private Use Area chars
+        // (U+F700–F8FF) that would be misinterpreted as printable text.
+        let special = specialKeyCharCode(key.keyCode)
+        if special > 0 {
+            vm_postKeyEvent(0, special, 0, modifiers)
+            vm_postKeyEvent(2, special, 0, modifiers)
+        } else if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
             let charCode = Int32(scalar.value)
             vm_postKeyEvent(0, charCode, 0, modifiers)
             vm_postKeyEvent(2, charCode, 0, modifiers)
-        } else {
-            let charCode = specialKeyCharCode(key.keyCode)
-            if charCode > 0 {
-                vm_postKeyEvent(0, charCode, 0, modifiers)
-                vm_postKeyEvent(2, charCode, 0, modifiers)
-            }
         }
     }
 
     /// Post key up event for a UIKey
     func postKeyUp(_ key: UIKey) {
         let modifiers = Int32(modifierFlagsToPharo(key.modifierFlags))
-        if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
+        let special = specialKeyCharCode(key.keyCode)
+        if special > 0 {
+            vm_postKeyEvent(1, special, 0, modifiers)
+        } else if let char = key.characters.first, let scalar = char.unicodeScalars.first, scalar.value > 0 {
             vm_postKeyEvent(1, Int32(scalar.value), 0, modifiers)
-        } else {
-            let charCode = specialKeyCharCode(key.keyCode)
-            if charCode > 0 {
-                vm_postKeyEvent(1, charCode, 0, modifiers)
-            }
         }
     }
 

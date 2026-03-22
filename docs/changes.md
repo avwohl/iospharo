@@ -1,3 +1,21 @@
+# What's New in Build 105
+
+Build 105 — 2026-03-22
+
+## Fix backspace and arrow keys inserting "?" on Mac Catalyst
+
+Backspace, arrow keys, and other special keys (Home, End, Page Up/Down,
+Escape, Tab, Delete Forward) were inserting "?" instead of performing their
+expected action. On Mac Catalyst, UIKey.characters for these keys contains
+Apple Private Use Area characters (U+F700–F8FF) which were being sent to
+Pharo as printable text. Fixed by checking specialKeyCharCode (which maps
+UIKeyboardHIDUsage to correct Pharo char codes) before falling back to
+key.characters.
+
+Fixes #3.
+
+---
+
 # What's New in Build 101
 
 Build 101 — 2026-03-20
