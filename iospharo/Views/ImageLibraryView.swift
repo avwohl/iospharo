@@ -70,7 +70,7 @@ struct ImageLibraryView: View {
                 } else {
                     // Project info bar
                     HStack(spacing: 4) {
-                        Text("iospharo — Experimental release, not endorsed by")
+                        Text("Pharo Smalltalk — Experimental release, not endorsed by")
                             .foregroundColor(.secondary)
                         Link("Pharo.org", destination: URL(string: "https://pharo.org")!)
                         Spacer()

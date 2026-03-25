@@ -110,7 +110,7 @@ struct iosparoApp: App {
         .commands {
             // Enable Quit menu item (Cmd+Q) on Mac Catalyst
             CommandGroup(replacing: .appTermination) {
-                Button("Quit iospharo") {
+                Button("Quit Pharo Smalltalk") {
                     PharoBridge.shared.stop()
                     exit(0)
                 }

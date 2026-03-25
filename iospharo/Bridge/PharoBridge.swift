@@ -270,7 +270,7 @@ class PharoBridge: ObservableObject {
     /// working directory on every image startup.
     private static func writeStartupScript(to directory: String) {
         let script = """
-        "Pharo 13 image patches - auto-applied by iospharo VM"
+        "Pharo 13 image patches - auto-applied by Pharo Smalltalk VM"
         "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
           MicGitHubRessourceReference compile: 'githubApi
@@ -401,14 +401,14 @@ class PharoBridge: ObservableObject {
                     stringBounds top < (bounds bottom - 4) ifTrue: [
                         aCanvas drawString: aString in: stringBounds.
                         stringBounds := stringBounds top: stringBounds top + lineH ] ] ]'.
-        "About window: add iospharo VM disclaimer and source link"
+        "About window: add Pharo Smalltalk VM disclaimer and source link"
         SmalltalkImage compile: 'systemInformationString
             | s |
             s := String streamContents: [ :stream |
                 stream
                     nextPutAll: ''Pharo '';
                     nextPutAll: SystemVersion current dottedMajorMinorPatch; cr; cr;
-                    nextPutAll: ''Running on iospharo — a community VM for iOS and macOS.''; cr;
+                    nextPutAll: ''Running on Pharo Smalltalk — a community VM for iOS and macOS.''; cr;
                     nextPutAll: ''This is NOT the official Pharo VM.''; cr; cr;
                     nextPutAll: ''Source code: https://github.com/avwohl/iospharo''; cr; cr;
                     nextPutAll: ''Built from: '';

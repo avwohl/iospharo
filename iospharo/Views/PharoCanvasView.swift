@@ -427,7 +427,7 @@ class PharoCanvasViewController: UIViewController {
         // menu bar doesn't intercept it (e.g. during first-responder edge cases).
         let quitCommand = UIKeyCommand(input: "q", modifierFlags: .command,
                                        action: #selector(handleQuit(_:)))
-        quitCommand.title = "Quit iospharo"
+        quitCommand.title = "Quit Pharo Smalltalk"
         addKeyCommand(quitCommand)
         #endif
     }
