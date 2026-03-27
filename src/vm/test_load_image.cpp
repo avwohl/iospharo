@@ -595,6 +595,48 @@ int main(int argc, char* argv[]) {
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
 
+        // Disable sub-pixel rendering before any Smalltalk code runs.
+        // See docs/subpixel-rendering.md for why this is needed.
+        // Uses same algorithm as PlatformBridge.cpp::disableSubPixelRendering().
+        {
+            Oop ftClass = memory.findGlobal("FreeTypeSettings");
+            if (ftClass.isObject() && !ftClass.isNil()) {
+                // Find singleton (class instance variable) by scanning class slots
+                Oop singleton = memory.nil();
+                ObjectHeader* ftHdr = ftClass.asObjectPtr();
+                for (size_t i = 0; i < ftHdr->slotCount(); i++) {
+                    Oop slot = memory.fetchPointer(i, ftClass);
+                    if (slot.isObject() && !slot.isNil() &&
+                        memory.nameOfClass(memory.classOf(slot)) == "FreeTypeSettings") {
+                        singleton = slot;
+                        break;
+                    }
+                }
+                if (singleton.isNil() || !singleton.isObject()) {
+                    std::cerr << "[VM] FreeTypeSettings singleton not yet created — startup.st will handle it" << std::endl;
+                } else {
+                    // Navigate FixedLayout → LayoutClassScope to find bitBltSubPixelAvailable
+                    Oop layout = memory.fetchPointer(3, ftClass);
+                    if (layout.isObject() && !layout.isNil()) {
+                        Oop scope = memory.fetchPointer(1, layout);
+                        if (scope.isObject() && !scope.isNil()) {
+                            ObjectHeader* scopeHdr = scope.asObjectPtr();
+                            for (size_t si = 1; si < scopeHdr->slotCount(); si++) {
+                                Oop slotObj = memory.fetchPointer(si, scope);
+                                if (!slotObj.isObject() || slotObj.isNil()) continue;
+                                if (memory.symbolEquals(memory.fetchPointer(0, slotObj), "bitBltSubPixelAvailable")) {
+                                    size_t idx = si - 1;
+                                    memory.storePointer(idx, singleton, memory.falseObject());
+                                    std::cerr << "[VM] Set FreeTypeSettings>>bitBltSubPixelAvailable to false (slot " << idx << ")" << std::endl;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Create Display Form if it doesn't exist (image may be headless)
         std::cout << "\n=== Creating Display ===" << std::endl;
         interpreter.ensureDisplayForm(1024, 768, 32);

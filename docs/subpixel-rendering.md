@@ -82,34 +82,76 @@ errors (`#rounded` on P13, `#>` on P14).  This was worse than returning
 PrimitiveFailed because the image couldn't fall back gracefully.
 
 
-## The right fix
+## Option A: C++ pre-set (implemented, build 108)
 
-The current solution works but is a band-aid.  The real fix is to
-eliminate the timing gap entirely.  Options, from best to most pragmatic:
+The timing gap is now eliminated by setting `bitBltSubPixelAvailable`
+directly in the heap from C++, before any Smalltalk code runs.
 
-**Option A: Set from C++ before the image runs.**
-In `PlatformBridge.cpp`, after `vm_init()` but before `vm_run()`, find
-the `FreeTypeSettings` singleton in the image and set its
-`bitBltSubPixelAvailable` instance variable to false directly.  This
-requires knowing the class layout (fragile across image versions) but
-guarantees the setting is applied before any Smalltalk code executes.
+`disableSubPixelRendering()` in `PlatformBridge.cpp` (and identically in
+`test_load_image.cpp`) does this after `vm_init()` but before `vm_run()`:
 
-**Option B: Defer the render loop.**
-Patch the image's `MorphicRenderLoop` startup to wait until
-`StartupPreferencesLoader` has finished.  This could be done in
-startup.st by having the render loop check a flag, but startup.st
-loads after the render loop starts — a chicken-and-egg problem.
+1. Find the `FreeTypeSettings` class via `findGlobal("FreeTypeSettings")`.
+2. Scan the class object's slots for a `FreeTypeSettings` instance (the
+   `current` singleton, stored as a class instance variable).
+3. Navigate the class's `FixedLayout` (slot 3) → `LayoutClassScope` (slot 1)
+   to find the `bitBltSubPixelAvailable` Slot object by name.
+4. Compute the instance variable index (scope position - 1, since
+   LayoutClassScope slot 0 is the parentScope).
+5. Store `false` at that index in the singleton.
 
-**Option C: Register a higher-priority startup handler.**
-Pharo's `SessionManager` runs handlers in priority order.  If we could
-register a handler that runs before MorphicRenderLoop's handler and sets
-`bitBltSubPixelAvailable := false`, the gap would be eliminated.  But
-this requires image-side changes (defeating the "standard image" goal).
+This works for both Pharo 13 (where the value is `nil` in fresh images)
+and Pharo 14 (where the value is `true`, baked in from when the image
+was saved on a desktop VM that supports sub-pixel rendering).
+
+If the singleton doesn't exist (hypothetical truly-fresh image where
+`FreeTypeSettings current` was never called), the function logs a message
+and returns — startup.st handles that case.
+
+
+## Fallback layers
+
+Even with Option A, the other layers remain as defense-in-depth:
+
+1. **C++ pre-set** (`PlatformBridge.cpp` / `test_load_image.cpp`):
+   Sets `bitBltSubPixelAvailable := false` before any Smalltalk runs.
+
+2. **Dispatcher early-set** (`startup.st`):
+   Sets `bitBltSubPixelAvailable := false` via `instVarNamed:put:` before
+   doing any `fileIn` calls.  Catches edge cases the C++ code might miss.
+
+3. **Primitive returns Failure** (`Primitives.cpp`):
+   `primitiveCopyBits` returns `PrimitiveFailed` for `argCount > 1`.
+   Correct spec-compliant behavior — the image falls back gracefully.
+
+4. **Cleanup fork** (`startup-13.st` / `startup-14.st`):
+   A forked process waits 800ms, clears FreeType caches and error marks,
+   forces a world redraw.  Handles any residual artifacts.
+
+
+## Pharo class layout details
+
+In Pharo 13+, class slot 3 is a `FixedLayout` object (not an Array of
+Symbols as in older Squeak).  The layout chain is:
+
+    Class slot 3 → FixedLayout
+    FixedLayout slot 1 → LayoutClassScope
+    LayoutClassScope slot 0 → parentScope
+    LayoutClassScope slots 1..N → Slot objects (one per instance variable)
+    Slot slot 0 → name (ByteSymbol)
+
+Instance variable index = scope position - 1 (because slot 0 is parentScope).
+
+The `current` singleton is a class instance variable, NOT a class variable
+(not in classPool).  It's stored as a named slot in the class object itself,
+after the standard Class layout.  Finding it by scanning for a FreeTypeSettings
+instance is more robust than computing the exact slot offset.
 
 
 ## Files involved
 
-    src/vm/Primitives.cpp               primitiveCopyBits — returns Failure for argCount > 1
+    src/platform/PlatformBridge.cpp      disableSubPixelRendering() — C++ pre-set
+    src/vm/test_load_image.cpp           same logic for headless testing
+    src/vm/Primitives.cpp                primitiveCopyBits — returns Failure for argCount > 1
     iospharo/Bridge/PharoBridge.swift    writeStartupScript — generates startup.st dispatcher
                                          and startup-{13,14}.st with cleanup fork
     startup.st (generated)               Sets bitBltSubPixelAvailable := false early
@@ -125,3 +167,7 @@ this requires image-side changes (defeating the "standard image" goal).
 
     Build 107  Reverted to PrimitiveFailed.  Added early-set in dispatcher
                and cleanup fork to handle the timing gap.
+
+    Build 108  Implemented Option A: C++ pre-set of bitBltSubPixelAvailable
+               before any Smalltalk code runs.  Eliminates timing gap entirely.
+               Verified on fresh P13 (was nil → false) and P14 (was true → false).

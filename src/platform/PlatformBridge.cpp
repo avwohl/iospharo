@@ -267,6 +267,69 @@ bool vm_initialize(size_t heapSize) {
     return gMemory->initialize(config);
 }
 
+// Set FreeTypeSettings current bitBltSubPixelAvailable := false directly in
+// the image, before any Smalltalk code runs.  This prevents the ~100ms timing
+// gap where the render loop tries sub-pixel text rendering before startup.st
+// can disable it.  See docs/subpixel-rendering.md.
+static void disableSubPixelRendering() {
+    // ObjC headers #define nil — undefine it so we can call gMemory->nil()
+    #pragma push_macro("nil")
+    #undef nil
+    using namespace pharo;
+    if (!gMemory) return;
+
+    // 1. Find FreeTypeSettings class
+    Oop ftClass = gMemory->findGlobal("FreeTypeSettings");
+    if (ftClass.isNil() || !ftClass.isObject()) return;
+
+    // 2. Find the singleton (class instance variable 'current').
+    //    It's stored in the class object itself, at a slot beyond the standard
+    //    Class layout.  Scan for a FreeTypeSettings instance in the class slots.
+    Oop singleton = gMemory->nil();
+    {
+        ObjectHeader* ftHdr = ftClass.asObjectPtr();
+        for (size_t i = 0; i < ftHdr->slotCount(); i++) {
+            Oop slot = gMemory->fetchPointer(i, ftClass);
+            if (slot.isObject() && !slot.isNil() &&
+                gMemory->nameOfClass(gMemory->classOf(slot)) == "FreeTypeSettings") {
+                singleton = slot;
+                break;
+            }
+        }
+    }
+    if (singleton.isNil() || !singleton.isObject()) {
+        fprintf(stderr, "[VM] FreeTypeSettings singleton not yet created — startup.st will handle it\n");
+        #pragma pop_macro("nil")
+        return;
+    }
+
+    // 3. Find 'bitBltSubPixelAvailable' via the FixedLayout.
+    //    In Pharo 13+, class slot 3 is a FixedLayout (not Array of Symbols).
+    //    FixedLayout[1] → LayoutClassScope
+    //    LayoutClassScope: slot 0 = parentScope, slots 1..N = Slot objects
+    //    Each Slot: slot 0 = name (ByteSymbol)
+    //    Instance variable index = scope position - 1
+    Oop layout = gMemory->fetchPointer(3, ftClass);
+    if (!layout.isNil() && layout.isObject()) {
+        Oop scope = gMemory->fetchPointer(1, layout);
+        if (!scope.isNil() && scope.isObject()) {
+            ObjectHeader* scopeHdr = scope.asObjectPtr();
+            for (size_t si = 1; si < scopeHdr->slotCount(); si++) {
+                Oop slotObj = gMemory->fetchPointer(si, scope);
+                if (!slotObj.isObject() || slotObj.isNil()) continue;
+                if (gMemory->symbolEquals(gMemory->fetchPointer(0, slotObj), "bitBltSubPixelAvailable")) {
+                    size_t instVarIdx = si - 1;
+                    gMemory->storePointer(instVarIdx, singleton, gMemory->falseObject());
+                    fprintf(stderr, "[VM] Set FreeTypeSettings>>bitBltSubPixelAvailable to false (slot %zu)\n", instVarIdx);
+                    #pragma pop_macro("nil")
+                    return;
+                }
+            }
+        }
+    }
+    #pragma pop_macro("nil")
+}
+
 bool vm_loadImage(const char* imagePath) {
     // Set app bundle path so FFI can find bundled libraries in Contents/Frameworks
 #ifdef __APPLE__
@@ -320,6 +383,12 @@ bool vm_loadImage(const char* imagePath) {
             gInterpreter->ensureDisplayForm(gDisplay->width(), gDisplay->height(), gDisplay->depth());
         }
     }
+
+    // Disable sub-pixel text rendering BEFORE the interpreter runs.
+    // See docs/subpixel-rendering.md — the render loop starts before
+    // startup.st can set this, causing ~100ms of failed sub-pixel calls.
+    // Setting it here (after image load, before vm_run) eliminates the gap.
+    disableSubPixelRendering();
 
     // SDL2/cairo libraries are compiled into the binary as stubs.
     // File primitives (primitiveFileExists, primitiveFileAttribute) report

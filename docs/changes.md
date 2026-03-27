@@ -1,3 +1,25 @@
+# What's New in Build 108
+
+Build 108 — 2026-03-27
+
+## Eliminate sub-pixel rendering timing gap
+
+Sub-pixel text rendering is now disabled from C++ before any Smalltalk code
+runs, eliminating the ~100ms timing gap where the render loop could hit the
+unimplemented sub-pixel primitive and mark morphs with red error boxes.
+
+The VM navigates the FreeTypeSettings class object in the heap to find the
+`current` singleton and sets `bitBltSubPixelAvailable` to `false` directly.
+Works on both Pharo 13 (value was nil) and Pharo 14 (value was true, baked
+into the image from a desktop VM build).
+
+The startup.st early-set, primitive failure, and cleanup fork remain as
+defense-in-depth layers.
+
+See `docs/subpixel-rendering.md` for full details.
+
+---
+
 # What's New in Build 107
 
 Build 107 — 2026-03-27
