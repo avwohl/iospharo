@@ -564,6 +564,13 @@ class PharoBridge: ObservableObject {
         "Detects the Pharo version and loads the appropriate patch file."
         "See docs/startup-system.md for details."
         | version file |
+
+        "FIRST: disable sub-pixel rendering BEFORE any file I/O."
+        "fileIn below can yield the process, letting the render loop preempt."
+        "Without this, FreeTypeSubPixelAntiAliasedGlyphRenderer hits nil#rounded."
+        (Smalltalk hasClassNamed: #FreeTypeSettings) ifTrue: [
+            FreeTypeSettings current instVarNamed: 'bitBltSubPixelAvailable' put: false].
+
         version := SystemVersion current major.
         Stdio stderr nextPutAll: '[startup] Pharo '; nextPutAll: version printString; lf; flush.
 
