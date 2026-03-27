@@ -210,17 +210,11 @@ class PharoBridge: ObservableObject {
         #endif
         FileManager.default.changeCurrentDirectoryPath(imageDir)
 
-        // Write startup.st with image patches (loaded by StartupPreferencesLoader)
-        // Skip if --image flag was used and a startup.st already exists (user-provided)
-        let existingStartup = FileManager.default.fileExists(atPath: imageDir + "/startup.st")
-        let isCLILaunch = ProcessInfo.processInfo.arguments.contains("--image")
-        if isCLILaunch && existingStartup {
-            #if DEBUG
-            fputs("[BRIDGE] skipping writeStartupScript — --image flag with existing startup.st\n", stderr)
-            #endif
-        } else {
-            Self.writeStartupScript(to: imageDir)
-        }
+        // Write startup.st + startup-{13,14}.st with image patches
+        // (loaded by Pharo's StartupPreferencesLoader on every image start).
+        // Always overwrite — these are auto-generated. Users add custom
+        // patches via startup-user.st, which is never overwritten.
+        Self.writeStartupScript(to: imageDir)
         #if DEBUG
         fputs("[BRIDGE] after writeStartupScript, startup.st exists=\(FileManager.default.fileExists(atPath: imageDir + "/startup.st"))\n", stderr)
         #endif
@@ -264,26 +258,41 @@ class PharoBridge: ObservableObject {
     }
 
     // MARK: - Image Patches
+    //
+    // The startup system writes three files next to the .image file:
+    //
+    //   startup.st       Dispatcher — detects Pharo version, loads the
+    //                    version-specific file, then loads user overrides.
+    //   startup-13.st   All patches for Pharo 13 (common + P13-specific).
+    //   startup-14.st   All patches for Pharo 14 (common + P14-specific).
+    //
+    // Pharo's StartupPreferencesLoader auto-loads startup.st from the
+    // working directory on every image startup.
+    //
+    // Users can create startup-user.st in the image directory for custom
+    // patches that run after the generated ones.  It is never overwritten.
+    // See docs/startup-system.md for details.
 
-    /// Write startup.st with Pharo image patches.
-    /// Pharo's StartupPreferencesLoader auto-loads startup.st from the
-    /// working directory on every image startup.
+    /// Write startup.st, startup-13.st, and startup-14.st next to the image.
     private static func writeStartupScript(to directory: String) {
-        let script = """
-        "Pharo image patches - auto-applied by Pharo Smalltalk VM"
-        "Supports both Pharo 13 and Pharo 14 images"
-        | isP14 w d |
-        isP14 := SystemVersion current major >= 14.
-        Stdio stderr nextPutAll: '[STARTUP.ST] isP14='; nextPutAll: isP14 printString; lf; flush.
-        "Disable sub-pixel text rendering — our VM does not implement BitBlt rule 41"
-        "Without this, FreeTypeSubPixelAntiAliasedGlyphRenderer crashes with nil data"
+
+        // ── Common patches (applied in both startup-13.st and startup-14.st) ──
+
+        let commonPatches = """
+        "Disable sub-pixel text rendering detection flag."
+        "Our VM handles the sub-pixel primitive as a regular copyBits (rule 41)"
+        "but the detection test in older images still checks for PrimitiveFailed."
+        "Setting this to false prevents the detection from running at all."
         (Smalltalk hasClassNamed: #FreeTypeSettings) ifTrue: [
           FreeTypeSettings current instVarNamed: 'bitBltSubPixelAvailable' put: false].
-        "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
+
+        "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash."
+        "IceTokenCredentials has a placeholder 'YOUR TOKEN' that causes 401 errors."
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
           MicGitHubRessourceReference compile: 'githubApi
             ^ MicGitHubAPI new beAnonymous'].
-        "Fix: doc browser error handler uses messageText instead of message"
+
+        "Fix: doc browser error handler — use messageText instead of message."
         (Smalltalk hasClassNamed: #MicDocumentBrowserModel) ifTrue: [
           MicDocumentBrowserModel compile: 'document
             resourceReference ifNil: [ ^ nil ].
@@ -294,7 +303,8 @@ class PharoBridge: ObservableObject {
                 document := Microdown parse: ''# Error
         '', error messageText ].
             ^ document'].
-        "Robust childrenOf: that handles API errors"
+
+        "Fix: robust childrenOf: that handles API errors."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
           MicDocumentBrowserPresenter compile: 'childrenOf: aNode
             [ (aNode isKindOf: MicElement) ifTrue: [ ^ aNode subsections children ].
@@ -305,9 +315,9 @@ class PharoBridge: ObservableObject {
                   [ ^ self childrenOf: (MicSectionBlock fromRoot: aNode loadMicrodown) ]
                     on: Error do: [ ^ #() ]]
             ] on: Error do: [ ^ #() ]'].
-        "Fix: menu shortcut symbols (U+2318 etc.) missing from embedded Source Sans Pro"
+
+        "Fix: menu shortcut symbols (U+2318 etc.) missing from embedded Source Sans Pro."
         "The embedded font is from 2012; Adobe added these glyphs in v2.040 (2018)."
-        "Replace Unicode symbols with readable ASCII abbreviations."
         (Smalltalk hasClassNamed: #KMShortcutPrinter) ifTrue: [
           KMShortcutPrinter symbolTable
             at: #Cmd put: 'Cmd+';
@@ -316,14 +326,14 @@ class PharoBridge: ObservableObject {
             at: #Ctrl put: 'Ctrl+';
             at: #Shift put: 'Shift+';
             at: #Enter put: 'Enter'].
-        "Fix: bullet chars (U+2022) in learning docs show as ? — not in embedded Source Sans Pro"
-        "Patch the bulletForLevel: renderer to use ASCII * and - instead of Unicode bullet."
+
+        "Fix: bullet chars (U+2022) in learning docs — not in embedded Source Sans Pro."
         (Smalltalk hasClassNamed: #MicRichTextComposer) ifTrue: [
           MicRichTextComposer compile: 'bulletForLevel: level
             ^ (''*-'' at: (level - 1 \\\\ 2) + 1) asText'].
-        "Fix: WarpBlt Smalltalk fallback drops alpha channel in mixPix:"
-        "mixPix:sourceMap:destMap: averages R,G,B but ignores alpha (bits 24-31)."
-        "This causes Color inspector swatch to be transparent (gray) instead of colored."
+
+        "Fix: WarpBlt Smalltalk fallback drops alpha channel in mixPix:."
+        "This causes Color inspector swatch to be transparent instead of colored."
         (Smalltalk hasClassNamed: #WarpBlt) ifTrue: [
           WarpBlt compile: 'mixPix: pix sourceMap: sourceMap destMap: destMap
             | r g b a rgb nPix bitsPerColor d |
@@ -352,10 +362,10 @@ class PharoBridge: ObservableObject {
               + ((g // nPix bitShift: d) bitShift: bitsPerColor)
               + ((b // nPix bitShift: d) bitShift: 0).
             ^ destMap ifNil: [ rgb ] ifNotNil: [ destMap at: rgb + 1 ]'].
-        "Debug: patch fullDrawOn: to log errors to stderr AND to a file"
+
+        "Patch fullDrawOn: to log errors to stderr and a file."
         "PrimitiveFailed is excluded — the image uses primitive failures for feature"
-        "detection (e.g. BitBlt sub-pixel rendering).  Catching them here would mark"
-        "morphs as broken before the image can handle the failure gracefully."
+        "detection (e.g. BitBlt sub-pixel rendering)."
         Morph compile: 'fullDrawOn: aCanvas
             self visible ifFalse: [ ^ self ].
             (aCanvas isVisible: self fullBounds) ifFalse: [ ^ self ].
@@ -388,7 +398,8 @@ class PharoBridge: ObservableObject {
                 self setProperty: #errorOnDraw toValue: true.
                 self setProperty: #drawError toValue: err freeze.
                 self drawErrorOn: aCanvas ]'.
-        "Debug: override drawErrorOn: to show error text visibly in the red box"
+
+        "Override drawErrorOn: to show the error text visibly in the red box."
         Morph compile: 'drawErrorOn: aCanvas
             | stringBounds lineH |
             aCanvas
@@ -398,10 +409,8 @@ class PharoBridge: ObservableObject {
                 borderColor: Color yellow.
             lineH := TextStyle defaultFont pixelSize * 1.2.
             stringBounds := bounds insetBy: 4.
-            "Show class name"
             aCanvas drawString: self class name in: stringBounds.
             stringBounds := stringBounds top: stringBounds top + lineH.
-            "Show error message and stack trace"
             self valueOfProperty: #drawError ifPresentDo: [ :error |
                 | trace |
                 aCanvas drawString: error messageText in: stringBounds.
@@ -412,10 +421,54 @@ class PharoBridge: ObservableObject {
                     stringBounds top < (bounds bottom - 4) ifTrue: [
                         aCanvas drawString: aString in: stringBounds.
                         stringBounds := stringBounds top: stringBounds top + lineH ] ] ]'.
-        "About window: add Pharo Smalltalk VM disclaimer and source link"
-        "P13 uses SmalltalkImage>>systemInformationString; P14 inlines in StPharoSettings"
-        isP14 ifFalse: [
-          SmalltalkImage compile: 'systemInformationString
+
+        "Fix: prevent windows from opening under the Pharo menu bar."
+        SystemWindow compile: 'openInWorld: aWorld
+            super openInWorld: aWorld.
+            aWorld submorphsDo: [ :m |
+                (m class name = ''MenubarMorph'' and: [ self top < m bottom ])
+                    ifTrue: [ self position: self position x @ m bottom ] ]'.
+
+        "Fix: reposition any existing windows that overlap the menu bar."
+        [
+          | menuBarBottom |
+          (Delay forMilliseconds: 500) wait.
+          menuBarBottom := 0.
+          World submorphsDo: [ :m |
+              (m class name = 'MenubarMorph') ifTrue: [ menuBarBottom := m bottom ] ].
+          menuBarBottom > 0 ifTrue: [
+              World submorphsDo: [ :m |
+                  (m isKindOf: SystemWindow) ifTrue: [
+                      m top < menuBarBottom ifTrue: [
+                          m position: m position x @ menuBarBottom ] ] ] ].
+        ] fork.
+
+        "Clean up: clear any #errorOnDraw marks from transient startup errors."
+        [
+          | cleared |
+          cleared := 0.
+          (Delay forMilliseconds: 800) wait.
+          [ FreeTypeFont allInstances do: [ :f | f clearCaches ] ]
+              on: Error do: [ :e | "ignore" ].
+          Morph allSubInstances do: [ :m |
+              (m hasProperty: #errorOnDraw) ifTrue: [
+                  m removeProperty: #errorOnDraw.
+                  m removeProperty: #drawError.
+                  m changed.
+                  cleared := cleared + 1 ] ].
+          cleared > 0 ifTrue: [
+              Stdio stderr nextPutAll: '[startup] Cleared errorOnDraw from ';
+                  nextPutAll: cleared printString; nextPutAll: ' morphs'; lf; flush ].
+          World doOneCycleNow.
+        ] fork.
+        """
+
+        // ── Pharo 13-only patches ──
+
+        let p13Patches = """
+
+        "About window: add Pharo Smalltalk VM disclaimer and source link."
+        SmalltalkImage compile: 'systemInformationString
             | s |
             s := String streamContents: [ :stream |
                 stream
@@ -429,9 +482,23 @@ class PharoBridge: ObservableObject {
                     nextPutAll: ''Last update: '';
                     nextPutAll: SystemVersion current date printString; cr; cr;
                     nextPutAll: Smalltalk license ].
-            ^ s'].
-        isP14 ifTrue: [
-          (Smalltalk hasClassNamed: #StPharoSettings) ifTrue: [
+            ^ s'.
+
+        "Refresh stale doc browser windows from previous saved sessions."
+        (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
+          [
+            (Delay forMilliseconds: 3000) wait.
+            MicDocumentBrowserPresenter allInstances do: [:each |
+              [ each updateTree ] on: Error do: [ "ignore" ] ].
+          ] fork ].
+        """
+
+        // ── Pharo 14-only patches ──
+
+        let p14Patches = """
+
+        "About window: add Pharo Smalltalk VM disclaimer and source link."
+        (Smalltalk hasClassNamed: #StPharoSettings) ifTrue: [
             StPharoSettings class compile: 'openPharoAbout
               | about |
               about := String cr , ''Pharo '' , SystemVersion current dottedMajorMinorPatch , String cr,
@@ -447,83 +514,95 @@ class PharoBridge: ObservableObject {
                 icon: (self iconNamed: #pharo);
                 label: about;
                 acceptLabel: ''Close'';
-                openDialog']].
-        "P14-only: fix nil renderer during early startup"
+                openDialog'].
+        ].
+
+        "Fix nil renderer during early startup."
         "P14 starts MorphicRenderLoop before the SDL renderer is created."
-        "outputExtent must call validate lazily to create the renderer on demand."
-        isP14 ifTrue: [
-          (Smalltalk hasClassNamed: #OSSDL2FormRenderer) ifTrue: [
+        (Smalltalk hasClassNamed: #OSSDL2FormRenderer) ifTrue: [
             OSSDL2FormRenderer compile: 'outputExtent
               renderer ifNil: [ self validate ].
               renderer ifNil: [ ^ 0@0 ].
-              ^ renderer outputExtent']].
-        "Fix: prevent windows from opening under the Pharo menu bar"
-        "Override openInWorld: to bump windows below the MenubarMorph"
-        SystemWindow compile: 'openInWorld: aWorld
-            super openInWorld: aWorld.
-            aWorld submorphsDo: [ :m |
-                (m class name = ''MenubarMorph'' and: [ self top < m bottom ])
-                    ifTrue: [ self position: self position x @ m bottom ] ]'.
-        "Fix: reposition any existing windows that overlap the menu bar"
-        [
-          | menuBarBottom |
-          (Delay forMilliseconds: 500) wait.
-          menuBarBottom := 0.
-          World submorphsDo: [ :m |
-              (m class name = 'MenubarMorph') ifTrue: [ menuBarBottom := m bottom ] ].
-          menuBarBottom > 0 ifTrue: [
-              World submorphsDo: [ :m |
-                  (m isKindOf: SystemWindow) ifTrue: [
-                      m top < menuBarBottom ifTrue: [
-                          m position: m position x @ menuBarBottom ] ] ] ].
-        ] fork.
-        "Refresh stale doc browser windows from previous saved sessions"
-        "The tree may be empty if the image was saved when SSL was broken."
-        "P13 uses updateTree; P14 removed it — use updateSourcePresenter instead."
+              ^ renderer outputExtent'.
+        ].
+
+        "Refresh stale doc browser windows from previous saved sessions."
+        "P14 uses updateSourcePresenter (updateTree was removed)."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
           [
             (Delay forMilliseconds: 3000) wait.
             MicDocumentBrowserPresenter allInstances do: [:each |
-              isP14
-                ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
-                ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
+              [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ].
           ] fork ].
-        "Clean up: the render loop may have started before our patches above."
-        "Any morphs marked #errorOnDraw during that window get cleared now."
-        "Also reset font renderer caches so they pick up bitBltSubPixelAvailable=false."
-        [
-          | cleared |
-          cleared := 0.
-          (Delay forMilliseconds: 800) wait.
-          "Reset all FreeType font glyph renderer caches"
-          [ FreeTypeFont allInstances do: [ :f | f clearCaches ] ]
-              on: Error do: [ :e | "ignore" ].
-          "Clear error marks from all morphs"
-          Morph allSubInstances do: [ :m |
-              (m hasProperty: #errorOnDraw) ifTrue: [
-                  m removeProperty: #errorOnDraw.
-                  m removeProperty: #drawError.
-                  m changed.
-                  cleared := cleared + 1 ] ].
-          cleared > 0 ifTrue: [
-              Stdio stderr nextPutAll: '[STARTUP.ST] Cleared errorOnDraw from ';
-                  nextPutAll: cleared printString; nextPutAll: ' morphs'; lf; flush ].
-          "Force complete world redraw"
-          World doOneCycleNow.
-        ] fork.
-        Stdio stderr nextPutAll: '[STARTUP.ST] Done.'; lf; flush.
         """
-        let path = (directory as NSString).appendingPathComponent("startup.st")
-        #if DEBUG
-        NSLog("[BRIDGE] writeStartupScript: directory=%@ path=%@", directory, path)
-        #endif
-        do {
-            try script.write(toFile: path, atomically: true, encoding: .utf8)
-            #if DEBUG
-            NSLog("[BRIDGE] startup.st written successfully (%d bytes)", script.count)
-            #endif
-        } catch {
-            NSLog("[BRIDGE] ERROR writing startup.st: %@", error.localizedDescription)
+
+        // ── Assemble the three files ──
+
+        let header13 = """
+        "startup-13.st — Auto-generated by Pharo Smalltalk VM."
+        "Patches for Pharo 13 images.  Do not edit — changes will be overwritten."
+        "To add custom patches, create startup-user.st in this directory."
+        Stdio stderr nextPutAll: '[startup-13] Loading patches'; lf; flush.
+        """
+
+        let header14 = """
+        "startup-14.st — Auto-generated by Pharo Smalltalk VM."
+        "Patches for Pharo 14 images.  Do not edit — changes will be overwritten."
+        "To add custom patches, create startup-user.st in this directory."
+        Stdio stderr nextPutAll: '[startup-14] Loading patches'; lf; flush.
+        """
+
+        let startup13 = header13 + commonPatches + p13Patches
+            + "\nStdio stderr nextPutAll: '[startup-13] Done.'; lf; flush.\n"
+
+        let startup14 = header14 + commonPatches + p14Patches
+            + "\nStdio stderr nextPutAll: '[startup-14] Done.'; lf; flush.\n"
+
+        // startup.st — the dispatcher loaded by StartupPreferencesLoader
+        let dispatcher = """
+        "startup.st — Auto-generated by Pharo Smalltalk VM."
+        "Detects the Pharo version and loads the appropriate patch file."
+        "See docs/startup-system.md for details."
+        | version file |
+        version := SystemVersion current major.
+        Stdio stderr nextPutAll: '[startup] Pharo '; nextPutAll: version printString; lf; flush.
+
+        "Load version-specific patches"
+        file := version >= 14
+            ifTrue:  [ FileSystem workingDirectory / 'startup-14.st' ]
+            ifFalse: [ FileSystem workingDirectory / 'startup-13.st' ].
+        file exists
+            ifTrue: [
+                Stdio stderr nextPutAll: '[startup] Loading '; nextPutAll: file basename; lf; flush.
+                Compiler evaluate: file contents ]
+            ifFalse: [
+                Stdio stderr nextPutAll: '[startup] WARNING: '; nextPutAll: file basename;
+                    nextPutAll: ' not found'; lf; flush ].
+
+        "Load user overrides if present"
+        (FileSystem workingDirectory / 'startup-user.st') exists ifTrue: [
+            Stdio stderr nextPutAll: '[startup] Loading startup-user.st'; lf; flush.
+            Compiler evaluate: (FileSystem workingDirectory / 'startup-user.st') contents ].
+        """
+
+        // ── Write files ──
+
+        let files: [(String, String)] = [
+            ("startup.st", dispatcher),
+            ("startup-13.st", startup13),
+            ("startup-14.st", startup14),
+        ]
+
+        for (name, content) in files {
+            let path = (directory as NSString).appendingPathComponent(name)
+            do {
+                try content.write(toFile: path, atomically: true, encoding: .utf8)
+                #if DEBUG
+                NSLog("[BRIDGE] %@ written (%d bytes)", name, content.count)
+                #endif
+            } catch {
+                NSLog("[BRIDGE] ERROR writing %@: %@", name, error.localizedDescription)
+            }
         }
     }
 
