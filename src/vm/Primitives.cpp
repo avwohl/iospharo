@@ -8655,7 +8655,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     //   If no arguments were provided, default to "--interactive" so the GUI starts.
     // Index 1000+: VM info attributes
     if (index == 0) {
-        Oop str = memory_.createString(vmPath_.empty() ? "iospharo" : vmPath_);
+        Oop str = memory_.createString(vmPath_.empty() ? "PharoSmalltalk" : vmPath_);
         pop();
         push(str);
         return PrimitiveResult::Success;
@@ -8699,7 +8699,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1002:
             pop();
-            push(memory_.createString("iospharo 1.0"));
+            push(memory_.createString("PharoSmalltalk 1.0"));
             return PrimitiveResult::Success;
         case 1003:
             pop();
@@ -8717,11 +8717,11 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
         case 1007:
         case 1008:
             pop();
-            push(memory_.createString("iospharo 2025-01-28"));
+            push(memory_.createString("PharoSmalltalk 2025-01-28"));
             return PrimitiveResult::Success;
         case 1009: {
             pop();
-            Oop str = memory_.createString("iospharo Date: 2025-01-28T00:00:00+00:00");
+            Oop str = memory_.createString("PharoSmalltalk Date: 2025-01-28T00:00:00+00:00");
             push(str);
             return PrimitiveResult::Success;
         }
@@ -10642,7 +10642,7 @@ PrimitiveResult Interpreter::primitiveVMInformation(int argCount) {
 
     switch (index) {
         case 1:  // VM version string
-            result = createStringObject(memory_, "iospharo 1.0");
+            result = createStringObject(memory_, "PharoSmalltalk 1.0");
             break;
         case 2:  // Build timestamp
             result = createStringObject(memory_, __DATE__ " " __TIME__);
@@ -22507,7 +22507,7 @@ PrimitiveResult Interpreter::primitiveGetVMVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Return our VM version string
-    const char* version = "iospharo 1.0";
+    const char* version = "PharoSmalltalk 1.0";
 
     Oop result = createStringObject(memory_, version);
     if (result.isNil()) {

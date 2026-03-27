@@ -17,7 +17,7 @@
                   <BuildableReference
                      BuildableIdentifier = "primary"
                      BlueprintIdentifier = "A50001"
-                     BuildableName = "iospharo.app"
+                     BuildableName = "Pharo Smalltalk.app"
                      BlueprintName = "iospharo"
                      ReferencedContainer = "container:iospharo.xcodeproj">
                   </BuildableReference>
@@ -35,7 +35,7 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "A50001"
-               BuildableName = "iospharo.app"
+               BuildableName = "Pharo Smalltalk.app"
                BlueprintName = "iospharo"
                ReferencedContainer = "container:iospharo.xcodeproj">
             </BuildableReference>
@@ -64,7 +64,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50001"
-            BuildableName = "iospharo.app"
+            BuildableName = "Pharo Smalltalk.app"
             BlueprintName = "iospharo"
             ReferencedContainer = "container:iospharo.xcodeproj">
          </BuildableReference>
@@ -81,7 +81,7 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "A50001"
-            BuildableName = "iospharo.app"
+            BuildableName = "Pharo Smalltalk.app"
             BlueprintName = "iospharo"
             ReferencedContainer = "container:iospharo.xcodeproj">
          </BuildableReference>

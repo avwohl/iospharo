@@ -16,14 +16,14 @@ NC='\033[0m' # No Color
 
 # Find the app in DerivedData (or override with APP_PATH env var)
 if [ -z "${APP_PATH:-}" ]; then
-    APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/iospharo-*/Build/Products/Debug-maccatalyst -name "iospharo.app" -maxdepth 1 2>/dev/null | head -1)
+    APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData/iospharo-*/Build/Products/Debug-maccatalyst -name "Pharo Smalltalk.app" -maxdepth 1 2>/dev/null | head -1)
     if [ -z "$APP_PATH" ]; then
-        echo "Error: Could not find iospharo.app in DerivedData. Build first or set APP_PATH."
+        echo "Error: Could not find Pharo Smalltalk.app in DerivedData. Build first or set APP_PATH."
         exit 1
     fi
 fi
-APP_NAME="iospharo"
-LOG_FILE="/tmp/iospharo-test.log"
+APP_NAME="Pharo Smalltalk"
+LOG_FILE="/tmp/pharosmalltalk-test.log"
 
 # Check dependencies
 check_dependencies() {

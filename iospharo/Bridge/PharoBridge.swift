@@ -270,7 +270,10 @@ class PharoBridge: ObservableObject {
     /// working directory on every image startup.
     private static func writeStartupScript(to directory: String) {
         let script = """
-        "Pharo 13 image patches - auto-applied by Pharo Smalltalk VM"
+        "Pharo image patches - auto-applied by Pharo Smalltalk VM"
+        "Supports both Pharo 13 and Pharo 14 images"
+        | isP14 |
+        isP14 := SystemVersion current major >= 14.
         "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
           MicGitHubRessourceReference compile: 'githubApi
@@ -402,7 +405,9 @@ class PharoBridge: ObservableObject {
                         aCanvas drawString: aString in: stringBounds.
                         stringBounds := stringBounds top: stringBounds top + lineH ] ] ]'.
         "About window: add Pharo Smalltalk VM disclaimer and source link"
-        SmalltalkImage compile: 'systemInformationString
+        "P13 uses SmalltalkImage>>systemInformationString; P14 inlines in StPharoSettings"
+        isP14 ifFalse: [
+          SmalltalkImage compile: 'systemInformationString
             | s |
             s := String streamContents: [ :stream |
                 stream
@@ -416,7 +421,34 @@ class PharoBridge: ObservableObject {
                     nextPutAll: ''Last update: '';
                     nextPutAll: SystemVersion current date printString; cr; cr;
                     nextPutAll: Smalltalk license ].
-            ^ s'.
+            ^ s'].
+        isP14 ifTrue: [
+          (Smalltalk hasClassNamed: #StPharoSettings) ifTrue: [
+            StPharoSettings class compile: 'openPharoAbout
+              | about |
+              about := String cr , ''Pharo '' , SystemVersion current dottedMajorMinorPatch , String cr,
+                String cr,
+                ''Running on Pharo Smalltalk — a community VM for iOS and macOS.'' , String cr,
+                ''This is NOT the official Pharo VM.'' , String cr , String cr,
+                ''Source code: https://github.com/avwohl/iospharo'' , String cr , String cr,
+                ''Build information: '', SystemVersion current asString, String cr,
+                SystemVersion current date asString , String cr, String cr,
+                Smalltalk licenseString.
+              SpInformDialog new
+                title: ''About Pharo'';
+                icon: (self iconNamed: #pharo);
+                label: about;
+                acceptLabel: ''Close'';
+                openDialog']].
+        "P14-only: fix nil renderer during early startup"
+        "P14 starts MorphicRenderLoop before the SDL renderer is created."
+        "outputExtent must call validate lazily to create the renderer on demand."
+        isP14 ifTrue: [
+          (Smalltalk hasClassNamed: #OSSDL2FormRenderer) ifTrue: [
+            OSSDL2FormRenderer compile: 'outputExtent
+              renderer ifNil: [ self validate ].
+              renderer ifNil: [ ^ 0@0 ].
+              ^ renderer outputExtent']].
         "Fix: prevent windows from opening under the Pharo menu bar"
         "Override openInWorld: to bump windows below the MenubarMorph"
         SystemWindow compile: 'openInWorld: aWorld
@@ -439,11 +471,14 @@ class PharoBridge: ObservableObject {
         ] fork.
         "Refresh stale doc browser windows from previous saved sessions"
         "The tree may be empty if the image was saved when SSL was broken."
+        "P13 uses updateTree; P14 removed it — use updateSourcePresenter instead."
         (Smalltalk hasClassNamed: #MicDocumentBrowserPresenter) ifTrue: [
           [
             (Delay forMilliseconds: 3000) wait.
             MicDocumentBrowserPresenter allInstances do: [:each |
-              [ each updateTree ] on: Error do: [ "ignore" ] ].
+              isP14
+                ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
+                ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")

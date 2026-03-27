@@ -4623,7 +4623,7 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Calculate number of temporaries for the new method
     Oop newMethodHeader = memory_.fetchPointer(0, method);
     if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0)) {
-        FILE* crashLog = fopen("/tmp/iospharo-crash.log", "w");
+        FILE* crashLog = fopen("/tmp/pharosmalltalk-crash.log", "w");
         if (!crashLog) crashLog = stderr;
         ObjectHeader* mObj = method.asObjectPtr();
         // Print raw header and overflow word for deep analysis
