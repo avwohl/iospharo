@@ -484,10 +484,10 @@ class PharoBridge: ObservableObject {
                 ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
                 ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
-        "P14: Start MorphicRenderLoop manually."
-        "We pass -interactive (single dash) to avoid P14's early render loop start"
-        "(which crashes on nil renderer). After all patches are applied, we start"
-        "the render loop here so the GUI comes up cleanly."
+        "P14: Start MorphicRenderLoop after patches are applied."
+        "We pass -interactive (single dash) to avoid P14's early render loop start."
+        "P14's isInteractive scans for --interactive (double dash), so single-dash"
+        "does not trigger it. After all patches are applied, we start the loop here."
         isP14 ifTrue: [
           MorphicUIManager new activate.
           MorphicUIManager new spawnNewProcess].

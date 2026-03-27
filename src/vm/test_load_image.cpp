@@ -576,19 +576,13 @@ int main(int argc, char* argv[]) {
     }
     interpreter.setImageArguments(imageArgs);
 
-    // We run "headless" (no OS-level display) with interactive mode (keep GUI alive).
-    // OSWorldRenderer >> isApplicableFor: requires BOTH:
-    //   1. Smalltalk isHeadless → true (checks VM params for --headless)
-    //   2. CommandLineArguments new hasOption: 'interactive' → true
-    // Without -interactive, the CommandLineHandler sees no args + headless mode,
-    // prints help and calls Smalltalk exit: 0, killing any forked processes.
-    //
-    // IMPORTANT: use single-dash "-interactive" (not "--interactive").
-    // Pharo 14's SmalltalkImage>>isInteractive scans for "--interactive" (double dash)
-    // and triggers early MorphicRenderLoop start before the renderer is created,
-    // causing a nil-renderer crash cascade.  Single-dash avoids this.
-    // startup.st patches and then starts MorphicRenderLoop for P14.
-    interpreter.setVMParameters({"--headless"});
+    // Display mode: no --headless since we provide a display surface.
+    // Single-dash "-interactive" satisfies OSWorldRenderer (hasOption: normalizes
+    // dashes) but does NOT trigger P14's early MorphicRenderLoop start (which
+    // scans for "--interactive" double-dash).  Without --headless, command line
+    // handler Exit signals don't quit the image.
+    // startup.st starts MorphicRenderLoop for P14 after applying patches.
+    interpreter.setVMParameters({});
     if (imageArgs.empty()) {
         interpreter.setImageArguments({"-interactive"});
     }

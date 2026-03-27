@@ -4,21 +4,29 @@ Build 106 — 2026-03-27
 
 ## Fix Pharo 14 image compatibility
 
-Pharo 14 images crashed on startup due to two issues:
+Pharo 14 images crashed on startup due to three issues:
 
 1. **Early MorphicRenderLoop crash**: P14's `SmalltalkImage>>isInteractive`
    changed to scan for `--interactive` (double dash) and triggers
    MorphicRenderLoop during session startup — before the SDL renderer exists.
    Fixed by switching to `-interactive` (single dash) which satisfies
-   `hasOption:` but avoids the early start. startup.st now starts
-   MorphicRenderLoop after all patches are applied.
+   `hasOption:` (normalizes dashes) but avoids the early start. startup.st
+   starts MorphicRenderLoop for P14 after all patches are applied.
 
 2. **Sub-pixel text rendering cascade**: P14 defaults
    `bitBltSubPixelAvailable` to `true`, causing text rendering to call
    `copyBitsColor:alpha:gammaTable:ungammaTable:` (BitBlt rule 41) which
-   our VM doesn't implement. The resulting error cascade starved all other
-   processes. Fixed by forcing `bitBltSubPixelAvailable := false` in
-   startup.st so the image uses the standard anti-aliased path.
+   our VM doesn't implement. Fixed by returning Failure for
+   `primitiveCopyBits` with argCount>1 (so the image's detection test
+   caches `bitBltSubPixelAvailable := false`) and also forcing it in
+   startup.st.
+
+3. **Command line handler Exit**: Both P13's `BasicCommandLineHandler` and
+   P14's `ClapCommandLineHandler` reject `-interactive` as unrecognized
+   and signal `Exit`, which calls `primitiveQuit`. Fixed by removing
+   `--headless` from VM parameters (so the Exit handler doesn't quit in
+   non-headless mode) and adding a 10-second startup grace period in
+   `primitiveQuit` to suppress early quit attempts.
 
 Both Pharo 13 and Pharo 14 images now start cleanly.
 

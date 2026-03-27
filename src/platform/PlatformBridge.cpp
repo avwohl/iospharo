@@ -299,20 +299,24 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter->setImageName(imagePath);
     gInterpreter->setOriginalImageHeader(loader.header());
 
-    // We run "headless" (no OS-level display) with interactive mode (keep GUI alive).
-    // OSWorldRenderer >> isApplicableFor: checks:
-    //   CommandLineArguments new hasOption: 'interactive'
-    // which reads from Smalltalk arguments (attribute indices 3+).
+    // Display mode: we do NOT pass --headless because we provide a full display
+    // via SDL2 stubs bridged to Metal.  Not setting --headless means:
+    //   1. Smalltalk isHeadless = false
+    //   2. Command line handler Exit signals don't quit (handleExit: only quits
+    //      when isHeadless AND NOT isInteractive)
     //
-    // IMPORTANT: use single-dash "-interactive" (not "--interactive").
-    // Pharo 14's SmalltalkImage>>isInteractive scans for "--interactive" (double dash)
-    // and triggers early MorphicRenderLoop start during session startup — before the
-    // SDL renderer is created, causing a nil-renderer crash cascade.  Single-dash
-    // "-interactive" satisfies hasOption: (which normalizes dashes) but avoids the
-    // early start.  startup.st then starts MorphicRenderLoop after applying patches.
-    // Pharo 13's isInteractive scans for "-interactive" (single dash), so both
-    // versions get interactive mode.
-    gInterpreter->setVMParameters({"--headless"});
+    // We use single-dash "-interactive" for the image argument:
+    //   - CommandLineArguments>>hasOption: normalizes dashes, so "-interactive"
+    //     matches 'interactive' → OSWorldRenderer is selected for the display
+    //   - P14's SmalltalkImage>>isInteractive scans for "--interactive" (double dash)
+    //     so single-dash "-interactive" does NOT trigger P14's early MorphicRenderLoop
+    //     start (which crashes on nil renderer before startup.st can patch it)
+    //   - P13's isInteractive recognizes single-dash → returns true → fine
+    //   - Both P13 and P14 ClapCommandLineHandler/BasicCommandLineHandler may print
+    //     "unrecognized argument" for -interactive, but since isHeadless=false the
+    //     image continues running
+    //   - startup.st starts MorphicRenderLoop for P14 after all patches are applied
+    gInterpreter->setVMParameters({});
     gInterpreter->setImageArguments({"-interactive"});
 
     if (!gInterpreter->initialize()) {

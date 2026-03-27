@@ -3529,17 +3529,28 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
-    //
-    // In test_load_image mode, test code (CommandLineHandler, SessionManager)
-    // can call exitFailure/exitSuccess spuriously. Only honor quit if the
-    // test runner's "ALL TESTS COMPLETE" marker exists in the results file.
 
     bool shouldQuit = true;
 
-    // Check if test runner finished (results file has completion marker)
+    // Startup grace period: suppress quit during the first 10 seconds.
+    // Pharo's command line handler (BasicCommandLineHandler in P13,
+    // ClapCommandLineHandler in P14) rejects unrecognized image arguments
+    // (like "-interactive") and calls Exit>>defaultAction which triggers
+    // primitiveQuit.  We need -interactive for OSWorldRenderer selection,
+    // but can't prevent the handler from rejecting it.  Suppressing quit
+    // during startup lets the image continue to load startup.st and start
+    // the GUI normally.  User-initiated quit (e.g., Save & Quit dialog)
+    // happens well after 10 seconds.
+    auto uptime = std::chrono::steady_clock::now() - vmStartTime_;
+    if (uptime < std::chrono::seconds(10)) {
+        fprintf(stderr, "[primitiveQuit] Suppressed during startup (%.1fs uptime)\n",
+                std::chrono::duration<double>(uptime).count());
+        return PrimitiveResult::Success;
+    }
+
+    // Test runner mode: only honor quit if the test's completion marker exists.
     FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
     if (rf) {
-        // Results file exists — we're in a test run. Only quit if complete.
         shouldQuit = false;
         char buf[256];
         while (fgets(buf, sizeof(buf), rf)) {
@@ -3555,8 +3566,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         running_ = false;
     } else {
         fprintf(stderr, "[primitiveQuit] Suppressed during test run (no BATCH COMPLETE marker)\n");
-        // Terminate the calling process instead of the whole VM
-        // Pop args and return nil so the caller doesn't crash
     }
 
     return PrimitiveResult::Success;
