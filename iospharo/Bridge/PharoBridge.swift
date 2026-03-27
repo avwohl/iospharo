@@ -459,7 +459,6 @@ class PharoBridge: ObservableObject {
           cleared > 0 ifTrue: [
               Stdio stderr nextPutAll: '[startup] Cleared errorOnDraw from ';
                   nextPutAll: cleared printString; nextPutAll: ' morphs'; lf; flush ].
-          World doOneCycleNow.
         ] fork.
         """
 
