@@ -44,6 +44,16 @@ volatile uint8_t g_watchdogLastBytecode = 0;
 
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
+
+// Display Form readiness flag — exposed to Swift via vm_isDisplayFormReady().
+// Set true when the image calls primitiveBeDisplay (prim 102) or
+// primitiveForceDisplayUpdate (prim 127), indicating the Display Form has
+// valid pixel content for the non-SDL rendering path.
+std::atomic<bool> g_displayFormReady{false};
+
+extern "C" bool vm_isDisplayFormReady() {
+    return g_displayFormReady.load(std::memory_order_relaxed);
+}
 // Watchdog send diagnostic: selector and receiver class name for last send
 char g_watchdogSelector[64] = {0};
 char g_watchdogReceiverClass[64] = {0};
@@ -495,6 +505,16 @@ void Interpreter::syncDisplayToSurface() {
                             copyWidth * sizeof(uint32_t));
             }
         }
+
+        // Debug: log pixel sample
+        static int copyLogCount = 0;
+        if (copyLogCount < 5 || (copyLogCount == 100)) {
+            uint32_t p0 = srcPixels[0];
+            uint32_t pMid = srcPixels[copyWidth * copyHeight / 2];
+            fprintf(stderr, "[syncDisplay] Copied %dx%d pixels. p[0]=0x%08x p[mid]=0x%08x\n",
+                    copyWidth, copyHeight, p0, pMid);
+        }
+        copyLogCount++;
     }
 
     pharo::gDisplaySurface->update();

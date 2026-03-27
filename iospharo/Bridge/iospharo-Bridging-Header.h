@@ -74,8 +74,9 @@ void vm_setClipboardCallbacks(ClipboardGetFunc getFunc, ClipboardSetFunc setFunc
 typedef void (*TextInputFunc)(bool active);
 void vm_setTextInputCallback(TextInputFunc func);
 
-/* SDL2 readiness flag */
+/* Display readiness flags */
 bool ffi_isSDLRenderingActive(void);     // True after first SDL_RenderPresent (Pharo drew a frame)
+bool vm_isDisplayFormReady(void);        // True after primitiveBeDisplay (Display Form has valid pixels)
 
 /* Core Motion shared data */
 #include "../../src/platform/MotionData.h"

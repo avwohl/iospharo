@@ -2,33 +2,25 @@
 
 Build 106 — 2026-03-27
 
-## Fix Pharo 14 image compatibility
+## Pharo 14 image support
 
-Pharo 14 images crashed on startup due to three issues:
+Pharo 14 (dev) images now render correctly alongside Pharo 13.
 
-1. **Early MorphicRenderLoop crash**: P14's `SmalltalkImage>>isInteractive`
-   changed to scan for `--interactive` (double dash) and triggers
-   MorphicRenderLoop during session startup — before the SDL renderer exists.
-   Fixed by switching to `-interactive` (single dash) which satisfies
-   `hasOption:` (normalizes dashes) but avoids the early start. startup.st
-   starts MorphicRenderLoop for P14 after all patches are applied.
+**Sub-pixel text rendering fix**: P14 starts the MorphicRenderLoop before
+startup.st can disable sub-pixel rendering, causing
+`copyBitsColor:alpha:gammaTable:ungammaTable:` to trigger PrimitiveFailed
+and permanently mark morphs with red error boxes. Fixed by having
+`primitiveCopyBits` strip the extra sub-pixel arguments and perform a
+regular copyBits instead of returning Failure. Rule 41
+(rgbComponentAlpha) is already implemented, so text composites correctly.
+startup.st still sets `bitBltSubPixelAvailable := false` and clears any
+early `#errorOnDraw` marks as a safety net.
 
-2. **Sub-pixel text rendering cascade**: P14 defaults
-   `bitBltSubPixelAvailable` to `true`, causing text rendering to call
-   `copyBitsColor:alpha:gammaTable:ungammaTable:` (BitBlt rule 41) which
-   our VM doesn't implement. Fixed by returning Failure for
-   `primitiveCopyBits` with argCount>1 (so the image's detection test
-   caches `bitBltSubPixelAvailable := false`) and also forcing it in
-   startup.st.
+**Display Form readiness**: Added `vm_isDisplayFormReady()` flag (set by
+primitiveBeDisplay/primitiveForceDisplayUpdate) so MetalRenderer can
+render P14's Display Form path in addition to P13's SDL path.
 
-3. **Command line handler Exit**: Both P13's `BasicCommandLineHandler` and
-   P14's `ClapCommandLineHandler` reject `-interactive` as unrecognized
-   and signal `Exit`, which calls `primitiveQuit`. Fixed by removing
-   `--headless` from VM parameters (so the Exit handler doesn't quit in
-   non-headless mode) and adding a 10-second startup grace period in
-   `primitiveQuit` to suppress early quit attempts.
-
-Both Pharo 13 and Pharo 14 images now start cleanly.
+Both Pharo 13 and Pharo 14 images start cleanly with the same app binary.
 
 ---
 

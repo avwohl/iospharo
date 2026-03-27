@@ -67,6 +67,9 @@ static inline void write16(uint32_t* words, intptr_t pixelIndex, uint16_t value)
 // Forward declaration for SDL rendering active check (defined in FFI.cpp)
 extern "C" bool ffi_isSDLRenderingActive();
 
+// Display Form readiness flag (defined in Interpreter.cpp)
+extern std::atomic<bool> g_displayFormReady;
+
 #include <ffi.h>
 
 // ===== SurfacePlugin: Surface Management =====
@@ -4029,6 +4032,7 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
     // This is important for P14 where primitiveForceDisplayUpdate may never be called
     // (P14 uses SDL_RenderPresent instead, but during startup the SDL path isn't active yet).
     displayFormReady_ = true;
+    g_displayFormReady.store(true, std::memory_order_relaxed);
 
     // Extract form dimensions to update screen size
     // Form slots: 0=bits, 1=width, 2=height, 3=depth
@@ -4064,6 +4068,7 @@ PrimitiveResult Interpreter::primitiveForceDisplayUpdate(int argCount) {
 
     // Mark that the image has drawn at least once
     displayFormReady_ = true;
+    g_displayFormReady.store(true, std::memory_order_relaxed);
 
     // Auto-discover Display global if displayForm_ not set
     if (displayForm_.isNil()) {
@@ -12345,6 +12350,7 @@ PrimitiveResult Interpreter::primitiveShowDisplayRect(int argCount) {
 
     // Mark that the image has drawn at least once
     displayFormReady_ = true;
+    g_displayFormReady.store(true, std::memory_order_relaxed);
 
     // Always refresh Display form (Pharo may change it, GC may move it)
     {
@@ -15834,11 +15840,16 @@ enum FormFields {
 // 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // argCount=4: copyBitsColor:alpha:gammaTable:ungammaTable: (sub-pixel text).
-    // We don't implement sub-pixel rendering.  Return Failure so the image's
-    // detection test (FreeTypeSettings>>bitBltSubPixelAvailable) catches the
-    // Error and caches bitBltSubPixelAvailable := false.  The image then falls
-    // back to rule 34 with pre-colored glyphs for all text rendering.
-    if (argCount > 1) { return PrimitiveResult::Failure; }
+    // We handle this by stripping the extra arguments and performing a regular
+    // copyBits.  The BitBlt object already has rule 41 (rgbComponentAlpha) set
+    // and the halftone form contains the foreground color, so the standard copy
+    // path composites text glyphs correctly.  We skip gamma table processing
+    // (minor visual difference, not worth the complexity).
+    int extraArgs = 0;
+    if (argCount > 1) {
+        extraArgs = argCount;
+        argCount = 0;
+    }
 
     // Extract constant alpha for translucent operations (rules 30-31).
     // copyBitsTranslucent: passes alpha as argument; plain copyBits defaults to 0.
@@ -15861,11 +15872,13 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
 
-    // On success, pop any extra arguments (alpha for copyBitsTranslucent:)
+    // On success, pop any extra arguments (alpha for copyBitsTranslucent:,
+    // or color/alpha/gammaTable/ungammaTable for sub-pixel variant)
     // leaving receiver on the stack. primitiveSuccess() handles its own stack.
-    #define BITBLT_SUCCESS do { popN(argCount); return PrimitiveResult::Success; } while(0)
+    int totalArgs = argCount + extraArgs;
+    #define BITBLT_SUCCESS do { popN(totalArgs); return PrimitiveResult::Success; } while(0)
 
-    Oop bitBlt = stackValue(argCount);
+    Oop bitBlt = stackValue(totalArgs);
     if (!bitBlt.isObject()) { return PrimitiveResult::Failure; }
 
     // Extract BitBlt parameters

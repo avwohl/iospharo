@@ -353,6 +353,9 @@ class PharoBridge: ObservableObject {
               + ((b // nPix bitShift: d) bitShift: 0).
             ^ destMap ifNil: [ rgb ] ifNotNil: [ destMap at: rgb + 1 ]'].
         "Debug: patch fullDrawOn: to log errors to stderr AND to a file"
+        "PrimitiveFailed is excluded — the image uses primitive failures for feature"
+        "detection (e.g. BitBlt sub-pixel rendering).  Catching them here would mark"
+        "morphs as broken before the image can handle the failure gracefully."
         Morph compile: 'fullDrawOn: aCanvas
             self visible ifFalse: [ ^ self ].
             (aCanvas isVisible: self fullBounds) ifFalse: [ ^ self ].
@@ -364,7 +367,7 @@ class PharoBridge: ObservableObject {
                     self drawSubmorphsOn: aCanvas.
                     self drawDropHighlightOn: aCanvas.
                     self drawMouseDownHighlightOn: aCanvas ]
-            ] on: Error do: [ :err |
+            ] on: Error - PrimitiveFailed do: [ :err |
                 | errText stackText |
                 errText := self class name , '': '' , err messageText.
                 stackText := err signalerContext
@@ -485,78 +488,29 @@ class PharoBridge: ObservableObject {
                 ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
                 ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
-        "P14: Fix startup when -interactive (single dash) is used."
-        "P14's isInteractive scans for --interactive (double dash), so with single"
-        "dash it returns false. This means UIManager stays NonInteractiveUIManager,"
-        "Display is never bound, and the render loop renders nothing."
-        "Fix: 1) patch isInteractive, 2) create Display, 3) re-trigger UIManager startup."
-        isP14 ifTrue: [
-          "1. Patch isInteractive to return true"
-          SmalltalkImage compile: 'isInteractive ^ true'.
-          Stdio stderr nextPutAll: '[P14] Step 1: isInteractive patched'; lf; flush.
-
-          "2. Create Display Form if not set (P14 doesn't create one when not interactive)"
-          d := Smalltalk globals at: #Display ifAbsent: [ nil ].
-          Stdio stderr nextPutAll: '[P14] Step 2: Display in globals = '; nextPutAll: (d ifNil: ['nil'] ifNotNil: ['found']); lf; flush.
-          d ifNil: [
-            d := Form extent: 1024@768 depth: 32.
-            Smalltalk globals at: #Display put: d.
-            Stdio stderr nextPutAll: '[P14] Display created and bound in globals'; lf; flush.
-            "Call primitive 102 to bind in C++"
-            Form compile: 'iosBeDisplay <primitive: 102>'.
-            Stdio stderr nextPutAll: '[P14] iosBeDisplay compiled, calling...'; lf; flush.
-            d iosBeDisplay.
-            Stdio stderr nextPutAll: '[P14] iosBeDisplay done'; lf; flush ].
-
-          "3. Re-trigger UIManager startup"
-          Stdio stderr nextPutAll: '[P14] Step 3: UIManager startUp'; lf; flush.
-          UIManager startUp: true.
-          Stdio stderr nextPutAll: '[P14] UIManager is now: '; nextPutAll: UIManager default class name; lf; flush.
-
-          "4. Resize World, kill old UI processes, start fresh render loop"
-          [ w := Smalltalk globals at: #World ifAbsent: [ nil ].
-            d := Smalltalk globals at: #Display ifAbsent: [ nil ].
-            Stdio stderr nextPutAll: '[P14] Step 4: World='; nextPutAll: (w ifNil: ['nil'] ifNotNil: [ w extent printString ]); nextPutAll: ' Display='; nextPutAll: (d ifNil: ['nil'] ifNotNil: [ d extent printString ]); lf; flush.
-            (w notNil and: [ d notNil ]) ifTrue: [
-              w extent: d extent.
-              Stdio stderr nextPutAll: '[P14] World resized'; lf; flush ] ]
-            on: Error do: [ :e |
-              Stdio stderr nextPutAll: '[P14] resize error: '; nextPutAll: e messageText; lf; flush ].
-
-          "5. Switch from NullWorldRenderer to OSWorldRenderer"
-          "UIManager startUp: doesn't re-init the renderer if World already exists."
-          w := Smalltalk globals at: #World ifAbsent: [ nil ].
-          w ifNotNil: [
-            Stdio stderr nextPutAll: '[P14] Step 5: current renderer: '; nextPutAll: ([ w worldState worldRenderer class name ] on: Error do: [ :e | e messageText ]); lf; flush.
-            [ | renderer |
-              renderer := OSWorldRenderer forWorld: w.
-              w worldState instVarNamed: 'worldRenderer' put: renderer.
-              Stdio stderr nextPutAll: '[P14] Renderer switched to: '; nextPutAll: renderer class name; lf; flush ]
-            on: Error do: [ :e |
-              Stdio stderr nextPutAll: '[P14] OSWorldRenderer error: '; nextPutAll: e messageText; lf; flush.
-              Stdio stderr nextPutAll: '[P14] Stack: '; nextPutAll: (String streamContents: [ :s | e signalerContext shortDebugStackOn: s ]); lf; flush ] ].
-
-          "6. Kill existing Morphic UI processes and start a fresh one."
-          (Process allSubInstances select: [ :p | p name = 'Morphic UI Process' ]) do: [ :p | p terminate ].
-          UIManager default spawnNewProcess.
-          Stdio stderr nextPutAll: '[P14] Step 6: fresh render loop spawned'; lf; flush.
-
-          "7. Force initial draw on Display Form via legacy path"
-          "This ensures something is visible even before SDL rendering kicks in."
-          [
-            (Delay forMilliseconds: 1000) wait.
-            w := Smalltalk globals at: #World ifAbsent: [ nil ].
-            d := Smalltalk globals at: #Display ifAbsent: [ nil ].
-            (w notNil and: [ d notNil ]) ifTrue: [
-              | canvas |
-              canvas := FormCanvas on: d.
-              [ w fullDrawOn: canvas ] on: Error do: [ :e |
-                Stdio stderr nextPutAll: '[P14] Draw error: '; nextPutAll: e messageText; lf; flush ].
-              "Compile and call forceDisplayUpdate (primitive 127)"
-              Form compile: 'iosForceUpdate <primitive: 127>'.
-              d iosForceUpdate.
-              Stdio stderr nextPutAll: '[P14] Force-drew World on Display'; lf; flush ]
-          ] fork ].
+        "Clean up: the render loop may have started before our patches above."
+        "Any morphs marked #errorOnDraw during that window get cleared now."
+        "Also reset font renderer caches so they pick up bitBltSubPixelAvailable=false."
+        [
+          | cleared |
+          cleared := 0.
+          (Delay forMilliseconds: 800) wait.
+          "Reset all FreeType font glyph renderer caches"
+          [ FreeTypeFont allInstances do: [ :f | f clearCaches ] ]
+              on: Error do: [ :e | "ignore" ].
+          "Clear error marks from all morphs"
+          Morph allSubInstances do: [ :m |
+              (m hasProperty: #errorOnDraw) ifTrue: [
+                  m removeProperty: #errorOnDraw.
+                  m removeProperty: #drawError.
+                  m changed.
+                  cleared := cleared + 1 ] ].
+          cleared > 0 ifTrue: [
+              Stdio stderr nextPutAll: '[STARTUP.ST] Cleared errorOnDraw from ';
+                  nextPutAll: cleared printString; nextPutAll: ' morphs'; lf; flush ].
+          "Force complete world redraw"
+          World doOneCycleNow.
+        ] fork.
         Stdio stderr nextPutAll: '[STARTUP.ST] Done.'; lf; flush.
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")

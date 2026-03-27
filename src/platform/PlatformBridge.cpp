@@ -299,25 +299,11 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter->setImageName(imagePath);
     gInterpreter->setOriginalImageHeader(loader.header());
 
-    // Display mode: we do NOT pass --headless because we provide a full display
-    // via SDL2 stubs bridged to Metal.  Not setting --headless means:
-    //   1. Smalltalk isHeadless = false
-    //   2. Command line handler Exit signals don't quit (handleExit: only quits
-    //      when isHeadless AND NOT isInteractive)
-    //
-    // We use single-dash "-interactive" for the image argument:
-    //   - CommandLineArguments>>hasOption: normalizes dashes, so "-interactive"
-    //     matches 'interactive' → OSWorldRenderer is selected for the display
-    //   - P14's SmalltalkImage>>isInteractive scans for "--interactive" (double dash)
-    //     so single-dash "-interactive" does NOT trigger P14's early MorphicRenderLoop
-    //     start (which crashes on nil renderer before startup.st can patch it)
-    //   - P13's isInteractive recognizes single-dash → returns true → fine
-    //   - Both P13 and P14 ClapCommandLineHandler/BasicCommandLineHandler may print
-    //     "unrecognized argument" for -interactive, but since isHeadless=false the
-    //     image continues running
-    //   - startup.st starts MorphicRenderLoop for P14 after all patches are applied
-    gInterpreter->setVMParameters({});
-    gInterpreter->setImageArguments({"-interactive"});
+    // Display mode: --headless tells the image we don't have a native display
+    // (so it uses OSSDL2Driver via FFI stubs instead of native windows).
+    // --interactive tells the image to start MorphicUIManager and the render loop.
+    gInterpreter->setVMParameters({"--headless"});
+    gInterpreter->setImageArguments({"--interactive"});
 
     if (!gInterpreter->initialize()) {
         return false;
@@ -491,6 +477,10 @@ void vm_destroy(void) {
     pharo::ffi::shutdownFFI();
     pharo::gEventQueue.reset();
     resetInterpreterProxy();
+
+    // Reset display form readiness flag (defined in Interpreter.cpp)
+    extern std::atomic<bool> g_displayFormReady;
+    g_displayFormReady.store(false, std::memory_order_relaxed);
 
     // Note: gPendingCallback, gClipboardGet/Set, gTextInputFunc are Swift-side
     // callbacks that persist across VM instances — do NOT reset them.

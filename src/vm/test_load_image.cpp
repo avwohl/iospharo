@@ -576,15 +576,12 @@ int main(int argc, char* argv[]) {
     }
     interpreter.setImageArguments(imageArgs);
 
-    // Display mode: no --headless since we provide a display surface.
-    // Single-dash "-interactive" satisfies OSWorldRenderer (hasOption: normalizes
-    // dashes) but does NOT trigger P14's early MorphicRenderLoop start (which
-    // scans for "--interactive" double-dash).  Without --headless, command line
-    // handler Exit signals don't quit the image.
-    // startup.st starts MorphicRenderLoop for P14 after applying patches.
-    interpreter.setVMParameters({});
+    // Display mode: --headless + --interactive tells the image to start GUI
+    // via SDL2 (which our stubs bridge to Metal/display surface).
+    // startup.st patches P14's OSSDL2FormRenderer>>outputExtent nil guard.
+    interpreter.setVMParameters({"--headless"});
     if (imageArgs.empty()) {
-        interpreter.setImageArguments({"-interactive"});
+        interpreter.setImageArguments({"--interactive"});
     }
 
     // Set up event callback BEFORE initialization

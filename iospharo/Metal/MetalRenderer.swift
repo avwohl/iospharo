@@ -176,9 +176,10 @@ class MetalRenderer: NSObject, MTKViewDelegate {
         drawCount += 1
 
         // Don't render the Pharo framebuffer until Pharo has completed its first
-        // frame (SDL_RenderPresent called). Before that, the buffer contains
-        // uninitialized/partial content from startup. Show the clear color instead.
-        guard ffi_isSDLRenderingActive() else {
+        // frame. Two paths: SDL (SDL_RenderPresent sets sdlActive) or Display Form
+        // (primitiveBeDisplay sets displayFormReady). P13 uses SDL; P14 may use
+        // the Display Form path during startup before SDL initializes.
+        guard ffi_isSDLRenderingActive() || vm_isDisplayFormReady() else {
             // Just present the clear color (light gray)
             guard let drawable = view.currentDrawable,
                   let rpd = view.currentRenderPassDescriptor,
