@@ -309,17 +309,17 @@ struct ImageLibraryView: View {
                 .foregroundColor(.secondary)
 
             VStack(spacing: 12) {
-                Button {
-                    if let template = ImageTemplate.builtIn.first {
+                ForEach(ImageTemplate.builtIn) { template in
+                    Button {
                         imageManager.downloadTemplate(template)
+                    } label: {
+                        Label("Download \(template.label)", systemImage: "arrow.down.circle.fill")
+                            .font(.headline)
+                            .frame(maxWidth: 280)
                     }
-                } label: {
-                    Label("Download \(ImageTemplate.builtIn.first?.label ?? "Pharo")", systemImage: "arrow.down.circle.fill")
-                        .font(.headline)
-                        .frame(maxWidth: 280)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
 
                 Button {
                     showingFileImporter = true
