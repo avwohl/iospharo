@@ -515,7 +515,6 @@ class PharoBridge: ObservableObject {
                 label: about;
                 acceptLabel: ''Close'';
                 openDialog'].
-        ].
 
         "Fix nil renderer during early startup."
         "P14 starts MorphicRenderLoop before the SDL renderer is created."
