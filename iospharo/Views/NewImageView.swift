@@ -73,7 +73,14 @@ struct NewImageView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
+                    Button { dismiss() } label: {
+                        #if targetEnvironment(macCatalyst)
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                        #else
+                        Text("Cancel")
+                        #endif
+                    }
                 }
             }
         }
