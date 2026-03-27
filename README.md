@@ -4,13 +4,13 @@ A Pharo Smalltalk VM for iOS and macOS, written as a clean C++ interpreter.
 
 ## Overview
 
-iospharo runs standard Pharo 13 images on iOS devices and Mac (via Catalyst).
-It is a from-scratch interpreter implementation — not a port of the Cog JIT VM —
-with full support for the Sista V1 bytecode set, FFI with callbacks, and the
-standard Pharo test suite.
+iospharo runs standard Pharo 13 and Pharo 14 images on iOS devices and Mac
+(via Catalyst). It is a from-scratch interpreter implementation — not a port
+of the Cog JIT VM — with full support for the Sista V1 bytecode set, FFI with
+callbacks, and the standard Pharo test suite.
 
-**Note:** Only Pharo 13 images are currently supported. Pharo 12 and earlier
-use a different class table layout that the VM does not yet handle.
+**Note:** Pharo 12 and earlier use a different class table layout that the VM
+does not yet handle.
 
 ## Status
 
@@ -69,7 +69,7 @@ brew install meson ninja pkg-config autoconf automake libtool
 
 You also need:
 - **Xcode 15+** (for the iOS/Mac Catalyst app)
-- **A Pharo 13 image** — download from https://pharo.org/download
+- **A Pharo 13 or 14 image** — download from https://pharo.org/download
 
 ## Building
 
@@ -171,6 +171,15 @@ iospharo/
 The image's OSSDL2Driver calls SDL2 functions via FFI. Our SDL2 stubs bridge
 these to the Metal rendering pipeline. Touch gestures are mapped to Pharo
 mouse events (tap=left-click, long-press=right-click, two-finger tap=right-click).
+
+### Startup patches
+
+The app applies Smalltalk patches on every launch to fix image bugs and adapt
+to VM differences (stubbed SDL2, missing font glyphs, etc.). Patches are
+version-specific — the app detects the Pharo version and loads `startup-13.st`
+or `startup-14.st` accordingly. Users can add custom patches by creating
+`startup-user.st` next to the image file (it is never overwritten).
+See [docs/startup-system.md](docs/startup-system.md) for the full details.
 
 ## Configuration
 

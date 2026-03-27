@@ -1,3 +1,25 @@
+# What's New in Build 107
+
+Build 107 — 2026-03-27
+
+## Startup file split
+
+Refactored the startup patch system from a single monolithic `startup.st`
+into version-specific files:
+
+  startup.st        Dispatcher — detects Pharo version, loads the right file
+  startup-13.st     Common patches + Pharo 13-specific patches
+  startup-14.st     Common patches + Pharo 14-specific patches
+  startup-user.st   (optional) User's custom patches — never overwritten
+
+The dispatcher uses `SystemVersion current major` to choose the file.
+Auto-generated files are always overwritten on launch; user customizations
+go in `startup-user.st`.
+
+See `docs/startup-system.md` for the full documentation.
+
+---
+
 # What's New in Build 106
 
 Build 106 — 2026-03-27

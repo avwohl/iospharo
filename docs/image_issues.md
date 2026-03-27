@@ -1,9 +1,9 @@
 # Pharo Image Issues
 
-Bugs and limitations in the stock Pharo 13 image that affect iospharo.
-We work around the bugs via `startup.st` (auto-loaded by
-`StartupPreferencesLoader`). Ideally these would be fixed upstream so
-the patches can be removed.
+Bugs and limitations in the stock Pharo 13/14 images that affect iospharo.
+We work around the bugs via `startup-13.st` and `startup-14.st` (loaded by
+the `startup.st` dispatcher — see `docs/startup-system.md`). Ideally these
+would be fixed upstream so the patches can be removed.
 
 For the upstream-ready write-ups (to share with the Pharo team), see
 `docs/upstream-proposals.md`.
