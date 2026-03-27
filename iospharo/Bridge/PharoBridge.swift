@@ -274,6 +274,7 @@ class PharoBridge: ObservableObject {
         "Supports both Pharo 13 and Pharo 14 images"
         | isP14 |
         isP14 := SystemVersion current major >= 14.
+        Stdio stderr nextPutAll: '[STARTUP.ST] isP14='; nextPutAll: isP14 printString; lf; flush.
         "Disable sub-pixel text rendering — our VM does not implement BitBlt rule 41"
         "Without this, FreeTypeSubPixelAntiAliasedGlyphRenderer crashes with nil data"
         (Smalltalk hasClassNamed: #FreeTypeSettings) ifTrue: [
@@ -484,13 +485,18 @@ class PharoBridge: ObservableObject {
                 ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
                 ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
-        "P14: Start MorphicRenderLoop after patches are applied."
-        "We pass -interactive (single dash) to avoid P14's early render loop start."
-        "P14's isInteractive scans for --interactive (double dash), so single-dash"
-        "does not trigger it. After all patches are applied, we start the loop here."
+        "P14: Patch isInteractive to return true, then start MorphicRenderLoop."
+        "We pass -interactive (single dash) to avoid P14's early render loop start"
+        "(P14's isInteractive scans for --interactive double dash). But this means"
+        "isInteractive returns false on P14, so MorphicUIManager>>activate bails out."
+        "Patching isInteractive to true lets activate create the World and Display."
+        Stdio stderr nextPutAll: '[STARTUP.ST] Patches applied, starting render loop...'; lf; flush.
         isP14 ifTrue: [
+          SmalltalkImage compile: 'isInteractive ^ true'.
           MorphicUIManager new activate.
-          MorphicUIManager new spawnNewProcess].
+          MorphicUIManager new spawnNewProcess.
+          Stdio stderr nextPutAll: '[STARTUP.ST] MorphicRenderLoop started for P14'; lf; flush].
+        Stdio stderr nextPutAll: '[STARTUP.ST] Done.'; lf; flush.
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")
         #if DEBUG
