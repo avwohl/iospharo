@@ -272,7 +272,7 @@ class PharoBridge: ObservableObject {
         let script = """
         "Pharo image patches - auto-applied by Pharo Smalltalk VM"
         "Supports both Pharo 13 and Pharo 14 images"
-        | isP14 |
+        | isP14 w d |
         isP14 := SystemVersion current major >= 14.
         Stdio stderr nextPutAll: '[STARTUP.ST] isP14='; nextPutAll: isP14 printString; lf; flush.
         "Disable sub-pixel text rendering — our VM does not implement BitBlt rule 41"
@@ -485,17 +485,78 @@ class PharoBridge: ObservableObject {
                 ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
                 ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
-        "P14: Patch isInteractive to return true, then start MorphicRenderLoop."
-        "We pass -interactive (single dash) to avoid P14's early render loop start"
-        "(P14's isInteractive scans for --interactive double dash). But this means"
-        "isInteractive returns false on P14, so MorphicUIManager>>activate bails out."
-        "Patching isInteractive to true lets activate create the World and Display."
-        Stdio stderr nextPutAll: '[STARTUP.ST] Patches applied, starting render loop...'; lf; flush.
+        "P14: Fix startup when -interactive (single dash) is used."
+        "P14's isInteractive scans for --interactive (double dash), so with single"
+        "dash it returns false. This means UIManager stays NonInteractiveUIManager,"
+        "Display is never bound, and the render loop renders nothing."
+        "Fix: 1) patch isInteractive, 2) create Display, 3) re-trigger UIManager startup."
         isP14 ifTrue: [
+          "1. Patch isInteractive to return true"
           SmalltalkImage compile: 'isInteractive ^ true'.
-          MorphicUIManager new activate.
-          MorphicUIManager new spawnNewProcess.
-          Stdio stderr nextPutAll: '[STARTUP.ST] MorphicRenderLoop started for P14'; lf; flush].
+          Stdio stderr nextPutAll: '[P14] Step 1: isInteractive patched'; lf; flush.
+
+          "2. Create Display Form if not set (P14 doesn't create one when not interactive)"
+          d := Smalltalk globals at: #Display ifAbsent: [ nil ].
+          Stdio stderr nextPutAll: '[P14] Step 2: Display in globals = '; nextPutAll: (d ifNil: ['nil'] ifNotNil: ['found']); lf; flush.
+          d ifNil: [
+            d := Form extent: 1024@768 depth: 32.
+            Smalltalk globals at: #Display put: d.
+            Stdio stderr nextPutAll: '[P14] Display created and bound in globals'; lf; flush.
+            "Call primitive 102 to bind in C++"
+            Form compile: 'iosBeDisplay <primitive: 102>'.
+            Stdio stderr nextPutAll: '[P14] iosBeDisplay compiled, calling...'; lf; flush.
+            d iosBeDisplay.
+            Stdio stderr nextPutAll: '[P14] iosBeDisplay done'; lf; flush ].
+
+          "3. Re-trigger UIManager startup"
+          Stdio stderr nextPutAll: '[P14] Step 3: UIManager startUp'; lf; flush.
+          UIManager startUp: true.
+          Stdio stderr nextPutAll: '[P14] UIManager is now: '; nextPutAll: UIManager default class name; lf; flush.
+
+          "4. Resize World, kill old UI processes, start fresh render loop"
+          [ w := Smalltalk globals at: #World ifAbsent: [ nil ].
+            d := Smalltalk globals at: #Display ifAbsent: [ nil ].
+            Stdio stderr nextPutAll: '[P14] Step 4: World='; nextPutAll: (w ifNil: ['nil'] ifNotNil: [ w extent printString ]); nextPutAll: ' Display='; nextPutAll: (d ifNil: ['nil'] ifNotNil: [ d extent printString ]); lf; flush.
+            (w notNil and: [ d notNil ]) ifTrue: [
+              w extent: d extent.
+              Stdio stderr nextPutAll: '[P14] World resized'; lf; flush ] ]
+            on: Error do: [ :e |
+              Stdio stderr nextPutAll: '[P14] resize error: '; nextPutAll: e messageText; lf; flush ].
+
+          "5. Switch from NullWorldRenderer to OSWorldRenderer"
+          "UIManager startUp: doesn't re-init the renderer if World already exists."
+          w := Smalltalk globals at: #World ifAbsent: [ nil ].
+          w ifNotNil: [
+            Stdio stderr nextPutAll: '[P14] Step 5: current renderer: '; nextPutAll: ([ w worldState worldRenderer class name ] on: Error do: [ :e | e messageText ]); lf; flush.
+            [ | renderer |
+              renderer := OSWorldRenderer forWorld: w.
+              w worldState instVarNamed: 'worldRenderer' put: renderer.
+              Stdio stderr nextPutAll: '[P14] Renderer switched to: '; nextPutAll: renderer class name; lf; flush ]
+            on: Error do: [ :e |
+              Stdio stderr nextPutAll: '[P14] OSWorldRenderer error: '; nextPutAll: e messageText; lf; flush.
+              Stdio stderr nextPutAll: '[P14] Stack: '; nextPutAll: (String streamContents: [ :s | e signalerContext shortDebugStackOn: s ]); lf; flush ] ].
+
+          "6. Kill existing Morphic UI processes and start a fresh one."
+          (Process allSubInstances select: [ :p | p name = 'Morphic UI Process' ]) do: [ :p | p terminate ].
+          UIManager default spawnNewProcess.
+          Stdio stderr nextPutAll: '[P14] Step 6: fresh render loop spawned'; lf; flush.
+
+          "7. Force initial draw on Display Form via legacy path"
+          "This ensures something is visible even before SDL rendering kicks in."
+          [
+            (Delay forMilliseconds: 1000) wait.
+            w := Smalltalk globals at: #World ifAbsent: [ nil ].
+            d := Smalltalk globals at: #Display ifAbsent: [ nil ].
+            (w notNil and: [ d notNil ]) ifTrue: [
+              | canvas |
+              canvas := FormCanvas on: d.
+              [ w fullDrawOn: canvas ] on: Error do: [ :e |
+                Stdio stderr nextPutAll: '[P14] Draw error: '; nextPutAll: e messageText; lf; flush ].
+              "Compile and call forceDisplayUpdate (primitive 127)"
+              Form compile: 'iosForceUpdate <primitive: 127>'.
+              d iosForceUpdate.
+              Stdio stderr nextPutAll: '[P14] Force-drew World on Display'; lf; flush ]
+          ] fork ].
         Stdio stderr nextPutAll: '[STARTUP.ST] Done.'; lf; flush.
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")

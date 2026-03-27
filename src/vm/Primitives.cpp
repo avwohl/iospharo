@@ -4013,6 +4013,7 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
+    fprintf(stderr, "[primitiveBeDisplay] called with argCount=%d\n", argCount);
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Get the receiver (a Form object)
@@ -4023,6 +4024,11 @@ PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
 
     // Store as the display form
     setDisplayForm(form);
+
+    // The image has explicitly set a Display form — mark it as ready for sync.
+    // This is important for P14 where primitiveForceDisplayUpdate may never be called
+    // (P14 uses SDL_RenderPresent instead, but during startup the SDL path isn't active yet).
+    displayFormReady_ = true;
 
     // Extract form dimensions to update screen size
     // Form slots: 0=bits, 1=width, 2=height, 3=depth

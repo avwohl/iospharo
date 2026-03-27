@@ -374,7 +374,16 @@ void Interpreter::ensureDisplayForm(int width, int height, int depth) {
     setScreenDepth(depth);
 
     // Bind to 'Display' global so Morphic can find it
-    memory_.setGlobal("Display", formObj);
+    bool bound = memory_.setGlobal("Display", formObj);
+    fprintf(stderr, "[ensureDisplayForm] Created %dx%dx%d Form, setGlobal=%s\n",
+            width, height, depth, bound ? "true" : "false");
+
+    // Verify the binding worked
+    Oop verifyDisplay = memory_.findGlobal("Display");
+    fprintf(stderr, "[ensureDisplayForm] Verify: findGlobal(Display)=%s raw=0x%llx formObj=0x%llx\n",
+            verifyDisplay.isNil() ? "nil" : "found",
+            (unsigned long long)verifyDisplay.rawBits(),
+            (unsigned long long)formObj.rawBits());
 }
 
 // ===== INPUT EVENT PROCESSING =====
@@ -421,12 +430,25 @@ void Interpreter::syncDisplayToSurface() {
     // SDL_RenderPresent copies SDL2 content to gDisplaySurface;
     // don't overwrite it with stale Display Form data.
     if (ffi_isSDLRenderingActive()) {
+        static int sdlLogCount = 0;
+        if (sdlLogCount < 3) {
+            fprintf(stderr, "[syncDisplay] SDL rendering active — skipping Display Form copy\n");
+            sdlLogCount++;
+        }
         return;
     }
 
     // Don't copy until the image has drawn at least once (primitiveForceDisplayUpdate).
     // Before that, the Display Form bits are uninitialized heap memory (garbage pixels).
-    if (!displayFormReady_) return;
+    if (!displayFormReady_) {
+        static int logCount = 0;
+        if (logCount < 5 || (logCount % 1000 == 0 && logCount < 10000)) {
+            fprintf(stderr, "[syncDisplay] displayFormReady_=false (call %d), displayForm_ isNil=%d\n",
+                    logCount, displayForm_.isNil() ? 1 : 0);
+        }
+        logCount++;
+        return;
+    }
 
     // displayForm_ is set during startup or by primitiveBeDisplay (prim 102).
     if (displayForm_.isNil()) {
