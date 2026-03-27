@@ -574,7 +574,7 @@ class PharoBridge: ObservableObject {
         file exists
             ifTrue: [
                 Stdio stderr nextPutAll: '[startup] Loading '; nextPutAll: file basename; lf; flush.
-                Compiler evaluate: file contents ]
+                file fileIn ]
             ifFalse: [
                 Stdio stderr nextPutAll: '[startup] WARNING: '; nextPutAll: file basename;
                     nextPutAll: ' not found'; lf; flush ].
@@ -582,7 +582,7 @@ class PharoBridge: ObservableObject {
         "Load user overrides if present"
         (FileSystem workingDirectory / 'startup-user.st') exists ifTrue: [
             Stdio stderr nextPutAll: '[startup] Loading startup-user.st'; lf; flush.
-            Compiler evaluate: (FileSystem workingDirectory / 'startup-user.st') contents ].
+            (FileSystem workingDirectory / 'startup-user.st') fileIn ].
         """
 
         // ── Write files ──
