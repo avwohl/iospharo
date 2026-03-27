@@ -15840,15 +15840,13 @@ enum FormFields {
 // 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     // argCount=4: copyBitsColor:alpha:gammaTable:ungammaTable: (sub-pixel text).
-    // We handle this by stripping the extra arguments and performing a regular
-    // copyBits.  The BitBlt object already has rule 41 (rgbComponentAlpha) set
-    // and the halftone form contains the foreground color, so the standard copy
-    // path composites text glyphs correctly.  We skip gamma table processing
-    // (minor visual difference, not worth the complexity).
-    int extraArgs = 0;
+    // Return Failure so the image falls back to non-sub-pixel rendering.
+    // The startup patches set bitBltSubPixelAvailable := false to prevent this
+    // path entirely; this is just a safety net for the brief window before
+    // startup.st loads.  The cleanup fork in startup-{13,14}.st clears any
+    // transient #errorOnDraw marks from this early failure.
     if (argCount > 1) {
-        extraArgs = argCount;
-        argCount = 0;
+        return PrimitiveResult::Failure;
     }
 
     // Extract constant alpha for translucent operations (rules 30-31).
@@ -15872,13 +15870,10 @@ PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
     };
     #define BITBLT_FAIL(rule, srcD, dstD, reason) do { logFailure(rule, srcD, dstD, reason); return PrimitiveResult::Failure; } while(0)
 
-    // On success, pop any extra arguments (alpha for copyBitsTranslucent:,
-    // or color/alpha/gammaTable/ungammaTable for sub-pixel variant)
-    // leaving receiver on the stack. primitiveSuccess() handles its own stack.
-    int totalArgs = argCount + extraArgs;
-    #define BITBLT_SUCCESS do { popN(totalArgs); return PrimitiveResult::Success; } while(0)
+    // On success, pop arguments leaving receiver on the stack.
+    #define BITBLT_SUCCESS do { popN(argCount); return PrimitiveResult::Success; } while(0)
 
-    Oop bitBlt = stackValue(totalArgs);
+    Oop bitBlt = stackValue(argCount);
     if (!bitBlt.isObject()) { return PrimitiveResult::Failure; }
 
     // Extract BitBlt parameters
