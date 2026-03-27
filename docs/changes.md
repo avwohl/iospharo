@@ -1,3 +1,29 @@
+# What's New in Build 106
+
+Build 106 — 2026-03-27
+
+## Fix Pharo 14 image compatibility
+
+Pharo 14 images crashed on startup due to two issues:
+
+1. **Early MorphicRenderLoop crash**: P14's `SmalltalkImage>>isInteractive`
+   changed to scan for `--interactive` (double dash) and triggers
+   MorphicRenderLoop during session startup — before the SDL renderer exists.
+   Fixed by switching to `-interactive` (single dash) which satisfies
+   `hasOption:` but avoids the early start. startup.st now starts
+   MorphicRenderLoop after all patches are applied.
+
+2. **Sub-pixel text rendering cascade**: P14 defaults
+   `bitBltSubPixelAvailable` to `true`, causing text rendering to call
+   `copyBitsColor:alpha:gammaTable:ungammaTable:` (BitBlt rule 41) which
+   our VM doesn't implement. The resulting error cascade starved all other
+   processes. Fixed by forcing `bitBltSubPixelAvailable := false` in
+   startup.st so the image uses the standard anti-aliased path.
+
+Both Pharo 13 and Pharo 14 images now start cleanly.
+
+---
+
 # What's New in Build 105
 
 Build 105 — 2026-03-22

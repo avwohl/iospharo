@@ -299,13 +299,21 @@ bool vm_loadImage(const char* imagePath) {
     gInterpreter->setImageName(imagePath);
     gInterpreter->setOriginalImageHeader(loader.header());
 
-    // In Pharo 13, the standard VM is always "headless" by default.
+    // We run "headless" (no OS-level display) with interactive mode (keep GUI alive).
     // OSWorldRenderer >> isApplicableFor: checks:
     //   CommandLineArguments new hasOption: 'interactive'
     // which reads from Smalltalk arguments (attribute indices 3+).
-    // So we pass --headless as VM param AND --interactive as image argument.
+    //
+    // IMPORTANT: use single-dash "-interactive" (not "--interactive").
+    // Pharo 14's SmalltalkImage>>isInteractive scans for "--interactive" (double dash)
+    // and triggers early MorphicRenderLoop start during session startup — before the
+    // SDL renderer is created, causing a nil-renderer crash cascade.  Single-dash
+    // "-interactive" satisfies hasOption: (which normalizes dashes) but avoids the
+    // early start.  startup.st then starts MorphicRenderLoop after applying patches.
+    // Pharo 13's isInteractive scans for "-interactive" (single dash), so both
+    // versions get interactive mode.
     gInterpreter->setVMParameters({"--headless"});
-    gInterpreter->setImageArguments({"--interactive"});
+    gInterpreter->setImageArguments({"-interactive"});
 
     if (!gInterpreter->initialize()) {
         return false;

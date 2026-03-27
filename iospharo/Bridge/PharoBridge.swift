@@ -274,6 +274,10 @@ class PharoBridge: ObservableObject {
         "Supports both Pharo 13 and Pharo 14 images"
         | isP14 |
         isP14 := SystemVersion current major >= 14.
+        "Disable sub-pixel text rendering — our VM does not implement BitBlt rule 41"
+        "Without this, FreeTypeSubPixelAntiAliasedGlyphRenderer crashes with nil data"
+        (Smalltalk hasClassNamed: #FreeTypeSettings) ifTrue: [
+          FreeTypeSettings current instVarNamed: 'bitBltSubPixelAvailable' put: false].
         "Fix: doc browser uses anonymous GitHub API to avoid IceTokenCredentials crash"
         (Smalltalk hasClassNamed: #MicGitHubRessourceReference) ifTrue: [
           MicGitHubRessourceReference compile: 'githubApi
@@ -480,6 +484,13 @@ class PharoBridge: ObservableObject {
                 ifTrue:  [ [ each updateSourcePresenter ] on: Error do: [ "ignore" ] ]
                 ifFalse: [ [ each updateTree ] on: Error do: [ "ignore" ] ] ].
           ] fork ].
+        "P14: Start MorphicRenderLoop manually."
+        "We pass -interactive (single dash) to avoid P14's early render loop start"
+        "(which crashes on nil renderer). After all patches are applied, we start"
+        "the render loop here so the GUI comes up cleanly."
+        isP14 ifTrue: [
+          MorphicUIManager new activate.
+          MorphicUIManager new spawnNewProcess].
         """
         let path = (directory as NSString).appendingPathComponent("startup.st")
         #if DEBUG

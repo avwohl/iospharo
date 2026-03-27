@@ -15818,6 +15818,11 @@ enum FormFields {
 // Combination rules: 0=AND 1=AND+NOT 2=NOT+AND 3=STORE 4=NOT+OR 5=DEST 6=XOR 7=OR
 // 24=alphaBlend 25=paint(OR) 34=sourceWord(copy)
 PrimitiveResult Interpreter::primitiveCopyBits(int argCount) {
+    // argCount=4: copyBitsColor:alpha:gammaTable:ungammaTable: (sub-pixel text).
+    // We don't implement sub-pixel rendering.  Return Failure so the image's
+    // detection test (FreeTypeSettings>>bitBltSubPixelAvailable) catches the
+    // Error and caches bitBltSubPixelAvailable := false.  The image then falls
+    // back to rule 34 with pre-colored glyphs for all text rendering.
     if (argCount > 1) { return PrimitiveResult::Failure; }
 
     // Extract constant alpha for translucent operations (rules 30-31).
