@@ -189,6 +189,14 @@ VM parameters are set in `PharoBridge.swift` when calling `vm_init()`:
   edenSize          10 MB   Young generation size
   maxCodeSize       0       JIT code space (unused)
 
+## Related
+
+- **[pharo-headless-test](https://github.com/avwohl/pharo-headless-test)** —
+  Run the full Pharo SUnit test suite headless with a fake GUI (click menus,
+  press buttons, take screenshots — no display needed). Extracted from this
+  project but works with any Spur VM. Included here as a submodule at
+  `scripts/pharo-headless-test/`.
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
