@@ -90,6 +90,9 @@ class PharoMTKView: MTKView {
     private var currentButton: Int = IOS_RED_BUTTON
     var suppressNextTouchCancel = false
     var suppressNextTouchEnd = false
+
+    // MARK: - Keyboard State
+
     /// Set in pressesBegan when a modified key (Shift+Enter etc.) is handled
     /// there, to suppress the duplicate insertText call from UIKeyInput.
     var handledInPressesBegan = false

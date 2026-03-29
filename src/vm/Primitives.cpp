@@ -698,8 +698,8 @@ PrimitiveResult Interpreter::primitiveEnterCriticalSection(int argCount) {
     if (argCount > 1) return PrimitiveResult::Failure;
 
     if (argCount > 0) {
-        criticalSection = stackValue(1);  // receiver
-        activeProc = stackTop();          // explicit process argument
+        criticalSection = stackValue(1);  // receiver (below argument on stack)
+        activeProc = stackTop();          // explicit process argument (top of stack)
     } else {
         criticalSection = stackTop();     // receiver
         activeProc = getActiveProcess();
@@ -751,8 +751,8 @@ PrimitiveResult Interpreter::primitiveTestAndSetOwnershipOfCriticalSection(int a
     if (argCount > 1) return PrimitiveResult::Failure;
 
     if (argCount > 0) {
-        criticalSection = stackValue(1);  // receiver
-        activeProc = stackTop();          // explicit process argument
+        criticalSection = stackValue(1);  // receiver (below argument on stack)
+        activeProc = stackTop();          // explicit process argument (top of stack)
     } else {
         criticalSection = stackTop();     // receiver
         activeProc = getActiveProcess();

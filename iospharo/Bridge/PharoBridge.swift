@@ -124,7 +124,7 @@ class PharoBridge: ObservableObject {
                 }
                 #else
                 // iOS: Don't let Pharo's SDL_StartTextInput show the soft keyboard.
-                // The user controls the keyboard via the floating toolbar button.
+                // The user controls the keyboard via the ModifierStrip toggle.
                 // Pharo calls SDL_StartTextInput aggressively (e.g. when refocusing
                 // any morph), which would pop the keyboard at unwanted times.
                 #endif

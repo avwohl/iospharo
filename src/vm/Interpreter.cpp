@@ -1281,32 +1281,6 @@ bool Interpreter::step() {
     }
     }
 
-    // Track process switches (disabled for performance - getActiveProcess costs 3 fetches per step)
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-        static FILE* procLog = nullptr;
-        static Oop lastProc = Oop::nil();
-        static int procSwitchCount = 0;
-        Oop curProc = getActiveProcess();
-        if (curProc.rawBits() != lastProc.rawBits()) {
-            if (!procLog) procLog = nullptr;
-            if (procLog && procSwitchCount < 200) {
-                procSwitchCount++;
-                int priority = -1;
-                if (curProc.isObject()) {
-                    Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, curProc);
-                    if (priOop.isSmallInteger()) priority = (int)priOop.asSmallInteger();
-                }
-                fprintf(procLog, "[PROC-SWITCH #%d step=%llu] 0x%llx (pri=%d) -> 0x%llx (pri=",
-                        procSwitchCount, (unsigned long long)g_stepNum,
-                        (unsigned long long)lastProc.rawBits(), -1,
-                        (unsigned long long)curProc.rawBits());
-                fprintf(procLog, "%d)\n", priority);
-                fflush(procLog);
-            }
-            lastProc = curProc;
-        }
-    }
-
     // If the previous step slept in relinquishProcessor, report as idle
     if (relinquishSlept_) {
         relinquishSlept_ = false;

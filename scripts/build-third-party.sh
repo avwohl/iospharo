@@ -205,10 +205,11 @@ build_autotools() {
 }
 
 # Helper: build a CMake library for the current platform
-# NOTE: We do NOT set CMAKE_SYSTEM_NAME=iOS because that triggers CMake's
+# NOTE: We do NOT set CMAKE_SYSTEM_NAME=iOS here because that triggers CMake's
 # built-in iOS toolchain which overrides compiler settings. Instead, the
 # cross-compilation is fully controlled by CFLAGS (-isysroot, -arch, -m*-min).
-# This produces correct static libraries for any target.
+# (build-xcframework.sh DOES set CMAKE_SYSTEM_NAME=iOS for the VM itself,
+# where it's needed for correct platform detection.)
 build_cmake() {
     local name="$1"
     local srcdir="$2"

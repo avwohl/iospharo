@@ -83,7 +83,7 @@ build_slice() {
     local thindir="$builddir/thin-libs"
     mkdir -p "$thindir"
     # Note: SDL2 is NOT merged — FFI.cpp intercepts all SDL_ calls with stubs.
-    # libffi is NOT merged — it's linked separately in the Xcode project.
+    # libffi is NOT merged — it's linked separately in the Xcode project via xcframework.
     for xcf_entry in \
         "cairo:libcairo.a" \
         "freetype:libfreetype.a" \
