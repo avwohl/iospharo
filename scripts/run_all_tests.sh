@@ -46,9 +46,9 @@ while true; do
     echo "$CURRENT $END" > /tmp/sunit_batch.txt
     rm -f /tmp/sunit_run_completed.txt
 
-    # Run with timeout
-    timeout $BATCH_TIMEOUT $VM /tmp/Pharo.image > /dev/null 2>&1
-    EXIT_CODE=$?
+    # Run with timeout (capture exit code without letting set -e abort)
+    EXIT_CODE=0
+    timeout $BATCH_TIMEOUT $VM /tmp/Pharo.image > /dev/null 2>&1 || EXIT_CODE=$?
 
     if [ $EXIT_CODE -eq 124 ]; then
         echo "  [KILLED by timeout after ${BATCH_TIMEOUT}s]" | tee -a "$RESULTS"
