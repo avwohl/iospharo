@@ -110,6 +110,22 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
   marker. The 10-second startup grace period is sufficient.
 - Benchmark runs now exit cleanly (~14s) instead of waiting for 600s timeout.
 
+## 12. Unchecked memory accessors + hot path hints (DONE — ~1% improvement)
+- Added `fetchPointerUnchecked()` / `storePointerUnchecked()` that skip
+  isObject/isValidPointer validation for objects already known valid.
+  Used in: getter/setter fast paths, pushRecvVar handler, method dict
+  lookup, class hierarchy walk, literal access, activateMethod,
+  activateBlock, pushFrame method header fetch.
+- Added `__builtin_expect` hints to activateMethod (CompiledBlock check),
+  pushFrame (overflow check, context sync), primitiveFullClosureValue.
+- Cached classOf investigated — caused 37000x regression (all cache misses).
+  Reverted. The issue: classOf() called before initCachedClasses() during
+  early init, returning nil class Oops.
+- A/B test (3 pairs, CPU-bound startup.st benchmark):
+  Baseline: 6.31, 6.30, 6.35 (avg 6.32s)
+  Optimized: 6.26, 6.28, 6.24 (avg 6.26s)
+  ~1% improvement — M1 branch predictor handles validation branches near-free.
+
 ---
 
 ## Planned
