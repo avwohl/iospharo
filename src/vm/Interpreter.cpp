@@ -8758,17 +8758,14 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     if (primitiveIndex >= 256 && primitiveIndex <= 519) {
         Oop receiver = stackTop();
 
-        if (primitiveIndex >= 264) {
+        if (__builtin_expect(primitiveIndex >= 264, 1)) {
             // Return instance variable at index (primitiveIndex - 264)
-            if (!receiver.isObject()) {
+            if (__builtin_expect(!receiver.isObject(), 0)) {
                 return PrimitiveResult::Failure;
             }
             size_t instVarIndex = static_cast<size_t>(primitiveIndex - 264);
-            size_t slotCount = memory_.slotCountOf(receiver);
-            if (instVarIndex >= slotCount) {
-                return PrimitiveResult::Failure;
-            }
-            Oop value = memory_.fetchPointer(instVarIndex, receiver);
+            // receiver is a known-valid heap object — use unchecked access
+            Oop value = memory_.fetchPointerUnchecked(instVarIndex, receiver);
             *(stackPointer_ - 1) = value;  // Replace stack top
             return PrimitiveResult::Success;
         }
