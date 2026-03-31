@@ -1550,758 +1550,596 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
     }
-    // Sista V1 bytecode dispatch (used by Pharo 10+, format 68021 with modern compiler)
-    // Key differences from V3PlusClosures:
-    // - 0x10-0x1F: push literal var (not temp)
-    // - 0x30-0x3F: push temp 0-15
-    // - 0x40-0x4B: push temp 0-11
-    // - 0x4C-0x4F: push self, true, false, nil
-    // - 0x50-0x51: push 0, push 1
-
     // ========================================================================
-    // SISTA V1 BYTECODE DECODER (Pharo 10+)
-    // Based on EncoderForSistaV1 specification
+    // SISTA V1 BYTECODE DISPATCH (Pharo 10+)
+    // Flat switch for O(1) jump-table dispatch. V3PlusClosures support removed.
+    // Based on EncoderForSistaV1 specification.
     // ========================================================================
 
-    if (bytecode <= 0x0F) {
-        // 0x00-0x0F: Push Receiver Variable 0-15 (same in V3 and Sista)
+    switch (bytecode) {
+
+    // 0x00-0x0F: Push Receiver Variable 0-15
+    case 0x00: case 0x01: case 0x02: case 0x03:
+    case 0x04: case 0x05: case 0x06: case 0x07:
+    case 0x08: case 0x09: case 0x0A: case 0x0B:
+    case 0x0C: case 0x0D: case 0x0E: case 0x0F:
         pushReceiverVariable(bytecode);
-    }
-    else if (bytecode <= 0x1F) {
-        // 0x10-0x1F: Differs by bytecode set
-        if (usesSistaV1_) {
-            // Sista V1: Push Literal Variable 0-15 (dereference Association)
-            pushLiteralVariable(bytecode - 0x10);
-        } else {
-            // V3: push temp 0-15
-            pushTemporary(bytecode - 0x10);
+        break;
+
+    // 0x10-0x1F: Push Literal Variable 0-15 (dereference Association)
+    case 0x10: case 0x11: case 0x12: case 0x13:
+    case 0x14: case 0x15: case 0x16: case 0x17:
+    case 0x18: case 0x19: case 0x1A: case 0x1B:
+    case 0x1C: case 0x1D: case 0x1E: case 0x1F:
+        pushLiteralVariable(bytecode - 0x10);
+        break;
+
+    // 0x20-0x3F: Push Literal Constant 0-31
+    case 0x20: case 0x21: case 0x22: case 0x23:
+    case 0x24: case 0x25: case 0x26: case 0x27:
+    case 0x28: case 0x29: case 0x2A: case 0x2B:
+    case 0x2C: case 0x2D: case 0x2E: case 0x2F:
+    case 0x30: case 0x31: case 0x32: case 0x33:
+    case 0x34: case 0x35: case 0x36: case 0x37:
+    case 0x38: case 0x39: case 0x3A: case 0x3B:
+    case 0x3C: case 0x3D: case 0x3E: case 0x3F:
+        pushLiteralConstant(bytecode - 0x20);
+        break;
+
+    // 0x40-0x4B: Push Temp 0-11
+    case 0x40: case 0x41: case 0x42: case 0x43:
+    case 0x44: case 0x45: case 0x46: case 0x47:
+        pushTemporary(bytecode - 0x40);
+        break;
+    case 0x48: case 0x49: case 0x4A: case 0x4B:
+        pushTemporary(8 + bytecode - 0x48);
+        break;
+
+    // 0x4C-0x4F: Push specials
+    case 0x4C: push(receiver_); break;              // push self
+    case 0x4D: push(memory_.trueObject()); break;   // push true
+    case 0x4E: push(memory_.falseObject()); break;  // push false
+    case 0x4F: push(memory_.nil()); break;           // push nil
+
+    // 0x50: Push 0
+    case 0x50: push(Oop::fromSmallInteger(0)); break;
+    // 0x51: Push 1
+    case 0x51: push(Oop::fromSmallInteger(1)); break;
+    // 0x52: Push thisContext / thisProcess
+    case 0x52: {
+        int savedExtB = extB_;
+        extB_ = 0;
+        if (savedExtB == 1) {
+            push(getActiveProcess());
+            break;
         }
-    }
-    else if (bytecode <= 0x3F) {
-        // 0x20-0x3F: Differs by bytecode set
-        if (usesSistaV1_) {
-            // Sista V1: Push Literal Constant 0-31 (push literal directly)
-            pushLiteralConstant(bytecode - 0x20);
-        } else {
-            // V3: 0x20-0x2F = push literal 0-15, 0x30-0x3F = push literal 16-31
-            pushLiteralConstant(bytecode - 0x20);
+        // Push thisContext - must materialize inline frames first
+        Oop contextToPush = activeContext_;
+        if (frameDepth_ > 0) {
+            contextToPush = materializeFrameStack();
+            activeContext_ = contextToPush;
+            currentFrameMaterializedCtx_ = memory_.nil();
+            frameDepth_ = 0;
         }
+        push(contextToPush);
+        break;
     }
-    else if (bytecode <= 0x5F) {
-        // 0x40-0x5F: Differs significantly between V3 and Sista
-        if (!usesSistaV1_) {
-            // V3PlusClosures: 0x40-0x5F = push literal variable 0-31
-            pushLiteralVariable(bytecode - 0x40);
+    // 0x53: Duplicate top
+    case 0x53: push(stackTop()); break;
+
+    // 0x54-0x57: UNASSIGNED
+    case 0x54: case 0x55: case 0x56: case 0x57:
+        break;
+
+    // 0x58: Return self
+    case 0x58:
+        push(receiver_);
+        returnFromMethod();
+        break;
+    // 0x59: Return true
+    case 0x59:
+        push(memory_.trueObject());
+        returnFromMethod();
+        break;
+    // 0x5A: Return false
+    case 0x5A:
+        push(memory_.falseObject());
+        returnFromMethod();
+        break;
+    // 0x5B: Return nil
+    case 0x5B:
+        push(memory_.nil());
+        returnFromMethod();
+        break;
+    // 0x5C: Return top
+    case 0x5C:
+        returnFromMethod();
+        break;
+    // 0x5D: BlockReturn nil
+    case 0x5D: {
+        bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                            method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
+        if (inFullBlock) {
+            returnValue(memory_.nil());
         } else {
-            // Sista V1:
-            // 0x40-0x47: Push Temp 0-7
-            // 0x48-0x4B: Push Temp 8-11
-            // 0x4C: Push self, 0x4D: Push true, 0x4E: Push false, 0x4F: Push nil
-            // 0x50: Push 0, 0x51: Push 1, 0x52: Push thisContext, 0x53: Dup
-            // 0x54-0x57: UNASSIGNED
-            // 0x58: Return self, 0x59: Return true, 0x5A: Return false, 0x5B: Return nil
-            // 0x5C: Return top, 0x5D: BlockReturn nil, 0x5E: BlockReturn top, 0x5F: Nop
-            if (bytecode <= 0x47) {
-                // 0x40-0x47: Push Temp 0-7
-                pushTemporary(bytecode - 0x40);
-            } else if (bytecode <= 0x4B) {
-                // 0x48-0x4B: Push Temp 8-11
-                pushTemporary(8 + bytecode - 0x48);
-            } else if (bytecode <= 0x4F) {
-                // 0x4C-0x4F: Push specials
-                switch (bytecode) {
-                    case 0x4C: push(receiver_); break;  // push self
-                    case 0x4D: push(memory_.trueObject()); break;   // push true
-                    case 0x4E: push(memory_.falseObject()); break;  // push false
-                    case 0x4F: push(memory_.nil()); break;          // push nil
-                }
-            } else if (bytecode <= 0x53) {
-                // 0x50-0x53: Special pushes
-                switch (bytecode) {
-                    case 0x50: push(Oop::fromSmallInteger(0)); break;  // push 0
-                    case 0x51: push(Oop::fromSmallInteger(1)); break;  // push 1
-                    case 0x52: {
-                        // Sista V1: extB == 0 → push thisContext
-                        //           extB == 1 → push thisProcess (active Process)
-                        int savedExtB = extB_;
-                        extB_ = 0;
-
-                        if (savedExtB == 1) {
-                            // Push thisProcess: the active Process object
-                            push(getActiveProcess());
-                            break;
-                        }
-
-                        // Push thisContext - must materialize inline frames first!
-                        Oop contextToPush = activeContext_;
-
-                        if (frameDepth_ > 0) {
-                            size_t savedFrameDepth = frameDepth_;
-                            contextToPush = materializeFrameStack();
-                            activeContext_ = contextToPush;
-                            currentFrameMaterializedCtx_ = memory_.nil();  // Now running from context, not frames
-                            frameDepth_ = 0;
-
-                        }
-
-                        push(contextToPush);
-                        break;
-                    }
-                    case 0x53: push(stackTop()); break;                // duplicate top
-                }
-            } else if (bytecode <= 0x57) {
-                // 0x54-0x57: UNASSIGNED in Sista V1
-                // These should not appear in valid Pharo code
-            } else {
-                // 0x58-0x5F: Returns and special operations
-                switch (bytecode) {
-                    case 0x58: // return self
-                    case 0x59: // return true
-                    case 0x5A: // return false
-                    case 0x5B: // return nil
-                    {
-                        Oop val;
-                        switch (bytecode) {
-                            case 0x58: val = receiver_; break;
-                            case 0x59: val = memory_.trueObject(); break;
-                            case 0x5A: val = memory_.falseObject(); break;
-                            default:   val = memory_.nil(); break;
-                        }
-                        // Push value and use returnFromMethod() which handles
-                        // both regular returns and NLR with ensure: detection.
-                        // Previously this had inline NLR that skipped ensure: checks.
-                        push(val);
-                        returnFromMethod();
-                        break;
-                    }
-                    case 0x5C: {
-                        returnFromMethod();
-                        break;
-                    }
-                    case 0x5D: {
-                        // BlockReturn nil
-                        // If we're in a full block (CompiledBlock), return nil from the block frame.
-                        // If we're in an inlined block within a CompiledMethod, push nil and continue.
-                        bool inFullBlock5D = (method_.isObject() && method_.rawBits() > 0x10000 &&
-                                              method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
-                        if (inFullBlock5D) {
-                            returnValue(memory_.nil());
-                        } else {
-                            // Inlined block: push nil (the block's return value) and continue
-                            push(memory_.nil());
-                            // Jump by extB_ bytes (0 means just continue to next bytecode)
-                            if (extB_ != 0) {
-                                instructionPointer_ += extB_;
-                                extB_ = 0;
-                            }
-                        }
-                        break;
-                    }
-                    case 0x5E: {                                           // block return top
-                        // Sista V1: 0x5E is extensible via Extend A and Extend B
-                        // extA_ = N: return from N-th enclosing block (non-local return)
-                        // extB_ = jump distance for inlined blocks
-                        int enclosingLevels = extA_;
-                        int jumpDist = extB_;
-                        extA_ = 0;
-                        extB_ = 0;
-
-                        if (enclosingLevels > 0) {
-                            // Non-local return - unwind enclosingLevels blocks
-                            returnFromBlock();
-                        } else {
-                            // Check if we're in a full block (CompiledBlock) or inlined block
-                            bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
-                                                method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
-                            if (inFullBlock) {
-                                // Full block return - pop TOS and return from block frame
-                                Oop value = pop();
-                                returnValue(value);
-                            } else {
-                                // Inlined block return - TOS is the block's result value.
-                                // It stays on the stack. Jump by jumpDist bytes forward
-                                // (0 means continue to next bytecode).
-                                instructionPointer_ += jumpDist;
-                            }
-                        }
-                        break;
-                    }
-                    case 0x5F: /* Nop */ break;
-                }
+            push(memory_.nil());
+            if (extB_ != 0) {
+                instructionPointer_ += extB_;
+                extB_ = 0;
             }
         }
+        break;
     }
-    else if (bytecode <= 0x6F) {
-        // 0x60-0x6F: Differs between V3 and Sista
-        if (!usesSistaV1_) {
-            // V3: Pop and store receiver variable 0-7 / temp 0-7
-            if (bytecode <= 0x67) {
+    // 0x5E: BlockReturn top
+    case 0x5E: {
+        int enclosingLevels = extA_;
+        int jumpDist = extB_;
+        extA_ = 0;
+        extB_ = 0;
+        if (enclosingLevels > 0) {
+            returnFromBlock();
+        } else {
+            bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
+                                method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
+            if (inFullBlock) {
                 Oop value = pop();
-                setReceiverInstVar(bytecode - 0x60, value);
+                returnValue(value);
             } else {
-                Oop value = pop();
-                setTemporary(bytecode - 0x68, value);
+                instructionPointer_ += jumpDist;
             }
-        } else {
-            // Sista V1: 0x60-0x6F = Send Arithmetic Message 0-15
-            // (+, -, <, >, <=, >=, =, ~=, *, /, \\, @, bitShift:, //, bitAnd:, bitOr:)
-            sendArithmetic(bytecode - 0x60);
         }
+        break;
     }
-    else if (bytecode <= 0x7F) {
-        // 0x70-0x7F: Differs between V3 and Sista
-        if (!usesSistaV1_) {
-            // V3PlusClosures:
-            // 0x70-0x77: push specials (self, true, false, nil, -1, 0, 1, 2)
-            // 0x78-0x7B: return (self, true, false, nil)
-            // 0x7C: return top, 0x7D: block return
-            if (bytecode <= 0x77) {
-                switch (bytecode) {
-                    case 0x70: push(receiver_); break;
-                    case 0x71: push(memory_.trueObject()); break;
-                    case 0x72: push(memory_.falseObject()); break;
-                    case 0x73: push(memory_.nil()); break;
-                    case 0x74: push(Oop::fromSmallInteger(-1)); break;
-                    case 0x75: push(Oop::fromSmallInteger(0)); break;
-                    case 0x76: push(Oop::fromSmallInteger(1)); break;
-                    case 0x77: push(Oop::fromSmallInteger(2)); break;
-                }
-            } else if (bytecode <= 0x7B) {
-                switch (bytecode) {
-                    case 0x78: returnValue(receiver_); break;
-                    case 0x79: returnValue(memory_.trueObject()); break;
-                    case 0x7A: returnValue(memory_.falseObject()); break;
-                    case 0x7B: returnValue(memory_.nil()); break;
-                }
-            } else if (bytecode == 0x7C) {
-                returnFromMethod();
-            } else if (bytecode == 0x7D) {
-                returnFromBlock();
-            }
-        } else {
-            // Sista V1: 0x70-0x7F = Send Special Message 16-31
-            // (at:, at:put:, size, next, nextPut:, atEnd, ==, class, ~~, value, value:, do:, new, new:, x, y)
+    // 0x5F: Nop
+    case 0x5F:
+        break;
 
-            // Bytecodes 0x79 (value), 0x7A (value:), 0x7B (do:) are optimized:
-            // If receiver is a FullBlockClosure, directly call primitiveFullClosureValue
-            // to activate the block (which sets up homeFrameDepth for NLR).
-            // This matches the reference VM's bytecodePrimValue/bytecodePrimValueWithArg.
-            int which = bytecode - 0x70;
-            bool handled = false;
-            if (which == 9 || which == 10) {
-                // 0x79 = value (0 args), 0x7A = value: (1 arg)
-                // Optimized: directly activate FullBlockClosures via primitiveFullClosureValue
-                // which calls activateBlock() and sets homeFrameDepth for NLR.
-                int numArgs = which - 9;
-                Oop rcvr = stackValue(numArgs);
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
-                    ObjectHeader* rcvrHdr = rcvr.asObjectPtr();
-                    if (rcvrHdr->classIndex() == fullBlockClosureClassIndex_) {
-                        argCount_ = numArgs;
-                        primitiveFailed_ = false;
-                        primFailCode_ = 0;
-                        PrimitiveResult result = primitiveFullClosureValue(numArgs);
-                        if (result == PrimitiveResult::Success) {
-                            handled = true;
-                        }
-                    }
-                }
-            }
-            if (!handled) {
-                commonSend(which);
-            }
+    // 0x60-0x6F: Send Arithmetic Message 0-15
+    // (+, -, <, >, <=, >=, =, ~=, *, /, \\, @, bitShift:, //, bitAnd:, bitOr:)
+    case 0x60: case 0x61: case 0x62: case 0x63:
+    case 0x64: case 0x65: case 0x66: case 0x67:
+    case 0x68: case 0x69: case 0x6A: case 0x6B:
+    case 0x6C: case 0x6D: case 0x6E: case 0x6F:
+        sendArithmetic(bytecode - 0x60);
+        break;
+
+    // 0x70-0x7F: Send Special Message 16-31
+    // (at:, at:put:, size, next, nextPut:, atEnd, ==, class, ~~, value, value:, do:, new, new:, x, y)
+    // 0x79 (value) and 0x7A (value:) have fast paths for FullBlockClosures.
+    case 0x79: {
+        // value (0 args) — fast path for FullBlockClosure
+        Oop rcvr = stackValue(0);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            argCount_ = 0;
+            primitiveFailed_ = false;
+            primFailCode_ = 0;
+            if (primitiveFullClosureValue(0) == PrimitiveResult::Success)
+                break;
         }
+        commonSend(9);
+        break;
     }
-    else if (bytecode <= 0x8F) {
-        // Sista V1: 0x80-0x8F (128-143): Send literal selector 0-15 with 0 args
-        int litIndex = bytecode & 0x0F;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 0);
+    case 0x7A: {
+        // value: (1 arg) — fast path for FullBlockClosure
+        Oop rcvr = stackValue(1);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            argCount_ = 1;
+            primitiveFailed_ = false;
+            primFailCode_ = 0;
+            if (primitiveFullClosureValue(1) == PrimitiveResult::Success)
+                break;
+        }
+        commonSend(10);
+        break;
     }
-    else if (bytecode <= 0x9F) {
-        // Sista V1: 0x90-0x9F (144-159): Send literal selector 0-15 with 1 arg
-        int litIndex = bytecode & 0x0F;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 1);
-    }
-    else if (bytecode <= 0xAF) {
-        // Sista V1: 0xA0-0xAF (160-175): Send literal selector 0-15 with 2 args
-        int litIndex = bytecode & 0x0F;
-        Oop selector = literal(litIndex);
-        sendSelector(selector, 2);
-    }
-    else if (bytecode <= 0xB7) {
-        // Sista V1: 0xB0-0xB7 (176-183): Short unconditional jump (1-8 bytes forward)
-        int offset = (bytecode & 0x07) + 1;
-        shortJump(offset);
-    }
-    else if (bytecode <= 0xBF) {
-        // Sista V1: 0xB8-0xBF (184-191): Short conditional jump if true (1-8 bytes)
-        int offset = (bytecode & 0x07) + 1;
-        shortJumpIfTrue(offset);
-    }
-    else if (bytecode <= 0xC7) {
-        // Sista V1: 0xC0-0xC7 (192-199): Short conditional jump if false (1-8 bytes)
-        int offset = (bytecode & 0x07) + 1;
-        shortJumpIfFalse(offset);
-    }
-    else if (bytecode <= 0xCF) {
-        // Sista V1: 0xC8-0xCF (200-207): Pop and Store Receiver Variable 0-7
-        int varIndex = bytecode & 0x07;
+    case 0x70: case 0x71: case 0x72: case 0x73:
+    case 0x74: case 0x75: case 0x76: case 0x77:
+    case 0x78: case 0x7B: case 0x7C: case 0x7D:
+    case 0x7E: case 0x7F:
+        commonSend(bytecode - 0x70);
+        break;
+
+    // 0x80-0x8F: Send literal selector 0-15 with 0 args
+    case 0x80: case 0x81: case 0x82: case 0x83:
+    case 0x84: case 0x85: case 0x86: case 0x87:
+    case 0x88: case 0x89: case 0x8A: case 0x8B:
+    case 0x8C: case 0x8D: case 0x8E: case 0x8F:
+        sendSelector(literal(bytecode & 0x0F), 0);
+        break;
+
+    // 0x90-0x9F: Send literal selector 0-15 with 1 arg
+    case 0x90: case 0x91: case 0x92: case 0x93:
+    case 0x94: case 0x95: case 0x96: case 0x97:
+    case 0x98: case 0x99: case 0x9A: case 0x9B:
+    case 0x9C: case 0x9D: case 0x9E: case 0x9F:
+        sendSelector(literal(bytecode & 0x0F), 1);
+        break;
+
+    // 0xA0-0xAF: Send literal selector 0-15 with 2 args
+    case 0xA0: case 0xA1: case 0xA2: case 0xA3:
+    case 0xA4: case 0xA5: case 0xA6: case 0xA7:
+    case 0xA8: case 0xA9: case 0xAA: case 0xAB:
+    case 0xAC: case 0xAD: case 0xAE: case 0xAF:
+        sendSelector(literal(bytecode & 0x0F), 2);
+        break;
+
+    // 0xB0-0xB7: Short unconditional jump (1-8 bytes forward)
+    case 0xB0: case 0xB1: case 0xB2: case 0xB3:
+    case 0xB4: case 0xB5: case 0xB6: case 0xB7:
+        shortJump((bytecode & 0x07) + 1);
+        break;
+
+    // 0xB8-0xBF: Short conditional jump if true (1-8 bytes)
+    case 0xB8: case 0xB9: case 0xBA: case 0xBB:
+    case 0xBC: case 0xBD: case 0xBE: case 0xBF:
+        shortJumpIfTrue((bytecode & 0x07) + 1);
+        break;
+
+    // 0xC0-0xC7: Short conditional jump if false (1-8 bytes)
+    case 0xC0: case 0xC1: case 0xC2: case 0xC3:
+    case 0xC4: case 0xC5: case 0xC6: case 0xC7:
+        shortJumpIfFalse((bytecode & 0x07) + 1);
+        break;
+
+    // 0xC8-0xCF: Pop and Store Receiver Variable 0-7
+    case 0xC8: case 0xC9: case 0xCA: case 0xCB:
+    case 0xCC: case 0xCD: case 0xCE: case 0xCF: {
         Oop value = pop();
-        setReceiverInstVar(varIndex, value);
+        setReceiverInstVar(bytecode & 0x07, value);
+        break;
     }
-    else if (bytecode <= 0xD7) {
-        // Sista V1: 0xD0-0xD7 (208-215): Store and pop temp 0-7
-        int tempIndex = bytecode & 0x07;
+
+    // 0xD0-0xD7: Pop and Store Temp 0-7
+    case 0xD0: case 0xD1: case 0xD2: case 0xD3:
+    case 0xD4: case 0xD5: case 0xD6: case 0xD7: {
         Oop value = pop();
-        setTemporary(tempIndex, value);
+        setTemporary(bytecode & 0x07, value);
+        break;
     }
-    else if (bytecode == 0xD8) {
-        // Sista V1: 0xD8 (216): Pop stack (discard top of stack)
+
+    // 0xD8: Pop stack (discard top)
+    case 0xD8:
         pop();
-    }
-    else if (bytecode == 0xD9) {
-        // Sista V1: 0xD9 (217): Unconditional trap (debugging)
+        break;
+
+    // 0xD9: Unconditional trap (debugging)
+    case 0xD9:
         stopVM("Unconditional trap bytecode 0xD9");
-    }
-    else if (bytecode <= 0xDF) {
-        // Sista V1: 0xDA-0xDF (218-223): Various extended operations
-        // These are typically used for debugging or reserved - no-op
-    }
-    else if (bytecode <= 0xE7) {
-        // ========================================================================
-        // Sista V1: 0xE0-0xE7 (224-231): 2-byte bytecodes - Extensions and Push operations
-        // ========================================================================
-        if (!usesSistaV1_) {
-            // V3PlusClosures: 0xE0-0xE7 = Send literal selector 0-7 with 2 args
-            int litIndex = bytecode - 0xE0;
-            Oop selector = literal(litIndex);
-            sendSelector(selector, 2);
-        } else {
-            switch (bytecode) {
-                case 0xE0: // 224: Extend A (unsigned) - modifies next bytecode's index
-                {
-                    uint8_t extByte = fetchByte();
-                    extA_ = (extA_ << 8) | extByte;
-                    inExtension_ = true;  // Prevent forceYield before target bytecode
-                    break;
-                }
-                case 0xE1: // 225: Extend B (signed) - modifies next bytecode's numArgs/offset
-                {
-                    uint8_t extByte = fetchByte();
-                    // Sign extend if high bit set
-                    if (extByte >= 128) {
-                        extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
-                    } else {
-                        extB_ = (extB_ << 8) | extByte;
-                    }
-                    inExtension_ = true;  // Prevent forceYield before target bytecode
-                    break;
-                }
-                case 0xE2: // 226: Push Receiver Variable #iiiiiiii (+ extA * 256)
-                {
-                    uint8_t indexByte = fetchByte();
-                    int fullIndex = (extA_ << 8) | indexByte;
-                    extA_ = 0;
-                    pushReceiverVariable(fullIndex);
-                    break;
-                }
-                case 0xE3: // 227: Push Literal Variable #iiiiiiii (+ extA * 256)
-                {
-                    uint8_t indexByte = fetchByte();
-                    int fullIndex = (extA_ << 8) | indexByte;
-                    extA_ = 0;
-                    pushLiteralVariable(fullIndex);
-                    break;
-                }
-                case 0xE4: // 228: Push Literal Constant #iiiiiiii (+ extA * 256)
-                {
-                    uint8_t indexByte = fetchByte();
-                    int fullIndex = (extA_ << 8) | indexByte;
-                    extA_ = 0;
-                    pushLiteralConstant(fullIndex);
-                    break;
-                }
-                case 0xE5: // 229: Push Temporary Variable #iiiiiiii
-                {
-                    uint8_t indexByte = fetchByte();
-                    pushTemporary(indexByte);
-                    break;
-                }
-                case 0xE6: // 230: UNASSIGNED (was pushNClosureTemps)
-                    fetchByte();  // Skip the argument byte
-                    break;
-                case 0xE7: // 231: Push Array (j=0) or Pop into Array (j=1)
-                {
-                    // jkkkkkkk: j=operation type, kkkkkkk=array size
-                    uint8_t desc = fetchByte();
-                    int arraySize = desc & 0x7F;
-                    bool popIntoArray = (desc >> 7) != 0;
+        break;
 
-                    // Create array
-                    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
-                    uint32_t classIndex = memory_.indexOfClass(arrayClass);
-                    Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
+    // 0xDA-0xDF: Reserved / no-op
+    case 0xDA: case 0xDB: case 0xDC: case 0xDD: case 0xDE: case 0xDF:
+        break;
 
-                    // Trace temp vector creation
-                    if constexpr (ENABLE_DEBUG_LOGGING) {
-                        static FILE* e7Log = nullptr;
-                        static int e7Count = 0;
-                        if (!e7Log) e7Log = nullptr;
-                        if (e7Log && e7Count < 50) {
-                            e7Count++;
-                            std::string methodSel = "<unknown>";
-                            if (method_.isObject() && method_.rawBits() > 0x10000) {
-                                ObjectHeader* mHdr = method_.asObjectPtr();
-                                if (mHdr->isCompiledMethod()) {
-                                    Oop hdr = memory_.fetchPointer(0, method_);
-                                    if (hdr.isSmallInteger()) {
-                                        size_t numLits = hdr.asSmallInteger() & 0x7FFF;
-                                        if (numLits >= 2) {
-                                            Oop selLit = memory_.fetchPointer(numLits - 1, method_);
-                                            if (selLit.isObject() && selLit.rawBits() > 0x10000) {
-                                                ObjectHeader* slHdr = selLit.asObjectPtr();
-                                                if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
-                                                    methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
-                                                }
-                                            }
-                                        }
+    // ====== 2-byte bytecodes: Extensions and Push operations (0xE0-0xE7) ======
+
+    case 0xE0: { // Extend A (unsigned)
+        uint8_t extByte = fetchByte();
+        extA_ = (extA_ << 8) | extByte;
+        inExtension_ = true;
+        break;
+    }
+    case 0xE1: { // Extend B (signed)
+        uint8_t extByte = fetchByte();
+        if (extByte >= 128)
+            extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
+        else
+            extB_ = (extB_ << 8) | extByte;
+        inExtension_ = true;
+        break;
+    }
+    case 0xE2: { // Push Receiver Variable #i (+ extA * 256)
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        pushReceiverVariable(fullIndex);
+        break;
+    }
+    case 0xE3: { // Push Literal Variable #i (+ extA * 256)
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        pushLiteralVariable(fullIndex);
+        break;
+    }
+    case 0xE4: { // Push Literal Constant #i (+ extA * 256)
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        pushLiteralConstant(fullIndex);
+        break;
+    }
+    case 0xE5: { // Push Temporary Variable #i
+        uint8_t indexByte = fetchByte();
+        pushTemporary(indexByte);
+        break;
+    }
+    case 0xE6: // UNASSIGNED (was pushNClosureTemps)
+        fetchByte();
+        break;
+    case 0xE7: { // Push Array (j=0) or Pop into Array (j=1)
+        uint8_t desc = fetchByte();
+        int arraySize = desc & 0x7F;
+        bool popIntoArray = (desc >> 7) != 0;
+        Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+        uint32_t classIndex = memory_.indexOfClass(arrayClass);
+        Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            static FILE* e7Log = nullptr;
+            static int e7Count = 0;
+            if (!e7Log) e7Log = nullptr;
+            if (e7Log && e7Count < 50) {
+                e7Count++;
+                std::string methodSel = "<unknown>";
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mHdr = method_.asObjectPtr();
+                    if (mHdr->isCompiledMethod()) {
+                        Oop hdr = memory_.fetchPointer(0, method_);
+                        if (hdr.isSmallInteger()) {
+                            size_t numLits = hdr.asSmallInteger() & 0x7FFF;
+                            if (numLits >= 2) {
+                                Oop selLit = memory_.fetchPointer(numLits - 1, method_);
+                                if (selLit.isObject() && selLit.rawBits() > 0x10000) {
+                                    ObjectHeader* slHdr = selLit.asObjectPtr();
+                                    if (slHdr->isBytesObject() && slHdr->byteSize() < 50) {
+                                        methodSel = std::string((char*)slHdr->bytes(), slHdr->byteSize());
                                     }
                                 }
                             }
-                            fprintf(e7Log, "[E7 #%d] Created Array size=%d popInto=%s in #%s\n",
-                                    e7Count, arraySize, popIntoArray ? "YES" : "NO", methodSel.c_str());
-                            fprintf(e7Log, "  array=0x%llx\n", (unsigned long long)array.rawBits());
-                            fflush(e7Log);
                         }
                     }
-
-                    if (popIntoArray) {
-                        // Pop arraySize elements into new array
-                        for (int i = arraySize - 1; i >= 0; i--) {
-                            memory_.storePointer(i, array, pop());
-                        }
-                    }
-                    push(array);
-                    break;
                 }
+                fprintf(e7Log, "[E7 #%d] Created Array size=%d popInto=%s in #%s\n",
+                        e7Count, arraySize, popIntoArray ? "YES" : "NO", methodSel.c_str());
+                fprintf(e7Log, "  array=0x%llx\n", (unsigned long long)array.rawBits());
+                fflush(e7Log);
             }
         }
+        if (popIntoArray) {
+            for (int i = arraySize - 1; i >= 0; i--)
+                memory_.storePointer(i, array, pop());
+        }
+        push(array);
+        break;
     }
-    else if (bytecode <= 0xEF) {
-        // ========================================================================
-        // Sista V1: 0xE8-0xEF (232-239): 2-byte bytecodes - Push/Send/Jump
-        // ========================================================================
-        switch (bytecode) {
-            case 0xE8: // 232: Push Integer #iiiiiiii (+ extB * 256, signed)
-            {
-                uint8_t intByte = fetchByte();
-                int value = intByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extB_ = 0;
-                push(Oop::fromSmallInteger(value));
-                break;
-            }
-            case 0xE9: // 233: Push Character #iiiiiiii (+ extB * 256)
-            {
-                uint8_t charByte = fetchByte();
-                int codePoint = charByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extB_ = 0;
-                // Create Character object - character is stored as immediate
-                push(Oop::fromCharacter(codePoint));
-                break;
-            }
-            case 0xEA: // 234: Send Literal Selector #iiiii (+ extA*32) with jjj (+ extB*8) args
-            {
-                uint8_t desc = fetchByte();
-                int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
-                int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
-                extA_ = 0;
-                extB_ = 0;
-                Oop selector = literal(selectorIndex);
-                sendSelector(selector, numArgs);
-                break;
-            }
-            case 0xEB: // 235: Send To Superclass
-            {
-                uint8_t desc = fetchByte();
-                int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
-                int effectiveExtB = extB_;
-                extA_ = 0;
-                extB_ = 0;
-                Oop selector = literal(selectorIndex);
-                Oop lookupClass;
 
-                if (effectiveExtB >= 64) {
-                    // Directed super send (used by FullBlockClosures):
-                    // Stack layout (top to bottom): definingClass, argN, ..., arg1, receiver
-                    // The defining class is on top of stack. Lookup starts from its SUPERCLASS.
-                    // numArgs uses (extB - 64) instead of extB.
-                    int numArgs = (((effectiveExtB - 64) << 3) | (desc & 0x07)) & 0xFF;
-                    Oop definingClass = pop();  // Pop the defining class from top of stack
-                    lookupClass = superclassOf(definingClass);
+    // ====== 2-byte bytecodes: Push/Send/Jump (0xE8-0xEF) ======
 
-                    Oop method = lookupMethod(selector, lookupClass);
-                    if (method.isNil()) {
-                        sendDoesNotUnderstand(selector, numArgs);
-                    } else {
-                        // Check for primitive and execute it before activating the method
-                        int primIdx = primitiveIndexOf(method);
-                        if (primIdx > 0) {
-                            argCount_ = numArgs;
-                            primitiveFailed_ = false;
-                            primFailCode_ = 0;
-                            newMethod_ = method;
-                            PrimitiveResult result = executePrimitive(primIdx, numArgs);
-                            if (result == PrimitiveResult::Success) {
-                                break;  // Primitive handled it
-                            }
-                        }
-                        activateMethod(method, numArgs);
-                    }
-                } else {
-                    // Normal super send: lookup from superclass of method's defining class
-                    int numArgs = ((effectiveExtB << 3) | (desc & 0x07)) & 0xFF;
-                    Oop methodClass = methodClassOf(method_);
+    case 0xE8: { // Push Integer #i (+ extB * 256, signed)
+        uint8_t intByte = fetchByte();
+        int value = intByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        push(Oop::fromSmallInteger(value));
+        break;
+    }
+    case 0xE9: { // Push Character #i (+ extB * 256)
+        uint8_t charByte = fetchByte();
+        int codePoint = charByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        push(Oop::fromCharacter(codePoint));
+        break;
+    }
+    case 0xEA: { // Send Literal Selector #iiiii (+ extA*32) with jjj (+ extB*8) args
+        uint8_t desc = fetchByte();
+        int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
+        int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
+        extA_ = 0;
+        extB_ = 0;
+        sendSelector(literal(selectorIndex), numArgs);
+        break;
+    }
+    case 0xEB: { // Send To Superclass
+        uint8_t desc = fetchByte();
+        int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
+        int effectiveExtB = extB_;
+        extA_ = 0;
+        extB_ = 0;
+        Oop selector = literal(selectorIndex);
+        Oop lookupClass;
 
-                    if (methodClass.isNil() || !methodClass.isObject()) {
-                        lookupClass = superclassOf(memory_.classOf(receiver_));
-                    } else {
-                        lookupClass = superclassOf(methodClass);
-                    }
-                    Oop method = lookupMethod(selector, lookupClass);
-
-                    if (method.isNil()) {
-                        sendDoesNotUnderstand(selector, numArgs);
-                    } else {
-                        // Check for primitive and execute it before activating the method
-                        int primIdx = primitiveIndexOf(method);
-                        if (primIdx > 0) {
-                            argCount_ = numArgs;
-                            primitiveFailed_ = false;
-                            primFailCode_ = 0;
-                            newMethod_ = method;
-                            PrimitiveResult result = executePrimitive(primIdx, numArgs);
-                            if (result == PrimitiveResult::Success) {
-                                break;  // Primitive handled it
-                            }
-                        }
-                        activateMethod(method, numArgs);
-                    }
+        if (effectiveExtB >= 64) {
+            // Directed super send (FullBlockClosures)
+            int numArgs = (((effectiveExtB - 64) << 3) | (desc & 0x07)) & 0xFF;
+            Oop definingClass = pop();
+            lookupClass = superclassOf(definingClass);
+            Oop method = lookupMethod(selector, lookupClass);
+            if (method.isNil()) {
+                sendDoesNotUnderstand(selector, numArgs);
+            } else {
+                int primIdx = primitiveIndexOf(method);
+                if (primIdx > 0) {
+                    argCount_ = numArgs;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = method;
+                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success)
+                        break;
                 }
-                break;
+                activateMethod(method, numArgs);
             }
-            case 0xEC: // 236: Call Mapped Inlined Primitive #iiiiiiii
-            {
-                uint8_t primByte = fetchByte();
-                // Inlined primitives are handled specially by the JIT
-                // For interpreter, we just execute the fallback code
-                (void)primByte;
-                break;
-            }
-            case 0xED: // 237: Jump #iiiiiiii (+ extB * 256, signed)
-            {
-                uint8_t offsetByte = fetchByte();
-                // Match Cog VM: cast to unsigned before shift to avoid UB on negative extB_
-                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extB_ = 0;
-                instructionPointer_ += offset;
-                break;
-            }
-            case 0xEE: // 238: Pop and Jump On True #iiiiiiii (+ extB * 256)
-            {
-                uint8_t offsetByte = fetchByte();
-                // Match Cog VM: unsigned shift + reset both extA_ and extB_
-                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extA_ = 0;
-                extB_ = 0;
-                Oop value = pop();
-                if (isTrue(value)) {
-                    instructionPointer_ += offset;
-                } else if (!isFalse(value)) {
-                    push(value);
-                    sendMustBeBoolean(value);
+        } else {
+            // Normal super send
+            int numArgs = ((effectiveExtB << 3) | (desc & 0x07)) & 0xFF;
+            Oop methodClass = methodClassOf(method_);
+            if (methodClass.isNil() || !methodClass.isObject())
+                lookupClass = superclassOf(memory_.classOf(receiver_));
+            else
+                lookupClass = superclassOf(methodClass);
+            Oop method = lookupMethod(selector, lookupClass);
+            if (method.isNil()) {
+                sendDoesNotUnderstand(selector, numArgs);
+            } else {
+                int primIdx = primitiveIndexOf(method);
+                if (primIdx > 0) {
+                    argCount_ = numArgs;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = method;
+                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success)
+                        break;
                 }
-                break;
-            }
-            case 0xEF: // 239: Pop and Jump On False #iiiiiiii (+ extB * 256)
-            {
-                uint8_t offsetByte = fetchByte();
-                // Match Cog VM: unsigned shift + reset both extA_ and extB_
-                int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extA_ = 0;
-                extB_ = 0;
-                Oop value = pop();
-                if (isFalse(value)) {
-                    instructionPointer_ += offset;
-                } else if (!isTrue(value)) {
-                    push(value);
-                    sendMustBeBoolean(value);
-                }
-                break;
+                activateMethod(method, numArgs);
             }
         }
+        break;
     }
-    else if (bytecode <= 0xF7) {
-        // ========================================================================
-        // Sista V1: 0xF0-0xF7 (240-247): 2-byte bytecodes - Store operations
-        // ========================================================================
-        switch (bytecode) {
-            case 0xF0: // 240: Pop and Store Receiver Variable #iiiiiiii (+ extA * 256)
-            {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                extA_ = 0;
-                Oop value = pop();
-                setReceiverInstVar(fullIndex, value);
-                break;
-            }
-            case 0xF1: // 241: Pop and Store Literal Variable #iiiiiiii (+ extA * 256)
-            {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                extA_ = 0;
-                Oop value = pop();
-                Oop assoc = literal(fullIndex);
-                if (assoc.isObject()) {
-                    memory_.storePointer(1, assoc, value);  // Store in Association's value slot
-                }
-                break;
-            }
-            case 0xF2: // 242: Pop and Store Temporary Variable #iiiiiiii
-            {
-                uint8_t indexByte = fetchByte();
-                Oop value = pop();
-                setTemporary(indexByte, value);
-                break;
-            }
-            case 0xF3: // 243: Store Receiver Variable #iiiiiiii (+ extA * 256) - no pop
-            {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                extA_ = 0;
-                Oop value = stackTop();
-                setReceiverInstVar(fullIndex, value);
-                break;
-            }
-            case 0xF4: // 244: Store Literal Variable #iiiiiiii (+ extA * 256) - no pop
-            {
-                uint8_t indexByte = fetchByte();
-                int fullIndex = (extA_ << 8) | indexByte;
-                extA_ = 0;
-                Oop value = stackTop();
-                Oop assoc = literal(fullIndex);
-                if (assoc.isObject()) {
-                    memory_.storePointer(1, assoc, value);
-                }
-                break;
-            }
-            case 0xF5: // 245: Store Temporary Variable #iiiiiiii - no pop
-            {
-                uint8_t indexByte = fetchByte();
-                Oop value = stackTop();
-                setTemporary(indexByte, value);
-                break;
-            }
-            case 0xF6: // 246: UNASSIGNED
-            case 0xF7: // 247: UNASSIGNED
-                fetchByte();  // Skip argument byte
-                break;
+    case 0xEC: { // Call Mapped Inlined Primitive #i
+        uint8_t primByte = fetchByte();
+        (void)primByte; // Interpreter fallback — JIT handles these
+        break;
+    }
+    case 0xED: { // Jump #i (+ extB * 256, signed)
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extB_ = 0;
+        instructionPointer_ += offset;
+        break;
+    }
+    case 0xEE: { // Pop and Jump On True #i (+ extB * 256)
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extA_ = 0;
+        extB_ = 0;
+        Oop value = pop();
+        if (isTrue(value)) {
+            instructionPointer_ += offset;
+        } else if (!isFalse(value)) {
+            push(value);
+            sendMustBeBoolean(value);
         }
+        break;
     }
-    else {
-        // ========================================================================
-        // Sista V1: 0xF8-0xFF (248-255): 3-byte bytecodes
-        // ========================================================================
-        switch (bytecode) {
-            case 0xF8: // 248: Call Primitive
-            {
-                // iiiiiiii mssjjjjj: primitive = iiiiiiii + (jjjjj * 256)
-                // m=1: inlined primitive, ss: operation set
-                uint8_t primLowByte = fetchByte();
-                uint8_t flagsAndHigh = fetchByte();
-                int primIndex = primLowByte | ((flagsAndHigh & 0x1F) << 8);
-                // Primitive is called at method activation, this bytecode is skipped
-                (void)primIndex;
-                break;
-            }
-            case 0xF9: // 249: Push FullBlockClosure
-            {
-                // xxxxxxxx siyyyyyy: literal index xxxxxxxx (+extA*256)
-                // numCopied yyyyyy, s=receiverOnStack, i=ignoreOuterContext
-                uint8_t litIndex = fetchByte();
-                uint8_t flags = fetchByte();
-                int fullLitIndex = (extA_ << 8) | litIndex;
-                extA_ = 0;
-                int numCopied = flags & 0x3F;
-                bool receiverOnStack = (flags >> 7) & 1;
-                bool ignoreOuterContext = (flags >> 6) & 1;
-                createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack, ignoreOuterContext);
-                break;
-            }
-            case 0xFA: // 250: Push Closure
-            {
-                // eeiiikkk jjjjjjjj: numCopied iii (+extA//16*8), numArgs kkk (+extA\16*8)
-                // blockSize jjjjjjjj (+extB*256), ee=num extension bytes
-                uint8_t desc = fetchByte();
-                uint8_t blockSizeLow = fetchByte();
-                int numCopied = ((desc >> 3) & 0x07) | ((extA_ >> 4) << 3);
-                int numArgs = (desc & 0x07) | ((extA_ & 0x0F) << 3);
-                int blockSize = blockSizeLow + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
-                extA_ = 0;
-                extB_ = 0;
-                createBlockWithArgs(numArgs, numCopied, blockSize);
-                break;
-            }
-            case 0xFB: // 251: Push Temp At kkkkkkkk In Temp Vector At jjjjjjjj
-            {
-                uint8_t tempIndex = fetchByte();
-                uint8_t vectorIndex = fetchByte();
-
-                // Temp vector is always a local temp (for both methods and blocks).
-                Oop tempVector = temporary(vectorIndex);
-                Oop value;
-                if (tempVector.isObject()) {
-                    value = memory_.fetchPointer(tempIndex, tempVector);
-                } else {
-                    value = memory_.nil();
-                }
-                push(value);
-                break;
-            }
-            case 0xFC: // 252: Store Temp At kkkkkkkk In Temp Vector At jjjjjjjj (no pop)
-            {
-                uint8_t tempIndex = fetchByte();
-                uint8_t vectorIndex = fetchByte();
-                Oop value = stackTop();
-
-                // Temp vector is always a local temp (for both methods and blocks).
-                Oop tempVector = temporary(vectorIndex);
-                if (tempVector.isObject()) {
-                    memory_.storePointer(tempIndex, tempVector, value);
-                }
-                break;
-            }
-            case 0xFD: // 253: Pop and Store Temp At kkkkkkkk In Temp Vector At jjjjjjjj
-            {
-                uint8_t tempIndex = fetchByte();
-                uint8_t vectorIndex = fetchByte();
-                Oop value = pop();
-
-                // Temp vector is always a local temp (for both methods and blocks).
-                Oop tempVector = temporary(vectorIndex);
-                if (tempVector.isObject()) {
-                    memory_.storePointer(tempIndex, tempVector, value);
-                }
-                break;
-            }
-            case 0xFE: // 254: UNASSIGNED
-            case 0xFF: // 255: UNASSIGNED
-                fetchByte();
-                fetchByte();
-                break;
+    case 0xEF: { // Pop and Jump On False #i (+ extB * 256)
+        uint8_t offsetByte = fetchByte();
+        int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extA_ = 0;
+        extB_ = 0;
+        Oop value = pop();
+        if (isFalse(value)) {
+            instructionPointer_ += offset;
+        } else if (!isTrue(value)) {
+            push(value);
+            sendMustBeBoolean(value);
         }
+        break;
     }
+
+    // ====== 2-byte bytecodes: Store operations (0xF0-0xF7) ======
+
+    case 0xF0: { // Pop and Store Receiver Variable #i (+ extA * 256)
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        Oop value = pop();
+        setReceiverInstVar(fullIndex, value);
+        break;
+    }
+    case 0xF1: { // Pop and Store Literal Variable #i (+ extA * 256)
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        Oop value = pop();
+        Oop assoc = literal(fullIndex);
+        if (assoc.isObject())
+            memory_.storePointer(1, assoc, value);
+        break;
+    }
+    case 0xF2: { // Pop and Store Temporary Variable #i
+        uint8_t indexByte = fetchByte();
+        Oop value = pop();
+        setTemporary(indexByte, value);
+        break;
+    }
+    case 0xF3: { // Store Receiver Variable #i (+ extA * 256) - no pop
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        setReceiverInstVar(fullIndex, stackTop());
+        break;
+    }
+    case 0xF4: { // Store Literal Variable #i (+ extA * 256) - no pop
+        uint8_t indexByte = fetchByte();
+        int fullIndex = (extA_ << 8) | indexByte;
+        extA_ = 0;
+        Oop assoc = literal(fullIndex);
+        if (assoc.isObject())
+            memory_.storePointer(1, assoc, stackTop());
+        break;
+    }
+    case 0xF5: { // Store Temporary Variable #i - no pop
+        uint8_t indexByte = fetchByte();
+        setTemporary(indexByte, stackTop());
+        break;
+    }
+    case 0xF6: // UNASSIGNED
+    case 0xF7: // UNASSIGNED
+        fetchByte();
+        break;
+
+    // ====== 3-byte bytecodes (0xF8-0xFF) ======
+
+    case 0xF8: { // Call Primitive
+        uint8_t primLowByte = fetchByte();
+        uint8_t flagsAndHigh = fetchByte();
+        int primIndex = primLowByte | ((flagsAndHigh & 0x1F) << 8);
+        (void)primIndex; // Skipped at activation time
+        break;
+    }
+    case 0xF9: { // Push FullBlockClosure
+        uint8_t litIndex = fetchByte();
+        uint8_t flags = fetchByte();
+        int fullLitIndex = (extA_ << 8) | litIndex;
+        extA_ = 0;
+        int numCopied = flags & 0x3F;
+        bool receiverOnStack = (flags >> 7) & 1;
+        bool ignoreOuterContext = (flags >> 6) & 1;
+        createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack, ignoreOuterContext);
+        break;
+    }
+    case 0xFA: { // Push Closure
+        uint8_t desc = fetchByte();
+        uint8_t blockSizeLow = fetchByte();
+        int numCopied = ((desc >> 3) & 0x07) | ((extA_ >> 4) << 3);
+        int numArgs = (desc & 0x07) | ((extA_ & 0x0F) << 3);
+        int blockSize = blockSizeLow + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
+        extA_ = 0;
+        extB_ = 0;
+        createBlockWithArgs(numArgs, numCopied, blockSize);
+        break;
+    }
+    case 0xFB: { // Push Temp At k In Temp Vector At j
+        uint8_t tempIndex = fetchByte();
+        uint8_t vectorIndex = fetchByte();
+        Oop tempVector = temporary(vectorIndex);
+        push(tempVector.isObject() ? memory_.fetchPointer(tempIndex, tempVector) : memory_.nil());
+        break;
+    }
+    case 0xFC: { // Store Temp At k In Temp Vector At j (no pop)
+        uint8_t tempIndex = fetchByte();
+        uint8_t vectorIndex = fetchByte();
+        Oop tempVector = temporary(vectorIndex);
+        if (tempVector.isObject())
+            memory_.storePointer(tempIndex, tempVector, stackTop());
+        break;
+    }
+    case 0xFD: { // Pop and Store Temp At k In Temp Vector At j
+        uint8_t tempIndex = fetchByte();
+        uint8_t vectorIndex = fetchByte();
+        Oop value = pop();
+        Oop tempVector = temporary(vectorIndex);
+        if (tempVector.isObject())
+            memory_.storePointer(tempIndex, tempVector, value);
+        break;
+    }
+    case 0xFE: // UNASSIGNED
+    case 0xFF: // UNASSIGNED
+        fetchByte();
+        fetchByte();
+        break;
+
+    } // switch (bytecode)
 }
 
 
@@ -4248,20 +4086,24 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     int64_t headerBits = methodHeader.asSmallInteger();
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
 
-    // Detect bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1
-    // In 64-bit Spur, negative header means alternate bytecode set (SistaV1)
+    // Bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1.
+    // Only Sista V1 (Pharo 10+) is supported.
     usesSistaV1_ = headerBits < 0;
+    if (__builtin_expect(!usesSistaV1_, 0)) {
+        stopVM("V3PlusClosures bytecode set not supported (requires Pharo 10+ / Sista V1)");
+        return;
+    }
 
     uint8_t* methodBytes = methodObj->bytes();
     size_t bytecodeStart = (1 + numLiterals) * 8;
     instructionPointer_ = methodBytes + bytecodeStart;
 
     // Skip past callPrimitive bytecode (0xF8 lowByte highByte) if present.
-    // In Sista V1, primitive methods start with callPrimitive which should be skipped
+    // Primitive methods start with callPrimitive which should be skipped
     // when the primitive fails and we fall through to execute bytecodes.
     // If <primitive: N error: ec> is declared, 0xF5 (Store Temp #i) follows callPrimitive.
     // We must skip that too and store the error object directly in the temp.
-    if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+    if (instructionPointer_[0] == 0xF8) {
         instructionPointer_ += 3;  // Skip 0xF8 + 2 bytes of primitive index
 
         // Check for "Store Temporary Variable #i" (0xF5 i) after callPrimitive
@@ -7500,9 +7342,12 @@ bool Interpreter::executeFromContext(Oop context) {
     int numLiterals = headerBits & 0x7FFF;  // bits 0-14 are numLiterals
     int numTemps = (headerBits >> 18) & 0x3F;
 
-    // Detect bytecode set: sign bit (bit 63) = 0 for V3PlusClosures, 1 for SistaV1
-    // In 64-bit Spur, negative header means alternate bytecode set (SistaV1)
+    // Bytecode set: only Sista V1 (Pharo 10+) is supported.
     usesSistaV1_ = headerBits < 0;
+    if (__builtin_expect(!usesSistaV1_, 0)) {
+        fprintf(stderr, "[VM] V3PlusClosures bytecode set not supported\n");
+        return false;
+    }
 
     uint8_t* methodBytes = methodObj->bytes();
     size_t bytecodeStart = (1 + numLiterals) * 8;
@@ -7542,21 +7387,21 @@ bool Interpreter::executeFromContext(Oop context) {
             } else {
                 // Invalid PC - reset to start of bytecodes
                 instructionPointer_ = methodBytes + bytecodeStart;
-                if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+                if (instructionPointer_[0] == 0xF8) {
                     instructionPointer_ += 3;
                 }
             }
         } else {
             instructionPointer_ = methodBytes + bytecodeStart;
             // Skip past callPrimitive if at start
-            if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+            if (instructionPointer_[0] == 0xF8) {
                 instructionPointer_ += 3;
             }
         }
     } else {
         instructionPointer_ = methodBytes + bytecodeStart;
         // Skip past callPrimitive if at start
-        if (usesSistaV1_ && instructionPointer_[0] == 0xF8) {
+        if (instructionPointer_[0] == 0xF8) {
             instructionPointer_ += 3;
         }
     }
