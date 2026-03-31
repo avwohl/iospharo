@@ -323,30 +323,42 @@ void ObjectMemory::initCachedClasses() {
     cachedClassSmallInteger_ = specialObject(SpecialObjectIndex::ClassSmallInteger);
     cachedClassCharacter_ = specialObject(SpecialObjectIndex::ClassCharacter);
     cachedClassSmallFloat_ = classAtIndex(4);
+
+    // Verify caches are valid — if nil, classOf() would break all sends
+    if (cachedClassSmallInteger_.isNil() || !cachedClassSmallInteger_.isObject()) {
+        fprintf(stderr, "[WARN] initCachedClasses: SmallInteger class not found (0x%llx)\n",
+                (unsigned long long)cachedClassSmallInteger_.rawBits());
+    }
+    if (cachedClassCharacter_.isNil() || !cachedClassCharacter_.isObject()) {
+        fprintf(stderr, "[WARN] initCachedClasses: Character class not found (0x%llx)\n",
+                (unsigned long long)cachedClassCharacter_.rawBits());
+    }
+    if (cachedClassSmallFloat_.isNil() || !cachedClassSmallFloat_.isObject()) {
+        fprintf(stderr, "[WARN] initCachedClasses: SmallFloat class not found (0x%llx)\n",
+                (unsigned long long)cachedClassSmallFloat_.rawBits());
+    }
 }
 
 Oop ObjectMemory::classOf(Oop obj) const {
-    // Fast path: check tag bits first (single mask + compare per type)
     if (obj.isSmallInteger()) {
-        return cachedClassSmallInteger_;
+        return specialObject(SpecialObjectIndex::ClassSmallInteger);
     }
     if (obj.isCharacter()) {
-        return cachedClassCharacter_;
+        return specialObject(SpecialObjectIndex::ClassCharacter);
     }
     if (obj.isSmallFloat()) {
-        return cachedClassSmallFloat_;
+        return classAtIndex(4);
     }
     if (!obj.isObject()) {
         return nilObject_;
     }
 
-    // nil, true, false are valid heap objects
     if (obj.isNil()) {
         ObjectHeader* header = obj.asObjectPtr();
         return classAtIndex(header->classIndex());
     }
 
-    if (__builtin_expect(!isValidPointer(obj), 0)) {
+    if (!isValidPointer(obj)) {
         return nilObject_;
     }
 
