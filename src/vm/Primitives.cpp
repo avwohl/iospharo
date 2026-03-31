@@ -3,6 +3,14 @@
  *
  * This file implements ~795 VM primitives covering arithmetic, memory,
  * I/O, process scheduling, FFI, and platform-specific operations.
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * This is a clean C++ reimplementation. The primitive numbering, semantics,
+ * and behavior are defined by the Pharo project (https://pharo.org) and
+ * its predecessors. VMMaker's StackInterpreter.initializePrimitiveTable
+ * served as the authoritative reference for the primitive dispatch table.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "Interpreter.hpp"

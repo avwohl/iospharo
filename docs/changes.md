@@ -1,3 +1,30 @@
+# What's New in Build 114
+
+Build 114 — 2026-03-31
+
+## Credits, licenses, and attribution (GitHub issue #5)
+
+Added proper attribution for all open source code used in the project:
+
+- **THIRD_PARTY_LICENSES**: New file with full license texts for all 14
+  upstream projects (Pharo, OpenSmalltalk-VM, IJG JPEG, libffi, SDL2,
+  cairo, FreeType, pixman, HarfBuzz, libpng, OpenSSL, libssh2, libgit2)
+- **LICENSE**: Updated to reference third-party code and their licenses
+- **README.md**: Expanded credits section with all upstream projects,
+  their authors, versions, and license types
+- **Source file headers**: Added attribution comments to all VMMaker-generated
+  plugins (B2DPlugin, DSAPrims, JPEGReaderPlugin, SqueakSSL, JPEGReadWriter2Plugin),
+  SqueakSSL platform files (sqMacSSL.c), generated VM headers (vmCallback.h,
+  cointerp.h, cogmethod.h, interp.h, cogit.h, vmMemoryMap.h, vmRememberedSet.h,
+  cointerp.hpp), compatibility shims (sq.h, sqVirtualMachine.h), and the
+  clean C++ VM core files (Interpreter.cpp, ObjectMemory.cpp, Primitives.cpp,
+  ImageLoader.cpp, ImageWriter.cpp, FFI.cpp, Oop.hpp, ObjectHeader.hpp)
+- **In-app Acknowledgements**: New AcknowledgementsView accessible from
+  Settings > Acknowledgements, listing all upstream projects with their
+  licenses, copyrights, and project URLs
+
+---
+
 # What's New in Build 113
 
 Build 113 — 2026-03-31

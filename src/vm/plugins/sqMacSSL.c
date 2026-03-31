@@ -4,9 +4,14 @@
  *   CONTENT: SSL platform functions
  *
  *   AUTHORS:  Andreas Raab (ar)
- *
  *             Tobias Pape (topa)
- *               Hasso Plattner Institute, Postdam, Germany
+ *               Hasso Plattner Institute, Potsdam, Germany
+ *
+ *   From OpenSmalltalk-VM / Pharo-VM.
+ *   Original source: https://github.com/OpenSmalltalk/opensmalltalk-vm
+ *
+ *   Copyright (c) 2013 3D Immersive Collaboration Consulting, LLC.
+ *   Licensed under the MIT License -- see THIRD_PARTY_LICENSES for details.
  *****************************************************************************/
 #include "sq.h"
 #include "SqueakSSL.h"

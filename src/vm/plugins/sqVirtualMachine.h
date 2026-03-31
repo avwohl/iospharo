@@ -1,4 +1,8 @@
-/* Minimal sqVirtualMachine.h for plugin compilation */
+/* Minimal sqVirtualMachine.h for plugin compilation.
+ *
+ * Based on interfaces defined by OpenSmalltalk-VM / Pharo-VM.
+ * See THIRD_PARTY_LICENSES for upstream license details.
+ */
 #ifndef _SqueakVM_H
 #define _SqueakVM_H
 

@@ -1,3 +1,12 @@
+/*
+ * SqueakSSL.h — SSL/TLS support for the Squeak/Pharo VM
+ *
+ * From OpenSmalltalk-VM / Pharo-VM.
+ * Original source: https://github.com/OpenSmalltalk/opensmalltalk-vm
+ *
+ * Copyright (c) 2013 3D Immersive Collaboration Consulting, LLC.
+ * Licensed under the MIT License — see THIRD_PARTY_LICENSES for details.
+ */
 #ifndef SqueakSSL_H
 #define SqueakSSL_H
 

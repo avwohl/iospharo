@@ -1,5 +1,8 @@
 /* sq.h — Minimal compatibility shim for VMMaker-generated plugins.
  * Provides the types and macros that plugins expect from the Squeak VM.
+ *
+ * Based on interfaces defined by OpenSmalltalk-VM / Pharo-VM.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 #ifndef _SQ_H
 #define _SQ_H

@@ -1,8 +1,12 @@
 /*
  * ObjectHeader.hpp - Spur 64-bit Object Header Format
  *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
  * Every heap-allocated Smalltalk object starts with a 64-bit header word
- * that encodes metadata about the object.
+ * that encodes metadata about the object. The Spur header format is defined
+ * by the Pharo project (https://pharo.org) and the Spur memory manager
+ * designed by Eliot Miranda. See THIRD_PARTY_LICENSES for upstream license details.
  *
  * SPUR 64-BIT HEADER LAYOUT:
  *

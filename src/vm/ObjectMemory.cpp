@@ -1,5 +1,13 @@
 /*
  * ObjectMemory.cpp - Heap Management Implementation
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * This is a clean C++ reimplementation of the Spur 64-bit object memory,
+ * based on the architecture and algorithms defined by the Pharo project
+ * (https://pharo.org) and OpenSmalltalk-VM. The Spur memory manager
+ * design by Eliot Miranda served as the authoritative reference.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "ObjectMemory.hpp"

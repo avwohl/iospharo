@@ -46,6 +46,12 @@ struct SettingsView: View {
                                 .foregroundColor(.secondary)
                         }
                     }
+
+                    NavigationLink {
+                        AcknowledgementsView()
+                    } label: {
+                        Label("Acknowledgements", systemImage: "heart")
+                    }
                 }
             }
             .navigationTitle("Settings")

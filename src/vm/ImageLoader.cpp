@@ -1,5 +1,11 @@
 /*
  * ImageLoader.cpp - Spur 64-bit Image File Loader Implementation
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * Loads standard Pharo/Squeak Spur images. The image format is defined by
+ * the Pharo project (https://pharo.org) and OpenSmalltalk-VM.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "ImageLoader.hpp"
