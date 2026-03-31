@@ -2,9 +2,10 @@
 # Run the full Pharo test suite in batches, auto-recovering from VM hangs.
 # Each batch gets a timeout; if the VM dies, we restart from the next batch.
 #
-# Usage: scripts/run_all_tests.sh [start_batch] [batch_size]
-#   start_batch: starting class index (default: 1)
-#   batch_size: classes per batch (default: 100)
+# Usage: scripts/run_all_tests.sh [--validate] [start_batch] [batch_size]
+#   --validate:   run image validator before and after each batch
+#   start_batch:  starting class index (default: 1)
+#   batch_size:   classes per batch (default: 100)
 
 set -e
 
@@ -14,8 +15,26 @@ RESULTS="/tmp/sunit_test_results_combined.txt"
 DETAILS="/tmp/sunit_test_detail_combined.txt"
 BATCH_TIMEOUT=600  # 10 minutes per batch of 100 classes
 
-START=${1:-1}
-BATCH_SIZE=${2:-100}
+VALIDATE=0
+VALIDATOR="../validate_smalltalk_image/build/validate_smalltalk_image"
+
+# Parse args
+POSITIONAL=()
+for arg in "$@"; do
+    case "$arg" in
+        --validate) VALIDATE=1 ;;
+        *) POSITIONAL+=("$arg") ;;
+    esac
+done
+
+START=${POSITIONAL[0]:-1}
+BATCH_SIZE=${POSITIONAL[1]:-100}
+
+if [ $VALIDATE -eq 1 ] && [ ! -x "$VALIDATOR" ]; then
+    echo "ERROR: Validator not found at $VALIDATOR"
+    echo "Build it: cd ../validate_smalltalk_image && cmake -B build && cmake --build build"
+    exit 1
+fi
 
 # Clear combined output files
 > "$RESULTS"
@@ -23,6 +42,7 @@ BATCH_SIZE=${2:-100}
 
 echo "=== Full Test Suite Run ===" | tee -a "$RESULTS"
 echo "Start: $START, Batch size: $BATCH_SIZE, Timeout: ${BATCH_TIMEOUT}s per batch" | tee -a "$RESULTS"
+[ $VALIDATE -eq 1 ] && echo "Image validation: ENABLED" | tee -a "$RESULTS"
 echo "" | tee -a "$RESULTS"
 
 CURRENT=$START
@@ -37,6 +57,16 @@ while true; do
     curl -sL https://get.pharo.org/64/130 | bash > /dev/null 2>&1
     cd - > /dev/null
 
+    # Validate fresh image (pre-test)
+    if [ $VALIDATE -eq 1 ]; then
+        echo "  [validate] Pre-test validation..." | tee -a "$RESULTS"
+        if $VALIDATOR /tmp/Pharo.image 2>/dev/null | tee -a "$RESULTS"; then
+            echo "  [validate] Pre-test: PASS" | tee -a "$RESULTS"
+        else
+            echo "  [validate] Pre-test: ERRORS FOUND" | tee -a "$RESULTS"
+        fi
+    fi
+
     # Inject test runner
     touch /tmp/sunit_run_completed.txt
     /tmp/pharo --headless /tmp/Pharo.image eval --save \
@@ -45,6 +75,13 @@ while true; do
     # Set batch range
     echo "$CURRENT $END" > /tmp/sunit_batch.txt
     rm -f /tmp/sunit_run_completed.txt
+
+    # Tell test runner to save image if validation is enabled
+    if [ $VALIDATE -eq 1 ]; then
+        touch /tmp/sunit_save_after.txt
+    else
+        rm -f /tmp/sunit_save_after.txt
+    fi
 
     # Run with timeout (capture exit code without letting set -e abort)
     EXIT_CODE=0
@@ -55,6 +92,17 @@ while true; do
     elif [ $EXIT_CODE -ne 0 ]; then
         echo "  [VM exited with code $EXIT_CODE]" | tee -a "$RESULTS"
     fi
+
+    # Validate saved image (post-test)
+    if [ $VALIDATE -eq 1 ] && [ -f /tmp/Pharo.image ]; then
+        echo "  [validate] Post-test validation..." | tee -a "$RESULTS"
+        if $VALIDATOR /tmp/Pharo.image 2>/dev/null | tee -a "$RESULTS"; then
+            echo "  [validate] Post-test: PASS" | tee -a "$RESULTS"
+        else
+            echo "  [validate] Post-test: ERRORS FOUND" | tee -a "$RESULTS"
+        fi
+    fi
+    rm -f /tmp/sunit_save_after.txt
 
     # Append results
     if [ -f /tmp/sunit_test_results.txt ]; then
