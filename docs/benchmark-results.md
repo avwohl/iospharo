@@ -109,16 +109,30 @@ These are dominated by per-class constant overhead, not per-test cost.
 
 ## Analysis
 
-The ~200ms "floor" visible in the slowest classes (all showing ref=0ms,
-ours~=200ms) is a per-class constant cost — likely TestCase class
-enumeration, setUp/tearDown, Delay-based watchdog overhead, or process
-scheduling. The actual per-test execution cost is modest: for classes
-with enough tests to be measurable, we're only 1.5-8x slower.
+The distribution is bimodal: classes are either 0-5ms or 150-213ms with
+nothing in between. This is NOT per-class constant overhead — it reflects
+which classes have computationally heavy tests vs trivial ones.
 
-The 77x overall ratio is misleading because:
-1. 1050 classes finish in 0ms on both VMs
-2. 22 classes show ~200ms constant overhead (not per-test cost)
-3. For the 32 classes with ref >= 1ms, the ratio is only 1.5x
+The 22 slow classes (150-213ms) have per-test costs of 1-25ms:
+
+    Class                              Tests   ms/test  Why slow
+    MicRawBlockTest                       8     25.0    Markdown parsing, string manipulation
+    AIAstarTest                           8     19.0    Graph search with heavy iteration
+    IntegerTest                          83      2.4    Factorial, modular arithmetic, primes
+    DictionaryTest                      205      1.0    Rehashing, growing, iteration
+    OrderedCollectionTest               351      0.6    Collection mutation in loops
+
+Meanwhile "fast" classes do 0.05ms/test (trivial operations like set
+membership, identity checks, basic array access) — these are essentially
+free on both VMs.
+
+The reference VM (JIT) finishes even the heavy classes in <1ms total
+because it compiles hot loops to native code. Our interpreter pays full
+dispatch cost for every iteration, which is the expected 100-200x penalty
+for loop-heavy Smalltalk code on an interpreter vs JIT.
+
+The 77x overall ratio is dominated by these 22 heavy classes (5.4s of
+the 5.7s total). The other 1977 classes total only 0.3s.
 
 Previous measurement (build ecd0d70, 2026-02-23) showed ~445x slower.
 Current build 111 shows 77x — a ~5.8x improvement, though methodology
