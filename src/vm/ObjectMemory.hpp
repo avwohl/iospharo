@@ -265,6 +265,14 @@ public:
     /// Get the class of an object (follows class index to class table)
     Oop classOf(Oop obj) const;
 
+    /// Initialize cached class Oops for fast classOf (call after image load)
+    void initCachedClasses();
+
+    // Cached immediate class Oops (avoid specialObject lookup on every send)
+    Oop cachedClassSmallInteger_{};
+    Oop cachedClassCharacter_{};
+    Oop cachedClassSmallFloat_{};
+
     /// Get the number of fixed (strong) instance variable slots for an object.
     /// For WeakWithFixed objects, these are the strong fields before the weak
     /// variable part. Reads the instance specification from the object's class.

@@ -319,37 +319,39 @@ Oop ObjectMemory::shallowCopy(Oop original) {
 
 // ===== CLASS TABLE =====
 
+void ObjectMemory::initCachedClasses() {
+    cachedClassSmallInteger_ = specialObject(SpecialObjectIndex::ClassSmallInteger);
+    cachedClassCharacter_ = specialObject(SpecialObjectIndex::ClassCharacter);
+    cachedClassSmallFloat_ = classAtIndex(4);
+}
+
 Oop ObjectMemory::classOf(Oop obj) const {
+    // Fast path: check tag bits first (single mask + compare per type)
     if (obj.isSmallInteger()) {
-        return specialObject(SpecialObjectIndex::ClassSmallInteger);
+        return cachedClassSmallInteger_;
     }
     if (obj.isCharacter()) {
-        return specialObject(SpecialObjectIndex::ClassCharacter);
+        return cachedClassCharacter_;
     }
     if (obj.isSmallFloat()) {
-        // SmallFloat64's class is at class table index 4 (Cog VM's smallFloatTag)
-        // NOT ClassFloat (special object index 9) which is BoxedFloat64
-        return classAtIndex(4);
+        return cachedClassSmallFloat_;
     }
     if (!obj.isObject()) {
-        return nilObject_;  // Return proper nil, not raw 0
+        return nilObject_;
     }
 
-    // nil, true, false are valid heap objects - look up their class normally
-    // (isValidPointer rejects nil, so handle it before the check)
+    // nil, true, false are valid heap objects
     if (obj.isNil()) {
-        // nil's class is UndefinedObject - read classIndex from nil's header
         ObjectHeader* header = obj.asObjectPtr();
         return classAtIndex(header->classIndex());
     }
 
-    if (!isValidPointer(obj)) {
+    if (__builtin_expect(!isValidPointer(obj), 0)) {
         return nilObject_;
     }
 
     ObjectHeader* header = obj.asObjectPtr();
-    uint32_t classIdx = header->classIndex();
-    return classAtIndex(classIdx);
+    return classAtIndex(header->classIndex());
 }
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
