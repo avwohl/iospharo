@@ -4860,7 +4860,7 @@ void Interpreter::handleStackOverflow(int argCount) {
 void Interpreter::activateMethod(Oop method, int argCount) {
     // Save current state
 
-    if (!pushFrame(method, argCount)) {
+    if (__builtin_expect(!pushFrame(method, argCount), 0)) {
         handleStackOverflow(argCount);
         return;
     }
@@ -4870,21 +4870,18 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     argCount_ = argCount;
     closure_ = memory_.nil();  // Method activations have no closure
 
-    // findInterned: trace detection (disabled — too verbose)
-
-    // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock
-    // CompiledMethod: homeMethod_ = method
-    // CompiledBlock: homeMethod_ = slot 2 first (Pharo 11+ FullBlockClosure), fallback to slot 0 chain
-    if (method.isObject()) {
+    // Determine homeMethod_ based on whether this is a CompiledMethod or CompiledBlock.
+    // From sendSelector(), method is always a CompiledMethod (method dicts don't contain
+    // blocks). CompiledBlock activation is handled via primitiveFullClosureValue.
+    // Check once and take the fast path for the common case.
+    if (__builtin_expect(method.isObject(), 1)) {
         ObjectHeader* methodHdr = method.asObjectPtr();
         uint32_t classIdx = methodHdr->classIndex();
 
-        if (classIdx == compiledBlockClassIndex_) {
-            // CompiledBlock - try slot 2 first (enclosing method in FullBlockClosure model)
-            homeMethod_ = method;  // Default in case chain traversal fails
+        if (__builtin_expect(classIdx == compiledBlockClassIndex_, 0)) {
+            // CompiledBlock (rare from activateMethod — usually blocks go through primitiveFullClosureValue)
+            homeMethod_ = method;
 
-            // Try slot 2 first (home method in FullBlockClosure model)
-            // method is a known-valid CompiledBlock
             Oop slot2 = memory_.fetchPointerUnchecked(2, method);
             if (slot2.isObject()) {
                 ObjectHeader* slot2Hdr = slot2.asObjectPtr();
@@ -4893,7 +4890,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
             }
 
-            // Fallback: try slot 0 chain (older formats)
             if (homeMethod_ == method) {
                 Oop homeCandidate = memory_.fetchPointerUnchecked(0, method);
                 int maxHops = 10;
@@ -4911,13 +4907,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
             }
         } else {
-            // CompiledMethod or other - homeMethod is the same as method
             homeMethod_ = method;
         }
     } else {
         homeMethod_ = method;
     }
-
 
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
@@ -5348,17 +5342,12 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
-    // Save current execution state before switching to new method
-    if (frameDepth_ >= MaxFrameDepth) {
-        stopVM("Frame depth overflow in pushFrame()");
-        return false;
-    }
-
-    // Graceful stack overflow: refuse to go deeper than StackOverflowLimit.
-    // The caller is responsible for cleaning up the operand stack (popping args,
-    // pushing nil as a return value). This allows the Smalltalk code to unwind
-    // naturally as each method returns nil to its caller.
-    if (frameDepth_ >= StackOverflowLimit) {
+    // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
+    // catches both infinite recursion (soft) and hard overflow.
+    if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+        if (frameDepth_ >= MaxFrameDepth) {
+            stopVM("Frame depth overflow in pushFrame()");
+        }
         return false;
     }
 
@@ -5382,12 +5371,9 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     currentFrameMaterializedCtx_ = memory_.nil();  // New frame has no cached context
 
     // When pushing a frame on top of a heap context (fd 0→1), sync the return
-    // address to the heap context's PC slot. This keeps the heap context's PC
-    // current so that if Smalltalk code later modifies it (e.g. Context>>privRefresh
-    // setting pc := startpc for restart), those modifications won't be overwritten
-    // by a later materializeFrameStack call.
-    if (frameDepth_ == 1 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000 &&
-        frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000) {
+    // address to the heap context's PC slot. Rare: only on first frame push.
+    if (__builtin_expect(frameDepth_ == 1 && activeContext_.isObject() && activeContext_.rawBits() > 0x10000 &&
+        frame.savedMethod.isObject() && frame.savedMethod.rawBits() > 0x10000, 0)) {
         ObjectHeader* mObj = frame.savedMethod.asObjectPtr();
         uint8_t* mBytes = mObj->bytes();
         if (frame.savedIP >= mBytes && frame.savedIP < mBytes + mObj->byteSize()) {
