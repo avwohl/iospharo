@@ -64,3 +64,21 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 - **Conclusion**: The 2-way 4096-entry global method cache is the right design
   for a pure interpreter. Further send optimization would need bytecode
   superinstructions (combining push+send into one dispatch).
+
+## 8. Speculative superinstructions (DONE)
+- Profile-guided: instrumented DISPATCH_NEXT to count all 65536 bytecode pairs
+  over 100M bytecodes of the full test suite
+- Implemented speculative fusion in computed goto handlers (peek at next bytecode):
+  - SmallInt comparison + conditional jump: 5.3M pairs → branch directly,
+    skip boolean object creation (eliminate push+pop+identity-check)
+  - push1+arith+ (2.2M, 65% hit), push1+arith- (183K), push0+arith= (356K):
+    increment/decrement without pushing constant
+  - pushNil + spec== (1.73M, 46% hit): nil identity check without pushing nil
+  - dup + pushNil + spec== + jump (1.45M, 96% hit): full nil-check idiom
+  - spec== (0x76) fast handler with branch fusion (2.4M total)
+- Stack balance bugs found and fixed: pushNil+==+jump missing pop,
+  dup+pushNil+== fallback pushing extra value
+- Measured gain: **~2.8% CPU** (18.00s → 17.49s avg across 3 runs)
+  Below Phase 3 estimate (15-30%) because M1 branch predictor already handles
+  the dispatch efficiently. Dispatch is a smaller fraction of total time than
+  the gap breakdown estimated.

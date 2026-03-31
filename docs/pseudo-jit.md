@@ -98,21 +98,23 @@ runtime patching. CPython 3.11+ does this (PEP 659). Luau does this.
 
 Must un-quicken before image snapshot (primitive 97).
 
-### Phase 3: Superinstructions (est. 15-30% improvement)
+### Phase 3: Superinstructions (DONE — measured 2.8%)
 
-Combine frequent bytecode pairs into single handlers:
+Profiled all 65536 bytecode pairs over 100M bytecodes. Implemented
+speculative fusion in computed goto handlers (peek at next bytecode):
 
-    pushTemp + sendArithmetic    -> one handler, one dispatch
-    pushTemp + pushTemp + send   -> one handler, one dispatch
-    send + popAndStoreTemp       -> one handler, one dispatch
-    pushRecvVar + send0Args      -> one handler, one dispatch
+    SmallInt comparison + jump   -> branch directly, skip boolean (5.3M pairs)
+    push1 + arith+               -> inline x+1 (2.2M, 65% hit)
+    pushNil + spec==             -> inline nil check (1.7M, 46% hit)
+    dup + pushNil + == + jump    -> full nil-check idiom (1.45M, 96% hit)
+    spec== fast handler          -> inline identity compare (2.4M)
 
-If hot loops average 5 bytecodes per iteration and we combine to 2-3
-superinstructions, dispatch count drops 40-60%.
-
-Academic results: up to 3.17x improvement (Ertl & Gregg).
-
-Must not span extension byte (0xE0/0xE1) boundaries.
+Result: 2.8% CPU improvement (18.00s → 17.49s, 3-run avg).
+Below the 15-30% estimate because Apple M1's branch predictor handles
+the dispatch jump table so efficiently that eliminating dispatches
+barely matters. The Ertl & Gregg 3.17x result was on x86 with weaker
+branch prediction. Dispatch overhead is a smaller fraction of total
+time than the gap breakdown estimated.
 
 ### Phase 4: Pre-Decoded IR / Flat Record (est. 10-20% improvement)
 

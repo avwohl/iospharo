@@ -1,6 +1,43 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
-## Latest: Build 114 — computed goto dispatch
+## Latest: Build 115 — speculative superinstructions
+
+    Date:          2026-03-31
+    Build:         115
+    Optimization:  Speculative superinstructions in computed goto handlers
+    Script:        scripts/time_tests.st
+    Image:         Pharo 13 (130) fresh download
+
+    Our VM:        iospharo test_load_image (interpreter-only, no JIT)
+    Reference VM:  Pharo v10.3.9 (Cog JIT, 33e04bb60)
+
+    Method:  3 runs each on identical fresh images, 300s wall timeout,
+             CPU time measured via `time`.
+
+    Baseline (build 114):  17.71  18.18  18.10   avg = 18.00s
+    Superinstructions:     17.52  17.46  17.48   avg = 17.49s
+    Improvement:           ~2.8% CPU
+
+    Superinstructions implemented (profile-guided from 100M bytecodes):
+    - SmallInt comparison + conditional jump fusion (5.3M pairs):
+      Skip boolean object creation, branch directly on comparison result
+    - push1 + arith+ / arith- fusion (2.4M, 65% hit rate):
+      Inline x+1 / x-1 without pushing constant
+    - pushNil + spec== fusion (1.73M, 46% hit rate):
+      Inline nil identity check, fuse with following branch
+    - dup + pushNil + spec== + jump fusion (1.45M, 96% hit rate):
+      Full "x ifNotNil:" idiom in one dispatch
+    - push0 + arith= fusion (356K): Inline "x = 0" check
+    - spec== (0x76) fast handler (2.4M total):
+      Identity comparison inlined as rawBits==, fused with branch
+
+    The 2.8% improvement is below the Phase 3 estimate (15-30%) because
+    Apple M1's branch predictor already handles the dispatch jump table
+    efficiently. Eliminating dispatches saves ~11% of dispatch operations
+    but dispatch overhead is a smaller fraction of total time than expected.
+    The bottleneck is method lookup and stack frame setup, not dispatch.
+
+## Build 114 — computed goto dispatch
 
     Date:          2026-03-31
     Build:         114

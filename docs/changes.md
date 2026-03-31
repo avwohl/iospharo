@@ -1,3 +1,25 @@
+# What's New in Build 115
+
+Build 115 — 2026-03-31
+
+## Speculative superinstructions (Phase 3 of pseudo-JIT plan)
+
+Profile-guided bytecode pair fusion. Instrumented the dispatch loop to count
+all 65536 possible bytecode pairs over 100M bytecodes of the full test suite,
+then implemented speculative fusion for the hottest patterns:
+
+- SmallInt comparison + conditional jump (5.3M pairs): Branch directly on
+  comparison result without creating a boolean object
+- push1 + arith+ (2.2M, 65% hit rate): Inline x+1 for SmallInt
+- pushNil + spec== (1.7M, 46% hit rate): Inline nil identity check
+- dup + pushNil + == + jumpFalse (1.45M, 96% hit rate): Full nil-check idiom
+- spec== (0x76) fast handler with branch fusion (2.4M): Identity comparison
+  inlined as rawBits comparison, bypasses method lookup entirely
+
+Benchmark: ~2.8% CPU improvement (18.00s → 17.49s avg, 3 runs each).
+Below estimate because Apple M1's branch predictor already handles dispatch
+jump tables efficiently — dispatch overhead is smaller than expected.
+
 # What's New in Build 114
 
 Build 114 — 2026-03-31
