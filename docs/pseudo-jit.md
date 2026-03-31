@@ -42,10 +42,20 @@ not from the dispatch mechanism.
 
 ## Implementation Plan
 
-### Phase 1: Tail-Call Threaded Dispatch (est. 10-25% improvement)
+### Phase 1: Computed Goto Dispatch (DONE — measured 2.5%)
 
-Convert dispatchBytecode() from a switch to tail-call-threaded functions.
-Each bytecode handler becomes its own C function:
+Implemented computed goto (GCC/Clang &&label extension) in interpret().
+Fast-path handlers for ~200 of 256 bytecodes (push/pop/store/jump/
+SmallInt arithmetic/literal sends). Slow path for complex bytecodes
+(returns, closures, extensions) via existing dispatchBytecode().
+
+Result: 2.5% CPU improvement (18.44s → 18.00s, 3-run avg).
+Below the 10-25% estimate because Apple M1's branch predictor already
+handles the switch jump table well. The original tail-call threading
+proposal (below) would not improve on this — the benefit comes from
+per-handler branch entries, which computed goto already provides.
+
+Original proposal was tail-call-threaded functions:
 
     static void op_pushTemp(InterpreterContext* ctx) {
         int index = ctx->ip[1];
