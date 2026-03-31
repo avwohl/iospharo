@@ -5070,8 +5070,9 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     // 2: numArgs (SmallInteger)
     // 3+: copied values
 
-    Oop slot1 = memory_.fetchPointer(1, block);
-    Oop outerContext = memory_.fetchPointer(0, block);
+    // block is a known-valid FullBlockClosure/BlockClosure
+    Oop slot1 = memory_.fetchPointerUnchecked(1, block);
+    Oop outerContext = memory_.fetchPointerUnchecked(0, block);
 
     Oop methodToExecute;
     uint8_t* startAddress = nullptr;
@@ -5081,7 +5082,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // Old-style BlockClosure: slot 1 is startPC
         int64_t startPC = slot1.asSmallInteger();
         // Get the method from outer context
-        Oop outerMethod = memory_.fetchPointer(3, outerContext);
+        Oop outerMethod = memory_.fetchPointerUnchecked(3, outerContext);
         methodToExecute = outerMethod;
         ObjectHeader* methodObj = outerMethod.asObjectPtr();
         startAddress = methodObj->bytes() + startPC;
@@ -5102,7 +5103,8 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         }
 
         methodToExecute = compiledBlock;
-        Oop header = memory_.fetchPointer(0, compiledBlock);
+        // compiledBlock validated above (isCompiledMethod check)
+        Oop header = memory_.fetchPointerUnchecked(0, compiledBlock);
         int64_t headerBits = header.asSmallInteger();
         int numLiterals = headerBits & 0x7FFF;  // bits 0-14
         size_t bytecodeOffset = (1 + numLiterals) * 8;
@@ -5117,7 +5119,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         // is also a CompiledMethod/Block. If so, it's a block (with outerCode).
         // If not, it's the home method.
         if (numLiterals >= 1) {
-            Oop enclosingCode = memory_.fetchPointer(numLiterals, compiledBlock);
+            Oop enclosingCode = memory_.fetchPointerUnchecked(numLiterals, compiledBlock);
             // Follow the chain of enclosing blocks until we reach the home method
             int chainDepth = 0;
             while (enclosingCode.isObject() && enclosingCode.rawBits() > 0x10000 && chainDepth < 20) {
@@ -5125,7 +5127,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                 if (!ecHdr->isCompiledMethod()) break;
 
                 // Get this code's header and last literal
-                Oop ecHeader = memory_.fetchPointer(0, enclosingCode);
+                Oop ecHeader = memory_.fetchPointerUnchecked(0, enclosingCode);
                 if (!ecHeader.isSmallInteger()) break;
                 int ecNumLits = ecHeader.asSmallInteger() & 0xFFFF;
                 if (ecNumLits < 1) {
@@ -5134,7 +5136,7 @@ void Interpreter::activateBlock(Oop block, int argCount) {
                     break;
                 }
 
-                Oop ecLastLit = memory_.fetchPointer(ecNumLits, enclosingCode);
+                Oop ecLastLit = memory_.fetchPointerUnchecked(ecNumLits, enclosingCode);
 
                 // Check if last literal is a CompiledMethod/Block
                 bool lastLitIsCode = false;

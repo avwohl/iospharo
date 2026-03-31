@@ -3243,22 +3243,21 @@ PrimitiveResult Interpreter::primitiveClosureCopyWithCopiedValues(int argCount) 
 PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
     Oop closure = stackValue(static_cast<size_t>(argCount));
 
-    if (!closure.isObject()) {
+    if (__builtin_expect(!closure.isObject(), 0)) {
         return PrimitiveResult::Failure;
     }
 
-    // Get numArgs from the closure (slot 2)
-    Oop numArgsOop = memory_.fetchPointer(2, closure);
-    if (!numArgsOop.isSmallInteger()) {
+    // Get numArgs from the closure (slot 2) — closure already validated
+    Oop numArgsOop = memory_.fetchPointerUnchecked(2, closure);
+    if (__builtin_expect(!numArgsOop.isSmallInteger(), 0)) {
         return PrimitiveResult::Failure;
     }
 
     int closureNumArgs = static_cast<int>(numArgsOop.asSmallInteger());
-    if (closureNumArgs != argCount) {
+    if (__builtin_expect(closureNumArgs != argCount, 0)) {
         return PrimitiveResult::Failure;
     }
 
-    // Activate the closure - same as regular block activation
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
 }
