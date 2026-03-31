@@ -159,9 +159,6 @@ bool Interpreter::initialize() {
     // Look up class indices dynamically (must happen after image load, before execution)
     initializeClassIndexCache();
 
-    // Cache immediate class Oops for fast classOf() (avoids specialObject lookup per send)
-    memory_.initCachedClasses();
-
     Oop scheduler = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
     if (scheduler.isNil()) {
         return false;
