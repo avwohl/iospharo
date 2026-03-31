@@ -753,6 +753,8 @@ void Interpreter::interpret() {
     op_pushNil: {
         // Speculative: pushNil + spec== (1.73M, 45.9% — "x == nil")
         // Identity comparison with nil doesn't need method lookup.
+        // Normal: pushNil adds nil; == pops rcvr+nil, pushes bool.
+        // Net: replaces TOS (rcvr → bool). With branch: rcvr consumed.
         if (*instructionPointer_ == 0x76) { // spec ==
             instructionPointer_++;
             Oop rcvr = stackTop();
@@ -761,11 +763,13 @@ void Interpreter::interpret() {
             uint8_t nextBC = *instructionPointer_;
             if (nextBC >= 0xC0 && nextBC <= 0xC7) { // jumpFalse
                 instructionPointer_++;
+                pop(); // consume rcvr (== pops rcvr+nil, jump pops bool)
                 if (!isNil) instructionPointer_ += (nextBC & 0x07) + 1;
                 DISPATCH_NEXT();
             }
             if (nextBC >= 0xB8 && nextBC <= 0xBF) { // jumpTrue
                 instructionPointer_++;
+                pop(); // consume rcvr
                 if (isNil) instructionPointer_ += (nextBC & 0x07) + 1;
                 DISPATCH_NEXT();
             }
@@ -845,8 +849,8 @@ void Interpreter::interpret() {
                 }
                 DISPATCH_NEXT();
             }
-            // No branch — push dup'd value and boolean
-            push(val);
+            // No branch — push boolean only (dup'd val consumed by ==)
+            // Before: [..., val]. After dup+pushNil+==: [..., val, bool]
             push(isNil ? memory_.trueObject() : memory_.falseObject());
             DISPATCH_NEXT();
         }
