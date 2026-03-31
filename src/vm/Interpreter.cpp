@@ -738,7 +738,7 @@ void Interpreter::interpret() {
     // ====== FAST INLINE HANDLERS ======
 
     op_pushRecvVar:
-        push(memory_.fetchPointer(bytecode & 0x0F, receiver_));
+        push(memory_.fetchPointerUnchecked(bytecode & 0x0F, receiver_));
         DISPATCH_NEXT();
 
     op_pushLitVar:
@@ -2965,7 +2965,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 // ===== BYTECODE IMPLEMENTATIONS =====
 
 void Interpreter::pushReceiverVariable(int index) {
-    Oop result = memory_.fetchPointer(index, receiver_);
+    Oop result = memory_.fetchPointerUnchecked(index, receiver_);
     push(result);
 }
 
@@ -3027,9 +3027,8 @@ void Interpreter::pushLiteralVariable(int index) {
     }
 
     // Normal case: Association with key in slot 0, value in slot 1
-    Oop value = memory_.fetchPointer(1, assoc);  // Association>>value
-
-
+    // assoc validated above (isObject, not bytes, not nil)
+    Oop value = memory_.fetchPointerUnchecked(1, assoc);  // Association>>value
     push(value);
 }
 
@@ -4512,7 +4511,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Getter fast path: pushRecvVar N + returnTop
         // Skip method activation — replace receiver with inst var value
         if (cached->accessorIndex >= 0 && argCount == 0) {
-            Oop ivar = memory_.fetchPointer(cached->accessorIndex, rcvr);
+            Oop ivar = memory_.fetchPointerUnchecked(cached->accessorIndex, rcvr);
             *(stackPointer_ - 1) = ivar;  // replace receiver in-place
             return;
         }
@@ -4521,7 +4520,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Skip method activation — store arg in inst var, leave receiver on stack
         if (cached->setterIndex >= 0 && argCount == 1) {
             Oop value = stackValue(0);  // the argument
-            memory_.storePointer(cached->setterIndex, rcvr, value);
+            memory_.storePointerUnchecked(cached->setterIndex, rcvr, value);
             pop();  // pop argument, leave receiver as return value
             return;
         }
@@ -4656,8 +4655,8 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     size_t mdSlotCount = mdHeader->slotCount();
     if (mdSlotCount < 3) return Oop::nil();
 
-    // Get values array (slot 1)
-    Oop valuesArray = memory_.fetchPointer(1, methodDict);
+    // Get values array (slot 1) — methodDict validated above
+    Oop valuesArray = memory_.fetchPointerUnchecked(1, methodDict);
     if (!valuesArray.isObject() || valuesArray.rawBits() < 0x10000) return Oop::nil();
 
     ObjectHeader* valuesHeader = valuesArray.asObjectPtr();
@@ -4679,7 +4678,8 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     size_t i = startIndex;
 
     do {
-        Oop key = memory_.fetchPointer(i + 2, methodDict);
+        // methodDict already validated above — skip isObject/isValidPointer
+        Oop key = memory_.fetchPointerUnchecked(i + 2, methodDict);
 
         // nil slot = end of probe chain (key not found)
         if (key.isNil() || key.rawBits() == nilBits) {
@@ -4689,7 +4689,7 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
         // Identity match — Symbols are interned
         if (key.rawBits() == selector.rawBits()) {
             if (i < valuesSize) {
-                return memory_.fetchPointer(i, valuesArray);
+                return memory_.fetchPointerUnchecked(i, valuesArray);
             }
             return Oop::nil();
         }
@@ -4884,7 +4884,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             homeMethod_ = method;  // Default in case chain traversal fails
 
             // Try slot 2 first (home method in FullBlockClosure model)
-            Oop slot2 = memory_.fetchPointer(2, method);
+            // method is a known-valid CompiledBlock
+            Oop slot2 = memory_.fetchPointerUnchecked(2, method);
             if (slot2.isObject()) {
                 ObjectHeader* slot2Hdr = slot2.asObjectPtr();
                 if (slot2Hdr->classIndex() == compiledMethodClassIndex_) {
@@ -4894,7 +4895,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
             // Fallback: try slot 0 chain (older formats)
             if (homeMethod_ == method) {
-                Oop homeCandidate = memory_.fetchPointer(0, method);
+                Oop homeCandidate = memory_.fetchPointerUnchecked(0, method);
                 int maxHops = 10;
                 while (homeCandidate.isObject() && maxHops-- > 0) {
                     ObjectHeader* candidateHdr = homeCandidate.asObjectPtr();
@@ -4903,7 +4904,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         homeMethod_ = homeCandidate;
                         break;
                     } else if (candidateCls == compiledBlockClassIndex_) {
-                        homeCandidate = memory_.fetchPointer(0, homeCandidate);
+                        homeCandidate = memory_.fetchPointerUnchecked(0, homeCandidate);
                     } else {
                         break;
                     }
@@ -5396,7 +5397,8 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     }
 
     // Calculate number of temporaries for the new method
-    Oop newMethodHeader = memory_.fetchPointer(0, method);
+    // method is a known-valid CompiledMethod at this point
+    Oop newMethodHeader = memory_.fetchPointerUnchecked(0, method);
     if (__builtin_expect(!newMethodHeader.isSmallInteger(), 0)) {
         FILE* crashLog = fopen("/tmp/pharosmalltalk-crash.log", "w");
         if (!crashLog) crashLog = stderr;
@@ -5573,28 +5575,25 @@ Oop Interpreter::literal(size_t index) const {
     // for literal access, NOT homeMethod_.
     Oop literalMethod = method_;
 
-    // Safety check
-    if (literalMethod.isNil() || !literalMethod.isObject()) {
+    // Safety check (cold path — method_ should always be valid during execution)
+    if (__builtin_expect(literalMethod.isNil() || !literalMethod.isObject(), 0)) {
         return memory_.specialObject(SpecialObjectIndex::NilObject);
     }
 
-    // Get numLiterals from method header for bounds check
-    // Pharo header format: bits 0-14 = numLiterals (15 bits)
-    Oop methodHeader = memory_.fetchPointer(0, literalMethod);
-    if (methodHeader.isSmallInteger()) {
+    // method_ is a known-valid CompiledMethod/CompiledBlock
+    Oop methodHeader = memory_.fetchPointerUnchecked(0, literalMethod);
+    if (__builtin_expect(methodHeader.isSmallInteger(), 1)) {
         int64_t headerBits = methodHeader.asSmallInteger();
         size_t numLiterals = headerBits & 0x7FFF;  // bits 0-14
 
-        if (index >= numLiterals) {
-            // Out-of-bounds literal access - return nil
+        if (__builtin_expect(index >= numLiterals, 0)) {
             return memory_.specialObject(SpecialObjectIndex::NilObject);
         }
     } else {
-        // Method header isn't a SmallInteger - bad method
         return memory_.specialObject(SpecialObjectIndex::NilObject);
     }
 
-    return memory_.fetchPointer(index + 1, literalMethod);
+    return memory_.fetchPointerUnchecked(index + 1, literalMethod);
 }
 
 Oop Interpreter::temporary(int index) const {
@@ -5666,19 +5665,12 @@ Oop Interpreter::receiverInstVar(size_t index) const {
     // Byte objects don't have pointer instance variables, so return nil
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
-        if (hdr->isBytesObject() || hdr->isCompiledMethod()) {
-            // std::cerr << "[WARN] Attempting to read instVar " << index
-                      // << " from byte object - returning nil";
+        if (__builtin_expect(hdr->isBytesObject() || hdr->isCompiledMethod(), 0)) {
             return memory_.nil();
         }
     }
-    Oop result = memory_.fetchPointer(index, receiver_);
-
-    // Log slot 0 (superclass) accesses to debug infinite inheritsFrom loop
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-    }
-
-    return result;
+    // receiver_ is a known-valid heap object
+    return memory_.fetchPointerUnchecked(index, receiver_);
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
@@ -5699,12 +5691,13 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
     // Check if receiver is a byte object - can't store to byte objects
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
-        if (hdr->isBytesObject() || hdr->isCompiledMethod()) {
+        if (__builtin_expect(hdr->isBytesObject() || hdr->isCompiledMethod(), 0)) {
             return;
         }
     }
 
-    memory_.storePointer(index, receiver_, value);
+    // receiver_ is a known-valid heap object
+    memory_.storePointerUnchecked(index, receiver_, value);
 }
 
 // ===== SPECIAL SENDS =====
@@ -5876,15 +5869,13 @@ bool Interpreter::isFalse(Oop value) const {
 
 Oop Interpreter::superclassOf(Oop classOop) const {
     // Class layout: superclass is slot 0
-    Oop result = memory_.fetchPointer(0, classOop);
-
-
-    return result;
+    // classOop validated by lookupMethod loop guard
+    return memory_.fetchPointerUnchecked(0, classOop);
 }
 
 Oop Interpreter::methodDictOf(Oop classOop) const {
     // Class layout: methodDict is slot 1
-    return memory_.fetchPointer(1, classOop);
+    return memory_.fetchPointerUnchecked(1, classOop);
 }
 
 Oop Interpreter::methodClassOf(Oop method) const {

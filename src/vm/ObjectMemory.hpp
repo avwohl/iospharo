@@ -361,8 +361,27 @@ public:
     /// Fetch a pointer field from an object (0-based index)
     Oop fetchPointer(size_t index, Oop obj) const;
 
+    /// Fast fetch — caller guarantees obj is a valid heap object.
+    /// Skips isObject/isValidPointer checks. Still bounds-checks.
+    inline Oop fetchPointerUnchecked(size_t index, Oop obj) const {
+        ObjectHeader* header = obj.asObjectPtr();
+        if (__builtin_expect(index >= header->slotCount(), 0)) return nilObject_;
+        return header->slotAt(index);
+    }
+
     /// Store a pointer field in an object (0-based index)
     void storePointer(size_t index, Oop obj, Oop value);
+
+    /// Fast store — caller guarantees obj is a valid heap object.
+    /// Skips isObject check. Still does bounds + remembered set.
+    inline void storePointerUnchecked(size_t index, Oop obj, Oop value) {
+        ObjectHeader* header = obj.asObjectPtr();
+        if (__builtin_expect(index >= header->slotCount(), 0)) return;
+        if (isOld(obj) && value.isObject() && isYoung(value)) {
+            rememberObject(obj);
+        }
+        header->slotAtPut(index, value);
+    }
 
     /// Fetch a byte from a byte object
     uint8_t fetchByte(size_t index, Oop obj) const;
