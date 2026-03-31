@@ -19,3 +19,28 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+
+THIRD-PARTY CODE
+================
+
+This project includes code from, and is based on the work of, several
+open source projects that are licensed under their own terms:
+
+  - Pharo (MIT) — https://pharo.org
+  - OpenSmalltalk-VM / Pharo-VM (MIT) — https://github.com/OpenSmalltalk/opensmalltalk-vm
+  - Independent JPEG Group libjpeg 6b (IJG License) — http://www.ijg.org
+  - libffi (MIT) — https://github.com/libffi/libffi
+  - SDL2 (zlib) — https://www.libsdl.org
+  - cairo (LGPL-2.1 / MPL-1.1) — https://cairographics.org
+  - FreeType (FTL) — https://freetype.org
+  - pixman (MIT) — https://cairographics.org
+  - HarfBuzz (MIT) — https://github.com/harfbuzz/harfbuzz
+  - libpng (libpng license) — http://libpng.org
+  - OpenSSL (Apache-2.0) — https://www.openssl.org
+  - libssh2 (BSD-3-Clause) — https://www.libssh2.org
+  - libgit2 (GPL-2.0 with linking exception) — https://libgit2.org
+
+See THIRD_PARTY_LICENSES for full license texts.
+
+This software is based in part on the work of the Independent JPEG Group.

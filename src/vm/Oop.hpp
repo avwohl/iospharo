@@ -1,8 +1,13 @@
 /*
  * Oop.hpp - Type-safe Object-Oriented Pointer for Pharo VM
  *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
  * This class provides a type-safe wrapper for Smalltalk object pointers
  * that is compatible with iOS ASLR (Address Space Layout Randomization).
+ * The Spur tagging scheme is defined by the Pharo project (https://pharo.org);
+ * this implementation uses low bits instead of high bits for iOS compatibility.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  *
  * TAGGING SCHEME (uses LOW bits only - iOS compatible):
  *

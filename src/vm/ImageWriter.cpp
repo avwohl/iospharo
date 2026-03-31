@@ -4,6 +4,11 @@
  * Writes the heap to disk in standard Spur format by converting iOS
  * immediate tags back to standard Spur encoding. Uses atomic write
  * (write to .tmp, then rename) to avoid corrupting the image on crash.
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * The Spur image format is defined by the Pharo project (https://pharo.org)
+ * and OpenSmalltalk-VM. See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "ImageWriter.hpp"

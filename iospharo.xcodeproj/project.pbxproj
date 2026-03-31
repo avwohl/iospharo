@@ -31,6 +31,7 @@
 		A1001C /* AppExporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001C /* AppExporter.swift */; };
 		A1001D /* AppTemplates.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001D /* AppTemplates.swift */; };
 		A1001E /* XcodeProjGenerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001E /* XcodeProjGenerator.swift */; };
+		A1001F /* AcknowledgementsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2001F /* AcknowledgementsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		A2001C /* AppExporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppExporter.swift; sourceTree = "<group>"; };
 		A2001D /* AppTemplates.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppTemplates.swift; sourceTree = "<group>"; };
 		A2001E /* XcodeProjGenerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XcodeProjGenerator.swift; sourceTree = "<group>"; };
+		A2001F /* AcknowledgementsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AcknowledgementsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -141,6 +143,7 @@
 				A20016 /* DownloadProgressRow.swift */,
 				A20017 /* SettingsView.swift */,
 				A20019 /* AutoLaunchSplashView.swift */,
+				A2001F /* AcknowledgementsView.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -318,6 +321,7 @@
 				A10015 /* NewImageView.swift in Sources */,
 				A10016 /* DownloadProgressRow.swift in Sources */,
 				A10017 /* SettingsView.swift in Sources */,
+				A1001F /* AcknowledgementsView.swift in Sources */,
 				A10019 /* AutoLaunchSplashView.swift in Sources */,
 				A1001B /* ExportAppSheet.swift in Sources */,
 				A1001C /* AppExporter.swift in Sources */,

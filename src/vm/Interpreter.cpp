@@ -2,6 +2,14 @@
  * Interpreter.cpp - Bytecode Interpreter Implementation
  *
  * This implements the Sista V1 bytecode interpreter.
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * This is a clean C++ reimplementation based on the architecture, bytecode
+ * specification, and algorithms defined by the Pharo project (https://pharo.org)
+ * and its predecessors (Squeak, OpenSmalltalk-VM). The Pharo VM source
+ * (VMMaker/CoInterpreter) served as the authoritative reference.
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "Interpreter.hpp"

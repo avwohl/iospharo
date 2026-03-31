@@ -3,6 +3,12 @@
  *
  * Implements UFFI/TFFI primitives and SDL2 stub functions.
  * Uses libffi for native callouts on ARM64.
+ *
+ * Copyright (c) 2025-2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * The FFI primitive interface is defined by the Pharo project
+ * (https://pharo.org). Uses libffi (MIT) and SDL2 (zlib).
+ * See THIRD_PARTY_LICENSES for upstream license details.
  */
 
 #include "FFI.hpp"
