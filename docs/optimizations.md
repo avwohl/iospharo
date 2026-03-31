@@ -130,15 +130,18 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 
 ## Planned
 
-### Phase 2: Quickening / specialized bytecodes (est. 20-40%)
+### Phase 2: Quickening / specialized bytecodes (revised est. 3-10%)
 Replace generic bytecodes with type-specialized variants at runtime.
-After seeing SmallInteger + SmallInteger N times, rewrite in place:
-`sendArithmetic +` → `SEND_ADD_SMALLINT` (no method lookup, no type check).
-Also: monomorphic send caching, inst var slot resolution, boolean jump
-optimization. See `docs/pseudo-jit.md` Phase 2 for details.
+Originally estimated 20-40%, but tight loop analysis shows our computed goto
+already achieves ~4.6 cycles/bytecode for SmallInt arithmetic — competitive
+with LuaJIT/Wasm3 interpreters. Quickening would help non-arithmetic sends
+(monomorphic send caching, skip classOf+cache probe). The 69x test suite gap
+is dominated by per-class startup overhead, not per-bytecode interpreter cost.
+See `docs/pseudo-jit.md` for analysis.
 
-### Phase 4: Pre-decoded IR / flat record (est. 10-20%)
+### Phase 4: Pre-decoded IR / flat record (revised est. 1-3%)
 On method activation, translate Sista V1 bytecodes to fixed-width records.
-Resolve extension bytes into wide operands, convert literal indices to direct
-pointers, convert variable-length to fixed-width. Eliminates extension byte
-overhead and literal table indirection. See `docs/pseudo-jit.md` Phase 4.
+Originally estimated 10-20%, but extension bytes are only 1.17% of execution,
+and dispatch is already ~4.6 cycles/bytecode. Pre-decoded IR would eliminate
+literal table indirection but fetchPointerUnchecked already handles this
+efficiently. The benefit doesn't justify the memory and complexity cost.

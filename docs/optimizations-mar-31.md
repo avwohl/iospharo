@@ -29,7 +29,22 @@ Short summary of interpreter performance work done in the last 48 hours
     Build 115 super+acc   16.37s (+9.1% from superinstructions + accessor inlining)
     Build 115 quit fix    ~12.5s (benchmark overhead reduction, not VM speedup)
 
-## Not done (planned)
+12. Unchecked fetchPointer/storePointer for validated hot paths (~1% gain)
+13. Tight loop performance analysis: 4.6 cycles/bytecode (LuaJIT-class)
 
-- Phase 2: Quickening / specialized bytecodes (est. 20-40%)
-- Phase 4: Pre-decoded IR / flat record (est. 10-20%)
+## Measurements
+
+    Build 110 baseline    ~23s   (estimated)
+    Build 112 fast loop   16.88s (-19% from method cache + loop)
+    Build 114 cg dispatch 18.00s (+2.5% from computed goto)
+    Build 115 super+acc   16.37s (+9.1% from superinstructions + accessor inlining)
+    Build 115 quit fix    ~12.5s (benchmark overhead reduction, not VM speedup)
+    Build 116 unchecked   ~1% (within noise, A/B verified)
+
+    Tight loop (100M SmallInt iterations): 4.6 cycles/bytecode
+    Competitive with LuaJIT (~3) and Wasm3 (~5) interpreters.
+
+## Not done (revised estimates)
+
+- Phase 2: Quickening / specialized bytecodes (revised est. 3-10%)
+- Phase 4: Pre-decoded IR / flat record (revised est. 1-3%)
