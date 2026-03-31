@@ -192,9 +192,36 @@ branch predictor handles indirect jumps (switch/computed goto) so well that
 software dispatch optimizations yield only 2-5%. The real bottleneck is
 method lookup and activation, not bytecode dispatch.
 
-Revised ceiling: with Phases 2 and 4 implemented, expect 2-4x additional
-improvement, bringing the gap from ~69x to roughly 17-35x vs Cog JIT.
-The remaining gap is the fundamental cost of interpreting vs native code.
+## Tight Loop Performance (build 116)
+
+Measured 100M iterations of `[n < 100M] whileTrue: [total := total + n. n := n + 1]`:
+
+    100M iter: 7.97s total, 1.77s for loop body (subtract 6.20s startup overhead)
+    Rate:      53.7M iterations/sec, 18.6ns/iteration
+    Cycles:    ~59.5 cycles per iteration (~13 bytecodes) = ~4.6 cycles/bytecode
+
+This is competitive with the best interpreters:
+    LuaJIT interpreter:  ~3 cycles/bytecode
+    Wasm3:               ~5 cycles/bytecode
+    Our VM:              ~4.6 cycles/bytecode (tight SmallInt loop)
+    CPython 3.14:        ~20 cycles/bytecode
+
+The 69x gap vs Cog JIT is NOT from interpreter overhead in tight loops.
+It comes from:
+1. Startup/framework code (SDL2 bootstrap, GC, SessionManager) — dominates
+   small benchmarks like the test suite where each class runs <1ms
+2. Non-inline sends to polymorphic/complex methods — full send path
+3. Block closures that the compiler doesn't inline (non-trivial blocks)
+
+Phase 2 quickening would help #2 but not #1 or #3. Estimated revised
+ceiling: 10-20% additional improvement from quickening non-arithmetic
+monomorphic sends, bringing the overall gap from ~69x to ~55-60x.
+The remaining gap is fundamental: interpreting vs native code.
+
+For the test suite specifically, the 69x ratio is misleading because the
+reference JIT finishes each test class in <1ms while our interpreter takes
+150-213ms for the same class — but that's dominated by constant per-class
+overhead (startup patches, class enumeration), not per-test computation.
 
 ## References
 
