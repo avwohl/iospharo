@@ -82,3 +82,17 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
   Below Phase 3 estimate (15-30%) because M1 branch predictor already handles
   the dispatch efficiently. Dispatch is a smaller fraction of total time than
   the gap breakdown estimated.
+
+## 9. Trivial getter/setter inlining (DONE)
+- At method cache time, detect trivial accessor methods:
+  - Getter: `pushRecvVar N + returnTop` (2 bytes) or `extPushRecvVar + returnTop`
+  - Setter: `popStoreRecvVar N + returnReceiver` or `extPopStoreRecvVar + returnReceiver`
+- Store accessor/setter index in MethodCacheEntry alongside method/primitive
+- On cache hit: bypass full method activation (frame push/pop/IP switch)
+  - Getter: replace receiver on stack with inst var value
+  - Setter: store arg in receiver inst var, pop arg, leave receiver
+- Profile data: 7.2M send0 calls per 100M bytecodes — many are accessors
+- Measured gain: **~6.4% CPU** (17.49s → 16.37s avg across 3 runs)
+  This is the largest single optimization since the method cache improvements
+  (build 113, 19%). Eliminates real work (frame setup/teardown) rather than
+  just dispatch overhead.

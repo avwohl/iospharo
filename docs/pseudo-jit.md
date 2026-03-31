@@ -131,15 +131,22 @@ Eliminates:
 Design choice: 4-byte records (opcode + 24-bit operand) or 8-byte records
 (opcode + pad + 32-bit operand + 16-bit aux).
 
-### Phase 5: C++ Fast Paths for Hot Kernel Methods (variable improvement)
+### Phase 5: C++ Fast Paths for Hot Kernel Methods (DONE — measured 6.4%)
 
-Extend the existing arithmeticSend() pattern to more methods:
+Trivial getter/setter inlining: detect accessor methods at method cache
+time and bypass Smalltalk activation entirely on cache hit:
+- Getter: pushRecvVar N + returnTop → replace receiver with inst var
+- Setter: popStoreRecvVar N + returnReceiver → store arg, return self
+
+Result: 6.4% CPU improvement (17.49s → 16.37s, 3-run avg). This is the
+single most effective optimization since the method cache improvements,
+because it eliminates real work (stack frame push/pop) rather than just
+dispatch overhead.
+
+Additional fast paths not yet implemented:
 - Boolean >> ifTrue:ifFalse: (skip method lookup, inline branch)
-- BlockClosure >> value / value: (skip frame setup for simple blocks)
 - Array >> at: / at:put: (bounds check + direct slot access)
 - SmallInteger >> to:do: (loop without message sends)
-
-These bypass the Smalltalk activation entirely for the hottest operations.
 
 ## What Cannot Be Pre-Resolved (Smalltalk Dynamism)
 

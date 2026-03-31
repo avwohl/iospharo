@@ -2,6 +2,17 @@
 
 Build 115 — 2026-03-31
 
+## Trivial getter/setter inlining (Phase 5 of pseudo-JIT plan)
+
+Detect trivial accessor methods at method cache time and bypass Smalltalk
+activation entirely on cache hit. For getters (pushRecvVar + returnTop),
+replace receiver on stack with inst var value. For setters (popStoreRecvVar +
+returnReceiver), store arg in inst var and leave receiver. Eliminates frame
+push/pop for millions of accessor calls.
+
+Benchmark: ~6.4% CPU improvement (17.49s → 16.37s avg, 3 runs).
+Combined with superinstructions: ~9.1% total (18.00s → 16.37s).
+
 ## Speculative superinstructions (Phase 3 of pseudo-JIT plan)
 
 Profile-guided bytecode pair fusion. Instrumented the dispatch loop to count

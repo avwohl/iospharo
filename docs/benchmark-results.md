@@ -1,6 +1,27 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
-## Latest: Build 115 — speculative superinstructions
+## Latest: Build 115 — superinstructions + accessor inlining
+
+    Date:          2026-03-31
+    Build:         115 (updated)
+    Optimization:  Superinstructions + trivial getter/setter inlining
+    Script:        scripts/time_tests.st
+    Image:         Pharo 13 (130) fresh download
+
+    Method:  3 runs each on identical fresh images, 300s wall timeout,
+             CPU time measured via `time`.
+
+    Baseline (build 114):   17.71  18.18  18.10   avg = 18.00s
+    Superinstructions only: 17.52  17.46  17.48   avg = 17.49s  (+2.8%)
+    + accessor inlining:    16.36  16.40  16.35   avg = 16.37s  (+6.4%)
+    Total improvement:      ~9.1% CPU
+
+    Accessor inlining detects trivial getter/setter methods at method cache
+    time. On cache hit, bypasses Smalltalk activation entirely — no frame
+    push/pop, no IP/method switch. Getters (pushRecvVar + returnTop) and
+    setters (popStoreRecvVar + returnReceiver) are handled.
+
+## Build 115 — speculative superinstructions
 
     Date:          2026-03-31
     Build:         115
