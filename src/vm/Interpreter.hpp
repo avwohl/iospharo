@@ -134,6 +134,9 @@ struct MethodCacheEntry {
     Oop method;
     PrimitiveFunc primitive;  // Cached primitive (if any)
     int primitiveIndex;       // Primitive number (0 = none)
+    int16_t accessorIndex;    // >=0: getter (pushRecvVar N + returnTop)
+                              // -1: not a trivial method
+    int16_t setterIndex;      // >=0: setter (popStoreRecvVar N + returnSelf)
 };
 
 /// Well-known selectors (cached for performance)
@@ -663,6 +666,8 @@ private:
             entry.selector = Oop::nil();
             entry.classOop = Oop::nil();
             entry.method = Oop::nil();
+            entry.accessorIndex = -1;
+            entry.setterIndex = -1;
         }
     }
 

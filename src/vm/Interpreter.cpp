@@ -4501,6 +4501,23 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     if (__builtin_expect(cached != nullptr, 1)) {
 
+        // Getter fast path: pushRecvVar N + returnTop
+        // Skip method activation — replace receiver with inst var value
+        if (cached->accessorIndex >= 0 && argCount == 0) {
+            Oop ivar = memory_.fetchPointer(cached->accessorIndex, rcvr);
+            *(stackPointer_ - 1) = ivar;  // replace receiver in-place
+            return;
+        }
+
+        // Setter fast path: popStoreRecvVar N + returnReceiver
+        // Skip method activation — store arg in inst var, leave receiver on stack
+        if (cached->setterIndex >= 0 && argCount == 1) {
+            Oop value = stackValue(0);  // the argument
+            memory_.storePointer(cached->setterIndex, rcvr, value);
+            pop();  // pop argument, leave receiver as return value
+            return;
+        }
+
         int primIdx = cached->primitiveIndex;
         if (primIdx > 0) {
             argCount_ = argCount;
@@ -4691,11 +4708,69 @@ MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
     return nullptr;
 }
 
+// Detect trivial getter/setter methods from their bytecodes.
+// Getter: pushRecvVar N + returnTop → returns inst var index
+// Setter: popStoreRecvVar N + returnReceiver → returns inst var index
+struct TrivialMethodInfo {
+    int16_t getterIndex = -1;  // >=0: getter
+    int16_t setterIndex = -1;  // >=0: setter
+};
+
+static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
+    TrivialMethodInfo info;
+    if (!method.isObject() || method.rawBits() < 0x10000) return info;
+    ObjectHeader* hdr = method.asObjectPtr();
+    if (!hdr->isCompiledMethod()) return info;
+
+    Oop header = memory.fetchPointer(0, method);
+    if (!header.isSmallInteger()) return info;
+    int64_t headerBits = header.asSmallInteger();
+    int numLiterals = headerBits & 0x7FFF;
+
+    uint8_t* bytes = hdr->bytes();
+    size_t bcStart = (1 + numLiterals) * 8;
+    size_t totalBytes = hdr->byteSize();
+    size_t bcLen = totalBytes - bcStart;
+    if (bcLen < 2) return info;
+
+    uint8_t bc0 = bytes[bcStart];
+    uint8_t bc1 = bytes[bcStart + 1];
+
+    // Getter: pushRecvVar N (0x00-0x0F) + returnTop (0x5C)
+    if (bc0 <= 0x0F && bc1 == 0x5C) {
+        info.getterIndex = (int16_t)bc0;
+        return info;
+    }
+
+    // Getter: extended pushRecvVar (0xE2 N) + returnTop (0x5C)
+    if (bcLen >= 3 && bc0 == 0xE2 && bytes[bcStart + 2] == 0x5C) {
+        info.getterIndex = (int16_t)bc1;
+        return info;
+    }
+
+    // Setter: popStoreRecvVar N (0xC8-0xCF) + returnReceiver (0x58)
+    // The 1-arg setter: receiver is at stackValue(1), arg at stackValue(0)
+    // popStoreRecvVar pops arg and stores in inst var, returnReceiver returns self
+    if (bc0 >= 0xC8 && bc0 <= 0xCF && bc1 == 0x58) {
+        info.setterIndex = (int16_t)(bc0 - 0xC8);
+        return info;
+    }
+
+    // Setter: extended (0xF0 N) + returnReceiver (0x58)
+    if (bcLen >= 3 && bc0 == 0xF0 && bytes[bcStart + 2] == 0x58) {
+        info.setterIndex = (int16_t)bc1;
+        return info;
+    }
+
+    return info;
+}
+
 void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     uint64_t selBits = selector.rawBits();
     uint64_t clsBits = classOop.rawBits();
     size_t mask = MethodCacheSize - 1;
     int primIndex = primitiveIndexOf(method);
+    TrivialMethodInfo trivial = detectTrivialMethod(method, memory_);
 
     // Primary slot: use if empty or same key
     size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
@@ -4706,6 +4781,8 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.method = method;
         e1.primitiveIndex = primIndex;
         e1.primitive = nullptr;
+        e1.accessorIndex = trivial.getterIndex;
+        e1.setterIndex = trivial.setterIndex;
         return;
     }
 
@@ -4717,6 +4794,8 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.method = method;
     e2.primitiveIndex = primIndex;
     e2.primitive = nullptr;
+    e2.accessorIndex = trivial.getterIndex;
+    e2.setterIndex = trivial.setterIndex;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
