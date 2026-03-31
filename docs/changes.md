@@ -1,3 +1,31 @@
+# What's New in Build 112
+
+Build 112 — 2026-03-31
+
+## Fast interpret() loop
+
+Rewrote the main execution loop for ~13% throughput improvement:
+
+- New `interpret()` method with tight fetch→dispatch→countdown inner loop
+- All periodic checks (GC, timer, signals, yield, preemption, display sync)
+  consolidated behind a single countdown gate (every 1024 bytecodes)
+- Tiered check frequencies: hot checks every 1K, warm every 64K, cold every 100K
+- `test_load_image` now calls `interpret()` directly with a monitoring thread
+  instead of per-bytecode `step()` loop
+- Extracted `handleForceYield()` for scheduler round-robin logic
+
+Benchmark: test suite total 5731ms → 5002ms (12.7% faster).
+
+## Build 111 — Flat switch dispatch
+
+- `dispatchBytecode()` rewritten from if-else chain to flat `switch(bytecode)`
+- Dropped V3PlusClosures bytecode support (requires Pharo 10+ / Sista V1)
+- Compiler emits jump table for O(1) dispatch
+
+Combined builds 111+112: ~5.8x faster than build 110 (ecd0d70 era).
+
+---
+
 # What's New in Build 108
 
 Build 108 — 2026-03-27

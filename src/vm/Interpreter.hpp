@@ -1898,6 +1898,9 @@ private:
     /// Returns true if a process was found and execution continues.
     bool tryReschedule();
 
+    /// Handle forced yield from heartbeat thread (process switching)
+    void handleForceYield();
+
     /// Periodic preemption check - allow other processes to run
     void checkForPreemption();
 

@@ -22,6 +22,8 @@
 #include <libgen.h>   // dirname
 #include <unistd.h>   // chdir
 #include <unistd.h>
+#include <thread>
+#include <atomic>
 
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -47,6 +49,9 @@ static void activateMacOSApp() {
 // SIGSEGV recovery support - defined in Interpreter.cpp
 extern sigjmp_buf g_sigsegvRecovery;
 extern volatile sig_atomic_t g_sigsegvRecoveryEnabled;
+
+// Watchdog step counter - defined in Interpreter.cpp
+extern std::atomic<long long> g_watchdogSteps;
 #include <unordered_map>
 
 using namespace pharo;
@@ -731,41 +736,59 @@ int main(int argc, char* argv[]) {
         auto idleStartTime = std::chrono::steady_clock::now();
         bool clickInjected = false;
 
-        for (long long i = 0; i < totalSteps; i++) {
-            // Start heartbeat after startup completes
-            if (!heartbeatStarted && i == 2000000) {
-                interpreter.startHeartbeat();
-                heartbeatStarted = true;
-            }
-            bool result = interpreter.step();
+        // Start heartbeat immediately (needed for Delay scheduling).
+        // interpret() handles all periodic checks internally.
+        if (!heartbeatStarted) {
+            interpreter.startHeartbeat();
+            heartbeatStarted = true;
+        }
 
-            // Stall detection: check test results file every 100M steps.
-            // If the file hasn't been modified in 300s, the test runner is stuck
-            // (e.g., Delay scheduler died). Exit so the timeout wrapper can restart.
-            if (i > 0 && i % 100000000 == 0) {
-                struct stat st;
-                if (stat("/tmp/sunit_test_results.txt", &st) == 0) {
-                    auto fileAge = std::chrono::system_clock::now() -
-                        std::chrono::system_clock::from_time_t(st.st_mtime);
-                    auto ageSecs = std::chrono::duration_cast<std::chrono::seconds>(fileAge).count();
-                    if (ageSecs > 300) {
-                        std::cout << "[STALL] Test results file unchanged for " << ageSecs
-                                  << "s, stopping." << std::endl;
+        // Monitoring thread: progress, stall detection, click injection.
+        // Runs alongside interpret() which handles the fast bytecode loop.
+        std::atomic<bool> monitorDone{false};
+        std::thread monitor([&]() {
+            auto startTime = std::chrono::steady_clock::now();
+            bool clickInjected = false;
+            long long lastSteps = 0;
+            int stuckSeconds = 0;
+
+            while (!monitorDone.load(std::memory_order_relaxed)) {
+                std::this_thread::sleep_for(std::chrono::seconds(1));
+                if (monitorDone.load(std::memory_order_relaxed)) break;
+
+                long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - startTime).count();
+
+                // Progress report every ~10s
+                if (elapsed % 10 == 0 && elapsed > 0) {
+                    std::cout << "[PROGRESS] " << elapsed << "s: ~" << steps << " steps" << std::endl;
+                }
+
+                // Click injection after ~5s of execution
+                if (!clickInjected && elapsed >= 5 && imageArgs.empty()) {
+                    std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
+                    injectMouseClick(50, 300, 2);
+                    clickInjected = true;
+                }
+
+                // Stall detection: if steps haven't advanced in 300s
+                if (steps == lastSteps) {
+                    stuckSeconds++;
+                    if (stuckSeconds > 300) {
+                        std::cout << "[STALL] VM stuck for " << stuckSeconds << "s, stopping." << std::endl;
+                        interpreter.stop();
                         break;
                     }
+                } else {
+                    stuckSeconds = 0;
                 }
-            }
+                lastSteps = steps;
 
-            // Progress report every 10M steps
-            if (i > 0 && i % 10000000 == 0) {
-                std::cout << "[PROGRESS] Step " << i << ": active=" << activeSteps
-                          << " idle=" << consecutiveIdle << " result=" << result << std::endl;
-
-                // In test mode, check for results file every 10M steps
+                // Check for test completion
                 if (testMode) {
                     FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
                     if (rf) {
-                        // Check if file contains completion marker
                         char buf[256];
                         bool complete = false;
                         while (fgets(buf, sizeof(buf), rf)) {
@@ -777,55 +800,21 @@ int main(int argc, char* argv[]) {
                         fclose(rf);
                         if (complete) {
                             std::cout << "[TEST] Results file complete! Stopping." << std::endl;
+                            interpreter.stop();
                             break;
                         }
                     }
                 }
             }
+        });
 
-            if (result) {
-                activeSteps++;
-                consecutiveIdle = 0;
+        // Run the fast interpreter loop (blocks until VM stops)
+        interpreter.interpret();
 
-                // Event injection moved to idle section below — must wait until
-                // OSSDL2Driver's FFI event loop has started (SDL_PollEvent activates
-                // after ~111M steps).
-            } else {
-                // If VM was explicitly stopped (snapshot:andQuit:), exit immediately
-                if (!interpreter.isRunning()) {
-                    std::cout << "[VM-EXIT] VM stopped, exiting step loop." << std::endl;
-                    break;
-                }
-                consecutiveIdle++;
-                // Record wall-clock time on first idle transition
-                if (consecutiveIdle == 1) {
-                    idleStartTime = std::chrono::steady_clock::now();
+        monitorDone.store(true, std::memory_order_relaxed);
+        if (monitor.joinable()) monitor.join();
 
-                    // Inject click during first idle — the OSSDL2Driver event loop
-                    // is now running (SDL_PollEvent has activated after startup).
-                    if (imageArgs.empty() && !clickInjected) {
-                        std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
-                        injectMouseClick(50, 300, 2);
-                        clickInjected = true;
-                    }
-                }
-                // Check wall-clock idle duration periodically (every 100K steps to avoid clock overhead)
-                if (consecutiveIdle % 100000 == 0) {
-                    auto idleElapsed = std::chrono::steady_clock::now() - idleStartTime;
-                    auto idleSecs = std::chrono::duration_cast<std::chrono::seconds>(idleElapsed).count();
-                    // In CLI mode, allow 30s idle for timer/delay-based tests
-                    if (!imageArgs.empty() && idleSecs > 30) {
-                        std::cout << "[CLI] Idle for " << idleSecs << "s wall-clock, stopping." << std::endl;
-                        break;
-                    }
-                    // In interactive mode, stop after 120s idle (test runners use
-                    // startup.st with Delay-based watchdogs that need time to fire)
-                    if (imageArgs.empty() && idleSecs > 120) {
-                        break;
-                    }
-                }
-            }
-        }
+        activeSteps = g_watchdogSteps.load(std::memory_order_relaxed);
 
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;

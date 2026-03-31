@@ -1,5 +1,29 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## Latest: Build 111 + interpret() fast loop
+
+    Date:          2026-03-31
+    Build:         112 (interpret() fast loop)
+    Git hash:      (build 112 commit)
+    Optimization:  step() hot path → fast interpret() loop
+    Script:        scripts/time_tests.st
+    Image:         Pharo 13 (130) fresh download
+
+    Our VM:        iospharo test_load_image (interpreter-only, no JIT)
+    Reference VM:  Pharo v10.3.9 (Cog JIT, 33e04bb60)
+
+    VM              Classes   Tests    Total ms   Wall time
+    Reference        1999    27968        58ms      ~0.2s
+    Ours             1999    27968      5002ms      ~5m*
+    Ratio                                86.2x
+
+    * Wall time inflated: VM continued running after tests completed
+      (quitPrimitive not killing interpret() loop). Actual test time ~5s.
+
+    Improvement over previous (step() loop): 5731ms → 5002ms (12.7% faster)
+
+## Previous: Build 111 (flat switch, step() loop)
+
     Date:          2026-03-30
     Build:         111
     Git hash:      2898e7d
@@ -9,8 +33,6 @@
 
     Our VM:        iospharo test_load_image (interpreter-only, no JIT)
     Reference VM:  Pharo v10.3.9 (Cog JIT, 33e04bb60)
-
-## Overall
 
     VM              Classes   Tests    Total ms   Wall time
     Reference        1999    27968        74ms      ~1s

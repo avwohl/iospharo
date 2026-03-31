@@ -9,12 +9,13 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 - Compiler emits a direct jump table — O(1) dispatch instead of O(n) comparisons
 - Expected gain: 15-30% on tight loops
 
-## 2. Slim down step() hot path
-- `step()` does ~15 conditionals, atomic loads, and a syscall per bytecode
-- Should inline the hot path: fetch-dispatch-check_counter loop
-- Move GC, timer, signals, yield, stuck-process checks behind a single countdown
-- One decrement + branch-predicted comparison per bytecode instead of current overhead
-- Expected gain: significant (combined with #1, possibly 2-3x on bytecode-heavy benchmarks)
+## 2. Slim down step() hot path (DONE)
+- Rewrote `interpret()` with fast inner loop: fetch→dispatch→countdown pattern
+- All periodic checks consolidated behind a single `--checkCountdown <= 0` gate
+- Tiered checks: every 1024 (GC, timer, yield), every ~64K (preemption, watchdog), every ~100K (input, display)
+- Extracted `handleForceYield()` from inline step() code
+- `test_load_image` now calls `interpret()` directly with a monitoring thread
+- Measured gain: **12.7%** (5731ms → 5002ms on full test suite, build 111)
 
 ## 3. Remove diagnostic overhead from sendSelector()
 - Selector byte extraction and receiver class name logging happen on every send

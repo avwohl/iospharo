@@ -605,10 +605,8 @@ void Interpreter::dumpProcessQueues() {
 }
 
 void Interpreter::interpret() {
-    // Debug: Log special object addresses once at start
-    volatile int loopCount = 0;
 #if __APPLE__
-    volatile int64_t lastRunLoopPumpMs = 0;  // Tracks ms since start (volatile for longjmp)
+    volatile int64_t lastRunLoopPumpMs = 0;  // volatile for longjmp safety
     auto runLoopBase = std::chrono::steady_clock::now();
 #endif
 
@@ -616,92 +614,313 @@ void Interpreter::interpret() {
     if (sigsetjmp(reenterInterpreter_, 0) != 0) {
         // Re-entered from enterInterpreterFromCallback().
         // Active process has been switched; just fall into the loop.
-        loopCount = 0;
 #if __APPLE__
         runLoopBase = std::chrono::steady_clock::now();
         lastRunLoopPumpMs = 0;
 #endif
     }
 
+    // ====================================================================
+    // FAST INNER LOOP
+    //
+    // The hot path is: fetch byte → switch dispatch → decrement counter.
+    // All periodic checks (GC, timer, signals, yield, watchdog, display)
+    // are behind a single countdown that fires every 1024 bytecodes.
+    // This replaces the old step()-per-bytecode design which had ~15
+    // conditionals, atomic loads, and syscalls on every single bytecode.
+    // ====================================================================
+
+    int checkCountdown = 1024;
+    uint64_t totalSteps = 0;
+
     while (running_) {
-        // Execute a batch of bytecodes before checking overhead
-        // This dramatically reduces the per-bytecode cost of timer/event checks
-        g_watchdogPhase.store(1, std::memory_order_relaxed);  // in step()
-        for (int batch = 0; batch < 1000 && running_; batch++) {
-            step();
-        }
-        g_watchdogPhase.store(0, std::memory_order_relaxed);  // between batches
-        loopCount += 1000;
-        g_watchdogSteps.store(loopCount, std::memory_order_relaxed);
 
-        // Update watchdog with current process priority (every 100K steps)
-        if (loopCount % 100000 == 0) {
-            Oop proc = getActiveProcess();
-            if (proc.isObject() && proc.rawBits() > 0x10000) {
-                Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
-                int pri = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
-                g_watchdogProcessPriority = pri;
+        // === HOT PATH: fetch + dispatch ===
+        if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0)) {
+            returnValue(receiver_);
+            if (!running_) break;
+        }
+
+        uint8_t bytecode = *instructionPointer_++;
+
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+            recentBytecodeIdx_++;
+            lastBytecode_ = bytecode;
+        }
+
+        inExtension_ = false;
+        dispatchBytecode(bytecode);
+
+        // === PERIODIC CHECKS (every 1024 bytecodes) ===
+        if (--checkCountdown <= 0) {
+            checkCountdown = 1024;
+            totalSteps += 1024;
+            g_stepNum += 1024;
+            g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
+
+            // CRITICAL: If we just dispatched an extension byte (0xE0/0xE1),
+            // skip all process-switching checks. Extension bytes set extA_/extB_
+            // which the NEXT bytecode needs. A process switch calls
+            // executeFromContext() which resets extA_/extB_ to 0, corrupting
+            // the next bytecode's arguments.
+            if (inExtension_) {
+                // Still do GC check (no process switch) and finalization one-shot
+                if (__builtin_expect(memory_.needsCompactGC(), 0)) {
+                    memory_.clearCompactGCFlag();
+                    memory_.fullGC(/* skipEphemerons */ true);
+                    flushMethodCache();
+                }
+                continue;
             }
-        }
 
-        // Process any pending external semaphore signals.
-        // CRITICAL: Skip if in extension byte sequence to protect extA_/extB_.
-        // The last step() in the batch may have been an extension byte (0xE0/0xE1).
-        // A process switch here would call executeFromContext() which resets
-        // extA_/extB_ to 0, corrupting the next bytecode's arguments (e.g.,
-        // turning a backward jump into a forward jump past method end).
-        if (hasPendingSignals() && !inExtension_) {
-            processPendingSignals();
-        }
+            // -- GC safe point --
+            if (__builtin_expect(memory_.needsCompactGC(), 0)) {
+                memory_.clearCompactGCFlag();
+                memory_.fullGC(/* skipEphemerons */ true);
+                flushMethodCache();
+            }
 
-        // Check timer every outer loop iteration (every 1000 bytecodes).
-        // Previous check used (loopCount & 0x3FF) which only triggered every
-        // 128,000 steps due to loopCount incrementing by 1000. This was too
-        // slow for 30ms Delays. Now checks every 1000 bytecodes (~1ms at 1M/s).
-        // CRITICAL: Skip if in extension byte sequence (same reason as above).
-        if (!inExtension_) {
+            // -- Finalization one-shot after GC --
+            if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+                finalizationCheckAfterGC_ = false;
+                signalFinalizationIfNeeded();
+            }
+
+            // -- Timer semaphore (Delay scheduler) --
             checkTimerSemaphore();
-        }
 
-        // Process input events every 10K bytecodes
-        // CRITICAL: Skip if in extension byte sequence (same reason as above).
-        if (loopCount % 10000 == 0 && !inExtension_) {
-            processInputEvents();
-        }
-
-#if __APPLE__
-        // Pump the native run loop periodically so Metal can render and
-        // UIKit can deliver events. Rate-limited to avoid slowing the VM:
-        //   - Check every 100K bytecodes (was 10K)
-        //   - Min interval: 50ms (was 16ms)
-        //   - CFRunLoopRunInMode timeout: 0 (non-blocking, was 0.001)
-        if (relinquishCallback_ && (loopCount % 100000 == 0)) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runLoopBase).count();
-            if (elapsed - lastRunLoopPumpMs >= 50) {
-                lastRunLoopPumpMs = elapsed;
-                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
+            // -- External semaphore signals (from heartbeat/events) --
+            if (hasPendingSignals()) {
+                processPendingSignals();
             }
-        }
-#endif
 
-        // Periodically look for Display Form
-        if (displayForm_.isNil() && (loopCount % 100000 == 0)) {
-            Oop display = memory_.findGlobal("Display");
-            if (!display.isNil() && display.isObject()) {
-                ObjectHeader* hdr = display.asObjectPtr();
-                if (hdr->slotCount() >= 4) {
-                    Oop w = memory_.fetchPointer(1, display);
-                    Oop h = memory_.fetchPointer(2, display);
-                    if (w.isSmallInteger() && h.isSmallInteger() &&
-                        w.asSmallInteger() > 0 && h.asSmallInteger() > 0) {
-                        setDisplayForm(display);
-                        setScreenSize(w.asSmallInteger(), h.asSmallInteger());
-                        Oop d = memory_.fetchPointer(3, display);
-                        if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
+            // -- Force yield (set by heartbeat every ~2ms) --
+            if (forceYield_.load(std::memory_order_acquire)) {
+                if (suppressContextSwitch_) {
+                    suppressContextSwitch_ = false;
+                } else {
+                    forceYield_.store(false, std::memory_order_release);
+                    handleForceYield();
+                }
+            }
+
+            // -- Terminate stuck process (set by watchdog, rare) --
+            if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
+                terminateStuck_.store(false, std::memory_order_relaxed);
+                terminateAndSwitchProcess();
+            }
+
+            // -- cannotReturn: deadline --
+            if (__builtin_expect(cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_, 0)) {
+                Oop currentProcess = getActiveProcess();
+                if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
+                    cannotReturnCount_ = 0;
+                    cannotReturnDeadline_ = 0;
+                    lastCannotReturnProcess_ = Oop::nil();
+                    lastCannotReturnCtx_ = Oop::nil();
+                    terminateCurrentProcess();
+                    if (!tryReschedule() && !bootstrapStartup()) {
+                        stopVM("No runnable processes after cannotReturn: deadline termination");
+                    }
+                } else {
+                    cannotReturnDeadline_ = 0;
+                }
+            }
+
+            // -- Display sync requested by heartbeat thread --
+            if (pendingDisplaySync_.load(std::memory_order_acquire)) {
+                pendingDisplaySync_.store(false, std::memory_order_release);
+                syncDisplayToSurface();
+            }
+
+            // -- Finalization (periodic, for auto-GC mourners) --
+            signalFinalizationIfNeeded();
+
+            // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
+            if ((totalSteps & 0xFFFF) == 0) {
+                // Preemption check
+                checkForPreemption();
+
+                // Stuck process termination (wall-clock based)
+                {
+                    Oop currentActive = getActiveProcess();
+                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
+                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
+
+                    if (prio >= 80) {
+                        startupGracePeriod_ = false;
+                        if (trackedProcess_.rawBits() == currentActive.rawBits())
+                            trackedProcess_ = Oop::nil();
+                    } else if (!startupGracePeriod_ && prio < 79) {
+                        if (currentActive.rawBits() != trackedProcess_.rawBits()) {
+                            trackedProcess_ = currentActive;
+                            cumulativeMs_ = 0;
+                            lastResumeTime_ = std::chrono::steady_clock::now();
+                            trackStartTime_ = lastResumeTime_;
+                        } else {
+                            auto now = std::chrono::steady_clock::now();
+                            auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                now - trackStartTime_).count();
+                            if (wallMs >= 90000) {
+                                fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
+                                        (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
+                                trackedProcess_ = Oop::nil();
+                                memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
+                                Oop nextProc = wakeHighestPriority();
+                                if (!nextProc.isNil() && nextProc.isObject())
+                                    transferTo(nextProc);
+                            }
+                        }
+                    }
+                }
+
+                // Watchdog process priority update
+                {
+                    Oop proc = getActiveProcess();
+                    if (proc.isObject() && proc.rawBits() > 0x10000) {
+                        Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                        g_watchdogProcessPriority = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
                     }
                 }
             }
+
+            // === INFREQUENT CHECKS (every ~100K bytecodes) ===
+            if ((totalSteps % 102400) == 0) {
+                // Process input events
+                processInputEvents();
+
+#if __APPLE__
+                // Pump native run loop for Metal rendering / UIKit events
+                if (relinquishCallback_) {
+                    auto now = std::chrono::steady_clock::now();
+                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runLoopBase).count();
+                    if (elapsed - lastRunLoopPumpMs >= 50) {
+                        lastRunLoopPumpMs = elapsed;
+                        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
+                    }
+                }
+#endif
+
+                // Look for Display Form if not yet found
+                if (displayForm_.isNil()) {
+                    Oop display = memory_.findGlobal("Display");
+                    if (!display.isNil() && display.isObject()) {
+                        ObjectHeader* hdr = display.asObjectPtr();
+                        if (hdr->slotCount() >= 4) {
+                            Oop w = memory_.fetchPointer(1, display);
+                            Oop h = memory_.fetchPointer(2, display);
+                            if (w.isSmallInteger() && h.isSmallInteger() &&
+                                w.asSmallInteger() > 0 && h.asSmallInteger() > 0) {
+                                setDisplayForm(display);
+                                setScreenSize(w.asSmallInteger(), h.asSmallInteger());
+                                Oop d = memory_.fetchPointer(3, display);
+                                if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
+                            }
+                        }
+                    }
+                }
+            }
+        } // periodic checks
+    } // while (running_)
+}
+
+void Interpreter::handleForceYield() {
+    // Process forced yield from heartbeat thread.
+    // Check scheduler queues for higher-priority or same-priority processes.
+    Oop activeProcess = getActiveProcess();
+    Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+    int activePriority = activePriorityOop.isSmallInteger() ?
+                        static_cast<int>(activePriorityOop.asSmallInteger()) : 0;
+
+    Oop nilObj = memory_.nil();
+    Oop nextProcess = nilObj;
+
+    {
+        Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+        Oop scheduler = memory_.fetchPointer(1, schedulerAssoc);
+        Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+        int maxPri = static_cast<int>(schedLists.asObjectPtr()->slotCount());
+
+        // Check for higher priority processes (preemption)
+        for (int pri = maxPri; pri > activePriority; pri--) {
+            Oop processList = memory_.fetchPointer(pri - 1, schedLists);
+            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+            if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
+                nextProcess = removeFirstLinkOfList(processList);
+                break;
+            }
+        }
+
+        // Round-robin at same priority level
+        if (nextProcess.rawBits() == nilObj.rawBits() &&
+            activePriority > 0 && activePriority <= maxPri) {
+            Oop processList = memory_.fetchPointer(activePriority - 1, schedLists);
+            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+            if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
+                first.rawBits() != activeProcess.rawBits()) {
+                nextProcess = removeFirstLinkOfList(processList);
+            }
+        }
+    }
+
+    if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits() &&
+        nextProcess.rawBits() != activeProcess.rawBits()) {
+        putToSleep(activeProcess);
+        g_xferReason = "forceYield";
+        transferTo(nextProcess);
+    }
+
+    if (hasPendingDriverInstall_) {
+        executePendingDriverInstall();
+        return;
+    }
+
+    // Convert pending driver setup to install if ready
+    if (hasPendingDriverSetup_ && pendingDriverSetupMethod_.isObject()) {
+        Oop nilObj2 = memory_.nil();
+        Oop osWindowDriverClass = memory_.findGlobal("OSWindowDriver");
+        if (osWindowDriverClass.isObject() && osWindowDriverClass.rawBits() != nilObj2.rawBits()) {
+            Oop classPool = memory_.fetchPointer(7, osWindowDriverClass);
+            if (classPool.isObject() && classPool.rawBits() != nilObj2.rawBits()) {
+                ObjectHeader* poolHdr = classPool.asObjectPtr();
+                if (poolHdr->slotCount() >= 2) {
+                    Oop assocArray = memory_.fetchPointer(1, classPool);
+                    if (assocArray.isObject()) {
+                        ObjectHeader* arrayHdr = assocArray.asObjectPtr();
+                        for (size_t i = 0; i < arrayHdr->slotCount(); i++) {
+                            Oop assoc = memory_.fetchPointer(i, assocArray);
+                            if (assoc.isObject() && assoc.rawBits() != nilObj2.rawBits()) {
+                                ObjectHeader* assocHdr = assoc.asObjectPtr();
+                                if (assocHdr->slotCount() >= 2) {
+                                    Oop key = memory_.fetchPointer(0, assoc);
+                                    if (key.isObject()) {
+                                        ObjectHeader* keyHdr = key.asObjectPtr();
+                                        if (keyHdr->isBytesObject() && keyHdr->byteSize() == 7) {
+                                            std::string keyName((char*)keyHdr->bytes(), keyHdr->byteSize());
+                                            if (keyName == "Current") {
+                                                Oop driverInstance = memory_.fetchPointer(1, assoc);
+                                                if (driverInstance.isObject() && driverInstance.rawBits() != nilObj2.rawBits()) {
+                                                    pendingDriverInstallMethod_ = pendingDriverSetupMethod_;
+                                                    pendingDriverInstallReceiver_ = driverInstance;
+                                                    hasPendingDriverInstall_ = true;
+                                                    pendingDriverMethodNeedsArg_ = false;
+                                                }
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        hasPendingDriverSetup_ = false;
+        pendingDriverSetupMethod_ = Oop::nil();
+        if (hasPendingDriverInstall_) {
+            executePendingDriverInstall();
         }
     }
 }
