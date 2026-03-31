@@ -1,26 +1,37 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
-## Latest: Build 111 + interpret() fast loop
+## Latest: Build 113 — sendSelector cleanup + multi-probe cache
 
     Date:          2026-03-31
-    Build:         112 (interpret() fast loop)
-    Git hash:      (build 112 commit)
-    Optimization:  step() hot path → fast interpret() loop
+    Build:         113
+    Optimizations: sendSelector() hot path cleanup + 2-way 4096-entry method cache
     Script:        scripts/time_tests.st
     Image:         Pharo 13 (130) fresh download
 
     Our VM:        iospharo test_load_image (interpreter-only, no JIT)
     Reference VM:  Pharo v10.3.9 (Cog JIT, 33e04bb60)
 
-    VM              Classes   Tests    Total ms   Wall time
-    Reference        1999    27968        58ms      ~0.2s
-    Ours             1999    27968      5002ms      ~5m*
-    Ratio                                86.2x
+    VM              Classes   Tests    CPU time   Smalltalk ms
+    Reference        1999    27968      0.18s          58
+    Ours             1999    27968     16.88s        ~5400*
 
-    * Wall time inflated: VM continued running after tests completed
-      (quitPrimitive not killing interpret() loop). Actual test time ~5s.
+    * Smalltalk-measured ms has ~10% run-to-run variance (5002-5708ms across
+      runs) due to bimodal test distribution. CPU time is the reliable metric.
 
-    Improvement over previous (step() loop): 5731ms → 5002ms (12.7% faster)
+    CPU improvement since build 112: 20.81s → 16.88s (18.9% faster)
+
+## Build 112 — interpret() fast loop
+
+    Date:          2026-03-31
+    Build:         112
+    Git hash:      e9fc0c9
+    Optimization:  step() hot path → fast interpret() loop
+
+    VM              Classes   Tests    CPU time   Smalltalk ms
+    Reference        1999    27968      0.18s          58
+    Ours             1999    27968     20.81s        5002
+
+    Improvement over build 111: 5731ms → 5002ms (12.7% by Smalltalk time)
 
 ## Previous: Build 111 (flat switch, step() loop)
 

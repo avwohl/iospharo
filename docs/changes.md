@@ -1,3 +1,25 @@
+# What's New in Build 113
+
+Build 113 — 2026-03-31
+
+## sendSelector() hot path cleanup + 2-way method cache
+
+Two more interpreter optimizations, combined 19% CPU reduction:
+
+- **sendSelector cleanup**: Moved selector byte extraction and receiver class
+  name logging behind the sendCount_ guard (every 1024 sends instead of every
+  send). Removed dead g_watchdogPrimIndex writes. Corruption check now behind
+  __builtin_expect.
+
+- **2-way set-associative method cache**: Expanded from 2048 to 4096 entries.
+  Added secondary probe with rotated hash. On miss, tries two slots before
+  falling through to full lookupMethod(). Reduces conflict misses that force
+  expensive class hierarchy walks.
+
+Benchmark: CPU time 20.81s → 16.88s on full test suite (18.9% faster).
+
+---
+
 # What's New in Build 112
 
 Build 112 — 2026-03-31

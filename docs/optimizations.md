@@ -17,20 +17,25 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 - `test_load_image` now calls `interpret()` directly with a monitoring thread
 - Measured gain: **12.7%** (5731ms → 5002ms on full test suite, build 111)
 
-## 3. Remove diagnostic overhead from sendSelector()
-- Selector byte extraction and receiver class name logging happen on every send
-- Should move behind the `(++sendCount_ & 0x3FF) == 0` guard
-- Corruption check (`rawBits() == 0`) could be debug-only
+## 3. Clean up sendSelector() hot path (DONE)
+- Moved selector byte extraction and receiver class name logging behind sendCount_ guard
+- Removed per-send `g_watchdogPrimIndex` writes (was dead code, never read)
+- Moved corruption check behind `__builtin_expect`
+- Diagnostics now at bottom of function, only on the cache-miss fallthrough path
+- Measured gain: **~9% CPU reduction** (isolated)
 
-## 4. Multi-probe method cache
-- Current: 2048 entries, single XOR hash probe
-- Cog VM uses 4-way set-associative (4096 entries, 4 probes)
-- Probe 2-3 secondary positions before full lookup to reduce conflict misses
+## 4. Multi-probe method cache (DONE)
+- Expanded cache from 2048 to 4096 entries
+- Added 2-way set-associative probing (primary + rotated secondary hash)
+- On miss: two probes before falling through to full lookupMethod()
+- On insert: primary slot preferred, secondary used for eviction
+- Combined with #3, measured gain: **~19% CPU reduction** vs build 112 baseline
+  (20.81s → 16.88s user time on full test suite)
 
-## 5. Reduce syscalls in periodic checks
-- `chrono::steady_clock::now()` (kernel syscall) called every 1024 bytecodes
-  for stuck-process tracking
-- Use bytecode count as cheap monotonic counter, only call clock every ~64K steps
+## 5. Reduce syscalls in periodic checks (SKIPPED)
+- Tried gating `checkTimerSemaphore()` behind 8x sub-counter (every 8192 bytecodes)
+- Reduced CPU time but caused Delay scheduler latency issues (tests measure elapsed time)
+- The timer syscall is already cheap on macOS (VDSO). Not worth the tradeoff.
 
 ## 6. Inline caching (PICs) — longer term
 - Monomorphic inline cache at each send bytecode site

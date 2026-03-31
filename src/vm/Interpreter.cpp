@@ -3897,69 +3897,34 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
-    // Fast path: Get selector bytes without creating std::string
-    const char* selBytes = nullptr;
-    size_t selLen = 0;
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() < 50) {
-            selBytes = (const char*)selHdr->bytes();
-            selLen = selHdr->byteSize();
-        }
-    }
-
     Oop rcvr = stackValue(argCount);
 
-    // Record watchdog info periodically (every 1024 sends) for timer summary
-    {
-        if ((++sendCount_ & 0x3FF) == 0) {
-            if (selBytes && selLen > 0 && selLen < 63) {
-                memcpy(g_watchdogSelector, selBytes, selLen);
-                g_watchdogSelector[selLen] = '\0';
-            }
-            Oop rcvrCls = memory_.classOf(rcvr);
-            if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
-                Oop nameOop = memory_.fetchPointer(6, rcvrCls);
-                if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
-                    ObjectHeader* nameHdr = nameOop.asObjectPtr();
-                    if (nameHdr->isBytesObject() && nameHdr->byteSize() < 63) {
-                        memcpy(g_watchdogReceiverClass, nameHdr->bytes(), nameHdr->byteSize());
-                        g_watchdogReceiverClass[nameHdr->byteSize()] = '\0';
-                    }
-                }
-            }
-        }
-    }
-
-    // Raw 0 receiver means memory corruption — stop immediately
-    if (rcvr.rawBits() == 0) {
+    // Corruption check (cold path)
+    if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
         stopVM("Message send to corrupted receiver (raw 0)");
         return;
     }
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-
-
-    // Check method cache
+    // Check method cache (2-way set-associative)
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
-    if (cached && cached->method != Oop::nil()) {
-        // Cache hit
-        if (cached->primitiveIndex > 0) {
-            g_watchdogPrimIndex = cached->primitiveIndex;
+    if (__builtin_expect(cached != nullptr, 1)) {
+        // Cache hit — fast path
+        int primIdx = cached->primitiveIndex;
+        if (primIdx > 0) {
             argCount_ = argCount;
             primitiveFailed_ = false;
             primFailCode_ = 0;
             newMethod_ = cached->method;
-            PrimitiveResult result = executePrimitive(cached->primitiveIndex, argCount);
+            PrimitiveResult result = executePrimitive(primIdx, argCount);
             if (result == PrimitiveResult::Success) {
                 return;
             }
         }
 
-        // Suppress context switch for primitive 198 (ensure:/ifCurtailed:)
-        if (cached->primitiveIndex == 198) {
+        if (__builtin_expect(primIdx == 198, 0)) {
             suppressContextSwitch_ = true;
         }
 
@@ -3973,7 +3938,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Cache miss - look up method
+    // Cache miss — full lookup
     Oop method = lookupMethod(selector, rcvrClass);
 
     if (method.isNil()) {
@@ -3990,11 +3955,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
-    // Check for primitive
     int primIndex = primitiveIndexOf(method);
 
     if (primIndex > 0) {
-        g_watchdogPrimIndex = primIndex;
         argCount_ = argCount;
         primitiveFailed_ = false;
         primFailCode_ = 0;
@@ -4005,12 +3968,33 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
-    // Suppress context switch for primitive 198 (ensure:/ifCurtailed:)
-    if (primIndex == 198) {
+    if (__builtin_expect(primIndex == 198, 0)) {
         suppressContextSwitch_ = true;
     }
 
     activateMethod(method, argCount);
+
+    // Watchdog diagnostics (every 1024 sends)
+    if (__builtin_expect((++sendCount_ & 0x3FF) == 0, 0)) {
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() < 63) {
+                memcpy(g_watchdogSelector, selHdr->bytes(), selHdr->byteSize());
+                g_watchdogSelector[selHdr->byteSize()] = '\0';
+            }
+        }
+        Oop rcvrCls = memory_.classOf(rcvr);
+        if (rcvrCls.isObject() && rcvrCls.rawBits() > 0x10000) {
+            Oop nameOop = memory_.fetchPointer(6, rcvrCls);
+            if (nameOop.isObject() && nameOop.rawBits() > 0x10000) {
+                ObjectHeader* nameHdr = nameOop.asObjectPtr();
+                if (nameHdr->isBytesObject() && nameHdr->byteSize() < 63) {
+                    memcpy(g_watchdogReceiverClass, nameHdr->bytes(), nameHdr->byteSize());
+                    g_watchdogReceiverClass[nameHdr->byteSize()] = '\0';
+                }
+            }
+        }
+    }
 }
 
 // ===== METHOD LOOKUP =====
@@ -4101,29 +4085,56 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
 }
 
 MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
-    size_t hash = cacheHash(selector, classOop);
-    MethodCacheEntry& entry = methodCache_[hash];
+    uint64_t selBits = selector.rawBits();
+    uint64_t clsBits = classOop.rawBits();
+    size_t mask = MethodCacheSize - 1;
 
-    if (entry.selector == selector && entry.classOop == classOop) {
-        return &entry;
+    // Primary probe
+    size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
+    MethodCacheEntry& e1 = methodCache_[h1];
+    if (e1.selector == selector && e1.classOop == classOop) {
+        return &e1;
+    }
+
+    // Secondary probe (rotated hash reduces collision aliasing)
+    size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
+    MethodCacheEntry& e2 = methodCache_[h2];
+    if (e2.selector == selector && e2.classOop == classOop) {
+        return &e2;
     }
 
     return nullptr;
 }
 
 void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
-    size_t hash = cacheHash(selector, classOop);
-    MethodCacheEntry& entry = methodCache_[hash];
+    uint64_t selBits = selector.rawBits();
+    uint64_t clsBits = classOop.rawBits();
+    size_t mask = MethodCacheSize - 1;
+    int primIndex = primitiveIndexOf(method);
 
-    entry.selector = selector;
-    entry.classOop = classOop;
-    entry.method = method;
-    entry.primitiveIndex = primitiveIndexOf(method);
-    entry.primitive = nullptr;  // Will be set on first call
+    // Primary slot: use if empty or same key
+    size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
+    MethodCacheEntry& e1 = methodCache_[h1];
+    if (e1.selector.isNil() || (e1.selector == selector && e1.classOop == classOop)) {
+        e1.selector = selector;
+        e1.classOop = classOop;
+        e1.method = method;
+        e1.primitiveIndex = primIndex;
+        e1.primitive = nullptr;
+        return;
+    }
+
+    // Secondary slot: evict
+    size_t h2 = static_cast<size_t>((selBits >> 2) ^ (clsBits << 1) ^ clsBits) & mask;
+    MethodCacheEntry& e2 = methodCache_[h2];
+    e2.selector = selector;
+    e2.classOop = classOop;
+    e2.method = method;
+    e2.primitiveIndex = primIndex;
+    e2.primitive = nullptr;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {
-    // XOR the raw bits and mask to cache size
     uint64_t h = selector.rawBits() ^ classOop.rawBits();
     return static_cast<size_t>(h) & (MethodCacheSize - 1);
 }

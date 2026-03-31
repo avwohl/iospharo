@@ -85,7 +85,7 @@ namespace pharo {
 constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
 
 /// Method cache size (must be power of 2)
-constexpr size_t MethodCacheSize = 2048;
+constexpr size_t MethodCacheSize = 4096;
 
 // ===== PROCESS/SCHEDULER OBJECT SLOT INDICES =====
 
