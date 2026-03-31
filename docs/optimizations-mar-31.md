@@ -44,7 +44,18 @@ Short summary of interpreter performance work done in the last 48 hours
     Tight loop (100M SmallInt iterations): 4.6 cycles/bytecode
     Competitive with LuaJIT (~3) and Wasm3 (~5) interpreters.
 
+14. Dead code cleanup: removed unused initCachedClasses() and cached class members
+
 ## Not done (revised estimates)
 
 - Phase 2: Quickening / specialized bytecodes (revised est. 3-10%)
 - Phase 4: Pre-decoded IR / flat record (revised est. 1-3%)
+
+## Assessment
+
+The interpreter is near-optimal for its architecture:
+- 4.6 cycles/bytecode in tight loops (competitive with LuaJIT ~3, Wasm3 ~5)
+- The 69x gap vs Cog JIT is dominated by startup/framework overhead, not dispatch
+- Remaining Phases 2 and 4 offer diminishing returns (3-10% and 1-3%)
+- The method cache + accessor inlining were the big wins (19% + 6.4%)
+- Further per-bytecode optimization has reached the point of diminishing returns
