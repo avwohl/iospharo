@@ -19,6 +19,8 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <vector>
+#include <algorithm>
 #include <atomic>
 #include <dlfcn.h>
 
@@ -663,6 +665,7 @@ void Interpreter::interpret() {
         for (int i = 0xC8; i <= 0xCF; i++) dispatchTable[i] = &&op_popStoreRecv;
         for (int i = 0xD0; i <= 0xD7; i++) dispatchTable[i] = &&op_popStoreTemp;
         dispatchTable[0xD8] = &&op_pop;
+        dispatchTable[0x76] = &&op_identityEq;   // spec== (2.4M total)
         tableInit = true;
     }
 
@@ -670,9 +673,33 @@ void Interpreter::interpret() {
     uint64_t totalSteps = 0;
     uint8_t bytecode;
 
+    // --- Bytecode pair profiling (compile-time flag) ---
+#ifndef PROFILE_BYTECODE_PAIRS
+#define PROFILE_BYTECODE_PAIRS 0
+#endif
+#if PROFILE_BYTECODE_PAIRS
+    static uint64_t pairCounts[256 * 256] = {};
+    uint8_t prevBytecode = 0;
+#endif
+
     // --- Dispatch macro ---
     // Countdown check is BEFORE inExtension_ reset so periodic_checks can
     // see extension state from the previous handler.
+#if PROFILE_BYTECODE_PAIRS
+    #define DISPATCH_NEXT() do { \
+        if (__builtin_expect(--checkCountdown <= 0, 0)) goto periodic_checks; \
+        prevBytecode = bytecode; \
+        bytecode = *instructionPointer_++; \
+        pairCounts[prevBytecode * 256 + bytecode]++; \
+        if constexpr (ENABLE_DEBUG_LOGGING) { \
+            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
+            recentBytecodeIdx_++; \
+            lastBytecode_ = bytecode; \
+        } \
+        inExtension_ = false; \
+        goto *dispatchTable[bytecode]; \
+    } while(0)
+#else
     #define DISPATCH_NEXT() do { \
         if (__builtin_expect(--checkCountdown <= 0, 0)) goto periodic_checks; \
         bytecode = *instructionPointer_++; \
@@ -684,6 +711,7 @@ void Interpreter::interpret() {
         inExtension_ = false; \
         goto *dispatchTable[bytecode]; \
     } while(0)
+#endif
 
     // --- Entry point ---
     if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0)) {
@@ -722,10 +750,109 @@ void Interpreter::interpret() {
     op_pushSelf:  push(receiver_);              DISPATCH_NEXT();
     op_pushTrue:  push(memory_.trueObject());   DISPATCH_NEXT();
     op_pushFalse: push(memory_.falseObject());  DISPATCH_NEXT();
-    op_pushNil:   push(memory_.nil());          DISPATCH_NEXT();
-    op_push0:     push(Oop::fromSmallInteger(0)); DISPATCH_NEXT();
-    op_push1:     push(Oop::fromSmallInteger(1)); DISPATCH_NEXT();
-    op_dup:       push(stackTop());             DISPATCH_NEXT();
+    op_pushNil: {
+        // Speculative: pushNil + spec== (1.73M, 45.9% — "x == nil")
+        // Identity comparison with nil doesn't need method lookup.
+        if (*instructionPointer_ == 0x76) { // spec ==
+            instructionPointer_++;
+            Oop rcvr = stackTop();
+            bool isNil = rcvr.isNil();
+            // Fuse with following branch too (1.5M spec== + jump pairs)
+            uint8_t nextBC = *instructionPointer_;
+            if (nextBC >= 0xC0 && nextBC <= 0xC7) { // jumpFalse
+                instructionPointer_++;
+                if (!isNil) instructionPointer_ += (nextBC & 0x07) + 1;
+                DISPATCH_NEXT();
+            }
+            if (nextBC >= 0xB8 && nextBC <= 0xBF) { // jumpTrue
+                instructionPointer_++;
+                if (isNil) instructionPointer_ += (nextBC & 0x07) + 1;
+                DISPATCH_NEXT();
+            }
+            // No branch fusion — replace TOS with boolean
+            *(stackPointer_ - 1) = isNil ? memory_.trueObject() : memory_.falseObject();
+            DISPATCH_NEXT();
+        }
+        push(memory_.nil());
+        DISPATCH_NEXT();
+    }
+    op_push0: {
+        // Speculative: push0 + arith= (356K, "x = 0" pattern)
+        if (*instructionPointer_ == 0x66) { // arith =
+            Oop rcvr = stackTop();
+            if (rcvr.isSmallInteger()) {
+                instructionPointer_++;
+                *(stackPointer_ - 1) = rcvr.asSmallInteger() == 0
+                    ? memory_.trueObject() : memory_.falseObject();
+                DISPATCH_NEXT();
+            }
+        }
+        push(Oop::fromSmallInteger(0));
+        DISPATCH_NEXT();
+    }
+
+    op_push1: {
+        // Speculative: push1 + arith+ (2.19M, 64.9% hit rate — "x + 1")
+        if (*instructionPointer_ == 0x60) { // arith +
+            Oop rcvr = stackTop();
+            if (rcvr.isSmallInteger()) {
+                int64_t r = rcvr.asSmallInteger() + 1;
+                if (r <= Oop::smallIntegerMax()) {
+                    instructionPointer_++;
+                    *(stackPointer_ - 1) = Oop::fromSmallInteger(r);
+                    DISPATCH_NEXT();
+                }
+            }
+        }
+        // Speculative: push1 + arith- (183K — "x - 1")
+        if (*instructionPointer_ == 0x61) { // arith -
+            Oop rcvr = stackTop();
+            if (rcvr.isSmallInteger()) {
+                int64_t r = rcvr.asSmallInteger() - 1;
+                if (r >= Oop::smallIntegerMin()) {
+                    instructionPointer_++;
+                    *(stackPointer_ - 1) = Oop::fromSmallInteger(r);
+                    DISPATCH_NEXT();
+                }
+            }
+        }
+        push(Oop::fromSmallInteger(1));
+        DISPATCH_NEXT();
+    }
+    op_dup: {
+        // Speculative: dup + pushNil + spec== + jumpFalse (1.45M, 95.7%)
+        // Full nil-check idiom: "x ifNotNil:" compiles to dup; pushNil; ==; jmpF
+        if (instructionPointer_[0] == 0x4F && instructionPointer_[1] == 0x76) {
+            // dup; pushNil; ==
+            Oop val = stackTop();
+            bool isNil = val.isNil();
+            instructionPointer_ += 2; // skip pushNil + spec==
+            // Try to fuse with branch
+            uint8_t nextBC = *instructionPointer_;
+            if (nextBC >= 0xC0 && nextBC <= 0xC7) { // jumpFalse
+                instructionPointer_++;
+                if (!isNil) {
+                    // Not nil: don't jump (ifNotNil path), keep dup'd value
+                    instructionPointer_ += (nextBC & 0x07) + 1;
+                }
+                // Nil: jump (skip ifNotNil body), keep dup'd value
+                DISPATCH_NEXT();
+            }
+            if (nextBC >= 0xB8 && nextBC <= 0xBF) { // jumpTrue
+                instructionPointer_++;
+                if (isNil) {
+                    instructionPointer_ += (nextBC & 0x07) + 1;
+                }
+                DISPATCH_NEXT();
+            }
+            // No branch — push dup'd value and boolean
+            push(val);
+            push(isNil ? memory_.trueObject() : memory_.falseObject());
+            DISPATCH_NEXT();
+        }
+        push(stackTop());
+        DISPATCH_NEXT();
+    }
 
     op_jump:
         instructionPointer_ += (bytecode & 0x07) + 1;
@@ -780,6 +907,7 @@ void Interpreter::interpret() {
         if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
             int64_t a = rcvr.asSmallInteger();
             int64_t b = arg.asSmallInteger();
+            bool cmp = false;  // used by comparison+branch fusion
 
             switch (which) {
             case 0: { // +
@@ -796,18 +924,55 @@ void Interpreter::interpret() {
                 }
                 break;
             }
-            case 2:  // <
-                popN(2); push(a < b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
-            case 3:  // >
-                popN(2); push(a > b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
-            case 4:  // <=
-                popN(2); push(a <= b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
-            case 5:  // >=
-                popN(2); push(a >= b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
-            case 6:  // =
-                popN(2); push(a == b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
-            case 7:  // ~=
-                popN(2); push(a != b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            // --- Comparison cases with branch fusion ---
+            // If the next bytecode is a conditional jump, branch directly
+            // without creating/pushing a boolean object. This fuses two
+            // dispatches into one and eliminates boolean allocation.
+            // Profile data: 5.3M comparison+branch pairs per 100M bytecodes.
+            case 2: cmp = a < b;  goto arith_cmp_fuse;
+            case 3: cmp = a > b;  goto arith_cmp_fuse;
+            case 4: cmp = a <= b; goto arith_cmp_fuse;
+            case 5: cmp = a >= b; goto arith_cmp_fuse;
+            case 6: cmp = a == b; goto arith_cmp_fuse;
+            case 7: cmp = a != b; goto arith_cmp_fuse;
+
+            arith_cmp_fuse: {
+                uint8_t nextBC = *instructionPointer_;
+                if (nextBC >= 0xC0 && nextBC <= 0xC7) {
+                    // Short jumpFalse: jump if comparison is false
+                    instructionPointer_++;
+                    popN(2);
+                    if (!cmp) instructionPointer_ += (nextBC & 0x07) + 1;
+                    DISPATCH_NEXT();
+                }
+                if (nextBC >= 0xB8 && nextBC <= 0xBF) {
+                    // Short jumpTrue: jump if comparison is true
+                    instructionPointer_++;
+                    popN(2);
+                    if (cmp) instructionPointer_ += (nextBC & 0x07) + 1;
+                    DISPATCH_NEXT();
+                }
+                if (nextBC == 0xEF) {
+                    // Extended jumpFalse (2 bytes, no extB in this path)
+                    instructionPointer_++;
+                    uint8_t offset = *instructionPointer_++;
+                    popN(2);
+                    if (!cmp) instructionPointer_ += offset;
+                    DISPATCH_NEXT();
+                }
+                if (nextBC == 0xEE) {
+                    // Extended jumpTrue (2 bytes, no extB in this path)
+                    instructionPointer_++;
+                    uint8_t offset = *instructionPointer_++;
+                    popN(2);
+                    if (cmp) instructionPointer_ += offset;
+                    DISPATCH_NEXT();
+                }
+                // No fusible branch — push boolean normally
+                popN(2);
+                push(cmp ? memory_.trueObject() : memory_.falseObject());
+                DISPATCH_NEXT();
+            }
             case 8: { // *
                 __int128 r128 = (__int128)a * (__int128)b;
                 int64_t r = (int64_t)r128;
@@ -881,6 +1046,45 @@ void Interpreter::interpret() {
         if (__builtin_expect(!running_, 0)) goto cg_exit;
         DISPATCH_NEXT();
 
+    // --- spec== (identity comparison) with branch fusion ---
+    // Profile: 2.4M total, 30% followed by conditional jump
+    op_identityEq: {
+        Oop rcvr = stackValue(1);
+        Oop arg = stackValue(0);
+        bool eq = rcvr.rawBits() == arg.rawBits();
+        // Fuse with following conditional jump
+        uint8_t nextBC = *instructionPointer_;
+        if (nextBC >= 0xC0 && nextBC <= 0xC7) {
+            instructionPointer_++;
+            popN(2);
+            if (!eq) instructionPointer_ += (nextBC & 0x07) + 1;
+            DISPATCH_NEXT();
+        }
+        if (nextBC >= 0xB8 && nextBC <= 0xBF) {
+            instructionPointer_++;
+            popN(2);
+            if (eq) instructionPointer_ += (nextBC & 0x07) + 1;
+            DISPATCH_NEXT();
+        }
+        if (nextBC == 0xEF) {
+            instructionPointer_++;
+            uint8_t offset = *instructionPointer_++;
+            popN(2);
+            if (!eq) instructionPointer_ += offset;
+            DISPATCH_NEXT();
+        }
+        if (nextBC == 0xEE) {
+            instructionPointer_++;
+            uint8_t offset = *instructionPointer_++;
+            popN(2);
+            if (eq) instructionPointer_ += offset;
+            DISPATCH_NEXT();
+        }
+        popN(2);
+        push(eq ? memory_.trueObject() : memory_.falseObject());
+        DISPATCH_NEXT();
+    }
+
     // ====== SLOW PATH (extensions, returns, closures, etc.) ======
     op_slow:
         inExtension_ = false;
@@ -894,6 +1098,24 @@ void Interpreter::interpret() {
         totalSteps += 1024;
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
+
+#if PROFILE_BYTECODE_PAIRS
+        // Dump pair counts to file after 100M bytecodes (one-shot)
+        if (__builtin_expect(totalSteps == 100 * 1024 * 1024, 0)) {
+            FILE* pf = fopen("/tmp/bytecode_pair_counts.tsv", "w");
+            if (pf) {
+                fprintf(pf, "bc1\tbc2\tcount\n");
+                for (int i = 0; i < 256; i++)
+                    for (int j = 0; j < 256; j++)
+                        if (pairCounts[i * 256 + j] > 0)
+                            fprintf(pf, "%d\t%d\t%llu\n", i, j,
+                                    (unsigned long long)pairCounts[i * 256 + j]);
+                fclose(pf);
+                fprintf(stderr, "[PROFILE] Bytecode pair counts written to /tmp/bytecode_pair_counts.tsv at %llu steps\n",
+                        (unsigned long long)totalSteps);
+            }
+        }
+#endif
 
         if (__builtin_expect(!running_, 0)) goto cg_exit;
 
@@ -1082,6 +1304,108 @@ void Interpreter::interpret() {
     } // periodic_checks
 
     cg_exit:
+#if PROFILE_BYTECODE_PAIRS
+    {
+        // Dump top 50 bytecode pairs by frequency
+        struct PairEntry { uint8_t a, b; uint64_t count; };
+        std::vector<PairEntry> pairs;
+        pairs.reserve(1000);
+        for (int i = 0; i < 256; i++)
+            for (int j = 0; j < 256; j++)
+                if (pairCounts[i * 256 + j] > 0)
+                    pairs.push_back({(uint8_t)i, (uint8_t)j, pairCounts[i * 256 + j]});
+        std::sort(pairs.begin(), pairs.end(), [](const PairEntry& a, const PairEntry& b) {
+            return a.count > b.count;
+        });
+
+        // Bytecode name helper
+        auto bcName = [](uint8_t bc) -> std::string {
+            if (bc <= 0x0F) return "pushRecvVar" + std::to_string(bc);
+            if (bc <= 0x1F) return "pushLitVar" + std::to_string(bc - 0x10);
+            if (bc <= 0x3F) return "pushLitConst" + std::to_string(bc - 0x20);
+            if (bc <= 0x4B) return "pushTemp" + std::to_string(bc < 0x48 ? bc - 0x40 : bc - 0x48 + 8);
+            if (bc == 0x4C) return "pushSelf";
+            if (bc == 0x4D) return "pushTrue";
+            if (bc == 0x4E) return "pushFalse";
+            if (bc == 0x4F) return "pushNil";
+            if (bc == 0x50) return "push0";
+            if (bc == 0x51) return "push1";
+            if (bc == 0x52) return "pushThisCtx";
+            if (bc == 0x53) return "dup";
+            if (bc <= 0x57) return "unused" + std::to_string(bc);
+            if (bc == 0x58) return "retRecv";
+            if (bc == 0x59) return "retTrue";
+            if (bc == 0x5A) return "retFalse";
+            if (bc == 0x5B) return "retNil";
+            if (bc == 0x5C) return "retTop";
+            if (bc == 0x5D) return "blockRetNil";
+            if (bc == 0x5E) return "blockRetTop";
+            if (bc == 0x5F) return "nop";
+            if (bc <= 0x6F) {
+                const char* ops[] = {"+","-","<",">","<=",">=","=","~=","*","/","\\\\","@","<<","//","&","|"};
+                return std::string("arith") + ops[bc - 0x60];
+            }
+            if (bc <= 0x7F) {
+                const char* ops[] = {"at:","at:put:","size","next","nextPut:","atEnd","==","class","~~","value","value:","do:","new","new:","x","y"};
+                return std::string("spec") + ops[bc - 0x70];
+            }
+            if (bc <= 0x8F) return "send0_" + std::to_string(bc & 0x0F);
+            if (bc <= 0x9F) return "send1_" + std::to_string(bc & 0x0F);
+            if (bc <= 0xAF) return "send2_" + std::to_string(bc & 0x0F);
+            if (bc <= 0xB7) return "jump+" + std::to_string((bc & 7) + 1);
+            if (bc <= 0xBF) return "jmpT+" + std::to_string((bc & 7) + 1);
+            if (bc <= 0xC7) return "jmpF+" + std::to_string((bc & 7) + 1);
+            if (bc <= 0xCF) return "popStRecv" + std::to_string(bc & 7);
+            if (bc <= 0xD7) return "popStTemp" + std::to_string(bc & 7);
+            if (bc == 0xD8) return "pop";
+            if (bc == 0xD9) return "trap";
+            if (bc <= 0xDF) return "unused" + std::to_string(bc);
+            if (bc == 0xE0) return "extA";
+            if (bc == 0xE1) return "extB";
+            if (bc == 0xE2) return "xPushRecvV";
+            if (bc == 0xE3) return "xPushLitV";
+            if (bc == 0xE4) return "xPushLitC";
+            if (bc == 0xE5) return "xPushTemp";
+            if (bc == 0xE7) return "pushArray";
+            if (bc == 0xE8) return "pushInt";
+            if (bc == 0xE9) return "pushChar";
+            if (bc == 0xEA) return "xSend";
+            if (bc == 0xEB) return "xSendSup";
+            if (bc == 0xEC) return "callMap";
+            if (bc == 0xED) return "xJump";
+            if (bc == 0xEE) return "xJmpTrue";
+            if (bc == 0xEF) return "xJmpFalse";
+            if (bc == 0xF0) return "xPopStRecv";
+            if (bc == 0xF1) return "xPopStLitV";
+            if (bc == 0xF2) return "xPopStTemp";
+            if (bc == 0xF3) return "xStRecv";
+            if (bc == 0xF4) return "xStLitVar";
+            if (bc == 0xF5) return "xStTemp";
+            if (bc == 0xF8) return "callPrim";
+            if (bc == 0xF9) return "fullBlock";
+            if (bc == 0xFA) return "closure";
+            if (bc == 0xFB) return "pushTempVec";
+            return "0x" + std::to_string(bc);
+        };
+
+        uint64_t total = 0;
+        for (auto& p : pairs) total += p.count;
+
+        fprintf(stderr, "\n=== BYTECODE PAIR PROFILE (top 50) ===\n");
+        fprintf(stderr, "Total pairs: %llu\n\n", (unsigned long long)total);
+        fprintf(stderr, "  %-20s %-20s %12s %7s %7s\n", "First", "Second", "Count", "Pct", "Cum");
+        double cumPct = 0;
+        int shown = std::min((int)pairs.size(), 50);
+        for (int i = 0; i < shown; i++) {
+            double pct = 100.0 * pairs[i].count / total;
+            cumPct += pct;
+            fprintf(stderr, "  %-20s %-20s %12llu %6.2f%% %6.2f%%\n",
+                    bcName(pairs[i].a).c_str(), bcName(pairs[i].b).c_str(),
+                    (unsigned long long)pairs[i].count, pct, cumPct);
+        }
+        fprintf(stderr, "=== END BYTECODE PAIR PROFILE ===\n\n");
+    }
+#endif
     #undef DISPATCH_NEXT
     return;
 }
