@@ -3533,8 +3533,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    bool shouldQuit = true;
-
     // Startup grace period: suppress quit during the first 10 seconds.
     // Pharo's command line handler (BasicCommandLineHandler in P13,
     // ClapCommandLineHandler in P14) rejects unrecognized image arguments
@@ -3551,26 +3549,7 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
         return PrimitiveResult::Success;
     }
 
-    // Test runner mode: only honor quit if the test's completion marker exists.
-    FILE* rf = fopen("/tmp/sunit_test_results.txt", "r");
-    if (rf) {
-        shouldQuit = false;
-        char buf[256];
-        while (fgets(buf, sizeof(buf), rf)) {
-            if (strstr(buf, "=== BATCH COMPLETE ===")) {
-                shouldQuit = true;
-                break;
-            }
-        }
-        fclose(rf);
-    }
-
-    if (shouldQuit) {
-        running_ = false;
-    } else {
-        fprintf(stderr, "[primitiveQuit] Suppressed during test run (no BATCH COMPLETE marker)\n");
-    }
-
+    running_ = false;
     return PrimitiveResult::Success;
 }
 

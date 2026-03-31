@@ -4518,6 +4518,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             return;
         }
 
+        // Identity fast path: returnReceiver (yourself, asXxx identity methods)
+        // Just pop args and leave receiver
+        if (cached->returnsSelf && argCount == 0) {
+            return;
+        }
+
         int primIdx = cached->primitiveIndex;
         if (primIdx > 0) {
             argCount_ = argCount;
@@ -4714,6 +4720,7 @@ MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
 struct TrivialMethodInfo {
     int16_t getterIndex = -1;  // >=0: getter
     int16_t setterIndex = -1;  // >=0: setter
+    bool returnsSelf = false;  // just returnReceiver (yourself)
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -4762,6 +4769,12 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
         return info;
     }
 
+    // Identity: returnReceiver (0x58) alone — "yourself" and similar
+    if (bc0 == 0x58) {
+        info.returnsSelf = true;
+        return info;
+    }
+
     return info;
 }
 
@@ -4783,6 +4796,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
         e1.primitive = nullptr;
         e1.accessorIndex = trivial.getterIndex;
         e1.setterIndex = trivial.setterIndex;
+        e1.returnsSelf = trivial.returnsSelf;
         return;
     }
 
@@ -4796,6 +4810,7 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     e2.primitive = nullptr;
     e2.accessorIndex = trivial.getterIndex;
     e2.setterIndex = trivial.setterIndex;
+    e2.returnsSelf = trivial.returnsSelf;
 }
 
 size_t Interpreter::cacheHash(Oop selector, Oop classOop) const {

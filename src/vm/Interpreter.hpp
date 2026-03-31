@@ -137,6 +137,7 @@ struct MethodCacheEntry {
     int16_t accessorIndex;    // >=0: getter (pushRecvVar N + returnTop)
                               // -1: not a trivial method
     int16_t setterIndex;      // >=0: setter (popStoreRecvVar N + returnSelf)
+    bool returnsSelf;         // true: method is just returnReceiver (yourself)
 };
 
 /// Well-known selectors (cached for performance)
@@ -668,6 +669,7 @@ private:
             entry.method = Oop::nil();
             entry.accessorIndex = -1;
             entry.setterIndex = -1;
+            entry.returnsSelf = false;
         }
     }
 
