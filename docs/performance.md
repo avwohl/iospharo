@@ -1,4 +1,6 @@
-# Performance: Our VM vs Reference Pharo VM (2026-02-23, commit ecd0d70)
+# Performance: Our VM vs Reference Pharo VM
+
+Last updated: 2026-03-31 (build 115)
 
 ## Summary
 
@@ -6,8 +8,11 @@ Our VM is a pure bytecode interpreter. The reference Pharo VM uses a JIT compile
 (Cogit) that translates hot Smalltalk methods to native machine code. This
 fundamental difference accounts for virtually all performance gaps.
 
-**Overall**: ~445x slower across the full test suite (26.7s vs 0.06s for 577 classes).
-Individual tests range from 20x to 340x slower depending on how loop-heavy they are.
+**Current (build 115)**: ~91x slower across the full test suite (16.37s vs 0.18s
+for 1999 classes, 27968 tests). Down from ~445x at build ecd0d70.
+
+See `docs/optimizations.md` for the optimization history and
+`docs/pseudo-jit.md` for the remaining plan to close the gap further.
 
 ## Why: Interpreter vs JIT
 
@@ -86,16 +91,20 @@ interpreter overhead that dominates:
 
 ## What Would Actually Help
 
-To close the 200x gap, we would need interpreter-level optimizations:
+See `docs/pseudo-jit.md` for the full plan. The remaining phases:
 
-- **Inline caching**: Skip method lookup for repeated sends to the same class.
-  Our method cache has ~91% hit rate; inline caches achieve ~99%.
-- **Bytecode superinstructions**: Combine common bytecode sequences
-  (e.g., push-send-store) into single dispatch steps.
-- **JIT compilation**: The nuclear option. Cogit is ~50K lines of Smalltalk
-  that generates native code. Not practical for our project scope.
-- **Specialized arithmetic dispatch**: For `SmallInteger op SmallInteger`,
-  skip full message send and go directly to the primitive.
+- **Quickening / specialized bytecodes** (Phase 2, est. 20-40%): Rewrite
+  generic bytecodes with type-specialized variants at runtime based on
+  observed types. E.g., replace `sendArithmetic +` with `SEND_ADD_SMALLINT`
+  that skips method lookup entirely for SmallInteger operands.
+- **Pre-decoded IR / flat record** (Phase 4, est. 10-20%): On method
+  activation, translate variable-length Sista V1 bytecodes to fixed-width
+  records with resolved operands. Eliminates extension byte overhead,
+  literal table indirection, and variable-width decoding.
+
+Already done (builds 111-115): flat switch, fast interpret loop,
+2-way method cache, computed goto, superinstructions, accessor inlining.
+See `docs/optimizations.md` for details and measurements.
 
 ## LargeInteger Algorithms
 

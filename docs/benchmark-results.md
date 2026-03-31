@@ -5,16 +5,22 @@
     Date:          2026-03-31
     Build:         115 (updated)
     Optimization:  Superinstructions + trivial getter/setter inlining
-    Script:        scripts/time_tests.st
+    Script:        startup.st timing benchmark (via StartupPreferencesLoader)
     Image:         Pharo 13 (130) fresh download
 
-    Method:  3 runs each on identical fresh images, 300s wall timeout,
-             CPU time measured via `time`.
+    Method:  3 runs each on identical fresh images, CPU time via `time`.
+             primitiveQuit fix allows clean exit (~14s wall) instead of
+             600s timeout.
 
     Baseline (build 114):   17.71  18.18  18.10   avg = 18.00s
     Superinstructions only: 17.52  17.46  17.48   avg = 17.49s  (+2.8%)
     + accessor inlining:    16.36  16.40  16.35   avg = 16.37s  (+6.4%)
     Total improvement:      ~9.1% CPU
+
+    returnsSelf A/B (3 alternating pairs, post quit-fix):
+    Baseline:    14.08  13.19  10.32   avg = 12.53s
+    returnsSelf: 13.89  12.85  10.55   avg = 12.43s
+    Difference:  ~0.8% — within noise (yourself/identity methods too rare)
 
     Accessor inlining detects trivial getter/setter methods at method cache
     time. On cache hit, bypasses Smalltalk activation entirely — no frame

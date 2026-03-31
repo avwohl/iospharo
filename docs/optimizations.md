@@ -96,3 +96,33 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
   This is the largest single optimization since the method cache improvements
   (build 113, 19%). Eliminates real work (frame setup/teardown) rather than
   just dispatch overhead.
+
+## 10. returnsSelf trivial method inlining (DONE — no measurable gain)
+- Extend trivial method detection to methods whose only bytecode is
+  `returnReceiver` (0x58) — covers `yourself` and similar identity methods
+- On cache hit with argCount == 0: return immediately (receiver already on stack)
+- Measured gain: **within noise** (~0.8%, A/B test 3 pairs)
+  These methods are too rare in hot paths to move the needle.
+
+## 11. primitiveQuit cleanup (DONE)
+- Removed test-runner-specific guard from primitiveQuit that blocked all quit
+  attempts when /tmp/sunit_test_results.txt existed without a BATCH COMPLETE
+  marker. The 10-second startup grace period is sufficient.
+- Benchmark runs now exit cleanly (~14s) instead of waiting for 600s timeout.
+
+---
+
+## Planned
+
+### Phase 2: Quickening / specialized bytecodes (est. 20-40%)
+Replace generic bytecodes with type-specialized variants at runtime.
+After seeing SmallInteger + SmallInteger N times, rewrite in place:
+`sendArithmetic +` → `SEND_ADD_SMALLINT` (no method lookup, no type check).
+Also: monomorphic send caching, inst var slot resolution, boolean jump
+optimization. See `docs/pseudo-jit.md` Phase 2 for details.
+
+### Phase 4: Pre-decoded IR / flat record (est. 10-20%)
+On method activation, translate Sista V1 bytecodes to fixed-width records.
+Resolve extension bytes into wide operands, convert literal indices to direct
+pointers, convert variable-length to fixed-width. Eliminates extension byte
+overhead and literal table indirection. See `docs/pseudo-jit.md` Phase 4.

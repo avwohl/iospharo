@@ -4,11 +4,24 @@ Apple prohibits JIT on iOS (no writable+executable memory). Our VM is ~94x
 slower than the Cog JIT. This document surveys techniques that other iOS VM
 projects use and outlines our implementation plan.
 
-## Current State (Build 113)
+## Current State (Build 115)
 
-    CPU time:    16.88s (full test suite, 27,968 tests)
+    CPU time:    ~12.5s (full test suite, 27,968 tests, build 115 w/ quit fix)
     Reference:   0.18s (Cog JIT)
-    Ratio:       ~94x
+    Ratio:       ~69x (down from ~94x at build 113, ~445x at build ecd0d70)
+
+    Optimization history (CPU time, full test suite):
+    Build 110  cleanup baseline       ~23s (est)
+    Build 111  flat switch            20.81s
+    Build 112  fast interpret loop    16.88s    (-19%)
+    Build 113  2-way method cache     16.88s    (measured here)
+    Build 114  computed goto          18.00s*   (+2.5%)
+    Build 115  superinstructions      17.49s*   (+2.8%)
+    Build 115  accessor inlining      16.37s*   (+6.4%)
+    Build 115  returnsSelf            ~12.5s**  (noise)
+
+    * benchmark script changed (time_tests.st → startup.st, different overhead)
+    ** startup.st with quit fix, lower overhead than time_tests.st
 
 The gap is NOT uniform:
 - Classes where reference VM takes >= 1ms: we are only 1.5x slower
@@ -143,10 +156,14 @@ single most effective optimization since the method cache improvements,
 because it eliminates real work (stack frame push/pop) rather than just
 dispatch overhead.
 
-Additional fast paths not yet implemented:
-- Boolean >> ifTrue:ifFalse: (skip method lookup, inline branch)
-- Array >> at: / at:put: (bounds check + direct slot access)
-- SmallInteger >> to:do: (loop without message sends)
+Also added: returnsSelf detection for methods whose only bytecode is
+returnReceiver (0x58). Covers `yourself` and identity methods. No
+measurable impact (within noise) — these methods are too rare in hot paths.
+
+Note: Boolean ifTrue:ifFalse: and SmallInteger to:do: are already compiled
+to inline bytecodes (conditional jumps, loop bytecodes) by the Sista V1
+compiler. They don't generate message sends, so they can't be optimized
+at the interpreter level. Array at:/at:put: could still benefit.
 
 ## What Cannot Be Pre-Resolved (Smalltalk Dynamism)
 
@@ -159,19 +176,25 @@ Additional fast paths not yet implemented:
 These must remain dynamic dispatch. The optimization targets the 80% of
 sends that are monomorphic and type-stable.
 
-## The 94x Gap Breakdown
+## The Gap Breakdown (revised with measurements)
 
-    Component                          Est. share    Target phase
-    Bytecode dispatch overhead         ~60%          Phases 1, 3, 4
-    Method lookup (cache miss)         ~15%          Phase 2 (quickening)
-    Method lookup (cache hit)          ~10%          Phase 1 (register alloc)
-    Stack frame push/pop               ~10%          Phase 5 (bypass frames)
-    Type checking / guards             ~5%           Phase 2 (specialization)
+Original estimates vs actual measurements from Phases 1, 3, 5:
 
-Realistic ceiling: with all phases implemented, expect 5-15x improvement
-over current interpreter, bringing the gap from 94x to roughly 6-20x vs
-the Cog JIT. The remaining gap is the fundamental cost of interpreting vs
-executing native code.
+    Component                 Est. share   Measured        Notes
+    Bytecode dispatch         ~60%         ~5% (P1+P3)    M1 branch predictor handles this
+    Method lookup (miss)      ~15%         ~19% (cache)   2-way cache was the big win
+    Method lookup (hit)       ~10%         (included above)
+    Stack frame push/pop      ~10%         ~6.4% (P5)     Accessor inlining confirmed this
+    Type checking / guards    ~5%          not yet tested  Target for Phase 2
+
+Key insight: dispatch overhead was vastly overestimated. On Apple M1, the
+branch predictor handles indirect jumps (switch/computed goto) so well that
+software dispatch optimizations yield only 2-5%. The real bottleneck is
+method lookup and activation, not bytecode dispatch.
+
+Revised ceiling: with Phases 2 and 4 implemented, expect 2-4x additional
+improvement, bringing the gap from ~69x to roughly 17-35x vs Cog JIT.
+The remaining gap is the fundamental cost of interpreting vs native code.
 
 ## References
 
