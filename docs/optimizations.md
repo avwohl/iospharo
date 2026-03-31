@@ -37,8 +37,16 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 - Reduced CPU time but caused Delay scheduler latency issues (tests measure elapsed time)
 - The timer syscall is already cheap on macOS (VDSO). Not worth the tradeoff.
 
-## 6. Inline caching (PICs) — longer term
-- Monomorphic inline cache at each send bytecode site
-- Store (classIndex, compiledMethod) pair in side table indexed by PC
-- Major step up from global method cache
-- High impact but high effort
+## 6. Inline caching (PICs) — investigated, not viable without JIT
+- Implemented monomorphic IC using instructionPointer_ as send-site key
+- 75% IC hit rate achieved, but requires selector validation (IC key doesn't
+  encode selector — `cannotReturn`/`doesNotUnderstand` sends at arbitrary PCs
+  pollute the cache with wrong selectors for that site)
+- No measurable CPU improvement over the 2-way global method cache (16.88s
+  both with and without IC). The global cache already handles 90%+ of sends;
+  IC just avoids the hash computation, which isn't the bottleneck
+- True PICs require per-send-site dispatch stubs (i.e., generated native code),
+  which is fundamentally a JIT technique. Not possible on iOS.
+- **Conclusion**: The 2-way 4096-entry global method cache is the right design
+  for a pure interpreter. Further send optimization would need bytecode
+  superinstructions (combining push+send into one dispatch).

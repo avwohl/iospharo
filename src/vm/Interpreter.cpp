@@ -3907,11 +3907,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    // Check method cache (2-way set-associative)
+    // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
     if (__builtin_expect(cached != nullptr, 1)) {
-        // Cache hit — fast path
+
         int primIdx = cached->primitiveIndex;
         if (primIdx > 0) {
             argCount_ = argCount;
@@ -3923,12 +3923,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 return;
             }
         }
-
         if (__builtin_expect(primIdx == 198, 0)) {
             suppressContextSwitch_ = true;
         }
-
-        // Non-CompiledMethod in cache — invoke as object-as-method
         if (__builtin_expect(!cached->method.isObject() || cached->method.rawBits() < 0x10000 ||
                              !cached->method.asObjectPtr()->isCompiledMethod(), 0)) {
             invokeObjectAsMethod(cached->method, selector, argCount);
@@ -3938,7 +3935,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Cache miss — full lookup
+    // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
 
     if (method.isNil()) {
@@ -3946,7 +3943,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         return;
     }
 
-    // Non-CompiledMethod found — invoke as object-as-method (metalinks, etc.)
     if (__builtin_expect(!method.isObject() || method.rawBits() < 0x10000 ||
                          !method.asObjectPtr()->isCompiledMethod(), 0)) {
         invokeObjectAsMethod(method, selector, argCount);

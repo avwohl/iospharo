@@ -87,6 +87,7 @@ constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDe
 /// Method cache size (must be power of 2)
 constexpr size_t MethodCacheSize = 4096;
 
+
 // ===== PROCESS/SCHEDULER OBJECT SLOT INDICES =====
 
 /// Process object slots
@@ -656,7 +657,7 @@ private:
     std::array<uint8_t, 256> recentBytecodes_;
     size_t recentBytecodeIdx_ = 0;
 
-    /// Clear the method cache (used when methods are modified)
+    /// Clear the method cache and inline cache (used when methods are modified or GC runs)
     void flushMethodCache() {
         for (auto& entry : methodCache_) {
             entry.selector = Oop::nil();
@@ -2087,6 +2088,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         visitor(entry.classOop);
         visitor(entry.method);
     }
+
 
     // Well-known selectors
     visitor(selectors_.doesNotUnderstand);
