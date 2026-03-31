@@ -1,3 +1,19 @@
+# What's New in Build 114
+
+Build 114 — 2026-03-31
+
+## Computed goto dispatch (Phase 1 of pseudo-JIT plan)
+
+Replaced the while loop + dispatchBytecode() call in interpret() with
+GCC/Clang computed goto labels. Fast-path handlers for ~200 of 256 bytecodes
+(push/pop/store/dup, jumps, SmallInt arithmetic, FullBlockClosure value/value:,
+literal sends). Complex bytecodes (returns, closures, extension bytes) route
+through existing dispatchBytecode() via slow path.
+
+Benchmark: ~2.5% CPU improvement (18.44s → 18.00s avg, 3 runs each).
+As predicted by research, computed goto on Apple M1 yields only 2-5% due to
+excellent branch prediction hardware.
+
 # What's New in Build 113
 
 Build 113 — 2026-03-31

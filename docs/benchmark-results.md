@@ -1,6 +1,30 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
-## Latest: Build 113 — sendSelector cleanup + multi-probe cache
+## Latest: Build 114 — computed goto dispatch
+
+    Date:          2026-03-31
+    Build:         114
+    Optimization:  Computed goto dispatch in interpret()
+    Script:        scripts/time_tests.st
+    Image:         Pharo 13 (130) fresh download
+
+    Our VM:        iospharo test_load_image (interpreter-only, no JIT)
+    Reference VM:  Pharo v10.3.9 (Cog JIT, 33e04bb60)
+
+    Method:  3 runs each on identical fresh images, 300s wall timeout,
+             CPU time measured via `time`. Both binaries built from same
+             commit tree, only Interpreter.cpp differs.
+
+    Baseline (switch):   18.17  18.51  18.63   avg = 18.44s
+    Computed goto:       17.71  18.18  18.10   avg = 18.00s
+    Improvement:         ~2.5% CPU
+
+    As predicted by research (docs/pseudo-jit.md), computed goto on Apple M1
+    yields only 2-5% due to excellent branch prediction hardware. The benefit
+    comes from per-handler branch predictor entries and eliminating the
+    running_/bytecodeEnd_ per-bytecode checks.
+
+## Build 113 — sendSelector cleanup + multi-probe cache
 
     Date:          2026-03-31
     Build:         113

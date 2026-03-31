@@ -37,6 +37,20 @@ due to Apple restrictions, so all gains must come from interpreter optimization.
 - Reduced CPU time but caused Delay scheduler latency issues (tests measure elapsed time)
 - The timer syscall is already cheap on macOS (VDSO). Not worth the tradeoff.
 
+## 7. Computed goto dispatch (DONE)
+- Replaced while loop + dispatchBytecode() call in interpret() with
+  GCC/Clang computed goto labels (&&label / goto *table[bc])
+- Fast-path handlers for ~200 of 256 bytecodes:
+  push/pop/store/dup, short jumps with inline boolean check,
+  arithmetic sends with inline SmallInt fast path,
+  FullBlockClosure value/value: fast path,
+  literal sends direct to sendSelector
+- Slow path for extensions, returns, closures via dispatchBytecode()
+- Benefits: per-handler branch prediction, no running_/bytecodeEnd_ check
+  between bytecodes, SmallInt arithmetic inlined at dispatch site
+- Measured gain: **~2.5% CPU** (18.44s → 18.00s avg across 3 runs)
+  Matches research prediction of 2-5% on Apple M1 (good branch predictor)
+
 ## 6. Inline caching (PICs) — investigated, not viable without JIT
 - Implemented monomorphic IC using instructionPointer_ as send-site key
 - 75% IC hit rate achieved, but requires selector validation (IC key doesn't
