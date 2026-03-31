@@ -621,208 +621,469 @@ void Interpreter::interpret() {
     }
 
     // ====================================================================
-    // FAST INNER LOOP
+    // COMPUTED GOTO DISPATCH
     //
-    // The hot path is: fetch byte → switch dispatch → decrement counter.
-    // All periodic checks (GC, timer, signals, yield, watchdog, display)
-    // are behind a single countdown that fires every 1024 bytecodes.
-    // This replaces the old step()-per-bytecode design which had ~15
-    // conditionals, atomic loads, and syscalls on every single bytecode.
+    // Uses GCC/Clang computed goto (&&label) for direct-threaded dispatch.
+    // Each handler jumps directly to the next bytecode's handler, eliminating:
+    //   - running_ check between bytecodes (only after sends/returns)
+    //   - bytecodeEnd_ check between bytecodes (only in periodic checks)
+    //   - Function call overhead for dispatchBytecode()
+    //   - Each handler gets its own branch predictor entry
+    //
+    // Simple handlers (push, pop, store, jump, SmallInt arithmetic) are
+    // fully inlined. Complex handlers delegate to existing member functions.
     // ====================================================================
+
+    // --- Dispatch table (one-time init) ---
+    static void* dispatchTable[256];
+    static bool tableInit = false;
+    if (!tableInit) {
+        for (int i = 0; i < 256; i++)
+            dispatchTable[i] = &&op_slow;
+        for (int i = 0x00; i <= 0x0F; i++) dispatchTable[i] = &&op_pushRecvVar;
+        for (int i = 0x10; i <= 0x1F; i++) dispatchTable[i] = &&op_pushLitVar;
+        for (int i = 0x20; i <= 0x3F; i++) dispatchTable[i] = &&op_pushLitConst;
+        for (int i = 0x40; i <= 0x4B; i++) dispatchTable[i] = &&op_pushTemp;
+        dispatchTable[0x4C] = &&op_pushSelf;
+        dispatchTable[0x4D] = &&op_pushTrue;
+        dispatchTable[0x4E] = &&op_pushFalse;
+        dispatchTable[0x4F] = &&op_pushNil;
+        dispatchTable[0x50] = &&op_push0;
+        dispatchTable[0x51] = &&op_push1;
+        dispatchTable[0x53] = &&op_dup;
+        for (int i = 0x60; i <= 0x6F; i++) dispatchTable[i] = &&op_arith;
+        dispatchTable[0x79] = &&op_value;
+        dispatchTable[0x7A] = &&op_value1;
+        for (int i = 0x80; i <= 0x8F; i++) dispatchTable[i] = &&op_send0;
+        for (int i = 0x90; i <= 0x9F; i++) dispatchTable[i] = &&op_send1;
+        for (int i = 0xA0; i <= 0xAF; i++) dispatchTable[i] = &&op_send2;
+        for (int i = 0xB0; i <= 0xB7; i++) dispatchTable[i] = &&op_jump;
+        for (int i = 0xB8; i <= 0xBF; i++) dispatchTable[i] = &&op_jumpTrue;
+        for (int i = 0xC0; i <= 0xC7; i++) dispatchTable[i] = &&op_jumpFalse;
+        for (int i = 0xC8; i <= 0xCF; i++) dispatchTable[i] = &&op_popStoreRecv;
+        for (int i = 0xD0; i <= 0xD7; i++) dispatchTable[i] = &&op_popStoreTemp;
+        dispatchTable[0xD8] = &&op_pop;
+        tableInit = true;
+    }
 
     int checkCountdown = 1024;
     uint64_t totalSteps = 0;
+    uint8_t bytecode;
 
-    while (running_) {
+    // --- Dispatch macro ---
+    // Countdown check is BEFORE inExtension_ reset so periodic_checks can
+    // see extension state from the previous handler.
+    #define DISPATCH_NEXT() do { \
+        if (__builtin_expect(--checkCountdown <= 0, 0)) goto periodic_checks; \
+        bytecode = *instructionPointer_++; \
+        if constexpr (ENABLE_DEBUG_LOGGING) { \
+            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
+            recentBytecodeIdx_++; \
+            lastBytecode_ = bytecode; \
+        } \
+        inExtension_ = false; \
+        goto *dispatchTable[bytecode]; \
+    } while(0)
 
-        // === HOT PATH: fetch + dispatch ===
-        if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0)) {
-            returnValue(receiver_);
-            if (!running_) break;
+    // --- Entry point ---
+    if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0)) {
+        returnValue(receiver_);
+        if (!running_) { goto cg_exit; }
+    }
+    bytecode = *instructionPointer_++;
+    if constexpr (ENABLE_DEBUG_LOGGING) {
+        recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+        recentBytecodeIdx_++;
+        lastBytecode_ = bytecode;
+    }
+    inExtension_ = false;
+    goto *dispatchTable[bytecode];
+
+    // ====== FAST INLINE HANDLERS ======
+
+    op_pushRecvVar:
+        push(memory_.fetchPointer(bytecode & 0x0F, receiver_));
+        DISPATCH_NEXT();
+
+    op_pushLitVar:
+        pushLiteralVariable(bytecode - 0x10);
+        DISPATCH_NEXT();
+
+    op_pushLitConst:
+        pushLiteralConstant(bytecode - 0x20);
+        DISPATCH_NEXT();
+
+    op_pushTemp: {
+        int idx = (bytecode < 0x48) ? (bytecode - 0x40) : (bytecode - 0x48 + 8);
+        push(*(framePointer_ + 1 + idx));
+        DISPATCH_NEXT();
+    }
+
+    op_pushSelf:  push(receiver_);              DISPATCH_NEXT();
+    op_pushTrue:  push(memory_.trueObject());   DISPATCH_NEXT();
+    op_pushFalse: push(memory_.falseObject());  DISPATCH_NEXT();
+    op_pushNil:   push(memory_.nil());          DISPATCH_NEXT();
+    op_push0:     push(Oop::fromSmallInteger(0)); DISPATCH_NEXT();
+    op_push1:     push(Oop::fromSmallInteger(1)); DISPATCH_NEXT();
+    op_dup:       push(stackTop());             DISPATCH_NEXT();
+
+    op_jump:
+        instructionPointer_ += (bytecode & 0x07) + 1;
+        DISPATCH_NEXT();
+
+    op_jumpTrue: {
+        Oop val = pop();
+        if (__builtin_expect(val.rawBits() == memory_.trueObject().rawBits(), 1)) {
+            instructionPointer_ += (bytecode & 0x07) + 1;
+        } else if (__builtin_expect(val.rawBits() != memory_.falseObject().rawBits(), 0)) {
+            push(val);
+            sendMustBeBoolean(val);
+            if (__builtin_expect(!running_, 0)) goto cg_exit;
         }
+        DISPATCH_NEXT();
+    }
 
-        uint8_t bytecode = *instructionPointer_++;
-
-        if constexpr (ENABLE_DEBUG_LOGGING) {
-            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
-            recentBytecodeIdx_++;
-            lastBytecode_ = bytecode;
+    op_jumpFalse: {
+        Oop val = pop();
+        if (__builtin_expect(val.rawBits() == memory_.falseObject().rawBits(), 1)) {
+            instructionPointer_ += (bytecode & 0x07) + 1;
+        } else if (__builtin_expect(val.rawBits() != memory_.trueObject().rawBits(), 0)) {
+            push(val);
+            sendMustBeBoolean(val);
+            if (__builtin_expect(!running_, 0)) goto cg_exit;
         }
+        DISPATCH_NEXT();
+    }
 
+    op_popStoreRecv: {
+        Oop value = pop();
+        setReceiverInstVar(bytecode & 0x07, value);
+        DISPATCH_NEXT();
+    }
+
+    op_popStoreTemp: {
+        Oop value = pop();
+        setTemporary(bytecode & 0x07, value);
+        DISPATCH_NEXT();
+    }
+
+    op_pop:
+        pop();
+        DISPATCH_NEXT();
+
+    // --- Arithmetic sends: inline SmallInteger fast paths ---
+    op_arith: {
+        int which = bytecode & 0x0F;
+        Oop rcvr = stackValue(1);
+        Oop arg = stackValue(0);
+
+        if (rcvr.isSmallInteger() && arg.isSmallInteger()) {
+            int64_t a = rcvr.asSmallInteger();
+            int64_t b = arg.asSmallInteger();
+
+            switch (which) {
+            case 0: { // +
+                int64_t r = a + b;
+                if (r >= Oop::smallIntegerMin() && r <= Oop::smallIntegerMax()) {
+                    popN(2); push(Oop::fromSmallInteger(r)); DISPATCH_NEXT();
+                }
+                break;
+            }
+            case 1: { // -
+                int64_t r = a - b;
+                if (r >= Oop::smallIntegerMin() && r <= Oop::smallIntegerMax()) {
+                    popN(2); push(Oop::fromSmallInteger(r)); DISPATCH_NEXT();
+                }
+                break;
+            }
+            case 2:  // <
+                popN(2); push(a < b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 3:  // >
+                popN(2); push(a > b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 4:  // <=
+                popN(2); push(a <= b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 5:  // >=
+                popN(2); push(a >= b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 6:  // =
+                popN(2); push(a == b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 7:  // ~=
+                popN(2); push(a != b ? memory_.trueObject() : memory_.falseObject()); DISPATCH_NEXT();
+            case 8: { // *
+                __int128 r128 = (__int128)a * (__int128)b;
+                int64_t r = (int64_t)r128;
+                if (r128 == (__int128)r && r >= Oop::smallIntegerMin() && r <= Oop::smallIntegerMax()) {
+                    popN(2); push(Oop::fromSmallInteger(r)); DISPATCH_NEXT();
+                }
+                break;
+            }
+            case 14: // bitAnd:
+                popN(2); push(Oop::fromSmallInteger(a & b)); DISPATCH_NEXT();
+            case 15: // bitOr:
+                popN(2); push(Oop::fromSmallInteger(a | b)); DISPATCH_NEXT();
+            default: break;
+            }
+        }
+        // Slow path: full method lookup
+        arithmeticSend(which);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+
+    // --- FullBlockClosure >> value fast path ---
+    op_value: {
+        Oop rcvr = stackValue(0);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            argCount_ = 0;
+            primitiveFailed_ = false;
+            primFailCode_ = 0;
+            if (primitiveFullClosureValue(0) == PrimitiveResult::Success) {
+                if (__builtin_expect(!running_, 0)) goto cg_exit;
+                DISPATCH_NEXT();
+            }
+        }
+        commonSend(9);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+
+    // --- FullBlockClosure >> value: fast path ---
+    op_value1: {
+        Oop rcvr = stackValue(1);
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+            rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
+            argCount_ = 1;
+            primitiveFailed_ = false;
+            primFailCode_ = 0;
+            if (primitiveFullClosureValue(1) == PrimitiveResult::Success) {
+                if (__builtin_expect(!running_, 0)) goto cg_exit;
+                DISPATCH_NEXT();
+            }
+        }
+        commonSend(10);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+    }
+
+    // --- Literal sends: bypass dispatchBytecode overhead ---
+    op_send0:
+        sendSelector(literal(bytecode & 0x0F), 0);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+
+    op_send1:
+        sendSelector(literal(bytecode & 0x0F), 1);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+
+    op_send2:
+        sendSelector(literal(bytecode & 0x0F), 2);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
+
+    // ====== SLOW PATH (extensions, returns, closures, etc.) ======
+    op_slow:
         inExtension_ = false;
         dispatchBytecode(bytecode);
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        DISPATCH_NEXT();
 
-        // === PERIODIC CHECKS (every 1024 bytecodes) ===
-        if (--checkCountdown <= 0) {
-            checkCountdown = 1024;
-            totalSteps += 1024;
-            g_stepNum += 1024;
-            g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
+    // ====== PERIODIC CHECKS (every 1024 bytecodes) ======
+    periodic_checks: {
+        checkCountdown = 1024;
+        totalSteps += 1024;
+        g_stepNum += 1024;
+        g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
-            // CRITICAL: If we just dispatched an extension byte (0xE0/0xE1),
-            // skip all process-switching checks. Extension bytes set extA_/extB_
-            // which the NEXT bytecode needs. A process switch calls
-            // executeFromContext() which resets extA_/extB_ to 0, corrupting
-            // the next bytecode's arguments.
-            if (inExtension_) {
-                // Still do GC check (no process switch) and finalization one-shot
-                if (__builtin_expect(memory_.needsCompactGC(), 0)) {
-                    memory_.clearCompactGCFlag();
-                    memory_.fullGC(/* skipEphemerons */ true);
-                    flushMethodCache();
-                }
-                continue;
-            }
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
 
-            // -- GC safe point --
+        // Safety: check IP bounds (was per-bytecode, now periodic)
+        if (__builtin_expect(instructionPointer_ >= bytecodeEnd_, 0)) {
+            returnValue(receiver_);
+            if (!running_) goto cg_exit;
+        }
+
+        // CRITICAL: If we just dispatched an extension byte (0xE0/0xE1),
+        // skip all process-switching checks. Extension bytes set extA_/extB_
+        // which the NEXT bytecode needs. A process switch calls
+        // executeFromContext() which resets extA_/extB_ to 0, corrupting
+        // the next bytecode's arguments.
+        if (inExtension_) {
             if (__builtin_expect(memory_.needsCompactGC(), 0)) {
                 memory_.clearCompactGCFlag();
                 memory_.fullGC(/* skipEphemerons */ true);
                 flushMethodCache();
             }
-
-            // -- Finalization one-shot after GC --
-            if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
-                finalizationCheckAfterGC_ = false;
-                signalFinalizationIfNeeded();
+            // Resume without process switching — don't clear inExtension_
+            // (the consumer's DISPATCH_NEXT will clear it)
+            bytecode = *instructionPointer_++;
+            if constexpr (ENABLE_DEBUG_LOGGING) {
+                recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+                recentBytecodeIdx_++;
+                lastBytecode_ = bytecode;
             }
+            goto *dispatchTable[bytecode];
+        }
 
-            // -- Timer semaphore (Delay scheduler) --
-            checkTimerSemaphore();
+        // -- GC safe point --
+        if (__builtin_expect(memory_.needsCompactGC(), 0)) {
+            memory_.clearCompactGCFlag();
+            memory_.fullGC(/* skipEphemerons */ true);
+            flushMethodCache();
+        }
 
-            // -- External semaphore signals (from heartbeat/events) --
-            if (hasPendingSignals()) {
-                processPendingSignals();
-            }
-
-            // -- Force yield (set by heartbeat every ~2ms) --
-            if (forceYield_.load(std::memory_order_acquire)) {
-                if (suppressContextSwitch_) {
-                    suppressContextSwitch_ = false;
-                } else {
-                    forceYield_.store(false, std::memory_order_release);
-                    handleForceYield();
-                }
-            }
-
-            // -- Terminate stuck process (set by watchdog, rare) --
-            if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
-                terminateStuck_.store(false, std::memory_order_relaxed);
-                terminateAndSwitchProcess();
-            }
-
-            // -- cannotReturn: deadline --
-            if (__builtin_expect(cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_, 0)) {
-                Oop currentProcess = getActiveProcess();
-                if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
-                    cannotReturnCount_ = 0;
-                    cannotReturnDeadline_ = 0;
-                    lastCannotReturnProcess_ = Oop::nil();
-                    lastCannotReturnCtx_ = Oop::nil();
-                    terminateCurrentProcess();
-                    if (!tryReschedule() && !bootstrapStartup()) {
-                        stopVM("No runnable processes after cannotReturn: deadline termination");
-                    }
-                } else {
-                    cannotReturnDeadline_ = 0;
-                }
-            }
-
-            // -- Display sync requested by heartbeat thread --
-            if (pendingDisplaySync_.load(std::memory_order_acquire)) {
-                pendingDisplaySync_.store(false, std::memory_order_release);
-                syncDisplayToSurface();
-            }
-
-            // -- Finalization (periodic, for auto-GC mourners) --
+        // -- Finalization one-shot after GC --
+        if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+            finalizationCheckAfterGC_ = false;
             signalFinalizationIfNeeded();
+        }
 
-            // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
-            if ((totalSteps & 0xFFFF) == 0) {
-                // Preemption check
-                checkForPreemption();
+        // -- Timer semaphore (Delay scheduler) --
+        checkTimerSemaphore();
 
-                // Stuck process termination (wall-clock based)
-                {
-                    Oop currentActive = getActiveProcess();
-                    Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
-                    int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
+        // -- External semaphore signals (from heartbeat/events) --
+        if (hasPendingSignals()) {
+            processPendingSignals();
+        }
 
-                    if (prio >= 80) {
-                        startupGracePeriod_ = false;
-                        if (trackedProcess_.rawBits() == currentActive.rawBits())
+        // -- Force yield (set by heartbeat every ~2ms) --
+        if (forceYield_.load(std::memory_order_acquire)) {
+            if (suppressContextSwitch_) {
+                suppressContextSwitch_ = false;
+            } else {
+                forceYield_.store(false, std::memory_order_release);
+                handleForceYield();
+            }
+        }
+
+        // -- Terminate stuck process (set by watchdog, rare) --
+        if (__builtin_expect(terminateStuck_.load(std::memory_order_acquire), 0)) {
+            terminateStuck_.store(false, std::memory_order_relaxed);
+            terminateAndSwitchProcess();
+        }
+
+        // -- cannotReturn: deadline --
+        if (__builtin_expect(cannotReturnDeadline_ > 0 && g_stepNum >= cannotReturnDeadline_, 0)) {
+            Oop currentProcess = getActiveProcess();
+            if (currentProcess.rawBits() == lastCannotReturnProcess_.rawBits()) {
+                cannotReturnCount_ = 0;
+                cannotReturnDeadline_ = 0;
+                lastCannotReturnProcess_ = Oop::nil();
+                lastCannotReturnCtx_ = Oop::nil();
+                terminateCurrentProcess();
+                if (!tryReschedule() && !bootstrapStartup()) {
+                    stopVM("No runnable processes after cannotReturn: deadline termination");
+                }
+            } else {
+                cannotReturnDeadline_ = 0;
+            }
+        }
+
+        // -- Display sync requested by heartbeat thread --
+        if (pendingDisplaySync_.load(std::memory_order_acquire)) {
+            pendingDisplaySync_.store(false, std::memory_order_release);
+            syncDisplayToSurface();
+        }
+
+        // -- Finalization (periodic, for auto-GC mourners) --
+        signalFinalizationIfNeeded();
+
+        // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
+        if ((totalSteps & 0xFFFF) == 0) {
+            checkForPreemption();
+
+            // Stuck process termination (wall-clock based)
+            {
+                Oop currentActive = getActiveProcess();
+                Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, currentActive);
+                int prio = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : 0;
+
+                if (prio >= 80) {
+                    startupGracePeriod_ = false;
+                    if (trackedProcess_.rawBits() == currentActive.rawBits())
+                        trackedProcess_ = Oop::nil();
+                } else if (!startupGracePeriod_ && prio < 79) {
+                    if (currentActive.rawBits() != trackedProcess_.rawBits()) {
+                        trackedProcess_ = currentActive;
+                        cumulativeMs_ = 0;
+                        lastResumeTime_ = std::chrono::steady_clock::now();
+                        trackStartTime_ = lastResumeTime_;
+                    } else {
+                        auto now = std::chrono::steady_clock::now();
+                        auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            now - trackStartTime_).count();
+                        if (wallMs >= 90000) {
+                            fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
+                                    (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
                             trackedProcess_ = Oop::nil();
-                    } else if (!startupGracePeriod_ && prio < 79) {
-                        if (currentActive.rawBits() != trackedProcess_.rawBits()) {
-                            trackedProcess_ = currentActive;
-                            cumulativeMs_ = 0;
-                            lastResumeTime_ = std::chrono::steady_clock::now();
-                            trackStartTime_ = lastResumeTime_;
-                        } else {
-                            auto now = std::chrono::steady_clock::now();
-                            auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-                                now - trackStartTime_).count();
-                            if (wallMs >= 90000) {
-                                fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
-                                        (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
-                                trackedProcess_ = Oop::nil();
-                                memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
-                                Oop nextProc = wakeHighestPriority();
-                                if (!nextProc.isNil() && nextProc.isObject())
-                                    transferTo(nextProc);
-                            }
+                            memory_.storePointer(ProcessSuspendedContextIndex, currentActive, Oop::nil());
+                            Oop nextProc = wakeHighestPriority();
+                            if (!nextProc.isNil() && nextProc.isObject())
+                                transferTo(nextProc);
                         }
                     }
                 }
-
-                // Watchdog process priority update
-                {
-                    Oop proc = getActiveProcess();
-                    if (proc.isObject() && proc.rawBits() > 0x10000) {
-                        Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
-                        g_watchdogProcessPriority = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
-                    }
-                }
             }
 
-            // === INFREQUENT CHECKS (every ~100K bytecodes) ===
-            if ((totalSteps % 102400) == 0) {
-                // Process input events
-                processInputEvents();
+            // Watchdog process priority update
+            {
+                Oop proc = getActiveProcess();
+                if (proc.isObject() && proc.rawBits() > 0x10000) {
+                    Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                    g_watchdogProcessPriority = priOop.isSmallInteger() ? priOop.asSmallInteger() : -1;
+                }
+            }
+        }
+
+        // === INFREQUENT CHECKS (every ~100K bytecodes) ===
+        if ((totalSteps % 102400) == 0) {
+            processInputEvents();
 
 #if __APPLE__
-                // Pump native run loop for Metal rendering / UIKit events
-                if (relinquishCallback_) {
-                    auto now = std::chrono::steady_clock::now();
-                    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runLoopBase).count();
-                    if (elapsed - lastRunLoopPumpMs >= 50) {
-                        lastRunLoopPumpMs = elapsed;
-                        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
-                    }
+            if (relinquishCallback_) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - runLoopBase).count();
+                if (elapsed - lastRunLoopPumpMs >= 50) {
+                    lastRunLoopPumpMs = elapsed;
+                    CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0, true);
                 }
+            }
 #endif
 
-                // Look for Display Form if not yet found
-                if (displayForm_.isNil()) {
-                    Oop display = memory_.findGlobal("Display");
-                    if (!display.isNil() && display.isObject()) {
-                        ObjectHeader* hdr = display.asObjectPtr();
-                        if (hdr->slotCount() >= 4) {
-                            Oop w = memory_.fetchPointer(1, display);
-                            Oop h = memory_.fetchPointer(2, display);
-                            if (w.isSmallInteger() && h.isSmallInteger() &&
-                                w.asSmallInteger() > 0 && h.asSmallInteger() > 0) {
-                                setDisplayForm(display);
-                                setScreenSize(w.asSmallInteger(), h.asSmallInteger());
-                                Oop d = memory_.fetchPointer(3, display);
-                                if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
-                            }
+            if (displayForm_.isNil()) {
+                Oop display = memory_.findGlobal("Display");
+                if (!display.isNil() && display.isObject()) {
+                    ObjectHeader* hdr = display.asObjectPtr();
+                    if (hdr->slotCount() >= 4) {
+                        Oop w = memory_.fetchPointer(1, display);
+                        Oop h = memory_.fetchPointer(2, display);
+                        if (w.isSmallInteger() && h.isSmallInteger() &&
+                            w.asSmallInteger() > 0 && h.asSmallInteger() > 0) {
+                            setDisplayForm(display);
+                            setScreenSize(w.asSmallInteger(), h.asSmallInteger());
+                            Oop d = memory_.fetchPointer(3, display);
+                            if (d.isSmallInteger()) setScreenDepth(d.asSmallInteger());
                         }
                     }
                 }
             }
-        } // periodic checks
-    } // while (running_)
+        }
+
+        // Resume dispatch after checks
+        if (__builtin_expect(!running_, 0)) goto cg_exit;
+        bytecode = *instructionPointer_++;
+        if constexpr (ENABLE_DEBUG_LOGGING) {
+            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
+            recentBytecodeIdx_++;
+            lastBytecode_ = bytecode;
+        }
+        inExtension_ = false;
+        goto *dispatchTable[bytecode];
+    } // periodic_checks
+
+    cg_exit:
+    #undef DISPATCH_NEXT
+    return;
 }
 
 void Interpreter::handleForceYield() {
