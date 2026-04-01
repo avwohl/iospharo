@@ -1,3 +1,34 @@
+# What's New in Build 122
+
+Build 122 — 2026-04-01
+
+## Fix image relaunch hang (displays but can't interact)
+
+Root cause: Three categories of global state were not reset between image
+launches, causing the second image to display but be unresponsive to input.
+
+Primary bug — SDL2 event polling never re-enabled:
+- `stub_SDL_PollEvent()` used a function-local `static bool` to enable
+  event polling on first call. After `vm_destroy()` reset the event queue
+  (clearing `sdl2EventPollingActive_`), the static was still `true`, so
+  `setSDL2EventPollingActive(true)` was never called on second launch.
+  Result: touch/mouse events were silently dropped.
+- Fix: moved the flag to file scope so `resetAllFFIState()` resets it.
+
+Plugin state not cleaned up on VM destroy:
+- SocketPlugin: I/O monitor thread kept running with stale socket list
+  and stale `vm` pointer. Added `socketPluginShutdown()` call.
+- MIDIPlugin: `gInitialized` flag was never reset, so `midiInit()` was
+  skipped on relaunch, leaving stale CoreMIDI handles. Added `midiShutdown()`.
+- SoundPlugin: Audio queue not stopped. Added `soundStop()` call.
+
+Session ID and emergency debugger flag:
+- Socket session ID now incremented on shutdown so stale handles from the
+  previous image are rejected immediately.
+- Emergency debugger flag reset so second image starts clean.
+
+---
+
 # What's New in Build 118
 
 Build 118 — 2026-04-01

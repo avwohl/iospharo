@@ -497,6 +497,7 @@ static int sMouseY = 0;
 static uint32_t sMouseButtons = 0;  // SDL button mask (bit 0=left, bit 1=middle, bit 2=right)
 static uint32_t sKeyModState = 0;   // SDL keyboard modifier state
 static bool sTextInputActive = false;  // Text input state (declared here for resetSDL2State)
+static bool sSDL2PollEventFlagSet = false;  // Tracks whether SDL_PollEvent has activated event polling
 
 static void resetAllFFIState() {
     sModuleHandleCache.clear();
@@ -518,6 +519,8 @@ static void resetAllFFIState() {
     sMouseButtons = 0;
     sKeyModState = 0;
     sTextInputActive = false;
+    sSDL2PollEventFlagSet = false;
+    g_emergencyDebuggerTriggered.store(false, std::memory_order_relaxed);
 }
 
 extern "C" {
@@ -912,9 +915,8 @@ int stub_SDL_UpdateTexture(void* texture, void* rect, void* pixels, int pitch) {
 
 // Forwards events from gEventQueue to SDL event structures for OSSDL2Driver.
 int stub_SDL_PollEvent(void* event) {
-    static bool flagSet = false;
-    if (!flagSet) {
-        flagSet = true;
+    if (!sSDL2PollEventFlagSet) {
+        sSDL2PollEventFlagSet = true;
         pharo::gEventQueue.setSDL2EventPollingActive(true);
     }
 

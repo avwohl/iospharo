@@ -118,6 +118,25 @@ bool midiInit(void) {
     return true;
 }
 
+void midiShutdown(void) {
+    if (!gInitialized) return;
+
+    // Close all open ports
+    for (int i = 0; i < kMaxPorts; i++) {
+        if (gPorts[i].active) {
+            midiClosePort(i);
+        }
+    }
+
+    // Dispose the CoreMIDI client
+    if (gClient) {
+        MIDIClientDispose(gClient);
+        gClient = 0;
+    }
+
+    gInitialized = false;
+}
+
 int midiGetPortCount(void) {
     if (!midiInit()) return 0;
     return numDestinations() + numSources();
@@ -265,6 +284,7 @@ bool midiSendSysEx(int handle, const uint8_t* data, int count) {
 #else
 // Non-Apple stub implementations
 bool midiInit(void) { return false; }
+void midiShutdown(void) {}
 int midiGetPortCount(void) { return 0; }
 char* midiGetPortName(int) { return nullptr; }
 int midiOpenPort(int) { return -1; }

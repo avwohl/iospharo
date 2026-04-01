@@ -10,6 +10,9 @@
 #include "../vm/Interpreter.hpp"
 #include "../vm/FFI.hpp"
 #include "../vm/InterpreterProxy.h"
+#include "../vm/plugins/SocketPlugin.h"
+#include "../vm/plugins/SoundPlugin.h"
+#include "../vm/plugins/MIDIPlugin.h"
 #include <thread>
 #include <atomic>
 #include <chrono>
@@ -541,6 +544,13 @@ void vm_destroy(void) {
     delete gDisplay;
     gDisplay = nullptr;
     pharo::gDisplaySurface = nullptr;
+
+    // Shut down plugins that have background threads or OS resources.
+    // Must happen before shutdownFFI/resetInterpreterProxy since plugins
+    // reference the VM proxy.
+    socketPluginShutdown();
+    soundStop();
+    midiShutdown();
 
     // Reset subsystems
     pharo::ffi::shutdownFFI();

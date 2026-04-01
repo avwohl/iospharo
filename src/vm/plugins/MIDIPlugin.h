@@ -19,6 +19,9 @@ extern "C" {
 // Initialize CoreMIDI client (lazy, called on first use).
 bool midiInit(void);
 
+// Shut down CoreMIDI client and reset state for VM relaunch.
+void midiShutdown(void);
+
 // Total port count (destinations + sources).
 int midiGetPortCount(void);
 

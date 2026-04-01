@@ -258,14 +258,22 @@ void socketPluginShutdown() {
     if (gWakePipe[1] >= 0) { close(gWakePipe[1]); gWakePipe[1] = -1; }
 
     // Clean up any remaining sockets
-    std::lock_guard<std::mutex> lock(gSocketMutex);
-    for (auto* ps : gActiveSockets) {
-        if (ps->fd >= 0) close(ps->fd);
-        delete ps;
+    {
+        std::lock_guard<std::mutex> lock(gSocketMutex);
+        for (auto* ps : gActiveSockets) {
+            if (ps->fd >= 0) close(ps->fd);
+            delete ps;
+        }
+        gActiveSockets.clear();
+        for (auto* ps : gDeleteQueue) delete ps;
+        gDeleteQueue.clear();
     }
-    gActiveSockets.clear();
-    for (auto* ps : gDeleteQueue) delete ps;
-    gDeleteQueue.clear();
+
+    // Bump session ID so stale socket handles from previous image are rejected
+    gSessionID++;
+
+    // Clear the VM pointer — will be set again by setInterpreter on next launch
+    vm = nullptr;
 }
 
 // =====================================================================
