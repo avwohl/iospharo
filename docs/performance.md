@@ -1,6 +1,6 @@
 # Performance: Our VM vs Reference Pharo VM
 
-Last updated: 2026-03-31 (build 115)
+Last updated: 2026-04-01 (build 118)
 
 ## Summary
 
@@ -10,6 +10,8 @@ fundamental difference accounts for virtually all performance gaps.
 
 **Current (build 115)**: ~91x slower across the full test suite (16.37s vs 0.18s
 for 1999 classes, 27968 tests). Down from ~445x at build ecd0d70.
+
+No performance-affecting changes in builds 116-118 (UI bug fixes and diagnostics).
 
 See `docs/optimizations.md` for the optimization history and
 `docs/pseudo-jit.md` for the remaining plan to close the gap further.
@@ -33,16 +35,16 @@ VMs. But the Smalltalk code that *calls* those primitives is 50-200x slower.
 
 Per-test timing using `scripts/time_tests.st` (30s timeout per test):
 
-| Test | Ref VM | Our VM | Ratio | Bottleneck |
-|------|--------|--------|-------|------------|
-| IntegerTest>>testSlowFactorial | 118ms | 24s | 203x | Loop dispatching 10000 multiplies |
-| IntegerTest>>testReciprocalModulo | 33ms | 11s | 339x | Modular exponentiation loop |
-| IntegerTest>>testPrintStringBase | 48ms | 8.4s | 174x | Repeated division for digit extraction |
-| IntegerTest>>testNthRootTruncated | 23ms | 5.2s | 225x | Newton's method iteration |
-| LargePositiveIntegerTest>>testReciprocalModulo | 33ms | 2.2s | 68x | Same as above, smaller inputs |
-| IntegerTest>>testHighBit | 14ms | 1.3s | 94x | Loop calling highBit on many values |
-| IntegerTest>>testIsPrime | 5ms | 1s | 198x | Miller-Rabin with modular exponentiation |
-| ArrayTest>>testPrintingRecursive | 12ms | 30s+ | 2500x+ | Deep recursion (hits 30s timeout) |
+    Test                                         Ref VM   Our VM   Ratio   Bottleneck
+    -------------------------------------------  ------   ------   -----   -------------------------------------------
+    IntegerTest>>testSlowFactorial               118ms    24s      203x    Loop dispatching 10000 multiplies
+    IntegerTest>>testReciprocalModulo             33ms     11s      339x    Modular exponentiation loop
+    IntegerTest>>testPrintStringBase              48ms     8.4s     174x    Repeated division for digit extraction
+    IntegerTest>>testNthRootTruncated             23ms     5.2s     225x    Newton's method iteration
+    LargePosIntegerTest>>testReciprocalModulo     33ms     2.2s     68x     Same as above, smaller inputs
+    IntegerTest>>testHighBit                      14ms     1.3s     94x     Loop calling highBit on many values
+    IntegerTest>>testIsPrime                      5ms      1s       198x    Miller-Rabin with modular exponentiation
+    ArrayTest>>testPrintingRecursive              12ms     30s+     2500x+  Deep recursion (hits 30s timeout)
 
 Typical collection/string tests: 20-50x slower (less loop-intensive).
 
@@ -50,12 +52,12 @@ Typical collection/string tests: 20-50x slower (less loop-intensive).
 
 For `IntegerTest>>testSlowFactorial` computing 10000! (result is ~15000 bytes):
 
-| Component | Time | Notes |
-|-----------|------|-------|
-| C++ multiply primitives | <1s | Karatsuba for large, scalar fast path for small |
-| Interpreter loop dispatch | ~20s | 10000 iterations × message send/return overhead |
-| GC pauses | ~3.5s | 7 full GCs from allocating ~112MB of intermediate LargeIntegers |
-| Total | ~24s | C++ is <5% of runtime |
+    Component                   Time    Notes
+    --------------------------  ------  -----------------------------------------------
+    C++ multiply primitives     <1s     Karatsuba for large, scalar fast path for small
+    Interpreter loop dispatch   ~20s    10000 iterations x message send/return overhead
+    GC pauses                   ~3.5s   7 full GCs from allocating ~112MB of intermediates
+    Total                       ~24s    C++ is <5% of runtime
 
 The reference VM's JIT eliminates the interpreter loop overhead entirely,
 leaving only the C++ multiply time (~118ms).
@@ -89,41 +91,53 @@ interpreter overhead that dominates:
 7. **primitiveHighBit** — Reads MSB directly from the object instead of
    copying the entire magnitude into a vector.
 
-## What Would Actually Help
+## Optimization Status
 
-See `docs/pseudo-jit.md` for the full plan. The remaining phases:
+All planned phases have been implemented or investigated. See
+`docs/optimizations.md` for details and measurements, `docs/pseudo-jit.md`
+for the full analysis.
 
-- **Quickening / specialized bytecodes** (Phase 2, est. 20-40%): Rewrite
-  generic bytecodes with type-specialized variants at runtime based on
-  observed types. E.g., replace `sendArithmetic +` with `SEND_ADD_SMALLINT`
-  that skips method lookup entirely for SmallInteger operands.
-- **Pre-decoded IR / flat record** (Phase 4, est. 10-20%): On method
-  activation, translate variable-length Sista V1 bytecodes to fixed-width
-  records with resolved operands. Eliminates extension byte overhead,
-  literal table indirection, and variable-width decoding.
+    Phase  Technique                     Status                  Measured
+    -----  ----------------------------  ----------------------  --------
+    1      Computed goto dispatch         DONE (build 114)        2.5%
+    2      Quickening / specialized BC    Investigated, shelved   —
+    3      Superinstructions              DONE (build 115)        2.8%
+    4      Pre-decoded IR / flat record   Investigated, shelved   —
+    5      Accessor inlining              DONE (build 115)        6.4%
+    —      2-way method cache             DONE (build 113)       19%
+    —      Fast interpret loop            DONE (build 112)       12.7%
 
-Already done (builds 111-115): flat switch, fast interpret loop,
-2-way method cache, computed goto, superinstructions, accessor inlining.
-See `docs/optimizations.md` for details and measurements.
+Phase 2 (quickening) was originally estimated at 20-40% but revised to 3-10%
+after tight loop analysis showed we already achieve ~4.6 cycles/bytecode —
+competitive with LuaJIT and Wasm3 interpreters. The remaining gap is dominated
+by per-class startup overhead, not per-bytecode cost. Ceiling: ~10-20%
+additional improvement, but the complexity isn't justified.
+
+Phase 4 (pre-decoded IR) was originally estimated at 10-20% but revised to
+1-3%. Extension bytes are only 1.17% of execution, and fetchPointerUnchecked
+already handles literal access efficiently.
+
+The remaining ~69x gap vs Cog JIT is fundamental: interpreting bytecodes vs
+running native code. Apple prohibits JIT on iOS, so this is the floor.
 
 ## LargeInteger Algorithms
 
 Our C++ implementations match or exceed typical VM quality:
 
-| Operation | Algorithm | Complexity |
-|-----------|-----------|------------|
-| Addition/Subtraction | Word-level with carry/borrow | O(n) |
-| Multiplication (small) | Schoolbook on 32-bit words | O(n²) |
-| Multiplication (large) | Karatsuba (threshold: 8 words) | O(n^1.585) |
-| Multiplication (scalar) | Single-word multiply-and-carry | O(n) |
-| Division (single-word divisor) | Long division on 32-bit words | O(n) |
-| Division (multi-word) | Knuth's Algorithm D | O(n·m) |
-| Montgomery multiply | Standard Montgomery reduction | O(n²) |
-| Bit scanning (highBit, lowBit) | Direct byte access + CLZ | O(1) |
-| Bit range test (anyBitFromTo) | Word-level mask scanning | O(n/32) |
-| Comparison | Word-level from MSW | O(n) |
-| Bitwise AND/OR/XOR | Word-level with two's complement | O(n) |
-| Bit shift | Word + bit shift | O(n) |
+    Operation                Algorithm                        Complexity
+    -----------------------  -------------------------------  ----------
+    Addition/Subtraction     Word-level with carry/borrow     O(n)
+    Multiplication (small)   Schoolbook on 32-bit words       O(n^2)
+    Multiplication (large)   Karatsuba (threshold: 8 words)   O(n^1.585)
+    Multiplication (scalar)  Single-word multiply-and-carry   O(n)
+    Division (single-word)   Long division on 32-bit words    O(n)
+    Division (multi-word)    Knuth's Algorithm D              O(n*m)
+    Montgomery multiply      Standard Montgomery reduction    O(n^2)
+    Bit scanning             Direct byte access + CLZ         O(1)
+    Bit range test           Word-level mask scanning         O(n/32)
+    Comparison               Word-level from MSW              O(n)
+    Bitwise AND/OR/XOR       Word-level with two's complement O(n)
+    Bit shift                Word + bit shift                 O(n)
 
 All primitives are registered in both indexed (0-37) and named
 (LargeIntegers plugin) forms. Zero LargeIntegers plugin primitive failures.
