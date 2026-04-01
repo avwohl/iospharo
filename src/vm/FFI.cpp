@@ -995,6 +995,14 @@ nextEvent:
         }
         return 1;
     } else if (pharoEvent.type == static_cast<int>(pharo::EventType::MouseWheel)) {
+        // Update mouse position so SDL_GetMouseState returns the scroll
+        // gesture location. OSSDL2BackendWindow>>visitMouseWheelEvent: calls
+        // SDL_GetMouseState to set the event position.  Without this update,
+        // the position is stale (from the last single-finger touch) and wheel
+        // events may be dispatched to the wrong morph.
+        sMouseX = pharoEvent.arg1;
+        sMouseY = pharoEvent.arg2;
+
         sdlEvent->wheel.type = SDL_MOUSEWHEEL;
         sdlEvent->wheel.timestamp = pharoEvent.timeStamp;
         sdlEvent->wheel.windowID = windowID;

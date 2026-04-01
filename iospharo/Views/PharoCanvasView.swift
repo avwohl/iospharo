@@ -678,14 +678,39 @@ class PharoCanvasViewController: UIViewController {
         bridge.hapticFeedback(style: .light)
     }
 
+    /// Track dominant scroll axis to suppress cross-axis noise.
+    /// On a small phone screen, a vertical two-finger swipe easily drifts
+    /// horizontally, which the Pharo SpMillerColumnPresenter interprets as
+    /// a horizontal page-change gesture — resetting scroll position on the
+    /// active page.  Once we lock an axis, we zero out the other.
+    private var scrollAxisLocked: Bool = false
+    private var scrollIsVertical: Bool = true
+
     @objc func handleTwoFingerPan(_ gesture: UIPanGestureRecognizer) {
         guard let bridge = bridge else { return }
         let point = gesture.location(in: mtkView)
         let translation = gesture.translation(in: mtkView)
         switch gesture.state {
-        case .began, .changed:
-            let deltaX = Int(translation.x)
-            let deltaY = Int(-translation.y)
+        case .began:
+            scrollAxisLocked = false
+            fallthrough
+        case .changed:
+            var deltaX = Int(translation.x)
+            var deltaY = Int(-translation.y)
+
+            // Lock to dominant axis after the first significant movement
+            if !scrollAxisLocked {
+                let absX = abs(deltaX)
+                let absY = abs(deltaY)
+                if absX > 4 || absY > 4 {
+                    scrollIsVertical = absY >= absX
+                    scrollAxisLocked = true
+                }
+            }
+            if scrollAxisLocked {
+                if scrollIsVertical { deltaX = 0 } else { deltaY = 0 }
+            }
+
             if deltaX != 0 || deltaY != 0 {
                 bridge.sendScrollEvent(at: point, deltaX: deltaX, deltaY: deltaY)
             }
