@@ -24589,14 +24589,17 @@ PrimitiveResult Interpreter::primitiveLoadSymbolFromModule(int argCount) {
     }
 #endif
 
-    if (!symbolAddr && moduleHandle && moduleHandle != RTLD_DEFAULT) {
-        // Real module handle — use it directly for the most accurate lookup
-        symbolAddr = dlsym(moduleHandle, symbolName.c_str());
+    // Check registered wrappers FIRST — safe_objc_registerClassPair etc. must
+    // intercept even when the image loads via a real module handle (libobjc.dylib).
+    // Without this, dlsym on the real handle returns the unwrapped function and
+    // crashes on image relaunch (duplicate class registration).
+    if (!symbolAddr) {
+        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
     }
 
-    if (!symbolAddr) {
-        // Try our lookup chain: cache -> dlsym(RTLD_DEFAULT) -> search paths -> stubs
-        symbolAddr = ffi::lookupFunction(moduleName.empty() ? "" : moduleName, symbolName);
+    if (!symbolAddr && moduleHandle && moduleHandle != RTLD_DEFAULT) {
+        // Real module handle — use it for accurate lookup
+        symbolAddr = dlsym(moduleHandle, symbolName.c_str());
     }
 
     if (!symbolAddr) {
