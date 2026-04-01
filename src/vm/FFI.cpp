@@ -26,6 +26,8 @@
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <objc/runtime.h>
+#include <unordered_set>
 #endif
 
 #include <atomic>
@@ -171,6 +173,53 @@ namespace ffi {
 static bool sInitialized = false;
 static std::unordered_map<std::string, void*> sFunctionCache;
 
+// ========== ObjC runtime wrappers for image relaunch ==========
+// When the Pharo image restarts within the same app process (quit without
+// save, then relaunch), ObjC classes registered in the first run persist
+// in the runtime. objc_allocateClassPair returns NULL for duplicate names,
+// and passing NULL to objc_registerClassPair causes SIGSEGV.
+// These wrappers handle the relaunch case transparently.
+#ifdef __APPLE__
+static std::unordered_set<Class> sPreexistingClasses;
+
+static Class safe_objc_allocateClassPair(Class superclass, const char* name, size_t extraBytes) {
+    Class cls = objc_allocateClassPair(superclass, name, extraBytes);
+    if (cls) return cls;
+
+    // Allocation failed — check if the class already exists (relaunch case)
+    cls = objc_getClass(name);
+    if (cls) {
+        sPreexistingClasses.insert(cls);
+        return cls;
+    }
+    return nullptr;  // Genuine failure (bad superclass, etc.)
+}
+
+static void safe_objc_registerClassPair(Class cls) {
+    if (!cls) return;  // Guard against NULL
+    if (sPreexistingClasses.count(cls)) return;  // Already registered from previous run
+    objc_registerClassPair(cls);
+}
+
+static void safe_objc_disposeClassPair(Class cls) {
+    if (!cls) return;
+    if (sPreexistingClasses.count(cls)) {
+        sPreexistingClasses.erase(cls);
+        return;  // Don't dispose classes we didn't allocate this run
+    }
+    objc_disposeClassPair(cls);
+}
+
+static void registerObjCRuntimeWrappers() {
+    registerFunction("objc_allocateClassPair",
+                     reinterpret_cast<void*>(safe_objc_allocateClassPair));
+    registerFunction("objc_registerClassPair",
+                     reinterpret_cast<void*>(safe_objc_registerClassPair));
+    registerFunction("objc_disposeClassPair",
+                     reinterpret_cast<void*>(safe_objc_disposeClassPair));
+}
+#endif
+
 bool initializeFFI() {
     if (sInitialized) return true;
     sInitialized = true;
@@ -186,6 +235,11 @@ bool initializeFFI() {
                      reinterpret_cast<void*>(primitiveLoadSymbolFromModule));
     registerFunction("primitiveLoadModule",
                      reinterpret_cast<void*>(primitiveLoadModule));
+
+#ifdef __APPLE__
+    // ObjC runtime wrappers — handle image relaunch within same process
+    registerObjCRuntimeWrappers();
+#endif
 
     // FreeType and libgit2 stubs are NOT registered at init time.
     // lookupFunction() tries real libraries first (via dlsym/dlopen),
