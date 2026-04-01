@@ -824,11 +824,13 @@ class PharoBridge: ObservableObject {
         motionTimer = nil
         motionManager.stop()
         vm_stop()
+        vm_destroy()  // Clean up global state so a fresh launch can succeed
         #if DEBUG
-        NSLog("[BRIDGE] VM stopped")
+        NSLog("[BRIDGE] VM stopped and destroyed")
         #endif
         isRunning = false
         isInitialized = false
+        imagePath = nil
     }
 }
 

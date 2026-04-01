@@ -91,6 +91,14 @@ class PharoMTKView: MTKView {
     var suppressNextTouchCancel = false
     var suppressNextTouchEnd = false
 
+    /// Dead zone for tap vs drag disambiguation.
+    /// Finger movement smaller than this threshold (in points) during a touch
+    /// is suppressed so Pharo sees a clean click, not a drag.  Without this,
+    /// the inevitable micro-movement of a fingertip triggers Morphic scroll panes.
+    private let dragThreshold: CGFloat = 8
+    private var touchOrigin: CGPoint = .zero
+    private var isDragging = false
+
     // MARK: - Keyboard State
 
     /// Set in pressesBegan when a modified key (Shift+Enter etc.) is handled
@@ -125,6 +133,8 @@ class PharoMTKView: MTKView {
         fputs("[TOUCH] began (\(Int(point.x)),\(Int(point.y))) btn=\(buttons)\n", stderr)
         #endif
         currentButton = buttons
+        touchOrigin = point
+        isDragging = false
         bridge.sendMouseMoved(to: point, modifiers: 0)
         bridge.sendTouchDown(at: point, buttons: buttons)
     }
@@ -132,6 +142,15 @@ class PharoMTKView: MTKView {
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first, let bridge = bridge else { return }
         let point = touch.location(in: self)
+
+        if !isDragging {
+            let dx = point.x - touchOrigin.x
+            let dy = point.y - touchOrigin.y
+            if dx * dx + dy * dy < dragThreshold * dragThreshold {
+                return  // Still within dead zone — suppress move to prevent scroll
+            }
+            isDragging = true
+        }
         bridge.sendTouchMoved(to: point, buttons: currentButton)
     }
 

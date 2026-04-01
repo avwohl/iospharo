@@ -551,6 +551,11 @@ void vm_destroy(void) {
     extern std::atomic<bool> g_displayFormReady;
     g_displayFormReady.store(false, std::memory_order_relaxed);
 
+    // Critical: reset gRunning so vm_run() can start a new interpreter.
+    // Without this, the second vm_run() call sees gRunning == true and
+    // returns immediately, leaving the VM dead on relaunch.
+    gRunning = false;
+
     // Note: gPendingCallback, gClipboardGet/Set, gTextInputFunc are Swift-side
     // callbacks that persist across VM instances — do NOT reset them.
 }
