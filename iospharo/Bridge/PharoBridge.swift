@@ -46,10 +46,14 @@ class PharoBridge: ObservableObject {
     private let motionManager = CoreMotionManager()
     private var motionTimer: Timer?
 
+    /// Dispatch source for system memory pressure notifications
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
+
     private init() {
         setupDisplayCallback()
         setupClipboardCallbacks()
         setupTextInputCallback()
+        setupMemoryPressureMonitor()
     }
 
     // MARK: - Display Callback
@@ -132,6 +136,39 @@ class PharoBridge: ObservableObject {
         }
     }
 
+    // MARK: - Memory Pressure
+
+    private func setupMemoryPressureMonitor() {
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak source] in
+            guard let source = source else { return }
+            let event = source.data
+            let level: String
+            switch event {
+            case .warning:  level = "WARNING"
+            case .critical: level = "CRITICAL"
+            default:        level = "unknown(\(event.rawValue))"
+            }
+            let mem = Self.memoryFootprintMB()
+            fputs("[MEMORY] pressure=\(level) footprint=\(mem)MB\n", stderr)
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    /// Returns the app's physical memory footprint in MB (what jetsam watches)
+    static func memoryFootprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        guard kr == KERN_SUCCESS else { return -1 }
+        return Int(info.phys_footprint) / (1024 * 1024)
+    }
+
     // MARK: - VM Lifecycle
 
     /// Load a Pharo image file
@@ -160,6 +197,9 @@ class PharoBridge: ObservableObject {
         // Don't set isRunning yet - wait until VM is initialized
         // This prevents SwiftUI from showing canvas before VM is ready
         errorMessage = nil
+
+        let memBefore = Self.memoryFootprintMB()
+        fputs("[MEMORY] pre-launch footprint=\(memBefore)MB image=\(imagePath)\n", stderr)
 
         // Initialize VM synchronously on main thread
         var parameters = VMParameters()
@@ -224,6 +264,8 @@ class PharoBridge: ObservableObject {
         if initResult != 0 {
             isInitialized = true
             isRunning = true
+            let memAfterInit = Self.memoryFootprintMB()
+            fputs("[MEMORY] post-init footprint=\(memAfterInit)MB\n", stderr)
             #if DEBUG
             NSLog("[BRIDGE] VM initialized, starting interpreter on background thread")
             #endif

@@ -65,6 +65,7 @@ class ImageManager: ObservableObject {
     // MARK: - Private Properties
 
     private var downloadTask: URLSessionDownloadTask?
+    private var downloadSession: URLSession?
     private var progressObservation: NSKeyValueObservation?
     private let fileManager = FileManager.default
 
@@ -263,6 +264,7 @@ class ImageManager: ObservableObject {
         errorMessage = nil
 
         let session = URLSession(configuration: .default)
+        downloadSession = session
         let capturedVersion = version
         downloadTask = session.downloadTask(with: url) { [weak self] tempURL, response, error in
             Task { @MainActor in
@@ -283,6 +285,8 @@ class ImageManager: ObservableObject {
     func cancelDownload() {
         downloadTask?.cancel()
         downloadTask = nil
+        downloadSession?.invalidateAndCancel()
+        downloadSession = nil
         progressObservation = nil
         isDownloading = false
         statusMessage = nil
@@ -423,6 +427,8 @@ class ImageManager: ObservableObject {
             isDownloading = false
             progressObservation = nil
             downloadTask = nil
+            downloadSession?.finishTasksAndInvalidate()
+            downloadSession = nil
         }
 
         if let error = error {
@@ -447,6 +453,9 @@ class ImageManager: ObservableObject {
             try fileManager.createDirectory(at: destDir, withIntermediateDirectories: true)
 
             try extractImage(from: tempURL, to: destDir)
+
+            // Clean up the download temp file (50-70MB ZIP sitting in tmp/)
+            try? fileManager.removeItem(at: tempURL)
 
             // Find the extracted .image file
             if let imageFileName = findFirstImageFile(in: destDir) {

@@ -1,3 +1,49 @@
+# What's New in Build 118
+
+Build 118 — 2026-04-01
+
+## Fix download memory cleanup + add jetsam pressure logging
+
+Investigating a crash report: download Pharo 14 image → immediate launch →
+crash during initial window draw.
+
+Download cleanup fixes:
+- URLSession now invalidated after download completes (was leaking internal
+  connection pool state)
+- Temp ZIP file deleted after extraction (was leaving 50-70MB in tmp/)
+- Cancel path also invalidates the session
+
+Memory pressure monitoring:
+- Logs physical memory footprint (what jetsam watches) before and after
+  vm_init, so crash reports show how much headroom was available
+- DispatchSource monitors system memory pressure events (warning/critical)
+  and logs them with current footprint — if jetsam kills the app, the
+  preceding log lines will show the ramp-up
+
+---
+
+# What's New in Build 117
+
+Build 117 — 2026-03-31
+
+## Fix scroll-then-tap bug on iPhone welcome screen
+
+Fixed two-finger scroll on iPhone causing the Pharo 14 Welcome Browser to
+reset scroll position when tapping afterward. Two issues:
+
+- SDL_GetMouseState returned stale position during wheel events, causing
+  OSSDL2BackendWindow to dispatch scroll events at the wrong coordinates.
+  Now updates mouse position from the scroll gesture center.
+
+- Horizontal drift in vertical two-finger swipes triggered accidental
+  page navigation in SpMillerColumnPresenter. Added axis-locking: once the
+  dominant scroll axis is detected (>4pt movement), cross-axis deltas are
+  zeroed out.
+
+Reported by Tim.
+
+---
+
 # What's New in Build 115
 
 Build 115 — 2026-03-31
