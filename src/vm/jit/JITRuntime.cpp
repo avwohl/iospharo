@@ -150,10 +150,13 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Can't execute methods with heap writes (need write barrier for GC).
     // Sends are handled via deopt: the stencil sets state.ip to the send
     // bytecode and exits, letting the interpreter resume at the send.
-    if (jm->hasHeapWrites) return false;
+    //
+    // Heap writes (storeRecvVar, storeLitVar) are allowed because
+    // generational GC is not implemented — all objects are in old space,
+    // so the write barrier (isOld && isYoung check) is a no-op.
+    // TODO: Add write barrier calls to store stencils when gen GC is added.
 
     // Touch for LRU tracking
     codeZone_.touch(jm);

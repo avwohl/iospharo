@@ -778,8 +778,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     else if (jitMethod->hasHeapWrites) heapWriteCount++;
     else sendDeoptCount++;  // Has sends but no heap writes → executable with deopt
     if (methodsCompiled_ % 50 == 0) {
-        fprintf(stderr, "[JIT] Methods: %zu pure, %zu send-deopt, %zu heap-blocked "
-                "(of %zu compiled)\n", pureCount, sendDeoptCount, heapWriteCount, methodsCompiled_);
+        fprintf(stderr, "[JIT] Methods: %zu pure, %zu send-deopt, %zu heap-write "
+                "(of %zu compiled, all executable)\n",
+                pureCount, sendDeoptCount, heapWriteCount, methodsCompiled_);
     }
 
     // Debug: log first few compiled methods with their stencil sequences
