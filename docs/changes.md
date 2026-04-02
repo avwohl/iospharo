@@ -2,6 +2,25 @@
 
 2026-04-02
 
+## Phase 5b: On-Stack Re-Entry After Send Deopt
+
+When JIT code deopts on a send and the interpreter handles the send, the
+caller can now re-enter JIT execution at the bytecode after the send returns.
+Previously, once JIT deopted, the entire rest of the method ran interpreted.
+
+Implementation:
+- bcToCodeOffset table: stored after the literal pool in each JITMethod
+  allocation. Maps bytecode offsets to machine code offsets for mid-method
+  re-entry. Built during compilation, one uint32_t per bytecode.
+- JITRuntime::tryResume(): enters JIT code at a specific bytecode offset
+  by looking up the code offset in the bcToCodeOffset table. Filters out
+  invalid entries (offset 0 = method start, handled by tryExecute).
+- Interpreter::tryJITResumeInCaller(): called from returnValue() after
+  push(result). Computes current bytecodeOffset, sets up JITState, calls
+  tryResume. Chains: if JIT returns from the method, pops frame and tries
+  the next caller too.
+- ~33% of sends result in a successful JIT resume (8.6M resumes / 26M sends).
+
 ## Phase 5: Full Execution — Send Deopt, Heap Writes, Expanded Coverage
 
 Enabled JIT execution of ALL compiled methods. Previously only "pure" methods

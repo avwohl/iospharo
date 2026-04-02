@@ -3486,6 +3486,14 @@ terminate_process:
     // After popping, if execution is still running, push the result
     if (running_) {
         push(value);
+
+#if PHARO_JIT_ENABLED
+        // Try to re-enter JIT execution in the caller method.
+        // IP is at the bytecode after the send that just returned.
+        if (jitRuntime_.isInitialized()) {
+            tryJITResumeInCaller();
+        }
+#endif
     }
 }
 
@@ -9039,6 +9047,68 @@ void Interpreter::initializeJIT() {
     if (!jitRuntime_.initialize(memory_, *this)) {
         fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
         return;
+    }
+}
+
+uint32_t Interpreter::computeCurrentBCOffset() {
+    if (!method_.isObject() || method_.rawBits() < 0x10000) return UINT32_MAX;
+    ObjectHeader* methObj = method_.asObjectPtr();
+    Oop methodHeader = methObj->slots()[0];
+    if (!methodHeader.isSmallInteger()) return UINT32_MAX;
+    int64_t headerBits = methodHeader.asSmallInteger();
+    int numLiterals = headerBits & 0x7FFF;
+    uint8_t* bytecodeStart = methObj->bytes() + (1 + numLiterals) * 8;
+    if (instructionPointer_ < bytecodeStart) return UINT32_MAX;
+    return static_cast<uint32_t>(instructionPointer_ - bytecodeStart);
+}
+
+void Interpreter::tryJITResumeInCaller() {
+    // After a send returns, we're in the caller's frame with IP at the
+    // bytecode after the send and the return value on the stack. If the
+    // caller has JIT code, resume execution in JIT from this bytecode.
+    while (running_ && jitRuntime_.isInitialized()) {
+        uint32_t bcOffset = computeCurrentBCOffset();
+        if (bcOffset == UINT32_MAX) return;
+
+        // Set up JIT state from current interpreter state
+        jit::JITState state;
+        state.sp = stackPointer_;
+        state.receiver = receiver_;
+
+        ObjectHeader* methObj = method_.asObjectPtr();
+        state.literals = methObj->slots() + 1;
+        state.tempBase = framePointer_ + 1;
+        state.memory = &memory_;
+        state.interp = this;
+        state.ip = instructionPointer_;
+        state.method = method_;
+        state.argCount = argCount_;
+
+        if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
+            return;  // Not JIT-compiled or no re-entry at this offset
+        }
+
+        // JIT code ran — handle exit reason
+        switch (state.exitReason) {
+        case jit::ExitReturn:
+            // JIT completed the rest of the method and returned.
+            // Pop frame and push result, then loop to try the next caller.
+            popFrame();
+            if (running_) {
+                push(state.returnValue);
+            }
+            continue;  // Try to resume in the next caller
+
+        case jit::ExitSend:
+        case jit::ExitArithOverflow:
+            // JIT hit another send/overflow. Let interpreter handle it.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            return;
+
+        default:
+            return;
+        }
     }
 }
 

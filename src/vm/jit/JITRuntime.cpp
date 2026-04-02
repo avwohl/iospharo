@@ -180,6 +180,36 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     return true;
 }
 
+bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state) {
+    if (!initialized_) return false;
+
+    JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
+    if (!jm || !jm->isExecutable()) return false;
+
+    // Look up the code offset for this bytecode offset
+    uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
+    if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
+
+    // Touch for LRU tracking
+    codeZone_.touch(jm);
+
+    // Set up JIT state
+    state.jitMethod = jm;
+    state.exitReason = ExitNone;
+
+    // Toggle W^X to executable
+    makeExecutable(jm->codeStart(), jm->codeSize);
+
+    // Enter at the specified code offset
+    StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
+    entry(&state);
+
+    // Back to writable
+    makeWritable(jm->codeStart(), jm->codeSize);
+
+    return true;
+}
+
 } // namespace jit
 } // namespace pharo
 

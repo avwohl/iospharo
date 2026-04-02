@@ -126,7 +126,8 @@ struct JITMethod {
     // --- LRU eviction ---
     uint32_t  lastUsedEpoch;      // Updated on entry; compared against global epoch for LRU
 
-    uint32_t  _padding;           // Explicit padding for alignment
+    // --- Re-entry table ---
+    uint32_t  bcToCodeTableOffset; // Offset from codeStart() to uint32_t[numBytecodes+1] table
 
     // --- Accessors ---
 
@@ -146,6 +147,18 @@ struct JITMethod {
 
     const ICEntry* icEntries() const {
         return reinterpret_cast<const ICEntry*>(codeStart() + codeSize);
+    }
+
+    // Pointer to the bcToCode re-entry table
+    const uint32_t* bcToCodeTable() const {
+        return reinterpret_cast<const uint32_t*>(codeStart() + bcToCodeTableOffset);
+    }
+
+    // Look up the code offset for a given bytecode offset.
+    // Returns the code offset, or codeSize if bcOffset is out of range.
+    uint32_t codeOffsetForBC(uint32_t bcOffset) const {
+        if (bcOffset >= numBytecodes) return codeSize;
+        return bcToCodeTable()[bcOffset];
     }
 
     // Function pointer to compiled code entry point

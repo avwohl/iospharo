@@ -685,6 +685,14 @@ private:
     // (caller should NOT proceed with interpreter execution).
     bool tryJITActivation(Oop method, int argCount);
 
+    // After a send returns, try to re-enter JIT execution in the caller.
+    // Called from returnValue() after push(result).
+    void tryJITResumeInCaller();
+
+    // Compute the current bytecode offset (IP - method bytecode start).
+    // Returns UINT32_MAX if it can't be computed.
+    uint32_t computeCurrentBCOffset();
+
     // Initialize JIT on first use (lazy init after image is loaded)
     void initializeJIT();
 #endif

@@ -754,7 +754,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Literal pool lives after the code, 8-byte aligned
     uint32_t literalPoolOffset = (codeSize + 7) & ~7u;
     uint32_t literalPoolSize = maxLiteralSlots * 8;
-    uint32_t totalSize = literalPoolOffset + literalPoolSize;
+    // bcToCode re-entry table lives after the literal pool, 4-byte aligned
+    uint32_t bcToCodeTableOffset = (literalPoolOffset + literalPoolSize + 3) & ~3u;
+    uint32_t bcToCodeTableSize = (static_cast<uint32_t>(bcLen) + 1) * sizeof(uint32_t);
+    uint32_t totalSize = bcToCodeTableOffset + bcToCodeTableSize;
 
     // The code zone is kept in writable W^X mode by default (set during
     // initialize). We write freely here; tryExecute() toggles to executable
@@ -886,6 +889,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         }
 
         offset += stencil.codeSize;
+    }
+
+    // Copy bcToCode re-entry table into the allocation
+    jitMethod->bcToCodeTableOffset = bcToCodeTableOffset;
+    uint32_t* tableBase = reinterpret_cast<uint32_t*>(codeBase + bcToCodeTableOffset);
+    for (size_t b = 0; b <= bcLen; b++) {
+        tableBase[b] = bcToCodeOffset[b];
     }
 
     // Flush icache for the newly written code

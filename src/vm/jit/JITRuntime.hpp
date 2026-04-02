@@ -42,6 +42,10 @@ public:
     // the method isn't compiled yet.
     bool tryExecute(Oop compiledMethod, JITState& state);
 
+    // Resume JIT execution at a specific bytecodeOffset (for on-stack re-entry
+    // after a send returns). Returns true if JIT code ran.
+    bool tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state);
+
     // Called by the interpreter on each method activation. Increments the
     // execution counter and triggers compilation at the threshold.
     void noteMethodEntry(Oop compiledMethod);
