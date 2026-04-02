@@ -9163,9 +9163,11 @@ void Interpreter::tryJITResumeInCaller() {
             if (frameDepth_ == callerDepth) {
                 // Target completed (JIT handled it end-to-end).
                 // We're back in the caller's frame — resume JIT.
+                jitJ2JChains_++;
                 continue;
             }
             // Target has an active frame — let dispatch loop handle it
+            jitJ2JFallbacks_++;
             inJITResume_ = false;
             return;
         }

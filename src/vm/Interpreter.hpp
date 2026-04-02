@@ -712,11 +712,15 @@ private:
     size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)
     size_t jitICPatches_ = 0;     // Successful IC data patches
     size_t jitICStale_ = 0;       // Stale IC invalidations
+    size_t jitJ2JChains_ = 0;     // JIT-to-JIT chain hits (target completed via JIT)
+    size_t jitJ2JFallbacks_ = 0;  // JIT-to-JIT fallbacks (target needs interpreter)
 public:
     size_t jitICHits() const { return jitICHits_; }
     size_t jitICMisses() const { return jitICMisses_; }
     size_t jitICPatches() const { return jitICPatches_; }
     size_t jitICStale() const { return jitICStale_; }
+    size_t jitJ2JChains() const { return jitJ2JChains_; }
+    size_t jitJ2JFallbacks() const { return jitJ2JFallbacks_; }
 private:
 #endif
 
