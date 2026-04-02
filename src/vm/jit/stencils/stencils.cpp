@@ -724,26 +724,53 @@ extern "C" void stencil_send(JITState* s) {
 // On IC hit: exits with ExitSendCached + cachedTarget
 // On IC miss: exits with ExitSend (interpreter does full lookup and patches IC)
 
-extern "C" void stencil_sendMono(JITState* s) {
+extern "C" void stencil_sendPoly(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
     int nArgs = (packed >> 16) & 0xFF;
 
     // Load IC data pointer from literal pool (full 64-bit via GOT load)
+    // Layout: 4 entries x 2 uint64_t = [class0, method0, class1, method1, ...]
     uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
 
     // Get receiver: below the args on the stack
-    // Stack: sp[-nArgs-1]=receiver, sp[-nArgs]=arg0, ..., sp[-1]=lastArg
     Oop receiver = s->sp[-(nArgs + 1)];
 
     // Quick path: check if receiver is an object (not SmallInteger/immediate)
     if ((receiver.bits & 0x7) == 0) {
-        // Object: check classIndex against cached class
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         uint64_t classIdx = obj->classIndex();
+
+        // Check 4 IC entries (unrolled for predictable code size)
         if (classIdx == icData[0] && icData[0] != 0) {
-            // IC HIT — skip method lookup, interpreter activates cached method
             s->cachedTarget.bits = icData[1];
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND_CACHED;
+            _HOLE_RT_SEND(s);
+            return;
+        }
+        if (classIdx == icData[2] && icData[2] != 0) {
+            s->cachedTarget.bits = icData[3];
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND_CACHED;
+            _HOLE_RT_SEND(s);
+            return;
+        }
+        if (classIdx == icData[4] && icData[4] != 0) {
+            s->cachedTarget.bits = icData[5];
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND_CACHED;
+            _HOLE_RT_SEND(s);
+            return;
+        }
+        if (classIdx == icData[6] && icData[6] != 0) {
+            s->cachedTarget.bits = icData[7];
             s->icDataPtr = icData;
             s->sendArgCount = nArgs;
             s->ip = s->ip + bcOffset;

@@ -513,7 +513,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 if (bc.operand2 >= 0 && bc.opcode >= 0x80) {
                     // Real send: upgrade to monomorphic IC stencil
                     int argCount = bc.operand2;
-                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendMono);
+                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendPoly);
                     bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
                     // operand2Ptr will be set after code zone allocation
                 } else {
@@ -773,14 +773,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Count send sites for inline cache data allocation
     uint16_t numSendSites = 0;
     for (auto& bc : decoded) {
-        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendMono)
+        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendPoly)
             numSendSites++;
     }
 
     // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
-    // 16 bytes: [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
+    // 64 bytes: 4 entries x [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
+    static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
+    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 16;
     uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
-    uint32_t icDataSize = numSendSites * 16;
+    uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     uint32_t totalSize = icDataOffset + icDataSize;
 
     // The code zone is kept in writable W^X mode by default (set during
@@ -819,9 +821,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     {
         uint16_t sendIdx = 0;
         for (auto& bc : decoded) {
-            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendMono) {
+            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendPoly) {
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(
-                    codeBase_pre + icDataOffset + sendIdx * 16);
+                    codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE);
                 sendIdx++;
             }
         }
@@ -898,7 +900,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
         // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:
-        case StencilID::stencil_sendMono:
+        case StencilID::stencil_sendPoly:
             jitMethod->hasSends = true;  // Track for stats, but doesn't block execution
             break;
 

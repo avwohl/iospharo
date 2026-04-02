@@ -9121,10 +9121,16 @@ void Interpreter::tryJITResumeInCaller() {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
-            // Patch IC on miss
-            if (state.icDataPtr && state.icDataPtr[0] == 0) {
-                pendingICPatch_ = state.icDataPtr;
-                pendingICSendArgCount_ = state.sendArgCount;
+            // Patch IC on miss if any slot is empty
+            if (state.icDataPtr) {
+                bool hasEmpty = false;
+                for (int e = 0; e < 4; e++) {
+                    if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+                }
+                if (hasEmpty) {
+                    pendingICPatch_ = state.icDataPtr;
+                    pendingICSendArgCount_ = state.sendArgCount;
+                }
             }
             return;
 
@@ -9170,19 +9176,24 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass) {
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
-    // Only patch if IC is still empty (avoid stomping a race)
-    if (icData[0] != 0) return;
+    if (!receiver_.isObject() || receiver_.rawBits() < 0x10000) return;
+    uint32_t classIdx = receiver_.asObjectPtr()->classIndex();
 
-    // Store classIndex (from receiver's object header, 22-bit class table index)
-    // and resolved method's raw Oop bits
-    if (receiverClass.isObject() && receiverClass.rawBits() > 0x10000) {
-        if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-            uint32_t classIdx = receiver_.asObjectPtr()->classIndex();
-            icData[0] = classIdx;
-            icData[1] = resolvedMethod.rawBits();
+    // Check if this class is already cached (avoid duplicates)
+    for (int e = 0; e < 4; e++) {
+        if (icData[e * 2] == classIdx) return;  // Already cached
+    }
+
+    // Find the first empty slot and fill it
+    for (int e = 0; e < 4; e++) {
+        if (icData[e * 2] == 0) {
+            icData[e * 2] = classIdx;
+            icData[e * 2 + 1] = resolvedMethod.rawBits();
             jitICPatches_++;
+            return;
         }
     }
+    // All 4 slots full — megamorphic, don't patch
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
@@ -9256,9 +9267,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp;
         jitICMisses_++;
-        if (state.icDataPtr && state.icDataPtr[0] == 0) {
-            pendingICPatch_ = state.icDataPtr;
-            pendingICSendArgCount_ = state.sendArgCount;
+        if (state.icDataPtr) {
+            bool hasEmpty = false;
+            for (int e = 0; e < 4; e++) {
+                if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+            }
+            if (hasEmpty) {
+                pendingICPatch_ = state.icDataPtr;
+                pendingICSendArgCount_ = state.sendArgCount;
+            }
         }
         return false;
 
@@ -9270,8 +9287,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Stale IC — invalidate and fall back to normal send
             jitICStale_++;
             if (state.icDataPtr) {
-                state.icDataPtr[0] = 0;
-                state.icDataPtr[1] = 0;
+                for (int e = 0; e < 4; e++) {
+                    state.icDataPtr[e * 2] = 0;
+                    state.icDataPtr[e * 2 + 1] = 0;
+                }
             }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
