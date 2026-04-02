@@ -1258,10 +1258,26 @@ void Interpreter::interpret() {
                     }
                 }
                 if (!method.isNil() && method.isObject()) {
-                    fprintf(stderr, "[TEST] Injecting SUnitRunner>>runAllTests\n");
+                    fprintf(stderr, "[TEST] Scheduling SUnitRunner>>runAllTests as new Process\n");
                     Oop context = memory_.createStartupContext(method, sunitRunner);
                     if (!context.isNil()) {
-                        executeFromContext(context);
+                        // Create a Process object and schedule it instead of
+                        // using executeFromContext, which disrupts the current
+                        // execution context and causes SIGSEGV.
+                        Oop processClass = memory_.specialObject(SpecialObjectIndex::ClassProcess);
+                        uint32_t procClassIdx = memory_.indexOfClass(processClass);
+                        if (procClassIdx == 0) procClassIdx = memory_.registerClass(processClass);
+                        // Process has at least 5 slots: nextLink, suspendedContext, priority, myList, name
+                        Oop proc = memory_.allocateSlots(procClassIdx, 5, ObjectFormat::FixedSize);
+                        if (!proc.isNil()) {
+                            memory_.storePointer(ProcessNextLinkIndex, proc, memory_.nil());
+                            memory_.storePointer(ProcessSuspendedContextIndex, proc, context);
+                            memory_.storePointer(ProcessPriorityIndex, proc, Oop::fromSmallInteger(40)); // userSchedulingPriority
+                            memory_.storePointer(ProcessMyListIndex, proc, memory_.nil());
+                            memory_.storePointer(4, proc, memory_.nil()); // name
+                            putToSleep(proc);
+                            fprintf(stderr, "[TEST] Process scheduled at priority 40\n");
+                        }
                     }
                 } else {
                     fprintf(stderr, "[TEST] runAllTests not found in metaclass\n");
@@ -5757,15 +5773,16 @@ Oop Interpreter::argument(int index) const {
 }
 
 Oop Interpreter::receiverInstVar(size_t index) const {
-    // Check if receiver is a byte object (String, Symbol, ByteArray, etc.)
-    // Byte objects don't have pointer instance variables, so return nil
-    if (receiver_.isObject()) {
-        ObjectHeader* hdr = receiver_.asObjectPtr();
-        if (__builtin_expect(hdr->isBytesObject() || hdr->isCompiledMethod(), 0)) {
-            return memory_.nil();
-        }
+    if (!receiver_.isObject()) {
+        return memory_.nil();  // Immediate receiver — no instance variables
     }
-    // receiver_ is a known-valid heap object
+    ObjectHeader* hdr = receiver_.asObjectPtr();
+    if (__builtin_expect(hdr->isBytesObject() || hdr->isCompiledMethod(), 0)) {
+        return memory_.nil();
+    }
+    if (__builtin_expect(index >= hdr->slotCount(), 0)) {
+        return memory_.nil();  // Out-of-bounds — method/receiver class mismatch
+    }
     return memory_.fetchPointerUnchecked(index, receiver_);
 }
 
@@ -5790,9 +5807,15 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
         if (__builtin_expect(hdr->isBytesObject() || hdr->isCompiledMethod(), 0)) {
             return;
         }
+        // Bounds check: don't write past the end of the object
+        if (__builtin_expect(index >= hdr->slotCount(), 0)) {
+            return;
+        }
+    } else {
+        // Immediate receiver (SmallInteger, Character) — can't have instance variables
+        return;
     }
 
-    // receiver_ is a known-valid heap object
     memory_.storePointerUnchecked(index, receiver_, value);
 }
 

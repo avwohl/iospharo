@@ -213,6 +213,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
         return false;  // Let interpreter handle it
     }
 
+    // Bounds-check: receiver must have enough slots for the max field index
+    if (jm->hasRecvFieldAccess && state.receiver.isObject()) {
+        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(state.receiver.rawBits());
+        size_t slotCount = recvObj->slotCount();
+        if (jm->maxRecvFieldIndex >= slotCount) {
+            return false;
+        }
+    }
+
     // Toggle W^X to executable for the call, then back to writable.
     // On Apple Silicon this is just a register write (no syscall).
     makeExecutable(jm->codeStart(), jm->codeSize);
@@ -275,6 +284,15 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // Guard: immediate receivers can't have instance variables.
     if ((state.receiver.isSmallInteger() || state.receiver.isCharacter()) && jm->hasRecvFieldAccess) {
         return false;  // Let interpreter handle it
+    }
+
+    // Bounds-check: receiver must have enough slots for the max field index
+    if (jm->hasRecvFieldAccess && state.receiver.isObject()) {
+        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(state.receiver.rawBits());
+        size_t slotCount = recvObj->slotCount();
+        if (jm->maxRecvFieldIndex >= slotCount) {
+            return false;  // Let interpreter handle
+        }
     }
 
     // Toggle W^X to executable

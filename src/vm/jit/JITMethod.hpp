@@ -115,6 +115,9 @@ struct JITMethod {
     bool        hasSends;         // Contains actual send stencils (need deopt, can't execute)
     bool        hasHeapWrites;    // Writes to heap objects (need write barrier, can't execute)
     bool        hasRecvFieldAccess; // Reads/writes receiver instance variables
+    bool        hasRecvFieldWrite;  // Writes to receiver instance variables
+    bool        hasLitVarWrite;     // Writes to literal variables (Associations)
+    uint8_t     maxRecvFieldIndex;  // Max receiver slot index accessed (for bounds checking)
 
     // --- Statistics ---
     uint32_t  executionCount;     // Incremented on each entry (for hot method detection)

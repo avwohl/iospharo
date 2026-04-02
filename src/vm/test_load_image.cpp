@@ -469,16 +469,16 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
     if (uc && uc->uc_mcontext) {
         uint64_t pc = uc->uc_mcontext->__ss.__pc;
         uint64_t lr = uc->uc_mcontext->__ss.__lr;
-        uint64_t x0 = uc->uc_mcontext->__ss.__x[0];
-        uint64_t x8 = uc->uc_mcontext->__ss.__x[8];
-        uint64_t x9 = uc->uc_mcontext->__ss.__x[9];
-        uint64_t x10 = uc->uc_mcontext->__ss.__x[10];
-        uint64_t x11 = uc->uc_mcontext->__ss.__x[11];
-        fprintf(stderr, "[CRASH] PC=0x%llx LR=0x%llx\n", (unsigned long long)pc, (unsigned long long)lr);
-        fprintf(stderr, "[CRASH] x0=0x%llx x8=0x%llx x9=0x%llx x10=0x%llx x11=0x%llx\n",
-                (unsigned long long)x0, (unsigned long long)x8,
-                (unsigned long long)x9, (unsigned long long)x10,
-                (unsigned long long)x11);
+        fprintf(stderr, "[CRASH] PC=0x%llx LR=0x%llx\n",
+                (unsigned long long)pc, (unsigned long long)lr);
+        // Dump all general-purpose registers for crash diagnosis
+        for (int r = 0; r < 29; r++) {
+            uint64_t xr = uc->uc_mcontext->__ss.__x[r];
+            if (xr != 0) fprintf(stderr, "[CRASH] x%d=0x%llx\n", r, (unsigned long long)xr);
+        }
+        fprintf(stderr, "[CRASH] fp=0x%llx sp=0x%llx\n",
+                (unsigned long long)uc->uc_mcontext->__ss.__fp,
+                (unsigned long long)uc->uc_mcontext->__ss.__sp);
         // Dump a few instructions around the faulting PC
         uint32_t* pcInsn = reinterpret_cast<uint32_t*>(pc);
         fprintf(stderr, "[CRASH] Instructions at PC: ");

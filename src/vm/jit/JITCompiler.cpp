@@ -989,12 +989,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->hasSends = false;
     jitMethod->hasHeapWrites = false;
     jitMethod->hasRecvFieldAccess = false;
+    jitMethod->hasRecvFieldWrite = false;
+    jitMethod->hasLitVarWrite = false;
+    jitMethod->maxRecvFieldIndex = 0;
     for (auto& d : decoded) {
         auto sid = static_cast<StencilID>(d.stencilIdx);
         switch (sid) {
         // Receiver field access (read) — safe only for object receivers
         case StencilID::stencil_pushRecvVar:
             jitMethod->hasRecvFieldAccess = true;
+            if (d.operand >= 0 && (uint8_t)d.operand > jitMethod->maxRecvFieldIndex)
+                jitMethod->maxRecvFieldIndex = (uint8_t)d.operand;
             break;
 
         // Pure reads/stack ops — always safe
@@ -1049,10 +1054,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_storeRecvVar:
             jitMethod->hasHeapWrites = true;
             jitMethod->hasRecvFieldAccess = true;
+            jitMethod->hasRecvFieldWrite = true;
+            if (d.operand >= 0 && (uint8_t)d.operand > jitMethod->maxRecvFieldIndex)
+                jitMethod->maxRecvFieldIndex = (uint8_t)d.operand;
             break;
         case StencilID::stencil_popStoreLitVar:
         case StencilID::stencil_storeLitVar:
             jitMethod->hasHeapWrites = true;
+            jitMethod->hasLitVarWrite = true;
             break;
 
         // Inlined special selectors — no deopt, pure computation
