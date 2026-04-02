@@ -2,6 +2,23 @@
 
 2026-04-02
 
+## Critical IC Fix: Correct Receiver for IC Patching
+
+patchJITICAfterSend was using stale receiver_ (set during activateMethod,
+which runs AFTER patching) instead of the actual send receiver from the
+stack. This caused IC entries to be patched with the wrong classIndex,
+making all subsequent IC checks miss. Now passes the actual receiver.
+
+Also fixed: nArgs for special selectors (0x70-0x7F) was hardcoded to 1;
+now uses a lookup table matching the spec. Extended sends (0xEA) and
+special selectors now also get polymorphic IC (were using no-IC stencil_send).
+
+Added inline stencils for == (stencil_identicalTo) and ~~ (stencil_notIdenticalTo)
+that execute identity comparison inline without any deopt.
+
+Result: IC hit rate 64% (was 0% steady-state). 63 compiled, 50 IC patches.
+46 stencils, 2652 bytes ARM64 code.
+
 ## Polymorphic Inline Caching (4 entries per site)
 
 Upgraded from monomorphic IC (1 class/method pair per send site) to
