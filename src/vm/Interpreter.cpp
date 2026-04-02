@@ -9273,114 +9273,150 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.icDataPtr = nullptr;
     state.sendArgCount = 0;
 
-    // Save entry SP so we can restore it on ExitSend (arithmetic overflow).
-    // The method will be re-executed from scratch by the interpreter.
+    // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
 
     if (!jitRuntime_.tryExecute(method, state)) {
         return false;  // Not compiled yet
     }
 
-    // Validate JIT output state — detect stencil corruption early
-    if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
-        state.exitReason == jit::ExitSendCached) {
-        uint64_t ipVal = reinterpret_cast<uint64_t>(state.ip);
-        uint64_t spVal = reinterpret_cast<uint64_t>(state.sp);
-        // IP should be a valid method address (in heap, high address)
-        if (ipVal < 0x10000 || ipVal > 0x1000000000000ULL) {
-            fprintf(stderr, "[JIT] BAD state.ip=0x%llx after exit %d, method=0x%llx\n",
-                    (unsigned long long)ipVal, state.exitReason,
-                    (unsigned long long)method.rawBits());
-            return false;  // Don't trust this exit
-        }
-        // SP should be near the stack (reasonable range)
-        if (spVal < 0x10000 || spVal > 0x1000000000000ULL) {
-            fprintf(stderr, "[JIT] BAD state.sp=0x%llx after exit %d\n",
-                    (unsigned long long)spVal, state.exitReason);
-            return false;
-        }
-    }
+    // Loop to handle chained JIT execution: when an IC-hit send's target
+    // completes, resume JIT execution at the next bytecode instead of
+    // falling back to the interpreter dispatch loop.
+    for (int chainLimit = 0; chainLimit < 100; chainLimit++) {
 
-    // JIT code ran — handle exit reason
-    switch (state.exitReason) {
-    case jit::ExitReturn:
-        // The compiled code wants to return a value.
-        // popFrame() resets SP to framePointer_, so no need to set it from state.sp.
-        popFrame();
-        push(state.returnValue);
-        return true;
-
-    case jit::ExitSend:
-        instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
-        jitICMisses_++;
-        if (state.icDataPtr) {
-            bool hasEmpty = false;
-            for (int e = 0; e < 4; e++) {
-                if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+        // Validate JIT output state — detect stencil corruption early
+        if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
+            state.exitReason == jit::ExitSendCached) {
+            uint64_t ipVal = reinterpret_cast<uint64_t>(state.ip);
+            uint64_t spVal = reinterpret_cast<uint64_t>(state.sp);
+            if (ipVal < 0x10000 || ipVal > 0x1000000000000ULL) {
+                fprintf(stderr, "[JIT] BAD state.ip=0x%llx after exit %d, method=0x%llx\n",
+                        (unsigned long long)ipVal, state.exitReason,
+                        (unsigned long long)method.rawBits());
+                return false;
             }
-            if (hasEmpty) {
-                pendingICPatch_ = state.icDataPtr;
-                pendingICSendArgCount_ = state.sendArgCount;
+            if (spVal < 0x10000 || spVal > 0x1000000000000ULL) {
+                fprintf(stderr, "[JIT] BAD state.sp=0x%llx after exit %d\n",
+                        (unsigned long long)spVal, state.exitReason);
+                return false;
             }
         }
-        return false;
 
-    case jit::ExitSendCached: {
-        // IC hit: cached method is in state.cachedTarget. Skip method lookup.
-        Oop cached = state.cachedTarget;
-        if (!cached.isObject() || cached.rawBits() < 0x10000 ||
-            cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
-            // Stale IC — invalidate and fall back to normal send
-            jitICStale_++;
+        // Handle exit reason
+        switch (state.exitReason) {
+        case jit::ExitReturn:
+            popFrame();
+            push(state.returnValue);
+            return true;
+
+        case jit::ExitSend:
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            jitICMisses_++;
             if (state.icDataPtr) {
+                bool hasEmpty = false;
                 for (int e = 0; e < 4; e++) {
-                    state.icDataPtr[e * 2] = 0;
-                    state.icDataPtr[e * 2 + 1] = 0;
+                    if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+                }
+                if (hasEmpty) {
+                    pendingICPatch_ = state.icDataPtr;
+                    pendingICSendArgCount_ = state.sendArgCount;
                 }
             }
+            return false;
+
+        case jit::ExitSendCached: {
+            // IC hit: cached method is in state.cachedTarget. Skip method lookup.
+            Oop cached = state.cachedTarget;
+            if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+                cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                // Stale IC — invalidate and fall back to normal send
+                jitICStale_++;
+                if (state.icDataPtr) {
+                    for (int e = 0; e < 4; e++) {
+                        state.icDataPtr[e * 2] = 0;
+                        state.icDataPtr[e * 2 + 1] = 0;
+                    }
+                }
+                instructionPointer_ = state.ip;
+                stackPointer_ = state.sp;
+                return false;
+            }
+            jitICHits_++;
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            {
+                uint8_t sendOp = *instructionPointer_;
+                if (sendOp >= 0x80 && sendOp <= 0xAF) {
+                    instructionPointer_ += 1;
+                } else if (sendOp == 0xEA) {
+                    instructionPointer_ += 2;
+                } else {
+                    instructionPointer_ += 1;
+                }
+            }
+            int nArgs = state.sendArgCount;
+            receiver_ = stackPointer_[-(nArgs + 1)];
+            jitRuntime_.noteMethodEntry(cached);
+
+            size_t callerDepth = frameDepth_;
+            activateMethod(cached, nArgs);
+
+            if (frameDepth_ != callerDepth) {
+                // Target has an active frame — dispatch loop handles it
+                jitJ2JActFalls_++;
+                return true;
+            }
+
+            // Target completed (JIT handled it end-to-end).
+            // Resume JIT execution at the bytecode after the send.
+            jitJ2JActChains_++;
+            {
+                uint32_t bcOffset = computeCurrentBCOffset();
+                if (bcOffset == UINT32_MAX) return true;
+
+                // Re-setup JIT state from current interpreter state
+                state.sp = stackPointer_;
+                state.receiver = receiver_;
+                methObj = method.asObjectPtr();
+                state.literals = methObj->slots() + 1;
+                state.tempBase = framePointer_ + 1;
+                // state.ip must be bytecodeStart (stencils use ip + bcOffset)
+                {
+                    Oop hdr = methObj->slots()[0];
+                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    state.ip = methObj->bytes() + (1 + numLits) * 8;
+                }
+                state.method = method;
+                state.argCount = argCount;
+                state.icDataPtr = nullptr;
+                state.sendArgCount = 0;
+                state.exitReason = jit::ExitNone;
+
+                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                    return true;  // No re-entry at this offset; interpreter handles rest
+                }
+                continue;  // Loop to handle the new exit reason
+            }
+        }
+
+        case jit::ExitArithOverflow:
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             return false;
+
+        case jit::ExitPrimFail:
+        case jit::ExitDeopt:
+            stackPointer_ = entrySP;
+            return false;
+
+        default:
+            return false;
         }
-        jitICHits_++;
-        instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
-        {
-            uint8_t sendOp = *instructionPointer_;
-            if (sendOp >= 0x80 && sendOp <= 0xAF) {
-                instructionPointer_ += 1;
-            } else if (sendOp == 0xEA) {
-                instructionPointer_ += 2;
-            } else {
-                instructionPointer_ += 1;
-            }
-        }
-        int nArgs = state.sendArgCount;
-        receiver_ = stackPointer_[-(nArgs + 1)];
-        jitRuntime_.noteMethodEntry(cached);  // Count for JIT compilation
-        activateMethod(cached, nArgs);
-        return true;  // Frame pushed, dispatch loop executes cached method
     }
-
-    case jit::ExitArithOverflow:
-        // Arithmetic overflow or non-SmallInteger: state.ip points to the
-        // arithmetic bytecode, state.sp is correct (operands still on stack).
-        // The interpreter will do the full send (e.g., LargeInteger>>+).
-        instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
-        return false;
-
-    case jit::ExitPrimFail:
-    case jit::ExitDeopt:
-        // Deoptimize: restore SP and let interpreter re-execute
-        stackPointer_ = entrySP;
-        return false;
-
-    default:
-        // ExitNone or unknown: shouldn't happen
-        return false;
-    }
+    // Chain limit reached — let interpreter continue
+    return true;
 }
 
 #endif // PHARO_JIT_ENABLED

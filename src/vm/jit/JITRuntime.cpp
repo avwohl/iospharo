@@ -122,14 +122,17 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         int hitPct = icTotal > 0 ? static_cast<int>(icHits * 100 / icTotal) : 0;
         size_t j2jChains = interp_ ? interp_->jitJ2JChains() : 0;
         size_t j2jFallbacks = interp_ ? interp_->jitJ2JFallbacks() : 0;
+        size_t j2jActChains = interp_ ? interp_->jitJ2JActChains() : 0;
+        size_t j2jActFalls = interp_ ? interp_->jitJ2JActFalls() : 0;
         fprintf(stderr, "[JIT] Stats: %zu sends, %zu compiled, %zu failed, "
                 "%zu/%zu KB code | IC: %zu/%zu (%d%% hit, %zu patched, %zu stale) "
-                "| J2J: %zu chain, %zu fallback\n",
+                "| J2J-resume: %zu/%zu | J2J-act: %zu/%zu\n",
                 totalEntries, compiler_->methodsCompiled(),
                 compiler_->compilationsFailed(),
                 codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024,
                 icHits, icTotal, hitPct, icPatches, icStale,
-                j2jChains, j2jFallbacks);
+                j2jChains, j2jChains + j2jFallbacks,
+                j2jActChains, j2jActChains + j2jActFalls);
 
     }
 
