@@ -227,6 +227,30 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     return true;
 }
 
+void JITRuntime::flushCaches() {
+    if (!initialized_) return;
+
+    // Clear mega cache
+    std::memset(megaCache_, 0, sizeof(megaCache_));
+
+    // Clear all IC entries in compiled methods.
+    // IC data layout per send site: 4 x [uint64_t key, uint64_t method] + uint64_t selectorBits
+    // We zero the first 64 bytes (4 key/method pairs) but preserve selectorBits (set at compile time).
+    static constexpr uint32_t IC_BYTES_PER_SITE = 72;
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (m->numICEntries > 0) {
+            uint32_t icSize = m->numICEntries * IC_BYTES_PER_SITE;
+            uint8_t* icStart = m->codeStart() + m->codeSize - icSize;
+            for (uint16_t i = 0; i < m->numICEntries; i++) {
+                // Zero first 64 bytes (key/method pairs), leave last 8 (selectorBits)
+                std::memset(icStart + i * IC_BYTES_PER_SITE, 0, 64);
+            }
+        }
+        m = m->nextInZone;
+    }
+}
+
 } // namespace jit
 } // namespace pharo
 

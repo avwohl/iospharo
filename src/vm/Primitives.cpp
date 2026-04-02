@@ -435,6 +435,7 @@ PrimitiveResult Interpreter::primitiveArrayBecome(int argCount) {
 
     // Flush method cache (critical after become that may affect classes)
     flushMethodCache();
+    flushJITCaches();
 
     popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
@@ -7205,6 +7206,7 @@ PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
     // Clear the method cache to force re-lookups
     // This is called after methods are modified or removed
     flushMethodCache();
+    flushJITCaches();
     primitiveSuccess(stackTop());  // Return receiver
     return PrimitiveResult::Success;
 }
@@ -8197,6 +8199,7 @@ PrimitiveResult Interpreter::primitiveBecome(int argCount) {
     // for either object are now stale (the cache key classOop may now
     // refer to a different class).
     flushMethodCache();
+    flushJITCaches();
 
     popN(2);
     push(rcvr);
@@ -9775,6 +9778,7 @@ PrimitiveResult Interpreter::primitiveContextXray(int argCount) {
 PrimitiveResult Interpreter::primitiveVoidVMState(int argCount) {
     // Clear the method cache
     flushMethodCache();
+    flushJITCaches();
 
     // In a JIT VM, this would also clear the machine code zone
     // and reinitialize interpreter state from the active context.
@@ -11949,6 +11953,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWay(int argCount) {
 
     // Flush method cache (critical after become)
     flushMethodCache();
+    flushJITCaches();
 
     popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;
@@ -12021,6 +12026,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
 
     // Flush method cache (critical after become)
     flushMethodCache();
+    flushJITCaches();
 
     popN(argCount);
     push(fromArrayOop);
@@ -12074,6 +12080,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayNoCopyHash(int argCount) 
 
     // Flush method cache (critical after become)
     flushMethodCache();
+    flushJITCaches();
 
     popN(1);  // Pop argument, leave receiver
     return PrimitiveResult::Success;

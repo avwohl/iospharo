@@ -50,6 +50,9 @@ public:
     // execution counter and triggers compilation at the threshold.
     void noteMethodEntry(Oop compiledMethod);
 
+    // Flush all inline caches and mega cache (called on become:, GC, method changes)
+    void flushCaches();
+
     // Access to subsystems
     CodeZone&     codeZone()   { return codeZone_; }
     MethodMap&    methodMap()  { return methodMap_; }

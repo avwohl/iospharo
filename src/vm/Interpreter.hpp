@@ -664,7 +664,7 @@ private:
     std::array<uint8_t, 256> recentBytecodes_;
     size_t recentBytecodeIdx_ = 0;
 
-    /// Clear the method cache and inline cache (used when methods are modified or GC runs)
+    /// Clear the method cache (used when methods are modified or GC runs)
     void flushMethodCache() {
         for (auto& entry : methodCache_) {
             entry.selector = Oop::nil();
@@ -674,6 +674,16 @@ private:
             entry.setterIndex = -1;
             entry.returnsSelf = false;
         }
+    }
+
+    /// Flush JIT inline caches and mega cache (call after become: or method changes,
+    /// NOT after GC — our GC doesn't compact so cached classIndex/Oop values stay valid)
+    void flushJITCaches() {
+#if PHARO_JIT_ENABLED
+        if (jitRuntime_.isInitialized()) {
+            jitRuntime_.flushCaches();
+        }
+#endif
     }
 
     // ===== JIT COMPILER =====
