@@ -2,6 +2,18 @@
 
 2026-04-02
 
+## Comparison+Jump Superinstructions
+
+Peephole pass fuses comparison bytecodes (< > <= >= = ~=) with following
+conditional jumps into single stencils. Eliminates boolean Oop creation,
+stack round-trip, and stencil boundary. Each fused stencil is 76 bytes
+vs 148 (108+40) for the pair (49% smaller). 12 fused stencils added.
+
+Known issue: identity stencils (== ~~) have an off-by-one stack bug
+(read sp[0] instead of sp[-1]). Fixing this changes execution paths
+because == currently always returns false. Identity+jump fusion disabled
+until the root cause is investigated.
+
 ## JIT-to-JIT Call Chaining
 
 When a JIT-compiled method hits an IC-cached send (ExitSendCached) and the
