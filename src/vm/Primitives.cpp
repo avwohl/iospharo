@@ -11064,6 +11064,13 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    static int fileOpenLog = 0;
+    if (fileOpenLog++ < 20) {
+        bool writable2 = (writableOop == memory_.trueObject());
+        fprintf(stderr, "[FILE] primitiveFileOpen #%d: '%s' writable=%d argCount=%d\n",
+                fileOpenLog, filename.c_str(), writable2, argCount);
+    }
+
     // Determine mode based on writable flag
     bool writable = (writableOop == memory_.trueObject());
     const char* mode = writable ? "r+b" : "rb";
@@ -11247,6 +11254,11 @@ PrimitiveResult Interpreter::primitiveFileSize(int argCount) {
 PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     if (argCount < 4) {
         return PrimitiveResult::Failure;
+    }
+
+    static int fileWriteLog = 0;
+    if (fileWriteLog++ < 20) {
+        fprintf(stderr, "[FILE] primitiveFileWrite #%d: argCount=%d\n", fileWriteLog, argCount);
     }
 
     Oop countOop = stackValue(0);
@@ -11542,10 +11554,16 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
 // primitiveGetCurrentWorkingDirectory - named primitive (no module)
 // Takes 1 arg: a ByteArray buffer. Fills it with getcwd() result and returns a String.
 PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
+    static int cwdLog = 0;
+    if (cwdLog++ < 5) {
+        fprintf(stderr, "[CWD] primitiveGetCurrentWorkingDirectory called! argCount=%d\n", argCount);
+    }
     char buf[1024];
     if (!getcwd(buf, sizeof(buf))) {
+        if (cwdLog <= 5) fprintf(stderr, "[CWD] getcwd failed!\n");
         return PrimitiveResult::Failure;
     }
+    if (cwdLog <= 5) fprintf(stderr, "[CWD] result='%s' len=%zu\n", buf, strlen(buf));
 
     Oop result = createStringObject(memory_, std::string(buf));
     if (result.isNil()) {
@@ -12963,6 +12981,11 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 // primitiveExternalCall -> result
 // Calls a primitive defined in an external plugin module
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
+    static int extCallLog = 0;
+    if (extCallLog++ < 50) {
+        std::string sel = memory_.selectorOf(newMethod_.isObject() ? newMethod_ : method_);
+        fprintf(stderr, "[EXT] primitiveExternalCall #%d: argCount=%d sel=#%s\n", extCallLog, argCount, sel.c_str());
+    }
     // Use newMethod_ (the method being activated) rather than method_ (the caller)
     // because executePrimitive runs BEFORE activateMethod
     Oop method = newMethod_.isObject() ? newMethod_ : method_;
@@ -13283,17 +13306,16 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         }
     }
 
-#ifdef DEBUG
-    // Diagnostic: log when SocketPlugin/SqueakSSL dispatch falls through without a match
-    for (auto& ls : literalStrings) {
-        if (ls.find("Socket") != std::string::npos || ls == "SqueakSSL") {
-            fprintf(stderr, "[DISPATCH] FAILED to dispatch! literals:");
+    // Log failed external call dispatch (first 30)
+    {
+        static int extCallFailLog = 0;
+        if (extCallFailLog++ < 30) {
+            std::string sel = memory_.selectorOf(method);
+            fprintf(stderr, "[EXT] FAIL #%d: selector=#%s literals:", extCallFailLog, sel.c_str());
             for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
             fprintf(stderr, "\n");
-            break;
         }
     }
-#endif
 
     return PrimitiveResult::Failure;
 }

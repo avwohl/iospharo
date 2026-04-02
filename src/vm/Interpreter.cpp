@@ -1302,6 +1302,20 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
+        // === PERIODIC SAMPLING (every ~1K bytecodes) ===
+        if ((totalSteps & 0x3FF) == 0) {
+            static int sampleCount = 0;
+            // Only sample after test trigger (skip first 5K steps = startup)
+            if (sampleCount < 100 && totalSteps > 5000) {
+                if (sampleCount++ < 100) {
+                    std::string sel = memory_.selectorOf(method_);
+                    fprintf(stderr, "[SAMPLE] #%d: #%s fd=%zu steps=%llu\n",
+                            sampleCount, sel.c_str(), frameDepth_,
+                            (unsigned long long)totalSteps);
+                }
+            }
+        }
+
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
@@ -5687,6 +5701,17 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
     // catches both infinite recursion (soft) and hard overflow.
     if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+        static int overflowLog = 0;
+        if (overflowLog++ < 3) {
+            fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
+                    frameDepth_, memory_.selectorOf(method).c_str(), argCount);
+            // Dump last 30 frames
+            fprintf(stderr, "[OVERFLOW] Call stack (last 30):\n");
+            size_t start = frameDepth_ > 30 ? frameDepth_ - 30 : 0;
+            for (size_t f = start; f < frameDepth_; f++) {
+                fprintf(stderr, "  [%zu] #%s\n", f, memory_.selectorOf(savedFrames_[f].savedMethod).c_str());
+            }
+        }
         if (frameDepth_ >= MaxFrameDepth) {
             stopVM("Frame depth overflow in pushFrame()");
         }
@@ -6629,6 +6654,14 @@ void Interpreter::initializeSelectors() {
 // ===== PROCESS SCHEDULING =====
 
 void Interpreter::terminateCurrentProcess() {
+    {
+        Oop proc = getActiveProcess();
+        Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
+        fprintf(stderr, "[TERM] terminateCurrentProcess: proc=0x%llx pri=%lld fd=%zu method=#%s\n",
+                (unsigned long long)proc.rawBits(),
+                pri.isSmallInteger() ? pri.asSmallInteger() : -1,
+                frameDepth_, memory_.selectorOf(method_).c_str());
+    }
     // Clear any pending NLR state
     nlrTargetCtx_ = Oop::nil();
     nlrEnsureCtx_ = Oop::nil();
