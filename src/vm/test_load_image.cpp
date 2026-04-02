@@ -464,6 +464,32 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
         siglongjmp(g_sigsegvRecovery, 1);
     }
     fprintf(stderr, "\n[SIGSEGV] Signal %d caught! Fault addr=%p\n", sig, info->si_addr);
+#if defined(__APPLE__) && defined(__arm64__)
+    ucontext_t* uc = static_cast<ucontext_t*>(ctx);
+    if (uc && uc->uc_mcontext) {
+        uint64_t pc = uc->uc_mcontext->__ss.__pc;
+        uint64_t lr = uc->uc_mcontext->__ss.__lr;
+        uint64_t x0 = uc->uc_mcontext->__ss.__x[0];
+        uint64_t x8 = uc->uc_mcontext->__ss.__x[8];
+        uint64_t x9 = uc->uc_mcontext->__ss.__x[9];
+        uint64_t x10 = uc->uc_mcontext->__ss.__x[10];
+        uint64_t x11 = uc->uc_mcontext->__ss.__x[11];
+        fprintf(stderr, "[CRASH] PC=0x%llx LR=0x%llx\n", (unsigned long long)pc, (unsigned long long)lr);
+        fprintf(stderr, "[CRASH] x0=0x%llx x8=0x%llx x9=0x%llx x10=0x%llx x11=0x%llx\n",
+                (unsigned long long)x0, (unsigned long long)x8,
+                (unsigned long long)x9, (unsigned long long)x10,
+                (unsigned long long)x11);
+        // Dump a few instructions around the faulting PC
+        uint32_t* pcInsn = reinterpret_cast<uint32_t*>(pc);
+        fprintf(stderr, "[CRASH] Instructions at PC: ");
+        for (int i = -2; i <= 2; i++) {
+            fprintf(stderr, "%s0x%08x ", i == 0 ? ">>>" : "", pcInsn[i]);
+        }
+        fprintf(stderr, "\n");
+    }
+#else
+    (void)ctx;
+#endif
     void* callstack[128];
     int frames = backtrace(callstack, 128);
     backtrace_symbols_fd(callstack, frames, 2);

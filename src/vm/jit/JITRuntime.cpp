@@ -83,9 +83,16 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.falseOopAddr = &falseOopBits;
     compiler_->setHelpers(helpers);
 
+    // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be
+    // "executable" rather than "writable". Ensure we start in writable mode
+    // so allocate() can zero the memory.
+    makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
+
     initialized_ = true;
-    fprintf(stderr, "[JIT] Initialized: %zu MB code zone\n",
-            codeZone_.totalBytes() / (1024 * 1024));
+    fprintf(stderr, "[JIT] Initialized: %zu MB code zone at %p\n",
+            codeZone_.totalBytes() / (1024 * 1024),
+            (void*)codeZone_.rawStart());
+
     return true;
 }
 
@@ -138,17 +145,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
-    // Execution temporarily disabled — compilation is working (2965 methods)
-    // but the first method that executes crashes (SIGSEGV in compiled code).
-    // The JITState setup in tryJITActivation needs debugging — likely
-    // tempBase or literals pointer is wrong, or the stencil ABI doesn't
-    // match what the compiler produces.
-    return false;
-
     if (!initialized_) return false;
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
+
+    // Can't execute methods with sends, stores, or arithmetic yet:
+    // - Sends exit with ExitSend but interpreter re-executes from method start
+    //   (corrupts stack — needs proper deoptimization)
+    // - Arithmetic stencils also exit with ExitSend on non-SmallInteger inputs
+    // - Store stencils write to heap without proper write barrier
+    // TODO: implement bytecode-level deoptimization for sends
+    if (jm->hasSends) return false;
 
     // Touch for LRU tracking
     codeZone_.touch(jm);
@@ -158,9 +166,16 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     state.jitMethod = jm;
     state.exitReason = ExitNone;
 
+    // Toggle W^X to executable for the call, then back to writable.
+    // On Apple Silicon this is just a register write (no syscall).
+    makeExecutable(jm->codeStart(), jm->codeSize);
+
     // Call the compiled code
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart());
     entry(&state);
+
+    // Back to writable so metadata updates (touch, counters) work
+    makeWritable(jm->codeStart(), jm->codeSize);
 
     return true;
 }

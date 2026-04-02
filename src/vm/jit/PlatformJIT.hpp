@@ -44,9 +44,11 @@ namespace jit {
 inline void* allocateCodeMemory(size_t size) {
 #if defined(__APPLE__)
     // MAP_JIT is required on Apple Silicon for W^X per-thread toggling.
-    // On Intel Macs it's accepted but has no effect.
+    // PROT_EXEC must be included so pthread_jit_write_protect_np can
+    // toggle between write and execute modes. Without it, the memory
+    // never becomes executable.
     void* p = mmap(nullptr, size,
-                   PROT_READ | PROT_WRITE,
+                   PROT_READ | PROT_WRITE | PROT_EXEC,
                    MAP_PRIVATE | MAP_ANON | MAP_JIT,
                    -1, 0);
     return (p == MAP_FAILED) ? nullptr : p;

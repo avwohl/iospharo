@@ -135,10 +135,13 @@ inline bool patchARM64(uint8_t* codeBase, const Relocation& reloc, uint64_t valu
     case RelocType::ARM64_PAGEOFF12: {
         // add/ldr imm12: bits 21:10
         uint32_t pageoff = static_cast<uint32_t>(value & 0xFFF);
-        // Check if this is an LDR (scaled) — need to shift by access size
+        // Check if this is an LDR/STR (scaled) — need to divide by access size.
+        // LDR/STR unsigned offset: bits[29:24] = 111V01 where V=0 for integer.
+        // In the 10-bit window (*insn >> 22), bits[7:2] = instruction bits[29:24].
+        // Match 111001 (integer) or 111101 (SIMD): mask=0xEC, value=0xE4.
         uint32_t opc = (*insn >> 22) & 0x3FF;
-        if ((opc & 0x3B0) == 0x390) {
-            // LDR/STR: scale by size (bits 31:30)
+        if ((opc & 0xEC) == 0xE4) {
+            // LDR/STR unsigned offset: imm12 is scaled by access size (bits 31:30)
             uint32_t size = (*insn >> 30) & 0x3;
             pageoff >>= size;
         }

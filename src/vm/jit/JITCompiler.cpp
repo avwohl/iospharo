@@ -419,6 +419,9 @@ bool JITCompiler::patchStencilInstance(
     uint32_t& nextLiteralSlot)
 {
     uint8_t* stencilCode = codeBase + stencilOffset;
+    // Track the last allocated GOT slot so adrp+ldr pairs share the same slot.
+    // PAGEOFF12 allocates; PAGE21 reuses.
+    uint64_t lastGotSlotAddr = 0;
 
     for (uint16_t r = 0; r < stencil.numRelocs; r++) {
         const Relocation& reloc = stencil.relocs[r];
@@ -453,33 +456,37 @@ bool JITCompiler::patchStencilInstance(
         }
 
         case HoleKind::Operand: {
-            // GOT-style: adrp+ldr pair loads from a literal pool slot
-            // We put the operand value in a literal pool entry and patch
-            // the adrp+ldr to load from it.
-            uint32_t slot = nextLiteralSlot++;
-            literalPool[slot] = static_cast<uint64_t>(bc.operand >= 0 ? bc.operand : 0);
-
-            uint64_t poolEntryAddr = reinterpret_cast<uint64_t>(
-                reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-
-            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGE21) {
-                if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
-            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
+            // GOT-style: adrp+ldr pair loads from a literal pool slot.
+            // The PAGEOFF12 reloc comes first (higher offset in generated relocs),
+            // followed by PAGE21. Both must target the SAME slot.
+            // Allocate on PAGEOFF12; reuse on PAGE21.
+            uint64_t poolEntryAddr;
+            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
+                uint32_t slot = nextLiteralSlot++;
+                literalPool[slot] = static_cast<uint64_t>(bc.operand >= 0 ? bc.operand : 0);
+                lastGotSlotAddr = reinterpret_cast<uint64_t>(
+                    reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
+                poolEntryAddr = lastGotSlotAddr;
+            } else {
+                // PAGE21: reuse the slot from the preceding PAGEOFF12
+                poolEntryAddr = lastGotSlotAddr;
             }
+            if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
             break;
         }
 
         case HoleKind::Operand2: {
-            uint32_t slot = nextLiteralSlot++;
-            literalPool[slot] = static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
-            uint64_t poolEntryAddr = reinterpret_cast<uint64_t>(
-                reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-
-            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGE21 ||
-                reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
+            uint64_t poolEntryAddr;
+            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
+                uint32_t slot = nextLiteralSlot++;
+                literalPool[slot] = static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
+                lastGotSlotAddr = reinterpret_cast<uint64_t>(
+                    reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
+                poolEntryAddr = lastGotSlotAddr;
+            } else {
+                poolEntryAddr = lastGotSlotAddr;
             }
+            if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
             break;
         }
 
@@ -509,17 +516,21 @@ bool JITCompiler::patchStencilInstance(
                 // Direct branch to helper function
                 uint64_t target = reinterpret_cast<uint64_t>(helperAddr);
                 if (!patchARM64(stencilCode, reloc, target)) return false;
-            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGE21 ||
-                       reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                // GOT load: put the value (Oop) in a literal pool slot
-                // and patch to load from it
+            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
+                // GOT load (PAGEOFF12 comes first): allocate literal pool slot.
+                // Store the ADDRESS, not the value. The stencil does a double
+                // dereference: load address from literal pool, then load value
+                // through that address. This keeps values in sync after GC
+                // (e.g., nilOopBits/trueOopBits/falseOopBits are updated by
+                // updateSpecialOops and the stencil reads the current value).
                 uint32_t slot = nextLiteralSlot++;
-                // For Oop helpers (nil/true/false), helperAddr points to the Oop value
-                uint64_t oopBits = *reinterpret_cast<uint64_t*>(helperAddr);
-                literalPool[slot] = oopBits;
-                uint64_t poolEntryAddr = reinterpret_cast<uint64_t>(
+                literalPool[slot] = reinterpret_cast<uint64_t>(helperAddr);
+                lastGotSlotAddr = reinterpret_cast<uint64_t>(
                     reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-                if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
+                if (!patchARM64(stencilCode, reloc, lastGotSlotAddr)) return false;
+            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGE21) {
+                // PAGE21: reuse the slot from the preceding PAGEOFF12
+                if (!patchARM64(stencilCode, reloc, lastGotSlotAddr)) return false;
             }
             break;
         }
@@ -621,6 +632,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     uint32_t literalPoolSize = maxLiteralSlots * 8;
     uint32_t totalSize = literalPoolOffset + literalPoolSize;
 
+    // The code zone is kept in writable W^X mode by default (set during
+    // initialize). We write freely here; tryExecute() toggles to executable
+    // only around the actual machine code call.
+
     // Allocate in code zone
     JITMethod* jitMethod = zone_.allocate(totalSize, 0 /* no IC entries yet */);
     if (!jitMethod) {
@@ -645,46 +660,88 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->argCount = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
 
+    // Mark methods that can't be safely executed yet.
+    // Only allow stencils that never exit with ExitSend (no fallback needed)
+    // and don't write to the heap (no receiver ivar or litvar stores).
+    jitMethod->hasSends = false;
+    for (auto& d : decoded) {
+        uint16_t sid = d.stencilIdx;
+        bool safe =
+            sid == static_cast<uint16_t>(StencilID::stencil_pushRecvVar) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushTemp) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushLitConst) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushReceiver) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushNil) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushTrue) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushFalse) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushZero) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pushOne) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_pop) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_popStoreTemp) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_dup) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_returnReceiver) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_returnTop) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_returnTrue) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_returnFalse) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_returnNil) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_jump) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_jumpFalse) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_jumpTrue) ||
+            sid == static_cast<uint16_t>(StencilID::stencil_nop);
+        if (!safe) {
+            jitMethod->hasSends = true;
+            break;
+        }
+    }
+
     uint8_t* codeBase = jitMethod->codeStart();
     uint64_t* literalPool = reinterpret_cast<uint64_t*>(codeBase + literalPoolOffset);
     uint32_t nextLiteralSlot = 0;
 
-    // Make writable for code generation
-    {
-        ScopedWriteAccess guard(codeBase, totalSize);
+    // Second pass: copy and patch stencils
+    uint32_t offset = 0;
+    for (size_t i = 0; i < decoded.size(); i++) {
+        const DecodedBC& bc = decoded[i];
+        const StencilDef& stencil = stencilTable[bc.stencilIdx];
 
-        // Second pass: copy and patch stencils
-        uint32_t offset = 0;
-        for (size_t i = 0; i < decoded.size(); i++) {
-            const DecodedBC& bc = decoded[i];
-            const StencilDef& stencil = stencilTable[bc.stencilIdx];
+        // Copy stencil bytes
+        std::memcpy(codeBase + offset, stencil.code, stencil.codeSize);
 
-            // Copy stencil bytes
-            std::memcpy(codeBase + offset, stencil.code, stencil.codeSize);
-
-            // Patch relocations
-            if (!patchStencilInstance(codeBase, offset, stencil, bc,
-                                      codeBase, totalSize, bcToCodeOffset,
-                                      literalPool, literalPoolOffset,
-                                      nextLiteralSlot)) {
-                compilationsFailed_++;
-                // The allocation is wasted but the zone will reclaim it later
-                return nullptr;
-            }
-
-            offset += stencil.codeSize;
+        // Patch relocations
+        if (!patchStencilInstance(codeBase, offset, stencil, bc,
+                                  codeBase, totalSize, bcToCodeOffset,
+                                  literalPool, literalPoolOffset,
+                                  nextLiteralSlot)) {
+            compilationsFailed_++;
+            // The allocation is wasted but the zone will reclaim it later
+            return nullptr;
         }
+
+        offset += stencil.codeSize;
     }
-    // ScopedWriteAccess flushes icache and marks executable
+
+    // Flush icache for the newly written code
+    flushICache(codeBase, totalSize);
 
     // Mark as compiled
     jitMethod->state = MethodState::Compiled;
-    zone_.finalize(jitMethod);
 
     // Register in method map
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);
 
     methodsCompiled_++;
+
+    // Debug: log first few compiled methods with their stencil sequences
+    if (methodsCompiled_ <= 5) {
+        fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes):\n",
+                methodsCompiled_, totalSize, decoded.size());
+        for (auto& d : decoded) {
+            const StencilDef& st = stencilTable[d.stencilIdx];
+            fprintf(stderr, "  bc[%d] op=0x%02X -> %s (operand=%d, branch=%d)\n",
+                    d.bcOffset, d.opcode, st.name, d.operand, d.branchTarget);
+        }
+    }
+
     return jitMethod;
 }
 

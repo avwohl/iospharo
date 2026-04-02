@@ -237,8 +237,7 @@ public:
     size_t compact() {
         if (!firstMethod_) return 0;
 
-        // Make writable for the compaction
-        ScopedWriteAccess guard(zoneStart_, zoneSize_);
+        // Zone is kept in writable mode by default, so no W^X toggle needed.
 
         uint8_t* dest = zoneStart_;
         JITMethod* prev = nullptr;
@@ -285,6 +284,11 @@ public:
         freePtr_ = dest;
         bytesUsed_ -= reclaimed;
 
+        // Flush icache for all relocated code
+        if (reclaimed > 0 && dest > zoneStart_) {
+            flushICache(zoneStart_, static_cast<size_t>(dest - zoneStart_));
+        }
+
         return reclaimed;
     }
 
@@ -312,6 +316,7 @@ public:
         return nullptr;
     }
 
+    uint8_t* rawStart() const { return zoneStart_; }
     size_t freeBytes() const { return static_cast<size_t>(zoneEnd_ - freePtr_); }
     size_t usedBytes() const { return bytesUsed_; }
     size_t totalBytes() const { return zoneSize_; }

@@ -112,6 +112,7 @@ struct JITMethod {
     uint8_t     tier;             // 0 = interpreter, 1 = copy-and-patch, 2 = optimizing
     uint8_t     argCount;         // Cached from method header
     uint8_t     tempCount;        // Cached from method header
+    bool        hasSends;         // Contains send stencils (can't fully execute yet)
 
     // --- Statistics ---
     uint32_t  executionCount;     // Incremented on each entry (for hot method detection)
