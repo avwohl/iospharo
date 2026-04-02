@@ -47,6 +47,7 @@ set(VM_SOURCES
     src/platform/iOSBridge.cpp
     src/platform/MotionData.cpp
     src/vm/ObjCExceptionGuard.m
+    src/vm/jit/CodeZone.cpp
 )
 
 # Mark Objective-C sources explicitly
@@ -81,6 +82,15 @@ list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 
+# JIT is enabled on non-iOS platforms
+if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=0)
+    message(STATUS "JIT: disabled (iOS)")
+else()
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=1)
+    message(STATUS "JIT: enabled")
+endif()
+
 # Pass PHARO_WITH_CRYPTO as a compile definition
 if(PHARO_WITH_CRYPTO)
     target_compile_definitions(PharoVMCore PUBLIC PHARO_WITH_CRYPTO=1)
@@ -91,6 +101,7 @@ endif()
 # Include directories - use platform-appropriate xcframework slice
 target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm
+    ${CMAKE_SOURCE_DIR}/src/vm/jit
     ${CMAKE_SOURCE_DIR}/src/vm/plugins
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/jpeg
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/testlib
