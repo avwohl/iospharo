@@ -177,6 +177,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         bc.opcode = bytecodes[i];
         bc.operand = -1;
         bc.operand2 = -1;
+        bc.operand2Ptr = 0;
         bc.branchTarget = -1;
         bc.bcOffset = static_cast<int>(i);
         bc.bcLength = 1;
@@ -504,8 +505,20 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         // state.ip = state.ip + bcOffset so the interpreter resumes there.
         {
             auto sid = static_cast<StencilID>(bc.stencilIdx);
-            if (sid == StencilID::stencil_send ||
-                sid == StencilID::stencil_addSmallInt ||
+            if (sid == StencilID::stencil_send) {
+                // Check if this is a real send (has argCount in operand2)
+                // vs a bail-out (operand2 == -1, was forced to stencil_send)
+                if (bc.operand2 >= 0 && bc.opcode >= 0x80) {
+                    // Real send: upgrade to monomorphic IC stencil
+                    int argCount = bc.operand2;
+                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendMono);
+                    bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
+                    // operand2Ptr will be set after code zone allocation
+                } else {
+                    // Bail-out or special send: keep stencil_send with bcOffset
+                    bc.operand = bc.bcOffset;
+                }
+            } else if (sid == StencilID::stencil_addSmallInt ||
                 sid == StencilID::stencil_subSmallInt ||
                 sid == StencilID::stencil_mulSmallInt ||
                 sid == StencilID::stencil_lessThanSmallInt ||
@@ -603,7 +616,10 @@ bool JITCompiler::patchStencilInstance(
             uint64_t poolEntryAddr;
             if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
                 uint32_t slot = nextLiteralSlot++;
-                literalPool[slot] = static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
+                // Use operand2Ptr (64-bit pointer) if set, otherwise fall back to operand2 (int)
+                literalPool[slot] = bc.operand2Ptr != 0
+                    ? bc.operand2Ptr
+                    : static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
                 lastGotSlotAddr = reinterpret_cast<uint64_t>(
                     reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
                 poolEntryAddr = lastGotSlotAddr;
@@ -757,7 +773,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // bcToCode re-entry table lives after the literal pool, 4-byte aligned
     uint32_t bcToCodeTableOffset = (literalPoolOffset + literalPoolSize + 3) & ~3u;
     uint32_t bcToCodeTableSize = (static_cast<uint32_t>(bcLen) + 1) * sizeof(uint32_t);
-    uint32_t totalSize = bcToCodeTableOffset + bcToCodeTableSize;
+
+    // Count send sites for inline cache data allocation
+    uint16_t numSendSites = 0;
+    for (auto& bc : decoded) {
+        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendMono)
+            numSendSites++;
+    }
+
+    // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
+    // 16 bytes: [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
+    uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+    uint32_t icDataSize = numSendSites * 16;
+    uint32_t totalSize = icDataOffset + icDataSize;
 
     // The code zone is kept in writable W^X mode by default (set during
     // initialize). We write freely here; tryExecute() toggles to executable
@@ -781,11 +809,29 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->methodHeader = static_cast<uint64_t>(headerBits);
     jitMethod->codeSize = totalSize;
     jitMethod->numBytecodes = static_cast<uint16_t>(bcLen);
+    jitMethod->numICEntries = numSendSites;
     jitMethod->tier = 1;
 
     // Extract arg/temp counts from header
     jitMethod->argCount = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
+
+    // Set up IC data pointers for send sites. The IC data lives at the end
+    // of the allocation. Each send site gets 16 bytes initialized to zero
+    // (empty IC — will be patched on first miss).
+    uint8_t* codeBase_pre = jitMethod->codeStart();
+    {
+        uint16_t sendIdx = 0;
+        for (auto& bc : decoded) {
+            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendMono) {
+                bc.operand2Ptr = reinterpret_cast<uint64_t>(
+                    codeBase_pre + icDataOffset + sendIdx * 16);
+                sendIdx++;
+            }
+        }
+        // Zero IC data area
+        std::memset(codeBase_pre + icDataOffset, 0, icDataSize);
+    }
 
     // Classify method executability based on stencil content.
     // Three categories:
@@ -856,6 +902,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
         // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:
+        case StencilID::stencil_sendMono:
             jitMethod->hasSends = true;  // Track for stats, but doesn't block execution
             break;
 

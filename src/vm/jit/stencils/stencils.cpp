@@ -72,6 +72,10 @@ struct JITState {
     int           argCount;     // offset 72
     int           exitReason;   // offset 76
     Oop           returnValue;  // offset 80
+    // IC support
+    Oop           cachedTarget; // offset 88
+    uint64_t*     icDataPtr;    // offset 96
+    int           sendArgCount; // offset 104
 };
 
 // Tag bit constants (must match Oop.hpp)
@@ -119,6 +123,7 @@ extern "C" {
 // ===== EXIT REASONS (must match ExitReason enum) =====
 static constexpr int EXIT_RETURN = 1;
 static constexpr int EXIT_SEND = 2;
+static constexpr int EXIT_SEND_CACHED = 7;
 
 // =====================================================================
 // STENCILS
@@ -707,6 +712,51 @@ extern "C" void stencil_bitShiftSmallInt(JITState* s) {
 // OPERAND = bytecode offset of this send (for deopt IP)
 extern "C" void stencil_send(JITState* s) {
     s->ip = s->ip + OPERAND;  // Set deopt IP to this send's bytecode
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+// ----- MONOMORPHIC INLINE CACHE SEND -----
+//
+// OPERAND  = (argCount << 16) | bytecodeOffset
+// OPERAND2 = pointer to IC data: uint64_t[2] = { cachedClassIndex, cachedMethodBits }
+//
+// On IC hit: exits with ExitSendCached + cachedTarget
+// On IC miss: exits with ExitSend (interpreter does full lookup and patches IC)
+
+extern "C" void stencil_sendMono(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    // Load IC data pointer from literal pool (full 64-bit via GOT load)
+    uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
+
+    // Get receiver: below the args on the stack
+    // Stack: sp[-nArgs-1]=receiver, sp[-nArgs]=arg0, ..., sp[-1]=lastArg
+    Oop receiver = s->sp[-(nArgs + 1)];
+
+    // Quick path: check if receiver is an object (not SmallInteger/immediate)
+    if ((receiver.bits & 0x7) == 0) {
+        // Object: check classIndex against cached class
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        uint64_t classIdx = obj->classIndex();
+        if (classIdx == icData[0] && icData[0] != 0) {
+            // IC HIT — for now, still deopt (Phase 2 will use ExitSendCached)
+            s->cachedTarget.bits = icData[1];
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND;  // TODO: change to EXIT_SEND_CACHED in Phase 2
+            _HOLE_RT_SEND(s);
+            return;
+        }
+    }
+
+    // IC MISS (or SmallInteger receiver) — full interpreter lookup
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
     s->exitReason = EXIT_SEND;
     _HOLE_RT_SEND(s);
 }

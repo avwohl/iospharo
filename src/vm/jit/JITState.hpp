@@ -63,6 +63,12 @@ struct JITState {
 
     int  exitReason;          // offset 76: Why JIT code exited (see ExitReason)
     Oop  returnValue;         // offset 80: Value to return (for return bytecodes)
+
+    // --- Inline cache support ---
+
+    Oop  cachedTarget;        // offset 88: Cached method Oop for IC hit (ExitSendCached)
+    uint64_t* icDataPtr;      // offset 96: Pointer to IC data [classIndex, methodOop]
+    int  sendArgCount;        // offset 104: Number of args for the current send (IC path)
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -75,6 +81,9 @@ static_assert(offsetof(JITState, interp)    == 40, "interp offset");
 static_assert(offsetof(JITState, ip)        == 48, "ip offset");
 static_assert(offsetof(JITState, jitMethod) == 56, "jitMethod offset");
 static_assert(offsetof(JITState, method)    == 64, "method offset");
+static_assert(offsetof(JITState, cachedTarget)  == 88, "cachedTarget offset");
+static_assert(offsetof(JITState, icDataPtr)     == 96, "icDataPtr offset");
+static_assert(offsetof(JITState, sendArgCount)  == 104, "sendArgCount offset");
 
 // ===== EXIT REASONS =====
 //
@@ -89,6 +98,7 @@ enum ExitReason : int {
     ExitDeopt       = 4,  // Deoptimization needed (e.g., uncommon trap)
     ExitStackOverflow = 5, // Stack limit reached
     ExitArithOverflow = 6, // Arithmetic overflow — restore entry SP, re-execute
+    ExitSendCached  = 7,  // IC hit — cachedTarget has resolved method, skip lookup
 };
 
 // ===== STENCIL FUNCTION SIGNATURE =====

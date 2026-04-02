@@ -54,6 +54,7 @@ struct DecodedBC {
     uint16_t  stencilIdx;   // Index into stencilTable
     int       operand;      // First operand (-1 if none)
     int       operand2;     // Second operand (-1 if none)
+    uint64_t  operand2Ptr;  // 64-bit pointer operand (if non-zero, used instead of operand2)
     int       branchTarget; // Target bytecode index for jumps (-1 if not a jump)
     int       bcOffset;     // Offset in the bytecode array
     int       bcLength;     // Number of bytecodes consumed

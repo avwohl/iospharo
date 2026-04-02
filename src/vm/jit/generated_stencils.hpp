@@ -625,6 +625,28 @@ static const Relocation stencil_send_relocs[] = {
     { 0, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
+// ----- stencil_sendMono (116 bytes, 7 relocs) -----
+static const uint8_t stencil_sendMono_code[] = {
+    0x08, 0x00, 0x00, 0x90, 0x08, 0x01, 0x40, 0xF9, 0x08, 0x5D, 0x10, 0x53, 0x09, 0x00, 0x40, 0xF9,
+    0xEA, 0x03, 0x28, 0x2A, 0x2A, 0xD9, 0x6A, 0xF8, 0x09, 0x00, 0x00, 0x90, 0x29, 0x01, 0x40, 0xF9,
+    0x5F, 0x09, 0x40, 0xF2, 0x21, 0x01, 0x00, 0x54, 0x4A, 0x01, 0x40, 0xF9, 0x4A, 0x55, 0x40, 0x92,
+    0x2B, 0x01, 0x40, 0xF9, 0x7F, 0x01, 0x0A, 0xEB, 0x64, 0x09, 0x40, 0xFA, 0x60, 0x00, 0x00, 0x54,
+    0x2A, 0x05, 0x40, 0xF9, 0x0A, 0x2C, 0x00, 0xF9, 0x0A, 0x00, 0x00, 0x90, 0x4A, 0x01, 0x40, 0xF9,
+    0x4A, 0x3D, 0x00, 0x12, 0x09, 0x30, 0x00, 0xF9, 0x08, 0x68, 0x00, 0xB9, 0x08, 0x18, 0x40, 0xF9,
+    0x08, 0x01, 0x0A, 0x8B, 0x08, 0x18, 0x00, 0xF9, 0x48, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9,
+    0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_sendMono_relocs[] = {
+    { 112, RelocType::ARM64_BRANCH26, HoleKind::RuntimeHelper, 1 },
+    { 76, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
+    { 72, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
+    { 28, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand2, 0 },
+    { 24, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand2, 0 },
+    { 4, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
+    { 0, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
+};
+
 // ----- stencil_nop (4 bytes, 1 relocs) -----
 static const uint8_t stencil_nop_code[] = {
     0x00, 0x00, 0x00, 0x14,
@@ -636,7 +658,7 @@ static const Relocation stencil_nop_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 43;
+static constexpr int NumStencils = 44;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -681,7 +703,8 @@ enum class StencilID : uint16_t {
     stencil_bitOrSmallInt = 39,
     stencil_bitShiftSmallInt = 40,
     stencil_send = 41,
-    stencil_nop = 42,
+    stencil_sendMono = 42,
+    stencil_nop = 43,
 };
 
 static const StencilDef stencilTable[] = {
@@ -727,6 +750,7 @@ static const StencilDef stencilTable[] = {
     { "stencil_bitOrSmallInt", stencil_bitOrSmallInt_code, 76, stencil_bitOrSmallInt_relocs, 4, 1 },
     { "stencil_bitShiftSmallInt", stencil_bitShiftSmallInt_code, 156, stencil_bitShiftSmallInt_relocs, 4, 1 },
     { "stencil_send", stencil_send_code, 32, stencil_send_relocs, 3, 1 },
+    { "stencil_sendMono", stencil_sendMono_code, 116, stencil_sendMono_relocs, 7, 1 },
     { "stencil_nop", stencil_nop_code, 4, stencil_nop_relocs, 1, 1 },
 };
 

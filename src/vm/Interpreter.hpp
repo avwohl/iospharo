@@ -693,8 +693,16 @@ private:
     // Returns UINT32_MAX if it can't be computed.
     uint32_t computeCurrentBCOffset();
 
+    // Patch the inline cache after the interpreter resolves a send.
+    // Called from sendSelector() after method lookup succeeds.
+    void patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass);
+
     // Initialize JIT on first use (lazy init after image is loaded)
     void initializeJIT();
+
+    // Pending IC patch data (set during ExitSend when IC was empty)
+    uint64_t* pendingICPatch_ = nullptr;
+    int pendingICSendArgCount_ = 0;
 #endif
 
     // ===== BYTECODE DISPATCH =====
