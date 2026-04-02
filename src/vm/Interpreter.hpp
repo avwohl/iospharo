@@ -704,6 +704,9 @@ private:
     uint64_t* pendingICPatch_ = nullptr;
     int pendingICSendArgCount_ = 0;
 
+    // Re-entrancy guard for JIT resume chaining
+    bool inJITResume_ = false;
+
     // IC statistics
     size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)
     size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)

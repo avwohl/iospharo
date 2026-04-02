@@ -9072,12 +9072,14 @@ void Interpreter::tryJITResumeInCaller() {
     // After a send returns, we're in the caller's frame with IP at the
     // bytecode after the send and the return value on the stack. If the
     // caller has JIT code, resume execution in JIT from this bytecode.
+    if (inJITResume_) return;  // Prevent re-entrancy from returnValue
+    inJITResume_ = true;
     while (running_ && jitRuntime_.isInitialized()) {
         // Validate method_ before using it
-        if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+        if (!method_.isObject() || method_.rawBits() < 0x10000) break;
 
         uint32_t bcOffset = computeCurrentBCOffset();
-        if (bcOffset == UINT32_MAX) return;
+        if (bcOffset == UINT32_MAX) break;
 
         // Set up JIT state from current interpreter state
         jit::JITState state;
@@ -9102,7 +9104,7 @@ void Interpreter::tryJITResumeInCaller() {
         state.sendArgCount = 0;
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
-            return;  // Not JIT-compiled or no re-entry at this offset
+            break;  // Not JIT-compiled or no re-entry at this offset
         }
 
         // JIT code ran — handle exit reason
@@ -9132,11 +9134,11 @@ void Interpreter::tryJITResumeInCaller() {
                     pendingICSendArgCount_ = state.sendArgCount;
                 }
             }
+            inJITResume_ = false;
             return;
 
         case jit::ExitSendCached: {
-            // IC hit during resume — directly activate cached method
-            // Validate cachedTarget is a CompiledMethod before activating
+            // IC hit during resume — activate cached method, then resume caller
             Oop cached = state.cachedTarget;
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
@@ -9145,6 +9147,7 @@ void Interpreter::tryJITResumeInCaller() {
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp;
                 pendingICPatch_ = nullptr;
+                inJITResume_ = false;
                 return;
             }
             jitICHits_++;
@@ -9154,21 +9157,31 @@ void Interpreter::tryJITResumeInCaller() {
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
             else if (sendOp == 0xEA) instructionPointer_ += 2;
             else instructionPointer_ += 1;
+            size_t callerDepth = frameDepth_;
             receiver_ = stackPointer_[-(state.sendArgCount + 1)];
             activateMethod(cached, state.sendArgCount);
-            return;  // dispatch loop runs the cached method
+            if (frameDepth_ == callerDepth) {
+                // Target completed (JIT handled it end-to-end).
+                // We're back in the caller's frame — resume JIT.
+                continue;
+            }
+            // Target has an active frame — let dispatch loop handle it
+            inJITResume_ = false;
+            return;
         }
 
         case jit::ExitArithOverflow:
-            // Arithmetic overflow. Let interpreter handle it.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
+            inJITResume_ = false;
             return;
 
         default:
+            inJITResume_ = false;
             return;
         }
     }
+    inJITResume_ = false;
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
