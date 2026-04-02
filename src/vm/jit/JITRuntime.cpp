@@ -129,6 +129,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024,
                 icHits, icTotal, hitPct, icPatches, icStale,
                 j2jChains, j2jFallbacks);
+
     }
 
     uint64_t key = compiledMethod.rawBits();
@@ -143,8 +144,9 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 // Hit threshold — compile!
                 JITMethod* jm = compiler_->compile(compiledMethod);
                 if (jm) {
-                    fprintf(stderr, "[JIT] Compiled method (entry count %u, %u bytes code)\n",
-                            countMap_[i].count, jm->codeSize);
+                    std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
+                    fprintf(stderr, "[JIT] Compiled #%s (entry %u, %u bytes)\n",
+                            sel.c_str(), countMap_[i].count, jm->codeSize);
                 }
             }
             return;

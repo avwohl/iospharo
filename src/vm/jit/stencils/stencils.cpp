@@ -797,19 +797,19 @@ extern "C" void stencil_sendPoly(JITState* s) {
 // == (identity compare): pop receiver and arg, push true/false
 // This works for ALL receiver types — no class-specific behavior.
 extern "C" void stencil_identicalTo(JITState* s) {
-    Oop arg = *s->sp;
-    Oop rcvr = *(s->sp - 1);
+    Oop arg = s->sp[-1];
+    Oop rcvr = s->sp[-2];
     s->sp -= 1;  // Pop arg, replace receiver with result
-    *s->sp = (rcvr.bits == arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
+    s->sp[-1] = (rcvr.bits == arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
     _HOLE_CONTINUE(s);
 }
 
 // ~~ (identity not-equal): pop receiver and arg, push true/false
 extern "C" void stencil_notIdenticalTo(JITState* s) {
-    Oop arg = *s->sp;
-    Oop rcvr = *(s->sp - 1);
+    Oop arg = s->sp[-1];
+    Oop rcvr = s->sp[-2];
     s->sp -= 1;
-    *s->sp = (rcvr.bits != arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
+    s->sp[-1] = (rcvr.bits != arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
     _HOLE_CONTINUE(s);
 }
 
