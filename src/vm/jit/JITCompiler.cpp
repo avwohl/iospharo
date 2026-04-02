@@ -518,8 +518,10 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             if (sid == StencilID::stencil_send) {
                 // Check if this is a real send (has argCount in operand2)
                 // vs a bail-out (operand2 == -1, was forced to stencil_send)
-                if (bc.operand2 >= 0 && bc.opcode >= 0x80) {
-                    // Real send: upgrade to monomorphic IC stencil
+                if (bc.operand2 >= 0 &&
+                    ((bc.opcode >= 0x80 && bc.opcode <= 0xAF) ||
+                     (bc.opcode >= 0x70 && bc.opcode <= 0x7F))) {
+                    // Real send: upgrade to polymorphic IC stencil
                     int argCount = bc.operand2;
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendPoly);
                     bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
