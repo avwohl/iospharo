@@ -196,6 +196,7 @@ public:
 
     /// Stop the interpreter
     void stop() { running_ = false; }
+    void triggerTestRunner() { pendingTestRun_.store(true, std::memory_order_release); }
     bool isRunning() const { return running_; }
 
     /// Start/stop the heartbeat thread (must be called from main thread)
@@ -566,6 +567,9 @@ private:
     // Watchdog: terminate process stuck for too long (VM safety feature)
     std::atomic<int> stuckTicks_{0};       // Consecutive stuck ticks from watchdog thread
     std::atomic<bool> terminateStuck_{false}; // Flag: main thread should terminate current process
+
+    // Test runner trigger (set from monitor thread, checked by main loop)
+    std::atomic<bool> pendingTestRun_{false};
 
     // Timer/delay semaphore (for Delay class)
     Oop timerSemaphore_ = Oop::nil();

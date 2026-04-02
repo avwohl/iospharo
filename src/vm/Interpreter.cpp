@@ -1224,6 +1224,53 @@ void Interpreter::interpret() {
             syncDisplayToSurface();
         }
 
+        // -- Test runner trigger (from monitor thread) --
+        if (__builtin_expect(pendingTestRun_.load(std::memory_order_acquire), 0)) {
+            pendingTestRun_.store(false, std::memory_order_release);
+            Oop sunitRunner = memory_.findGlobal("SUnitRunner");
+            if (sunitRunner.isObject() && !sunitRunner.isNil()) {
+                // Look up runAllTests in the metaclass method dictionary
+                Oop metaclass = memory_.classOf(sunitRunner);
+                Oop method = Oop::nil();
+                if (metaclass.isObject()) {
+                    Oop methodDict = memory_.fetchPointer(1, metaclass);
+                    if (methodDict.isObject()) {
+                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
+                        for (size_t i = 2; i < mdHdr->slotCount(); i++) {
+                            Oop key = mdHdr->slotAt(i);
+                            if (!key.isObject() || key.isNil()) continue;
+                            ObjectHeader* keyHdr = key.asObjectPtr();
+                            if (!keyHdr->isBytesObject()) continue;
+                            size_t keyLen = keyHdr->byteSize();
+                            const char* keyBytes = (const char*)keyHdr->bytes();
+                            if (keyLen == 11 && memcmp(keyBytes, "runAllTests", 11) == 0) {
+                                Oop values = memory_.fetchPointer(1, methodDict);
+                                if (values.isObject()) {
+                                    ObjectHeader* valHdr = values.asObjectPtr();
+                                    size_t valIdx = i - 2;
+                                    if (valIdx < valHdr->slotCount()) {
+                                        method = valHdr->slotAt(valIdx);
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (!method.isNil() && method.isObject()) {
+                    fprintf(stderr, "[TEST] Injecting SUnitRunner>>runAllTests\n");
+                    Oop context = memory_.createStartupContext(method, sunitRunner);
+                    if (!context.isNil()) {
+                        executeFromContext(context);
+                    }
+                } else {
+                    fprintf(stderr, "[TEST] runAllTests not found in metaclass\n");
+                }
+            } else {
+                fprintf(stderr, "[TEST] SUnitRunner class not found\n");
+            }
+        }
+
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
@@ -7814,11 +7861,38 @@ bool Interpreter::bootstrapStartup() {
         }
     }
 
+    // Attempt 5: If SUnitRunner is installed and "test" image arg is present,
+    // directly call SUnitRunner>>runAllTests to bypass SessionManager.
+    if (startupAttempt_ == 5) {
+        bool isTestMode = false;
+        for (auto& arg : imageArguments_) {
+            if (arg == "test") { isTestMode = true; break; }
+        }
+        if (isTestMode) {
+            Oop sunitRunner = memory_.findGlobal("SUnitRunner");
+            if (sunitRunner.isObject() && !sunitRunner.isNil()) {
+                // Look up runAllTests on the metaclass (class-side method)
+                Oop metaclass = memory_.classOf(sunitRunner);
+                Oop method = lookupMethodInClass(metaclass, "runAllTests");
+                if (!method.isNil() && method.isObject()) {
+                    fprintf(stderr, "[BOOTSTRAP] SUnitRunner found, calling runAllTests\n");
+                    Oop context = memory_.createStartupContext(method, sunitRunner);
+                    if (!context.isNil()) {
+                        stackPointer_ = stackBase_;
+                        frameDepth_ = 0;
+                        if (executeFromContext(context)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // If we get here, we've exhausted our startup options
     // Note: This is normal for headless images - the startup methods executed
     // successfully in earlier attempts, but the Smalltalk code returned because
     // there's no GUI event loop to run.
-              // << startupAttempt_ << ")";
     return false;
 }
 

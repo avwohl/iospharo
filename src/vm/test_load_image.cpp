@@ -798,6 +798,16 @@ int main(int argc, char* argv[]) {
                     clickInjected = true;
                 }
 
+                // Test mode: trigger SUnitRunner>>runAllTests after 10 seconds
+                // of boot time. Uses an atomic flag checked by the interpreter's
+                // main loop — thread-safe, no Smalltalk semaphore needed.
+                static bool testTriggered = false;
+                if (testMode && !testTriggered && elapsed >= 10) {
+                    testTriggered = true;
+                    std::cout << "[TEST] Triggering SUnitRunner>>runAllTests" << std::endl;
+                    interpreter.triggerTestRunner();
+                }
+
                 // Stall detection: if steps haven't advanced in 300s
                 if (steps == lastSteps) {
                     stuckSeconds++;
