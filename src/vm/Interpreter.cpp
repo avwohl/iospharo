@@ -9195,6 +9195,23 @@ void Interpreter::tryJITResumeInCaller() {
             return;
         }
 
+        case jit::ExitBlockCreate: {
+            // PushFullBlock during resume: create closure, then continue resume loop
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+
+            uint64_t packed = state.cachedTarget.rawBits();
+            int litIndex = static_cast<int>(packed & 0xFFFF);
+            int flags = static_cast<int>((packed >> 32) & 0xFF);
+            int numCopied = flags & 0x3F;
+            bool receiverOnStack = (flags >> 7) & 1;
+            bool ignoreOuterContext = (flags >> 6) & 1;
+
+            createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack, ignoreOuterContext);
+            instructionPointer_ += 3;
+            continue;  // Try to resume JIT at next bytecode
+        }
+
         case jit::ExitArithOverflow:
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
@@ -9399,6 +9416,52 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 continue;  // Loop to handle the new exit reason
             }
+        }
+
+        case jit::ExitBlockCreate: {
+            // PushFullBlock exit: create the closure, then resume JIT.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+
+            // Extract block parameters from cachedTarget
+            uint64_t packed = state.cachedTarget.rawBits();
+            int litIndex = static_cast<int>(packed & 0xFFFF);
+            int flags = static_cast<int>((packed >> 32) & 0xFF);
+            int numCopied = flags & 0x3F;
+            bool receiverOnStack = (flags >> 7) & 1;
+            bool ignoreOuterContext = (flags >> 6) & 1;
+
+            // Create the closure using the interpreter's existing method
+            createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack, ignoreOuterContext);
+
+            // Advance IP past PushFullBlock (3 bytes)
+            instructionPointer_ += 3;
+
+            // Try to resume JIT at next bytecode
+            uint32_t bcOffset = computeCurrentBCOffset();
+            if (bcOffset == UINT32_MAX) return true;
+
+            // Re-setup JIT state from current interpreter state
+            state.sp = stackPointer_;
+            state.receiver = receiver_;
+            methObj = method.asObjectPtr();
+            state.literals = methObj->slots() + 1;
+            state.tempBase = framePointer_ + 1;
+            {
+                Oop hdr = methObj->slots()[0];
+                int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                state.ip = methObj->bytes() + (1 + numLits) * 8;
+            }
+            state.method = method;
+            state.argCount = argCount;
+            state.icDataPtr = nullptr;
+            state.sendArgCount = 0;
+            state.exitReason = jit::ExitNone;
+
+            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                return true;  // Can't resume; interpreter handles rest
+            }
+            continue;  // Loop to handle the new exit reason
         }
 
         case jit::ExitArithOverflow:

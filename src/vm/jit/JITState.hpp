@@ -99,6 +99,7 @@ enum ExitReason : int {
     ExitStackOverflow = 5, // Stack limit reached
     ExitArithOverflow = 6, // Arithmetic overflow — restore entry SP, re-execute
     ExitSendCached  = 7,  // IC hit — cachedTarget has resolved method, skip lookup
+    ExitBlockCreate = 8,  // PushFullBlock — cachedTarget has packed (litIndex | flags<<32)
 };
 
 // ===== STENCIL FUNCTION SIGNATURE =====

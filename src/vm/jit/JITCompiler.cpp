@@ -173,6 +173,8 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
     case SistaV1::ExtJump:         return static_cast<uint16_t>(StencilID::stencil_jump);
     case SistaV1::ExtJumpTrue:     return static_cast<uint16_t>(StencilID::stencil_jumpTrue);
     case SistaV1::ExtJumpFalse:    return static_cast<uint16_t>(StencilID::stencil_jumpFalse);
+    // Note: ExtPopStoreRecv/Temp/LitVar, ExtStore* are handled in decodeBytecodes
+    // by remapping to short opcodes, so they never reach selectStencil.
     default: break;
     }
 
@@ -483,9 +485,23 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 extA = 0; extB = 0;
                 continue;
             }
-            case SistaV1::PushFullBlock:
+            case SistaV1::PushFullBlock: {
+                // Block creation — exit to interpreter, create closure, resume JIT
+                if (i + 2 >= length) goto done;
+                int litIndex = (extA << 8) | bytecodes[i + 1];
+                int flags = bytecodes[i + 2];
+                // Pack: bcOffset in high 16, litIndex in low 16
+                bc.operand = (bc.bcOffset << 16) | (litIndex & 0xFFFF);
+                bc.operand2 = flags;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushBlock);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             case SistaV1::PushClosure: {
-                // Block/closure creation — deopt to interpreter (3-byte bytecodes)
+                // Old-style closure — deopt to interpreter (3-byte)
                 if (i + 2 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 3;
@@ -495,14 +511,40 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 extA = 0; extB = 0;
                 continue;
             }
-            case SistaV1::PushRemoteTemp:
-            case SistaV1::StoreRemoteTemp:
-            case SistaV1::PopStoreRemoteTemp: {
-                // Remote temp (outer context access) — deopt to interpreter (3-byte)
+            case SistaV1::PushRemoteTemp: {
+                // Push Temp At k In Temp Vector At j (3-byte)
                 if (i + 2 >= length) goto done;
-                bc.operand = bc.bcOffset;
+                int tempIndex = bytecodes[i + 1];
+                int vectorIndex = bytecodes[i + 2];
+                bc.operand = (vectorIndex << 8) | tempIndex;
                 bc.bcLength = 3;
-                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushRemoteTemp);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::StoreRemoteTemp: {
+                // Store Temp At k In Temp Vector At j (3-byte, no pop)
+                if (i + 2 >= length) goto done;
+                int tempIndex = bytecodes[i + 1];
+                int vectorIndex = bytecodes[i + 2];
+                bc.operand = (vectorIndex << 8) | tempIndex;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeRemoteTemp);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::PopStoreRemoteTemp: {
+                // Pop and Store Temp At k In Temp Vector At j (3-byte)
+                if (i + 2 >= length) goto done;
+                int tempIndex = bytecodes[i + 1];
+                int vectorIndex = bytecodes[i + 2];
+                bc.operand = (vectorIndex << 8) | tempIndex;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRemoteTemp);
                 decoded.push_back(bc);
                 i += bc.bcLength;
                 extA = 0; extB = 0;
@@ -1009,6 +1051,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_identicalTo:
         case StencilID::stencil_notIdenticalTo:
             break;  // safe (identity compare, no side effects)
+
+        // Remote temp access — reads/writes through temp vector, no heap alloc
+        case StencilID::stencil_pushRemoteTemp:
+            break;  // safe (read through temp vector)
+        case StencilID::stencil_storeRemoteTemp:
+        case StencilID::stencil_popStoreRemoteTemp:
+            jitMethod->hasHeapWrites = true;  // writes to temp vector object
+            break;
+
+        // Block creation — exits to interpreter to allocate, then resumes
+        case StencilID::stencil_pushBlock:
+            jitMethod->hasSends = true;  // exits to interpreter
+            break;
 
         // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:

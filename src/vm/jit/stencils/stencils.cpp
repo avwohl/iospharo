@@ -134,6 +134,7 @@ extern "C" {
 static constexpr int EXIT_RETURN = 1;
 static constexpr int EXIT_SEND = 2;
 static constexpr int EXIT_SEND_CACHED = 7;
+static constexpr int EXIT_BLOCK_CREATE = 8;
 
 // =====================================================================
 // STENCILS
@@ -819,6 +820,73 @@ extern "C" void stencil_sendPoly(JITState* s) {
     s->ip = s->ip + bcOffset;
     s->exitReason = EXIT_SEND;
     _HOLE_RT_SEND(s);
+}
+
+// ----- REMOTE TEMP STENCILS -----
+//
+// Remote temps are accessed through a temp vector (an Array stored in a local).
+// Used by closures that capture variables from outer scopes.
+// OPERAND = (vectorIndex << 8) | tempIndex
+
+// Push Temp At k In Temp Vector At j
+// Bytecode: 0xFB tempIndex vectorIndex
+extern "C" void stencil_pushRemoteTemp(JITState* s) {
+    int packed = OPERAND;
+    int tempIndex = packed & 0xFF;
+    int vectorIndex = (packed >> 8) & 0xFF;
+
+    Oop tempVector = s->tempBase[vectorIndex];
+    ObjectHeader* tvObj = asObjectPtr(tempVector);
+    Oop value = tvObj->slots()[tempIndex];
+
+    *(s->sp) = value;
+    s->sp++;
+    _HOLE_CONTINUE(s);
+}
+
+// Store Temp At k In Temp Vector At j (no pop)
+// Bytecode: 0xFC tempIndex vectorIndex
+extern "C" void stencil_storeRemoteTemp(JITState* s) {
+    int packed = OPERAND;
+    int tempIndex = packed & 0xFF;
+    int vectorIndex = (packed >> 8) & 0xFF;
+
+    Oop value = s->sp[-1];  // TOS, no pop
+    Oop tempVector = s->tempBase[vectorIndex];
+    ObjectHeader* tvObj = asObjectPtr(tempVector);
+    tvObj->slots()[tempIndex] = value;
+    _HOLE_CONTINUE(s);
+}
+
+// Pop and Store Temp At k In Temp Vector At j
+// Bytecode: 0xFD tempIndex vectorIndex
+extern "C" void stencil_popStoreRemoteTemp(JITState* s) {
+    int packed = OPERAND;
+    int tempIndex = packed & 0xFF;
+    int vectorIndex = (packed >> 8) & 0xFF;
+
+    s->sp--;
+    Oop value = *(s->sp);
+    Oop tempVector = s->tempBase[vectorIndex];
+    ObjectHeader* tvObj = asObjectPtr(tempVector);
+    tvObj->slots()[tempIndex] = value;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- BLOCK CREATION STENCIL -----
+//
+// Exit to interpreter to create a FullBlockClosure, then resume JIT.
+// OPERAND = (bcOffset << 16) | (litIndex & 0xFFFF)
+// OPERAND2 = flags byte (numCopied:6 | ignoreOuterContext:1 | receiverOnStack:1)
+extern "C" void stencil_pushBlock(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = (packed >> 16) & 0xFFFF;
+    s->ip = s->ip + bcOffset;
+    // Store litIndex and flags for the handler
+    s->cachedTarget.bits = (static_cast<uint64_t>(packed & 0xFFFF)) |
+                           (static_cast<uint64_t>(static_cast<uint32_t>(OPERAND2)) << 32);
+    s->exitReason = EXIT_BLOCK_CREATE;
+    _HOLE_RT_RETURN(s);
 }
 
 // ----- SPECIAL SELECTOR STENCILS -----
