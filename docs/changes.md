@@ -2,6 +2,33 @@
 
 2026-04-02
 
+## Remote Temp Stencils and PushFullBlock Deopt-Resume
+
+Added stencils for remote temp access (0xFB/0xFC/0xFD) — these access temps
+through indirection via temp vectors (used by closures capturing outer vars).
+Previously deoptimized to interpreter; now execute natively in JIT.
+
+Added stencil_pushBlock for PushFullBlock (0xF9) with ExitBlockCreate exit
+reason. Instead of falling to interpreted execution for the rest of the method,
+the handler creates the FullBlockClosure via the interpreter's existing
+createFullBlockWithLiteral, then immediately resumes JIT at the next bytecode.
+Same handler added to tryJITResumeInCaller for the resume path.
+
+66 stencils total (was 62), 3940 bytes ARM64 code.
+
+## J2J Chaining in tryJITActivation
+
+Extended J2J chaining from tryJITResumeInCaller to tryJITActivation. When JIT
+code hits an IC-cached send and the target completes entirely via JIT, the
+caller now resumes JIT execution in a loop instead of returning to the dispatch
+loop. Uses the same frameDepth_ comparison as tryJITResumeInCaller.
+
+Added separate stats counters (J2J-resume vs J2J-act) and count map diagnostics
+(tracked/hot method counts) to JIT stats line.
+
+Steady-state with 33 compiled methods: activation chains ~0% (most targets not
+JIT-compiled), resume chains 33%. Will improve as more methods get compiled.
+
 ## Megamorphic Method Cache
 
 Added a direct-mapped 4096-entry mega cache probed by stencil_sendPoly after
