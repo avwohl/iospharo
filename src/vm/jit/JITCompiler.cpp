@@ -163,7 +163,20 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
     if (opcode >= SistaV1::PopStoreTempBase && opcode <= 0xD7)
         return static_cast<uint16_t>(StencilID::stencil_popStoreTemp);
 
-    // Fallback for extended opcodes that fall through to selectStencil
+    // Extended bytecodes that use the same stencils as their short counterparts
+    switch (opcode) {
+    case SistaV1::ExtPushRecvVar:  return static_cast<uint16_t>(StencilID::stencil_pushRecvVar);
+    case SistaV1::ExtPushLitVar:   return static_cast<uint16_t>(StencilID::stencil_pushLitVar);
+    case SistaV1::ExtPushLitConst: return static_cast<uint16_t>(StencilID::stencil_pushLitConst);
+    case SistaV1::ExtPushTemp:     return static_cast<uint16_t>(StencilID::stencil_pushTemp);
+    case SistaV1::ExtSend:         return static_cast<uint16_t>(StencilID::stencil_send);
+    case SistaV1::ExtJump:         return static_cast<uint16_t>(StencilID::stencil_jump);
+    case SistaV1::ExtJumpTrue:     return static_cast<uint16_t>(StencilID::stencil_jumpTrue);
+    case SistaV1::ExtJumpFalse:    return static_cast<uint16_t>(StencilID::stencil_jumpFalse);
+    default: break;
+    }
+
+    // Fallback: unknown extended opcodes deopt to interpreter
     return static_cast<uint16_t>(StencilID::stencil_send);
 }
 
@@ -1064,7 +1077,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                 pureCount, sendDeoptCount, heapWriteCount, methodsCompiled_);
     }
 
-    // Debug: log first few compiled methods with their stencil sequences
+    // Log first few compiled methods with stencil detail
     if (methodsCompiled_ <= 5) {
         fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes):\n",
                 methodsCompiled_, totalSize, decoded.size());
