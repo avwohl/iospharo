@@ -2,6 +2,16 @@
 
 2026-04-02
 
+## Eliminate JIT Compilation Bail-Outs
+
+All 7 compilation bail-outs were caused by truncated multi-byte bytecodes
+at the end of CompiledMethods. These are dead code after return bytecodes
+(unreachable paths, unassigned opcodes like 0xE6). The decoder now stops
+gracefully instead of failing when a multi-byte bytecode extends past the
+bytecodes array length.
+
+Result: 0 bail-outs (was 7), 42 compiled methods (was 35), 100% success rate.
+
 ## Phase 6: Monomorphic Inline Caching (IC)
 
 Per-site inline caches for JIT send bytecodes. Each send site gets 16 bytes
