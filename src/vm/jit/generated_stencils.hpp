@@ -230,6 +230,18 @@ static const Relocation stencil_popStoreLitVar_relocs[] = {
     { 16, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
+// ----- stencil_storeLitVar (32 bytes, 3 relocs) -----
+static const uint8_t stencil_storeLitVar_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x08, 0x81, 0x5F, 0xF8, 0x09, 0x08, 0x40, 0xF9, 0x0A, 0x00, 0x00, 0x90,
+    0x4A, 0x01, 0x40, 0xF9, 0x29, 0xD9, 0x6A, 0xF8, 0x28, 0x09, 0x00, 0xF9, 0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_storeLitVar_relocs[] = {
+    { 28, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+    { 16, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
+    { 12, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
+};
+
 // ----- stencil_returnTop (28 bytes, 1 relocs) -----
 static const uint8_t stencil_returnTop_code[] = {
     0x08, 0x00, 0x40, 0xF9, 0x09, 0x8D, 0x5F, 0xF8, 0x08, 0x00, 0x00, 0xF9, 0x09, 0x28, 0x00, 0xF9,
@@ -489,7 +501,7 @@ static const Relocation stencil_nop_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 35;
+static constexpr int NumStencils = 36;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -510,23 +522,24 @@ enum class StencilID : uint16_t {
     stencil_storeRecvVar = 15,
     stencil_storeTemp = 16,
     stencil_popStoreLitVar = 17,
-    stencil_returnTop = 18,
-    stencil_returnReceiver = 19,
-    stencil_returnTrue = 20,
-    stencil_returnFalse = 21,
-    stencil_returnNil = 22,
-    stencil_jump = 23,
-    stencil_jumpFalse = 24,
-    stencil_jumpTrue = 25,
-    stencil_addSmallInt = 26,
-    stencil_subSmallInt = 27,
-    stencil_lessThanSmallInt = 28,
-    stencil_greaterThanSmallInt = 29,
-    stencil_equalSmallInt = 30,
-    stencil_notEqualSmallInt = 31,
-    stencil_mulSmallInt = 32,
-    stencil_send = 33,
-    stencil_nop = 34,
+    stencil_storeLitVar = 18,
+    stencil_returnTop = 19,
+    stencil_returnReceiver = 20,
+    stencil_returnTrue = 21,
+    stencil_returnFalse = 22,
+    stencil_returnNil = 23,
+    stencil_jump = 24,
+    stencil_jumpFalse = 25,
+    stencil_jumpTrue = 26,
+    stencil_addSmallInt = 27,
+    stencil_subSmallInt = 28,
+    stencil_lessThanSmallInt = 29,
+    stencil_greaterThanSmallInt = 30,
+    stencil_equalSmallInt = 31,
+    stencil_notEqualSmallInt = 32,
+    stencil_mulSmallInt = 33,
+    stencil_send = 34,
+    stencil_nop = 35,
 };
 
 static const StencilDef stencilTable[] = {
@@ -548,6 +561,7 @@ static const StencilDef stencilTable[] = {
     { "stencil_storeRecvVar", stencil_storeRecvVar_code, 28, stencil_storeRecvVar_relocs, 3, 1 },
     { "stencil_storeTemp", stencil_storeTemp_code, 28, stencil_storeTemp_relocs, 3, 1 },
     { "stencil_popStoreLitVar", stencil_popStoreLitVar_code, 36, stencil_popStoreLitVar_relocs, 3, 1 },
+    { "stencil_storeLitVar", stencil_storeLitVar_code, 32, stencil_storeLitVar_relocs, 3, 1 },
     { "stencil_returnTop", stencil_returnTop_code, 28, stencil_returnTop_relocs, 1, 1 },
     { "stencil_returnReceiver", stencil_returnReceiver_code, 20, stencil_returnReceiver_relocs, 1, 1 },
     { "stencil_returnTrue", stencil_returnTrue_code, 28, stencil_returnTrue_relocs, 3, 1 },

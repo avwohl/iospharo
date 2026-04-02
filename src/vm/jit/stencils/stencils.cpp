@@ -306,6 +306,17 @@ extern "C" void stencil_popStoreLitVar(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// Store into literal variable (no pop — TOS stays on stack)
+// Bytecode: 0xF4
+extern "C" void stencil_storeLitVar(JITState* s) {
+    int idx = OPERAND;
+    Oop value = s->sp[-1];
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    obj->slots()[1] = value;
+    _HOLE_CONTINUE(s);
+}
+
 // ----- RETURN STENCILS -----
 
 // Return top of stack

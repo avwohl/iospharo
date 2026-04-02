@@ -191,13 +191,33 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             bc.operand = op - SistaV1::PushTempBase;           // pushTemp
         } else if (op >= SistaV1::PushReceiver && op <= SistaV1::Dup) {
             // 0x4C-0x53: individual push bytecodes, no operand
-            if (op == 0x52) { failedOpcode = op; return false; } // pushThisContext
+            if (op == 0x52) {
+                // pushThisContext — deopt to interpreter
+                bc.operand = bc.bcOffset;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
         } else if (op >= 0x54 && op <= 0x57) {
-            failedOpcode = op; return false;                   // unused
+            // Unused in Sista V1, but may appear — deopt to interpreter
+            bc.operand = bc.bcOffset;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
             // 0x58-0x5C: return bytecodes, no operand
         } else if (op >= 0x5D && op <= 0x5F) {
-            failedOpcode = op; return false;                   // unused
+            // 0x5D/0x5E: block return, 0x5F: reserved — deopt to interpreter
+            bc.operand = bc.bcOffset;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
         } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
             bc.operand = op & 0x0F;                            // arithmetic selector
         } else if (op >= 0x70 && op <= 0x7F) {
@@ -225,7 +245,13 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         } else if (op == SistaV1::Pop) {
             // 0xD8: no operand
         } else if (op >= 0xD9 && op <= 0xDF) {
-            failedOpcode = op; return false;                   // trap/reserved
+            // Trap bytecodes — deopt to interpreter
+            bc.operand = bc.bcOffset;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
         } else {
             // Extended bytecodes (0xE0+) — switch on exact opcode
             switch (op) {
@@ -275,8 +301,17 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 bc.bcLength = 2;
                 break;
             }
-            case SistaV1::PushArray:
-                failedOpcode = op; return false;  // Needs allocation stencil
+            case SistaV1::PushArray: {
+                // Allocates array — deopt to interpreter
+                if (i + 1 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             case SistaV1::PushInteger: {
                 if (i + 1 >= length) return false;
                 int value = (extB << 8) | bytecodes[i + 1];
@@ -307,10 +342,28 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 bc.bcLength = 2;
                 break;
             }
-            case SistaV1::ExtSuperSend:
-                failedOpcode = op; return false;  // No super send stencil
-            case SistaV1::InlinedPrimitive:
-                failedOpcode = op; return false;  // Sista-specific
+            case SistaV1::ExtSuperSend: {
+                // Super send — deopt to interpreter (handles super lookup)
+                if (i + 1 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::InlinedPrimitive: {
+                // Sista inlined primitive — deopt to interpreter
+                if (i + 1 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             case SistaV1::ExtJump: {
                 if (i + 1 >= length) return false;
                 int offset = bytecodes[i + 1] + (extB << 8);
@@ -369,8 +422,16 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 extA = 0; extB = 0;
                 continue;
             }
-            case SistaV1::ExtStoreLitVar:
-                failedOpcode = op; return false;  // No store-literal-variable-no-pop stencil
+            case SistaV1::ExtStoreLitVar: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeLitVar);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             case SistaV1::ExtStoreTemp: {
                 if (i + 1 >= length) return false;
                 bc.operand = bytecodes[i + 1];
@@ -391,9 +452,42 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 extA = 0; extB = 0;
                 continue;
             }
-            default:
-                // Unhandled extended bytecode (closures, remote temps, etc.)
-                failedOpcode = op; return false;
+            case SistaV1::PushFullBlock:
+            case SistaV1::PushClosure: {
+                // Block/closure creation — deopt to interpreter (3-byte bytecodes)
+                if (i + 2 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::PushRemoteTemp:
+            case SistaV1::StoreRemoteTemp:
+            case SistaV1::PopStoreRemoteTemp: {
+                // Remote temp (outer context access) — deopt to interpreter (3-byte)
+                if (i + 2 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            default: {
+                // Unknown extended bytecode — deopt to interpreter (2-byte)
+                if (i + 1 >= length) return false;
+                bc.operand = bc.bcOffset;
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             } // end switch
         }
 
@@ -600,8 +694,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     if (!decodeBytecodes(bytecodes, bcLen, decoded, failedOpcode)) {
         compilationsFailed_++;
         if (failedOpcode) bailoutCounts_[failedOpcode]++;
-        // Periodic bail-out stats (every 500 failures)
-        if (compilationsFailed_ % 500 == 0) {
+        // Periodic bail-out stats (every 100 failures)
+        if (compilationsFailed_ % 100 == 0) {
             fprintf(stderr, "[JIT] Bail-out stats (%zu failures, %zu compiled):\n",
                     compilationsFailed_, methodsCompiled_);
             for (int b = 0; b < 256; b++) {
@@ -728,10 +822,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_notEqualSmallInt:
             break;  // safe (ExitSend handled by SP restore)
 
-        // Heap writes — need write barrier
+        // Heap writes — need write barrier (when gen GC is added)
         case StencilID::stencil_popStoreRecvVar:
         case StencilID::stencil_storeRecvVar:
         case StencilID::stencil_popStoreLitVar:
+        case StencilID::stencil_storeLitVar:
             jitMethod->hasHeapWrites = true;
             break;
 
