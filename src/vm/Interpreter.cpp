@@ -9094,9 +9094,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return false;  // Interpreter dispatch loop picks up at the send
 
     case jit::ExitArithOverflow:
-        // Arithmetic overflow: SP may be inconsistent (mid-operation).
-        // Restore entry SP and re-execute the entire method.
-        stackPointer_ = entrySP;
+        // Arithmetic overflow or non-SmallInteger: state.ip points to the
+        // arithmetic bytecode, state.sp is correct (operands still on stack).
+        // The interpreter will do the full send (e.g., LargeInteger>>+).
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
         return false;
 
     case jit::ExitPrimFail:

@@ -398,10 +398,21 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         }
 
         bc.stencilIdx = selectStencil(bc.opcode, bc.operand);
-        // For send stencils, operand = bytecode offset (for deopt IP).
-        // The stencil uses OPERAND to set state.ip = state.ip + bcOffset.
-        if (bc.stencilIdx == static_cast<uint16_t>(StencilID::stencil_send)) {
-            bc.operand = bc.bcOffset;
+        // For send and arithmetic stencils, operand = bytecode offset for
+        // precise deopt. On overflow or unhandled send, the stencil sets
+        // state.ip = state.ip + bcOffset so the interpreter resumes there.
+        {
+            auto sid = static_cast<StencilID>(bc.stencilIdx);
+            if (sid == StencilID::stencil_send ||
+                sid == StencilID::stencil_addSmallInt ||
+                sid == StencilID::stencil_subSmallInt ||
+                sid == StencilID::stencil_mulSmallInt ||
+                sid == StencilID::stencil_lessThanSmallInt ||
+                sid == StencilID::stencil_greaterThanSmallInt ||
+                sid == StencilID::stencil_equalSmallInt ||
+                sid == StencilID::stencil_notEqualSmallInt) {
+                bc.operand = bc.bcOffset;
+            }
         }
         decoded.push_back(bc);
         i += bc.bcLength;

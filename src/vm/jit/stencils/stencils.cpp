@@ -389,6 +389,7 @@ extern "C" void stencil_jumpTrue(JITState* s) {
 
 // SmallInteger add (fast path + overflow exit)
 // Bytecode: 0x60 (arithmetic selector +)
+// OPERAND = bytecode offset for precise deopt
 extern "C" void stencil_addSmallInt(JITState* s) {
     Oop b = s->sp[-1];
     Oop a = s->sp[-2];
@@ -407,7 +408,8 @@ extern "C" void stencil_addSmallInt(JITState* s) {
             return;  // unreachable but helps compiler
         }
     }
-    // Overflow or non-SmallInteger: exit to interpreter for full send
+    // Overflow or non-SmallInteger: deopt to interpreter at this bytecode
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -430,6 +432,7 @@ extern "C" void stencil_subSmallInt(JITState* s) {
             return;
         }
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -447,6 +450,7 @@ extern "C" void stencil_lessThanSmallInt(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -464,6 +468,7 @@ extern "C" void stencil_greaterThanSmallInt(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -481,6 +486,7 @@ extern "C" void stencil_equalSmallInt(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -498,6 +504,7 @@ extern "C" void stencil_notEqualSmallInt(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -521,6 +528,7 @@ extern "C" void stencil_mulSmallInt(JITState* s) {
             return;
         }
     }
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
