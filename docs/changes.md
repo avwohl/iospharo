@@ -1,3 +1,39 @@
+# JIT Infrastructure and Copy-and-Patch Compiler
+
+2026-04-02
+
+## Phase 1: JIT Infrastructure
+
+New directory `src/vm/jit/` with foundational JIT subsystem:
+- JITConfig.hpp: Platform/arch detection, auto-disables on iOS
+- PlatformJIT.hpp: Cross-platform mmap, W^X (Apple Silicon MAP_JIT +
+  pthread_jit_write_protect_np), icache flush, ScopedWriteAccess RAII
+- JITMethod.hpp: 72-byte method header, ICEntry (mono/poly/mega), MethodMap
+- CodeZone.hpp: 16 MB bump allocator with LRU eviction and compaction
+
+## Phase 2: Copy-and-Patch JIT Compiler
+
+Copy-and-patch engine: compile C++ bytecode handlers with Clang -O2, extract
+machine code as "stencils", memcpy+patch at runtime.
+
+31 stencils covering all basic Sista V1 bytecodes (1268 bytes ARM64 code):
+push (recvVar, litConst, litVar, temp, self, true/false/nil, 0, 1, dup),
+store (popStoreRecvVar, popStoreTemp, pop), return (top, self, true/false/nil),
+jump (unconditional, jumpTrue, jumpFalse), arithmetic (+, -, *, <, >, =, ~=
+SmallInt fast path), send (generic exit to interpreter).
+
+Build pipeline: extract_stencils.py compiles stencils.cpp, parses Mach-O ARM64
+relocations (BRANCH26, GOT_LOAD_PAGE21/PAGEOFF12), generates
+generated_stencils.hpp with byte arrays + relocation tables.
+
+JITCompiler walks bytecodes, copies stencils into CodeZone, patches ARM64
+relocations using a literal pool for GOT-style operand loading.
+
+JITRuntime: compile-on-2nd-call threshold, tryExecute entry point, runtime
+stubs for send/return/overflow exit to interpreter.
+
+---
+
 # What's New in Build 122
 
 Build 122 — 2026-04-01
