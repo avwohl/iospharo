@@ -9176,18 +9176,27 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass) {
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
-    if (!receiver_.isObject() || receiver_.rawBits() < 0x10000) return;
-    uint32_t classIdx = receiver_.asObjectPtr()->classIndex();
+    // Compute lookup key matching stencil_sendPoly:
+    // objects → classIndex, immediates → (tag & 7) | 0x80000000
+    uint64_t lookupKey;
+    uint64_t tag = receiver_.rawBits() & 0x7;
+    if (tag == 0 && receiver_.rawBits() >= 0x10000) {
+        lookupKey = receiver_.asObjectPtr()->classIndex();
+    } else if (tag != 0) {
+        lookupKey = tag | 0x80000000ULL;
+    } else {
+        return;  // Invalid object pointer (< 0x10000)
+    }
 
-    // Check if this class is already cached (avoid duplicates)
+    // Check if this key is already cached (avoid duplicates)
     for (int e = 0; e < 4; e++) {
-        if (icData[e * 2] == classIdx) return;  // Already cached
+        if (icData[e * 2] == lookupKey) return;
     }
 
     // Find the first empty slot and fill it
     for (int e = 0; e < 4; e++) {
         if (icData[e * 2] == 0) {
-            icData[e * 2] = classIdx;
+            icData[e * 2] = lookupKey;
             icData[e * 2 + 1] = resolvedMethod.rawBits();
             jitICPatches_++;
             return;
