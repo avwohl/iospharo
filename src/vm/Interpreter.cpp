@@ -9159,6 +9159,7 @@ void Interpreter::tryJITResumeInCaller() {
             else instructionPointer_ += 1;
             size_t callerDepth = frameDepth_;
             receiver_ = stackPointer_[-(state.sendArgCount + 1)];
+            jitRuntime_.noteMethodEntry(cached);  // Count for JIT compilation
             activateMethod(cached, state.sendArgCount);
             if (frameDepth_ == callerDepth) {
                 // Target completed (JIT handled it end-to-end).
@@ -9335,6 +9336,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
         int nArgs = state.sendArgCount;
         receiver_ = stackPointer_[-(nArgs + 1)];
+        jitRuntime_.noteMethodEntry(cached);  // Count for JIT compilation
         activateMethod(cached, nArgs);
         return true;  // Frame pushed, dispatch loop executes cached method
     }
