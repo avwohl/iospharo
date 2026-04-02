@@ -2,7 +2,7 @@
 
 2026-04-02
 
-## Phase 5: Send Deoptimization + Heap Writes — 100% Methods Executable
+## Phase 5: Full Execution — Send Deopt, Heap Writes, Expanded Coverage
 
 Enabled JIT execution of ALL compiled methods. Previously only "pure" methods
 (no sends, no heap writes) could execute via JIT (~5.7% of compiled methods).
@@ -21,10 +21,23 @@ Heap writes allowed:
   directly without barriers, which is equivalent to the interpreter's path.
 - TODO: Add write barrier calls to store stencils when gen GC is added.
 
-Result: 100% of compiled methods (227/227) now executable. 100M+ sends, zero
-crashes. Methods with sends execute JIT code up to the first send, then deopt
-to the interpreter. Methods with only pushes/arithmetic/stores run entirely
-in JIT code.
+Bytecode coverage expansion:
+- Converted bail-out bytecodes to deopt stencils: PushFullBlock (0xF9),
+  SuperSend (0xEB), InlinedPrimitive (0xEC), PushArray (0xE7), block
+  returns (0x5D/0x5E), traps (0xD9-0xDF), remote temps, pushThisContext.
+  Methods compile even with unsupported bytecodes (just deopt there).
+- New stencil: storeLitVar (0xF4) — store to literal variable, no pop.
+- Compilation failure rate dropped from 41% to 14%.
+
+Precise arithmetic deopt:
+- Arithmetic stencils now set state.ip on overflow (not re-execute method).
+  Avoids repeating side effects.
+
+Additional arithmetic stencils: <=, >=, //, \\, bitAnd:, bitOr:, bitShift:
+Now 14 of 16 Sista V1 arithmetic special selectors have SmallInteger fast paths.
+
+Result: 43 stencils, 2344 bytes ARM64 code. 145 compiled, 24 failed (86%
+success). 100% executable. 115M+ sends, zero crashes.
 
 ## Phase 4: JIT Execution Working
 
