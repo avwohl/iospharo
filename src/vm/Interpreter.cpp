@@ -9068,31 +9068,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.method = method;
     state.argCount = argCount;
 
+    // Save entry SP so we can restore it on ExitSend (arithmetic overflow).
+    // The method will be re-executed from scratch by the interpreter.
+    Oop* entrySP = stackPointer_;
+
     if (!jitRuntime_.tryExecute(method, state)) {
         return false;  // Not compiled yet
     }
 
     // JIT code ran — handle exit reason
-    stackPointer_ = state.sp;
-
     switch (state.exitReason) {
     case jit::ExitReturn:
-        // The compiled code wants to return a value
-        // Pop the frame we pushed in activateMethod() and push the return value
+        // The compiled code wants to return a value.
+        // popFrame() resets SP to framePointer_, so no need to set it from state.sp.
         popFrame();
         push(state.returnValue);
         return true;
 
     case jit::ExitSend:
-        // JIT couldn't handle this send — restore IP and fall through
-        // to interpreter execution. The stack is set up for the send.
-        instructionPointer_ = state.ip;
+        // Arithmetic overflow or other unhandled operation.
+        // Restore SP to entry state — the JIT only did stack pushes and
+        // temp reads/writes, no heap side effects. The interpreter will
+        // re-execute the entire method from the start.
+        stackPointer_ = entrySP;
         return false;  // Let interpreter handle it
 
     case jit::ExitPrimFail:
     case jit::ExitDeopt:
-        // Deoptimize: restore IP and let interpreter continue
-        instructionPointer_ = state.ip;
+        // Deoptimize: restore SP and let interpreter re-execute
+        stackPointer_ = entrySP;
         return false;
 
     default:

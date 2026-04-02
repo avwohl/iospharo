@@ -150,13 +150,9 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Can't execute methods with sends, stores, or arithmetic yet:
-    // - Sends exit with ExitSend but interpreter re-executes from method start
-    //   (corrupts stack — needs proper deoptimization)
-    // - Arithmetic stencils also exit with ExitSend on non-SmallInteger inputs
-    // - Store stencils write to heap without proper write barrier
-    // TODO: implement bytecode-level deoptimization for sends
-    if (jm->hasSends) return false;
+    // Can't execute methods with actual sends (need bytecode-level deopt)
+    // or heap writes (need write barrier for GC).
+    if (jm->hasSends || jm->hasHeapWrites) return false;
 
     // Touch for LRU tracking
     codeZone_.touch(jm);

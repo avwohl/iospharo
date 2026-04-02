@@ -660,35 +660,68 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->argCount = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
 
-    // Mark methods that can't be safely executed yet.
-    // Only allow stencils that never exit with ExitSend (no fallback needed)
-    // and don't write to the heap (no receiver ivar or litvar stores).
+    // Classify method executability based on stencil content.
+    // Three categories:
+    //   1. hasSends: contains actual send stencils — can't execute (needs deopt)
+    //   2. hasHeapWrites: writes receiver ivars or litvar — can't execute (needs write barrier)
+    //   3. Neither: safe to execute. Arithmetic stencils may exit with ExitSend
+    //      on non-SmallInteger inputs, which is handled by restoring SP.
     jitMethod->hasSends = false;
+    jitMethod->hasHeapWrites = false;
     for (auto& d : decoded) {
-        uint16_t sid = d.stencilIdx;
-        bool safe =
-            sid == static_cast<uint16_t>(StencilID::stencil_pushRecvVar) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushTemp) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushLitConst) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushReceiver) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushNil) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushTrue) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushFalse) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushZero) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pushOne) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_pop) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_popStoreTemp) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_dup) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_returnReceiver) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_returnTop) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_returnTrue) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_returnFalse) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_returnNil) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_jump) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_jumpFalse) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_jumpTrue) ||
-            sid == static_cast<uint16_t>(StencilID::stencil_nop);
-        if (!safe) {
+        auto sid = static_cast<StencilID>(d.stencilIdx);
+        switch (sid) {
+        // Pure reads/stack ops — always safe
+        case StencilID::stencil_pushRecvVar:
+        case StencilID::stencil_pushTemp:
+        case StencilID::stencil_pushLitConst:
+        case StencilID::stencil_pushLitVar:
+        case StencilID::stencil_pushReceiver:
+        case StencilID::stencil_pushNil:
+        case StencilID::stencil_pushTrue:
+        case StencilID::stencil_pushFalse:
+        case StencilID::stencil_pushZero:
+        case StencilID::stencil_pushOne:
+        case StencilID::stencil_pushInteger:
+        case StencilID::stencil_dup:
+        case StencilID::stencil_pop:
+        case StencilID::stencil_nop:
+        // Stack-only stores (write to tempBase, not heap)
+        case StencilID::stencil_popStoreTemp:
+        case StencilID::stencil_storeTemp:
+        // Returns
+        case StencilID::stencil_returnReceiver:
+        case StencilID::stencil_returnTop:
+        case StencilID::stencil_returnTrue:
+        case StencilID::stencil_returnFalse:
+        case StencilID::stencil_returnNil:
+        // Control flow
+        case StencilID::stencil_jump:
+        case StencilID::stencil_jumpFalse:
+        case StencilID::stencil_jumpTrue:
+            break;  // safe
+
+        // Arithmetic — may exit with ExitSend on non-SmallInteger,
+        // handled by SP restore in tryJITActivation
+        case StencilID::stencil_addSmallInt:
+        case StencilID::stencil_subSmallInt:
+        case StencilID::stencil_mulSmallInt:
+        case StencilID::stencil_lessThanSmallInt:
+        case StencilID::stencil_greaterThanSmallInt:
+        case StencilID::stencil_equalSmallInt:
+        case StencilID::stencil_notEqualSmallInt:
+            break;  // safe (ExitSend handled by SP restore)
+
+        // Heap writes — need write barrier
+        case StencilID::stencil_popStoreRecvVar:
+        case StencilID::stencil_storeRecvVar:
+        case StencilID::stencil_popStoreLitVar:
+            jitMethod->hasHeapWrites = true;
+            break;
+
+        // Actual sends — need deoptimization
+        case StencilID::stencil_send:
+        default:
             jitMethod->hasSends = true;
             break;
         }
