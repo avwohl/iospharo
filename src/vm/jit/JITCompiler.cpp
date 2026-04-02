@@ -136,8 +136,14 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
     }
 
     // Send special selectors 16-31 (0x70-0x7F)
-    if (opcode >= 0x70 && opcode <= 0x7F)
-        return static_cast<uint16_t>(StencilID::stencil_send);
+    if (opcode >= 0x70 && opcode <= 0x7F) {
+        int selectorIdx = opcode - 0x70;
+        switch (selectorIdx) {
+        case 6:  return static_cast<uint16_t>(StencilID::stencil_identicalTo);     // ==
+        case 8:  return static_cast<uint16_t>(StencilID::stencil_notIdenticalTo);  // ~~
+        default: return static_cast<uint16_t>(StencilID::stencil_send);
+        }
+    }
 
     // Sends (0x80-0xAF)
     if (opcode >= SistaV1::Send0Base && opcode <= 0xAF)
@@ -897,6 +903,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_storeLitVar:
             jitMethod->hasHeapWrites = true;
             break;
+
+        // Inlined special selectors — no deopt, pure computation
+        case StencilID::stencil_identicalTo:
+        case StencilID::stencil_notIdenticalTo:
+            break;  // safe (identity compare, no side effects)
 
         // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:

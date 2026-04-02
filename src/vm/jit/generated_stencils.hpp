@@ -652,6 +652,38 @@ static const Relocation stencil_sendPoly_relocs[] = {
     { 0, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
+// ----- stencil_identicalTo (52 bytes, 5 relocs) -----
+static const uint8_t stencil_identicalTo_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x01, 0x40, 0xF9, 0x0A, 0x8D, 0x5F, 0xF8, 0x0B, 0x00, 0x00, 0x90,
+    0x6B, 0x01, 0x40, 0xF9, 0x0C, 0x00, 0x00, 0x90, 0x8C, 0x01, 0x40, 0xF9, 0x08, 0x00, 0x00, 0xF9,
+    0x5F, 0x01, 0x09, 0xEB, 0x69, 0x01, 0x8C, 0x9A, 0x29, 0x01, 0x40, 0xF9, 0x09, 0x01, 0x00, 0xF9,
+    0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_identicalTo_relocs[] = {
+    { 48, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+    { 24, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 6 },
+    { 20, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 6 },
+    { 16, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 5 },
+    { 12, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 5 },
+};
+
+// ----- stencil_notIdenticalTo (52 bytes, 5 relocs) -----
+static const uint8_t stencil_notIdenticalTo_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x01, 0x40, 0xF9, 0x0A, 0x8D, 0x5F, 0xF8, 0x0B, 0x00, 0x00, 0x90,
+    0x6B, 0x01, 0x40, 0xF9, 0x0C, 0x00, 0x00, 0x90, 0x8C, 0x01, 0x40, 0xF9, 0x08, 0x00, 0x00, 0xF9,
+    0x5F, 0x01, 0x09, 0xEB, 0x69, 0x01, 0x8C, 0x9A, 0x29, 0x01, 0x40, 0xF9, 0x09, 0x01, 0x00, 0xF9,
+    0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_notIdenticalTo_relocs[] = {
+    { 48, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+    { 24, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 5 },
+    { 20, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 5 },
+    { 16, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 6 },
+    { 12, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 6 },
+};
+
 // ----- stencil_nop (4 bytes, 1 relocs) -----
 static const uint8_t stencil_nop_code[] = {
     0x00, 0x00, 0x00, 0x14,
@@ -663,7 +695,7 @@ static const Relocation stencil_nop_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 44;
+static constexpr int NumStencils = 46;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -709,7 +741,9 @@ enum class StencilID : uint16_t {
     stencil_bitShiftSmallInt = 40,
     stencil_send = 41,
     stencil_sendPoly = 42,
-    stencil_nop = 43,
+    stencil_identicalTo = 43,
+    stencil_notIdenticalTo = 44,
+    stencil_nop = 45,
 };
 
 static const StencilDef stencilTable[] = {
@@ -756,6 +790,8 @@ static const StencilDef stencilTable[] = {
     { "stencil_bitShiftSmallInt", stencil_bitShiftSmallInt_code, 156, stencil_bitShiftSmallInt_relocs, 4, 1 },
     { "stencil_send", stencil_send_code, 32, stencil_send_relocs, 3, 1 },
     { "stencil_sendPoly", stencil_sendPoly_code, 204, stencil_sendPoly_relocs, 7, 1 },
+    { "stencil_identicalTo", stencil_identicalTo_code, 52, stencil_identicalTo_relocs, 5, 1 },
+    { "stencil_notIdenticalTo", stencil_notIdenticalTo_code, 52, stencil_notIdenticalTo_relocs, 5, 1 },
     { "stencil_nop", stencil_nop_code, 4, stencil_nop_relocs, 1, 1 },
 };
 

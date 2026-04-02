@@ -792,6 +792,27 @@ extern "C" void stencil_sendPoly(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// ----- SPECIAL SELECTOR STENCILS -----
+
+// == (identity compare): pop receiver and arg, push true/false
+// This works for ALL receiver types — no class-specific behavior.
+extern "C" void stencil_identicalTo(JITState* s) {
+    Oop arg = *s->sp;
+    Oop rcvr = *(s->sp - 1);
+    s->sp -= 1;  // Pop arg, replace receiver with result
+    *s->sp = (rcvr.bits == arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
+    _HOLE_CONTINUE(s);
+}
+
+// ~~ (identity not-equal): pop receiver and arg, push true/false
+extern "C" void stencil_notIdenticalTo(JITState* s) {
+    Oop arg = *s->sp;
+    Oop rcvr = *(s->sp - 1);
+    s->sp -= 1;
+    *s->sp = (rcvr.bits != arg.bits) ? _HOLE_TRUE_OOP : _HOLE_FALSE_OOP;
+    _HOLE_CONTINUE(s);
+}
+
 // ----- NOP STENCIL -----
 
 // Used for bytecodes we skip or as padding
