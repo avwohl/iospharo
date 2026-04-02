@@ -11077,7 +11077,7 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
 
     if (!file) {
         // Return nil on failure
-        popN(argCount);
+        popN(argCount + 1);
         push(memory_.nil());
         return PrimitiveResult::Success;
     }
@@ -11086,7 +11086,7 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     int fileId = nextFileId_++;
     openFiles_[fileId] = file;
 
-    popN(argCount);
+    popN(argCount + 1);
     push(Oop::fromSmallInteger(fileId));
     return PrimitiveResult::Success;
 }
@@ -11123,7 +11123,7 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
     // Can't read from output-only streams
     FILE* file = it->second;
     if (file == stdout || file == stderr) {
-        popN(argCount);
+        popN(argCount + 1);
         push(Oop::fromSmallInteger(0));
         return PrimitiveResult::Success;
     }
@@ -11147,7 +11147,7 @@ PrimitiveResult Interpreter::primitiveFileRead(int argCount) {
         memory_.storeByte(start - 1 + i, bufferOop, tempBuffer[i]);
     }
 
-    popN(argCount);
+    popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesRead)));
     return PrimitiveResult::Success;
 }
@@ -11178,7 +11178,7 @@ PrimitiveResult Interpreter::primitiveFileSetPosition(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    popN(argCount);
+    popN(argCount + 1);
     push(fileIdOop);  // Return the file handle
     return PrimitiveResult::Success;
 }
@@ -11290,7 +11290,7 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
     fflush(it->second);
 
-    popN(argCount);
+    popN(argCount + 1);
     push(Oop::fromSmallInteger(static_cast<int64_t>(bytesWritten)));
     return PrimitiveResult::Success;
 }
@@ -11314,7 +11314,7 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
 
     int result = rename(oldName.c_str(), newName.c_str());
 
-    popN(argCount);
+    popN(argCount + 1);
     push(result == 0 ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
@@ -11376,7 +11376,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     DIR* dir = opendir(path.c_str());
     if (!dir) {
         // Directory doesn't exist or can't be opened
-        popN(argCount);
+        popN(argCount + 1);
         push(memory_.nil());
         return PrimitiveResult::Success;
     }
@@ -11398,7 +11398,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     if (!entry) {
         // Index out of range
         closedir(dir);
-        popN(argCount);
+        popN(argCount + 1);
         push(memory_.nil());
         return PrimitiveResult::Success;
     }
@@ -11467,7 +11467,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
     memory_.storePointer(3, resultArray, isDir ? memory_.trueObject() : memory_.falseObject());
     memory_.storePointer(4, resultArray, Oop::fromSmallInteger(fileSize));
 
-    popN(argCount);
+    popN(argCount + 1);
     push(resultArray);
     return PrimitiveResult::Success;
 }
@@ -11692,7 +11692,7 @@ PrimitiveResult Interpreter::primitiveFileTruncate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    popN(argCount);
+    popN(argCount + 1);
     push(fileIdOop);  // Return the file handle
     return PrimitiveResult::Success;
 }
@@ -12048,7 +12048,7 @@ PrimitiveResult Interpreter::primitiveArrayBecomeOneWayCopyHash(int argCount) {
     flushMethodCache();
     flushJITCaches();
 
-    popN(argCount);
+    popN(argCount + 1);
     push(fromArrayOop);
     return PrimitiveResult::Success;
 }

@@ -1264,17 +1264,21 @@ void Interpreter::interpret() {
                         // Create a Process object and schedule it instead of
                         // using executeFromContext, which disrupts the current
                         // execution context and causes SIGSEGV.
-                        Oop processClass = memory_.specialObject(SpecialObjectIndex::ClassProcess);
-                        uint32_t procClassIdx = memory_.indexOfClass(processClass);
-                        if (procClassIdx == 0) procClassIdx = memory_.registerClass(processClass);
-                        // Process has at least 5 slots: nextLink, suspendedContext, priority, myList, name
-                        Oop proc = memory_.allocateSlots(procClassIdx, 5, ObjectFormat::FixedSize);
+                        // Derive class and slot count from the active process (a real Process instance).
+                        // SpecialObject 27 (ClassProcess) is nil in Pharo 13, so we can't use it.
+                        Oop activeProc = getActiveProcess();
+                        uint32_t procClassIdx = activeProc.asObjectPtr()->classIndex();
+                        size_t procSlotCount = activeProc.asObjectPtr()->slotCount();
+                        fprintf(stderr, "[TEST] Active process classIdx=%u slots=%zu\n", procClassIdx, procSlotCount);
+                        Oop proc = memory_.allocateSlots(procClassIdx, static_cast<uint32_t>(procSlotCount), ObjectFormat::FixedSize);
                         if (!proc.isNil()) {
-                            memory_.storePointer(ProcessNextLinkIndex, proc, memory_.nil());
+                            // Initialize all slots to nil first (Process may have >5 inst vars in Pharo 13)
+                            for (size_t s = 0; s < procSlotCount; s++) {
+                                memory_.storePointer(s, proc, memory_.nil());
+                            }
+                            // Set the known slots
                             memory_.storePointer(ProcessSuspendedContextIndex, proc, context);
                             memory_.storePointer(ProcessPriorityIndex, proc, Oop::fromSmallInteger(40)); // userSchedulingPriority
-                            memory_.storePointer(ProcessMyListIndex, proc, memory_.nil());
-                            memory_.storePointer(4, proc, memory_.nil()); // name
                             // Verify scheduler capacity
                             Oop schedAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
                             Oop sched2 = memory_.fetchPointer(1, schedAssoc2);
@@ -6044,9 +6048,13 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     {
         if (selectors_.doesNotUnderstand.rawBits() == selector.rawBits()) {
             dnuDepth_--;
-            // Standard VM behavior: terminate the active process, not the whole VM.
-            // The process has an unrecoverable error (its receiver's class hierarchy
-            // doesn't include doesNotUnderstand:). Other processes should continue.
+            fprintf(stderr, "[DNU] CASCADE: receiver can't handle doesNotUnderstand:\n");
+            // Log what selector triggered the original DNU
+            if (frameDepth_ > 0) {
+                SavedFrame& prev = savedFrames_[frameDepth_ - 1];
+                fprintf(stderr, "[DNU]   caller=#%s fd=%zu\n",
+                        memory_.selectorOf(prev.savedMethod).c_str(), frameDepth_);
+            }
             Oop nextProcess = wakeHighestPriority();
             if (nextProcess.isNil() || !nextProcess.isObject()) {
                 stopVM("Recursive doesNotUnderstand: and no other runnable process");
@@ -6055,6 +6063,29 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             g_xferReason = "dnuCascade";
             transferTo(nextProcess);
             return;
+        }
+    }
+
+    // Log ALL DNU messages in first 10 occurrences (to debug test runner)
+    {
+        static int dnuLogCount = 0;
+        if (dnuLogCount++ < 10) {
+            std::string selName = "(unknown)";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sH = selector.asObjectPtr();
+                if (sH->isBytesObject()) selName = std::string((const char*)sH->bytes(), sH->byteSize());
+            }
+            Oop rcvr = stackValue(argCount);
+            fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s\n",
+                    dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
+                    memory_.selectorOf(method_).c_str());
+            if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                ObjectHeader* rH = rcvr.asObjectPtr();
+                fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
+                        rH->classIndex(), (int)rH->format(), memory_.classNameOf(rcvr).c_str());
+            } else if (rcvr.isSmallInteger()) {
+                fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
+            }
         }
     }
 
