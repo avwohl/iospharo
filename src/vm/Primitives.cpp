@@ -2099,6 +2099,22 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
     // and mirror-side (argCount=1, target object at top, mirror class below)
     Oop rcvr = stackTop();
 
+    // Debug: trace primitive 62 for byte strings (classIndex 52)
+    bool tracePrim62 = false;
+    if (rcvr.isObject() && rcvr.rawBits() > 0x10000 && frameDepth_ >= 15) {
+        ObjectHeader* rHdr = rcvr.asObjectPtr();
+        if (rHdr->classIndex() == 52) {
+            static int p62trace = 0;
+            if (p62trace++ < 5) {
+                fprintf(stderr, "[VM] PRIM62 #%d: rcvr=0x%llx cls=52 fmt=%d argCount=%d fd=%zu sp=%d\n",
+                        p62trace, (unsigned long long)rcvr.rawBits(),
+                        (int)rHdr->format(), argCount, frameDepth_,
+                        (int)(stackPointer_ - stack_.data()));
+                tracePrim62 = true;
+            }
+        }
+    }
+
     if (!rcvr.isObject()) {
         return PrimitiveResult::Failure;  // Immediates fail
     }
@@ -2145,6 +2161,10 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
 
     if (!Oop::canBeSmallInteger(static_cast<int64_t>(size))) {
         return PrimitiveResult::Failure;
+    }
+
+    if (tracePrim62) {
+        fprintf(stderr, "[VM] PRIM62 SUCCESS: size=%zu\n", size);
     }
 
     popN(argCount + 1);

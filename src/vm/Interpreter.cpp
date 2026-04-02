@@ -4579,20 +4579,24 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
-    // Debug: trace how byte string gets receiver position
+    // Debug: trace sends to byte strings (classIndex 52) to find wrong dispatch
+    bool traceByteSend = false;
     if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000, 1)) {
         ObjectHeader* rH = rcvr.asObjectPtr();
-        if (__builtin_expect(rH->isBytesObject() && !rH->isCompiledMethod() && rH->classIndex() == 52, 0)) {
+        if (__builtin_expect(rH->isBytesObject() && !rH->isCompiledMethod() && rH->classIndex() == 52 && frameDepth_ >= 15, 0)) {
             static int sendToStr52 = 0;
-            if (sendToStr52++ < 5) {
+            if (sendToStr52++ < 10) {
                 std::string sel = "(?)";
                 if (selector.isObject() && selector.rawBits() > 0x10000) {
                     ObjectHeader* sH = selector.asObjectPtr();
                     if (sH->isBytesObject()) sel = std::string((const char*)sH->bytes(), sH->byteSize());
                 }
-                fprintf(stderr, "[VM] SEND-TO-STR52 #%d: #%s argCount=%d rcvr=0x%llx in #%s fd=%zu\n",
+                Oop rcvrClass = memory_.classOf(rcvr);
+                fprintf(stderr, "[VM] STR52-SEND #%d: #%s argCount=%d rcvr=0x%llx cls=0x%llx in #%s fd=%zu\n",
                         sendToStr52, sel.c_str(), argCount, (unsigned long long)rcvr.rawBits(),
+                        (unsigned long long)rcvrClass.rawBits(),
                         memory_.selectorOf(method_).c_str(), frameDepth_);
+                traceByteSend = true;
             }
         }
     }
@@ -4663,8 +4667,24 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
+    if (__builtin_expect(traceByteSend, 0)) {
+        fprintf(stderr, "[VM]   classOf returned 0x%llx\n", (unsigned long long)rcvrClass.rawBits());
+    }
+
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
+
+    if (__builtin_expect(traceByteSend, 0)) {
+        if (cached) {
+            int primIdx = cached->primitiveIndex;
+            fprintf(stderr, "[VM]   CACHE HIT: method=0x%llx prim=%d accessor=%d setter=%d retSelf=%d #%s\n",
+                    (unsigned long long)cached->method.rawBits(), primIdx,
+                    cached->accessorIndex, cached->setterIndex, cached->returnsSelf ? 1 : 0,
+                    memory_.selectorOf(cached->method).c_str());
+        } else {
+            fprintf(stderr, "[VM]   CACHE MISS\n");
+        }
+    }
 
     if (__builtin_expect(cached != nullptr, 1)) {
 
@@ -4686,19 +4706,39 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
         // Getter fast path: pushRecvVar N + returnTop
         // Skip method activation — replace receiver with inst var value
+        // Guard: byte objects have no named inst vars — reading their
+        // "slots" returns raw byte data misinterpreted as Oops.
         if (cached->accessorIndex >= 0 && argCount == 0) {
-            Oop ivar = memory_.fetchPointerUnchecked(cached->accessorIndex, rcvr);
-            *(stackPointer_ - 1) = ivar;  // replace receiver in-place
-            return;
+            if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+                                 rcvr.asObjectPtr()->isBytesObject(), 0)) {
+                // Byte object: fall through to normal dispatch
+                static int getterByteGuard = 0;
+                if (getterByteGuard++ < 5) {
+                    std::string sel = memory_.selectorOf(cached->method);
+                    fprintf(stderr, "[VM] GETTER-BYTE-GUARD #%d: #%s accessor=%d on bytes-obj cls=%u\n",
+                            getterByteGuard, sel.c_str(), cached->accessorIndex,
+                            rcvr.asObjectPtr()->classIndex());
+                }
+            } else {
+                Oop ivar = memory_.fetchPointerUnchecked(cached->accessorIndex, rcvr);
+                *(stackPointer_ - 1) = ivar;  // replace receiver in-place
+                return;
+            }
         }
 
         // Setter fast path: popStoreRecvVar N + returnReceiver
         // Skip method activation — store arg in inst var, leave receiver on stack
+        // Same byte-object guard as getter path.
         if (cached->setterIndex >= 0 && argCount == 1) {
-            Oop value = stackValue(0);  // the argument
-            memory_.storePointerUnchecked(cached->setterIndex, rcvr, value);
-            pop();  // pop argument, leave receiver as return value
-            return;
+            if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+                                 rcvr.asObjectPtr()->isBytesObject(), 0)) {
+                // Byte object: fall through to normal dispatch
+            } else {
+                Oop value = stackValue(0);  // the argument
+                memory_.storePointerUnchecked(cached->setterIndex, rcvr, value);
+                pop();  // pop argument, leave receiver as return value
+                return;
+            }
         }
 
         // Identity fast path: returnReceiver (yourself, asXxx identity methods)
@@ -4715,7 +4755,13 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             newMethod_ = cached->method;
             PrimitiveResult result = executePrimitive(primIdx, argCount);
             if (result == PrimitiveResult::Success) {
+                if (__builtin_expect(traceByteSend, 0)) {
+                    fprintf(stderr, "[VM]   CACHED PRIM %d SUCCEEDED\n", primIdx);
+                }
                 return;
+            }
+            if (__builtin_expect(traceByteSend, 0)) {
+                fprintf(stderr, "[VM]   CACHED PRIM %d FAILED (code=%d)\n", primIdx, primFailCode_);
             }
         }
         if (__builtin_expect(primIdx == 198, 0)) {
@@ -4726,6 +4772,9 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             invokeObjectAsMethod(cached->method, selector, argCount);
             return;
         }
+        if (__builtin_expect(traceByteSend, 0)) {
+            fprintf(stderr, "[VM]   CACHED ACTIVATING METHOD (prim failed or none)\n");
+        }
 #if PHARO_JIT_ENABLED
         patchJITICAfterSend(cached->method, rcvr);
 #endif
@@ -4735,6 +4784,34 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
+
+    if (__builtin_expect(traceByteSend, 0)) {
+        if (method.isNil()) {
+            fprintf(stderr, "[VM]   LOOKUP: not found\n");
+        } else {
+            int primIdx = primitiveIndexOf(method);
+            fprintf(stderr, "[VM]   LOOKUP: method=0x%llx prim=%d #%s\n",
+                    (unsigned long long)method.rawBits(), primIdx,
+                    memory_.selectorOf(method).c_str());
+            // Dump first bytecodes
+            if (method.isObject() && method.rawBits() > 0x10000) {
+                ObjectHeader* mH = method.asObjectPtr();
+                if (mH->isCompiledMethod()) {
+                    Oop hdr = memory_.fetchPointer(0, method);
+                    if (hdr.isSmallInteger()) {
+                        int nLit = hdr.asSmallInteger() & 0x7FFF;
+                        size_t bcStart = (1 + nLit) * 8;
+                        size_t totalBytes = mH->byteSize();
+                        fprintf(stderr, "[VM]   bytecodes:");
+                        for (size_t b = bcStart; b < totalBytes && b < bcStart + 10; b++) {
+                            fprintf(stderr, " %02x", mH->bytes()[b]);
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                }
+            }
+        }
+    }
 
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
@@ -4774,8 +4851,18 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         newMethod_ = method;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
+            if (__builtin_expect(traceByteSend, 0)) {
+                fprintf(stderr, "[VM]   PRIM %d SUCCEEDED\n", primIndex);
+            }
             return;
         }
+        if (__builtin_expect(traceByteSend, 0)) {
+            fprintf(stderr, "[VM]   PRIM %d FAILED (code=%d)\n", primIndex, primFailCode_);
+        }
+    }
+
+    if (__builtin_expect(traceByteSend, 0)) {
+        fprintf(stderr, "[VM]   ACTIVATING METHOD (prim failed or none)\n");
     }
 
     if (__builtin_expect(primIndex == 198, 0)) {
@@ -5114,29 +5201,42 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Debug: catch byte object receivers (type confusion)
+    // Debug: catch when #on: activates with a byte receiver
+    // This should never happen — stream methods should get stream instances
     if (__builtin_expect(receiver_.isObject() && receiver_.rawBits() > 0x10000, 1)) {
         ObjectHeader* rHdr = receiver_.asObjectPtr();
-        if (__builtin_expect(rHdr->isBytesObject() && !rHdr->isCompiledMethod(), 0)) {
+        if (__builtin_expect(rHdr->isBytesObject() && !rHdr->isCompiledMethod() && frameDepth_ >= 15, 0)) {
             static int byteRcvCount = 0;
             if (byteRcvCount++ < 3) {
                 std::string sel = memory_.selectorOf(method);
                 fprintf(stderr, "[VM] BYTE-RECV #%d: #%s rcvr=0x%llx cls=%u fmt=%d fd=%zu argCount=%d\n",
                         byteRcvCount, sel.c_str(), (unsigned long long)receiver_.rawBits(),
                         rHdr->classIndex(), (int)rHdr->format(), frameDepth_, argCount);
-                // Show what's on the stack around the frame
-                fprintf(stderr, "[VM]   FP slots:");
-                for (int i = -2; i <= argCount + 3; i++) {
-                    Oop s = *(framePointer_ + i);
-                    fprintf(stderr, " [FP%+d]=0x%llx", i, (unsigned long long)s.rawBits());
-                }
-                fprintf(stderr, "\n");
-                // Show caller info
+                // Dump the CALLER's state to see what it pushed
                 if (frameDepth_ > 0) {
                     SavedFrame& caller = savedFrames_[frameDepth_ - 1];
-                    fprintf(stderr, "[VM]   caller=#%s rcvr=0x%llx\n",
+                    fprintf(stderr, "[VM]   caller=#%s rcvr=0x%llx callerMethod=0x%llx\n",
                             memory_.selectorOf(caller.savedMethod).c_str(),
-                            (unsigned long long)caller.savedReceiver.rawBits());
+                            (unsigned long long)caller.savedReceiver.rawBits(),
+                            (unsigned long long)caller.savedMethod.rawBits());
+                    // Decode the caller's method to understand what send produced this
+                    if (caller.savedMethod.isObject() && caller.savedMethod.rawBits() > 0x10000) {
+                        ObjectHeader* cmHdr = caller.savedMethod.asObjectPtr();
+                        Oop cmHeader = memory_.fetchPointer(0, caller.savedMethod);
+                        if (cmHeader.isSmallInteger()) {
+                            int nLit = cmHeader.asSmallInteger() & 0x7FFF;
+                            size_t bcStart = (1 + nLit) * 8;
+                            ptrdiff_t callerIP = caller.savedIP - cmHdr->bytes();
+                            fprintf(stderr, "[VM]   callerIP=%td bcStart=%zu bytecodes:", callerIP, bcStart);
+                            // Dump bytecodes around caller's IP
+                            for (ptrdiff_t b = callerIP - 5; b < callerIP + 3; b++) {
+                                if (b >= (ptrdiff_t)bcStart && b < (ptrdiff_t)cmHdr->byteSize())
+                                    fprintf(stderr, "%s%02x", b == callerIP ? " [" : " ", cmHdr->bytes()[b]);
+                                if (b == callerIP) fprintf(stderr, "]");
+                            }
+                            fprintf(stderr, "\n");
+                        }
+                    }
                 }
             }
         }
@@ -9404,9 +9504,27 @@ void Interpreter::tryJITResumeInCaller() {
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
             else if (sendOp == 0xEA) instructionPointer_ += 2;
             else instructionPointer_ += 1;
-            size_t callerDepth = frameDepth_;
-            receiver_ = stackPointer_[-(state.sendArgCount + 1)];
+
             jitRuntime_.noteMethodEntry(cached);  // Count for JIT compilation
+
+            // Try primitive before activateMethod — primitive methods should
+            // execute their primitive, not fallback bytecodes.
+            {
+                int primIdx = primitiveIndexOf(cached);
+                if (primIdx > 0) {
+                    argCount_ = state.sendArgCount;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = cached;
+                    PrimitiveResult result = executePrimitive(primIdx, state.sendArgCount);
+                    if (result == PrimitiveResult::Success) {
+                        // Primitive succeeded — resume JIT at bytecode after send
+                        continue;
+                    }
+                }
+            }
+
+            size_t callerDepth = frameDepth_;
             activateMethod(cached, state.sendArgCount);
             if (frameDepth_ == callerDepth) {
                 // Target completed (JIT handled it end-to-end).
@@ -9599,8 +9717,45 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
             }
             int nArgs = state.sendArgCount;
-            receiver_ = stackPointer_[-(nArgs + 1)];
             jitRuntime_.noteMethodEntry(cached);
+
+            // Try primitive before activateMethod — primitive methods should
+            // execute their primitive, not fallback bytecodes.
+            {
+                int primIdx = primitiveIndexOf(cached);
+                if (primIdx > 0) {
+                    argCount_ = nArgs;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = cached;
+                    PrimitiveResult result = executePrimitive(primIdx, nArgs);
+                    if (result == PrimitiveResult::Success) {
+                        // Primitive succeeded — resume JIT at bytecode after send
+                        jitJ2JActChains_++;
+                        uint32_t bcOffset = computeCurrentBCOffset();
+                        if (bcOffset == UINT32_MAX) return true;
+                        state.sp = stackPointer_;
+                        state.receiver = receiver_;
+                        methObj = method.asObjectPtr();
+                        state.literals = methObj->slots() + 1;
+                        state.tempBase = framePointer_ + 1;
+                        {
+                            Oop hdr = methObj->slots()[0];
+                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            state.ip = methObj->bytes() + (1 + numLits) * 8;
+                        }
+                        state.method = method;
+                        state.argCount = argCount;
+                        state.icDataPtr = nullptr;
+                        state.sendArgCount = 0;
+                        state.exitReason = jit::ExitNone;
+                        if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                            return true;
+                        }
+                        continue;
+                    }
+                }
+            }
 
             size_t callerDepth = frameDepth_;
             activateMethod(cached, nArgs);
