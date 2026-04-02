@@ -1,0 +1,7 @@
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/PharoVMCore.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/test_load_image.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/test_class_table.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/test_platform.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/test_ios_bridge.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/edit_cache.dir
+/Users/wohl/src/iospharo/build_nojit/CMakeFiles/rebuild_cache.dir

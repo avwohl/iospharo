@@ -814,7 +814,7 @@ Oop ObjectMemory::createStartupContext(Oop method, Oop receiver) {
 
     storePointer(0, context, nil());                              // sender
     storePointer(1, context, Oop::fromSmallInteger(initialPC));   // pc
-    storePointer(2, context, Oop::fromSmallInteger(numTemps + 5)); // stackp
+    storePointer(2, context, Oop::fromSmallInteger(numTemps)); // stackp (1-based index of top temp)
     storePointer(3, context, method);                              // method
     storePointer(4, context, nil());                               // closureOrNil
     storePointer(5, context, receiver);                            // receiver
@@ -861,7 +861,7 @@ Oop ObjectMemory::createStartupContextWithArg(Oop method, Oop receiver, Oop arg)
 
     storePointer(0, context, nil());                                      // sender
     storePointer(1, context, Oop::fromSmallInteger(initialPC));           // pc
-    storePointer(2, context, Oop::fromSmallInteger(numArgs + numTemps + 5)); // stackp
+    storePointer(2, context, Oop::fromSmallInteger(numTemps)); // stackp (1-based index of top temp)
     storePointer(3, context, method);                                      // method
     storePointer(4, context, nil());                                       // closureOrNil
     storePointer(5, context, receiver);                                    // receiver

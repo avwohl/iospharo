@@ -538,7 +538,7 @@ void Interpreter::syncDisplayToSurface() {
 // ===== MAIN LOOP =====
 
 void Interpreter::stopVM(const char* reason) {
-    (void)reason;
+    fprintf(stderr, "[VM] stopVM: %s\n", reason ? reason : "(no reason)");
     running_ = false;
 }
 
@@ -1275,6 +1275,14 @@ void Interpreter::interpret() {
                             memory_.storePointer(ProcessPriorityIndex, proc, Oop::fromSmallInteger(40)); // userSchedulingPriority
                             memory_.storePointer(ProcessMyListIndex, proc, memory_.nil());
                             memory_.storePointer(4, proc, memory_.nil()); // name
+                            // Verify scheduler capacity
+                            Oop schedAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                            Oop sched2 = memory_.fetchPointer(1, schedAssoc2);
+                            Oop schedLists2 = memory_.fetchPointer(SchedulerProcessListsIndex, sched2);
+                            int maxPri2 = static_cast<int>(schedLists2.asObjectPtr()->slotCount());
+                            Oop activePri = memory_.fetchPointer(ProcessPriorityIndex, getActiveProcess());
+                            fprintf(stderr, "[TEST] Scheduler has %d priority levels, active process pri=%lld\n",
+                                    maxPri2, activePri.isSmallInteger() ? activePri.asSmallInteger() : -1);
                             putToSleep(proc);
                             fprintf(stderr, "[TEST] Process scheduled at priority 40\n");
                         }
@@ -4571,10 +4579,86 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
+    // Debug: trace how byte string gets receiver position
+    if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000, 1)) {
+        ObjectHeader* rH = rcvr.asObjectPtr();
+        if (__builtin_expect(rH->isBytesObject() && !rH->isCompiledMethod() && rH->classIndex() == 52, 0)) {
+            static int sendToStr52 = 0;
+            if (sendToStr52++ < 5) {
+                std::string sel = "(?)";
+                if (selector.isObject() && selector.rawBits() > 0x10000) {
+                    ObjectHeader* sH = selector.asObjectPtr();
+                    if (sH->isBytesObject()) sel = std::string((const char*)sH->bytes(), sH->byteSize());
+                }
+                fprintf(stderr, "[VM] SEND-TO-STR52 #%d: #%s argCount=%d rcvr=0x%llx in #%s fd=%zu\n",
+                        sendToStr52, sel.c_str(), argCount, (unsigned long long)rcvr.rawBits(),
+                        memory_.selectorOf(method_).c_str(), frameDepth_);
+            }
+        }
+    }
+
     // Corruption check (cold path)
     if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
-        stopVM("Message send to corrupted receiver (raw 0)");
-        return;
+        std::string selName = "(unknown)";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject()) {
+                selName = std::string((const char*)selHdr->bytes(), selHdr->byteSize());
+            }
+        }
+        static int zeroCount = 0;
+        zeroCount++;
+        if (zeroCount <= 3) {
+            fprintf(stderr, "[VM] BUG #%d: send #%s argCount=%d to receiver raw=0 in #%s fd=%zu\n",
+                    zeroCount, selName.c_str(), argCount, memory_.selectorOf(method_).c_str(), frameDepth_);
+            fprintf(stderr, "[VM]   method Oop=0x%llx\n", (unsigned long long)method_.rawBits());
+            // Dump bytecodes around current IP
+            if (method_.isObject() && method_.rawBits() > 0x10000) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                uint8_t* mBytes = mHdr->bytes();
+                ptrdiff_t ipOff = instructionPointer_ - mBytes;
+                fprintf(stderr, "[VM]   IP offset: %td, bytecodes around:\n    ", ipOff);
+                for (ptrdiff_t b = ipOff - 8; b < ipOff + 8; b++) {
+                    if (b >= 0 && b < (ptrdiff_t)mHdr->byteSize())
+                        fprintf(stderr, "%s%02x", b == ipOff ? "[" : " ", mBytes[b]);
+                    if (b == ipOff) fprintf(stderr, "]");
+                }
+                fprintf(stderr, "\n");
+                // Dump literals
+                Oop mh = memory_.fetchPointer(0, method_);
+                if (mh.isSmallInteger()) {
+                    int nLit = mh.asSmallInteger() & 0x7FFF;
+                    fprintf(stderr, "[VM]   %d literals:", nLit);
+                    for (int i = 0; i < nLit && i < 10; i++) {
+                        Oop lit = memory_.fetchPointer(1 + i, method_);
+                        fprintf(stderr, " [%d]=0x%llx", i, (unsigned long long)lit.rawBits());
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+            // Full stack dump
+            fprintf(stderr, "[VM]   stack (top 10):");
+            for (int i = 0; i < 10; i++) {
+                Oop sv = stackValue(i);
+                fprintf(stderr, " [%d]=0x%llx", i, (unsigned long long)sv.rawBits());
+            }
+            fprintf(stderr, "\n");
+            fprintf(stderr, "[VM]   Call stack (with receivers):\n");
+            for (size_t f = 0; f <= frameDepth_ && f < 20; f++) {
+                Oop frcv = savedFrames_[f].savedReceiver;
+                fprintf(stderr, "[VM]     [%zu] #%s rcvr=0x%llx", f,
+                        memory_.selectorOf(savedFrames_[f].savedMethod).c_str(),
+                        (unsigned long long)frcv.rawBits());
+                if (frcv.isObject() && frcv.rawBits() > 0x10000) {
+                    ObjectHeader* fhdr = frcv.asObjectPtr();
+                    fprintf(stderr, " (cls=%u fmt=%d)", fhdr->classIndex(), (int)fhdr->format());
+                }
+                fprintf(stderr, "\n");
+            }
+        }
+        // Patch receiver to nil and continue (recoverable)
+        rcvr = memory_.nil();
+        stackValuePut(argCount, rcvr);
     }
 
     Oop rcvrClass = memory_.classOf(rcvr);
@@ -5029,6 +5113,34 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
+
+    // Debug: catch byte object receivers (type confusion)
+    if (__builtin_expect(receiver_.isObject() && receiver_.rawBits() > 0x10000, 1)) {
+        ObjectHeader* rHdr = receiver_.asObjectPtr();
+        if (__builtin_expect(rHdr->isBytesObject() && !rHdr->isCompiledMethod(), 0)) {
+            static int byteRcvCount = 0;
+            if (byteRcvCount++ < 3) {
+                std::string sel = memory_.selectorOf(method);
+                fprintf(stderr, "[VM] BYTE-RECV #%d: #%s rcvr=0x%llx cls=%u fmt=%d fd=%zu argCount=%d\n",
+                        byteRcvCount, sel.c_str(), (unsigned long long)receiver_.rawBits(),
+                        rHdr->classIndex(), (int)rHdr->format(), frameDepth_, argCount);
+                // Show what's on the stack around the frame
+                fprintf(stderr, "[VM]   FP slots:");
+                for (int i = -2; i <= argCount + 3; i++) {
+                    Oop s = *(framePointer_ + i);
+                    fprintf(stderr, " [FP%+d]=0x%llx", i, (unsigned long long)s.rawBits());
+                }
+                fprintf(stderr, "\n");
+                // Show caller info
+                if (frameDepth_ > 0) {
+                    SavedFrame& caller = savedFrames_[frameDepth_ - 1];
+                    fprintf(stderr, "[VM]   caller=#%s rcvr=0x%llx\n",
+                            memory_.selectorOf(caller.savedMethod).c_str(),
+                            (unsigned long long)caller.savedReceiver.rawBits());
+                }
+            }
+        }
+    }
 
 
 
@@ -7070,6 +7182,22 @@ void Interpreter::transferTo(Oop newProcess) {
     ObjectHeader* newProcHdr = newProcess.asObjectPtr();
     if (newProcHdr->slotCount() < 2) {
         return;
+    }
+
+    // Debug: log process switches with priorities
+    {
+        static int xferCount = 0;
+        xferCount++;
+        if (xferCount <= 20) {
+            Oop oldPri = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
+            Oop newPri = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
+            fprintf(stderr, "[XFER] #%d %s: pri %lld -> %lld (proc 0x%llx -> 0x%llx)\n",
+                    xferCount, g_xferReason,
+                    oldPri.isSmallInteger() ? oldPri.asSmallInteger() : -1,
+                    newPri.isSmallInteger() ? newPri.asSmallInteger() : -1,
+                    (unsigned long long)oldProcess.rawBits(),
+                    (unsigned long long)newProcess.rawBits());
+        }
     }
 
     // Save outgoing process's NLR state if any is active.
