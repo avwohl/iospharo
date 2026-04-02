@@ -84,10 +84,11 @@ static_assert(offsetof(JITState, method)    == 64, "method offset");
 enum ExitReason : int {
     ExitNone        = 0,  // Normal completion (should not happen mid-method)
     ExitReturn      = 1,  // Return bytecode — returnValue is set
-    ExitSend        = 2,  // Message send that JIT can't inline-cache
+    ExitSend        = 2,  // Message send — ip points to send bytecode, sp is correct
     ExitPrimFail    = 3,  // Primitive failed — fall back to Smalltalk code
     ExitDeopt       = 4,  // Deoptimization needed (e.g., uncommon trap)
     ExitStackOverflow = 5, // Stack limit reached
+    ExitArithOverflow = 6, // Arithmetic overflow — restore entry SP, re-execute
 };
 
 // ===== STENCIL FUNCTION SIGNATURE =====

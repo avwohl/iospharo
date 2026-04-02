@@ -35,9 +35,9 @@ extern "C" void jit_rt_return(JITState* state) {
 }
 
 extern "C" void jit_rt_arith_overflow(JITState* state) {
-    // Treat overflow as a send (the interpreter will do the full
-    // arithmetic message send with LargeInteger support).
-    state->exitReason = ExitSend;
+    // Arithmetic overflow: restore entry SP and re-execute the whole method.
+    // The interpreter will handle LargeInteger arithmetic.
+    state->exitReason = ExitArithOverflow;
 }
 
 // ===== JITRuntime =====
@@ -150,9 +150,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Can't execute methods with actual sends (need bytecode-level deopt)
-    // or heap writes (need write barrier for GC).
-    if (jm->hasSends || jm->hasHeapWrites) return false;
+    // Can't execute methods with heap writes (need write barrier for GC).
+    // Sends are handled via deopt: the stencil sets state.ip to the send
+    // bytecode and exits, letting the interpreter resume at the send.
+    if (jm->hasHeapWrites) return false;
 
     // Touch for LRU tracking
     codeZone_.touch(jm);

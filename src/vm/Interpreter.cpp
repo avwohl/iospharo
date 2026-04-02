@@ -9086,12 +9086,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return true;
 
     case jit::ExitSend:
-        // Arithmetic overflow or other unhandled operation.
-        // Restore SP to entry state — the JIT only did stack pushes and
-        // temp reads/writes, no heap side effects. The interpreter will
-        // re-execute the entire method from the start.
+        // JIT reached a send it can't handle. state.ip points to the
+        // send bytecode, state.sp has receiver+args already pushed.
+        // Let the interpreter continue from the send bytecode.
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
+        return false;  // Interpreter dispatch loop picks up at the send
+
+    case jit::ExitArithOverflow:
+        // Arithmetic overflow: SP may be inconsistent (mid-operation).
+        // Restore entry SP and re-execute the entire method.
         stackPointer_ = entrySP;
-        return false;  // Let interpreter handle it
+        return false;
 
     case jit::ExitPrimFail:
     case jit::ExitDeopt:

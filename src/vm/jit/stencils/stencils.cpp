@@ -528,14 +528,9 @@ extern "C" void stencil_mulSmallInt(JITState* s) {
 
 // Generic send: exit to interpreter for full lookup
 // Bytecodes: 0x80-0xBF (send with 0-2 args), extended sends
-// The JIT compiler patches OPERAND = selector literal index,
-// OPERAND2 = argCount.
+// OPERAND = bytecode offset of this send (for deopt IP)
 extern "C" void stencil_send(JITState* s) {
-    // Store the selector index and arg count for the interpreter
-    int selectorIdx = OPERAND;
-    int numArgs = OPERAND2;
-    (void)selectorIdx;  // Communicated via ip (deopt point)
-    (void)numArgs;
+    s->ip = s->ip + OPERAND;  // Set deopt IP to this send's bytecode
     s->exitReason = EXIT_SEND;
     _HOLE_RT_SEND(s);
 }

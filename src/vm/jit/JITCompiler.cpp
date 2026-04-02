@@ -398,6 +398,11 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         }
 
         bc.stencilIdx = selectStencil(bc.opcode, bc.operand);
+        // For send stencils, operand = bytecode offset (for deopt IP).
+        // The stencil uses OPERAND to set state.ip = state.ip + bcOffset.
+        if (bc.stencilIdx == static_cast<uint16_t>(StencilID::stencil_send)) {
+            bc.operand = bc.bcOffset;
+        }
         decoded.push_back(bc);
         i += bc.bcLength;
         extA = 0;
@@ -719,8 +724,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
             jitMethod->hasHeapWrites = true;
             break;
 
-        // Actual sends — need deoptimization
+        // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:
+            jitMethod->hasSends = true;  // Track for stats, but doesn't block execution
+            break;
+
         default:
             jitMethod->hasSends = true;
             break;
@@ -763,6 +771,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);
 
     methodsCompiled_++;
+
+    // Track method executability breakdown
+    static size_t pureCount = 0, sendDeoptCount = 0, heapWriteCount = 0;
+    if (!jitMethod->hasSends && !jitMethod->hasHeapWrites) pureCount++;
+    else if (jitMethod->hasHeapWrites) heapWriteCount++;
+    else sendDeoptCount++;  // Has sends but no heap writes → executable with deopt
+    if (methodsCompiled_ % 50 == 0) {
+        fprintf(stderr, "[JIT] Methods: %zu pure, %zu send-deopt, %zu heap-blocked "
+                "(of %zu compiled)\n", pureCount, sendDeoptCount, heapWriteCount, methodsCompiled_);
+    }
 
     // Debug: log first few compiled methods with their stencil sequences
     if (methodsCompiled_ <= 5) {

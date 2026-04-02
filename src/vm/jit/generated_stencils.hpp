@@ -445,13 +445,16 @@ static const Relocation stencil_mulSmallInt_relocs[] = {
     { 76, RelocType::ARM64_BRANCH26, HoleKind::RuntimeHelper, 3 },
 };
 
-// ----- stencil_send (12 bytes, 1 relocs) -----
+// ----- stencil_send (32 bytes, 3 relocs) -----
 static const uint8_t stencil_send_code[] = {
-    0x48, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9, 0x00, 0x00, 0x00, 0x14,
+    0x08, 0x00, 0x00, 0x90, 0x08, 0x01, 0x40, 0xF9, 0x09, 0x18, 0x40, 0xF9, 0x28, 0xC1, 0x28, 0x8B,
+    0x08, 0x18, 0x00, 0xF9, 0x48, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9, 0x00, 0x00, 0x00, 0x14,
 };
 
 static const Relocation stencil_send_relocs[] = {
-    { 8, RelocType::ARM64_BRANCH26, HoleKind::RuntimeHelper, 1 },
+    { 28, RelocType::ARM64_BRANCH26, HoleKind::RuntimeHelper, 1 },
+    { 4, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
+    { 0, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
 // ----- stencil_nop (4 bytes, 1 relocs) -----
@@ -539,7 +542,7 @@ static const StencilDef stencilTable[] = {
     { "stencil_equalSmallInt", stencil_equalSmallInt_code, 84, stencil_equalSmallInt_relocs, 6, 1 },
     { "stencil_notEqualSmallInt", stencil_notEqualSmallInt_code, 84, stencil_notEqualSmallInt_relocs, 6, 1 },
     { "stencil_mulSmallInt", stencil_mulSmallInt_code, 100, stencil_mulSmallInt_relocs, 2, 1 },
-    { "stencil_send", stencil_send_code, 12, stencil_send_relocs, 1, 1 },
+    { "stencil_send", stencil_send_code, 32, stencil_send_relocs, 3, 1 },
     { "stencil_nop", stencil_nop_code, 4, stencil_nop_relocs, 1, 1 },
 };
 

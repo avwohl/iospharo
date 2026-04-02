@@ -2,6 +2,28 @@
 
 2026-04-02
 
+## Phase 5: Send Deoptimization — 77% Methods Executable
+
+Enabled JIT execution of methods containing message sends. Previously only
+"pure" methods (no sends, no heap writes) could execute via JIT (~5.7% of
+compiled methods). Now methods with sends execute their pre-send stencils
+(pushes, arithmetic, jumps) in JIT code, then deopt to the interpreter at
+the send bytecode.
+
+Changes:
+- Send stencil modified: sets state.ip = state.ip + OPERAND (bytecode offset)
+  before exiting. The interpreter resumes at the exact send bytecode with the
+  JIT's stack state (receiver + args already pushed).
+- New ExitArithOverflow (6) exit reason: arithmetic overflow restores entry SP
+  and re-executes the whole method (SP may be inconsistent mid-operation).
+  Previously overloaded ExitSend for both cases.
+- Send operand changed from selector literal index to bytecodeOffset in
+  decodeBytecodes. The interpreter reads selector from the bytecodes itself.
+- hasSends no longer blocks tryExecute (only hasHeapWrites still blocks).
+
+Result: 155/200 compiled methods (77.5%) now executable. Only heap-write
+methods still blocked (need write barriers). 100M+ sends, zero crashes.
+
 ## Phase 4: JIT Execution Working
 
 Fixed two critical ARM64 relocation patching bugs that prevented JIT-compiled
