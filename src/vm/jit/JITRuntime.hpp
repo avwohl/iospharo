@@ -1,0 +1,101 @@
+/*
+ * JITRuntime.hpp - Runtime support for JIT-compiled code
+ *
+ * Copyright (c) 2026 Aaron Wohl. Licensed under the MIT License.
+ *
+ * Provides:
+ * - Entry point: interpreter -> JIT code transition
+ * - Exit stubs: JIT code -> interpreter (for sends, returns, deopt)
+ * - Runtime helper functions called from JIT stencils
+ * - Special Oop storage for nil/true/false (used by stencil patching)
+ */
+
+#ifndef PHARO_JIT_RUNTIME_HPP
+#define PHARO_JIT_RUNTIME_HPP
+
+#include "JITConfig.hpp"
+#include "JITState.hpp"
+#include "JITMethod.hpp"
+#include "CodeZone.hpp"
+#include "JITCompiler.hpp"
+#include "../Oop.hpp"
+
+#if PHARO_JIT_ENABLED
+
+namespace pharo {
+
+class Interpreter;
+class ObjectMemory;
+
+namespace jit {
+
+class JITRuntime {
+public:
+    JITRuntime();
+    ~JITRuntime();
+
+    // Initialize the JIT subsystem. Call once after ObjectMemory is loaded.
+    bool initialize(ObjectMemory& memory, Interpreter& interp);
+
+    // Attempt to execute a compiled method. Returns true if JIT code ran
+    // (the interpreter should inspect state.exitReason). Returns false if
+    // the method isn't compiled yet.
+    bool tryExecute(Oop compiledMethod, JITState& state);
+
+    // Called by the interpreter on each method activation. Increments the
+    // execution counter and triggers compilation at the threshold.
+    void noteMethodEntry(Oop compiledMethod);
+
+    // Access to subsystems
+    CodeZone&     codeZone()   { return codeZone_; }
+    MethodMap&    methodMap()  { return methodMap_; }
+    JITCompiler*  compiler()   { return compiler_; }
+
+    // Special Oop storage (stencils load from these addresses)
+    uint64_t nilOopBits;
+    uint64_t trueOopBits;
+    uint64_t falseOopBits;
+
+    // Update special Oops (call after GC moves objects)
+    void updateSpecialOops(ObjectMemory& memory);
+
+    bool isInitialized() const { return initialized_; }
+
+private:
+    CodeZone    codeZone_;
+    MethodMap   methodMap_;
+    JITCompiler* compiler_ = nullptr;
+    bool        initialized_ = false;
+
+    // Execution count tracking for compilation triggering
+    // Simple hash map: CompiledMethod Oop bits -> count
+    static constexpr size_t CountMapSize = 16384;
+    struct CountEntry {
+        uint64_t key;
+        uint32_t count;
+    };
+    CountEntry countMap_[CountMapSize];
+};
+
+// ===== RUNTIME HELPER FUNCTIONS =====
+//
+// These are called from JIT stencils via patched branch instructions.
+// They have the same signature as stencils: void(JITState*).
+
+// Send slow path: JIT code couldn't handle this send (no IC, megamorphic, etc.)
+// Sets up state for the interpreter to do a full lookup+activate.
+extern "C" void jit_rt_send(JITState* state);
+
+// Return to interpreter: JIT code hit a return bytecode.
+// The interpreter reads state->returnValue and unwinds.
+extern "C" void jit_rt_return(JITState* state);
+
+// Arithmetic overflow: SmallInteger operation overflowed or operands
+// weren't SmallIntegers. Fall back to interpreter for full send.
+extern "C" void jit_rt_arith_overflow(JITState* state);
+
+} // namespace jit
+} // namespace pharo
+
+#endif // PHARO_JIT_ENABLED
+#endif // PHARO_JIT_RUNTIME_HPP

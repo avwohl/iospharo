@@ -48,6 +48,8 @@ set(VM_SOURCES
     src/platform/MotionData.cpp
     src/vm/ObjCExceptionGuard.m
     src/vm/jit/CodeZone.cpp
+    src/vm/jit/JITCompiler.cpp
+    src/vm/jit/JITRuntime.cpp
 )
 
 # Mark Objective-C sources explicitly

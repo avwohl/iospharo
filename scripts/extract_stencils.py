@@ -1,0 +1,515 @@
+#!/usr/bin/env python3
+"""
+extract_stencils.py - Extract machine code stencils from compiled object file
+
+Copyright (c) 2026 Aaron Wohl. Licensed under the MIT License.
+
+This script:
+1. Compiles stencils.cpp to an object file with Clang -O2
+2. Parses the Mach-O object to extract each stencil function's:
+   - Machine code bytes
+   - Relocation entries (with hole names and types)
+3. Generates a C++ header (generated_stencils.hpp) with byte arrays
+   and relocation tables suitable for copy-and-patch JIT.
+
+Usage:
+    python3 scripts/extract_stencils.py
+
+Output:
+    src/vm/jit/generated_stencils.hpp
+
+Requires:
+    - Clang (for compiling stencils)
+    - Python 3.6+ (no external deps)
+"""
+
+import struct
+import subprocess
+import sys
+import os
+from pathlib import Path
+from dataclasses import dataclass, field
+from typing import List, Dict, Optional, Tuple
+
+# ===== CONFIGURATION =====
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+STENCIL_SRC = PROJECT_ROOT / "src" / "vm" / "jit" / "stencils" / "stencils.cpp"
+OUTPUT_HPP = PROJECT_ROOT / "src" / "vm" / "jit" / "generated_stencils.hpp"
+STENCIL_OBJ = Path("/tmp/jit_stencils.o")
+
+CLANG = "clang++"
+CFLAGS = [
+    "-c", "-O2", "-std=c++17",
+    "-fno-exceptions", "-fno-rtti",
+    "-fno-asynchronous-unwind-tables",
+    "-fno-stack-protector",
+    "-target", "arm64-apple-macos14",
+]
+
+# ===== MACH-O CONSTANTS =====
+
+MH_MAGIC_64 = 0xFEEDFACF
+MH_CIGAM_64 = 0xCFFAEDFE  # byte-swapped
+CPU_TYPE_ARM64 = 0x0100000C
+CPU_TYPE_X86_64 = 0x01000007
+
+# Load commands
+LC_SEGMENT_64 = 0x19
+LC_SYMTAB = 0x02
+LC_DYSYMTAB = 0x0B
+
+# Section types
+S_REGULAR = 0x00
+
+# N-list types
+N_EXT = 0x01
+N_UNDF = 0x00
+N_SECT = 0x0E
+
+# ARM64 relocation types (from mach-o/arm64/reloc.h)
+ARM64_RELOC_UNSIGNED = 0
+ARM64_RELOC_SUBTRACTOR = 1
+ARM64_RELOC_BRANCH26 = 2
+ARM64_RELOC_PAGE21 = 3
+ARM64_RELOC_PAGEOFF12 = 4
+ARM64_RELOC_GOT_LOAD_PAGE21 = 5
+ARM64_RELOC_GOT_LOAD_PAGEOFF12 = 6
+ARM64_RELOC_POINTER_TO_GOT = 7
+ARM64_RELOC_TLVP_LOAD_PAGE21 = 8
+ARM64_RELOC_TLVP_LOAD_PAGEOFF12 = 9
+ARM64_RELOC_ADDEND = 10
+
+# Our relocation type names (for the generated header)
+RELOC_TYPE_MAP = {
+    ARM64_RELOC_BRANCH26: "RelocType::ARM64_BRANCH26",
+    ARM64_RELOC_PAGE21: "RelocType::ARM64_PAGE21",
+    ARM64_RELOC_PAGEOFF12: "RelocType::ARM64_PAGEOFF12",
+    ARM64_RELOC_GOT_LOAD_PAGE21: "RelocType::ARM64_GOT_LOAD_PAGE21",
+    ARM64_RELOC_GOT_LOAD_PAGEOFF12: "RelocType::ARM64_GOT_LOAD_PAGEOFF12",
+}
+
+# Map hole symbol names to HoleKind enum values
+HOLE_KIND_MAP = {
+    "__HOLE_CONTINUE": "HoleKind::Continue",
+    "__HOLE_BRANCH_TARGET": "HoleKind::BranchTarget",
+    "__HOLE_OPERAND": "HoleKind::Operand",
+    "__HOLE_OPERAND2": "HoleKind::Operand2",
+    "__HOLE_RT_SEND": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_RETURN": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_ARITH_OVERFLOW": "HoleKind::RuntimeHelper",
+    "__HOLE_NIL_OOP": "HoleKind::RuntimeHelper",
+    "__HOLE_TRUE_OOP": "HoleKind::RuntimeHelper",
+    "__HOLE_FALSE_OOP": "HoleKind::RuntimeHelper",
+}
+
+# Finer-grained runtime helper IDs for distinguishing helper functions.
+# The JIT compiler needs to know WHICH helper to patch in.
+RUNTIME_HELPER_ID = {
+    "__HOLE_CONTINUE": 0,
+    "__HOLE_BRANCH_TARGET": 0,
+    "__HOLE_OPERAND": 0,
+    "__HOLE_OPERAND2": 0,
+    "__HOLE_RT_SEND": 1,
+    "__HOLE_RT_RETURN": 2,
+    "__HOLE_RT_ARITH_OVERFLOW": 3,
+    "__HOLE_NIL_OOP": 4,
+    "__HOLE_TRUE_OOP": 5,
+    "__HOLE_FALSE_OOP": 6,
+}
+
+
+# ===== DATA CLASSES =====
+
+@dataclass
+class Relocation:
+    offset: int           # Byte offset within stencil
+    reloc_type: int       # Mach-O relocation type
+    symbol: str           # Hole symbol name
+    addend: int = 0       # Addend from ARM64_RELOC_ADDEND
+
+@dataclass
+class StencilInfo:
+    name: str             # Function name (without leading _)
+    offset: int           # Offset in __text section
+    size: int             # Code size in bytes
+    code: bytes           # Raw machine code
+    relocs: List[Relocation] = field(default_factory=list)
+
+
+# ===== MACH-O PARSER =====
+
+class MachOParser:
+    """Minimal Mach-O 64-bit parser for extracting stencil code + relocations."""
+
+    def __init__(self, data: bytes):
+        self.data = data
+        self.symbols: List[dict] = []
+        self.sections: List[dict] = []
+        self.text_section: Optional[dict] = None
+        self.string_table: bytes = b""
+        self._parse()
+
+    def _parse(self):
+        magic = struct.unpack_from("<I", self.data, 0)[0]
+        if magic == MH_MAGIC_64:
+            self.endian = "<"
+        elif magic == MH_CIGAM_64:
+            self.endian = ">"
+        else:
+            raise ValueError(f"Not a Mach-O 64-bit file (magic: 0x{magic:08X})")
+
+        # Mach-O header: magic, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags, reserved
+        hdr = struct.unpack_from(f"{self.endian}IIIIIIII", self.data, 0)
+        ncmds = hdr[4]
+
+        offset = 32  # Size of mach_header_64
+        symtab_off = dysymtab_off = 0
+
+        for _ in range(ncmds):
+            cmd, cmdsize = struct.unpack_from(f"{self.endian}II", self.data, offset)
+
+            if cmd == LC_SEGMENT_64:
+                self._parse_segment(offset)
+            elif cmd == LC_SYMTAB:
+                self._parse_symtab(offset)
+
+            offset += cmdsize
+
+        # Find the __TEXT,__text section
+        for sec in self.sections:
+            if sec["segname"].rstrip("\0") == "__TEXT" and sec["sectname"].rstrip("\0") == "__text":
+                self.text_section = sec
+                break
+
+    def _parse_segment(self, offset: int):
+        # segment_command_64: cmd, cmdsize, segname(16), vmaddr, vmsize,
+        #                     fileoff, filesize, maxprot, initprot, nsects, flags
+        e = self.endian
+        segname = self.data[offset+8:offset+24].decode("ascii")
+        nsects = struct.unpack_from(f"{e}I", self.data, offset + 64)[0]
+
+        sec_offset = offset + 72  # Size of segment_command_64
+        for _ in range(nsects):
+            sec = self._parse_section(sec_offset)
+            self.sections.append(sec)
+            sec_offset += 80  # Size of section_64
+
+    def _parse_section(self, offset: int) -> dict:
+        e = self.endian
+        sectname = self.data[offset:offset+16].decode("ascii")
+        segname = self.data[offset+16:offset+32].decode("ascii")
+        addr, size, fileoff, align, reloff, nreloc = struct.unpack_from(
+            f"{e}QQIIII", self.data, offset + 32)
+        flags = struct.unpack_from(f"{e}I", self.data, offset + 64)[0]
+
+        return {
+            "sectname": sectname,
+            "segname": segname,
+            "addr": addr,
+            "size": size,
+            "fileoff": fileoff,
+            "align": align,
+            "reloff": reloff,
+            "nreloc": nreloc,
+            "flags": flags,
+        }
+
+    def _parse_symtab(self, offset: int):
+        e = self.endian
+        _, _, symoff, nsyms, stroff, strsize = struct.unpack_from(
+            f"{e}IIIIII", self.data, offset)
+
+        self.string_table = self.data[stroff:stroff + strsize]
+
+        for i in range(nsyms):
+            sym_offset = symoff + i * 16  # nlist_64 is 16 bytes
+            strx, type_byte, sect, desc, value = struct.unpack_from(
+                f"{e}IBBHQ", self.data, sym_offset)
+
+            name = self._get_string(strx)
+            self.symbols.append({
+                "name": name,
+                "type": type_byte,
+                "sect": sect,
+                "desc": desc,
+                "value": value,
+            })
+
+    def _get_string(self, offset: int) -> str:
+        end = self.string_table.index(b"\0", offset)
+        return self.string_table[offset:end].decode("ascii")
+
+    def get_text_code(self) -> bytes:
+        """Return the raw bytes of the __text section."""
+        sec = self.text_section
+        if not sec:
+            raise ValueError("No __text section found")
+        return self.data[sec["fileoff"]:sec["fileoff"] + sec["size"]]
+
+    def get_relocations(self) -> List[Tuple[int, int, bool, bool, int, str]]:
+        """
+        Parse relocations for the __text section.
+        Returns list of (offset, type, pcrel, extern, length, symbol_name).
+        """
+        sec = self.text_section
+        if not sec or sec["nreloc"] == 0:
+            return []
+
+        result = []
+        e = self.endian
+        pending_addend = 0
+
+        for i in range(sec["nreloc"]):
+            roff = sec["reloff"] + i * 8
+            r_word0, r_word1 = struct.unpack_from(f"{e}II", self.data, roff)
+
+            r_address = r_word0
+            r_symbolnum = r_word1 & 0x00FFFFFF
+            r_pcrel = bool((r_word1 >> 24) & 1)
+            r_length = (r_word1 >> 25) & 3
+            r_extern = bool((r_word1 >> 27) & 1)
+            r_type = (r_word1 >> 28) & 0xF
+
+            # Handle ARM64_RELOC_ADDEND: it sets an addend for the next reloc
+            if r_type == ARM64_RELOC_ADDEND:
+                pending_addend = r_address  # addend is in the address field
+                continue
+
+            sym_name = ""
+            if r_extern and r_symbolnum < len(self.symbols):
+                sym_name = self.symbols[r_symbolnum]["name"]
+
+            result.append({
+                "offset": r_address,
+                "type": r_type,
+                "pcrel": r_pcrel,
+                "extern": r_extern,
+                "length": r_length,
+                "symbol": sym_name,
+                "addend": pending_addend,
+            })
+            pending_addend = 0
+
+        return result
+
+
+# ===== STENCIL EXTRACTION =====
+
+def compile_stencils() -> Path:
+    """Compile stencils.cpp to an object file."""
+    cmd = [CLANG] + CFLAGS + ["-o", str(STENCIL_OBJ), str(STENCIL_SRC)]
+    print(f"  Compiling: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"ERROR: Compilation failed:\n{result.stderr}", file=sys.stderr)
+        sys.exit(1)
+    print(f"  Output: {STENCIL_OBJ} ({STENCIL_OBJ.stat().st_size} bytes)")
+    return STENCIL_OBJ
+
+
+def extract_stencils(obj_path: Path) -> List[StencilInfo]:
+    """Parse the object file and extract stencil info."""
+    data = obj_path.read_bytes()
+    parser = MachOParser(data)
+    text_code = parser.get_text_code()
+    relocs = parser.get_relocations()
+
+    # Find stencil functions (symbols starting with _stencil_)
+    stencil_syms = []
+    for sym in parser.symbols:
+        if sym["name"].startswith("_stencil_") and (sym["type"] & 0x0E) == N_SECT:
+            stencil_syms.append(sym)
+
+    # Sort by address
+    stencil_syms.sort(key=lambda s: s["value"])
+
+    # Calculate sizes (distance between consecutive symbols)
+    text_sec = parser.text_section
+    text_start = text_sec["addr"]
+    text_end = text_start + text_sec["size"]
+
+    stencils = []
+    for i, sym in enumerate(stencil_syms):
+        start = sym["value"]
+        if i + 1 < len(stencil_syms):
+            end = stencil_syms[i + 1]["value"]
+        else:
+            end = text_end
+
+        name = sym["name"].lstrip("_")  # Remove Mach-O leading underscore
+        file_start = start - text_start
+        size = end - start
+        code = text_code[file_start:file_start + size]
+
+        # Filter relocations for this stencil
+        stencil_relocs = []
+        for r in relocs:
+            if r["offset"] >= file_start and r["offset"] < file_start + size:
+                if r["symbol"] and r["symbol"] in HOLE_KIND_MAP:
+                    stencil_relocs.append(Relocation(
+                        offset=r["offset"] - file_start,
+                        reloc_type=r["type"],
+                        symbol=r["symbol"],
+                        addend=r["addend"],
+                    ))
+
+        stencils.append(StencilInfo(
+            name=name,
+            offset=file_start,
+            size=size,
+            code=code,
+            relocs=stencil_relocs,
+        ))
+
+    return stencils
+
+
+# ===== CODE GENERATION =====
+
+def format_code_bytes(code: bytes, indent: str = "    ") -> str:
+    """Format bytes as a C array initializer."""
+    lines = []
+    for i in range(0, len(code), 16):
+        chunk = code[i:i+16]
+        hex_vals = ", ".join(f"0x{b:02X}" for b in chunk)
+        lines.append(f"{indent}{hex_vals},")
+    return "\n".join(lines)
+
+
+def generate_header(stencils: List[StencilInfo]) -> str:
+    """Generate the C++ header file."""
+    lines = []
+    lines.append("""\
+/*
+ * generated_stencils.hpp - Auto-generated stencil machine code
+ *
+ * Generated by scripts/extract_stencils.py — DO NOT EDIT
+ *
+ * Contains ARM64 machine code stencils extracted from compiled C++ bytecode
+ * handlers. Each stencil is a byte array + relocation table used by the
+ * copy-and-patch JIT compiler.
+ */
+
+#ifndef PHARO_GENERATED_STENCILS_HPP
+#define PHARO_GENERATED_STENCILS_HPP
+
+#include "Stencil.hpp"
+
+#if PHARO_JIT_ENABLED
+
+namespace pharo {
+namespace jit {
+namespace generated {
+""")
+
+    # Emit each stencil's code and relocation data
+    for s in stencils:
+        lines.append(f"// ----- {s.name} ({s.size} bytes, {len(s.relocs)} relocs) -----")
+        lines.append(f"static const uint8_t {s.name}_code[] = {{")
+        lines.append(format_code_bytes(s.code))
+        lines.append("};")
+        lines.append("")
+
+        if s.relocs:
+            lines.append(f"static const Relocation {s.name}_relocs[] = {{")
+            for r in s.relocs:
+                rtype = RELOC_TYPE_MAP.get(r.reloc_type)
+                if rtype is None:
+                    print(f"  WARNING: Unknown reloc type {r.reloc_type} in {s.name} at offset {r.offset}")
+                    rtype = f"static_cast<RelocType>({r.reloc_type})"
+
+                hkind = HOLE_KIND_MAP.get(r.symbol, "HoleKind::Continue")
+
+                # For runtime helpers, encode the helper ID in the addend
+                addend = r.addend
+                if hkind == "HoleKind::RuntimeHelper":
+                    addend = RUNTIME_HELPER_ID.get(r.symbol, 0)
+
+                lines.append(f"    {{ {r.offset}, {rtype}, {hkind}, {addend} }},")
+            lines.append("};")
+        else:
+            lines.append(f"static const Relocation* {s.name}_relocs = nullptr;")
+        lines.append("")
+
+    # Emit the stencil table
+    lines.append("// ===== STENCIL TABLE =====")
+    lines.append("")
+    lines.append(f"static constexpr int NumStencils = {len(stencils)};")
+    lines.append("")
+
+    # Enum for stencil indices
+    lines.append("enum class StencilID : uint16_t {")
+    for i, s in enumerate(stencils):
+        lines.append(f"    {s.name} = {i},")
+    lines.append("};")
+    lines.append("")
+
+    # Stencil definition table
+    lines.append("static const StencilDef stencilTable[] = {")
+    for s in stencils:
+        nrelocs = len(s.relocs)
+        relocs_ptr = f"{s.name}_relocs" if nrelocs > 0 else "nullptr"
+        lines.append(
+            f'    {{ "{s.name}", {s.name}_code, {s.size}, '
+            f'{relocs_ptr}, {nrelocs}, 1 }},')
+    lines.append("};")
+    lines.append("")
+
+    # Helper to look up by name
+    lines.append("""// Look up a stencil by name (for debugging)
+static inline const StencilDef* findStencil(const char* name) {
+    for (int i = 0; i < NumStencils; i++) {
+        if (__builtin_strcmp(stencilTable[i].name, name) == 0)
+            return &stencilTable[i];
+    }
+    return nullptr;
+}""")
+
+    lines.append("")
+    lines.append("} // namespace generated")
+    lines.append("} // namespace jit")
+    lines.append("} // namespace pharo")
+    lines.append("")
+    lines.append("#endif // PHARO_JIT_ENABLED")
+    lines.append("#endif // PHARO_GENERATED_STENCILS_HPP")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
+# ===== MAIN =====
+
+def main():
+    print("=== Stencil Extraction ===")
+    print()
+
+    # Step 1: Compile
+    print("[1/3] Compiling stencils...")
+    obj_path = compile_stencils()
+    print()
+
+    # Step 2: Extract
+    print("[2/3] Extracting stencils from Mach-O...")
+    stencils = extract_stencils(obj_path)
+    print(f"  Found {len(stencils)} stencils:")
+    total_code = 0
+    total_relocs = 0
+    for s in stencils:
+        print(f"    {s.name:30s}  {s.size:4d} bytes  {len(s.relocs):2d} relocs")
+        total_code += s.size
+        total_relocs += len(s.relocs)
+    print(f"  Total: {total_code} bytes code, {total_relocs} relocations")
+    print()
+
+    # Step 3: Generate header
+    print("[3/3] Generating header...")
+    header = generate_header(stencils)
+    OUTPUT_HPP.write_text(header)
+    print(f"  Written: {OUTPUT_HPP} ({len(header)} bytes)")
+    print()
+    print("Done!")
+
+
+if __name__ == "__main__":
+    main()
