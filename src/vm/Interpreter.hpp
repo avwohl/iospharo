@@ -703,6 +703,18 @@ private:
     // Pending IC patch data (set during ExitSend when IC was empty)
     uint64_t* pendingICPatch_ = nullptr;
     int pendingICSendArgCount_ = 0;
+
+    // IC statistics
+    size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)
+    size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)
+    size_t jitICPatches_ = 0;     // Successful IC data patches
+    size_t jitICStale_ = 0;       // Stale IC invalidations
+public:
+    size_t jitICHits() const { return jitICHits_; }
+    size_t jitICMisses() const { return jitICMisses_; }
+    size_t jitICPatches() const { return jitICPatches_; }
+    size_t jitICStale() const { return jitICStale_; }
+private:
 #endif
 
     // ===== BYTECODE DISPATCH =====

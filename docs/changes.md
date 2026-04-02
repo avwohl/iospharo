@@ -2,6 +2,43 @@
 
 2026-04-02
 
+## Phase 6: Monomorphic Inline Caching (IC)
+
+Per-site inline caches for JIT send bytecodes. Each send site gets 16 bytes
+of IC data (classIndex + methodOop) stored in the code zone after the
+bcToCode table. On first miss, the interpreter patches the IC with the
+resolved method's class and Oop. On subsequent executions, if the receiver's
+classIndex matches the cached class, the stencil exits with ExitSendCached
+and the interpreter directly activates the cached method (skipping lookup).
+
+Implementation:
+- stencil_sendMono: replaces stencil_send for real sends (opcode >= 0x80).
+  Loads IC data pointer from literal pool via GOT mechanism (OPERAND2).
+  Checks receiver classIndex against cached class. IC hit: ExitSendCached.
+  IC miss: ExitSend with icDataPtr set for patching.
+- IC data allocation: computed during compilation. 16 bytes per send site
+  (8-byte aligned), stored after bcToCode table in code zone. Zero-initialized.
+- OPERAND packing: (argCount << 16) | (bcOffset & 0xFFFF) encodes both the
+  deopt bytecode offset and argument count in a single 32-bit operand.
+- ExitSendCached handler: validates cachedTarget is a CompiledMethod before
+  activating. Stale ICs (wrong classIndex after GC) are invalidated and the
+  send falls back to interpreter lookup.
+- IC patching: patchJITICAfterSend() called from sendSelector() stores the
+  receiver's classIndex and resolved method Oop into the IC data.
+- JITState extensions: cachedTarget (offset 88), icDataPtr (offset 96),
+  sendArgCount (offset 104), ExitSendCached (exit reason 7).
+
+Bug fixes during IC development:
+- Fixed uninitialized icDataPtr in JITState causing SIGSEGV (stencil_send
+  doesn't set icDataPtr; stack-allocated JITState had garbage)
+- Fixed state.ip calculation for tryJITResumeInCaller: must use bytecodeStart
+  (not current IP) because stencils use ip + bcOffset from method start
+- Added method_ validity guard in tryJITResumeInCaller loop
+
+Stats at startup: 4K IC hits / 14M IC checks, 16 sites patched.
+Low hit rate expected during startup (polymorphic sends dominate).
+Steady-state workloads (Morphic loop, collections) will benefit more.
+
 ## Phase 5b: On-Stack Re-Entry After Send Deopt
 
 When JIT code deopts on a send and the interpreter handles the send, the

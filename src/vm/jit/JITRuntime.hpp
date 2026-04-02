@@ -69,6 +69,7 @@ private:
     CodeZone    codeZone_;
     MethodMap   methodMap_;
     JITCompiler* compiler_ = nullptr;
+    Interpreter* interp_ = nullptr;
     bool        initialized_ = false;
 
     // Execution count tracking for compilation triggering

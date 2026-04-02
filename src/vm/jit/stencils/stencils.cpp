@@ -742,12 +742,12 @@ extern "C" void stencil_sendMono(JITState* s) {
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         uint64_t classIdx = obj->classIndex();
         if (classIdx == icData[0] && icData[0] != 0) {
-            // IC HIT — for now, still deopt (Phase 2 will use ExitSendCached)
+            // IC HIT — skip method lookup, interpreter activates cached method
             s->cachedTarget.bits = icData[1];
             s->icDataPtr = icData;
             s->sendArgCount = nArgs;
             s->ip = s->ip + bcOffset;
-            s->exitReason = EXIT_SEND;  // TODO: change to EXIT_SEND_CACHED in Phase 2
+            s->exitReason = EXIT_SEND_CACHED;
             _HOLE_RT_SEND(s);
             return;
         }

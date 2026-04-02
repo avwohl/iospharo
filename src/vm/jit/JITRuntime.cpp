@@ -70,6 +70,9 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // Set up special Oop values
     updateSpecialOops(memory);
 
+    // Store interpreter reference for stats access
+    interp_ = &interp;
+
     // Create the compiler
     compiler_ = new JITCompiler(codeZone_, methodMap_, memory, interp);
 
@@ -110,11 +113,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
     // Periodic stats (every ~64K entries)
     if ((totalEntries & 0xFFFF) == 0) {
+        size_t icHits = interp_ ? interp_->jitICHits() : 0;
+        size_t icMisses = interp_ ? interp_->jitICMisses() : 0;
+        size_t icPatches = interp_ ? interp_->jitICPatches() : 0;
+        size_t icStale = interp_ ? interp_->jitICStale() : 0;
+        size_t icTotal = icHits + icMisses;
+        int hitPct = icTotal > 0 ? static_cast<int>(icHits * 100 / icTotal) : 0;
         fprintf(stderr, "[JIT] Stats: %zu sends, %zu compiled, %zu failed, "
-                "%zu/%zu KB code zone\n",
+                "%zu/%zu KB code | IC: %zu/%zu (%d%% hit, %zu patched, %zu stale)\n",
                 totalEntries, compiler_->methodsCompiled(),
                 compiler_->compilationsFailed(),
-                codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024);
+                codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024,
+                icHits, icTotal, hitPct, icPatches, icStale);
     }
 
     uint64_t key = compiledMethod.rawBits();

@@ -9073,6 +9073,9 @@ void Interpreter::tryJITResumeInCaller() {
     // bytecode after the send and the return value on the stack. If the
     // caller has JIT code, resume execution in JIT from this bytecode.
     while (running_ && jitRuntime_.isInitialized()) {
+        // Validate method_ before using it
+        if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) return;
 
@@ -9086,9 +9089,17 @@ void Interpreter::tryJITResumeInCaller() {
         state.tempBase = framePointer_ + 1;
         state.memory = &memory_;
         state.interp = this;
-        state.ip = instructionPointer_;
+        // IP must be set to bytecodeStart (not current IP) because stencils
+        // use ip + bcOffset where bcOffset is from method start
+        {
+            Oop hdr = methObj->slots()[0];
+            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+            state.ip = methObj->bytes() + (1 + numLits) * 8;
+        }
         state.method = method_;
         state.argCount = argCount_;
+        state.icDataPtr = nullptr;
+        state.sendArgCount = 0;
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             return;  // Not JIT-compiled or no re-entry at this offset
@@ -9109,6 +9120,7 @@ void Interpreter::tryJITResumeInCaller() {
             // JIT hit a send. Let interpreter handle it.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
+            jitICMisses_++;
             // Patch IC on miss
             if (state.icDataPtr && state.icDataPtr[0] == 0) {
                 pendingICPatch_ = state.icDataPtr;
@@ -9118,6 +9130,18 @@ void Interpreter::tryJITResumeInCaller() {
 
         case jit::ExitSendCached: {
             // IC hit during resume — directly activate cached method
+            // Validate cachedTarget is a CompiledMethod before activating
+            Oop cached = state.cachedTarget;
+            if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+                cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                // Stale IC — fall through to normal send
+                jitICStale_++;
+                instructionPointer_ = state.ip;
+                stackPointer_ = state.sp;
+                pendingICPatch_ = nullptr;
+                return;
+            }
+            jitICHits_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             uint8_t sendOp = *instructionPointer_;
@@ -9125,7 +9149,7 @@ void Interpreter::tryJITResumeInCaller() {
             else if (sendOp == 0xEA) instructionPointer_ += 2;
             else instructionPointer_ += 1;
             receiver_ = stackPointer_[-(state.sendArgCount + 1)];
-            activateMethod(state.cachedTarget, state.sendArgCount);
+            activateMethod(cached, state.sendArgCount);
             return;  // dispatch loop runs the cached method
         }
 
@@ -9152,12 +9176,11 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass) {
     // Store classIndex (from receiver's object header, 22-bit class table index)
     // and resolved method's raw Oop bits
     if (receiverClass.isObject() && receiverClass.rawBits() > 0x10000) {
-        // The classIndex is what the stencil checks — extract from the receiver's header.
-        // We get it from the receiver object: receiver_ is still the send's receiver.
         if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
             uint32_t classIdx = receiver_.asObjectPtr()->classIndex();
             icData[0] = classIdx;
             icData[1] = resolvedMethod.rawBits();
+            jitICPatches_++;
         }
     }
 }
@@ -9185,11 +9208,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.memory = &memory_;
     state.interp = this;
 
-    // Bytecode IP for deoptimization
-    state.ip = instructionPointer_;
-    // JITState::method is a pharo::Oop (same type as the interpreter's Oop)
+    // IP = bytecodeStart (stencils use ip + bcOffset where bcOffset is from method start)
+    state.ip = instructionPointer_;  // Already at bytecodeStart from activateMethod
     state.method = method;
     state.argCount = argCount;
+    state.icDataPtr = nullptr;
+    state.sendArgCount = 0;
 
     // Save entry SP so we can restore it on ExitSend (arithmetic overflow).
     // The method will be re-executed from scratch by the interpreter.
@@ -9229,45 +9253,46 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return true;
 
     case jit::ExitSend:
-        // JIT reached a send it can't handle. state.ip points to the
-        // send bytecode, state.sp has receiver+args already pushed.
-        // Let the interpreter continue from the send bytecode.
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp;
-        // Patch IC data if this came from a sendMono miss (icDataPtr set, IC empty)
+        jitICMisses_++;
         if (state.icDataPtr && state.icDataPtr[0] == 0) {
-            // IC will be patched after the interpreter resolves the send.
-            // Store the IC pointer for patchJITICAfterSend() to find.
             pendingICPatch_ = state.icDataPtr;
             pendingICSendArgCount_ = state.sendArgCount;
         }
-        return false;  // Interpreter dispatch loop picks up at the send
+        return false;
 
     case jit::ExitSendCached: {
         // IC hit: cached method is in state.cachedTarget. Skip method lookup.
-        // Advance IP past the send bytecode, then activate the cached method.
+        Oop cached = state.cachedTarget;
+        if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+            cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+            // Stale IC — invalidate and fall back to normal send
+            jitICStale_++;
+            if (state.icDataPtr) {
+                state.icDataPtr[0] = 0;
+                state.icDataPtr[1] = 0;
+            }
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            return false;
+        }
+        jitICHits_++;
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp;
-        // Advance IP past the send bytecode (interpreter needs IP past the send
-        // when the cached method's frame is saved, so returnValue restores
-        // the correct resume point).
         {
             uint8_t sendOp = *instructionPointer_;
             if (sendOp >= 0x80 && sendOp <= 0xAF) {
-                instructionPointer_ += 1;  // 1-byte sends
+                instructionPointer_ += 1;
             } else if (sendOp == 0xEA) {
-                instructionPointer_ += 2;  // ExtSend: 2 bytes
+                instructionPointer_ += 2;
             } else {
-                instructionPointer_ += 1;  // fallback
+                instructionPointer_ += 1;
             }
         }
-
-        // Set receiver_ from the stack (below the args)
         int nArgs = state.sendArgCount;
         receiver_ = stackPointer_[-(nArgs + 1)];
-
-        // Directly activate the cached method (bypasses method lookup)
-        activateMethod(state.cachedTarget, nArgs);
+        activateMethod(cached, nArgs);
         return true;  // Frame pushed, dispatch loop executes cached method
     }
 
