@@ -13,6 +13,7 @@ build-sim/
 build-vm/
 build-cpp/
 build-test/
+build-nojit/
 build-xcframework/
 third-party-build/
 

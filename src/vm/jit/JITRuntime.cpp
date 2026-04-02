@@ -220,12 +220,40 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
     if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
 
+    // Validate that codeOffset is within the machine code region, not the
+    // literal pool / bcToCode table / IC data appended after it.
+    // bcToCodeTable[numBytecodes] is the sentinel = end of machine code.
+    uint32_t machineCodeEnd = jm->bcToCodeTable()[jm->numBytecodes];
+    if (codeOffset >= machineCodeEnd) {
+        fprintf(stderr, "[JIT] BUG: resume codeOffset %u >= machineCodeEnd %u (bc %u)\n",
+                codeOffset, machineCodeEnd, bcOffset);
+        return false;
+    }
+
+    // Validate state.sp is a reasonable pointer (not a SmallInteger or low address)
+    if (reinterpret_cast<uint64_t>(state.sp) < 0x10000) {
+        fprintf(stderr, "[JIT] BUG: resume sp=%p looks invalid\n", (void*)state.sp);
+        return false;
+    }
+
     // Touch for LRU tracking
     codeZone_.touch(jm);
 
     // Set up JIT state
     state.jitMethod = jm;
     state.exitReason = ExitNone;
+
+    // Validate IC data area is within code zone
+    if (jm->numICEntries > 0) {
+        uint32_t icSize = jm->numICEntries * 72;
+        uint8_t* icStart = jm->codeStart() + jm->codeSize - icSize;
+        if (icStart < codeZone_.rawStart() || icStart + icSize > codeZone_.rawStart() + codeZone_.totalBytes()) {
+            fprintf(stderr, "[JIT] BUG: IC data %p outside code zone [%p, %p)\n",
+                    (void*)icStart, (void*)codeZone_.rawStart(),
+                    (void*)(codeZone_.rawStart() + codeZone_.totalBytes()));
+            return false;
+        }
+    }
 
     // Toggle W^X to executable
     makeExecutable(jm->codeStart(), jm->codeSize);
