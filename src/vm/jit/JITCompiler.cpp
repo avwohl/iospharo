@@ -988,11 +988,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     //      on non-SmallInteger inputs, which is handled by restoring SP.
     jitMethod->hasSends = false;
     jitMethod->hasHeapWrites = false;
+    jitMethod->hasRecvFieldAccess = false;
     for (auto& d : decoded) {
         auto sid = static_cast<StencilID>(d.stencilIdx);
         switch (sid) {
-        // Pure reads/stack ops — always safe
+        // Receiver field access (read) — safe only for object receivers
         case StencilID::stencil_pushRecvVar:
+            jitMethod->hasRecvFieldAccess = true;
+            break;
+
+        // Pure reads/stack ops — always safe
         case StencilID::stencil_pushTemp:
         case StencilID::stencil_pushLitConst:
         case StencilID::stencil_pushLitVar:
@@ -1042,6 +1047,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // Heap writes — need write barrier (when gen GC is added)
         case StencilID::stencil_popStoreRecvVar:
         case StencilID::stencil_storeRecvVar:
+            jitMethod->hasHeapWrites = true;
+            jitMethod->hasRecvFieldAccess = true;
+            break;
         case StencilID::stencil_popStoreLitVar:
         case StencilID::stencil_storeLitVar:
             jitMethod->hasHeapWrites = true;

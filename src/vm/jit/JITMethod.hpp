@@ -114,6 +114,7 @@ struct JITMethod {
     uint8_t     tempCount;        // Cached from method header
     bool        hasSends;         // Contains actual send stencils (need deopt, can't execute)
     bool        hasHeapWrites;    // Writes to heap objects (need write barrier, can't execute)
+    bool        hasRecvFieldAccess; // Reads/writes receiver instance variables
 
     // --- Statistics ---
     uint32_t  executionCount;     // Incremented on each entry (for hot method detection)

@@ -196,6 +196,23 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     state.jitMethod = jm;
     state.exitReason = ExitNone;
 
+    // Validate JITState fields
+    if (reinterpret_cast<uint64_t>(state.sp) < 0x10000 ||
+        reinterpret_cast<uint64_t>(state.ip) < 0x10000 ||
+        reinterpret_cast<uint64_t>(state.tempBase) < 0x10000 ||
+        reinterpret_cast<uint64_t>(state.literals) < 0x10000) {
+        fprintf(stderr, "[JIT] BUG: invalid JITState in tryExecute: sp=%p ip=%p tempBase=%p literals=%p\n",
+                (void*)state.sp, (void*)state.ip,
+                (void*)state.tempBase, (void*)state.literals);
+        return false;
+    }
+
+    // Guard: immediate receivers can't have instance variables.
+    // Methods with pushRecvVar/storeRecvVar dereference receiver as an object.
+    if ((state.receiver.isSmallInteger() || state.receiver.isCharacter()) && jm->hasRecvFieldAccess) {
+        return false;  // Let interpreter handle it
+    }
+
     // Toggle W^X to executable for the call, then back to writable.
     // On Apple Silicon this is just a register write (no syscall).
     makeExecutable(jm->codeStart(), jm->codeSize);
@@ -253,6 +270,11 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
                     (void*)(codeZone_.rawStart() + codeZone_.totalBytes()));
             return false;
         }
+    }
+
+    // Guard: immediate receivers can't have instance variables.
+    if ((state.receiver.isSmallInteger() || state.receiver.isCharacter()) && jm->hasRecvFieldAccess) {
+        return false;  // Let interpreter handle it
     }
 
     // Toggle W^X to executable
