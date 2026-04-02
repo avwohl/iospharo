@@ -2,6 +2,16 @@
 
 2026-04-02
 
+## Polymorphic Inline Caching (4 entries per site)
+
+Upgraded from monomorphic IC (1 class/method pair per send site) to
+polymorphic IC (4 pairs). stencil_sendPoly unrolls 4 IC entry checks.
+On miss, interpreter fills the next empty slot (deduplicates, stops at 4).
+Stale IC invalidation clears all entries.
+
+Result: 8181 IC hits (2x monomorphic), 19 sites patched, 15% early hit rate.
+stencil_sendPoly: 196 bytes (was 124 for sendMono).
+
 ## Eliminate JIT Compilation Bail-Outs
 
 All 7 compilation bail-outs were caused by truncated multi-byte bytecodes
