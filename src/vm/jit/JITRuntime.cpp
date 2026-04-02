@@ -98,6 +98,18 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 
+    static size_t totalEntries = 0;
+    totalEntries++;
+
+    // Periodic stats (every 100K method entries)
+    if ((totalEntries & 0xFFFFF) == 0) {  // Every ~1M entries
+        fprintf(stderr, "[JIT] Stats: %zu entries, %zu compiled, %zu failed, "
+                "%zu/%zu KB code zone\n",
+                totalEntries, compiler_->methodsCompiled(),
+                compiler_->compilationsFailed(),
+                codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024);
+    }
+
     uint64_t key = compiledMethod.rawBits();
     size_t idx = (key >> 3) % CountMapSize;
 

@@ -315,13 +315,18 @@ bool JITCompiler::patchStencilInstance(
 
         case HoleKind::BranchTarget: {
             // Patch branch to the target bytecode's stencil
-            if (bc.branchTarget < 0 || bc.branchTarget >= (int)bcToCodeOffset.size()) {
+            if (bc.branchTarget < 0) {
                 fprintf(stderr, "[JIT] Invalid branch target %d\n", bc.branchTarget);
                 return false;
             }
-            uint32_t targetOff = bcToCodeOffset[bc.branchTarget];
-            uint64_t target = reinterpret_cast<uint64_t>(codeBase + targetOff);
-            if (!patchARM64(stencilCode, reloc, target)) return false;
+            // Clamp to end-of-method if branch targets past the last bytecode
+            int target = bc.branchTarget;
+            if (target >= (int)bcToCodeOffset.size()) {
+                target = (int)bcToCodeOffset.size() - 1;
+            }
+            uint32_t targetOff = bcToCodeOffset[target];
+            uint64_t targetAddr = reinterpret_cast<uint64_t>(codeBase + targetOff);
+            if (!patchARM64(stencilCode, reloc, targetAddr)) return false;
             break;
         }
 
@@ -462,6 +467,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
     for (auto& bc : decoded) {
         bcToCodeOffset[bc.bcOffset] = codeSize;
+        // Fill intermediate bytes of multi-byte instructions with the same offset
+        for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
+            bcToCodeOffset[bc.bcOffset + b] = codeSize;
+        }
         const StencilDef& stencil = stencilTable[bc.stencilIdx];
         codeSize += stencil.codeSize;
         // Count literal pool slots needed (one per GOT reloc pair)
