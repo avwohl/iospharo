@@ -813,6 +813,223 @@ extern "C" void stencil_notIdenticalTo(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// ----- SUPERINSTRUCTION STENCILS -----
+//
+// Fused comparison + conditional jump. Eliminates:
+// - Boolean Oop creation (no true/false push)
+// - Stack round-trip (no push then pop of boolean)
+// - Stencil boundary overhead between comparison and jump
+//
+// OPERAND = bytecode offset (for deopt on non-SmallInteger)
+// CONTINUE = fall-through (condition NOT taken)
+// BRANCH_TARGET = jump target (condition taken)
+
+// lessThan + jumpFalse: jump if NOT (a < b), i.e. a >= b
+// Pattern: `i < n ifTrue: [body]` → jump over body if false
+extern "C" void stencil_ltJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) < asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// lessThan + jumpTrue: jump if a < b
+// Pattern: `i < n ifFalse: [body]` → jump over body if true
+extern "C" void stencil_ltJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) < asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// greaterThan + jumpFalse: jump if NOT (a > b), i.e. a <= b
+extern "C" void stencil_gtJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) > asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// greaterThan + jumpTrue: jump if a > b
+extern "C" void stencil_gtJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) > asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// lessEqual + jumpFalse: jump if NOT (a <= b), i.e. a > b
+extern "C" void stencil_leJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) <= asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// lessEqual + jumpTrue: jump if a <= b
+extern "C" void stencil_leJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) <= asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// greaterEqual + jumpFalse: jump if NOT (a >= b), i.e. a < b
+extern "C" void stencil_geJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) >= asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// greaterEqual + jumpTrue: jump if a >= b
+extern "C" void stencil_geJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) >= asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// equal + jumpFalse: jump if NOT (a = b)
+extern "C" void stencil_eqJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) == asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// equal + jumpTrue: jump if a = b
+extern "C" void stencil_eqJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) == asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// notEqual + jumpFalse: jump if NOT (a ~= b), i.e. a = b
+extern "C" void stencil_neqJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) != asSmallInteger(b)) {
+            _HOLE_CONTINUE(s);
+        } else {
+            _HOLE_BRANCH_TARGET(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// notEqual + jumpTrue: jump if a ~= b
+extern "C" void stencil_neqJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        s->sp -= 2;
+        if (asSmallInteger(a) != asSmallInteger(b)) {
+            _HOLE_BRANCH_TARGET(s);
+        } else {
+            _HOLE_CONTINUE(s);
+        }
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
 // ----- NOP STENCIL -----
 
 // Used for bytecodes we skip or as padding

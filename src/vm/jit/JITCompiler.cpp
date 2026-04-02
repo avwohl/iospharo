@@ -748,6 +748,51 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         return nullptr;
     }
 
+    // Peephole: fuse comparison + conditional jump into superinstructions.
+    // This eliminates the boolean Oop creation/stack-roundtrip between them.
+    for (size_t pi = 0; pi + 1 < decoded.size(); pi++) {
+        auto& cmp = decoded[pi];
+        auto& jmp = decoded[pi + 1];
+        auto cmpSid = static_cast<StencilID>(cmp.stencilIdx);
+        auto jmpSid = static_cast<StencilID>(jmp.stencilIdx);
+
+        // Only fuse arithmetic comparisons followed by jumpTrue/jumpFalse
+        if (jmpSid != StencilID::stencil_jumpFalse &&
+            jmpSid != StencilID::stencil_jumpTrue) continue;
+        bool jumpOnFalse = (jmpSid == StencilID::stencil_jumpFalse);
+
+        StencilID fused = StencilID::stencil_nop;
+        switch (cmpSid) {
+        case StencilID::stencil_lessThanSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_ltJumpFalse : StencilID::stencil_ltJumpTrue;
+            break;
+        case StencilID::stencil_greaterThanSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_gtJumpFalse : StencilID::stencil_gtJumpTrue;
+            break;
+        case StencilID::stencil_lessEqualSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_leJumpFalse : StencilID::stencil_leJumpTrue;
+            break;
+        case StencilID::stencil_greaterEqualSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_geJumpFalse : StencilID::stencil_geJumpTrue;
+            break;
+        case StencilID::stencil_equalSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_eqJumpFalse : StencilID::stencil_eqJumpTrue;
+            break;
+        case StencilID::stencil_notEqualSmallInt:
+            fused = jumpOnFalse ? StencilID::stencil_neqJumpFalse : StencilID::stencil_neqJumpTrue;
+            break;
+        default: continue;
+        }
+
+        // Replace comparison with fused stencil, keeping its bcOffset and operand (deopt offset)
+        cmp.stencilIdx = static_cast<uint16_t>(fused);
+        cmp.branchTarget = jmp.branchTarget;  // Take the jump's branch target
+        // Replace jump with nop (its bytecode offset is preserved for the bcToCode map)
+        jmp.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+        jmp.branchTarget = -1;
+        pi++;  // Skip the consumed jump
+    }
+
     // First pass: compute total code size and build bytecode->code offset map
     // We also need a literal pool for GOT-style patching
     uint32_t codeSize = 0;
