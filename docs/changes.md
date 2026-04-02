@@ -2,6 +2,28 @@
 
 2026-04-02
 
+## Phase 4: JIT Execution Working
+
+Fixed two critical ARM64 relocation patching bugs that prevented JIT-compiled
+code from running:
+
+1. PAGEOFF12 scaling: LDR opcode detection used wrong bitmask (0x3B0/0x390),
+   so 64-bit load offsets weren't divided by 8. Literal pool reads went to
+   8x the intended address. Fixed with correct check (0xEC/0xE4).
+
+2. RuntimeHelper GOT indirection: literal pool stored Oop VALUES (e.g., 0 for
+   nil) instead of ADDRESSES (pointer to nilOopBits). Stencils do double
+   dereference (pool→addr→value), so storing values caused null pointer deref.
+   Now stores addresses, which also keeps values in sync after GC.
+
+Also: W^X management simplified (zone stays writable, toggle to executable only
+during JIT calls), hasSends gating (only execute pure methods without sends/
+arithmetic/stores), better crash diagnostics (ARM64 register dump in signal
+handler).
+
+Result: 2500+ methods compile, pure methods (push/return only) execute
+correctly through 19M+ interpreter sends with zero crashes.
+
 ## Phase 1: JIT Infrastructure
 
 New directory `src/vm/jit/` with foundational JIT subsystem:
