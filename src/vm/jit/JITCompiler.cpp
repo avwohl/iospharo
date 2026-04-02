@@ -262,10 +262,12 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             continue;
         } else {
             // Extended bytecodes (0xE0+) — switch on exact opcode
+            // If a multi-byte bytecode is truncated (runs past end of bytecodes),
+            // it's dead code after a return — stop decoding rather than bail out.
             switch (op) {
 
             case SistaV1::ExtendA: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 extA = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
@@ -274,7 +276,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;  // Don't reset ext — carries to next bytecode
             }
             case SistaV1::ExtendB: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 uint8_t extByte = bytecodes[i + 1];
                 extB = (extByte >= 128)
                     ? (extB << 8) | extByte | static_cast<int>(0xFFFFFF00u)
@@ -286,32 +288,32 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtPushRecvVar: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 break;
             }
             case SistaV1::ExtPushLitVar: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 break;
             }
             case SistaV1::ExtPushLitConst: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 break;
             }
             case SistaV1::ExtPushTemp: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bytecodes[i + 1];
                 bc.bcLength = 2;
                 break;
             }
             case SistaV1::PushArray: {
                 // Allocates array — deopt to interpreter
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -321,7 +323,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::PushInteger: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 int value = (extB << 8) | bytecodes[i + 1];
                 bc.operand = static_cast<int>((static_cast<int64_t>(value) << 3) | 1);
                 bc.bcLength = 2;
@@ -332,7 +334,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::PushCharacter: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 int codePoint = bytecodes[i + 1] + (extB << 8);
                 bc.operand = static_cast<int>((static_cast<int64_t>(codePoint) << 3) | 3);
                 bc.bcLength = 2;
@@ -343,7 +345,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtSend: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 uint8_t desc = bytecodes[i + 1];
                 bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
                 bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
@@ -352,7 +354,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             }
             case SistaV1::ExtSuperSend: {
                 // Super send — deopt to interpreter (handles super lookup)
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -363,7 +365,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             }
             case SistaV1::InlinedPrimitive: {
                 // Sista inlined primitive — deopt to interpreter
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -373,7 +375,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtJump: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 int offset = bytecodes[i + 1] + (extB << 8);
                 bc.branchTarget = static_cast<int>(i) + 2 + offset;
                 bc.bcLength = 2;
@@ -381,7 +383,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::ExtJumpTrue: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 int offset = bytecodes[i + 1] + (extB << 8);
                 bc.branchTarget = static_cast<int>(i) + 2 + offset;
                 bc.bcLength = 2;
@@ -389,7 +391,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::ExtJumpFalse: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 int offset = bytecodes[i + 1] + (extB << 8);
                 bc.branchTarget = static_cast<int>(i) + 2 + offset;
                 bc.bcLength = 2;
@@ -397,14 +399,14 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::ExtPopStoreRecv: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.opcode = SistaV1::PopStoreRecvBase;
                 break;
             }
             case SistaV1::ExtPopStoreLitVar: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreLitVar);
@@ -414,14 +416,14 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtPopStoreTemp: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.opcode = SistaV1::PopStoreTempBase;
                 break;
             }
             case SistaV1::ExtStoreRecv: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeRecvVar);
@@ -431,7 +433,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtStoreLitVar: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = (extA << 8) | bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeLitVar);
@@ -441,7 +443,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::ExtStoreTemp: {
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bytecodes[i + 1];
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeTemp);
@@ -452,7 +454,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             }
             case SistaV1::CallPrimitive: {
                 // 3 bytes — skip, already handled by activateMethod
-                if (i + 2 >= length) return false;
+                if (i + 2 >= length) goto done;
                 bc.bcLength = 3;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
                 decoded.push_back(bc);
@@ -463,7 +465,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             case SistaV1::PushFullBlock:
             case SistaV1::PushClosure: {
                 // Block/closure creation — deopt to interpreter (3-byte bytecodes)
-                if (i + 2 >= length) return false;
+                if (i + 2 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 3;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -476,7 +478,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             case SistaV1::StoreRemoteTemp:
             case SistaV1::PopStoreRemoteTemp: {
                 // Remote temp (outer context access) — deopt to interpreter (3-byte)
-                if (i + 2 >= length) return false;
+                if (i + 2 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 3;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -487,7 +489,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             }
             default: {
                 // Unknown extended bytecode — deopt to interpreter (2-byte)
-                if (i + 1 >= length) return false;
+                if (i + 1 >= length) goto done;
                 bc.operand = bc.bcOffset;
                 bc.bcLength = 2;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -541,6 +543,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         extB = 0;
     }
 
+done:
     return true;
 }
 
@@ -724,15 +727,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     if (!decodeBytecodes(bytecodes, bcLen, decoded, failedOpcode)) {
         compilationsFailed_++;
         if (failedOpcode) bailoutCounts_[failedOpcode]++;
-        // Periodic bail-out stats (every 100 failures)
-        if (compilationsFailed_ % 100 == 0) {
-            fprintf(stderr, "[JIT] Bail-out stats (%zu failures, %zu compiled):\n",
-                    compilationsFailed_, methodsCompiled_);
-            for (int b = 0; b < 256; b++) {
-                if (bailoutCounts_[b] > 0)
-                    fprintf(stderr, "  0x%02X: %u\n", b, bailoutCounts_[b]);
-            }
-        }
+        fprintf(stderr, "[JIT] Bail-out #%zu: opcode 0x%02X bcLen=%zu\n",
+                compilationsFailed_, failedOpcode, bcLen);
         return nullptr;
     }
 
