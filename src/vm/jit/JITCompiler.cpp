@@ -236,7 +236,9 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             bc.operand = op & 0x0F;                            // arithmetic selector
         } else if (op >= 0x70 && op <= 0x7F) {
             bc.operand = op - 0x70;                            // send special 16-31
-            bc.operand2 = 1;
+            // nArgs per selector: at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
+            static const uint8_t specialNArgs[16] = {1,2,0,0,1,0,1,0,1,0,1,1,0,1,0,0};
+            bc.operand2 = specialNArgs[bc.operand];
         } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
             bc.operand = op & 0x0F;
             bc.operand2 = 0;                                   // send 0 args
