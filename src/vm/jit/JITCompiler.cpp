@@ -756,7 +756,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         auto cmpSid = static_cast<StencilID>(cmp.stencilIdx);
         auto jmpSid = static_cast<StencilID>(jmp.stencilIdx);
 
-        // Only fuse arithmetic comparisons followed by jumpTrue/jumpFalse
+        // Fuse comparison (arithmetic or identity) followed by jumpTrue/jumpFalse
         if (jmpSid != StencilID::stencil_jumpFalse &&
             jmpSid != StencilID::stencil_jumpTrue) continue;
         bool jumpOnFalse = (jmpSid == StencilID::stencil_jumpFalse);
@@ -780,6 +780,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
             break;
         case StencilID::stencil_notEqualSmallInt:
             fused = jumpOnFalse ? StencilID::stencil_neqJumpFalse : StencilID::stencil_neqJumpTrue;
+            break;
+        case StencilID::stencil_identicalTo:
+            fused = jumpOnFalse ? StencilID::stencil_identJumpFalse : StencilID::stencil_identJumpTrue;
+            break;
+        case StencilID::stencil_notIdenticalTo:
+            fused = jumpOnFalse ? StencilID::stencil_notIdentJumpFalse : StencilID::stencil_notIdentJumpTrue;
             break;
         default: continue;
         }

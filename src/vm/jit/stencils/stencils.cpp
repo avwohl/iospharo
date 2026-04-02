@@ -1030,6 +1030,63 @@ extern "C" void stencil_neqJumpTrue(JITState* s) {
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
+// ----- IDENTITY + JUMP SUPERINSTRUCTIONS -----
+//
+// Fused identity comparison + conditional jump. No type guard needed —
+// identity comparison works on all types. No deopt path.
+
+// == + jumpFalse: jump if NOT identical (a ~~ b)
+// Pattern: `x == nil ifTrue: [body]` → jump over body if not identical
+extern "C" void stencil_identJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    s->sp -= 2;
+    if (a.bits == b.bits) {
+        _HOLE_CONTINUE(s);
+    } else {
+        _HOLE_BRANCH_TARGET(s);
+    }
+}
+
+// == + jumpTrue: jump if identical (a == b)
+// Pattern: `x == nil ifFalse: [body]` → jump over body if identical
+extern "C" void stencil_identJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    s->sp -= 2;
+    if (a.bits == b.bits) {
+        _HOLE_BRANCH_TARGET(s);
+    } else {
+        _HOLE_CONTINUE(s);
+    }
+}
+
+// ~~ + jumpFalse: jump if identical (a == b)
+// Pattern: `x ~~ nil ifTrue: [body]` → jump over body if identical
+extern "C" void stencil_notIdentJumpFalse(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    s->sp -= 2;
+    if (a.bits != b.bits) {
+        _HOLE_CONTINUE(s);
+    } else {
+        _HOLE_BRANCH_TARGET(s);
+    }
+}
+
+// ~~ + jumpTrue: jump if not identical (a ~~ b)
+// Pattern: `x ~~ nil ifFalse: [body]` → jump over body if not identical
+extern "C" void stencil_notIdentJumpTrue(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+    s->sp -= 2;
+    if (a.bits != b.bits) {
+        _HOLE_BRANCH_TARGET(s);
+    } else {
+        _HOLE_CONTINUE(s);
+    }
+}
+
 // ----- NOP STENCIL -----
 
 // Used for bytecodes we skip or as padding

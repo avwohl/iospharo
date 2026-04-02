@@ -888,6 +888,50 @@ static const Relocation stencil_neqJumpTrue_relocs[] = {
     { 32, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
+// ----- stencil_identJumpFalse (28 bytes, 2 relocs) -----
+static const uint8_t stencil_identJumpFalse_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x29, 0xFF, 0xA9, 0x08, 0x00, 0x00, 0xF9, 0x3F, 0x01, 0x0A, 0xEB,
+    0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_identJumpFalse_relocs[] = {
+    { 24, RelocType::ARM64_BRANCH26, HoleKind::BranchTarget, 0 },
+    { 20, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+};
+
+// ----- stencil_identJumpTrue (28 bytes, 2 relocs) -----
+static const uint8_t stencil_identJumpTrue_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x29, 0xFF, 0xA9, 0x08, 0x00, 0x00, 0xF9, 0x3F, 0x01, 0x0A, 0xEB,
+    0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_identJumpTrue_relocs[] = {
+    { 24, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+    { 20, RelocType::ARM64_BRANCH26, HoleKind::BranchTarget, 0 },
+};
+
+// ----- stencil_notIdentJumpFalse (28 bytes, 2 relocs) -----
+static const uint8_t stencil_notIdentJumpFalse_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x29, 0xFF, 0xA9, 0x08, 0x00, 0x00, 0xF9, 0x3F, 0x01, 0x0A, 0xEB,
+    0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_notIdentJumpFalse_relocs[] = {
+    { 24, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+    { 20, RelocType::ARM64_BRANCH26, HoleKind::BranchTarget, 0 },
+};
+
+// ----- stencil_notIdentJumpTrue (28 bytes, 2 relocs) -----
+static const uint8_t stencil_notIdentJumpTrue_code[] = {
+    0x08, 0x00, 0x40, 0xF9, 0x09, 0x29, 0xFF, 0xA9, 0x08, 0x00, 0x00, 0xF9, 0x3F, 0x01, 0x0A, 0xEB,
+    0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x00, 0x00, 0x00, 0x14,
+};
+
+static const Relocation stencil_notIdentJumpTrue_relocs[] = {
+    { 24, RelocType::ARM64_BRANCH26, HoleKind::BranchTarget, 0 },
+    { 20, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+};
+
 // ----- stencil_nop (4 bytes, 1 relocs) -----
 static const uint8_t stencil_nop_code[] = {
     0x00, 0x00, 0x00, 0x14,
@@ -899,7 +943,7 @@ static const Relocation stencil_nop_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 58;
+static constexpr int NumStencils = 62;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -959,7 +1003,11 @@ enum class StencilID : uint16_t {
     stencil_eqJumpTrue = 54,
     stencil_neqJumpFalse = 55,
     stencil_neqJumpTrue = 56,
-    stencil_nop = 57,
+    stencil_identJumpFalse = 57,
+    stencil_identJumpTrue = 58,
+    stencil_notIdentJumpFalse = 59,
+    stencil_notIdentJumpTrue = 60,
+    stencil_nop = 61,
 };
 
 static const StencilDef stencilTable[] = {
@@ -1020,6 +1068,10 @@ static const StencilDef stencilTable[] = {
     { "stencil_eqJumpTrue", stencil_eqJumpTrue_code, 76, stencil_eqJumpTrue_relocs, 5, 1 },
     { "stencil_neqJumpFalse", stencil_neqJumpFalse_code, 76, stencil_neqJumpFalse_relocs, 5, 1 },
     { "stencil_neqJumpTrue", stencil_neqJumpTrue_code, 76, stencil_neqJumpTrue_relocs, 5, 1 },
+    { "stencil_identJumpFalse", stencil_identJumpFalse_code, 28, stencil_identJumpFalse_relocs, 2, 1 },
+    { "stencil_identJumpTrue", stencil_identJumpTrue_code, 28, stencil_identJumpTrue_relocs, 2, 1 },
+    { "stencil_notIdentJumpFalse", stencil_notIdentJumpFalse_code, 28, stencil_notIdentJumpFalse_relocs, 2, 1 },
+    { "stencil_notIdentJumpTrue", stencil_notIdentJumpTrue_code, 28, stencil_notIdentJumpTrue_relocs, 2, 1 },
     { "stencil_nop", stencil_nop_code, 4, stencil_nop_relocs, 1, 1 },
 };
 
