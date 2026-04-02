@@ -695,7 +695,7 @@ private:
 
     // Patch the inline cache after the interpreter resolves a send.
     // Called from sendSelector() after method lookup succeeds.
-    void patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass);
+    void patchJITICAfterSend(Oop resolvedMethod, Oop receiver);
 
     // Initialize JIT on first use (lazy init after image is loaded)
     void initializeJIT();

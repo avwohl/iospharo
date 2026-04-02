@@ -4569,7 +4569,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             return;
         }
 #if PHARO_JIT_ENABLED
-        patchJITICAfterSend(cached->method, rcvrClass);
+        patchJITICAfterSend(cached->method, rcvr);
 #endif
         activateMethod(cached->method, argCount);
         return;
@@ -4614,7 +4614,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
 #if PHARO_JIT_ENABLED
-    patchJITICAfterSend(method, rcvrClass);
+    patchJITICAfterSend(method, rcvr);
 #endif
     activateMethod(method, argCount);
 
@@ -9171,7 +9171,7 @@ void Interpreter::tryJITResumeInCaller() {
     }
 }
 
-void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass) {
+void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
     if (!pendingICPatch_) return;
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
@@ -9179,9 +9179,9 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiverClass) {
     // Compute lookup key matching stencil_sendPoly:
     // objects → classIndex, immediates → (tag & 7) | 0x80000000
     uint64_t lookupKey;
-    uint64_t tag = receiver_.rawBits() & 0x7;
-    if (tag == 0 && receiver_.rawBits() >= 0x10000) {
-        lookupKey = receiver_.asObjectPtr()->classIndex();
+    uint64_t tag = receiver.rawBits() & 0x7;
+    if (tag == 0 && receiver.rawBits() >= 0x10000) {
+        lookupKey = receiver.asObjectPtr()->classIndex();
     } else if (tag != 0) {
         lookupKey = tag | 0x80000000ULL;
     } else {
