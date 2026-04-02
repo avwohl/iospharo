@@ -103,6 +103,19 @@ static constexpr size_t MethodAlignment = 64;
 // Maximum entries in a closed polymorphic inline cache (PIC)
 static constexpr size_t MaxPICEntries = 6;
 
+// ===== MEGAMORPHIC METHOD CACHE =====
+//
+// A simple direct-mapped cache probed by JIT stencils when the 4-entry
+// PIC misses. Keyed on (selectorBits, classIndex).
+
+static constexpr size_t MegaCacheSize = 4096;  // Must be power of 2
+
+struct MegaCacheEntry {
+    uint64_t selectorBits;
+    uint64_t classIndex;     // For objects: class index (22-bit); for immediates: tag|0x80000000
+    uint64_t methodBits;     // Oop bits of the resolved CompiledMethod
+};
+
 // ===== PAGE SIZE =====
 
 // We use 16 KB as the assumed page size. On ARM64 macOS/iOS this is the

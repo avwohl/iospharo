@@ -84,6 +84,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.nilOopAddr = &nilOopBits;
     helpers.trueOopAddr = &trueOopBits;
     helpers.falseOopAddr = &falseOopBits;
+    helpers.megaCacheAddr = megaCache_;
     compiler_->setHelpers(helpers);
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be

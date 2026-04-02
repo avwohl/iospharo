@@ -4524,6 +4524,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 #if PHARO_JIT_ENABLED
         // Count ALL sends for JIT compilation, not just activateMethod calls
         jitRuntime_.noteMethodEntry(cached->method);
+
+        // Populate megamorphic cache for JIT stencil probes
+        {
+            uint64_t tag = rcvr.rawBits() & 0x7;
+            uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
+                ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
+                : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+            if (megaKey != 0) {
+                jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey, cached->method.rawBits());
+            }
+        }
 #endif
 
         // Getter fast path: pushRecvVar N + returnTop
@@ -4592,6 +4603,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 #if PHARO_JIT_ENABLED
     // Also count uncached sends for JIT
     jitRuntime_.noteMethodEntry(method);
+
+    // Populate megamorphic cache for JIT stencil probes
+    {
+        uint64_t tag = rcvr.rawBits() & 0x7;
+        uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
+            ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
+            : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+        if (megaKey != 0) {
+            jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey, method.rawBits());
+        }
+    }
 #endif
 
     // Cache the method

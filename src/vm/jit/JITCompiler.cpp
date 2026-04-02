@@ -524,6 +524,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                      bc.opcode == SistaV1::ExtSend)) {
                     // Real send: upgrade to polymorphic IC stencil
                     int argCount = bc.operand2;
+                    bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendPoly);
                     bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
                     // operand2Ptr will be set after code zone allocation
@@ -656,6 +657,7 @@ bool JITCompiler::patchStencilInstance(
             case 4: helperAddr = helpers_.nilOopAddr; break;
             case 5: helperAddr = helpers_.trueOopAddr; break;
             case 6: helperAddr = helpers_.falseOopAddr; break;
+            case 7: helperAddr = helpers_.megaCacheAddr; break;
             default:
                 fprintf(stderr, "[JIT] Unknown runtime helper ID %d\n", helperId);
                 return false;
@@ -840,9 +842,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     }
 
     // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
-    // 64 bytes: 4 entries x [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
+    // 72 bytes: 4 entries x [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
+    // + 8 bytes for selectorBits (used by mega cache probe)
     static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
-    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 16;
+    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 16 + 8;
     uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     uint32_t totalSize = icDataOffset + icDataSize;
@@ -877,20 +880,49 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
 
     // Set up IC data pointers for send sites. The IC data lives at the end
-    // of the allocation. Each send site gets 16 bytes initialized to zero
-    // (empty IC — will be patched on first miss).
+    // of the allocation. Each send site gets 72 bytes initialized to zero
+    // (empty IC — will be patched on first miss). The last 8 bytes of each
+    // block store selectorBits for the megamorphic cache probe.
     uint8_t* codeBase_pre = jitMethod->codeStart();
     {
+        // Zero IC data area first
+        std::memset(codeBase_pre + icDataOffset, 0, icDataSize);
+
+        // Get special selectors array for 0x70-0x7F sends
+        Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+        ObjectHeader* ssArray = (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000)
+            ? specialSelectors.asObjectPtr() : nullptr;
+
         uint16_t sendIdx = 0;
         for (auto& bc : decoded) {
             if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendPoly) {
-                bc.operand2Ptr = reinterpret_cast<uint64_t>(
-                    codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE);
+                uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
+                bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
+
+                // Store selectorBits at offset 64 (icData[8]) for mega cache probe
+                uint64_t selectorBits = 0;
+                if (bc.opcode >= 0x70 && bc.opcode <= 0x7F) {
+                    // Special selector: from special objects array
+                    int selectorIndex = (bc.opcode - 0x70) + 16;
+                    if (ssArray) {
+                        size_t selectorSlot = selectorIndex * 2;
+                        if (selectorSlot < ssArray->slotCount()) {
+                            selectorBits = ssArray->slotAt(selectorSlot).rawBits();
+                        }
+                    }
+                } else {
+                    // Literal selector: from method's literal frame
+                    int litIndex = bc.branchTarget;
+                    if (litIndex >= 0 && litIndex < numLiterals) {
+                        selectorBits = methObj->slotAt(1 + litIndex).rawBits();
+                    }
+                }
+                uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
+                icSlots[8] = selectorBits;
+
                 sendIdx++;
             }
         }
-        // Zero IC data area
-        std::memset(codeBase_pre + icDataOffset, 0, icDataSize);
     }
 
     // Classify method executability based on stencil content.

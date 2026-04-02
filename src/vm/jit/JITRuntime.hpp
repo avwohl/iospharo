@@ -65,7 +65,19 @@ public:
 
     bool isInitialized() const { return initialized_; }
 
+    // Megamorphic method cache — probed by stencils after PIC miss
+    MegaCacheEntry* megaCache() { return megaCache_; }
+
+    // Add entry to mega cache (called by interpreter after method lookup)
+    void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex, uint64_t methodBits) {
+        size_t h = static_cast<size_t>(selectorBits ^ classIndex) & (MegaCacheSize - 1);
+        megaCache_[h].selectorBits = selectorBits;
+        megaCache_[h].classIndex = classIndex;
+        megaCache_[h].methodBits = methodBits;
+    }
+
 private:
+    MegaCacheEntry megaCache_[MegaCacheSize] = {};
     CodeZone    codeZone_;
     MethodMap   methodMap_;
     JITCompiler* compiler_ = nullptr;

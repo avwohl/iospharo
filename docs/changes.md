@@ -2,6 +2,20 @@
 
 2026-04-02
 
+## Megamorphic Method Cache
+
+Added a direct-mapped 4096-entry mega cache probed by stencil_sendPoly after
+all 4 PIC entries miss. The cache is keyed on (selectorBits, classIndex) and
+stores the resolved CompiledMethod bits. The interpreter populates the cache
+on every successful method lookup (both cache-hit and full-lookup paths).
+
+The stencil reads the selector Oop bits from IC data (stored by the compiler
+at compile time from the method's literal frame or special selectors array)
+and probes the mega cache using (selectorBits ^ lookupKey) & 4095.
+
+Result: IC hit rate 25% → 74% in steady-state Morphic render loop. The mega
+cache eliminates ~2/3 of interpreter fallbacks for polymorphic send sites.
+
 ## Comparison+Jump Superinstructions
 
 Peephole pass fuses comparison bytecodes (< > <= >= = ~=) with following

@@ -77,6 +77,7 @@ public:
         void* nilOopAddr;       // Address of a memory location holding nil Oop
         void* trueOopAddr;      // Address of a memory location holding true Oop
         void* falseOopAddr;     // Address of a memory location holding false Oop
+        void* megaCacheAddr;    // Address of mega cache entries array
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }

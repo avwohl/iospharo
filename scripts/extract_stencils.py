@@ -101,6 +101,7 @@ HOLE_KIND_MAP = {
     "__HOLE_NIL_OOP": "HoleKind::RuntimeHelper",
     "__HOLE_TRUE_OOP": "HoleKind::RuntimeHelper",
     "__HOLE_FALSE_OOP": "HoleKind::RuntimeHelper",
+    "__HOLE_MEGA_CACHE": "HoleKind::RuntimeHelper",
 }
 
 # Finer-grained runtime helper IDs for distinguishing helper functions.
@@ -116,6 +117,7 @@ RUNTIME_HELPER_ID = {
     "__HOLE_NIL_OOP": 4,
     "__HOLE_TRUE_OOP": 5,
     "__HOLE_FALSE_OOP": 6,
+    "__HOLE_MEGA_CACHE": 7,
 }
 
 
