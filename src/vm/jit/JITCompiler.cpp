@@ -110,6 +110,9 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
     decoded.clear();
     decoded.reserve(length);  // Upper bound: one DecodedBC per byte
 
+    int extA = 0;  // Extension A accumulator (Sista V1 prefix 0xE0)
+    int extB = 0;  // Extension B accumulator (Sista V1 prefix 0xE1)
+
     size_t i = 0;
     while (i < length) {
         DecodedBC bc;
@@ -158,15 +161,125 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             bc.operand = op & 0x07;  // popStoreRecvVar index
         } else if (op >= 0xD0 && op <= 0xD7) {
             bc.operand = op - 0xD0;  // popStoreTemp index
+        } else if (op == 0xD8) {
+            // Pop (handled by selectStencil)
+        } else if (op == 0xE0) {
+            // extA prefix: accumulate into extension A value
+            // E0 consumes 2 bytes total (opcode + extension byte)
+            if (i + 1 >= length) return false;
+            uint8_t extByte = bytecodes[i + 1];
+            extA = (extA << 8) | extByte;
+            bc.bcLength = 2;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            continue;  // Don't reset extA — it carries to the next bytecode
+        } else if (op == 0xE1) {
+            // extB prefix: signed extension
+            if (i + 1 >= length) return false;
+            uint8_t extByte = bytecodes[i + 1];
+            if (extByte >= 128)
+                extB = (extB << 8) | extByte | static_cast<int>(0xFFFFFF00u);
+            else
+                extB = (extB << 8) | extByte;
+            bc.bcLength = 2;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            continue;
+        } else if (op == 0xE2) {
+            // Extended push receiver variable
+            if (i + 1 >= length) return false;
+            bc.operand = (extA << 8) | bytecodes[i + 1];
+            bc.bcLength = 2;
+        } else if (op == 0xE3) {
+            // Extended push literal variable
+            if (i + 1 >= length) return false;
+            bc.operand = (extA << 8) | bytecodes[i + 1];
+            bc.bcLength = 2;
+        } else if (op == 0xE4) {
+            // Extended push literal constant
+            if (i + 1 >= length) return false;
+            bc.operand = (extA << 8) | bytecodes[i + 1];
+            bc.bcLength = 2;
+        } else if (op == 0xE5) {
+            // Extended push temp
+            if (i + 1 >= length) return false;
+            bc.operand = bytecodes[i + 1];
+            bc.bcLength = 2;
+        } else if (op == 0xE8) {
+            // Push integer (signed, extB extends)
+            if (i + 1 >= length) return false;
+            bc.bcLength = 2;
+            // Bail out: pushInteger requires a stencil that creates SmallIntegers
+            // from arbitrary values, which we don't have yet. Fall back to send/nop.
+            return false;
+        } else if (op == 0xEA) {
+            // Extended send: selector = (extA<<5 | byte>>3), args = (extB<<3 | byte&7)
+            if (i + 1 >= length) return false;
+            uint8_t desc = bytecodes[i + 1];
+            bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
+            bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
+            bc.bcLength = 2;
+        } else if (op == 0xEB) {
+            // Super send — bail, we don't have a super send stencil
+            return false;
+        } else if (op == 0xEF) {
+            // Extended pop store
+            if (i + 1 >= length) return false;
+            uint8_t desc = bytecodes[i + 1];
+            int kind = (desc >> 5) & 0x07;
+            int index = ((extA << 5) | (desc & 0x1F));
+            bc.operand = index;
+            bc.bcLength = 2;
+            if (kind == 0) {
+                // Store into receiver variable
+                bc.opcode = 0xC8;  // Pretend it's popStoreRecvVar
+            } else if (kind == 1) {
+                // Store into temp
+                bc.opcode = 0xD0;  // Pretend it's popStoreTemp
+            } else {
+                return false;  // Other store kinds not supported
+            }
+        } else if (op == 0xF0 || op == 0xF1 || op == 0xF2) {
+            // Extended jumps (3 bytes: opcode + 2 byte offset)
+            if (i + 2 >= length) return false;
+            uint8_t b1 = bytecodes[i + 1];
+            uint8_t b2 = bytecodes[i + 2];
+            int offset = (extB << 16) | (b1 << 8) | b2;
+            bc.branchTarget = static_cast<int>(i) + 3 + offset;
+            bc.bcLength = 3;
+            if (op == 0xF0) bc.opcode = 0xB0;       // unconditional jump
+            else if (op == 0xF1) bc.opcode = 0xB8;   // jump true
+            else bc.opcode = 0xC0;                    // jump false
+        } else if (op == 0xF5) {
+            // Store temp (after primitive): just skip
+            if (i + 1 >= length) return false;
+            bc.bcLength = 2;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
+        } else if (op == 0xF8) {
+            // callPrimitive (3 bytes) — skip, already handled by activateMethod
+            if (i + 2 >= length) return false;
+            bc.bcLength = 3;
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
         } else if (op >= 0xE0) {
-            // Extended bytecodes: for now, bail out of compilation
-            // (these need 2-3 byte decoding)
+            // Other unhandled extended bytecodes — bail
             return false;
         }
 
-        bc.stencilIdx = selectStencil(op, bc.operand);
+        bc.stencilIdx = selectStencil(bc.opcode, bc.operand);
         decoded.push_back(bc);
         i += bc.bcLength;
+        extA = 0;
+        extB = 0;
     }
 
     return true;

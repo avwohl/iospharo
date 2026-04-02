@@ -5057,6 +5057,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // std::cerr << std::hex << (int)methodBytes[bytecodeStart + i] << " ";
     }
     // std::cerr << std::dec; // DEBUG
+
+#if PHARO_JIT_ENABLED
+    // Try JIT execution. If it handles the method, it pops the frame
+    // and pushes the return value — the dispatch loop continues with
+    // the caller's next bytecode.
+    if (tryJITActivation(method, argCount)) {
+        return;  // JIT handled it
+    }
+    // Otherwise fall through to interpreter execution via the dispatch loop
+#endif
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
@@ -9002,5 +9012,86 @@ void Interpreter::logCurrentMethod(FILE* out) {
 // this section from the header via a separate impl file pattern.
 // Actually, since the template must be in the header for the compiler to see it,
 // we implement it there. See Interpreter.hpp.
+
+// ===== JIT INTEGRATION =====
+
+#if PHARO_JIT_ENABLED
+
+void Interpreter::initializeJIT() {
+    if (jitInitialized_) return;
+    jitInitialized_ = true;
+
+    if (!jitRuntime_.initialize(memory_, *this)) {
+        fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
+        return;
+    }
+}
+
+bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    if (!jitInitialized_) {
+        initializeJIT();
+    }
+    if (!jitRuntime_.isInitialized()) return false;
+
+    // Count this method entry (may trigger compilation)
+    jitRuntime_.noteMethodEntry(method);
+
+    // Try to execute compiled code
+    jit::JITState state;
+    state.sp = stackPointer_;
+    state.receiver = receiver_;
+
+    // Set up literals pointer: slot 1 of CompiledMethod
+    // (slot 0 is the method header)
+    ObjectHeader* methObj = method.asObjectPtr();
+    state.literals = methObj->slots() + 1;
+
+    // Temp base: arguments start after receiver in the frame
+    // framePointer_ + 1 points to the first arg/temp slot
+    state.tempBase = framePointer_ + 1;
+
+    state.memory = &memory_;
+    state.interp = this;
+
+    // Bytecode IP for deoptimization
+    state.ip = instructionPointer_;
+    // JITState::method is a pharo::Oop (same type as the interpreter's Oop)
+    state.method = method;
+    state.argCount = argCount;
+
+    if (!jitRuntime_.tryExecute(method, state)) {
+        return false;  // Not compiled yet
+    }
+
+    // JIT code ran — handle exit reason
+    stackPointer_ = state.sp;
+
+    switch (state.exitReason) {
+    case jit::ExitReturn:
+        // The compiled code wants to return a value
+        // Pop the frame we pushed in activateMethod() and push the return value
+        popFrame();
+        push(state.returnValue);
+        return true;
+
+    case jit::ExitSend:
+        // JIT couldn't handle this send — restore IP and fall through
+        // to interpreter execution. The stack is set up for the send.
+        instructionPointer_ = state.ip;
+        return false;  // Let interpreter handle it
+
+    case jit::ExitPrimFail:
+    case jit::ExitDeopt:
+        // Deoptimize: restore IP and let interpreter continue
+        instructionPointer_ = state.ip;
+        return false;
+
+    default:
+        // ExitNone or unknown: shouldn't happen
+        return false;
+    }
+}
+
+#endif // PHARO_JIT_ENABLED
 
 } // namespace pharo

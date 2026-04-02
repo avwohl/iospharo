@@ -61,6 +61,9 @@
 #include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
 #include "WorldRenderer.hpp"
+#if PHARO_JIT_ENABLED
+#include "jit/JITRuntime.hpp"
+#endif
 #include <array>
 #include <atomic>
 #include <csetjmp>
@@ -672,6 +675,19 @@ private:
             entry.returnsSelf = false;
         }
     }
+
+    // ===== JIT COMPILER =====
+#if PHARO_JIT_ENABLED
+    jit::JITRuntime jitRuntime_;
+    bool jitInitialized_ = false;
+
+    // Try to execute via JIT. Returns true if JIT handled the method
+    // (caller should NOT proceed with interpreter execution).
+    bool tryJITActivation(Oop method, int argCount);
+
+    // Initialize JIT on first use (lazy init after image is loaded)
+    void initializeJIT();
+#endif
 
     // ===== BYTECODE DISPATCH =====
 
