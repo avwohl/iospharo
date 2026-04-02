@@ -18,6 +18,67 @@ namespace jit {
 
 using namespace generated;
 
+// Sista V1 bytecode opcodes (see docs/SistaV1-Bytecode-Spec.md)
+namespace SistaV1 {
+    // 1-byte ranges
+    constexpr uint8_t PushRecvVarBase   = 0x00; // 0x00-0x0F
+    constexpr uint8_t PushLitVarBase    = 0x10; // 0x10-0x1F
+    constexpr uint8_t PushLitConstBase  = 0x20; // 0x20-0x3F
+    constexpr uint8_t PushTempBase      = 0x40; // 0x40-0x4B
+    constexpr uint8_t PushReceiver      = 0x4C;
+    constexpr uint8_t PushTrue          = 0x4D;
+    constexpr uint8_t PushFalse         = 0x4E;
+    constexpr uint8_t PushNil           = 0x4F;
+    constexpr uint8_t PushZero          = 0x50;
+    constexpr uint8_t PushOne           = 0x51;
+    constexpr uint8_t Dup               = 0x53;
+    constexpr uint8_t ReturnReceiver    = 0x58;
+    constexpr uint8_t ReturnTrue        = 0x59;
+    constexpr uint8_t ReturnFalse       = 0x5A;
+    constexpr uint8_t ReturnNil         = 0x5B;
+    constexpr uint8_t ReturnTop         = 0x5C;
+    constexpr uint8_t ArithBase         = 0x60; // 0x60-0x6F
+    constexpr uint8_t Send0Base         = 0x80; // 0x80-0x8F
+    constexpr uint8_t Send1Base         = 0x90; // 0x90-0x9F
+    constexpr uint8_t Send2Base         = 0xA0; // 0xA0-0xAF
+    constexpr uint8_t ShortJumpBase     = 0xB0; // 0xB0-0xB7
+    constexpr uint8_t ShortJumpTrueBase = 0xB8; // 0xB8-0xBF
+    constexpr uint8_t ShortJumpFalseBase= 0xC0; // 0xC0-0xC7
+    constexpr uint8_t PopStoreRecvBase  = 0xC8; // 0xC8-0xCF
+    constexpr uint8_t PopStoreTempBase  = 0xD0; // 0xD0-0xD7
+    constexpr uint8_t Pop               = 0xD8;
+    // 2-byte extended bytecodes
+    constexpr uint8_t ExtendA           = 0xE0;
+    constexpr uint8_t ExtendB           = 0xE1;
+    constexpr uint8_t ExtPushRecvVar    = 0xE2;
+    constexpr uint8_t ExtPushLitVar     = 0xE3;
+    constexpr uint8_t ExtPushLitConst   = 0xE4;
+    constexpr uint8_t ExtPushTemp       = 0xE5;
+    constexpr uint8_t PushArray         = 0xE7;
+    constexpr uint8_t PushInteger       = 0xE8;
+    constexpr uint8_t PushCharacter     = 0xE9;
+    constexpr uint8_t ExtSend           = 0xEA;
+    constexpr uint8_t ExtSuperSend      = 0xEB;
+    constexpr uint8_t InlinedPrimitive  = 0xEC;
+    constexpr uint8_t ExtJump           = 0xED;
+    constexpr uint8_t ExtJumpTrue       = 0xEE;
+    constexpr uint8_t ExtJumpFalse      = 0xEF;
+    constexpr uint8_t ExtPopStoreRecv   = 0xF0;
+    constexpr uint8_t ExtPopStoreLitVar = 0xF1;
+    constexpr uint8_t ExtPopStoreTemp   = 0xF2;
+    constexpr uint8_t ExtStoreRecv      = 0xF3;
+    constexpr uint8_t ExtStoreLitVar    = 0xF4;
+    constexpr uint8_t ExtStoreTemp      = 0xF5;
+    // 3-byte bytecodes
+    constexpr uint8_t CallPrimitive     = 0xF8;
+    constexpr uint8_t PushFullBlock     = 0xF9;
+    constexpr uint8_t PushClosure       = 0xFA;
+    constexpr uint8_t PushRemoteTemp    = 0xFB;
+    constexpr uint8_t StoreRemoteTemp   = 0xFC;
+    constexpr uint8_t PopStoreRemoteTemp= 0xFD;
+}
+
+
 JITCompiler::JITCompiler(CodeZone& zone, MethodMap& methodMap,
                          ObjectMemory& memory, Interpreter& interp)
     : zone_(zone), methodMap_(methodMap), memory_(memory), interp_(interp)
@@ -28,38 +89,34 @@ JITCompiler::JITCompiler(CodeZone& zone, MethodMap& methodMap,
 // ===== BYTECODE DECODING =====
 
 uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
-    // Map Sista V1 bytecodes to stencils
+    // Map Sista V1 bytecodes to stencils.
+    // Range bytecodes are handled with if-chains (compiler optimizes to range checks).
+    // Individual bytecodes use a switch.
     if (opcode <= 0x0F) return static_cast<uint16_t>(StencilID::stencil_pushRecvVar);
     if (opcode <= 0x1F) return static_cast<uint16_t>(StencilID::stencil_pushLitVar);
     if (opcode <= 0x3F) return static_cast<uint16_t>(StencilID::stencil_pushLitConst);
     if (opcode <= 0x4B) return static_cast<uint16_t>(StencilID::stencil_pushTemp);
 
     switch (opcode) {
-    case 0x4C: return static_cast<uint16_t>(StencilID::stencil_pushReceiver);
-    case 0x4D: return static_cast<uint16_t>(StencilID::stencil_pushTrue);
-    case 0x4E: return static_cast<uint16_t>(StencilID::stencil_pushFalse);
-    case 0x4F: return static_cast<uint16_t>(StencilID::stencil_pushNil);
-    case 0x50: return static_cast<uint16_t>(StencilID::stencil_pushZero);
-    case 0x51: return static_cast<uint16_t>(StencilID::stencil_pushOne);
-    case 0x53: return static_cast<uint16_t>(StencilID::stencil_dup);
-
-    // Returns
-    case 0x58: return static_cast<uint16_t>(StencilID::stencil_returnReceiver);
-    case 0x59: return static_cast<uint16_t>(StencilID::stencil_returnTrue);
-    case 0x5A: return static_cast<uint16_t>(StencilID::stencil_returnFalse);
-    case 0x5B: return static_cast<uint16_t>(StencilID::stencil_returnNil);
-    case 0x5C: return static_cast<uint16_t>(StencilID::stencil_returnTop);
-
-    // Pop
-    case 0xD8: return static_cast<uint16_t>(StencilID::stencil_pop);
-
+    case SistaV1::PushReceiver:  return static_cast<uint16_t>(StencilID::stencil_pushReceiver);
+    case SistaV1::PushTrue:      return static_cast<uint16_t>(StencilID::stencil_pushTrue);
+    case SistaV1::PushFalse:     return static_cast<uint16_t>(StencilID::stencil_pushFalse);
+    case SistaV1::PushNil:       return static_cast<uint16_t>(StencilID::stencil_pushNil);
+    case SistaV1::PushZero:      return static_cast<uint16_t>(StencilID::stencil_pushZero);
+    case SistaV1::PushOne:       return static_cast<uint16_t>(StencilID::stencil_pushOne);
+    case SistaV1::Dup:           return static_cast<uint16_t>(StencilID::stencil_dup);
+    case SistaV1::ReturnReceiver:return static_cast<uint16_t>(StencilID::stencil_returnReceiver);
+    case SistaV1::ReturnTrue:    return static_cast<uint16_t>(StencilID::stencil_returnTrue);
+    case SistaV1::ReturnFalse:   return static_cast<uint16_t>(StencilID::stencil_returnFalse);
+    case SistaV1::ReturnNil:     return static_cast<uint16_t>(StencilID::stencil_returnNil);
+    case SistaV1::ReturnTop:     return static_cast<uint16_t>(StencilID::stencil_returnTop);
+    case SistaV1::Pop:           return static_cast<uint16_t>(StencilID::stencil_pop);
     default: break;
     }
 
-    // Arithmetic (0x60-0x6F)
-    if (opcode >= 0x60 && opcode <= 0x6F) {
-        int which = opcode & 0x0F;
-        switch (which) {
+    // Arithmetic (0x60-0x6F): fast-path SmallInteger ops
+    if (opcode >= SistaV1::ArithBase && opcode <= 0x6F) {
+        switch (opcode & 0x0F) {
         case 0:  return static_cast<uint16_t>(StencilID::stencil_addSmallInt);
         case 1:  return static_cast<uint16_t>(StencilID::stencil_subSmallInt);
         case 2:  return static_cast<uint16_t>(StencilID::stencil_lessThanSmallInt);
@@ -67,46 +124,40 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
         case 6:  return static_cast<uint16_t>(StencilID::stencil_equalSmallInt);
         case 7:  return static_cast<uint16_t>(StencilID::stencil_notEqualSmallInt);
         case 8:  return static_cast<uint16_t>(StencilID::stencil_mulSmallInt);
-        default: return static_cast<uint16_t>(StencilID::stencil_send);  // fallback to send
+        default: return static_cast<uint16_t>(StencilID::stencil_send);
         }
     }
 
-    // Sends (0x80-0xAF)
-    if (opcode >= 0x80 && opcode <= 0xAF) {
+    // Send special selectors 16-31 (0x70-0x7F)
+    if (opcode >= 0x70 && opcode <= 0x7F)
         return static_cast<uint16_t>(StencilID::stencil_send);
-    }
 
-    // Short jumps (0xB0-0xB7)
-    if (opcode >= 0xB0 && opcode <= 0xB7) {
+    // Sends (0x80-0xAF)
+    if (opcode >= SistaV1::Send0Base && opcode <= 0xAF)
+        return static_cast<uint16_t>(StencilID::stencil_send);
+
+    // Jumps
+    if (opcode >= SistaV1::ShortJumpBase && opcode <= 0xB7)
         return static_cast<uint16_t>(StencilID::stencil_jump);
-    }
-
-    // Short jump true (0xB8-0xBF)
-    if (opcode >= 0xB8 && opcode <= 0xBF) {
+    if (opcode >= SistaV1::ShortJumpTrueBase && opcode <= 0xBF)
         return static_cast<uint16_t>(StencilID::stencil_jumpTrue);
-    }
-
-    // Short jump false (0xC0-0xC7)
-    if (opcode >= 0xC0 && opcode <= 0xC7) {
+    if (opcode >= SistaV1::ShortJumpFalseBase && opcode <= 0xC7)
         return static_cast<uint16_t>(StencilID::stencil_jumpFalse);
-    }
 
-    // Pop and store receiver var (0xC8-0xCF)
-    if (opcode >= 0xC8 && opcode <= 0xCF) {
+    // Pop-and-store
+    if (opcode >= SistaV1::PopStoreRecvBase && opcode <= 0xCF)
         return static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar);
-    }
-
-    // Pop and store temp (0xD0-0xD7)
-    if (opcode >= 0xD0 && opcode <= 0xD7) {
+    if (opcode >= SistaV1::PopStoreTempBase && opcode <= 0xD7)
         return static_cast<uint16_t>(StencilID::stencil_popStoreTemp);
-    }
 
-    // Extended bytecodes (0xE0+) — bail out for now
+    // Fallback for extended opcodes that fall through to selectStencil
     return static_cast<uint16_t>(StencilID::stencil_send);
 }
 
 bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
-                                   std::vector<DecodedBC>& decoded) {
+                                   std::vector<DecodedBC>& decoded,
+                                   uint8_t& failedOpcode) {
+    failedOpcode = 0;
     decoded.clear();
     decoded.reserve(length);  // Upper bound: one DecodedBC per byte
 
@@ -125,154 +176,225 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
 
         uint8_t op = bytecodes[i];
 
-        // Decode operand from bytecode encoding
+        // Decode operand from bytecode encoding.
+        // Short (1-byte) bytecodes encode the operand in the opcode itself.
+        // Extended (2-3 byte) bytecodes use separate bytes + extension prefixes.
+        //
+        // The ranges are tested in bytecode order (0x00 → 0xFF).
         if (op <= 0x0F) {
-            bc.operand = op & 0x0F;  // pushRecvVar index
+            bc.operand = op & 0x0F;                            // pushRecvVar
         } else if (op <= 0x1F) {
-            bc.operand = op & 0x0F;  // pushLitVar index
+            bc.operand = op & 0x0F;                            // pushLitVar
         } else if (op <= 0x3F) {
-            bc.operand = op & 0x1F;  // pushLitConst index
+            bc.operand = op & 0x1F;                            // pushLitConst
         } else if (op <= 0x4B) {
-            bc.operand = op - 0x40;  // pushTemp index
-        } else if (op >= 0x60 && op <= 0x6F) {
-            bc.operand = op & 0x0F;  // arithmetic selector index
-        } else if (op >= 0x80 && op <= 0x8F) {
-            bc.operand = op & 0x0F;  // send0: literal selector index
-            bc.operand2 = 0;         // 0 args
-        } else if (op >= 0x90 && op <= 0x9F) {
+            bc.operand = op - SistaV1::PushTempBase;           // pushTemp
+        } else if (op >= SistaV1::PushReceiver && op <= SistaV1::Dup) {
+            // 0x4C-0x53: individual push bytecodes, no operand
+            if (op == 0x52) { failedOpcode = op; return false; } // pushThisContext
+        } else if (op >= 0x54 && op <= 0x57) {
+            failedOpcode = op; return false;                   // unused
+        } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+            // 0x58-0x5C: return bytecodes, no operand
+        } else if (op >= 0x5D && op <= 0x5F) {
+            failedOpcode = op; return false;                   // unused
+        } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
+            bc.operand = op & 0x0F;                            // arithmetic selector
+        } else if (op >= 0x70 && op <= 0x7F) {
+            bc.operand = op - 0x70;                            // send special 16-31
+            bc.operand2 = 1;
+        } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
             bc.operand = op & 0x0F;
-            bc.operand2 = 1;         // 1 arg
-        } else if (op >= 0xA0 && op <= 0xAF) {
+            bc.operand2 = 0;                                   // send 0 args
+        } else if (op >= SistaV1::Send1Base && op <= 0x9F) {
             bc.operand = op & 0x0F;
-            bc.operand2 = 2;         // 2 args
-        } else if (op >= 0xB0 && op <= 0xB7) {
-            // Short unconditional jump: target = pc + (op & 7) + 1
-            int delta = (op & 0x07) + 1;
-            bc.branchTarget = static_cast<int>(i) + 1 + delta;
-        } else if (op >= 0xB8 && op <= 0xBF) {
-            // Short jump if true
-            int delta = (op & 0x07) + 1;
-            bc.branchTarget = static_cast<int>(i) + 1 + delta;
-        } else if (op >= 0xC0 && op <= 0xC7) {
-            // Short jump if false
-            int delta = (op & 0x07) + 1;
-            bc.branchTarget = static_cast<int>(i) + 1 + delta;
-        } else if (op >= 0xC8 && op <= 0xCF) {
-            bc.operand = op & 0x07;  // popStoreRecvVar index
-        } else if (op >= 0xD0 && op <= 0xD7) {
-            bc.operand = op - 0xD0;  // popStoreTemp index
-        } else if (op == 0xD8) {
-            // Pop (handled by selectStencil)
-        } else if (op == 0xE0) {
-            // extA prefix: accumulate into extension A value
-            // E0 consumes 2 bytes total (opcode + extension byte)
-            if (i + 1 >= length) return false;
-            uint8_t extByte = bytecodes[i + 1];
-            extA = (extA << 8) | extByte;
-            bc.bcLength = 2;
-            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
-            decoded.push_back(bc);
-            i += bc.bcLength;
-            continue;  // Don't reset extA — it carries to the next bytecode
-        } else if (op == 0xE1) {
-            // extB prefix: signed extension
-            if (i + 1 >= length) return false;
-            uint8_t extByte = bytecodes[i + 1];
-            if (extByte >= 128)
-                extB = (extB << 8) | extByte | static_cast<int>(0xFFFFFF00u);
-            else
-                extB = (extB << 8) | extByte;
-            bc.bcLength = 2;
-            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
-            decoded.push_back(bc);
-            i += bc.bcLength;
-            continue;
-        } else if (op == 0xE2) {
-            // Extended push receiver variable
-            if (i + 1 >= length) return false;
-            bc.operand = (extA << 8) | bytecodes[i + 1];
-            bc.bcLength = 2;
-        } else if (op == 0xE3) {
-            // Extended push literal variable
-            if (i + 1 >= length) return false;
-            bc.operand = (extA << 8) | bytecodes[i + 1];
-            bc.bcLength = 2;
-        } else if (op == 0xE4) {
-            // Extended push literal constant
-            if (i + 1 >= length) return false;
-            bc.operand = (extA << 8) | bytecodes[i + 1];
-            bc.bcLength = 2;
-        } else if (op == 0xE5) {
-            // Extended push temp
-            if (i + 1 >= length) return false;
-            bc.operand = bytecodes[i + 1];
-            bc.bcLength = 2;
-        } else if (op == 0xE8) {
-            // Push integer (signed, extB extends)
-            if (i + 1 >= length) return false;
-            bc.bcLength = 2;
-            // Bail out: pushInteger requires a stencil that creates SmallIntegers
-            // from arbitrary values, which we don't have yet. Fall back to send/nop.
-            return false;
-        } else if (op == 0xEA) {
-            // Extended send: selector = (extA<<5 | byte>>3), args = (extB<<3 | byte&7)
-            if (i + 1 >= length) return false;
-            uint8_t desc = bytecodes[i + 1];
-            bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
-            bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
-            bc.bcLength = 2;
-        } else if (op == 0xEB) {
-            // Super send — bail, we don't have a super send stencil
-            return false;
-        } else if (op == 0xEF) {
-            // Extended pop store
-            if (i + 1 >= length) return false;
-            uint8_t desc = bytecodes[i + 1];
-            int kind = (desc >> 5) & 0x07;
-            int index = ((extA << 5) | (desc & 0x1F));
-            bc.operand = index;
-            bc.bcLength = 2;
-            if (kind == 0) {
-                // Store into receiver variable
-                bc.opcode = 0xC8;  // Pretend it's popStoreRecvVar
-            } else if (kind == 1) {
-                // Store into temp
-                bc.opcode = 0xD0;  // Pretend it's popStoreTemp
-            } else {
-                return false;  // Other store kinds not supported
+            bc.operand2 = 1;                                   // send 1 arg
+        } else if (op >= SistaV1::Send2Base && op <= 0xAF) {
+            bc.operand = op & 0x0F;
+            bc.operand2 = 2;                                   // send 2 args
+        } else if (op >= SistaV1::ShortJumpBase && op <= 0xB7) {
+            bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
+        } else if (op >= SistaV1::ShortJumpTrueBase && op <= 0xBF) {
+            bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
+        } else if (op >= SistaV1::ShortJumpFalseBase && op <= 0xC7) {
+            bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
+        } else if (op >= SistaV1::PopStoreRecvBase && op <= 0xCF) {
+            bc.operand = op & 0x07;                            // popStoreRecvVar
+        } else if (op >= SistaV1::PopStoreTempBase && op <= 0xD7) {
+            bc.operand = op - SistaV1::PopStoreTempBase;       // popStoreTemp
+        } else if (op == SistaV1::Pop) {
+            // 0xD8: no operand
+        } else if (op >= 0xD9 && op <= 0xDF) {
+            failedOpcode = op; return false;                   // trap/reserved
+        } else {
+            // Extended bytecodes (0xE0+) — switch on exact opcode
+            switch (op) {
+
+            case SistaV1::ExtendA: {
+                if (i + 1 >= length) return false;
+                extA = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                continue;  // Don't reset ext — carries to next bytecode
             }
-        } else if (op == 0xF0 || op == 0xF1 || op == 0xF2) {
-            // Extended jumps (3 bytes: opcode + 2 byte offset)
-            if (i + 2 >= length) return false;
-            uint8_t b1 = bytecodes[i + 1];
-            uint8_t b2 = bytecodes[i + 2];
-            int offset = (extB << 16) | (b1 << 8) | b2;
-            bc.branchTarget = static_cast<int>(i) + 3 + offset;
-            bc.bcLength = 3;
-            if (op == 0xF0) bc.opcode = 0xB0;       // unconditional jump
-            else if (op == 0xF1) bc.opcode = 0xB8;   // jump true
-            else bc.opcode = 0xC0;                    // jump false
-        } else if (op == 0xF5) {
-            // Store temp (after primitive): just skip
-            if (i + 1 >= length) return false;
-            bc.bcLength = 2;
-            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
-            decoded.push_back(bc);
-            i += bc.bcLength;
-            extA = 0; extB = 0;
-            continue;
-        } else if (op == 0xF8) {
-            // callPrimitive (3 bytes) — skip, already handled by activateMethod
-            if (i + 2 >= length) return false;
-            bc.bcLength = 3;
-            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
-            decoded.push_back(bc);
-            i += bc.bcLength;
-            extA = 0; extB = 0;
-            continue;
-        } else if (op >= 0xE0) {
-            // Other unhandled extended bytecodes — bail
-            return false;
+            case SistaV1::ExtendB: {
+                if (i + 1 >= length) return false;
+                uint8_t extByte = bytecodes[i + 1];
+                extB = (extByte >= 128)
+                    ? (extB << 8) | extByte | static_cast<int>(0xFFFFFF00u)
+                    : (extB << 8) | extByte;
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                continue;
+            }
+            case SistaV1::ExtPushRecvVar: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                break;
+            }
+            case SistaV1::ExtPushLitVar: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                break;
+            }
+            case SistaV1::ExtPushLitConst: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                break;
+            }
+            case SistaV1::ExtPushTemp: {
+                if (i + 1 >= length) return false;
+                bc.operand = bytecodes[i + 1];
+                bc.bcLength = 2;
+                break;
+            }
+            case SistaV1::PushArray:
+                failedOpcode = op; return false;  // Needs allocation stencil
+            case SistaV1::PushInteger: {
+                if (i + 1 >= length) return false;
+                int value = (extB << 8) | bytecodes[i + 1];
+                bc.operand = static_cast<int>((static_cast<int64_t>(value) << 3) | 1);
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushInteger);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::PushCharacter: {
+                if (i + 1 >= length) return false;
+                int codePoint = bytecodes[i + 1] + (extB << 8);
+                bc.operand = static_cast<int>((static_cast<int64_t>(codePoint) << 3) | 3);
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushInteger);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::ExtSend: {
+                if (i + 1 >= length) return false;
+                uint8_t desc = bytecodes[i + 1];
+                bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
+                bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
+                bc.bcLength = 2;
+                break;
+            }
+            case SistaV1::ExtSuperSend:
+                failedOpcode = op; return false;  // No super send stencil
+            case SistaV1::InlinedPrimitive:
+                failedOpcode = op; return false;  // Sista-specific
+            case SistaV1::ExtJump: {
+                if (i + 1 >= length) return false;
+                int offset = bytecodes[i + 1] + (extB << 8);
+                bc.branchTarget = static_cast<int>(i) + 2 + offset;
+                bc.bcLength = 2;
+                bc.opcode = SistaV1::ShortJumpBase;
+                break;
+            }
+            case SistaV1::ExtJumpTrue: {
+                if (i + 1 >= length) return false;
+                int offset = bytecodes[i + 1] + (extB << 8);
+                bc.branchTarget = static_cast<int>(i) + 2 + offset;
+                bc.bcLength = 2;
+                bc.opcode = SistaV1::ShortJumpTrueBase;
+                break;
+            }
+            case SistaV1::ExtJumpFalse: {
+                if (i + 1 >= length) return false;
+                int offset = bytecodes[i + 1] + (extB << 8);
+                bc.branchTarget = static_cast<int>(i) + 2 + offset;
+                bc.bcLength = 2;
+                bc.opcode = SistaV1::ShortJumpFalseBase;
+                break;
+            }
+            case SistaV1::ExtPopStoreRecv: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.opcode = SistaV1::PopStoreRecvBase;
+                break;
+            }
+            case SistaV1::ExtPopStoreLitVar: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreLitVar);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::ExtPopStoreTemp: {
+                if (i + 1 >= length) return false;
+                bc.operand = bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.opcode = SistaV1::PopStoreTempBase;
+                break;
+            }
+            case SistaV1::ExtStoreRecv: {
+                if (i + 1 >= length) return false;
+                bc.operand = (extA << 8) | bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeRecvVar);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::ExtStoreLitVar:
+                failedOpcode = op; return false;  // No store-literal-variable-no-pop stencil
+            case SistaV1::ExtStoreTemp: {
+                if (i + 1 >= length) return false;
+                bc.operand = bytecodes[i + 1];
+                bc.bcLength = 2;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeTemp);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            case SistaV1::CallPrimitive: {
+                // 3 bytes — skip, already handled by activateMethod
+                if (i + 2 >= length) return false;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            default:
+                // Unhandled extended bytecode (closures, remote temps, etc.)
+                failedOpcode = op; return false;
+            } // end switch
         }
 
         bc.stencilIdx = selectStencil(bc.opcode, bc.operand);
@@ -447,9 +569,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
     // Decode bytecodes
     std::vector<DecodedBC> decoded;
-    if (!decodeBytecodes(bytecodes, bcLen, decoded)) {
+    uint8_t failedOpcode = 0;
+    if (!decodeBytecodes(bytecodes, bcLen, decoded, failedOpcode)) {
         compilationsFailed_++;
-        return nullptr;  // Contains unsupported extended bytecodes
+        if (failedOpcode) bailoutCounts_[failedOpcode]++;
+        // Periodic bail-out stats (every 500 failures)
+        if (compilationsFailed_ % 500 == 0) {
+            fprintf(stderr, "[JIT] Bail-out stats (%zu failures, %zu compiled):\n",
+                    compilationsFailed_, methodsCompiled_);
+            for (int b = 0; b < 256; b++) {
+                if (bailoutCounts_[b] > 0)
+                    fprintf(stderr, "  0x%02X: %u\n", b, bailoutCounts_[b]);
+            }
+        }
+        return nullptr;
     }
 
     if (decoded.empty()) {
@@ -534,7 +667,6 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                                       codeBase, totalSize, bcToCodeOffset,
                                       literalPool, literalPoolOffset,
                                       nextLiteralSlot)) {
-                fprintf(stderr, "[JIT] Patch failed at bytecode offset %d\n", bc.bcOffset);
                 compilationsFailed_++;
                 // The allocation is wasted but the zone will reclaim it later
                 return nullptr;

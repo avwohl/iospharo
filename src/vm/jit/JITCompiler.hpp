@@ -85,9 +85,10 @@ public:
     size_t compilationsFailed() const { return compilationsFailed_; }
 
 private:
-    // Decode all bytecodes in a method
+    // Decode all bytecodes in a method.
+    // On failure, failedOpcode is set to the bytecode that caused the bail-out.
     bool decodeBytecodes(const uint8_t* bytecodes, size_t length,
-                         std::vector<DecodedBC>& decoded);
+                         std::vector<DecodedBC>& decoded, uint8_t& failedOpcode);
 
     // Select the stencil for a given bytecode
     uint16_t selectStencil(uint8_t opcode, int operand) const;
@@ -109,6 +110,7 @@ private:
 
     size_t methodsCompiled_ = 0;
     size_t compilationsFailed_ = 0;
+    uint32_t bailoutCounts_[256] = {};  // Indexed by bytecode that caused bail-out
 };
 
 } // namespace jit

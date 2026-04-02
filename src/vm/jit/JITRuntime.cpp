@@ -101,9 +101,9 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     static size_t totalEntries = 0;
     totalEntries++;
 
-    // Periodic stats (every 100K method entries)
-    if ((totalEntries & 0xFFFFF) == 0) {  // Every ~1M entries
-        fprintf(stderr, "[JIT] Stats: %zu entries, %zu compiled, %zu failed, "
+    // Periodic stats (every ~64K entries)
+    if ((totalEntries & 0xFFFF) == 0) {
+        fprintf(stderr, "[JIT] Stats: %zu sends, %zu compiled, %zu failed, "
                 "%zu/%zu KB code zone\n",
                 totalEntries, compiler_->methodsCompiled(),
                 compiler_->compilationsFailed(),
@@ -138,6 +138,13 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
+    // Execution temporarily disabled — compilation is working (2965 methods)
+    // but the first method that executes crashes (SIGSEGV in compiled code).
+    // The JITState setup in tryJITActivation needs debugging — likely
+    // tempBase or literals pointer is wrong, or the stencil ABI doesn't
+    // match what the compiler produces.
+    return false;
+
     if (!initialized_) return false;
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());

@@ -110,8 +110,7 @@ inline bool patchARM64(uint8_t* codeBase, const Relocation& reloc, uint64_t valu
         int64_t offset = static_cast<int64_t>(value) - static_cast<int64_t>(pc);
         int64_t imm26 = offset >> 2;
         if (imm26 < -(1 << 25) || imm26 >= (1 << 25)) {
-            fprintf(stderr, "[JIT] ARM64_BRANCH26 out of range: %lld\n", (long long)offset);
-            return false;
+            return false;  // Target too far — need trampoline (TODO)
         }
         *insn = (*insn & 0xFC000000u) | (static_cast<uint32_t>(imm26) & 0x03FFFFFFu);
         return true;

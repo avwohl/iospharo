@@ -305,6 +305,11 @@ bool Interpreter::initialize() {
         memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
     }
 
+    // Initialize JIT before execution starts so noteMethodEntry works from first send
+#if PHARO_JIT_ENABLED
+    initializeJIT();
+#endif
+
     // Now execute from the original context
     return executeFromContext(context);
 }
@@ -4508,6 +4513,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     if (__builtin_expect(cached != nullptr, 1)) {
 
+#if PHARO_JIT_ENABLED
+        // Count ALL sends for JIT compilation, not just activateMethod calls
+        jitRuntime_.noteMethodEntry(cached->method);
+#endif
+
         // Getter fast path: pushRecvVar N + returnTop
         // Skip method activation — replace receiver with inst var value
         if (cached->accessorIndex >= 0 && argCount == 0) {
@@ -4567,6 +4577,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         invokeObjectAsMethod(method, selector, argCount);
         return;
     }
+
+#if PHARO_JIT_ENABLED
+    // Also count uncached sends for JIT
+    jitRuntime_.noteMethodEntry(method);
+#endif
 
     // Cache the method
     cacheMethod(selector, rcvrClass, method);
@@ -9028,13 +9043,7 @@ void Interpreter::initializeJIT() {
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
-    if (!jitInitialized_) {
-        initializeJIT();
-    }
     if (!jitRuntime_.isInitialized()) return false;
-
-    // Count this method entry (may trigger compilation)
-    jitRuntime_.noteMethodEntry(method);
 
     // Try to execute compiled code
     jit::JITState state;

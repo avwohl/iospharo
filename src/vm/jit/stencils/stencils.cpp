@@ -233,6 +233,17 @@ extern "C" void stencil_dup(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// Push SmallInteger (arbitrary value, pre-tagged by the JIT compiler)
+// Bytecode: 0xE8 (extended push integer)
+// OPERAND is the pre-computed tagged SmallInteger bits ((value << 3) | 1)
+extern "C" void stencil_pushInteger(JITState* s) {
+    Oop value;
+    value.bits = static_cast<uint64_t>(OPERAND);
+    *(s->sp) = value;
+    s->sp++;
+    _HOLE_CONTINUE(s);
+}
+
 // ----- POP / STORE STENCILS -----
 
 // Pop top of stack
@@ -260,6 +271,38 @@ extern "C" void stencil_popStoreTemp(JITState* s) {
     s->sp--;
     Oop value = *(s->sp);
     s->tempBase[idx] = value;
+    _HOLE_CONTINUE(s);
+}
+
+// Store into receiver instance variable (no pop — TOS stays on stack)
+// Bytecode: 0xF3
+extern "C" void stencil_storeRecvVar(JITState* s) {
+    int idx = OPERAND;
+    Oop value = s->sp[-1];
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    obj->slots()[idx] = value;
+    _HOLE_CONTINUE(s);
+}
+
+// Store into temporary variable (no pop — TOS stays on stack)
+// Bytecode: 0xF5
+extern "C" void stencil_storeTemp(JITState* s) {
+    int idx = OPERAND;
+    Oop value = s->sp[-1];
+    s->tempBase[idx] = value;
+    _HOLE_CONTINUE(s);
+}
+
+// Pop and store into literal variable (value of Association)
+// Bytecode: 0xF1
+extern "C" void stencil_popStoreLitVar(JITState* s) {
+    int idx = OPERAND;
+    s->sp--;
+    Oop value = *(s->sp);
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    // Association value is slot 1
+    obj->slots()[1] = value;
     _HOLE_CONTINUE(s);
 }
 
