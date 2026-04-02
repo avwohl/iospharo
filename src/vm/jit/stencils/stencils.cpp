@@ -543,6 +543,163 @@ extern "C" void stencil_mulSmallInt(JITState* s) {
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
+// SmallInteger less-equal
+// Bytecode: 0x64 (arithmetic selector <=)
+extern "C" void stencil_lessEqualSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        bool result = asSmallInteger(a) <= asSmallInteger(b);
+        s->sp -= 2;
+        *(s->sp) = result ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->sp++;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger greater-equal
+// Bytecode: 0x65 (arithmetic selector >=)
+extern "C" void stencil_greaterEqualSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        bool result = asSmallInteger(a) >= asSmallInteger(b);
+        s->sp -= 2;
+        *(s->sp) = result ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->sp++;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger integer division (//)
+// Bytecode: 0x6D (arithmetic selector //)
+extern "C" void stencil_divSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        int64_t bi = asSmallInteger(b);
+        if (bi != 0) {
+            int64_t ai = asSmallInteger(a);
+            // Smalltalk // is floor division (rounds toward -infinity)
+            int64_t result = ai / bi;
+            if ((ai ^ bi) < 0 && result * bi != ai) result--;
+            s->sp -= 2;
+            *(s->sp) = fromSmallInteger(result);
+            s->sp++;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger modulo (\\)
+// Bytecode: 0x6A (arithmetic selector \\)
+extern "C" void stencil_modSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        int64_t bi = asSmallInteger(b);
+        if (bi != 0) {
+            int64_t ai = asSmallInteger(a);
+            // Smalltalk \\ is floor modulo (result has same sign as divisor)
+            int64_t result = ai % bi;
+            if (result != 0 && (ai ^ bi) < 0) result += bi;
+            s->sp -= 2;
+            *(s->sp) = fromSmallInteger(result);
+            s->sp++;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger bitAnd:
+// Bytecode: 0x6E (arithmetic selector bitAnd:)
+extern "C" void stencil_bitAndSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        // Bitwise AND on tagged values: (a & b) preserves the tag
+        // since both have tag 001 in bits 2:0
+        uint64_t result = a.bits & b.bits;
+        s->sp -= 2;
+        *(s->sp) = Oop{result};
+        s->sp++;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger bitOr:
+// Bytecode: 0x6F (arithmetic selector bitOr:)
+extern "C" void stencil_bitOrSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        // Bitwise OR on tagged values: (a | b) preserves the tag
+        uint64_t result = a.bits | b.bits;
+        s->sp -= 2;
+        *(s->sp) = Oop{result};
+        s->sp++;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// SmallInteger bitShift:
+// Bytecode: 0x6C (arithmetic selector bitShift:)
+extern "C" void stencil_bitShiftSmallInt(JITState* s) {
+    Oop b = s->sp[-1];
+    Oop a = s->sp[-2];
+
+    if (isSmallInteger(a) && isSmallInteger(b)) {
+        int64_t ai = asSmallInteger(a);
+        int64_t bi = asSmallInteger(b);
+
+        if (bi >= 0 && bi < 60) {
+            // Left shift — check for overflow
+            int64_t result = ai << bi;
+            if ((result >> bi) == ai && result >= -(1LL << 60) && result < (1LL << 60)) {
+                s->sp -= 2;
+                *(s->sp) = fromSmallInteger(result);
+                s->sp++;
+                _HOLE_CONTINUE(s);
+                return;
+            }
+        } else if (bi < 0 && bi > -64) {
+            // Right shift (arithmetic)
+            int64_t result = ai >> (-bi);
+            s->sp -= 2;
+            *(s->sp) = fromSmallInteger(result);
+            s->sp++;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    s->ip = s->ip + OPERAND;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
 // ----- SEND STENCIL -----
 
 // Generic send: exit to interpreter for full lookup

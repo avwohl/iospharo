@@ -121,9 +121,16 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
         case 1:  return static_cast<uint16_t>(StencilID::stencil_subSmallInt);
         case 2:  return static_cast<uint16_t>(StencilID::stencil_lessThanSmallInt);
         case 3:  return static_cast<uint16_t>(StencilID::stencil_greaterThanSmallInt);
+        case 4:  return static_cast<uint16_t>(StencilID::stencil_lessEqualSmallInt);
+        case 5:  return static_cast<uint16_t>(StencilID::stencil_greaterEqualSmallInt);
         case 6:  return static_cast<uint16_t>(StencilID::stencil_equalSmallInt);
         case 7:  return static_cast<uint16_t>(StencilID::stencil_notEqualSmallInt);
         case 8:  return static_cast<uint16_t>(StencilID::stencil_mulSmallInt);
+        case 10: return static_cast<uint16_t>(StencilID::stencil_modSmallInt);
+        case 12: return static_cast<uint16_t>(StencilID::stencil_bitShiftSmallInt);
+        case 13: return static_cast<uint16_t>(StencilID::stencil_divSmallInt);
+        case 14: return static_cast<uint16_t>(StencilID::stencil_bitAndSmallInt);
+        case 15: return static_cast<uint16_t>(StencilID::stencil_bitOrSmallInt);
         default: return static_cast<uint16_t>(StencilID::stencil_send);
         }
     }
@@ -503,8 +510,15 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 sid == StencilID::stencil_mulSmallInt ||
                 sid == StencilID::stencil_lessThanSmallInt ||
                 sid == StencilID::stencil_greaterThanSmallInt ||
+                sid == StencilID::stencil_lessEqualSmallInt ||
+                sid == StencilID::stencil_greaterEqualSmallInt ||
                 sid == StencilID::stencil_equalSmallInt ||
-                sid == StencilID::stencil_notEqualSmallInt) {
+                sid == StencilID::stencil_notEqualSmallInt ||
+                sid == StencilID::stencil_divSmallInt ||
+                sid == StencilID::stencil_modSmallInt ||
+                sid == StencilID::stencil_bitAndSmallInt ||
+                sid == StencilID::stencil_bitOrSmallInt ||
+                sid == StencilID::stencil_bitShiftSmallInt) {
                 bc.operand = bc.bcOffset;
             }
         }
@@ -811,16 +825,23 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_jumpTrue:
             break;  // safe
 
-        // Arithmetic — may exit with ExitSend on non-SmallInteger,
-        // handled by SP restore in tryJITActivation
+        // Arithmetic — may exit with ExitArithOverflow on non-SmallInteger,
+        // handled by precise deopt in tryJITActivation
         case StencilID::stencil_addSmallInt:
         case StencilID::stencil_subSmallInt:
         case StencilID::stencil_mulSmallInt:
         case StencilID::stencil_lessThanSmallInt:
         case StencilID::stencil_greaterThanSmallInt:
+        case StencilID::stencil_lessEqualSmallInt:
+        case StencilID::stencil_greaterEqualSmallInt:
         case StencilID::stencil_equalSmallInt:
         case StencilID::stencil_notEqualSmallInt:
-            break;  // safe (ExitSend handled by SP restore)
+        case StencilID::stencil_divSmallInt:
+        case StencilID::stencil_modSmallInt:
+        case StencilID::stencil_bitAndSmallInt:
+        case StencilID::stencil_bitOrSmallInt:
+        case StencilID::stencil_bitShiftSmallInt:
+            break;  // safe (ExitArithOverflow handled by precise deopt)
 
         // Heap writes — need write barrier (when gen GC is added)
         case StencilID::stencil_popStoreRecvVar:
