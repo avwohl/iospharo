@@ -227,6 +227,13 @@ bool Interpreter::initialize() {
 
         // Get receiver and method from context
         Oop receiver = memory_.fetchPointer(5, currentCtx);
+        // Always log resume chain for debugging
+        {
+            Oop meth = memory_.fetchPointer(3, currentCtx);
+            std::string sel = meth.isObject() && !meth.isNil() ? memory_.selectorOf(meth) : "?";
+            std::string cls = memory_.classNameOf(receiver);
+            fprintf(stderr, "[RESUME] ctx[%d]: %s>>%s\n", depth, cls.c_str(), sel.c_str());
+        }
         Oop method = memory_.fetchPointer(3, currentCtx);
 
         std::string rcvrClassName = memory_.classNameOf(receiver);
@@ -263,6 +270,16 @@ bool Interpreter::initialize() {
     //   non-nil = resuming from save -> run startup handlers
     // We need to modify the context to indicate "resuming" by ensuring the
     // snapshot primitive returns a non-nil value (true).
+    fprintf(stderr, "[RESUME] inSnapshotCode=%d chainDepth=%d\n", inSnapshotCode, depth);
+    // Log the PC and first bytecodes of the resume context
+    {
+        Oop pcOop = memory_.fetchPointer(1, context);
+        Oop methodOop = memory_.fetchPointer(3, context);
+        std::string sel = methodOop.isObject() && !methodOop.isNil() ? memory_.selectorOf(methodOop) : "?";
+        fprintf(stderr, "[RESUME] Initial context: method=#%s pc=%s\n",
+                sel.c_str(),
+                pcOop.isSmallInteger() ? std::to_string(pcOop.asSmallInteger()).c_str() : "nil");
+    }
     if (inSnapshotCode) {
         // Patch the snapshot context's stack top to true so Smalltalk
         // interprets this as "resuming from saved image" instead of
@@ -282,18 +299,14 @@ bool Interpreter::initialize() {
                     else if (oldVal.rawBits() == falseObj.rawBits()) oldDesc = "false";
                     else if (oldVal.isNil()) oldDesc = "nil";
                     else if (oldVal.isSmallInteger()) oldDesc = "SmallInteger";
-#ifdef DEBUG
-                    fprintf(stderr, "[RESUME] stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx)\n",
-                            stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
-#endif
+                    fprintf(stderr, "[RESUME] Patching: stackp=%lld stackTopSlot=%zu oldVal=%s(0x%llx) -> true\n",
+                            (long long)stackp, stackTopSlot, oldDesc, (unsigned long long)oldVal.rawBits());
                     memory_.storePointer(stackTopSlot, context, trueObj);
                 }
             }
         }
     } else {
-#ifdef DEBUG
         fprintf(stderr, "[RESUME] Not in snapshot code — resuming as-is\n");
-#endif
     }
 
     // Note: Display initialization is deferred to primitiveForceDisplayUpdate
@@ -4565,6 +4578,32 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
+
+    // Trace first 1000 message sends to diagnose startup flow
+    static int sendTraceCount = 0;
+    if (sendTraceCount < 1000) {
+        sendTraceCount++;
+        std::string sel = "(?)";
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sH = selector.asObjectPtr();
+            if (sH->isBytesObject()) sel = std::string((const char*)sH->bytes(), sH->byteSize());
+        }
+        std::string cls = memory_.classNameOf(rcvr);
+        // Extra detail for hash-related sends and dictionary lookups
+        std::string extra;
+        if (rcvr.isSmallInteger() && (sel == "hash" || sel == "hashMultiply")) {
+            extra = " val=" + std::to_string(rcvr.asSmallInteger());
+        } else if (sel == "at:" || sel == "at:ifAbsent:" || sel == "scanFor:" || sel == "errorKeyNotFound:") {
+            Oop arg = stackValue(argCount - 1);
+            if (arg.isSmallInteger()) {
+                extra = " key=" + std::to_string(arg.asSmallInteger());
+            } else if (arg.isObject() && arg.rawBits() > 0x10000) {
+                extra = " key=obj(0x" + std::to_string(arg.rawBits()) + ")";
+            }
+        }
+        fprintf(stderr, "[SEND#%d] %s >> #%s (args=%d fd=%zu)%s\n",
+                sendTraceCount, cls.c_str(), sel.c_str(), argCount, frameDepth_, extra.c_str());
+    }
 
     // Debug: trace sends to byte strings (classIndex 52) to find wrong dispatch
     bool traceByteSend = false;
@@ -9860,11 +9899,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Loop to handle chained JIT execution: when an IC-hit send's target
     // completes, resume JIT execution at the next bytecode instead of
     // falling back to the interpreter dispatch loop.
+    //
+    // IMPORTANT: The countdown check is NOT at the top of the loop.
+    // After tryResume+continue, state holds an unprocessed exit reason
+    // that MUST be handled before breaking. The countdown is checked at
+    // each continue site instead (after chargeJITBytecodes).
     for (int chainLimit = 0; chainLimit < 100; chainLimit++) {
-
-        // Break out if checkCountdown_ expired — let interpret() periodic
-        // checks run (GC, timer, process scheduling, test triggers, etc.)
-        if (checkCountdown_ <= 0) break;
 
         // Validate JIT output state — detect stencil corruption early
         if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
@@ -9885,6 +9925,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         // Handle exit reason
+        // JIT debug trace for first 50 exits
+        {
+            static int jitExitTrace = 0;
+            if (jitExitTrace < 300) {
+                jitExitTrace++;
+                const char* reason = "?";
+                switch (state.exitReason) {
+                    case jit::ExitReturn: reason = "Return"; break;
+                    case jit::ExitSend: reason = "Send"; break;
+                    case jit::ExitSendCached: reason = "SendCached"; break;
+                    case jit::ExitArithOverflow: reason = "ArithOvf"; break;
+                    default: break;
+                }
+                std::string meth = memory_.selectorOf(method);
+                fprintf(stderr, "[JIT-EXIT#%d] %s exit=%s sp=%p ip=%p",
+                    jitExitTrace, meth.c_str(), reason,
+                    (void*)state.sp, (void*)state.ip);
+                if (state.exitReason == jit::ExitReturn) {
+                    if (state.returnValue.isSmallInteger())
+                        fprintf(stderr, " retval=%lld", state.returnValue.asSmallInteger());
+                } else if (state.exitReason == jit::ExitSendCached) {
+                    std::string target = memory_.selectorOf(state.cachedTarget);
+                    fprintf(stderr, " target=#%s nArgs=%d", target.c_str(), state.sendArgCount);
+                    // Show receiver of the send
+                    Oop rcv = state.sp[-(state.sendArgCount + 1)];
+                    if (rcv.isSmallInteger())
+                        fprintf(stderr, " rcv=%lld", rcv.asSmallInteger());
+                    else
+                        fprintf(stderr, " rcv=0x%llx", (unsigned long long)rcv.rawBits());
+                }
+                fprintf(stderr, "\n");
+            }
+        }
         switch (state.exitReason) {
         case jit::ExitReturn:
             if (!popFrame()) {
@@ -9978,6 +10051,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Primitive succeeded — resume JIT at bytecode after send
                         jitJ2JActChains_++;
                         uint32_t bcOffset = computeCurrentBCOffset();
+                        {
+                            static int jitResumeTrace = 0;
+                            if (jitResumeTrace < 100) {
+                                jitResumeTrace++;
+                                std::string meth = memory_.selectorOf(method);
+                                fprintf(stderr, "[JIT-RESUME#%d] prim=%d ok in %s bcOff=%u retval=%s(0x%llx)\n",
+                                    jitResumeTrace, primIdx, meth.c_str(), bcOffset,
+                                    stackTop().isSmallInteger() ? "smi" : "obj",
+                                    (unsigned long long)stackTop().rawBits());
+                            }
+                        }
                         if (bcOffset == UINT32_MAX) return true;
                         state.sp = stackPointer_;
                         state.receiver = receiver_;
@@ -9995,9 +10079,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                            {
+                                static int resumeFailTrace = 0;
+                                if (resumeFailTrace < 20) {
+                                    resumeFailTrace++;
+                                    std::string meth = memory_.selectorOf(method);
+                                    fprintf(stderr, "[JIT-RESUME-FAIL#%d] %s bcOff=%u method=0x%llx\n",
+                                        resumeFailTrace, meth.c_str(), bcOffset,
+                                        (unsigned long long)method.rawBits());
+                                }
+                            }
                             return true;
                         }
                         chargeJITBytecodes(state);
+                        if (checkCountdown_ <= 0) goto jit_loop_exit;
                         continue;
                     }
                 }
@@ -10041,6 +10136,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     return true;  // No re-entry at this offset; interpreter handles rest
                 }
                 chargeJITBytecodes(state);
+                if (checkCountdown_ <= 0) goto jit_loop_exit;
                 continue;  // Loop to handle the new exit reason
             }
         }
@@ -10089,6 +10185,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 return true;  // Can't resume; interpreter handles rest
             }
             chargeJITBytecodes(state);
+            if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
         }
 
@@ -10138,6 +10235,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 return true;  // Can't resume; interpreter handles rest
             }
             chargeJITBytecodes(state);
+            if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
         }
 
@@ -10155,8 +10253,57 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             return false;
         }
     }
-    // Chain limit reached — let interpreter continue
-    return true;
+    // Chain limit reached — fall through to handle unprocessed exit
+
+jit_loop_exit:
+    // The loop exited (chain limit or countdown expired) with an
+    // unprocessed exit reason in state.  Process it now so the
+    // interpreter state is consistent.
+    switch (state.exitReason) {
+    case jit::ExitReturn:
+        if (!popFrame()) {
+            if (activeContext_.isObject() && !activeContext_.isNil()) {
+                Oop sender = memory_.fetchPointer(0, activeContext_);
+                if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
+                    memory_.storePointer(0, activeContext_, memory_.nil());
+                    memory_.storePointer(1, activeContext_, memory_.nil());
+                    stackPointer_ = stackBase_;
+                    Oop senderStackp = memory_.fetchPointer(2, sender);
+                    int origSp = senderStackp.isSmallInteger()
+                        ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+                    executeFromContext(sender);
+                    framePointer_[1 + origSp] = state.returnValue;
+                    Oop* pastVal = framePointer_ + 1 + origSp + 1;
+                    if (pastVal > stackPointer_) stackPointer_ = pastVal;
+                    return true;
+                }
+            }
+            terminateCurrentProcess();
+            tryReschedule();
+            return true;
+        }
+        push(state.returnValue);
+        return true;
+
+    case jit::ExitSend:
+    case jit::ExitSendCached:
+    case jit::ExitArithOverflow:
+        // Sync interpreter state from JIT and let interpreter handle
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
+        return false;
+
+    case jit::ExitBlockCreate:
+    case jit::ExitArrayCreate:
+        // These exits need interpreter handling; sync state
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
+        return false;
+
+    default:
+        // ExitNone or unknown — JIT handled everything
+        return true;
+    }
 }
 
 #endif // PHARO_JIT_ENABLED
