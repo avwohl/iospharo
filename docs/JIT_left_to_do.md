@@ -62,14 +62,15 @@ inline dispatch.
 
 ## Phase 3: Remaining Inline Cache Work
 
-### 3. IC invalidation on class hierarchy changes
-Currently ICs are flushed on become: and method changes. Also need
-flushing when:
-- A class is reshaped (slot layout changes)
-- A method is added/removed from a class (new lookup result)
-- A class is removed
+### 3. IC invalidation on class hierarchy changes — DONE
+JIT ICs are now flushed in all relevant primitives:
+- primitiveChangeClass (115/160) — class reshape/adopt
+- primitiveFlushCacheByMethod (119) — method added/removed/modified
+- primitiveFlushCacheBySelector (120) — selector invalidation
+- become: already triggers full IC flush via recoverAfterGC
 
-    Where:  Primitives.cpp — primitiveChangeClass, compile-related prims
+    Files:  Primitives.cpp — flushJITCaches() calls added to changeClassOf,
+            primitiveFlushCacheByMethod, primitiveFlushCacheBySelector
 
 ### 4. Profiling counters for Sista support
 Per-branch counters decremented on conditional branches. When counter
@@ -182,7 +183,7 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     2   IC patching                 high     small     DONE (97% hit rate)
     9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
     7   PushArray stencil           medium   small     DONE
-    3   IC hierarchy invalidation   medium   small     TODO
+    3   IC hierarchy invalidation   medium   small     DONE
     10  Full test suite             medium   medium    TODO
     4   Profiling counters          medium   medium    TODO
     6   Context / deoptimization    medium   large     TODO

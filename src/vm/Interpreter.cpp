@@ -1225,78 +1225,11 @@ void Interpreter::interpret() {
         }
 
         // -- Test runner trigger (from monitor thread) --
+        // Note: pendingTestRun_ flag is set by monitor thread but test execution
+        // happens via Smalltalk startup.st script loaded by StartupPreferencesLoader.
+        // This flag is only used by the monitor thread to detect when to check results.
         if (__builtin_expect(pendingTestRun_.load(std::memory_order_acquire), 0)) {
             pendingTestRun_.store(false, std::memory_order_release);
-            Oop sunitRunner = memory_.findGlobal("SUnitRunner");
-            if (sunitRunner.isObject() && !sunitRunner.isNil()) {
-                // Look up runAllTests in the metaclass method dictionary
-                Oop metaclass = memory_.classOf(sunitRunner);
-                Oop method = Oop::nil();
-                if (metaclass.isObject()) {
-                    Oop methodDict = memory_.fetchPointer(1, metaclass);
-                    if (methodDict.isObject()) {
-                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
-                        for (size_t i = 2; i < mdHdr->slotCount(); i++) {
-                            Oop key = mdHdr->slotAt(i);
-                            if (!key.isObject() || key.isNil()) continue;
-                            ObjectHeader* keyHdr = key.asObjectPtr();
-                            if (!keyHdr->isBytesObject()) continue;
-                            size_t keyLen = keyHdr->byteSize();
-                            const char* keyBytes = (const char*)keyHdr->bytes();
-                            if (keyLen == 11 && memcmp(keyBytes, "runAllTests", 11) == 0) {
-                                Oop values = memory_.fetchPointer(1, methodDict);
-                                if (values.isObject()) {
-                                    ObjectHeader* valHdr = values.asObjectPtr();
-                                    size_t valIdx = i - 2;
-                                    if (valIdx < valHdr->slotCount()) {
-                                        method = valHdr->slotAt(valIdx);
-                                    }
-                                }
-                                break;
-                            }
-                        }
-                    }
-                }
-                if (!method.isNil() && method.isObject()) {
-                    fprintf(stderr, "[TEST] Scheduling SUnitRunner>>runAllTests as new Process\n");
-                    Oop context = memory_.createStartupContext(method, sunitRunner);
-                    if (!context.isNil()) {
-                        // Create a Process object and schedule it instead of
-                        // using executeFromContext, which disrupts the current
-                        // execution context and causes SIGSEGV.
-                        // Derive class and slot count from the active process (a real Process instance).
-                        // SpecialObject 27 (ClassProcess) is nil in Pharo 13, so we can't use it.
-                        Oop activeProc = getActiveProcess();
-                        uint32_t procClassIdx = activeProc.asObjectPtr()->classIndex();
-                        size_t procSlotCount = activeProc.asObjectPtr()->slotCount();
-                        fprintf(stderr, "[TEST] Active process classIdx=%u slots=%zu\n", procClassIdx, procSlotCount);
-                        Oop proc = memory_.allocateSlots(procClassIdx, static_cast<uint32_t>(procSlotCount), ObjectFormat::FixedSize);
-                        if (!proc.isNil()) {
-                            // Initialize all slots to nil first (Process may have >5 inst vars in Pharo 13)
-                            for (size_t s = 0; s < procSlotCount; s++) {
-                                memory_.storePointer(s, proc, memory_.nil());
-                            }
-                            // Set the known slots
-                            memory_.storePointer(ProcessSuspendedContextIndex, proc, context);
-                            memory_.storePointer(ProcessPriorityIndex, proc, Oop::fromSmallInteger(40)); // userSchedulingPriority
-                            // Verify scheduler capacity
-                            Oop schedAssoc2 = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                            Oop sched2 = memory_.fetchPointer(1, schedAssoc2);
-                            Oop schedLists2 = memory_.fetchPointer(SchedulerProcessListsIndex, sched2);
-                            int maxPri2 = static_cast<int>(schedLists2.asObjectPtr()->slotCount());
-                            Oop activePri = memory_.fetchPointer(ProcessPriorityIndex, getActiveProcess());
-                            fprintf(stderr, "[TEST] Scheduler has %d priority levels, active process pri=%lld\n",
-                                    maxPri2, activePri.isSmallInteger() ? activePri.asSmallInteger() : -1);
-                            putToSleep(proc);
-                            fprintf(stderr, "[TEST] Process scheduled at priority 40\n");
-                        }
-                    }
-                } else {
-                    fprintf(stderr, "[TEST] runAllTests not found in metaclass\n");
-                }
-            } else {
-                fprintf(stderr, "[TEST] SUnitRunner class not found\n");
-            }
         }
 
         // -- Finalization (periodic, for auto-GC mourners) --
@@ -2324,6 +2257,14 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != activeProcess.rawBits();
 
         if (foundProcess) {
+            int nextPri = safeProcessPriority(nextProcess);
+            static int yieldLog = 0;
+            if (yieldLog++ < 20) {
+                fprintf(stderr, "[YIELD] step() P%d→P%d (0x%llx→0x%llx)\n",
+                        activePriority, nextPri,
+                        (unsigned long long)activeProcess.rawBits(),
+                        (unsigned long long)nextProcess.rawBits());
+            }
             putToSleep(activeProcess);
             g_xferReason = "forceYield";
             transferTo(nextProcess);
@@ -9544,6 +9485,10 @@ void Interpreter::tryJITResumeInCaller() {
     if (inJITResume_) return;  // Prevent re-entrancy from returnValue
     inJITResume_ = true;
     while (running_ && jitRuntime_.isInitialized()) {
+        // Break out if checkCountdown_ expired — let interpret() periodic
+        // checks run (GC, timer, process scheduling, test triggers, etc.)
+        if (checkCountdown_ <= 0) break;
+
         // Validate method_ before using it
         if (!method_.isObject() || method_.rawBits() < 0x10000) break;
 
@@ -9817,6 +9762,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // completes, resume JIT execution at the next bytecode instead of
     // falling back to the interpreter dispatch loop.
     for (int chainLimit = 0; chainLimit < 100; chainLimit++) {
+
+        // Break out if checkCountdown_ expired — let interpret() periodic
+        // checks run (GC, timer, process scheduling, test triggers, etc.)
+        if (checkCountdown_ <= 0) break;
 
         // Validate JIT output state — detect stencil corruption early
         if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
