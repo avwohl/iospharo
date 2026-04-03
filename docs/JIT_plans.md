@@ -374,6 +374,44 @@ automatically -- it rewrites bytecodes, and the JIT recompiles them.
 
 ---
 
+## Completed: GC Cooperation (2026-04-02)
+
+JIT-compiled methods now survive compacting GC correctly:
+
+  - **forEachRoot scanning**: JITMethod headers' `compiledMethodOop` fields are
+    scanned as GC roots. This keeps referenced CompiledMethods alive and updates
+    Oop values in-place when compaction moves objects. Skips invalidated entries
+    (failed compilations with zeroed Oop).
+
+  - **recoverAfterGC**: Called after every fullGC. Flushes all ICs (cached Oops
+    are stale), updates nil/true/false bits, rebuilds MethodMap from updated
+    JITMethod headers, and clears the execution count map (keys are stale Oop bits).
+
+  - **Code zone leak fix**: Failed compilations (patch failure after allocation)
+    now invalidate the JITMethod and zero its compiledMethodOop, preventing
+    GC from visiting stale pointers and allowing compaction to reclaim space.
+
+## Performance: Send-Heavy Methods (2026-04-02)
+
+**Finding:** JIT execution of methods containing sends is ~1000x slower than
+interpretation. Every send exits the JIT (W^X toggle, JITState marshalling,
+exit handling) and re-enters the interpreter. For typical Smalltalk code (which
+is mostly sends), this overhead dominates.
+
+**Fix:** `tryExecute` and `tryResume` skip methods with `hasSends=true`. Only
+send-free methods (pure arithmetic, accessors, control flow) are executed via
+JIT, where the overhead is amortized by the actual computation.
+
+**Impact:** With the hasSends guard, JIT-enabled VM runs at full interpreter
+speed (~87M steps/10s vs ~90M without JIT). Send-free methods still benefit
+from JIT compilation.
+
+**Future:** To make the JIT profitable for send-containing methods, implement
+direct JIT-to-JIT calls on IC hits (call target stencil directly without
+exiting to the interpreter). This is the Phase 3+ optimization.
+
+---
+
 ## Known Bugs
 
 ### JIT IC Corruption: Special Selector Sends (2026-04-02) — FIXED
