@@ -4693,7 +4693,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 }
             } else {
 #if PHARO_JIT_ENABLED
-                patchJITICAfterSend(cached->method, rcvr);
+                patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
                 Oop ivar = memory_.fetchPointerUnchecked(cached->accessorIndex, rcvr);
                 *(stackPointer_ - 1) = ivar;  // replace receiver in-place
@@ -4710,7 +4710,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 // Byte object: fall through to normal dispatch
             } else {
 #if PHARO_JIT_ENABLED
-                patchJITICAfterSend(cached->method, rcvr);
+                patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
                 Oop value = stackValue(0);  // the argument
                 memory_.storePointerUnchecked(cached->setterIndex, rcvr, value);
@@ -4723,7 +4723,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Just pop args and leave receiver
         if (cached->returnsSelf && argCount == 0) {
 #if PHARO_JIT_ENABLED
-            patchJITICAfterSend(cached->method, rcvr);
+            patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
             return;
         }
@@ -4740,7 +4740,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                     fprintf(stderr, "[VM]   CACHED PRIM %d SUCCEEDED\n", primIdx);
                 }
 #if PHARO_JIT_ENABLED
-                patchJITICAfterSend(cached->method, rcvr);
+                patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
                 return;
             }
@@ -4760,7 +4760,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             fprintf(stderr, "[VM]   CACHED ACTIVATING METHOD (prim failed or none)\n");
         }
 #if PHARO_JIT_ENABLED
-        patchJITICAfterSend(cached->method, rcvr);
+        patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
         activateMethod(cached->method, argCount);
         return;
@@ -4839,7 +4839,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 fprintf(stderr, "[VM]   PRIM %d SUCCEEDED\n", primIndex);
             }
 #if PHARO_JIT_ENABLED
-            patchJITICAfterSend(method, rcvr);
+            patchJITICAfterSend(method, rcvr, selector);
 #endif
             return;
         }
@@ -4857,7 +4857,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
 #if PHARO_JIT_ENABLED
-    patchJITICAfterSend(method, rcvr);
+    patchJITICAfterSend(method, rcvr, selector);
 #endif
     activateMethod(method, argCount);
 
@@ -9671,10 +9671,19 @@ void Interpreter::tryJITResumeInCaller() {
     inJITResume_ = false;
 }
 
-void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
+void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
     if (!pendingICPatch_) return;
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
+
+    // Verify the IC belongs to this send by checking that the IC's stored
+    // selector matches the send's selector. If they don't match, the
+    // pendingICPatch_ was stale (set by a different send in a nested JIT
+    // execution or process switch) — patching would corrupt the IC.
+    uint64_t icSelectorBits = icData[12];
+    if (icSelectorBits != 0 && icSelectorBits != selector.rawBits()) {
+        return;  // IC belongs to a different send site — skip
+    }
 
     // Compute lookup key matching stencil_sendPoly:
     // objects → classIndex, immediates → (tag & 7) | 0x80000000
@@ -9716,6 +9725,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
+
             return;
         }
     }
