@@ -238,10 +238,18 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             continue;
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
             // 0x58-0x5C: return bytecodes, no operand
-        } else if (op >= 0x5D && op <= 0x5F) {
-            // 0x5D/0x5E: block return, 0x5F: reserved — deopt to interpreter
+        } else if (op == 0x5D || op == 0x5E) {
+            // blockReturn nil (0x5D), blockReturn top (0x5E): complex semantics
+            // (depends on whether we're in a FullBlock or method). Deopt.
             bc.operand = bc.bcOffset;
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
+        } else if (op == 0x5F) {
+            // Nop (per Sista V1 spec)
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
             decoded.push_back(bc);
             i += bc.bcLength;
             extA = 0; extB = 0;
