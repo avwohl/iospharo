@@ -11,9 +11,11 @@ Inline getter/setter/yourself dispatch in stencil_sendPoly eliminates
 C++ boundary crossing for trivial sends. IC stride-3 layout (104 bytes/site)
 with extra word encoding getter (bit 63), setter (bit 62), returnsSelf (bit 61).
 hasSends guard removed — all methods with sends now execute via JIT.
-6,119+ methods compiled, 0 failures, 97% IC hit rate.
+6,119+ methods compiled, 0 failures, 99% IC hit rate.
 IC selector verification prevents cross-send IC corruption from stale
 pendingICPatch_ in nested JIT executions/process switches.
+Code zone: incremental LRU eviction via free list (no method movement).
+Block returns (0x5D/0x5E) handled as return stencils in FullBlocks.
 
 
 ## Critical Bugs
@@ -117,14 +119,23 @@ relocation issues with ARM64 stencils. Tested with 256KB zone: keeps
     Old:       Full flush on zone full → all methods lost, recompile
     New:       LRU eviction → free list → reuse, hot methods preserved
 
-### 6. Context support / deoptimization
-`thisContext` access (bytecode 0x58) currently causes deopt. Methods
-that reify their context (for exception handling, debugging, etc.)
-can't run in JIT at all.
+### 6. Context support / deoptimization — PARTIAL
+`thisContext` access (bytecode 0x52) currently causes deopt to
+interpreter which handles it correctly. Methods with thisContext
+compile and run, but remaining bytecodes after 0x52 run interpreted.
 
-    Design:    On thisContext access, create a real Context object from
-               JIT frame, switch to interpreter for that activation.
-    Cog ref:   "Marry" the context to the frame, deoptimize on access
+Block returns (0x5D/0x5E) in FullBlocks are now handled as simple
+returns (stencil_returnNil/stencil_returnTop). Non-local returns
+(extA > 0) and old-style closures still deopt correctly.
+
+Full JIT resume after thisContext would require frame materialization
+without invalidating the JIT frame stack. Cog handles this with
+context-frame "marriage" which is a larger effort.
+
+    Files:     src/vm/jit/JITCompiler.cpp (FullBlock detection, block return stencils)
+    Status:    Block returns in FullBlocks: DONE
+               thisContext deopt to interpreter: works (no resume)
+               Non-local returns: deopt (works)
 
 ### 7. PushArray stencil (0xE7) — DONE
 `createArray:` bytecode exits with ExitArrayCreate, handler allocates
@@ -132,16 +143,18 @@ array in the interpreter, resumes JIT. Unblocked compilation of methods
 using literal arrays, cascades, and some control flow patterns.
 
 ### 8. More bytecodes that currently deopt — PARTIAL
-    0x52    pushThisContext        (needs context/deopt support)
-    0x5C    blockReturn            (return from block to home context)
-    0xEE    closureCreate          (old-style, rarely used)
-    0xF0-F1 callPrimitive          (inlined primitives)
-    0xF8-FF trap                   (needs profiling counters)
+    Remaining (deopt to interpreter, all work correctly):
+    0x52    pushThisContext        (deopt works, resume would need frame marriage)
+    0xFA    closureCreate          (old-style, rarely used in Pharo 10+)
 
     DONE:
+    0x5D    blockReturnNil         (FullBlock: stencil_returnNil, others: deopt)
+    0x5E    blockReturnTop         (FullBlock: stencil_returnTop, others: deopt)
     0x5F    nop                    (handled as stencil_nop)
     0x78    superSend              (polymorphic IC via 0xEB stencil)
     0x79    superSend (ext)        (same)
+    0xF8    callPrimitive          (NOP — handled at method activation)
+    0xEC    inlinedPrimitive       (NOP — handled by interpreter on miss)
     0xFE    unassigned 3-byte      (handled as 3-byte nop)
     0xFF    unassigned 3-byte      (handled as 3-byte nop)
     0x60-6F arithmetic sends       (upgraded to sendPoly with IC caching)
@@ -217,10 +230,10 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
     7   PushArray stencil           medium   small     DONE
     3   IC hierarchy invalidation   medium   small     DONE
-    8   More bytecode stencils      medium   medium    PARTIAL (super, arith, nop, 0xFE/FF)
-    10  Full test suite             medium   medium    PARTIAL (IC bug fixed)
-    4   Profiling counters          medium   medium    TODO
-    6   Context / deoptimization    medium   large     TODO
+    8   More bytecode stencils      medium   medium    PARTIAL (+ block returns in FullBlocks)
+    10  Full test suite             medium   medium    PARTIAL (blocked by SessionManager)
+    4   Profiling counters          medium   medium    TODO (W^X constraints)
+    6   Context / deoptimization    medium   large     PARTIAL (block returns done, thisContext deopt)
     14  x86_64 stencils             medium   large     TODO
     11  Tier 2 backend              low      very large
     12  Sista integration           low      large

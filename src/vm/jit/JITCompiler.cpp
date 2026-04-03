@@ -989,7 +989,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         size_t freed = zone_.evictLRU(evictTarget, evictCallback, &methodMap_);
         if (freed > 0) {
             static int evictCount = 0;
-            if (++evictCount <= 5 || (evictCount % 100 == 0)) {
+            if (++evictCount <= 3 || (evictCount % 500 == 0)) {
                 fprintf(stderr, "[JIT] Incremental evict #%d: freed %zu bytes for %zu needed, "
                         "%zu methods remain, freeList=%zu\n",
                         evictCount, freed, allocSize,
