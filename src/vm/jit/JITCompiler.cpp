@@ -912,9 +912,21 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Allocate in code zone
     JITMethod* jitMethod = zone_.allocate(totalSize, 0 /* no IC entries yet */);
     if (!jitMethod) {
-        // Try eviction
+        // Try eviction + compaction
         zone_.evictLRU(totalSize + 1024);
         zone_.compact();
+
+        // Rebuild MethodMap — compact() moved JITMethods in memory,
+        // so existing pointers in the map are stale.
+        methodMap_.clear();
+        JITMethod* m = zone_.firstMethod();
+        while (m) {
+            if (m->state == MethodState::Compiled) {
+                methodMap_.insert(m->compiledMethodOop, m);
+            }
+            m = m->nextInZone;
+        }
+
         jitMethod = zone_.allocate(totalSize, 0);
         if (!jitMethod) {
             compilationsFailed_++;
