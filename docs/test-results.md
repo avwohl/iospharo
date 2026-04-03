@@ -1,6 +1,6 @@
 # Test Results
 
-Last updated: 2026-04-02
+Last updated: 2026-04-03
 
 ## Summary
 
@@ -12,6 +12,42 @@ Last updated: 2026-04-02
     Timeout:            0
 
     Zero VM-specific failures.
+
+## JIT Expanded Validation (Build 122, 2026-04-03)
+
+Fresh Pharo 13 image, all 15 core test classes. JIT with inline
+getter/setter dispatch, IC selector verification, free-list LRU eviction.
+
+    Class                    Pass  Fail  Error  Skip
+    ArrayTest                 323     0      0     0
+    BagTest                   167     0      0     0
+    CharacterTest              16     0      0     0
+    DictionaryTest            205     0      0     0
+    FloatTest                  72     0      0     1
+    FractionTest               30     0      0     0
+    IdentitySetTest           176     0      0     0
+    IntegerTest                75     0      0     3
+    IntervalTest              260     0      0     0
+    OrderedCollectionTest     351     0      0     0
+    PointTest                  34     0      0     0
+    SetTest                   174     0      0     0
+    SmallIntegerTest           27     0      0     0
+    SortedCollectionTest      287     0      0     0
+    SymbolTest                268     0      0     0
+    TOTAL                   2,465     0      0     4
+
+    100% pass rate. DictionaryTest previously hung at 43 — now runs fully (205).
+    4 skips are expectedFailure tests (FloatTest, IntegerTest).
+
+JIT stats at end of run:
+    317 compiled, 0 failed, 0 bailouts
+    IC: 99% hit rate, 0 stale entries
+    J2J activation: 73% of sends resolved via JIT-to-JIT chaining
+
+Remaining 187+ classes from expanded tiers blocked by Delay scheduler
+at priority 79 preventing test fork processes from completing. The 15
+core classes cover all fundamental VM mechanics (arithmetic, collections,
+strings, symbols, intervals, dictionaries, sets, arrays, points).
 
 ## JIT + GC Cooperation Validation (Build 122, 2026-04-02)
 
