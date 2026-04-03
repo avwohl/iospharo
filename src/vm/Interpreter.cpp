@@ -9624,7 +9624,7 @@ void Interpreter::tryJITResumeInCaller() {
             stackPointer_ = state.sp;
             uint8_t sendOp = *instructionPointer_;
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
-            else if (sendOp == 0xEA) instructionPointer_ += 2;
+            else if (sendOp == 0xEA || sendOp == 0xEB) instructionPointer_ += 2;
             else instructionPointer_ += 1;
 
             jitRuntime_.noteMethodEntry(cached);  // Count for JIT compilation
@@ -9884,8 +9884,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint8_t sendOp = *instructionPointer_;
                 if (sendOp >= 0x80 && sendOp <= 0xAF) {
                     instructionPointer_ += 1;
-                } else if (sendOp == 0xEA) {
-                    instructionPointer_ += 2;
+                } else if (sendOp == 0xEA || sendOp == 0xEB) {
+                    instructionPointer_ += 2;  // ExtSend / ExtSuperSend
                 } else {
                     instructionPointer_ += 1;
                 }

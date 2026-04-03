@@ -383,15 +383,15 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::ExtSuperSend: {
-                // Super send — deopt to interpreter (handles super lookup)
+                // Super send — same encoding as ExtSend, lookup starts at superclass.
+                // IC caching works the same: key=receiverClassIndex, value=resolved method.
+                // On IC miss, the interpreter does a super lookup.
                 if (i + 1 >= length) goto done;
-                bc.operand = bc.bcOffset;
+                uint8_t desc = bytecodes[i + 1];
+                bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
+                bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
                 bc.bcLength = 2;
-                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
-                decoded.push_back(bc);
-                i += bc.bcLength;
-                extA = 0; extB = 0;
-                continue;
+                break;  // Fall through to selectStencil → stencil_send → upgrade to sendPoly
             }
             case SistaV1::InlinedPrimitive: {
                 // Sista inlined primitive — interpreter treats as nop (skip operand)
@@ -582,7 +582,8 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 if (bc.operand2 >= 0 &&
                     ((bc.opcode >= 0x80 && bc.opcode <= 0xAF) ||
                      (bc.opcode >= 0x70 && bc.opcode <= 0x7F) ||
-                     bc.opcode == SistaV1::ExtSend)) {
+                     bc.opcode == SistaV1::ExtSend ||
+                     bc.opcode == SistaV1::ExtSuperSend)) {
                     // Real send: upgrade to polymorphic IC stencil
                     int argCount = bc.operand2;
                     bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
