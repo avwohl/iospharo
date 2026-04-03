@@ -1043,6 +1043,23 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
                 icSlots[12] = selectorBits;
 
+                // IC ALLOC TRACE: log IC data address per send site
+                {
+                    static int icAllocLog = 0;
+                    if (icAllocLog < 60) {
+                        icAllocLog++;
+                        std::string selName = "?";
+                        if ((selectorBits & 7) == 0 && selectorBits > 0x10000) {
+                            auto* selObj = reinterpret_cast<ObjectHeader*>(selectorBits);
+                            if (selObj->isBytesObject())
+                                selName = std::string((char*)selObj->bytes(), selObj->byteSize());
+                        }
+                        fprintf(stderr, "[IC-ALLOC] method=0x%llx sendIdx=%d IC=%p sel=#%s op=0x%02X\n",
+                                (unsigned long long)compiledMethod.rawBits(),
+                                sendIdx, (void*)icBase, selName.c_str(), bc.opcode);
+                    }
+                }
+
                 sendIdx++;
             }
         }

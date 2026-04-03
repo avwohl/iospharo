@@ -110,7 +110,7 @@ array in the interpreter, resumes JIT. Unblocked compilation of methods
 using literal arrays, cascades, and some control flow patterns.
 
 ### 8. More bytecodes that currently deopt — PARTIAL
-    0x58    pushThisContext        (needs context/deopt support)
+    0x52    pushThisContext        (needs context/deopt support)
     0x5C    blockReturn            (return from block to home context)
     0xEE    closureCreate          (old-style, rarely used)
     0xF0-F1 callPrimitive          (inlined primitives)
