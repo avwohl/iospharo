@@ -374,6 +374,36 @@ automatically -- it rewrites bytecodes, and the JIT recompiles them.
 
 ---
 
+## Known Bugs
+
+### JIT IC Corruption: Special Selector Sends (2026-04-02)
+
+**Status:** Open — JIT disabled for test runs until fixed.
+
+**Symptom:** Infinite `#assert` recursion during image startup. Occurs ~80% of
+runs with JIT enabled, never with JIT disabled.
+
+**Root cause:** The JIT inline cache (IC) for the `#value` send (bytecode 0x79,
+special selector index 9) in the `assert` method sometimes caches the *assert
+method itself* as the send target instead of `FullBlockClosure>>value`.
+
+When `tryJITActivation` handles `ExitSendCached`, it calls
+`activateMethod(cached, nArgs)` with the wrong cached method. Since
+`activateMethod` calls `tryJITActivation`, this creates infinite recursion:
+
+    activateMethod → tryJITActivation → ExitSendCached → activateMethod → ...
+
+**Evidence:**
+- `dladdr` traces confirmed `tryJITActivation` as the caller of recursive `activateMethod`
+- CMakeLists.txt was overriding `-DPHARO_JIT_ENABLED=0` (fixed)
+- 5/5 clean runs with JIT truly disabled vs 4/5 recursive with JIT enabled
+
+**Fix needed:** Investigate IC population logic in `JITCompiler.cpp` for
+special selector send sites. The IC must only cache the *resolved method*
+(e.g. `FullBlockClosure>>value`), not the caller's method.
+
+---
+
 ## Key References
 
     Copy-and-Patch
