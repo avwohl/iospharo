@@ -13,7 +13,29 @@ Last updated: 2026-04-02
 
     Zero VM-specific failures.
 
-## JIT Validation (Build 122, 2026-04-02)
+## JIT + GC Cooperation Validation (Build 122, 2026-04-02)
+
+JIT with full GC cooperation (forEachRoot scanning, recoverAfterGC, IC
+flushing, code zone leak fix). Send-heavy method guard (`hasSends`) keeps
+JIT-enabled VM at full interpreter speed (~87M steps/10s).
+
+    Class                  Pass  Fail  Error  Skip  Timeout
+    SortedCollectionTest    287     0      0     0        0
+    IdentitySetTest         176     0      0     0        0
+    IntegerTest             102     0      0     3        0
+    FloatTest                71     0      0     1        1
+    DictionaryTest           43     0      0     0        0
+    PointTest                34     0      0     0        0
+    FractionTest             30     0      0     0        0
+    SmallIntegerTest         27     0      0     0        0
+    CharacterTest            16     0      0     0        0
+    TOTAL                   786     0      0     4        1
+
+0 failures, 0 errors. DictionaryTest partial (hung on a slow test after 43
+passes). Skips are expectedFailure tests. Timeout is testFloatTruncated
+(known slow).
+
+## JIT IC Validation (Build 122, 2026-04-02)
 
 Kernel-Tests run with copy-and-patch JIT (Tier 1) enabled on macOS ARM64.
 JIT IC corruption bug (infinite #assert recursion) fixed — stale
@@ -24,7 +46,7 @@ pendingICPatch_ was being consumed by sends inside blocks.
 
 No JIT-specific failures. All failures are non-deterministic GC/weak ref tests
 (testClearing, testWeakObject, testWeakDoubleAnnouncer) or Pharo image bugs
-(testFastPointersTo).
+(testFastPointorsTo).
 
 Both runs hit a timeout on SlotClassBuilderTest >> testUsingMethodsFFI
 (exceeded 80s per-test watchdog, then process-level 1800s timeout).
