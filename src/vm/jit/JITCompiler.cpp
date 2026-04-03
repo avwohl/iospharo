@@ -256,6 +256,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             continue;
         } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
             bc.operand = op & 0x0F;                            // arithmetic selector
+            bc.operand2 = 1;                                   // all arith selectors are 1-arg
         } else if (op >= 0x70 && op <= 0x7F) {
             bc.operand = op - 0x70;                            // send special 16-31
             // nArgs per selector: at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
@@ -564,6 +565,17 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 extA = 0; extB = 0;
                 continue;
             }
+            case 0xFE:
+            case 0xFF: {
+                // UNASSIGNED 3-byte bytecodes — skip as nop
+                if (i + 2 >= length) goto done;
+                bc.bcLength = 3;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
             default: {
                 // Unknown extended bytecode — deopt to interpreter (2-byte)
                 if (i + 1 >= length) goto done;
@@ -588,8 +600,9 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 // Check if this is a real send (has argCount in operand2)
                 // vs a bail-out (operand2 == -1, was forced to stencil_send)
                 if (bc.operand2 >= 0 &&
-                    ((bc.opcode >= 0x80 && bc.opcode <= 0xAF) ||
+                    ((bc.opcode >= 0x60 && bc.opcode <= 0x6F) ||
                      (bc.opcode >= 0x70 && bc.opcode <= 0x7F) ||
+                     (bc.opcode >= 0x80 && bc.opcode <= 0xAF) ||
                      bc.opcode == SistaV1::ExtSend ||
                      bc.opcode == SistaV1::ExtSuperSend)) {
                     // Real send: upgrade to polymorphic IC stencil
@@ -1002,8 +1015,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
                 // Store selectorBits at offset 64 (icData[8]) for mega cache probe
                 uint64_t selectorBits = 0;
-                if (bc.opcode >= 0x70 && bc.opcode <= 0x7F) {
-                    // Special selector: from special objects array
+                if (bc.opcode >= 0x60 && bc.opcode <= 0x6F) {
+                    // Arithmetic special selector (index 0-15): from special objects array
+                    int selectorIndex = bc.opcode - 0x60;
+                    if (ssArray) {
+                        size_t selectorSlot = selectorIndex * 2;
+                        if (selectorSlot < ssArray->slotCount()) {
+                            selectorBits = ssArray->slotAt(selectorSlot).rawBits();
+                        }
+                    }
+                } else if (bc.opcode >= 0x70 && bc.opcode <= 0x7F) {
+                    // Special selector 16-31: from special objects array
                     int selectorIndex = (bc.opcode - 0x70) + 16;
                     if (ssArray) {
                         size_t selectorSlot = selectorIndex * 2;
