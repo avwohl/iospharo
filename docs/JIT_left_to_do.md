@@ -6,10 +6,12 @@ checkpoint reguarly and push without bothering the human
 
 Updated: 2026-04-03
 
-Current state: 66 stencils, ARM64 only, GC cooperation working.
-Send-free methods execute via JIT; send-containing methods fall back to
-interpreter (hasSends guard). 6,119 methods compiled, 0 failures.
-3,502 test passes, 2 failures (pre-existing), 1 error (pre-existing).
+Current state: 67 stencils, ARM64 only, GC cooperation working.
+Inline getter/setter/yourself dispatch in stencil_sendPoly eliminates
+C++ boundary crossing for trivial sends. IC stride-3 layout (104 bytes/site)
+with extra word encoding getter (bit 63), setter (bit 62), returnsSelf (bit 61).
+hasSends guard removed — all methods with sends now execute via JIT.
+6,119+ methods compiled, 0 failures, 97% IC hit rate.
 
 
 ## Critical Bugs
@@ -22,41 +24,40 @@ had stale pointers to moved JITMethods.
 Fix: full zone flush (invalidate all methods + compact) when zone is full.
 Methods recompile naturally. 5/5 clean runs after fix.
 
-### Send-containing methods cause ~600x slowdown
+### Send-containing methods cause ~600x slowdown — FIXED
 Tested removing hasSends guard: 97% IC hit rate but C++ boundary crossing
-overhead per send (JITState setup, W^X toggle, exit handling) dominates.
-144K steps/10s vs 87M without JIT. Need direct stencil-to-stencil calls
-(Phase 3 item 1) before this can be enabled.
+overhead per send (JITState setup, W^X toggle, exit handling) dominated.
+Fix: inline getter/setter/yourself dispatch in stencil_sendPoly. On IC
+hit for trivial methods, the stencil reads/writes the field directly
+and continues to the next stencil without exiting to C++. Non-trivial
+sends still exit via ExitSendCached with J2J chaining in the interpreter.
 
 
 ## Phase 3: Make JIT Profitable for Sends
 
-The hasSends guard currently prevents JIT execution of any method with
-sends. This is ~95% of all Smalltalk methods. Without fixing this, the
-JIT only helps pure arithmetic/accessor methods.
+### 1. Direct JIT-to-JIT calls — PARTIAL (inline getter/setter)
+Inline getter/setter/yourself dispatch handles the most common trivial
+sends (~30-50% of all sends in typical Smalltalk code) entirely within
+the stencil. For non-trivial sends, the interpreter's J2J chaining
+(tryJITActivation loop on ExitSendCached) handles method calls with
+reduced overhead vs full interpreter dispatch.
 
-### 1. Direct JIT-to-JIT calls (highest priority)
-When an IC hits and the target method is also JIT-compiled, call the
-target's machine code directly instead of exiting to the interpreter.
-This eliminates the W^X toggle + JITState marshalling overhead that
-makes per-send JIT execution ~1000x slower than interpretation.
+Full stencil-to-stencil calls (saving/restoring JITState, calling
+target JIT code directly from sender JIT code) remain a future
+optimization for non-trivial sends.
 
-    Files:     src/vm/jit/stencils/stencils.cpp (send stencils)
-               src/vm/jit/JITRuntime.cpp (tryExecute/tryResume)
-    Design:    On IC hit, check if target CompiledMethod has a JITMethod.
-               If yes, call it directly (function pointer in IC data).
-               On return, resume caller's JIT code.
-    Blocker:   Need to handle stack frame setup in machine code.
+    Files:     src/vm/jit/stencils/stencils.cpp (stencil_sendPoly IC_HIT macro)
+               src/vm/Interpreter.cpp (patchJITICAfterSend — getter/setter detection)
+    Status:    IC hit inline dispatch working, hasSends guard removed
 
-### 2. IC patching in compiled code
-ICs are currently never populated (stats show 0% hit rate, 0 patched).
-The pendingICPatch_ mechanism exists but may not be wiring up correctly
-after the hasSends guard was added (sends deopt before IC gets a chance
-to be populated).
+### 2. IC patching in compiled code — DONE
+ICs are populated on send misses. 97% hit rate observed. The
+patchJITICAfterSend function now detects trivial methods (getter,
+setter, returnsSelf) and stores the info in the IC extra word for
+inline dispatch.
 
-    Files:     src/vm/jit/JITRuntime.cpp (patchJITICAfterSend)
-               src/vm/Interpreter.cpp (sendSelector)
-    Verify:    Disable hasSends guard temporarily, check IC stats
+    Files:     src/vm/Interpreter.cpp (patchJITICAfterSend)
+    Status:    Working — 97% IC hit rate, 16+ patches per 64K sends
 
 
 ## Phase 3: Remaining Inline Cache Work
@@ -102,21 +103,16 @@ can't run in JIT at all.
                JIT frame, switch to interpreter for that activation.
     Cog ref:   "Marry" the context to the frame, deoptimize on access
 
-### 7. PushArray stencil (0xE7)
-`createArray:` bytecode allocates a Smalltalk Array on the heap. Can't
-do heap allocation in stencils (no GC cooperation mid-stencil).
-
-    Design:    Same as PushFullBlock — exit with ExitArrayCreate, handler
-               allocates array, resumes JIT.
-    Impact:    Unblocks compilation of methods using literal arrays,
-               cascades, and some control flow patterns.
+### 7. PushArray stencil (0xE7) — DONE
+`createArray:` bytecode exits with ExitArrayCreate, handler allocates
+array in the interpreter, resumes JIT. Unblocked compilation of methods
+using literal arrays, cascades, and some control flow patterns.
 
 ### 8. More bytecodes that currently deopt
     0x58    pushThisContext        (needs context/deopt support)
     0x5C    blockReturn            (return from block to home context)
     0x78    superSend              (needs super lookup, different IC)
     0x79    superSend (ext)        (same)
-    0xE7    pushArray              (see item 7)
     0xEE    closureCreate          (old-style, rarely used)
     0xF0-F1 callPrimitive          (inlined primitives)
     0xF8-FF trap                   (needs profiling counters)
@@ -182,15 +178,16 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     #   Item                        Impact   Effort    Status
     1   Fix code zone crash         blocker  small     DONE
     5   Zone eviction/compaction    blocker  medium    PARTIAL (flush works)
-    2   Fix IC patching             high     small     blocked by hasSends
-    1   Direct J2J calls for sends  high     large     KEY BLOCKER
+    1   Inline getter/setter J2J    high     medium    DONE
+    2   IC patching                 high     small     DONE (97% hit rate)
     9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
-    7   PushArray stencil           medium   small
-    10  Full test suite             medium   medium
-    4   Profiling counters          medium   medium
-    6   Context / deoptimization    medium   large
-    8   More bytecode stencils      medium   medium
-    14  x86_64 stencils             medium   large
+    7   PushArray stencil           medium   small     DONE
+    3   IC hierarchy invalidation   medium   small     TODO
+    10  Full test suite             medium   medium    TODO
+    4   Profiling counters          medium   medium    TODO
+    6   Context / deoptimization    medium   large     TODO
+    8   More bytecode stencils      medium   medium    TODO
+    14  x86_64 stencils             medium   large     TODO
     11  Tier 2 backend              low      very large
     12  Sista integration           low      large
     13  SimStack                    low      medium
