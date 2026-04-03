@@ -1,5 +1,39 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-03
+
+## Inline Getter/Setter Dispatch in Stencil Send
+
+IC layout expanded from 72 to 104 bytes per send site (4 entries x [key, method,
+extra] + selectorBits). The extra word encodes trivial method info:
+- bit 63: getter (slot index in low 16 bits)
+- bit 62: setter (slot index in low 16 bits)
+- bit 61: returnsSelf (e.g. "yourself")
+
+On IC hit for trivial methods, the stencil reads/writes the field directly and
+continues to the next bytecode without exiting to C++. This eliminates ~500ns
+per-send boundary crossing overhead for the most common Smalltalk sends.
+
+The hasSends guard is removed — all methods with sends now execute via JIT.
+Non-trivial sends still exit via ExitSendCached with J2J chaining. 67 stencils,
+4632 bytes ARM64 code.
+
+## IC Invalidation on Class Changes
+
+primitiveChangeClass (115), primitiveAdoptInstance (160), primitiveFlushCacheByMethod
+(119), and primitiveFlushCacheBySelector (120) now flush JIT inline caches.
+
+## Super Send Support (0xEB)
+
+ExtSuperSend now uses stencil_sendPoly instead of deopting. IC works the same as
+normal sends — on miss, the interpreter does the super lookup. IP advancement for
+2-byte super send fixed in both ExitSendCached handlers.
+
+## Nop Bytecodes
+
+0x54-0x57 (unassigned), 0xDA-0xDF (reserved), 0xEC (Sista inlined primitive) now
+use stencil_nop instead of deopting. 0xD9 (unconditional trap) still deopts.
+
 2026-04-02
 
 ## Remote Temp Stencils and PushFullBlock Deopt-Resume
