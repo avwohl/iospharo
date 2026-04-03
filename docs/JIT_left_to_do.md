@@ -24,6 +24,20 @@ had stale pointers to moved JITMethods.
 Fix: full zone flush (invalidate all methods + compact) when zone is full.
 Methods recompile naturally. 5/5 clean runs after fix.
 
+### JIT IC dispatch to wrong method — FIXED
+Root cause: sendSelector() had early-exit paths (primitive success,
+getter/setter/identity fast paths) that returned without calling
+patchJITICAfterSend(). This left pendingICPatch_ stale from a
+previous JIT ExitSend. The stale pointer was consumed by a later
+send in a different method, patching the wrong method into the IC.
+
+Symptom: Object>>copy sends #shallowCopy (primitive 148 succeeds),
+pendingICPatch_ not consumed, later #copyTo: send patches copyTo:
+method into copy's shallowCopy IC slot → infinite recursion.
+
+Fix: call patchJITICAfterSend() on ALL successful send resolution
+paths in sendSelector(), not just the activateMethod path.
+
 ### Send-containing methods cause ~600x slowdown — FIXED
 Tested removing hasSends guard: 97% IC hit rate but C++ boundary crossing
 overhead per send (JITState setup, W^X toggle, exit handling) dominated.
@@ -138,16 +152,15 @@ the helpers_ struct field in the literal pool for double indirection.
 
 Result: 6,119 compiled, 0 failed (was 10,683 failed).
 
-### 10. Full Pharo test suite with JIT — BLOCKED
+### 10. Full Pharo test suite with JIT — PARTIAL
 Current validation: 3,502 pass, 2 fail, 1 error across expanded test classes.
 (Failures are pre-existing: testBeRecursivelyReadOnlyObject, testBeRecursivelyWritableObject.)
 Need to run the full 2000+ class suite to ensure no JIT-specific regressions.
 
-Blocker: SessionManager startup sequence doesn't fully complete in our VM.
-The Delay scheduler runs at priority 79, preventing lower-priority test
-processes from being scheduled. The JIT chain loop starvation fix (breaking
-out on checkCountdown_ expiry) helps periodic checks fire, but the deeper
-process scheduling issue remains.
+Previous blocker (JIT IC dispatch bug causing infinite recursion on #copy)
+is fixed. Remaining blocker: SessionManager startup sequence doesn't fully
+complete in our VM. The Delay scheduler runs at priority 79, preventing
+lower-priority test processes from being scheduled.
 
 
 ## Phase 5: Tier 2 Optimizing JIT (Future)
