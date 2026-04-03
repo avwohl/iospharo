@@ -3501,7 +3501,7 @@ terminate_process:
         if (frameDepth_ > 0)
             willBeRestoredTo = memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod);
 
-        popFrame();
+        if (!popFrame()) return;  // Process terminated and rescheduled
 
         std::string afterMethod = memory_.selectorOf(method_);
 
@@ -3523,7 +3523,7 @@ terminate_process:
         }
     } else {
         // Pop frame and push result
-        popFrame();
+        if (!popFrame()) return;  // Process terminated and rescheduled
     }
 
     // After popping, if execution is still running, push the result
@@ -3630,13 +3630,13 @@ void Interpreter::returnFromMethod() {
                                     primitiveIndexOf(rm) == 198) {
                                     nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                     nlrValue_ = value;
-                                    popFrame();
+                                    if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
                                     return;
                                 }
                             }
-                            popFrame();
+                            if (!popFrame()) return;
                         }
                         returnValue(value);
                         return;
@@ -3732,7 +3732,7 @@ void Interpreter::returnFromMethod() {
                                     // context and continue the NLR.
                                     nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                     nlrValue_ = value;
-                                    popFrame();
+                                    if (!popFrame()) return;
                                     push(value);
                                     if (frameDepth_ > 0) {
                                         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
@@ -3743,7 +3743,7 @@ void Interpreter::returnFromMethod() {
                         }
                     }
                 }
-                popFrame();
+                if (!popFrame()) return;
             }
             // Now we're at homeFrame, returnValue pops this frame and returns to caller
             nlrHomeMethod_ = Oop::nil();  // Clear safety net — inline NLR succeeded
@@ -3888,7 +3888,7 @@ void Interpreter::returnFromBlock() {
                             if (primIndex == 198) {
                                 nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
                                 nlrValue_ = value;
-                                popFrame();
+                                if (!popFrame()) return;
                                 push(value);
                                 if (frameDepth_ > 0) {
                                     savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
@@ -3899,7 +3899,7 @@ void Interpreter::returnFromBlock() {
                     }
                 }
             }
-            popFrame();
+            if (!popFrame()) return;
         }
         // Now do a regular return which pops one more frame and pushes the value
         returnValue(value);
@@ -5891,11 +5891,11 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 
 
 
-void Interpreter::popFrame() {
+bool Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
         stopVM("popFrame at frameDepth 0");
-        return;
+        return false;
     }
 
     --frameDepth_;
@@ -5921,6 +5921,7 @@ void Interpreter::popFrame() {
     if (frameDepth_ == 0 && frame.savedIP == nullptr) {
         stopVM("Last frame popped in popFrame()");
     }
+    return true;
 }
 
 // ===== VARIABLE ACCESS =====
@@ -9539,8 +9540,10 @@ void Interpreter::tryJITResumeInCaller() {
         switch (state.exitReason) {
         case jit::ExitReturn:
             // JIT completed the rest of the method and returned.
-            // Pop frame and push result, then loop to try the next caller.
-            popFrame();
+            if (!popFrame()) {
+                inJITResume_ = false;
+                return;  // Process terminated and rescheduled
+            }
             if (running_) {
                 push(state.returnValue);
             }
@@ -9812,7 +9815,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn:
-            popFrame();
+            if (!popFrame()) return true;  // Process terminated and rescheduled
             push(state.returnValue);
             return true;
 

@@ -867,8 +867,9 @@ private:
     /// Create a new stack frame
     bool pushFrame(Oop method, int argCount);  // Returns false if recursion detected
 
-    /// Pop the current stack frame
-    void popFrame();
+    /// Pop the current stack frame. Returns false if this was the last frame
+    /// (process completed) and the caller should NOT push a return value.
+    bool popFrame();
 
     /// Get temporary variable
     Oop temporary(int index) const;
