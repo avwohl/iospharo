@@ -109,14 +109,20 @@ can't run in JIT at all.
 array in the interpreter, resumes JIT. Unblocked compilation of methods
 using literal arrays, cascades, and some control flow patterns.
 
-### 8. More bytecodes that currently deopt
+### 8. More bytecodes that currently deopt — PARTIAL
     0x58    pushThisContext        (needs context/deopt support)
     0x5C    blockReturn            (return from block to home context)
-    0x78    superSend              (needs super lookup, different IC)
-    0x79    superSend (ext)        (same)
     0xEE    closureCreate          (old-style, rarely used)
     0xF0-F1 callPrimitive          (inlined primitives)
     0xF8-FF trap                   (needs profiling counters)
+
+    DONE:
+    0x5F    nop                    (handled as stencil_nop)
+    0x78    superSend              (polymorphic IC via 0xEB stencil)
+    0x79    superSend (ext)        (same)
+    0xFE    unassigned 3-byte      (handled as 3-byte nop)
+    0xFF    unassigned 3-byte      (handled as 3-byte nop)
+    0x60-6F arithmetic sends       (upgraded to sendPoly with IC caching)
 
 ### 9. Reduce compilation failures — DONE
 Root cause: ARM64 BRANCH26 relocations for runtime helpers (jit_rt_send,
@@ -132,10 +138,16 @@ the helpers_ struct field in the literal pool for double indirection.
 
 Result: 6,119 compiled, 0 failed (was 10,683 failed).
 
-### 10. Full Pharo test suite with JIT
+### 10. Full Pharo test suite with JIT — BLOCKED
 Current validation: 3,502 pass, 2 fail, 1 error across expanded test classes.
 (Failures are pre-existing: testBeRecursivelyReadOnlyObject, testBeRecursivelyWritableObject.)
 Need to run the full 2000+ class suite to ensure no JIT-specific regressions.
+
+Blocker: SessionManager startup sequence doesn't fully complete in our VM.
+The Delay scheduler runs at priority 79, preventing lower-priority test
+processes from being scheduled. The JIT chain loop starvation fix (breaking
+out on checkCountdown_ expiry) helps periodic checks fire, but the deeper
+process scheduling issue remains.
 
 
 ## Phase 5: Tier 2 Optimizing JIT (Future)
@@ -184,10 +196,10 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
     7   PushArray stencil           medium   small     DONE
     3   IC hierarchy invalidation   medium   small     DONE
-    10  Full test suite             medium   medium    TODO
+    8   More bytecode stencils      medium   medium    PARTIAL (super, arith, nop, 0xFE/FF)
+    10  Full test suite             medium   medium    BLOCKED (process scheduling)
     4   Profiling counters          medium   medium    TODO
     6   Context / deoptimization    medium   large     TODO
-    8   More bytecode stencils      medium   medium    TODO
     14  x86_64 stencils             medium   large     TODO
     11  Tier 2 backend              low      very large
     12  Sista integration           low      large
