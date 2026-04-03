@@ -8527,6 +8527,11 @@ PrimitiveResult Interpreter::changeClassOf(Oop rcvr, Oop newClass) {
     // Also update the format to match the new class
     rcvrHeader->setFormat(static_cast<ObjectFormat>(newFormat));
 
+    // Flush caches — the object's class changed so cached method lookups
+    // keyed on its classIndex are now stale.
+    flushMethodCache();
+    flushJITCaches();
+
     popN(2);
     push(rcvr);  // Return receiver
     return PrimitiveResult::Success;
@@ -9879,6 +9884,7 @@ PrimitiveResult Interpreter::primitiveFlushCacheByMethod(int argCount) {
             entry.primitiveIndex = 0;
         }
     }
+    flushJITCaches();  // JIT ICs may cache this method
     return PrimitiveResult::Success;
 }
 
@@ -9896,6 +9902,7 @@ PrimitiveResult Interpreter::primitiveFlushCacheBySelector(int argCount) {
             entry.primitiveIndex = 0;
         }
     }
+    flushJITCaches();  // JIT ICs may cache methods for this selector
     return PrimitiveResult::Success;
 }
 
