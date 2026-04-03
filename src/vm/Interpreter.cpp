@@ -721,6 +721,12 @@ void Interpreter::interpret() {
             recentBytecodeIdx_++; \
             lastBytecode_ = bytecode; \
         } \
+        if (__builtin_expect(bcTraceActive_ > 0 && bcTraceActive_ <= 200, 0)) { \
+            ptrdiff_t _off = instructionPointer_ - method_.asObjectPtr()->bytes() - 1; \
+            fprintf(stderr, "[BCTRACE] #%d fd=%zu bc=0x%02x ipOff=%td mOop=0x%llx\n", \
+                    bcTraceActive_++, frameDepth_, bytecode, _off, \
+                    (unsigned long long)method_.rawBits()); \
+        } \
         inExtension_ = false; \
         goto *dispatchTable[bytecode]; \
     } while(0)
@@ -1014,6 +1020,23 @@ void Interpreter::interpret() {
     // --- FullBlockClosure >> value fast path ---
     op_value: {
         Oop rcvr = stackValue(0);
+        // Log value sends in assert method for recursion diagnosis
+        {
+            static int valInAssert = 0;
+            static Oop assertOop2 = Oop::nil();
+            if (assertOop2.isNil() && frameDepth_ > 15) {
+                std::string ms = memory_.selectorOf(method_);
+                if (ms == "assert") assertOop2 = method_;
+            }
+            if (!assertOop2.isNil() && method_.rawBits() == assertOop2.rawBits() && valInAssert < 20) {
+                valInAssert++;
+                bool isBlock = rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
+                               rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_;
+                fprintf(stderr, "[VALUE-IN-ASSERT] #%d fd=%zu isBlock=%d rcvr=0x%llx\n",
+                        valInAssert, frameDepth_, isBlock, (unsigned long long)rcvr.rawBits());
+                fflush(stderr);
+            }
+        }
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
             argCount_ = 0;
@@ -2460,6 +2483,26 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
     }
+    // Single-step trace for assert recursion debugging
+    {
+        static int assertTraceCount = 0;
+        if (assertTraceCount < 200 && frameDepth_ >= 20 && frameDepth_ < 25) {
+            // Check if we're in the assert method (by checking method oop)
+            static Oop assertMethodOop = Oop::nil();
+            if (assertMethodOop.isNil()) {
+                std::string sel = memory_.selectorOf(method_);
+                if (sel == "assert") assertMethodOop = method_;
+            }
+            if (method_.rawBits() == assertMethodOop.rawBits() && !assertMethodOop.isNil()) {
+                ObjectHeader* mHdr = method_.asObjectPtr();
+                ptrdiff_t ipOff = instructionPointer_ - mHdr->bytes() - 1; // -1 because fetchByte already advanced
+                fprintf(stderr, "[ATRACE] fd=%zu bc=0x%02x ipOff=%td\n",
+                        frameDepth_, bytecode, ipOff);
+                assertTraceCount++;
+                if (assertTraceCount % 50 == 0) fflush(stderr);
+            }
+        }
+    }
     // ========================================================================
     // SISTA V1 BYTECODE DISPATCH (Pharo 10+)
     // Flat switch for O(1) jump-table dispatch. V3PlusClosures support removed.
@@ -2591,6 +2634,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         } else {
             bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
                                 method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
+            if (!inFullBlock && frameDepth_ > 10) {
+                static int blockRetLog = 0;
+                if (blockRetLog++ < 5) {
+                    uint32_t methodClsIdx = method_.isObject() ? method_.asObjectPtr()->classIndex() : 9999;
+                    fprintf(stderr, "[BLOCKRET-FAIL] #%d: inFullBlock=false method_clsIdx=%u compiledBlockClassIndex_=%u fd=%zu method=#%s\n",
+                            blockRetLog, methodClsIdx, compiledBlockClassIndex_,
+                            frameDepth_, memory_.selectorOf(method_).c_str());
+                    fflush(stderr);
+                }
+            }
             if (inFullBlock) {
                 Oop value = pop();
                 returnValue(value);
@@ -2619,13 +2672,48 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0x79: {
         // value (0 args) — fast path for FullBlockClosure
         Oop rcvr = stackValue(0);
+        // Debug: log when classIndex doesn't match for FullBlockClosure
+        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 && frameDepth_ > 15) {
+            uint32_t rci = rcvr.asObjectPtr()->classIndex();
+            if (rci == 38 && rci != fullBlockClosureClassIndex_) {
+                static int mismatchCount = 0;
+                if (mismatchCount++ < 3) {
+                    fprintf(stderr, "[CLSIDX-MISMATCH] #%d: rcvr classIndex=%u fullBlockClosureClassIndex_=%u in #%s fd=%zu\n",
+                            mismatchCount, rci, fullBlockClosureClassIndex_,
+                            memory_.selectorOf(method_).c_str(), frameDepth_);
+                    fflush(stderr);
+                }
+            }
+        }
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
-            if (primitiveFullClosureValue(0) == PrimitiveResult::Success)
+            auto res = primitiveFullClosureValue(0);
+            if (res == PrimitiveResult::Success)
                 break;
+            // Log the failure to understand the recursion
+            static int valueFail = 0;
+            if (valueFail++ < 5) {
+                Oop numArgsOop = memory_.fetchPointerUnchecked(2, rcvr);
+                std::string curMethod = memory_.selectorOf(method_);
+                fprintf(stderr, "[VALUE-FAIL] #%d: primitiveFullClosureValue failed in #%s fd=%zu "
+                        "closure=0x%llx numArgs=%lld\n",
+                        valueFail, curMethod.c_str(), frameDepth_,
+                        (unsigned long long)rcvr.rawBits(),
+                        numArgsOop.isSmallInteger() ? numArgsOop.asSmallInteger() : -999);
+                // Also check what commonSend(9) will resolve to
+                Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                if (specialSelectors.isObject()) {
+                    size_t selectorSlot = 25 * 2;  // (9+16)*2 = 50
+                    Oop sel = specialSelectors.asObjectPtr()->slotAt(selectorSlot);
+                    std::string selStr = memory_.oopToString(sel);
+                    fprintf(stderr, "[VALUE-FAIL]   commonSend(9) will send: '%s' (oop=0x%llx)\n",
+                            selStr.c_str(), (unsigned long long)sel.rawBits());
+                }
+                fflush(stderr);
+            }
         }
         commonSend(9);
         break;
@@ -4619,6 +4707,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
     }
 
+    // Log sends from within assert during recursion
+    {
+        static int assertSendLog = 0;
+        static Oop assertOop = Oop::nil();
+        if (assertOop.isNil() && frameDepth_ > 15) {
+            std::string ms = memory_.selectorOf(method_);
+            if (ms == "assert") assertOop = method_;
+        }
+        if (!assertOop.isNil() && method_.rawBits() == assertOop.rawBits() && assertSendLog < 30 && frameDepth_ >= 19) {
+            assertSendLog++;
+            std::string selStr = "(?)";
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sH = selector.asObjectPtr();
+                if (sH->isBytesObject()) selStr = std::string((const char*)sH->bytes(), sH->byteSize());
+            }
+            std::string rcvrClass = memory_.nameOfClass(memory_.classOf(rcvr));
+            ptrdiff_t ipOff = instructionPointer_ - method_.asObjectPtr()->bytes();
+            fprintf(stderr, "[ASSERT-SEND] #%d fd=%zu sel=#%s argCount=%d rcvr_class=%s ipOff=%td\n",
+                    assertSendLog, frameDepth_, selStr.c_str(), argCount, rcvrClass.c_str(), ipOff);
+            fflush(stderr);
+        }
+    }
+
     // Corruption check (cold path)
     if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
         std::string selName = "(unknown)";
@@ -5161,6 +5272,65 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // One-shot: dump bytecodes when #assert is called from within #assert
+    {
+        static int assertDumpCount = 0;
+        if (assertDumpCount < 1 && frameDepth_ > 15) {
+            std::string newSel = memory_.selectorOf(method);
+            if (newSel == "assert") {
+                std::string curSel = memory_.selectorOf(method_);
+                if (curSel == "assert") {
+                    assertDumpCount++;
+                    // Dump the assert method's bytecodes
+                    if (method.isObject()) {
+                        ObjectHeader* mHdr = method.asObjectPtr();
+                        Oop header = memory_.fetchPointer(0, method);
+                        int nLit = header.isSmallInteger() ? (header.asSmallInteger() & 0x7FFF) : 0;
+                        size_t bcStart = (1 + nLit) * 8;
+                        size_t bcEnd = mHdr->byteSize();
+                        fprintf(stderr, "[ASSERT-DUMP] method=0x%llx nLit=%d bcStart=%zu bcEnd=%zu fd=%zu\n",
+                                (unsigned long long)method.rawBits(), nLit, bcStart, bcEnd, frameDepth_);
+                        // Print literals
+                        for (int i = 0; i < nLit && i < 20; i++) {
+                            Oop lit = memory_.fetchPointer(1 + i, method);
+                            std::string litStr = memory_.oopToString(lit);
+                            fprintf(stderr, "  lit[%d] = 0x%llx %s\n", i, (unsigned long long)lit.rawBits(),
+                                    litStr.empty() ? "(non-string)" : litStr.c_str());
+                        }
+                        // Print bytecodes
+                        fprintf(stderr, "  bytecodes:");
+                        for (size_t b = bcStart; b < bcEnd && b < bcStart + 60; b++) {
+                            fprintf(stderr, " %02x", mHdr->bytes()[b]);
+                        }
+                        fprintf(stderr, "\n");
+                        // Also dump caller's IP position within its method
+                        ptrdiff_t callerIPoff = instructionPointer_ - method_.asObjectPtr()->bytes();
+                        fprintf(stderr, "  caller assert IP offset=%td\n", callerIPoff);
+                        // Dump caller bytecodes around IP
+                        ObjectHeader* callerM = method_.asObjectPtr();
+                        fprintf(stderr, "  caller bytecodes around IP:");
+                        for (ptrdiff_t b = callerIPoff - 5; b < callerIPoff + 5; b++) {
+                            if (b >= 0 && b < (ptrdiff_t)callerM->byteSize()) {
+                                fprintf(stderr, "%s%02x", b == callerIPoff ? " [" : " ", callerM->bytes()[b]);
+                                if (b == callerIPoff) fprintf(stderr, "]");
+                            }
+                        }
+                        fprintf(stderr, "\n");
+                        // Print receiver info
+                        Oop rcvr = stackValue(argCount);
+                        fprintf(stderr, "  receiver=0x%llx", (unsigned long long)rcvr.rawBits());
+                        if (rcvr.isSmallInteger()) fprintf(stderr, " (SmallInt=%lld)", rcvr.asSmallInteger());
+                        else if (rcvr.isObject()) {
+                            std::string cn = memory_.nameOfClass(memory_.classOf(rcvr));
+                            fprintf(stderr, " (class=%s cls_idx=%u)", cn.c_str(), rcvr.asObjectPtr()->classIndex());
+                        }
+                        fprintf(stderr, "\n");
+                        fflush(stderr);
+                    }
+                }
+            }
+        }
+    }
     // Save current state
 
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
@@ -5382,6 +5552,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     size_t totalBytes = methodObj->byteSize();
     bytecodeEnd_ = methodBytes + totalBytes;
 
+    // Verify IP for assert recursion
+    {
+        static int assertIPcheck = 0;
+        if (assertIPcheck < 5 && frameDepth_ >= 19) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "assert") {
+                assertIPcheck++;
+                ptrdiff_t ipOff = instructionPointer_ - methodBytes;
+                fprintf(stderr, "[ASSERT-IP] #%d fd=%zu ipOff=%td bcStart=%zu bcEnd=%zu firstByte=0x%02x\n",
+                        assertIPcheck, frameDepth_, ipOff, bytecodeStart, totalBytes,
+                        instructionPointer_[0]);
+                fflush(stderr);
+                // Start bytecode tracing after 5th assert activation
+                if (assertIPcheck == 5) {
+                    bcTraceActive_ = 1;
+                    fprintf(stderr, "[BCTRACE] Starting trace after 5th assert activation\n");
+                    fflush(stderr);
+                }
+            }
+        }
+    }
+
               // << " rawHdr=0x" << std::hex << methodHeader.rawBits()
               // << " hdrBits=" << headerBits << std::dec
               // << " numLiterals=" << numLiterals << " bytecodeStart=" << bytecodeStart
@@ -5524,6 +5716,39 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (!pushFrame(methodToExecute, argCount)) {
         handleStackOverflow(argCount);
         return;
+    }
+
+    // Log block activation from assert to diagnose recursion
+    {
+        static int blockFromAssert = 0;
+        if (blockFromAssert < 3 && frameDepth_ > 15) {
+            // Check if the caller is #assert
+            std::string callerSel = memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod);
+            if (callerSel == "assert") {
+                blockFromAssert++;
+                ObjectHeader* blkHdr = methodToExecute.asObjectPtr();
+                size_t bcStart = startAddress - blkHdr->bytes();
+                size_t bcEnd = blkHdr->byteSize();
+                fprintf(stderr, "[BLOCK-FROM-ASSERT] #%d fd=%zu block=0x%llx bcStart=%zu bcEnd=%zu\n",
+                        blockFromAssert, frameDepth_,
+                        (unsigned long long)methodToExecute.rawBits(), bcStart, bcEnd);
+                fprintf(stderr, "  block bytecodes:");
+                for (size_t b = bcStart; b < bcEnd && b < bcStart + 40; b++) {
+                    fprintf(stderr, " %02x", blkHdr->bytes()[b]);
+                }
+                fprintf(stderr, "\n");
+                // Print block literals
+                Oop header = memory_.fetchPointerUnchecked(0, methodToExecute);
+                int nLit = header.isSmallInteger() ? (header.asSmallInteger() & 0x7FFF) : 0;
+                for (int i = 0; i < nLit && i < 10; i++) {
+                    Oop lit = memory_.fetchPointer(1 + i, methodToExecute);
+                    std::string litStr = memory_.oopToString(lit);
+                    fprintf(stderr, "  blit[%d] = 0x%llx %s\n", i, (unsigned long long)lit.rawBits(),
+                            litStr.empty() ? "(non-string)" : litStr.c_str());
+                }
+                fflush(stderr);
+            }
+        }
     }
 
     // Set current closure for this block activation
@@ -5698,6 +5923,33 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    // Frame-depth milestones: log the selector at key depths to trace recursion patterns
+    if (__builtin_expect(frameDepth_ >= 50, 0)) {
+        static size_t lastMilestone = 0;
+        static int milestoneCount = 0;
+        // Log at 50, 100, 200, 500, 1000, 2000, 3000, 4000
+        size_t fd = frameDepth_;
+        size_t milestone = (fd < 100) ? 50 : (fd < 200) ? 100 : (fd < 500) ? 200 :
+                           (fd < 1000) ? 500 : (fd < 2000) ? 1000 : (fd < 3000) ? 2000 :
+                           (fd < 4000) ? 3000 : 4000;
+        if (fd == milestone && milestone != lastMilestone && milestoneCount < 50) {
+            milestoneCount++;
+            lastMilestone = milestone;
+            std::string sel = memory_.selectorOf(method);
+            fprintf(stderr, "[DEPTH] fd=%zu pushing #%s (argCount=%d)\n",
+                    fd, sel.c_str(), argCount);
+            // At fd=50, print ALL frames; at higher milestones, print last 10
+            size_t start = (fd == 50) ? 0 : (fd > 10 ? fd - 10 : 0);
+            for (size_t f = start; f < fd; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                std::string savedSel = memory_.selectorOf(savedM);
+                fprintf(stderr, "  [%zu] #%s (oop=0x%llx)\n", f, savedSel.c_str(),
+                        (unsigned long long)savedM.rawBits());
+            }
+            fflush(stderr);
+        }
+    }
+
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
     // catches both infinite recursion (soft) and hard overflow.
     if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
@@ -5705,12 +5957,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         if (overflowLog++ < 3) {
             fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
                     frameDepth_, memory_.selectorOf(method).c_str(), argCount);
-            // Dump last 30 frames
-            fprintf(stderr, "[OVERFLOW] Call stack (last 30):\n");
-            size_t start = frameDepth_ > 30 ? frameDepth_ - 30 : 0;
+            // Dump last 50 frames with raw bits for debugging
+            fprintf(stderr, "[OVERFLOW] Call stack (last 50):\n");
+            size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
             for (size_t f = start; f < frameDepth_; f++) {
-                fprintf(stderr, "  [%zu] #%s\n", f, memory_.selectorOf(savedFrames_[f].savedMethod).c_str());
+                Oop savedM = savedFrames_[f].savedMethod;
+                std::string savedSel = memory_.selectorOf(savedM);
+                fprintf(stderr, "  [%zu] #%s (oop=0x%llx)\n", f, savedSel.c_str(),
+                        (unsigned long long)savedM.rawBits());
             }
+            fflush(stderr);
         }
         if (frameDepth_ >= MaxFrameDepth) {
             stopVM("Frame depth overflow in pushFrame()");
@@ -6240,6 +6496,16 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
+    static int logCount = 0;
+    if (logCount++ < 10) {
+        std::string selStr = memory_.selectorOf(selectors_.mustBeBoolean);
+        std::string valClass = memory_.nameOfClass(memory_.classOf(value));
+        std::string curMethod = memory_.selectorOf(method_);
+        fprintf(stderr, "[MUSTBOOL] fd=%zu sel=#%s value_class=%s value=0x%llx in_method=#%s\n",
+                frameDepth_, selStr.c_str(), valClass.c_str(),
+                (unsigned long long)value.rawBits(), curMethod.c_str());
+        fflush(stderr);
+    }
     (void)value;
     sendSelector(selectors_.mustBeBoolean, 0);
 }

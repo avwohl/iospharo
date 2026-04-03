@@ -501,6 +501,7 @@ private:
     // Execution control
     bool running_;
     bool primitiveFailed_;
+    int bcTraceActive_ = 0;  // >0 = tracing bytecodes, increments each step
     int primFailCode_ = 0;  // Primitive failure error code (stored in error: temp on failure)
     int64_t osErrorCode_ = 0;  // OS error code for PrimErrOSError (e.g., errno)
     // DNS resolver state (async)
