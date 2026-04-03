@@ -208,9 +208,18 @@ not a full register allocator.
 
 ## Cross-Platform (Future)
 
-### 14. x86_64 stencils
-Currently ARM64 only. Need x86_64 stencils for macOS Intel, Linux, Windows.
-extract_stencils.py already parses Mach-O; needs ELF/COFF support.
+### 14. x86_64 stencils — PARTIAL (infrastructure done)
+extract_stencils.py generates x86_64 stencil headers (67 stencils, 5354 bytes,
+184 relocations). JITCompiler.cpp refactored with if constexpr for x86_64
+patching (X86_64_PC32 relocations, independent literal pool slots).
+Remaining: COFF parsing for Windows, ELF for Linux. macOS x86_64 not a
+useful target (Apple Silicon transition complete). Windows is the right
+place to finish x86_64 support.
+
+    Files:     scripts/extract_stencils.py (--arch flag, x86_64 reloc maps)
+               src/vm/jit/generated_stencils_x86_64.hpp (generated)
+               src/vm/jit/generated_stencils.hpp (arch dispatcher)
+               src/vm/jit/JITCompiler.cpp (arch-conditional patching)
 
 ### 15. Windows COFF relocation handling
 Stencil extraction needs to handle COFF relocations for Windows builds.
@@ -234,7 +243,7 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     10  Full test suite             medium   medium    PARTIAL (blocked by SessionManager)
     4   Profiling counters          medium   medium    TODO (W^X constraints)
     6   Context / deoptimization    medium   large     PARTIAL (block returns done, thisContext deopt)
-    14  x86_64 stencils             medium   large     TODO
+    14  x86_64 stencils             medium   large     PARTIAL (infra done, needs Windows COFF)
     11  Tier 2 backend              low      very large
     12  Sista integration           low      large
     13  SimStack                    low      medium
