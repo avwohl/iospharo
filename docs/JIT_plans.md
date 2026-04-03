@@ -376,31 +376,27 @@ automatically -- it rewrites bytecodes, and the JIT recompiles them.
 
 ## Known Bugs
 
-### JIT IC Corruption: Special Selector Sends (2026-04-02)
+### JIT IC Corruption: Special Selector Sends (2026-04-02) — FIXED
 
-**Status:** Open — JIT disabled for test runs until fixed.
+**Status:** Fixed (commit 944e8bb).
 
-**Symptom:** Infinite `#assert` recursion during image startup. Occurs ~80% of
-runs with JIT enabled, never with JIT disabled.
+**Symptom:** Infinite `#assert` recursion during image startup. Occurred ~80%
+of runs with JIT enabled.
 
-**Root cause:** The JIT inline cache (IC) for the `#value` send (bytecode 0x79,
-special selector index 9) in the `assert` method sometimes caches the *assert
-method itself* as the send target instead of `FullBlockClosure>>value`.
+**Root cause:** When the JIT exited with `ExitSend` at a `#value` bytecode,
+`pendingICPatch_` was set to that send site's IC data pointer. The interpreter
+then handled `#value` via the fast path (`primitiveFullClosureValue` →
+`activateBlock`), bypassing `sendSelector`. Sends INSIDE the block consumed
+`pendingICPatch_` via `patchJITICAfterSend`, writing the wrong method into the
+`#value` send's IC. This caused the IC to cache the assert method itself as the
+target for `#value`, creating infinite recursion.
 
-When `tryJITActivation` handles `ExitSendCached`, it calls
-`activateMethod(cached, nArgs)` with the wrong cached method. Since
-`activateMethod` calls `tryJITActivation`, this creates infinite recursion:
+**Fix:** Clear `pendingICPatch_` at the start of `activateBlock()`. Block
+activation means sends inside the block are unrelated to the JIT send that
+set the pending IC patch.
 
-    activateMethod → tryJITActivation → ExitSendCached → activateMethod → ...
-
-**Evidence:**
-- `dladdr` traces confirmed `tryJITActivation` as the caller of recursive `activateMethod`
-- CMakeLists.txt was overriding `-DPHARO_JIT_ENABLED=0` (fixed)
-- 5/5 clean runs with JIT truly disabled vs 4/5 recursive with JIT enabled
-
-**Fix needed:** Investigate IC population logic in `JITCompiler.cpp` for
-special selector send sites. The IC must only cache the *resolved method*
-(e.g. `FullBlockClosure>>value`), not the caller's method.
+**Verification:** 5/5 clean runs with JIT enabled after fix (previously 4/5
+showed recursion).
 
 ---
 

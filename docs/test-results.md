@@ -1,10 +1,10 @@
 # Test Results
 
-Last updated: 2026-03-09
+Last updated: 2026-04-02
 
 ## Summary
 
-    Total tests:   28,071 across 2,046 classes
+    Total tests:   28,071 across 2,046 classes (full suite, Build 78+)
     Pass:          27,510 (98.00%)
     Fail:              39
     Error:            391
@@ -12,6 +12,22 @@ Last updated: 2026-03-09
     Timeout:            0
 
     Zero VM-specific failures.
+
+## JIT Validation (Build 122, 2026-04-02)
+
+Kernel-Tests run with copy-and-patch JIT (Tier 1) enabled on macOS ARM64.
+JIT IC corruption bug (infinite #assert recursion) fixed — stale
+pendingICPatch_ was being consumed by sends inside blocks.
+
+    JIT disabled:  187 classes  8248 pass  5 fail  1 error  15 skip
+    JIT enabled:   187 classes  8249 pass  4 fail  1 error  15 skip
+
+No JIT-specific failures. All failures are non-deterministic GC/weak ref tests
+(testClearing, testWeakObject, testWeakDoubleAnnouncer) or Pharo image bugs
+(testFastPointersTo).
+
+Both runs hit a timeout on SlotClassBuilderTest >> testUsingMethodsFFI
+(exceeded 80s per-test watchdog, then process-level 1800s timeout).
 
 Trait tests (previously 480 "failures") now pass: 217/217.
 Without the ProcessTest processMonitor issue (46 errors, Pharo 13 image bug):
