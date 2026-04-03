@@ -185,6 +185,8 @@ static void doFFICall(void* p) {
 
 namespace pharo {
 
+extern const char* g_xferReason;  // defined in Interpreter.cpp
+
 // Forward declarations for LargeInteger arithmetic helpers
 static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& magnitude, bool& isNegative);
 static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
@@ -3550,6 +3552,7 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    g_xferReason = "semWait";
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -3561,20 +3564,20 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    // Startup grace period: suppress quit during the first 10 seconds.
-    // Pharo's command line handler (BasicCommandLineHandler in P13,
-    // ClapCommandLineHandler in P14) rejects unrecognized image arguments
-    // (like "-interactive") and calls Exit>>defaultAction which triggers
-    // primitiveQuit.  We need -interactive for OSWorldRenderer selection,
-    // but can't prevent the handler from rejecting it.  Suppressing quit
-    // during startup lets the image continue to load startup.st and start
-    // the GUI normally.  User-initiated quit (e.g., Save & Quit dialog)
-    // happens well after 10 seconds.
+    // Startup grace period: fail quit during the first 10 seconds.
     auto uptime = std::chrono::steady_clock::now() - vmStartTime_;
     if (uptime < std::chrono::seconds(10)) {
-        fprintf(stderr, "[primitiveQuit] Suppressed during startup (%.1fs uptime)\n",
-                std::chrono::duration<double>(uptime).count());
-        return PrimitiveResult::Success;
+        static int quitSuppressCount = 0;
+        if (++quitSuppressCount <= 5) {
+            Oop proc = getActiveProcess();
+            Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
+            fprintf(stderr, "[primitiveQuit] Failed during startup (%.1fs, #%d, proc=0x%llx pri=%lld in #%s)\n",
+                    std::chrono::duration<double>(uptime).count(), quitSuppressCount,
+                    (unsigned long long)proc.rawBits(),
+                    pri.isSmallInteger() ? pri.asSmallInteger() : -1,
+                    memory_.selectorOf(method_).c_str());
+        }
+        return PrimitiveResult::Failure;
     }
 
     running_ = false;

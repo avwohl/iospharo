@@ -607,13 +607,11 @@ int main(int argc, char* argv[]) {
     }
     interpreter.setImageArguments(imageArgs);
 
-    // Display mode: --headless + --interactive tells the image to start GUI
-    // via SDL2 (which our stubs bridge to Metal/display surface).
-    // startup.st patches P14's OSSDL2FormRenderer>>outputExtent nil guard.
-    interpreter.setVMParameters({"--headless"});
-    if (imageArgs.empty()) {
-        interpreter.setImageArguments({"--interactive"});
-    }
+    // No VM parameters needed — the display is handled by our Metal/display
+    // surface pipeline. Avoid --headless (suppresses display init) and
+    // --interactive (rejected by BasicCommandLineHandler with Exit).
+    // Don't set image arguments unless explicitly provided — this prevents
+    // the BasicCommandLineHandler from rejecting unknown args and calling Exit.
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;

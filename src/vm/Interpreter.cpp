@@ -1662,6 +1662,7 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
+            g_xferReason = "semSignal";
             putToSleep(activeProcess);
             transferTo(process);
         } else {
@@ -6071,6 +6072,26 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
 
         dnuDepth_++;
+
+    // TFFI type autofill protocol: selectors like #tfexternalSizeTType are sent
+    // to whatever tfAutoFillWorkerClass returns. When no TFFI plugin is loaded,
+    // that returns false/nil. The correct answer is nil (no type mapping available).
+    // Without this, the DNU triggers fatal error handling that kills SessionManager.
+    if (selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (selHdr->isBytesObject() && selHdr->byteSize() >= 11) {
+            const char* selBytes = reinterpret_cast<const char*>(selHdr->bytes());
+            if (selHdr->byteSize() >= 11 &&
+                std::memcmp(selBytes, "tfexternal", 10) == 0) {
+                // Pop args and receiver, push nil
+                for (int i = 0; i < argCount; i++) pop();
+                pop();  // receiver
+                push(memory_.nil());
+                dnuDepth_--;
+                return;
+            }
+        }
+    }
 
     // If the selector IS doesNotUnderstand:, we're in a recursive DNU cascade.
     // The standard VM terminates the process in this case — there's no way to recover
