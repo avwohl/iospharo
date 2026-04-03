@@ -316,20 +316,47 @@ void JITRuntime::flushCaches() {
 
     // Clear all IC entries in compiled methods.
     // IC data layout per send site: 4 x [uint64_t key, uint64_t method] + uint64_t selectorBits
-    // We zero the first 64 bytes (4 key/method pairs) but preserve selectorBits (set at compile time).
+    // Zero ALL 72 bytes including selectorBits — after GC, selector Symbol Oops
+    // may have moved, making selectorBits stale. The mega cache probe in
+    // stencil_sendPoly skips if selectorBits==0, so this is safe (just slower
+    // until the interpreter repopulates the mega cache on misses).
     static constexpr uint32_t IC_BYTES_PER_SITE = 72;
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
         if (m->numICEntries > 0) {
             uint32_t icSize = m->numICEntries * IC_BYTES_PER_SITE;
             uint8_t* icStart = m->codeStart() + m->codeSize - icSize;
-            for (uint16_t i = 0; i < m->numICEntries; i++) {
-                // Zero first 64 bytes (key/method pairs), leave last 8 (selectorBits)
-                std::memset(icStart + i * IC_BYTES_PER_SITE, 0, 64);
-            }
+            std::memset(icStart, 0, icSize);
         }
         m = m->nextInZone;
     }
+}
+
+void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
+    if (!initialized_) return;
+
+    // 1. Flush all caches (ICs contain stale method Oops, mega cache stale too)
+    flushCaches();
+
+    // 2. Update nil/true/false bits (GC may have moved them)
+    updateSpecialOops(memory);
+
+    // 3. Rebuild MethodMap — keys are compiledMethodOop bits which were updated
+    //    in-place by forEachRoot during updatePointersAfterCompact, but the
+    //    MethodMap hash table still has the old key values.
+    methodMap_.clear();
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (m->state == MethodState::Compiled) {
+            methodMap_.insert(m->compiledMethodOop, m);
+        }
+        m = m->nextInZone;
+    }
+
+    // 4. Clear count map — keys are stale CompiledMethod Oop bits.
+    //    Methods will re-accumulate counts naturally. Since the compile
+    //    threshold is only 2, this is a minor transient cost.
+    std::memset(countMap_, 0, sizeof(countMap_));
 }
 
 } // namespace jit

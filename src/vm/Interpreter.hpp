@@ -706,12 +706,23 @@ private:
         }
     }
 
-    /// Flush JIT inline caches and mega cache (call after become: or method changes,
-    /// NOT after GC — our GC doesn't compact so cached classIndex/Oop values stay valid)
+    /// Flush JIT inline caches and mega cache.
+    /// Must be called after GC (compaction moves objects, invalidating cached Oops),
+    /// after become:, and after method changes.
     void flushJITCaches() {
 #if PHARO_JIT_ENABLED
         if (jitRuntime_.isInitialized()) {
             jitRuntime_.flushCaches();
+        }
+#endif
+    }
+
+    /// Full JIT recovery after GC compaction: flush caches, rebuild MethodMap
+    /// from updated JITMethod headers, update special Oops, clear count map.
+    void recoverJITAfterGC() {
+#if PHARO_JIT_ENABLED
+        if (jitRuntime_.isInitialized()) {
+            jitRuntime_.recoverAfterGC(memory_);
         }
 #endif
     }
@@ -2191,6 +2202,20 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         visitor(entry.method);
     }
 
+
+    // JIT code zone: compiledMethodOop in each JITMethod header.
+    // These must be GC roots so (a) referenced CompiledMethods aren't collected
+    // and (b) Oops are updated in-place when compaction moves methods.
+#if PHARO_JIT_ENABLED
+    if (jitRuntime_.isInitialized()) {
+        jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();
+        while (m) {
+            Oop& methodOop = *reinterpret_cast<Oop*>(&m->compiledMethodOop);
+            visitor(methodOop);
+            m = m->nextInZone;
+        }
+    }
+#endif
 
     // Well-known selectors
     visitor(selectors_.doesNotUnderstand);

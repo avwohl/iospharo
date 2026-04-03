@@ -9470,6 +9470,7 @@ void Interpreter::afterGC() {
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
+    recoverJITAfterGC();
 }
 
 void Interpreter::logCurrentMethod(FILE* out) {

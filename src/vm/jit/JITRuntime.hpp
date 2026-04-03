@@ -53,6 +53,11 @@ public:
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 
+    // Full recovery after GC compaction: flush caches, rebuild MethodMap from
+    // updated JITMethod headers, update special Oops, clear count map.
+    // Call AFTER forEachRoot has updated compiledMethodOop in JITMethod headers.
+    void recoverAfterGC(ObjectMemory& memory);
+
     // Access to subsystems
     CodeZone&     codeZone()   { return codeZone_; }
     MethodMap&    methodMap()  { return methodMap_; }
