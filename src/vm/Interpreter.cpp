@@ -1256,134 +1256,6 @@ void Interpreter::interpret() {
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
 
-            // Diagnostic: dump scheduler queues to see what processes exist
-            {
-                static int dumpCount = 0;
-                if (dumpCount < 6) {
-                    dumpCount++;
-                    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                    if (schedAssoc.isObject()) {
-                        Oop sched = memory_.fetchPointer(1, schedAssoc);
-                        if (sched.isObject()) {
-                            Oop activeProc = memory_.fetchPointer(1, sched);
-                            Oop activePriOop = memory_.fetchPointer(ProcessPriorityIndex, activeProc);
-                            int activePri = activePriOop.isSmallInteger() ? (int)activePriOop.asSmallInteger() : -1;
-                            std::string activeSel = memory_.selectorOf(method_);
-                            fprintf(stderr, "[SCHED-DUMP #%d] Active: pri=%d sel=#%s steps=%llu\n",
-                                    dumpCount, activePri, activeSel.c_str(), (unsigned long long)totalSteps);
-
-                            Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, sched);
-                            if (schedLists.isObject()) {
-                                int numQ = (int)schedLists.asObjectPtr()->slotCount();
-                                for (int q = 0; q < numQ; q++) {
-                                    Oop procList = memory_.fetchPointer(q, schedLists);
-                                    if (!procList.isObject()) continue;
-                                    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, procList);
-                                    if (first.isObject() && first.rawBits() != memory_.nil().rawBits()) {
-                                        // Walk the linked list
-                                        int count = 0;
-                                        Oop proc = first;
-                                        while (proc.isObject() && proc.rawBits() != memory_.nil().rawBits() && count < 10) {
-                                            count++;
-                                            // Get suspendedContext to see what it's running
-                                            Oop ctx = memory_.fetchPointer(1, proc);
-                                            std::string ctxInfo = "no-ctx";
-                                            if (ctx.isObject() && ctx.rawBits() != memory_.nil().rawBits()) {
-                                                // Context slot 3 = method
-                                                Oop ctxMethod = memory_.fetchPointer(3, ctx);
-                                                if (ctxMethod.isObject()) ctxInfo = memory_.selectorOf(ctxMethod);
-                                            }
-                                            fprintf(stderr, "[SCHED-DUMP] Queue[%d] (pri %d): proc=0x%llx ctx=#%s\n",
-                                                    q, q+1, (unsigned long long)proc.rawBits(), ctxInfo.c_str());
-                                            // Next link: slot 0 of Process
-                                            proc = memory_.fetchPointer(0, proc);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // One-shot: fork SUnitRunner test process if in test mode
-            {
-                static bool testForked = false;
-                static auto testStartTime = std::chrono::steady_clock::now();
-                if (!testForked && imageBooted_) {
-                    // Check if test mode
-                    bool isTestMode = false;
-                    for (auto& arg : imageArguments_) {
-                        if (arg == "test") { isTestMode = true; break; }
-                    }
-                    if (isTestMode) {
-                        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                            std::chrono::steady_clock::now() - testStartTime).count();
-                        if (elapsed >= 8) {  // Wait 8 seconds for startup to complete
-                            testForked = true;
-                            Oop sunitRunner = memory_.findGlobal("SUnitRunner");
-                            fprintf(stderr, "[VM-TEST-DBG] SUnitRunner=0x%llx isObj=%d isNil=%d\n",
-                                    (unsigned long long)sunitRunner.rawBits(),
-                                    sunitRunner.isObject(), sunitRunner.isNil());
-                            if (sunitRunner.isObject() && !sunitRunner.isNil()) {
-                                Oop metaclass = memory_.classOf(sunitRunner);
-                                // Look up runAllTests in the method dictionary manually
-                                Oop method = Oop::nil();
-                                if (metaclass.isObject()) {
-                                    Oop methodDict = memory_.fetchPointer(1, metaclass);
-                                    if (methodDict.isObject()) {
-                                        ObjectHeader* mdHdr = methodDict.asObjectPtr();
-                                        for (size_t i = 2; i < mdHdr->slotCount(); i++) {
-                                            Oop key = mdHdr->slotAt(i);
-                                            if (!key.isObject() || key.isNil()) continue;
-                                            ObjectHeader* kh = key.asObjectPtr();
-                                            if (kh->isBytesObject() && kh->byteSize() == 11 &&
-                                                memcmp(kh->bytes(), "runAllTests", 11) == 0) {
-                                                Oop vals = memory_.fetchPointer(1, methodDict);
-                                                if (vals.isObject()) {
-                                                    ObjectHeader* vh = vals.asObjectPtr();
-                                                    size_t vi = i - 2;
-                                                    if (vi < vh->slotCount()) method = vh->slotAt(vi);
-                                                }
-                                                break;
-                                            }
-                                        }
-                                    }
-                                }
-                                if (!method.isNil() && method.isObject()) {
-                                    // Create a Context for runAllTests
-                                    Oop context = memory_.createStartupContext(method, sunitRunner);
-                                    if (!context.isNil()) {
-                                        // Find or create Process class index
-                                        Oop processClass = memory_.findGlobal("Process");
-                                        if (processClass.isNil()) processClass = memory_.specialObject(SpecialObjectIndex::ClassProcess);
-                                        if (processClass.isObject() && !processClass.isNil()) {
-                                            uint32_t processClassIdx = memory_.indexOfClass(processClass);
-                                            if (processClassIdx == 0) processClassIdx = memory_.registerClass(processClass);
-                                            if (processClassIdx > 0) {
-                                                // Process has 7 slots: nextLink, suspendedContext, priority, myList, name, env, effectiveProcess
-                                                Oop process = memory_.allocateSlots(processClassIdx, 7);
-                                                if (!process.isNil()) {
-                                                    memory_.storePointer(0, process, memory_.nil());       // nextLink
-                                                    memory_.storePointer(1, process, context);              // suspendedContext
-                                                    memory_.storePointer(2, process, Oop::fromSmallInteger(30)); // priority
-                                                    memory_.storePointer(3, process, memory_.nil());       // myList
-                                                    memory_.storePointer(4, process, memory_.nil());       // name
-                                                    memory_.storePointer(5, process, memory_.nil());       // env
-                                                    memory_.storePointer(6, process, memory_.nil());       // effectiveProcess
-                                                    putToSleep(process);
-                                                    fprintf(stderr, "[VM-TEST] Forked SUnitRunner process at priority 30\n");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
             // Stuck process termination (wall-clock based)
             {
                 Oop currentActive = getActiveProcess();
@@ -4774,29 +4646,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
-    // Debug: detect copy→copyTo: misroute
-    {
-        static int scDbg = 0;
-        if (scDbg < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selH = selector.asObjectPtr();
-            if (selH->isBytesObject() && selH->byteSize() == 11 &&
-                memcmp(selH->bytes(), "shallowCopy", 11) == 0) {
-                scDbg++;
-                if (cached) {
-                    std::string resolvedSel = memory_.selectorOf(cached->method);
-                    fprintf(stderr, "[CACHE-DBG] fd=%zu #shallowCopy on cls=%u: CACHE HIT → #%s (method=0x%llx)\n",
-                            frameDepth_,
-                            rcvr.isObject() ? rcvr.asObjectPtr()->classIndex() : 0,
-                            resolvedSel.c_str(), (unsigned long long)cached->method.rawBits());
-                } else {
-                    fprintf(stderr, "[CACHE-DBG] fd=%zu #shallowCopy on cls=%u: CACHE MISS\n",
-                            frameDepth_,
-                            rcvr.isObject() ? rcvr.asObjectPtr()->classIndex() : 0);
-                }
-            }
-        }
-    }
-
     if (__builtin_expect(traceByteSend, 0)) {
         if (cached) {
             int primIdx = cached->primitiveIndex;
@@ -4919,22 +4768,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
-
-    // Debug: check if shallowCopy lookup returns wrong method
-    {
-        static int luDbg = 0;
-        if (luDbg < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selH = selector.asObjectPtr();
-            if (selH->isBytesObject() && selH->byteSize() == 11 &&
-                memcmp(selH->bytes(), "shallowCopy", 11) == 0 && !method.isNil()) {
-                luDbg++;
-                std::string resolvedSel = memory_.selectorOf(method);
-                fprintf(stderr, "[LOOKUP-DBG] fd=%zu #shallowCopy LOOKUP → #%s (method=0x%llx) on class=0x%llx\n",
-                        frameDepth_, resolvedSel.c_str(), (unsigned long long)method.rawBits(),
-                        (unsigned long long)rcvrClass.rawBits());
-            }
-        }
-    }
 
     if (__builtin_expect(traceByteSend, 0)) {
         if (method.isNil()) {
@@ -5297,24 +5130,6 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
-    // Debug: trace all copy/copyTo: activations to find where recursion starts
-    {
-        static int copyTrace = 0;
-        if (copyTrace < 30) {
-            std::string calleeSel = memory_.selectorOf(method);
-            if (calleeSel == "copy" || calleeSel == "copyTo:" || calleeSel == "postCopy" || calleeSel == "shallowCopy") {
-                copyTrace++;
-                std::string callerSel = memory_.selectorOf(method_);
-                uint32_t rcvrClsIdx = 0;
-                Oop rcvr = stackValue(argCount);
-                if (rcvr.isObject() && rcvr.rawBits() > 0x10000)
-                    rcvrClsIdx = rcvr.asObjectPtr()->classIndex();
-                fprintf(stderr, "[COPY-TRACE] #%d fd=%zu: #%s → activate #%s(0x%llx) rcvr_cls=%u args=%d\n",
-                        copyTrace, frameDepth_, callerSel.c_str(), calleeSel.c_str(),
-                        (unsigned long long)method.rawBits(), rcvrClsIdx, argCount);
-            }
-        }
-    }
     // Save current state
 
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
@@ -7664,10 +7479,6 @@ void Interpreter::transferTo(Oop newProcess) {
 }
 
 bool Interpreter::tryReschedule() {
-    // Debug: dump scheduler queues periodically
-    if constexpr (ENABLE_DEBUG_LOGGING) {
-    }
-
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     Oop schedulerAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
 
@@ -9905,26 +9716,6 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
-            // IC PATCH TRACE: log ALL patches to the suspicious IC address
-            {
-                static int patchLog = 0;
-                static void* suspiciousIC = nullptr;
-                std::string methSel = memory_.selectorOf(resolvedMethod);
-                if (methSel == "copyTo:" || methSel == "copy" || methSel == "shallowCopy") {
-                    suspiciousIC = (void*)icData;
-                }
-                if (patchLog < 50 && ((void*)icData == suspiciousIC ||
-                    methSel == "copyTo:" || methSel == "copy" || methSel == "shallowCopy")) {
-                    patchLog++;
-                    std::string callerSel = memory_.selectorOf(method_);
-                    fprintf(stderr, "[IC-PATCH #%d] caller=#%s patching IC=%p[%d] "
-                            "key=0x%llx method=#%s(0x%llx) callerMethod=0x%llx fd=%zu\n",
-                            patchLog, callerSel.c_str(), (void*)icData, e,
-                            (unsigned long long)lookupKey, methSel.c_str(),
-                            (unsigned long long)resolvedMethod.rawBits(),
-                            (unsigned long long)method_.rawBits(), frameDepth_);
-                }
-            }
             return;
         }
     }
@@ -10027,19 +9818,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (hasEmpty) {
                     pendingICPatch_ = state.icDataPtr;
                     pendingICSendArgCount_ = state.sendArgCount;
-                    // IC SET TRACE
-                    {
-                        static int setLog = 0;
-                        if (setLog < 30) {
-                            setLog++;
-                            std::string mSel = memory_.selectorOf(method_);
-                            std::string jmSel = memory_.selectorOf(method);
-                            fprintf(stderr, "[IC-SET #%d] method_=#%s(0x%llx) jitMethod=#%s(0x%llx) IC=%p fd=%zu\n",
-                                    setLog, mSel.c_str(), (unsigned long long)method_.rawBits(),
-                                    jmSel.c_str(), (unsigned long long)method.rawBits(),
-                                    (void*)state.icDataPtr, frameDepth_);
-                        }
-                    }
                 }
             }
             return false;
@@ -10065,71 +9843,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             jitICHits_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
-
-            // IC VERIFY: for #copy sends, verify the cached method via lookup
-            {
-                static int icVerifyLog = 0;
-                if (icVerifyLog < 30) {
-                    uint8_t sendOp = *instructionPointer_;
-                    Oop expectedSelector;
-                    int litIdx = -1;
-                    if (sendOp >= 0x80 && sendOp <= 0xAF) {
-                        litIdx = sendOp & 0x0F;
-                    } else if (sendOp == 0xEA) {
-                        uint8_t desc = instructionPointer_[1];
-                        litIdx = (desc >> 3) & 0x1F;
-                    }
-                    if (litIdx >= 0) {
-                        ObjectHeader* methObj2 = method.asObjectPtr();
-                        Oop hdr2 = methObj2->slots()[0];
-                        int numLits2 = hdr2.isSmallInteger() ? (hdr2.asSmallInteger() & 0x7FFF) : 0;
-                        if (litIdx < numLits2) {
-                            expectedSelector = methObj2->slots()[1 + litIdx];
-                        }
-                    }
-                    if (expectedSelector.isObject() && !expectedSelector.isNil()) {
-                        // Get receiver from stack: it's below the args
-                        int nArgsTmp = state.sendArgCount;
-                        Oop receiver = state.sp[-(nArgsTmp + 1)];
-                        // Do a lookup and compare
-                        Oop receiverClass = memory_.classOf(receiver);
-                        if (receiverClass.isObject()) {
-                            Oop lookedUp = lookupMethod(expectedSelector, receiverClass);
-                            if (lookedUp.isObject() && !lookedUp.isNil() &&
-                                lookedUp.rawBits() != cached.rawBits()) {
-                                icVerifyLog++;
-                                std::string callerSel = memory_.selectorOf(method);
-                                std::string expectedName = "?";
-                                if (expectedSelector.asObjectPtr()->isBytesObject())
-                                    expectedName = std::string((char*)expectedSelector.asObjectPtr()->bytes(),
-                                                               expectedSelector.asObjectPtr()->byteSize());
-                                std::string cachedSel = memory_.selectorOf(cached);
-                                std::string lookedUpSel = memory_.selectorOf(lookedUp);
-                                fprintf(stderr, "[IC-WRONG-METHOD #%d] caller=#%s send=#%s "
-                                        "cached=#%s(0x%llx) correct=#%s(0x%llx) rcvCls=%u IC=%p\n",
-                                        icVerifyLog, callerSel.c_str(), expectedName.c_str(),
-                                        cachedSel.c_str(), (unsigned long long)cached.rawBits(),
-                                        lookedUpSel.c_str(), (unsigned long long)lookedUp.rawBits(),
-                                        memory_.classOf(receiver).isObject() ?
-                                            receiver.asObjectPtr()->classIndex() : 0,
-                                        (void*)state.icDataPtr);
-                                // Dump IC entries
-                                if (state.icDataPtr) {
-                                    for (int e = 0; e < 4; e++) {
-                                        uint64_t key = state.icDataPtr[e * 3];
-                                        uint64_t meth = state.icDataPtr[e * 3 + 1];
-                                        if (key != 0 || meth != 0)
-                                            fprintf(stderr, "  IC[%d]: key=0x%llx method=0x%llx\n",
-                                                    e, (unsigned long long)key, (unsigned long long)meth);
-                                    }
-                                    fprintf(stderr, "  IC selectorBits=0x%llx\n",
-                                            (unsigned long long)state.icDataPtr[12]);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
 
             {
                 uint8_t sendOp = *instructionPointer_;

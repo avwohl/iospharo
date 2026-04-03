@@ -476,8 +476,6 @@ PrimitiveResult Interpreter::primitiveClone(int argCount) {
     // Primitive 148: Return a shallow copy of the receiver
     // Per official VM: immediates return themselves, objects get copied
     Oop rcvr = stackValue(0);
-    static int cloneDbg = 0;
-    bool doCloneDbg = (cloneDbg < 10 && frameDepth_ >= 3);
 
     // Handle immediates - they are their own copies
     if (!rcvr.isObject()) {
@@ -490,14 +488,7 @@ PrimitiveResult Interpreter::primitiveClone(int argCount) {
     stackValuePut(0, rcvr);
 
     // Delegate to shallowCopy
-    auto result = primitiveShallowCopy(argCount);
-    if (doCloneDbg) {
-        cloneDbg++;
-        uint32_t cls = rcvr.isObject() && rcvr.rawBits() > 0x10000 ? rcvr.asObjectPtr()->classIndex() : 0;
-        fprintf(stderr, "[CLONE-DBG] fd=%zu cls=%u result=%s\n",
-                frameDepth_, cls, result == PrimitiveResult::Success ? "OK" : "FAIL");
-    }
-    return result;
+    return primitiveShallowCopy(argCount);
 }
 
 // Primitive 118: Execute a primitive with arguments from an array
