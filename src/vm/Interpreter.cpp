@@ -682,7 +682,7 @@ void Interpreter::interpret() {
         tableInit = true;
     }
 
-    int checkCountdown = 1024;
+    checkCountdown_ = 1024;
     uint64_t totalSteps = 0;
     uint8_t bytecode;
 
@@ -700,7 +700,7 @@ void Interpreter::interpret() {
     // see extension state from the previous handler.
 #if PROFILE_BYTECODE_PAIRS
     #define DISPATCH_NEXT() do { \
-        if (__builtin_expect(--checkCountdown <= 0, 0)) goto periodic_checks; \
+        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
         prevBytecode = bytecode; \
         bytecode = *instructionPointer_++; \
         pairCounts[prevBytecode * 256 + bytecode]++; \
@@ -714,7 +714,7 @@ void Interpreter::interpret() {
     } while(0)
 #else
     #define DISPATCH_NEXT() do { \
-        if (__builtin_expect(--checkCountdown <= 0, 0)) goto periodic_checks; \
+        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
         bytecode = *instructionPointer_++; \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
@@ -1111,7 +1111,7 @@ void Interpreter::interpret() {
 
     // ====== PERIODIC CHECKS (every 1024 bytecodes) ======
     periodic_checks: {
-        checkCountdown = 1024;
+        checkCountdown_ = 1024;
         totalSteps += 1024;
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
@@ -9762,6 +9762,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return false;  // Not compiled yet
     }
 
+    // Charge the periodic check countdown for JIT-executed bytecodes.
+    // Without this, JIT execution starves the interpreter's periodic checks
+    // (GC, timer semaphores, process scheduling, heartbeat) because the
+    // countdown only decrements on interpreter bytecode dispatch.
+    auto chargeJITBytecodes = [this](const jit::JITState& s) {
+        if (s.jitMethod) {
+            checkCountdown_ -= s.jitMethod->numBytecodes;
+            g_stepNum += s.jitMethod->numBytecodes;
+        }
+    };
+
+    chargeJITBytecodes(state);
+
     // Loop to handle chained JIT execution: when an IC-hit send's target
     // completes, resume JIT execution at the next bytecode instead of
     // falling back to the interpreter dispatch loop.
@@ -9874,6 +9887,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
+                        chargeJITBytecodes(state);
                         continue;
                     }
                 }
@@ -9916,6 +9930,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;  // No re-entry at this offset; interpreter handles rest
                 }
+                chargeJITBytecodes(state);
                 continue;  // Loop to handle the new exit reason
             }
         }
@@ -9963,6 +9978,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
             }
+            chargeJITBytecodes(state);
             continue;  // Loop to handle the new exit reason
         }
 

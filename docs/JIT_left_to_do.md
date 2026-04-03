@@ -1,3 +1,7 @@
+do the rest of this list on your own
+if you get stuck and need a human do something else on the list
+checkpoint reguarly and push without bothering the human
+
 # JIT: Remaining Work
 
 Updated: 2026-04-02

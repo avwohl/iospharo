@@ -180,10 +180,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Send-containing methods are now executable: IC hits use J2J chaining
-    // (tryResume re-enters JIT after the send target completes), and IC
-    // misses fall back to interpreter lookup. The W^X toggle per send is
-    // just a register write on Apple Silicon (no syscall overhead).
+    // Skip JIT execution for methods that contain sends. Per-send exit
+    // overhead (C++ boundary crossing, state marshal, W^X toggle) outweighs
+    // the benefit until direct stencil-to-stencil calls are implemented.
+    // Only execute send-free methods (pure arithmetic, accessors, control flow).
+    if (jm->hasSends) return false;
 
     // Heap writes (storeRecvVar, storeLitVar) are allowed because
     // generational GC is not implemented — all objects are in old space,
@@ -244,7 +245,8 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Send-containing methods resume normally — IC hits chain via J2J.
+    // Skip resume for send-containing methods (same rationale as tryExecute)
+    if (jm->hasSends) return false;
 
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);

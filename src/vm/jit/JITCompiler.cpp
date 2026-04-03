@@ -913,19 +913,22 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     JITMethod* jitMethod = zone_.allocate(totalSize, 0 /* no IC entries yet */);
     if (!jitMethod) {
         // Try eviction + compaction
-        zone_.evictLRU(totalSize + 1024);
-        zone_.compact();
-
-        // Rebuild MethodMap — compact() moved JITMethods in memory,
-        // so existing pointers in the map are stale.
-        methodMap_.clear();
-        JITMethod* m = zone_.firstMethod();
-        while (m) {
-            if (m->state == MethodState::Compiled) {
-                methodMap_.insert(m->compiledMethodOop, m);
+        // Evict cold methods. Don't compact — stencils contain absolute
+        // branch targets that would become invalid if methods are moved.
+        // Eviction alone marks methods as Invalidated; the zone keeps gaps
+        // but allocate() uses bump-pointer so it only uses space after the
+        // last allocation. We must invalidate ALL methods and reset the zone
+        // to reclaim the space: effectively a full zone flush.
+        {
+            JITMethod* m = zone_.firstMethod();
+            while (m) {
+                m->invalidate();
+                m->compiledMethodOop = 0;
+                m = m->nextInZone;
             }
-            m = m->nextInZone;
         }
+        zone_.compact();   // Now safe: all methods are invalidated → all removed
+        methodMap_.clear(); // No live methods left
 
         jitMethod = zone_.allocate(totalSize, 0);
         if (!jitMethod) {
