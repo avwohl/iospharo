@@ -26,11 +26,23 @@
  * LIFECYCLE:
  *
  *     1. initialize(size) — mmap the zone
- *     2. allocate(codeSize, numIC) — bump-allocate a JITMethod
+ *     2. allocate(codeSize, numIC) — bump-allocate or reuse from free list
  *     3. ... write machine code into the allocated region ...
  *     4. finalize(method) — flush icache, mark executable
- *     5. When full: evictLRU() frees cold methods, compact() slides survivors
+ *     5. When full: freeMethod() evicts cold methods into free list,
+ *        allocate() reuses freed space. compact() is a last resort
+ *        that only works when ALL methods are invalidated first.
  *     6. destroy() — munmap
+ *
+ * ALLOCATION STRATEGY:
+ *
+ *     allocate() tries in order:
+ *       1. Bump pointer (fast path, no fragmentation)
+ *       2. Free list best-fit (reuse evicted method slots)
+ *
+ *     freeMethod() returns a method's space to the free list without
+ *     moving any other methods (avoids ADRP+LDR relocation issues).
+ *     Adjacent free blocks are coalesced.
  */
 
 #ifndef PHARO_CODE_ZONE_HPP
@@ -48,6 +60,16 @@
 
 namespace pharo {
 namespace jit {
+
+// Free block in the code zone (stored in-place in freed method space)
+struct FreeBlock {
+    uint32_t   blockSize;   // Total size of this free block (including header)
+    uint32_t   _pad;        // Alignment padding
+    FreeBlock* next;        // Next free block (address-ordered list)
+};
+
+static_assert(sizeof(FreeBlock) <= MethodAlignment,
+              "FreeBlock must fit in minimum allocation");
 
 class CodeZone {
 public:
@@ -80,9 +102,11 @@ public:
         zoneSize_ = size;
         methodCount_ = 0;
         bytesUsed_ = 0;
+        freeListBytes_ = 0;
         epoch_ = 0;
         firstMethod_ = nullptr;
         lastMethod_ = nullptr;
+        freeList_ = nullptr;
 
         return true;
     }
@@ -97,8 +121,10 @@ public:
             zoneSize_ = 0;
             methodCount_ = 0;
             bytesUsed_ = 0;
+            freeListBytes_ = 0;
             firstMethod_ = nullptr;
             lastMethod_ = nullptr;
+            freeList_ = nullptr;
         }
     }
 
@@ -122,40 +148,37 @@ public:
         // Align to MethodAlignment
         totalSize = (totalSize + MethodAlignment - 1) & ~(MethodAlignment - 1);
 
-        if (freePtr_ + totalSize > zoneEnd_) {
-            return nullptr;  // Zone full
+        JITMethod* method = nullptr;
+
+        // 1. Try bump-pointer (fast path)
+        if (freePtr_ + totalSize <= zoneEnd_) {
+            method = reinterpret_cast<JITMethod*>(freePtr_);
+            freePtr_ += totalSize;
+        }
+        // 2. Try free list (best-fit)
+        else if (freeListBytes_ >= totalSize) {
+            method = allocateFromFreeList(totalSize);
         }
 
-        // Bump-allocate
-        JITMethod* method = reinterpret_cast<JITMethod*>(freePtr_);
-        freePtr_ += totalSize;
+        if (!method) return nullptr;
+
+        // Initialize the allocation
         bytesUsed_ += totalSize;
         methodCount_++;
 
-        // Zero the entire allocation
         std::memset(method, 0, totalSize);
-
-        // Set geometry
         method->codeSize = codeSize;
         method->numICEntries = numICEntries;
         method->totalSize = static_cast<uint32_t>(totalSize);
-        method->state = MethodState::Interpreted;  // Not yet executable
+        method->state = MethodState::Interpreted;
         method->lastUsedEpoch = epoch_;
 
-        // Initialize IC entries
         for (uint16_t i = 0; i < numICEntries; i++) {
             method->icEntries()[i].reset();
         }
 
-        // Link into the method list
-        method->prevInZone = lastMethod_;
-        method->nextInZone = nullptr;
-        if (lastMethod_) {
-            lastMethod_->nextInZone = method;
-        } else {
-            firstMethod_ = method;
-        }
-        lastMethod_ = method;
+        // Link into the method list (address-ordered for cache locality)
+        linkMethod(method);
 
         return method;
     }
@@ -174,6 +197,37 @@ public:
         return true;
     }
 
+    // ===== FREE METHOD =====
+
+    // Free a compiled method: unlink from method list, add space to free list.
+    // Returns the compiledMethodOop (for MethodMap cleanup by the caller).
+    // Caller must remove the method from MethodMap separately.
+    uint64_t freeMethod(JITMethod* method) {
+        if (!method || !contains(method)) return 0;
+
+        uint64_t methodOop = method->compiledMethodOop;
+        size_t size = method->allocationSize();
+
+        // Unlink from the doubly-linked method list
+        if (method->prevInZone)
+            method->prevInZone->nextInZone = method->nextInZone;
+        else
+            firstMethod_ = method->nextInZone;
+
+        if (method->nextInZone)
+            method->nextInZone->prevInZone = method->prevInZone;
+        else
+            lastMethod_ = method->prevInZone;
+
+        methodCount_--;
+        bytesUsed_ -= size;
+
+        // Add to free list
+        addToFreeList(reinterpret_cast<uint8_t*>(method), size);
+
+        return methodOop;
+    }
+
     // ===== EVICTION =====
 
     // Increment the global epoch counter. Call this periodically
@@ -185,109 +239,70 @@ public:
         method->lastUsedEpoch = epoch_;
     }
 
-    // Evict the oldest methods until at least `bytesNeeded` are free.
-    // Returns the number of methods evicted.
-    size_t evictLRU(size_t bytesNeeded) {
+    // Evict the oldest methods until at least `bytesNeeded` are freed.
+    // Freed space goes to the free list for reuse by allocate().
+    // Caller must handle MethodMap cleanup for each evicted method
+    // (use the callback variant evictLRU with a callback).
+    //
+    // Returns the number of bytes freed.
+    size_t evictLRU(size_t bytesNeeded,
+                    void (*onEvict)(uint64_t methodOop, void* ctx) = nullptr,
+                    void* ctx = nullptr) {
         size_t freed = 0;
-        size_t evicted = 0;
-
-        // Find the coldest method (lowest lastUsedEpoch)
-        // Simple strategy: scan the list and invalidate methods below a threshold.
-        // A more sophisticated approach would sort by epoch, but for 16 MB
-        // with typical method sizes of 200-2000 bytes, linear scan is fine.
-
         uint32_t threshold = epoch_ > 10 ? epoch_ - 10 : 0;
 
+        // First pass: evict methods older than threshold
         JITMethod* m = firstMethod_;
         while (m && freed < bytesNeeded) {
             JITMethod* next = m->nextInZone;
             if (m->state == MethodState::Compiled && m->lastUsedEpoch < threshold) {
-                m->invalidate();
-                freed += m->allocationSize();
-                evicted++;
+                size_t sz = m->allocationSize();
+                uint64_t oop = freeMethod(m);
+                if (onEvict) onEvict(oop, ctx);
+                freed += sz;
             }
             m = next;
         }
 
-        // If we couldn't free enough with the threshold, lower it
+        // Second pass with lower threshold if needed
         if (freed < bytesNeeded) {
             m = firstMethod_;
             while (m && freed < bytesNeeded) {
                 JITMethod* next = m->nextInZone;
                 if (m->state == MethodState::Compiled) {
-                    m->invalidate();
-                    freed += m->allocationSize();
-                    evicted++;
+                    size_t sz = m->allocationSize();
+                    uint64_t oop = freeMethod(m);
+                    if (onEvict) onEvict(oop, ctx);
+                    freed += sz;
                 }
                 m = next;
             }
         }
 
-        return evicted;
+        return freed;
     }
 
-    // Compact the zone by sliding live (Compiled) methods toward the start,
-    // eliminating gaps from invalidated/evicted methods. This requires
-    // updating all pointers to compiled code (in the MethodMap and IC entries).
+    // Reset the zone: clear the free list and reset the bump pointer.
+    // Only safe when NO live methods remain (all have been freed via
+    // freeMethod). This is the "full flush" last resort when the free
+    // list is too fragmented to satisfy an allocation.
     //
-    // Returns the number of bytes reclaimed.
-    //
-    // NOTE: This is expensive and should only be called when eviction alone
-    // doesn't free enough space (highly fragmented zone).
+    // WARNING: Do NOT call this when live methods exist — it would
+    // overwrite them. The method list must be empty before calling.
     size_t compact() {
-        if (!firstMethod_) return 0;
-
-        // Zone is kept in writable mode by default, so no W^X toggle needed.
-
-        uint8_t* dest = zoneStart_;
-        JITMethod* prev = nullptr;
-        JITMethod* m = firstMethod_;
-        size_t reclaimed = 0;
-
-        firstMethod_ = nullptr;
-        lastMethod_ = nullptr;
-        methodCount_ = 0;
-
-        while (m) {
-            JITMethod* next = m->nextInZone;
-            size_t mSize = m->allocationSize();
-
-            if (m->state == MethodState::Compiled) {
-                // Keep this method — slide it down if there's a gap
-                uint8_t* src = reinterpret_cast<uint8_t*>(m);
-                if (dest != src) {
-                    std::memmove(dest, src, mSize);
-                }
-
-                JITMethod* moved = reinterpret_cast<JITMethod*>(dest);
-                moved->prevInZone = prev;
-                moved->nextInZone = nullptr;
-
-                if (prev) {
-                    prev->nextInZone = moved;
-                } else {
-                    firstMethod_ = moved;
-                }
-                lastMethod_ = moved;
-                prev = moved;
-                methodCount_++;
-
-                dest += mSize;
-            } else {
-                // Invalidated/free — skip it
-                reclaimed += mSize;
-            }
-
-            m = next;
+        if (firstMethod_) {
+            // There are still live methods — we can't safely reset.
+            // Just return 0; caller should free all methods first.
+            return 0;
         }
 
-        freePtr_ = dest;
-        bytesUsed_ -= reclaimed;
+        size_t reclaimed = freeListBytes_;
 
-        // Flush icache for all relocated code
-        if (reclaimed > 0 && dest > zoneStart_) {
-            flushICache(zoneStart_, static_cast<size_t>(dest - zoneStart_));
-        }
+        // Clear the free list and reset bump pointer to start of zone
+        freeList_ = nullptr;
+        freeListBytes_ = 0;
+        freePtr_ = zoneStart_;
+        // bytesUsed_ should already be 0 since all methods were freed
 
         return reclaimed;
     }
@@ -317,7 +332,11 @@ public:
     }
 
     uint8_t* rawStart() const { return zoneStart_; }
-    size_t freeBytes() const { return static_cast<size_t>(zoneEnd_ - freePtr_); }
+    size_t freeBytes() const {
+        return static_cast<size_t>(zoneEnd_ - freePtr_) + freeListBytes_;
+    }
+    size_t bumpFreeBytes() const { return static_cast<size_t>(zoneEnd_ - freePtr_); }
+    size_t freeListFreeBytes() const { return freeListBytes_; }
     size_t usedBytes() const { return bytesUsed_; }
     size_t totalBytes() const { return zoneSize_; }
     size_t methodCount() const { return methodCount_; }
@@ -334,9 +353,10 @@ public:
     // ===== DIAGNOSTICS =====
 
     void printStats() const {
-        fprintf(stderr, "[JIT CodeZone] %zu / %zu bytes used (%d%%), %zu methods, epoch %u\n",
+        fprintf(stderr, "[JIT CodeZone] %zu / %zu bytes used (%d%%), %zu methods, epoch %u, "
+                "freeList=%zu bytes\n",
                 bytesUsed_, zoneSize_, utilizationPercent(),
-                methodCount_, epoch_);
+                methodCount_, epoch_, freeListBytes_);
     }
 
 private:
@@ -346,11 +366,121 @@ private:
     size_t   zoneSize_ = 0;
     size_t   methodCount_ = 0;
     size_t   bytesUsed_ = 0;
+    size_t   freeListBytes_ = 0;  // Total bytes in free list
     uint32_t epoch_ = 0;
 
     // Doubly-linked list of methods in allocation order
     JITMethod* firstMethod_ = nullptr;
     JITMethod* lastMethod_ = nullptr;
+
+    // Free list (address-ordered, coalesced)
+    FreeBlock* freeList_ = nullptr;
+
+    // ===== PRIVATE HELPERS =====
+
+    // Add freed space to the free list with coalescing.
+    void addToFreeList(uint8_t* ptr, size_t size) {
+        if (size < sizeof(FreeBlock)) return;
+
+        // Insert in address order (enables coalescing)
+        FreeBlock** prev = &freeList_;
+        FreeBlock*  curr = freeList_;
+        while (curr && reinterpret_cast<uint8_t*>(curr) < ptr) {
+            prev = &curr->next;
+            curr = curr->next;
+        }
+
+        // Create the new free block
+        FreeBlock* block = reinterpret_cast<FreeBlock*>(ptr);
+        block->blockSize = static_cast<uint32_t>(size);
+        block->next = curr;
+        *prev = block;
+        freeListBytes_ += size;
+
+        // Coalesce with next block if adjacent
+        if (curr) {
+            uint8_t* blockEnd = ptr + block->blockSize;
+            if (blockEnd == reinterpret_cast<uint8_t*>(curr)) {
+                block->blockSize += curr->blockSize;
+                block->next = curr->next;
+            }
+        }
+
+        // Coalesce with previous block if adjacent
+        // prev points to the 'next' field of the predecessor (or &freeList_)
+        if (prev != &freeList_) {
+            // The predecessor FreeBlock contains the 'next' field that prev points to
+            FreeBlock* predBlock = reinterpret_cast<FreeBlock*>(
+                reinterpret_cast<uint8_t*>(prev) - offsetof(FreeBlock, next));
+            uint8_t* predEnd = reinterpret_cast<uint8_t*>(predBlock) + predBlock->blockSize;
+            if (predEnd == ptr) {
+                predBlock->blockSize += block->blockSize;
+                predBlock->next = block->next;
+            }
+        }
+    }
+
+    // Allocate from free list using best-fit. Returns nullptr if no fit found.
+    JITMethod* allocateFromFreeList(size_t totalSize) {
+        FreeBlock** bestPrev = nullptr;
+        FreeBlock*  bestBlock = nullptr;
+        size_t      bestSize = SIZE_MAX;
+
+        // Best-fit search
+        FreeBlock** prev = &freeList_;
+        FreeBlock*  curr = freeList_;
+        while (curr) {
+            if (curr->blockSize >= totalSize && curr->blockSize < bestSize) {
+                bestPrev = prev;
+                bestBlock = curr;
+                bestSize = curr->blockSize;
+                if (bestSize == totalSize) break;  // Perfect fit
+            }
+            prev = &curr->next;
+            curr = curr->next;
+        }
+
+        if (!bestBlock) return nullptr;
+
+        size_t remainder = bestBlock->blockSize - totalSize;
+        freeListBytes_ -= totalSize;
+
+        if (remainder >= MethodAlignment) {
+            // Split: create a smaller free block from the remainder
+            FreeBlock* rest = reinterpret_cast<FreeBlock*>(
+                reinterpret_cast<uint8_t*>(bestBlock) + totalSize);
+            rest->blockSize = static_cast<uint32_t>(remainder);
+            rest->next = bestBlock->next;
+            *bestPrev = rest;
+        } else {
+            // Use the entire block (small waste is acceptable)
+            *bestPrev = bestBlock->next;
+            freeListBytes_ -= remainder;  // This waste is no longer free
+            totalSize = bestBlock->blockSize;
+        }
+
+        return reinterpret_cast<JITMethod*>(bestBlock);
+    }
+
+    // Link a method into the doubly-linked list in address order.
+    void linkMethod(JITMethod* method) {
+        uint8_t* addr = reinterpret_cast<uint8_t*>(method);
+
+        // Find insertion point (address order)
+        JITMethod* prev = nullptr;
+        JITMethod* curr = firstMethod_;
+        while (curr && reinterpret_cast<uint8_t*>(curr) < addr) {
+            prev = curr;
+            curr = curr->nextInZone;
+        }
+
+        method->prevInZone = prev;
+        method->nextInZone = curr;
+        if (prev) prev->nextInZone = method;
+        else firstMethod_ = method;
+        if (curr) curr->prevInZone = method;
+        else lastMethod_ = method;
+    }
 };
 
 } // namespace jit

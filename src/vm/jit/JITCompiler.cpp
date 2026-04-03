@@ -952,31 +952,58 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // initialize). We write freely here; tryExecute() toggles to executable
     // only around the actual machine code call.
 
-    // Allocate in code zone
+    // Compute the actual allocation size (allocate() adds JITMethod header + alignment)
+    size_t allocSize = sizeof(JITMethod) + totalSize;
+    allocSize = (allocSize + MethodAlignment - 1) & ~(MethodAlignment - 1);
+
+    // Allocate in code zone (tries bump pointer, then free list)
     JITMethod* jitMethod = zone_.allocate(totalSize, 0 /* no IC entries yet */);
     if (!jitMethod) {
-        // Try eviction + compaction
-        // Evict cold methods. Don't compact — stencils contain absolute
-        // branch targets that would become invalid if methods are moved.
-        // Eviction alone marks methods as Invalidated; the zone keeps gaps
-        // but allocate() uses bump-pointer so it only uses space after the
-        // last allocation. We must invalidate ALL methods and reset the zone
-        // to reclaim the space: effectively a full zone flush.
-        {
+        // Incremental eviction: free cold methods into the free list.
+        // allocate() will reuse freed space without moving methods
+        // (ADRP+LDR relocations in stencils are not position-independent
+        // across non-page-aligned moves).
+        auto evictCallback = [](uint64_t methodOop, void* ctx) {
+            auto* map = static_cast<MethodMap*>(ctx);
+            map->remove(methodOop);
+        };
+        // Evict at least 2x what we need (amortize eviction cost)
+        size_t evictTarget = allocSize * 2;
+        size_t freed = zone_.evictLRU(evictTarget, evictCallback, &methodMap_);
+        if (freed > 0) {
+            static int evictCount = 0;
+            if (++evictCount <= 5 || (evictCount % 100 == 0)) {
+                fprintf(stderr, "[JIT] Incremental evict #%d: freed %zu bytes for %zu needed, "
+                        "%zu methods remain, freeList=%zu\n",
+                        evictCount, freed, allocSize,
+                        zone_.methodCount(), zone_.freeListFreeBytes());
+            }
+            jitMethod = zone_.allocate(totalSize, 0);
+        }
+
+        // If incremental eviction wasn't enough, full flush as last resort
+        if (!jitMethod) {
+            static int fullFlushCount = 0;
+            if (++fullFlushCount <= 5) {
+                fprintf(stderr, "[JIT] Full zone flush #%d (needed %zu bytes, "
+                        "evicted %zu, freeList=%zu, bump=%zu)\n",
+                        fullFlushCount, allocSize, freed,
+                        zone_.freeListFreeBytes(), zone_.bumpFreeBytes());
+            }
             JITMethod* m = zone_.firstMethod();
             while (m) {
-                m->invalidate();
-                m->compiledMethodOop = 0;
-                m = m->nextInZone;
+                JITMethod* next = m->nextInZone;
+                zone_.freeMethod(m);
+                m = next;
             }
-        }
-        zone_.compact();   // Now safe: all methods are invalidated → all removed
-        methodMap_.clear(); // No live methods left
+            methodMap_.clear();
+            zone_.compact();
 
-        jitMethod = zone_.allocate(totalSize, 0);
-        if (!jitMethod) {
-            compilationsFailed_++;
-            return nullptr;
+            jitMethod = zone_.allocate(totalSize, 0);
+            if (!jitMethod) {
+                compilationsFailed_++;
+                return nullptr;
+            }
         }
     }
 
