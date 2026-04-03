@@ -102,16 +102,20 @@ reaches zero, fire trap bytecode to call back into image optimizer.
 
 ## Phase 4: Polish and Robustness
 
-### 5. Code zone eviction / compaction — PARTIAL
-Full zone flush implemented (invalidate all + compact when zone is full).
-Methods recompile naturally after flush. Proper incremental eviction
-(keep hot methods, only evict cold ones) would be better but requires
-fixing absolute branch targets in stencils (use relative branches or
-maintain a relocation table).
+### 5. Code zone eviction / compaction — DONE
+Incremental LRU eviction via free list. When zone fills, cold methods
+are freed into a free list; hot methods survive. allocate() tries bump
+pointer first, then best-fit from free list. Adjacent free blocks are
+coalesced. Full flush is only a last resort if free list is too fragmented.
 
-    Current:    Full flush on zone full → all methods lost, recompile
-    Better:     Relative branch targets → safe per-method eviction + compact
-    Cog ref:    Sliding compaction + LRU eviction (branch targets are relative)
+Methods are never moved in memory — this avoids ADRP+LDR page-relative
+relocation issues with ARM64 stencils. Tested with 256KB zone: keeps
+~92 hot methods alive while recycling cold ones, zero full flushes.
+
+    Files:     src/vm/jit/CodeZone.hpp (FreeBlock, freeMethod, allocateFromFreeList)
+               src/vm/jit/JITCompiler.cpp (incremental eviction with MethodMap callback)
+    Old:       Full flush on zone full → all methods lost, recompile
+    New:       LRU eviction → free list → reuse, hot methods preserved
 
 ### 6. Context support / deoptimization
 `thisContext` access (bytecode 0x58) currently causes deopt. Methods
@@ -207,7 +211,7 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
 
     #   Item                        Impact   Effort    Status
     1   Fix code zone crash         blocker  small     DONE
-    5   Zone eviction/compaction    blocker  medium    PARTIAL (flush works)
+    5   Zone eviction/compaction    blocker  medium    DONE (free list LRU)
     1   Inline getter/setter J2J    high     medium    DONE
     2   IC patching                 high     small     DONE (97% hit rate)
     9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
