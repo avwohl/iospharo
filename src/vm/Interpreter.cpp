@@ -9596,7 +9596,7 @@ void Interpreter::tryJITResumeInCaller() {
             if (state.icDataPtr) {
                 bool hasEmpty = false;
                 for (int e = 0; e < 4; e++) {
-                    if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+                    if (state.icDataPtr[e * 3] == 0) { hasEmpty = true; break; }
                 }
                 if (hasEmpty) {
                     pendingICPatch_ = state.icDataPtr;
@@ -9731,14 +9731,31 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver) {
 
     // Check if this key is already cached (avoid duplicates)
     for (int e = 0; e < 4; e++) {
-        if (icData[e * 2] == lookupKey) return;
+        if (icData[e * 3] == lookupKey) return;
+    }
+
+    // Detect inline getter/setter/yourself for J2J dispatch.
+    // extra word bit layout:
+    //   bit 63: getter — slot index in bits 15:0
+    //   bit 62: setter — slot index in bits 15:0
+    //   bit 61: returnsSelf
+    uint64_t extra = 0;
+    {
+        TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
+        if (tmi.getterIndex >= 0)
+            extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
+        else if (tmi.setterIndex >= 0)
+            extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
+        else if (tmi.returnsSelf)
+            extra = (1ULL << 61);
     }
 
     // Find the first empty slot and fill it
     for (int e = 0; e < 4; e++) {
-        if (icData[e * 2] == 0) {
-            icData[e * 2] = lookupKey;
-            icData[e * 2 + 1] = resolvedMethod.rawBits();
+        if (icData[e * 3] == 0) {
+            icData[e * 3] = lookupKey;
+            icData[e * 3 + 1] = resolvedMethod.rawBits();
+            icData[e * 3 + 2] = extra;
             jitICPatches_++;
             return;
         }
@@ -9833,7 +9850,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (state.icDataPtr) {
                 bool hasEmpty = false;
                 for (int e = 0; e < 4; e++) {
-                    if (state.icDataPtr[e * 2] == 0) { hasEmpty = true; break; }
+                    if (state.icDataPtr[e * 3] == 0) { hasEmpty = true; break; }
                 }
                 if (hasEmpty) {
                     pendingICPatch_ = state.icDataPtr;
@@ -9851,8 +9868,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 jitICStale_++;
                 if (state.icDataPtr) {
                     for (int e = 0; e < 4; e++) {
-                        state.icDataPtr[e * 2] = 0;
-                        state.icDataPtr[e * 2 + 1] = 0;
+                        state.icDataPtr[e * 3] = 0;
+                        state.icDataPtr[e * 3 + 1] = 0;
+                        state.icDataPtr[e * 3 + 2] = 0;
                     }
                 }
                 instructionPointer_ = state.ip;

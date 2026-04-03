@@ -910,10 +910,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     }
 
     // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
-    // 72 bytes: 4 entries x [uint64_t cachedClassIndex, uint64_t cachedMethodBits]
-    // + 8 bytes for selectorBits (used by mega cache probe)
+    // 104 bytes: 4 entries x [uint64_t classKey, uint64_t methodBits, uint64_t extra]
+    // + 8 bytes for selectorBits (used by mega cache probe).
+    // The 'extra' field holds J2J info: high byte = kind (0x80=getter, 0x40=setter),
+    // low 32 bits = slot index. When kind != 0, the send stencil inlines the
+    // field access directly, bypassing the C++ boundary crossing entirely.
     static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
-    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 16 + 8;
+    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 24 + 8;
     uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     uint32_t totalSize = icDataOffset + icDataSize;
@@ -963,9 +966,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
 
     // Set up IC data pointers for send sites. The IC data lives at the end
-    // of the allocation. Each send site gets 72 bytes initialized to zero
-    // (empty IC — will be patched on first miss). The last 8 bytes of each
-    // block store selectorBits for the megamorphic cache probe.
+    // of the allocation. Each send site gets 104 bytes initialized to zero
+    // (empty IC — will be patched on first miss): 4 x [key, method, extra]
+    // + selectorBits. The extra word encodes inline getter/setter info for
+    // J2J dispatch (bit 63=getter, bit 62=setter, bit 61=returnsSelf).
     uint8_t* codeBase_pre = jitMethod->codeStart();
     {
         // Zero IC data area first
@@ -1001,7 +1005,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                     }
                 }
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
-                icSlots[8] = selectorBits;
+                icSlots[12] = selectorBits;
 
                 sendIdx++;
             }

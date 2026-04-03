@@ -54,6 +54,10 @@ struct ObjectHeader {
     Oop* slots() { return reinterpret_cast<Oop*>(this + 1); }
     const Oop* slots() const { return reinterpret_cast<const Oop*>(this + 1); }
 
+    // Slot accessors (match ObjectHeader.hpp)
+    Oop slotAt(size_t index) const { return slots()[index]; }
+    void slotAtPut(size_t index, Oop value) { slots()[index] = value; }
+
     // Class index (bits 0-21)
     uint32_t classIndex() const { return static_cast<uint32_t>(header & 0x3FFFFF); }
 };
@@ -745,7 +749,12 @@ extern "C" void stencil_sendPoly(JITState* s) {
     int nArgs = (packed >> 16) & 0xFF;
 
     // Load IC data pointer from literal pool (full 64-bit via GOT load)
-    // Layout: 4 entries x 2 uint64_t = [key0, method0, key1, method1, ...]
+    // Layout: 4 entries x 3 uint64_t = [key0, method0, extra0, key1, method1, extra1, ...]
+    // extra encodes inline getter/setter info for J2J dispatch:
+    //   bit 63 set = getter, bits 15:0 = slot index
+    //   bit 62 set = setter, bits 15:0 = slot index
+    //   bit 61 set = returnsSelf (e.g. "yourself")
+    // After 4 entries: icData[12] = selectorBits for megacache
     uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
 
     // Get receiver: below the args on the stack
@@ -761,47 +770,57 @@ extern "C" void stencil_sendPoly(JITState* s) {
         lookupKey = tag | 0x80000000ULL;
     }
 
+    // Macro for inline getter/setter dispatch on IC hit
+    // Avoids exiting to C++ for trivial methods (~500ns savings per send)
+#define IC_HIT(entry_idx) do {                                              \
+    uint64_t extra = icData[(entry_idx) * 3 + 2];                           \
+    if (extra != 0 && tag == 0) {                                           \
+        uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);                      \
+        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits); \
+        if (extra & (1ULL << 63)) {                                         \
+            /* Inline getter: replace receiver+args with field value */      \
+            Oop val = recvObj->slotAt(slotIdx);                             \
+            s->sp[-(nArgs + 1)] = val;                                      \
+            s->sp -= nArgs;                                                 \
+            _HOLE_CONTINUE(s);                                              \
+            return;                                                         \
+        }                                                                   \
+        if (extra & (1ULL << 62)) {                                         \
+            /* Inline setter: store arg to slot, return self */             \
+            Oop arg = s->sp[-(nArgs)];                                      \
+            recvObj->slotAtPut(slotIdx, arg);                               \
+            s->sp[-(nArgs + 1)] = receiver;                                 \
+            s->sp -= nArgs;                                                 \
+            _HOLE_CONTINUE(s);                                              \
+            return;                                                         \
+        }                                                                   \
+        if (extra & (1ULL << 61)) {                                         \
+            /* returnsSelf: pop args, leave receiver on stack */             \
+            s->sp -= nArgs;                                                 \
+            _HOLE_CONTINUE(s);                                              \
+            return;                                                         \
+        }                                                                   \
+    }                                                                       \
+    s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];                     \
+    s->icDataPtr = icData;                                                  \
+    s->sendArgCount = nArgs;                                                \
+    s->ip = s->ip + bcOffset;                                               \
+    s->exitReason = EXIT_SEND_CACHED;                                       \
+    _HOLE_RT_SEND(s);                                                       \
+    return;                                                                 \
+} while(0)
+
     // Check 4 IC entries (unrolled for predictable code size)
-    if (lookupKey == icData[0] && icData[0] != 0) {
-        s->cachedTarget.bits = icData[1];
-        s->icDataPtr = icData;
-        s->sendArgCount = nArgs;
-        s->ip = s->ip + bcOffset;
-        s->exitReason = EXIT_SEND_CACHED;
-        _HOLE_RT_SEND(s);
-        return;
-    }
-    if (lookupKey == icData[2] && icData[2] != 0) {
-        s->cachedTarget.bits = icData[3];
-        s->icDataPtr = icData;
-        s->sendArgCount = nArgs;
-        s->ip = s->ip + bcOffset;
-        s->exitReason = EXIT_SEND_CACHED;
-        _HOLE_RT_SEND(s);
-        return;
-    }
-    if (lookupKey == icData[4] && icData[4] != 0) {
-        s->cachedTarget.bits = icData[5];
-        s->icDataPtr = icData;
-        s->sendArgCount = nArgs;
-        s->ip = s->ip + bcOffset;
-        s->exitReason = EXIT_SEND_CACHED;
-        _HOLE_RT_SEND(s);
-        return;
-    }
-    if (lookupKey == icData[6] && icData[6] != 0) {
-        s->cachedTarget.bits = icData[7];
-        s->icDataPtr = icData;
-        s->sendArgCount = nArgs;
-        s->ip = s->ip + bcOffset;
-        s->exitReason = EXIT_SEND_CACHED;
-        _HOLE_RT_SEND(s);
-        return;
-    }
+    if (lookupKey == icData[0] && icData[0] != 0) { IC_HIT(0); }
+    if (lookupKey == icData[3] && icData[3] != 0) { IC_HIT(1); }
+    if (lookupKey == icData[6] && icData[6] != 0) { IC_HIT(2); }
+    if (lookupKey == icData[9] && icData[9] != 0) { IC_HIT(3); }
+
+#undef IC_HIT
 
     // IC MISS — probe megamorphic method cache before falling back
     {
-        uint64_t selectorBits = icData[8];  // Stored at end of IC data by compiler
+        uint64_t selectorBits = icData[12];  // Stored at end of IC data by compiler
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
             size_t hash = (size_t)(selectorBits ^ lookupKey) & 4095;

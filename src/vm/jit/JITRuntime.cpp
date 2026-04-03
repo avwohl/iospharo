@@ -180,12 +180,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Skip JIT execution for methods that contain sends. Per-send exit
-    // overhead (C++ boundary crossing, state marshal, W^X toggle) is ~500ns
-    // vs ~30ns for the interpreter, making JIT ~17x slower per send.
-    // Aggregated over send-heavy code, this causes ~87,000x slowdown.
-    // Direct stencil-to-stencil calls (J2J) are needed before removing this.
-    if (jm->hasSends) return false;
+    // Inline getter/setter/yourself sends are dispatched directly in the
+    // stencil (stencil_sendPoly IC_HIT macro) without exiting to C++.
+    // Non-trivial sends still exit via ExitSendCached, but J2J chaining in
+    // the interpreter handles those without the full activate overhead.
 
     // Heap writes (storeRecvVar, storeLitVar) are allowed because
     // generational GC is not implemented — all objects are in old space,
@@ -246,9 +244,6 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Skip resume for send-containing methods (same rationale as tryExecute)
-    if (jm->hasSends) return false;
-
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
     if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
@@ -278,7 +273,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     // Validate IC data area is within code zone
     if (jm->numICEntries > 0) {
-        uint32_t icSize = jm->numICEntries * 72;
+        uint32_t icSize = jm->numICEntries * 104;
         uint8_t* icStart = jm->codeStart() + jm->codeSize - icSize;
         if (icStart < codeZone_.rawStart() || icStart + icSize > codeZone_.rawStart() + codeZone_.totalBytes()) {
             fprintf(stderr, "[JIT] BUG: IC data %p outside code zone [%p, %p)\n",
@@ -322,12 +317,12 @@ void JITRuntime::flushCaches() {
     std::memset(megaCache_, 0, sizeof(megaCache_));
 
     // Clear all IC entries in compiled methods.
-    // IC data layout per send site: 4 x [uint64_t key, uint64_t method] + uint64_t selectorBits
-    // Zero ALL 72 bytes including selectorBits — after GC, selector Symbol Oops
-    // may have moved, making selectorBits stale. The mega cache probe in
-    // stencil_sendPoly skips if selectorBits==0, so this is safe (just slower
+    // IC data layout per send site: 4 x [uint64_t key, method, extra] + uint64_t selectorBits
+    // = 4*24 + 8 = 104 bytes. Zero ALL 104 bytes including selectorBits — after GC,
+    // selector Symbol Oops may have moved, making selectorBits stale. The mega cache
+    // probe in stencil_sendPoly skips if selectorBits==0, so this is safe (just slower
     // until the interpreter repopulates the mega cache on misses).
-    static constexpr uint32_t IC_BYTES_PER_SITE = 72;
+    static constexpr uint32_t IC_BYTES_PER_SITE = 104;
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
         if (m->numICEntries > 0) {
