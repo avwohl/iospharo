@@ -2629,48 +2629,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0x79: {
         // value (0 args) — fast path for FullBlockClosure
         Oop rcvr = stackValue(0);
-        // Debug: log when classIndex doesn't match for FullBlockClosure
-        if (rcvr.isObject() && rcvr.rawBits() > 0x10000 && frameDepth_ > 15) {
-            uint32_t rci = rcvr.asObjectPtr()->classIndex();
-            if (rci == 38 && rci != fullBlockClosureClassIndex_) {
-                static int mismatchCount = 0;
-                if (mismatchCount++ < 3) {
-                    fprintf(stderr, "[CLSIDX-MISMATCH] #%d: rcvr classIndex=%u fullBlockClosureClassIndex_=%u in #%s fd=%zu\n",
-                            mismatchCount, rci, fullBlockClosureClassIndex_,
-                            memory_.selectorOf(method_).c_str(), frameDepth_);
-                    fflush(stderr);
-                }
-            }
-        }
         if (rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
             rcvr.asObjectPtr()->classIndex() == fullBlockClosureClassIndex_) {
             argCount_ = 0;
             primitiveFailed_ = false;
             primFailCode_ = 0;
-            auto res = primitiveFullClosureValue(0);
-            if (res == PrimitiveResult::Success)
+            if (primitiveFullClosureValue(0) == PrimitiveResult::Success)
                 break;
-            // Log the failure to understand the recursion
-            static int valueFail = 0;
-            if (valueFail++ < 5) {
-                Oop numArgsOop = memory_.fetchPointerUnchecked(2, rcvr);
-                std::string curMethod = memory_.selectorOf(method_);
-                fprintf(stderr, "[VALUE-FAIL] #%d: primitiveFullClosureValue failed in #%s fd=%zu "
-                        "closure=0x%llx numArgs=%lld\n",
-                        valueFail, curMethod.c_str(), frameDepth_,
-                        (unsigned long long)rcvr.rawBits(),
-                        numArgsOop.isSmallInteger() ? numArgsOop.asSmallInteger() : -999);
-                // Also check what commonSend(9) will resolve to
-                Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
-                if (specialSelectors.isObject()) {
-                    size_t selectorSlot = 25 * 2;  // (9+16)*2 = 50
-                    Oop sel = specialSelectors.asObjectPtr()->slotAt(selectorSlot);
-                    std::string selStr = memory_.oopToString(sel);
-                    fprintf(stderr, "[VALUE-FAIL]   commonSend(9) will send: '%s' (oop=0x%llx)\n",
-                            selStr.c_str(), (unsigned long long)sel.rawBits());
-                }
-                fflush(stderr);
-            }
         }
         commonSend(9);
         break;
@@ -5459,6 +5424,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
+#if PHARO_JIT_ENABLED
+    // Clear stale IC patch pointer — block activation means sends inside the
+    // block are unrelated to the JIT send that set pendingICPatch_.
+    pendingICPatch_ = nullptr;
+#endif
+
     // BlockClosure/FullBlockClosure layout:
     // 0: outerContext
     // 1: startPC (SmallInteger) for old BlockClosure, OR
