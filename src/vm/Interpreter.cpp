@@ -310,6 +310,20 @@ bool Interpreter::initialize() {
     initializeJIT();
 #endif
 
+    // Bootstrap the Delay scheduler: signal TheTimerSemaphore.
+    // When resuming from a snapshot, the Delay scheduler is blocked on the
+    // timer semaphore (set in the previous session). Our VM starts with
+    // nextWakeupTime_=0 and timerSemaphore_=nil, so checkTimerSemaphore()
+    // will never fire. Signal the semaphore once to wake the scheduler,
+    // which will then re-arm the timer and maintain itself.
+    {
+        Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
+        if (timerSema.isObject() && !timerSema.isNil() && timerSema.rawBits() > 0x10000) {
+            lastKnownTimerSemaphore_ = timerSema;
+            synchronousSignal(timerSema);
+        }
+    }
+
     // Image is booted (valid snapshot context being resumed)
     imageBooted_ = true;
 
@@ -7384,19 +7398,31 @@ void Interpreter::transferTo(Oop newProcess) {
         return;
     }
 
-    // Debug: log process switches with priorities
+    // Debug: log process switches with priorities and method context
     {
         static int xferCount = 0;
         xferCount++;
-        if (xferCount <= 20) {
+        if (xferCount <= 40) {
             Oop oldPri = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
             Oop newPri = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-            fprintf(stderr, "[XFER] #%d %s: pri %lld -> %lld (proc 0x%llx -> 0x%llx)\n",
+
+            // Get the method name for the new process's suspended context
+            std::string newMethodName = "?";
+            Oop newCtx = memory_.fetchPointer(1, newProcess); // suspendedContext
+            if (newCtx.isObject() && !newCtx.isNil() && newCtx.rawBits() > 0x10000) {
+                Oop method = memory_.fetchPointer(3, newCtx); // MethodIndex
+                if (method.isObject() && !method.isNil() && method.rawBits() > 0x10000) {
+                    newMethodName = memory_.selectorOf(method);
+                }
+            }
+
+            fprintf(stderr, "[XFER] #%d %s: pri %lld -> %lld (proc 0x%llx -> 0x%llx) in #%s\n",
                     xferCount, g_xferReason,
                     oldPri.isSmallInteger() ? oldPri.asSmallInteger() : -1,
                     newPri.isSmallInteger() ? newPri.asSmallInteger() : -1,
                     (unsigned long long)oldProcess.rawBits(),
-                    (unsigned long long)newProcess.rawBits());
+                    (unsigned long long)newProcess.rawBits(),
+                    newMethodName.c_str());
         }
     }
 
