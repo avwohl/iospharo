@@ -84,8 +84,11 @@ list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 
-# JIT is enabled on non-iOS platforms
-if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+# JIT: respect command-line override, default to enabled on non-iOS
+if(DEFINED PHARO_JIT_ENABLED)
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=${PHARO_JIT_ENABLED})
+    message(STATUS "JIT: ${PHARO_JIT_ENABLED} (command-line override)")
+elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
     target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=0)
     message(STATUS "JIT: disabled (iOS)")
 else()
