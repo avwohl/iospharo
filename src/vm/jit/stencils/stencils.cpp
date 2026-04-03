@@ -117,10 +117,13 @@ extern "C" {
     extern char _HOLE_OPERAND;
     extern char _HOLE_OPERAND2;
 
-    // Runtime helpers (implemented in JITRuntime.cpp)
-    void _HOLE_RT_SEND(JITState*);
-    void _HOLE_RT_RETURN(JITState*);
-    void _HOLE_RT_ARITH_OVERFLOW(JITState*);
+    // Runtime helpers — declared as function pointer variables so the
+    // compiler generates GOT-style adrp+ldr (±4GB range) instead of
+    // direct BL (BRANCH26, ±128MB range which is too small when the
+    // code zone is far from the helper functions in memory).
+    extern void (*_HOLE_RT_SEND)(JITState*);
+    extern void (*_HOLE_RT_RETURN)(JITState*);
+    extern void (*_HOLE_RT_ARITH_OVERFLOW)(JITState*);
 
     // Megamorphic method cache (address resolved via literal pool)
     extern char _HOLE_MEGA_CACHE;

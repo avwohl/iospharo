@@ -729,13 +729,25 @@ bool JITCompiler::patchStencilInstance(
                 if (!patchARM64(stencilCode, reloc, target)) return false;
             } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
                 // GOT load (PAGEOFF12 comes first): allocate literal pool slot.
-                // Store the ADDRESS, not the value. The stencil does a double
-                // dereference: load address from literal pool, then load value
-                // through that address. This keeps values in sync after GC
-                // (e.g., nilOopBits/trueOopBits/falseOopBits are updated by
-                // updateSpecialOops and the stencil reads the current value).
+                // The stencil does a double dereference: load address from
+                // literal pool, then load value through that address.
+                //
+                // For function pointer helpers (1-3): store address of the
+                // helpers_ struct field. The stencil loads &field → loads fn
+                // ptr → blr. This gives ±4GB range (vs ±128MB for BRANCH26).
+                //
+                // For data helpers (4-7): store the data address directly.
+                // This keeps values in sync after GC (nilOopBits etc. are
+                // updated by updateSpecialOops, stencil reads current value).
                 uint32_t slot = nextLiteralSlot++;
-                literalPool[slot] = reinterpret_cast<uint64_t>(helperAddr);
+                uint64_t poolValue;
+                switch (helperId) {
+                case 1: poolValue = reinterpret_cast<uint64_t>(&helpers_.sendSlow); break;
+                case 2: poolValue = reinterpret_cast<uint64_t>(&helpers_.returnToInterp); break;
+                case 3: poolValue = reinterpret_cast<uint64_t>(&helpers_.arithOverflow); break;
+                default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
+                }
+                literalPool[slot] = poolValue;
                 lastGotSlotAddr = reinterpret_cast<uint64_t>(
                     reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
                 if (!patchARM64(stencilCode, reloc, lastGotSlotAddr)) return false;

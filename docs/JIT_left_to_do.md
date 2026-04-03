@@ -4,25 +4,29 @@ checkpoint reguarly and push without bothering the human
 
 # JIT: Remaining Work
 
-Updated: 2026-04-02
+Updated: 2026-04-03
 
 Current state: 66 stencils, ARM64 only, GC cooperation working.
 Send-free methods execute via JIT; send-containing methods fall back to
-interpreter (hasSends guard). 786 test passes, 0 failures.
+interpreter (hasSends guard). 6,119 methods compiled, 0 failures.
+3,502 test passes, 2 failures (pre-existing), 1 error (pre-existing).
 
 
 ## Critical Bugs
 
-### SIGSEGV when code zone fills up
-Code zone reaches capacity (~16384 KB) due to 7000+ failed compilations.
-After zone is full, a crash occurs in tryExecute (fault addr=0x1). Likely
-a stale JITMethod pointer or corrupt code after zone pressure. Reproduces
-in runs longer than ~2 minutes with many unique methods.
+### SIGSEGV when code zone fills up — FIXED
+Root cause: compact() used memmove to slide JITMethods in memory, but
+absolute branch targets in stencil code became stale. Also MethodMap
+had stale pointers to moved JITMethods.
 
-    Where:  JITRuntime::tryExecute → SIGSEGV
-    Impact: Crashes the VM after extended running
-    Fix:    Need LRU eviction or zone compaction (see below), and/or
-            stop attempting compilations when zone is nearly full
+Fix: full zone flush (invalidate all methods + compact) when zone is full.
+Methods recompile naturally. 5/5 clean runs after fix.
+
+### Send-containing methods cause ~600x slowdown
+Tested removing hasSends guard: 97% IC hit rate but C++ boundary crossing
+overhead per send (JITState setup, W^X toggle, exit handling) dominates.
+144K steps/10s vs 87M without JIT. Need direct stencil-to-stencil calls
+(Phase 3 item 1) before this can be enabled.
 
 
 ## Phase 3: Make JIT Profitable for Sends
@@ -78,14 +82,16 @@ reaches zero, fire trap bytecode to call back into image optimizer.
 
 ## Phase 4: Polish and Robustness
 
-### 5. Code zone eviction / compaction
-Zone fills up with ~7000 failed compilations + ~500 successful ones.
-Currently no way to reclaim space from invalidated methods.
+### 5. Code zone eviction / compaction — PARTIAL
+Full zone flush implemented (invalidate all + compact when zone is full).
+Methods recompile naturally after flush. Proper incremental eviction
+(keep hot methods, only evict cold ones) would be better but requires
+fixing absolute branch targets in stencils (use relative branches or
+maintain a relocation table).
 
-    Cog approach: LRU eviction (free least-recently-used methods)
-                  Sliding compaction (eliminate gaps)
-    Simpler:      Stop compiling when zone is >90% full
-                  Free invalidated methods' space on next GC
+    Current:    Full flush on zone full → all methods lost, recompile
+    Better:     Relative branch targets → safe per-method eviction + compact
+    Cog ref:    Sliding compaction + LRU eviction (branch targets are relative)
 
 ### 6. Context support / deoptimization
 `thisContext` access (bytecode 0x58) currently causes deopt. Methods
@@ -115,16 +121,24 @@ do heap allocation in stencils (no GC cooperation mid-stencil).
     0xF0-F1 callPrimitive          (inlined primitives)
     0xF8-FF trap                   (needs profiling counters)
 
-### 9. Reduce compilation failures
-10,683 out of ~16,000 hot methods fail to compile. Main reasons:
-- Bail-out on unsupported bytecodes (tracked in bailoutCounts_[])
-- Methods too large (> MaxCompilableBytecodes)
-Need to audit bailoutCounts_ to find the most impactful missing stencils.
+### 9. Reduce compilation failures — DONE
+Root cause: ARM64 BRANCH26 relocations for runtime helpers (jit_rt_send,
+jit_rt_return, jit_rt_arith_overflow) had ±128MB range limit, but the
+code zone was mmap'd ~139MB from the helper functions. 10,683 methods
+failed to compile because patchARM64() returned false on BRANCH26.
+
+Fix: Changed runtime helper declarations in stencils.cpp from direct
+function calls (BL → BRANCH26) to function pointer variables (adrp+ldr
+→ GOT_LOAD_PAGE21/PAGEOFF12, ±4GB range). Same pattern already used
+for nil/true/false Oop loading. JITCompiler patching stores address of
+the helpers_ struct field in the literal pool for double indirection.
+
+Result: 6,119 compiled, 0 failed (was 10,683 failed).
 
 ### 10. Full Pharo test suite with JIT
-Current validation: 9 Kernel-Tests classes (786 pass, 0 fail).
-Need to run all 187+ classes and the full 2000+ class suite to ensure
-no JIT-specific regressions.
+Current validation: 3,502 pass, 2 fail, 1 error across expanded test classes.
+(Failures are pre-existing: testBeRecursivelyReadOnlyObject, testBeRecursivelyWritableObject.)
+Need to run the full 2000+ class suite to ensure no JIT-specific regressions.
 
 
 ## Phase 5: Tier 2 Optimizing JIT (Future)
@@ -165,12 +179,12 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
 
 ## Priority Order
 
-    #   Item                        Impact   Effort
-    1   Fix code zone crash         blocker  small
-    5   Zone eviction/compaction    blocker  medium
-    2   Fix IC patching             high     small
-    1   Direct J2J calls for sends  high     large
-    9   Reduce compilation fails    high     medium
+    #   Item                        Impact   Effort    Status
+    1   Fix code zone crash         blocker  small     DONE
+    5   Zone eviction/compaction    blocker  medium    PARTIAL (flush works)
+    2   Fix IC patching             high     small     blocked by hasSends
+    1   Direct J2J calls for sends  high     large     KEY BLOCKER
+    9   Reduce compilation fails    high     medium    DONE (BRANCH26→GOT)
     7   PushArray stencil           medium   small
     10  Full test suite             medium   medium
     4   Profiling counters          medium   medium
