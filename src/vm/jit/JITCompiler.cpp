@@ -667,14 +667,46 @@ bool JITCompiler::patchStencilInstance(
     uint32_t& nextLiteralSlot)
 {
     uint8_t* stencilCode = codeBase + stencilOffset;
-    // Track the last allocated GOT slot so adrp+ldr pairs share the same slot.
-    // PAGEOFF12 allocates; PAGE21 reuses.
+
+    // Architecture-specific patch dispatcher
+    auto patchOne = [&](const Relocation& r, uint64_t value) -> bool {
+        if constexpr (HostArch == Arch::ARM64) {
+            return patchARM64(stencilCode, r, value);
+        } else {
+            return patchX86_64(stencilCode, r, value);
+        }
+    };
+
+    // Allocate a literal pool slot and store a value. Returns the address
+    // of the pool entry (which is what gets patched into the instruction).
+    auto allocPoolSlot = [&](uint64_t value) -> uint64_t {
+        uint32_t slot = nextLiteralSlot++;
+        literalPool[slot] = value;
+        return reinterpret_cast<uint64_t>(
+            reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
+    };
+
+    // ARM64 GOT pairs: PAGEOFF12 allocates a slot, PAGE21 reuses it.
+    // x86_64: every GOT reloc independently allocates a slot.
     uint64_t lastGotSlotAddr = 0;
+
+    auto allocOrReuseSlot = [&](const Relocation& reloc, uint64_t value) -> uint64_t {
+        if constexpr (HostArch == Arch::ARM64) {
+            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
+                lastGotSlotAddr = allocPoolSlot(value);
+                return lastGotSlotAddr;
+            } else {
+                // PAGE21: reuse the slot from the preceding PAGEOFF12
+                return lastGotSlotAddr;
+            }
+        } else {
+            // x86_64: each GOT reloc gets its own slot
+            return allocPoolSlot(value);
+        }
+    };
 
     for (uint16_t r = 0; r < stencil.numRelocs; r++) {
         const Relocation& reloc = stencil.relocs[r];
-        uint32_t* insn = reinterpret_cast<uint32_t*>(stencilCode + reloc.offset);
-        uint64_t pc = reinterpret_cast<uint64_t>(insn);
 
         switch (reloc.hole) {
 
@@ -682,7 +714,7 @@ bool JITCompiler::patchStencilInstance(
             // Patch branch to the next stencil (stencilOffset + stencil.codeSize)
             uint32_t nextOffset = stencilOffset + stencil.codeSize;
             uint64_t target = reinterpret_cast<uint64_t>(codeBase + nextOffset);
-            if (!patchARM64(stencilCode, reloc, target)) return false;
+            if (!patchOne(reloc, target)) return false;
             break;
         }
 
@@ -699,45 +731,26 @@ bool JITCompiler::patchStencilInstance(
             }
             uint32_t targetOff = bcToCodeOffset[target];
             uint64_t targetAddr = reinterpret_cast<uint64_t>(codeBase + targetOff);
-            if (!patchARM64(stencilCode, reloc, targetAddr)) return false;
+            if (!patchOne(reloc, targetAddr)) return false;
             break;
         }
 
         case HoleKind::Operand: {
-            // GOT-style: adrp+ldr pair loads from a literal pool slot.
-            // The PAGEOFF12 reloc comes first (higher offset in generated relocs),
-            // followed by PAGE21. Both must target the SAME slot.
-            // Allocate on PAGEOFF12; reuse on PAGE21.
-            uint64_t poolEntryAddr;
-            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                uint32_t slot = nextLiteralSlot++;
-                literalPool[slot] = static_cast<uint64_t>(bc.operand >= 0 ? bc.operand : 0);
-                lastGotSlotAddr = reinterpret_cast<uint64_t>(
-                    reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-                poolEntryAddr = lastGotSlotAddr;
-            } else {
-                // PAGE21: reuse the slot from the preceding PAGEOFF12
-                poolEntryAddr = lastGotSlotAddr;
-            }
-            if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
+            // Load operand from literal pool via GOT-style relocation.
+            // ARM64: adrp+ldr pair (PAGEOFF12 allocates, PAGE21 reuses).
+            // x86_64: single RIP-relative instruction (always allocates).
+            uint64_t operandVal = static_cast<uint64_t>(bc.operand >= 0 ? bc.operand : 0);
+            uint64_t poolEntryAddr = allocOrReuseSlot(reloc, operandVal);
+            if (!patchOne(reloc, poolEntryAddr)) return false;
             break;
         }
 
         case HoleKind::Operand2: {
-            uint64_t poolEntryAddr;
-            if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                uint32_t slot = nextLiteralSlot++;
-                // Use operand2Ptr (64-bit pointer) if set, otherwise fall back to operand2 (int)
-                literalPool[slot] = bc.operand2Ptr != 0
-                    ? bc.operand2Ptr
-                    : static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
-                lastGotSlotAddr = reinterpret_cast<uint64_t>(
-                    reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-                poolEntryAddr = lastGotSlotAddr;
-            } else {
-                poolEntryAddr = lastGotSlotAddr;
-            }
-            if (!patchARM64(stencilCode, reloc, poolEntryAddr)) return false;
+            uint64_t op2Val = bc.operand2Ptr != 0
+                ? bc.operand2Ptr
+                : static_cast<uint64_t>(bc.operand2 >= 0 ? bc.operand2 : 0);
+            uint64_t poolEntryAddr = allocOrReuseSlot(reloc, op2Val);
+            if (!patchOne(reloc, poolEntryAddr)) return false;
             break;
         }
 
@@ -764,23 +777,29 @@ bool JITCompiler::patchStencilInstance(
                 return false;
             }
 
-            if (reloc.type == RelocType::ARM64_BRANCH26) {
-                // Direct branch to helper function
-                uint64_t target = reinterpret_cast<uint64_t>(helperAddr);
-                if (!patchARM64(stencilCode, reloc, target)) return false;
-            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGEOFF12) {
-                // GOT load (PAGEOFF12 comes first): allocate literal pool slot.
-                // The stencil does a double dereference: load address from
-                // literal pool, then load value through that address.
-                //
-                // For function pointer helpers (1-3): store address of the
-                // helpers_ struct field. The stencil loads &field → loads fn
-                // ptr → blr. This gives ±4GB range (vs ±128MB for BRANCH26).
-                //
-                // For data helpers (4-7): store the data address directly.
-                // This keeps values in sync after GC (nilOopBits etc. are
-                // updated by updateSpecialOops, stencil reads current value).
-                uint32_t slot = nextLiteralSlot++;
+            if constexpr (HostArch == Arch::ARM64) {
+                if (reloc.type == RelocType::ARM64_BRANCH26) {
+                    // Direct branch to helper function
+                    uint64_t target = reinterpret_cast<uint64_t>(helperAddr);
+                    if (!patchARM64(stencilCode, reloc, target)) return false;
+                } else {
+                    // GOT load: allocate/reuse literal pool slot.
+                    // For function pointer helpers (1-3): store address of the
+                    // helpers_ struct field for double indirection (±4GB range).
+                    // For data helpers (4-7): store data address directly.
+                    uint64_t poolValue;
+                    switch (helperId) {
+                    case 1: poolValue = reinterpret_cast<uint64_t>(&helpers_.sendSlow); break;
+                    case 2: poolValue = reinterpret_cast<uint64_t>(&helpers_.returnToInterp); break;
+                    case 3: poolValue = reinterpret_cast<uint64_t>(&helpers_.arithOverflow); break;
+                    default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
+                    }
+                    uint64_t poolAddr = allocOrReuseSlot(reloc, poolValue);
+                    if (!patchARM64(stencilCode, reloc, poolAddr)) return false;
+                }
+            } else {
+                // x86_64: all runtime helpers use GOT-style literal pool.
+                // Same double-indirection scheme as ARM64 GOT loads.
                 uint64_t poolValue;
                 switch (helperId) {
                 case 1: poolValue = reinterpret_cast<uint64_t>(&helpers_.sendSlow); break;
@@ -788,13 +807,8 @@ bool JITCompiler::patchStencilInstance(
                 case 3: poolValue = reinterpret_cast<uint64_t>(&helpers_.arithOverflow); break;
                 default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
                 }
-                literalPool[slot] = poolValue;
-                lastGotSlotAddr = reinterpret_cast<uint64_t>(
-                    reinterpret_cast<uint8_t*>(literalPool) + slot * 8);
-                if (!patchARM64(stencilCode, reloc, lastGotSlotAddr)) return false;
-            } else if (reloc.type == RelocType::ARM64_GOT_LOAD_PAGE21) {
-                // PAGE21: reuse the slot from the preceding PAGEOFF12
-                if (!patchARM64(stencilCode, reloc, lastGotSlotAddr)) return false;
+                uint64_t poolAddr = allocPoolSlot(poolValue);
+                if (!patchX86_64(stencilCode, reloc, poolAddr)) return false;
             }
             break;
         }
@@ -929,10 +943,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         }
         const StencilDef& stencil = stencilTable[bc.stencilIdx];
         codeSize += stencil.codeSize;
-        // Count literal pool slots needed (one per GOT reloc pair)
+        // Count literal pool slots needed.
+        // ARM64: one slot per GOT pair (counted via PAGE21, the second reloc).
+        // x86_64: one slot per non-branch reloc (each GOT ref is a single instruction).
         for (uint16_t r = 0; r < stencil.numRelocs; r++) {
-            if (stencil.relocs[r].type == RelocType::ARM64_GOT_LOAD_PAGE21) {
-                maxLiteralSlots++;
+            const auto& rel = stencil.relocs[r];
+            if constexpr (HostArch == Arch::ARM64) {
+                if (rel.type == RelocType::ARM64_GOT_LOAD_PAGE21) {
+                    maxLiteralSlots++;
+                }
+            } else {
+                if (rel.hole != HoleKind::Continue && rel.hole != HoleKind::BranchTarget) {
+                    maxLiteralSlots++;
+                }
             }
         }
     }
