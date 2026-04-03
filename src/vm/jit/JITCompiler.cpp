@@ -230,9 +230,8 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
         } else if (op >= 0x54 && op <= 0x57) {
-            // Unused in Sista V1, but may appear — deopt to interpreter
-            bc.operand = bc.bcOffset;
-            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            // Unused in Sista V1 — interpreter treats as nop
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
             decoded.push_back(bc);
             i += bc.bcLength;
             extA = 0; extB = 0;
@@ -275,10 +274,17 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             bc.operand = op - SistaV1::PopStoreTempBase;       // popStoreTemp
         } else if (op == SistaV1::Pop) {
             // 0xD8: no operand
-        } else if (op >= 0xD9 && op <= 0xDF) {
-            // Trap bytecodes — deopt to interpreter
+        } else if (op == 0xD9) {
+            // Unconditional trap — deopt to interpreter (stopVM)
             bc.operand = bc.bcOffset;
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+            decoded.push_back(bc);
+            i += bc.bcLength;
+            extA = 0; extB = 0;
+            continue;
+        } else if (op >= 0xDA && op <= 0xDF) {
+            // Reserved bytecodes — interpreter treats as nop
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
             decoded.push_back(bc);
             i += bc.bcLength;
             extA = 0; extB = 0;
@@ -388,11 +394,10 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::InlinedPrimitive: {
-                // Sista inlined primitive — deopt to interpreter
+                // Sista inlined primitive — interpreter treats as nop (skip operand)
                 if (i + 1 >= length) goto done;
-                bc.operand = bc.bcOffset;
                 bc.bcLength = 2;
-                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
                 decoded.push_back(bc);
                 i += bc.bcLength;
                 extA = 0; extB = 0;
