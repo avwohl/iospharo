@@ -180,9 +180,13 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // Sends are handled via deopt: the stencil sets state.ip to the send
-    // bytecode and exits, letting the interpreter resume at the send.
-    //
+    // Skip JIT execution for methods that contain sends. These methods
+    // exit to the interpreter on every send, and the per-send overhead
+    // (W^X toggle, state marshalling, exit handling) makes JIT slower
+    // than pure interpretation. Only execute send-free methods (pure
+    // arithmetic, accessors, control flow) where JIT provides a speedup.
+    if (jm->hasSends) return false;
+
     // Heap writes (storeRecvVar, storeLitVar) are allowed because
     // generational GC is not implemented — all objects are in old space,
     // so the write barrier (isOld && isYoung check) is a no-op.
@@ -241,6 +245,9 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
+
+    // Skip resume for send-containing methods (same rationale as tryExecute)
+    if (jm->hasSends) return false;
 
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
