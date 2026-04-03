@@ -184,7 +184,8 @@ uint16_t JITCompiler::selectStencil(uint8_t opcode, int operand) const {
 
 bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                                    std::vector<DecodedBC>& decoded,
-                                   uint8_t& failedOpcode) {
+                                   uint8_t& failedOpcode,
+                                   bool isFullBlock) {
     failedOpcode = 0;
     decoded.clear();
     decoded.reserve(length);  // Upper bound: one DecodedBC per byte
@@ -239,8 +240,20 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
             // 0x58-0x5C: return bytecodes, no operand
         } else if (op == 0x5D || op == 0x5E) {
-            // blockReturn nil (0x5D), blockReturn top (0x5E): complex semantics
-            // (depends on whether we're in a FullBlock or method). Deopt.
+            if (isFullBlock && extA == 0) {
+                // In a FullBlock with no enclosing levels: these are simple returns.
+                // 0x5D = return nil from block, 0x5E = return top from block.
+                if (op == 0x5D) {
+                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnNil);
+                } else {
+                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop);
+                }
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            // Non-FullBlock or non-local return (extA > 0): complex semantics. Deopt.
             bc.operand = bc.bcOffset;
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
             decoded.push_back(bc);
@@ -829,10 +842,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
     const uint8_t* bytecodes = bytes + bcStart;
 
+    // Check if this is a CompiledBlock (FullBlock) — block returns are simple returns
+    uint32_t methodClassIndex = methObj->classIndex();
+    bool isFullBlock = (methodClassIndex == interp_.compiledBlockClassIndex());
+
     // Decode bytecodes
     std::vector<DecodedBC> decoded;
     uint8_t failedOpcode = 0;
-    if (!decodeBytecodes(bytecodes, bcLen, decoded, failedOpcode)) {
+    if (!decodeBytecodes(bytecodes, bcLen, decoded, failedOpcode, isFullBlock)) {
         compilationsFailed_++;
         if (failedOpcode) bailoutCounts_[failedOpcode]++;
         fprintf(stderr, "[JIT] Bail-out #%zu: opcode 0x%02X bcLen=%zu\n",

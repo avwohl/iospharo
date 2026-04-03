@@ -90,7 +90,8 @@ private:
     // Decode all bytecodes in a method.
     // On failure, failedOpcode is set to the bytecode that caused the bail-out.
     bool decodeBytecodes(const uint8_t* bytecodes, size_t length,
-                         std::vector<DecodedBC>& decoded, uint8_t& failedOpcode);
+                         std::vector<DecodedBC>& decoded, uint8_t& failedOpcode,
+                         bool isFullBlock = false);
 
     // Select the stencil for a given bytecode
     uint16_t selectStencil(uint8_t opcode, int operand) const;

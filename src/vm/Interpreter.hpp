@@ -678,6 +678,9 @@ private:
     uint32_t fullBlockClosureClassIndex_ = 0;
     uint32_t lookupClassIndexByName(const char* name);
     void initializeClassIndexCache();
+public:
+    uint32_t compiledBlockClassIndex() const { return compiledBlockClassIndex_; }
+private:
 
     // ===== CACHES =====
 
