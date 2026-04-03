@@ -5894,7 +5894,10 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 bool Interpreter::popFrame() {
     // Restore previous execution state
     if (frameDepth_ == 0) {
-        stopVM("popFrame at frameDepth 0");
+        // No C++ frames to pop. This is NOT a fatal error — the process may
+        // have more contexts in the heap chain. Return false so the caller
+        // can handle the context-based return (follow sender chain) or
+        // terminate the process if there's no sender.
         return false;
     }
 
@@ -5916,11 +5919,6 @@ bool Interpreter::popFrame() {
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 
-
-    // If this was the last frame, we're done
-    if (frameDepth_ == 0 && frame.savedIP == nullptr) {
-        stopVM("Last frame popped in popFrame()");
-    }
     return true;
 }
 
@@ -9541,8 +9539,35 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitReturn:
             // JIT completed the rest of the method and returned.
             if (!popFrame()) {
+                // fd=0: no C++ frames left. Follow context sender chain.
+                if (activeContext_.isObject() && !activeContext_.isNil()) {
+                    Oop sender = memory_.fetchPointer(0, activeContext_);
+                    if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
+                        // Kill current context (it returned)
+                        memory_.storePointer(0, activeContext_, memory_.nil());
+                        memory_.storePointer(1, activeContext_, memory_.nil());
+                        // Load sender context
+                        stackPointer_ = stackBase_;
+                        Oop senderStackp = memory_.fetchPointer(2, sender);
+                        int origSp = senderStackp.isSmallInteger()
+                            ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+                        executeFromContext(sender);
+                        // Push return value at correct position
+                        framePointer_[1 + origSp] = state.returnValue;
+                        Oop* pastVal = framePointer_ + 1 + origSp + 1;
+                        if (pastVal > stackPointer_) stackPointer_ = pastVal;
+                        continue;  // Try to resume in sender's JIT code
+                    }
+                }
+                // No valid sender — terminate process and reschedule
+                terminateCurrentProcess();
+                if (tryReschedule()) {
+                    inJITResume_ = false;
+                    return;
+                }
+                stopVM("No runnable processes after JIT return at fd=0");
                 inJITResume_ = false;
-                return;  // Process terminated and rescheduled
+                return;
             }
             if (running_) {
                 push(state.returnValue);
@@ -9815,7 +9840,29 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn:
-            if (!popFrame()) return true;  // Process terminated and rescheduled
+            if (!popFrame()) {
+                // fd=0: follow context sender chain
+                if (activeContext_.isObject() && !activeContext_.isNil()) {
+                    Oop sender = memory_.fetchPointer(0, activeContext_);
+                    if (sender.isObject() && !sender.isNil() && memory_.isValidPointer(sender)) {
+                        memory_.storePointer(0, activeContext_, memory_.nil());
+                        memory_.storePointer(1, activeContext_, memory_.nil());
+                        stackPointer_ = stackBase_;
+                        Oop senderStackp = memory_.fetchPointer(2, sender);
+                        int origSp = senderStackp.isSmallInteger()
+                            ? static_cast<int>(senderStackp.asSmallInteger()) : 0;
+                        executeFromContext(sender);
+                        framePointer_[1 + origSp] = state.returnValue;
+                        Oop* pastVal = framePointer_ + 1 + origSp + 1;
+                        if (pastVal > stackPointer_) stackPointer_ = pastVal;
+                        return true;
+                    }
+                }
+                // No sender — terminate and reschedule
+                terminateCurrentProcess();
+                tryReschedule();
+                return true;
+            }
             push(state.returnValue);
             return true;
 

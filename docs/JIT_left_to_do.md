@@ -12,6 +12,8 @@ C++ boundary crossing for trivial sends. IC stride-3 layout (104 bytes/site)
 with extra word encoding getter (bit 63), setter (bit 62), returnsSelf (bit 61).
 hasSends guard removed — all methods with sends now execute via JIT.
 6,119+ methods compiled, 0 failures, 97% IC hit rate.
+IC selector verification prevents cross-send IC corruption from stale
+pendingICPatch_ in nested JIT executions/process switches.
 
 
 ## Critical Bugs
@@ -24,19 +26,21 @@ had stale pointers to moved JITMethods.
 Fix: full zone flush (invalidate all methods + compact) when zone is full.
 Methods recompile naturally. 5/5 clean runs after fix.
 
-### JIT IC dispatch to wrong method — FIXED
-Root cause: sendSelector() had early-exit paths (primitive success,
+### JIT IC dispatch to wrong method — FIXED (two rounds)
+Round 1: sendSelector() had early-exit paths (primitive success,
 getter/setter/identity fast paths) that returned without calling
-patchJITICAfterSend(). This left pendingICPatch_ stale from a
-previous JIT ExitSend. The stale pointer was consumed by a later
-send in a different method, patching the wrong method into the IC.
+patchJITICAfterSend(). Fix: call patchJITICAfterSend() on ALL
+successful send resolution paths.
 
-Symptom: Object>>copy sends #shallowCopy (primitive 148 succeeds),
-pendingICPatch_ not consumed, later #copyTo: send patches copyTo:
-method into copy's shallowCopy IC slot → infinite recursion.
+Round 2: Even with all paths calling patchJITICAfterSend(), stale
+pendingICPatch_ from nested JIT executions or process switches could
+patch the wrong IC. Diagnostic showed IC for #valueNoContextSwitch
+being patched with #debuggerSelectionStrategy method.
 
-Fix: call patchJITICAfterSend() on ALL successful send resolution
-paths in sendSelector(), not just the activateMethod path.
+Fix: Added selector verification — patchJITICAfterSend() now takes
+the send's selector parameter and compares it against icData[12]
+(the IC's stored selectorBits). If they don't match, the patch is
+skipped. All 7 call sites in sendSelector() updated to pass selector.
 
 ### Send-containing methods cause ~600x slowdown — FIXED
 Tested removing hasSends guard: 97% IC hit rate but C++ boundary crossing
@@ -210,7 +214,7 @@ W^X uses standard mmap/mprotect (no Apple-specific MAP_JIT needed).
     7   PushArray stencil           medium   small     DONE
     3   IC hierarchy invalidation   medium   small     DONE
     8   More bytecode stencils      medium   medium    PARTIAL (super, arith, nop, 0xFE/FF)
-    10  Full test suite             medium   medium    BLOCKED (process scheduling)
+    10  Full test suite             medium   medium    PARTIAL (IC bug fixed)
     4   Profiling counters          medium   medium    TODO
     6   Context / deoptimization    medium   large     TODO
     14  x86_64 stencils             medium   large     TODO
