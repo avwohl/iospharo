@@ -1113,7 +1113,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                                   literalPool, literalPoolOffset,
                                   nextLiteralSlot)) {
             compilationsFailed_++;
-            // The allocation is wasted but the zone will reclaim it later
+            // Mark as invalidated so forEachRoot won't scan its stale Oop
+            // and compaction can reclaim the space.
+            jitMethod->invalidate();
+            jitMethod->compiledMethodOop = 0;
             return nullptr;
         }
 

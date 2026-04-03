@@ -2206,12 +2206,15 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // JIT code zone: compiledMethodOop in each JITMethod header.
     // These must be GC roots so (a) referenced CompiledMethods aren't collected
     // and (b) Oops are updated in-place when compaction moves methods.
+    // Skip invalidated entries (failed compilations) — their Oop is zeroed.
 #if PHARO_JIT_ENABLED
     if (jitRuntime_.isInitialized()) {
         jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();
         while (m) {
-            Oop& methodOop = *reinterpret_cast<Oop*>(&m->compiledMethodOop);
-            visitor(methodOop);
+            if (m->compiledMethodOop != 0) {
+                Oop& methodOop = *reinterpret_cast<Oop*>(&m->compiledMethodOop);
+                visitor(methodOop);
+            }
             m = m->nextInZone;
         }
     }
