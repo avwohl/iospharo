@@ -100,6 +100,7 @@ enum ExitReason : int {
     ExitArithOverflow = 6, // Arithmetic overflow — restore entry SP, re-execute
     ExitSendCached  = 7,  // IC hit — cachedTarget has resolved method, skip lookup
     ExitBlockCreate = 8,  // PushFullBlock — cachedTarget has packed (litIndex | flags<<32)
+    ExitArrayCreate = 9,  // PushArray — cachedTarget has desc byte (arraySize | popIntoArray<<7)
 };
 
 // ===== STENCIL FUNCTION SIGNATURE =====

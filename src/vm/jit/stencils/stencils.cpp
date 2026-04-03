@@ -138,6 +138,7 @@ static constexpr int EXIT_RETURN = 1;
 static constexpr int EXIT_SEND = 2;
 static constexpr int EXIT_SEND_CACHED = 7;
 static constexpr int EXIT_BLOCK_CREATE = 8;
+static constexpr int EXIT_ARRAY_CREATE = 9;
 
 // =====================================================================
 // STENCILS
@@ -889,6 +890,16 @@ extern "C" void stencil_pushBlock(JITState* s) {
     s->cachedTarget.bits = (static_cast<uint64_t>(packed & 0xFFFF)) |
                            (static_cast<uint64_t>(static_cast<uint32_t>(OPERAND2)) << 32);
     s->exitReason = EXIT_BLOCK_CREATE;
+    _HOLE_RT_RETURN(s);
+}
+
+// ----- ARRAY CREATION STENCIL -----
+//
+// Exit to interpreter to allocate a Smalltalk Array, then resume JIT.
+// OPERAND = desc byte from 0xE7: bits 0-6 = arraySize, bit 7 = popIntoArray
+extern "C" void stencil_pushArray(JITState* s) {
+    s->cachedTarget.bits = static_cast<uint64_t>(static_cast<uint32_t>(OPERAND));
+    s->exitReason = EXIT_ARRAY_CREATE;
     _HOLE_RT_RETURN(s);
 }
 

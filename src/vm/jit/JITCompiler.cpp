@@ -335,11 +335,12 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::PushArray: {
-                // Allocates array — deopt to interpreter
+                // Exit to interpreter for array allocation, then resume JIT.
+                // OPERAND = desc byte (bits 0-6 = arraySize, bit 7 = popIntoArray)
                 if (i + 1 >= length) goto done;
-                bc.operand = bc.bcOffset;
+                bc.operand = bytecodes[i + 1];
                 bc.bcLength = 2;
-                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushArray);
                 decoded.push_back(bc);
                 i += bc.bcLength;
                 extA = 0; extB = 0;

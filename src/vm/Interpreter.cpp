@@ -9677,6 +9677,27 @@ void Interpreter::tryJITResumeInCaller() {
             continue;  // Try to resume JIT at next bytecode
         }
 
+        case jit::ExitArrayCreate: {
+            // PushArray during resume: allocate array, then continue resume loop
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+
+            int desc = static_cast<int>(state.cachedTarget.rawBits());
+            int arraySize = desc & 0x7F;
+            bool popIntoArray = (desc >> 7) != 0;
+
+            Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+            uint32_t classIndex = memory_.indexOfClass(arrayClass);
+            Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
+            if (popIntoArray) {
+                for (int i = arraySize - 1; i >= 0; i--)
+                    memory_.storePointer(i, array, pop());
+            }
+            push(array);
+            instructionPointer_ += 2;  // Past PushArray (2 bytes)
+            continue;  // Resume JIT at next bytecode
+        }
+
         case jit::ExitArithOverflow:
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
@@ -9953,6 +9974,55 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             // Advance IP past PushFullBlock (3 bytes)
             instructionPointer_ += 3;
+
+            // Try to resume JIT at next bytecode
+            uint32_t bcOffset = computeCurrentBCOffset();
+            if (bcOffset == UINT32_MAX) return true;
+
+            // Re-setup JIT state from current interpreter state
+            state.sp = stackPointer_;
+            state.receiver = receiver_;
+            methObj = method.asObjectPtr();
+            state.literals = methObj->slots() + 1;
+            state.tempBase = framePointer_ + 1;
+            {
+                Oop hdr = methObj->slots()[0];
+                int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                state.ip = methObj->bytes() + (1 + numLits) * 8;
+            }
+            state.method = method;
+            state.argCount = argCount;
+            state.icDataPtr = nullptr;
+            state.sendArgCount = 0;
+            state.exitReason = jit::ExitNone;
+
+            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                return true;  // Can't resume; interpreter handles rest
+            }
+            chargeJITBytecodes(state);
+            continue;  // Loop to handle the new exit reason
+        }
+
+        case jit::ExitArrayCreate: {
+            // PushArray exit: allocate array, then resume JIT.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+
+            int desc = static_cast<int>(state.cachedTarget.rawBits());
+            int arraySize = desc & 0x7F;
+            bool popIntoArray = (desc >> 7) != 0;
+
+            Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+            uint32_t classIndex = memory_.indexOfClass(arrayClass);
+            Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
+            if (popIntoArray) {
+                for (int i = arraySize - 1; i >= 0; i--)
+                    memory_.storePointer(i, array, pop());
+            }
+            push(array);
+
+            // Advance IP past PushArray (2 bytes)
+            instructionPointer_ += 2;
 
             // Try to resume JIT at next bytecode
             uint32_t bcOffset = computeCurrentBCOffset();
