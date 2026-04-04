@@ -220,13 +220,9 @@ VMs. Measures pure Smalltalk computation speed, no test framework.
     Total         11ms        829ms       787ms
 
     Process       Wall        User CPU    Sys CPU
-    Cog           0.19s       0.16s       0.01s
-    Our JIT       120s*       6.8s        1.1s
-    Our Interp    120s*       19.6s       1.1s
-
-    * VM does not exit cleanly (exit primitive not implemented);
-      120s is the safety timeout, not actual benchmark time.
-      Smalltalk-measured elapsed is ~830ms for JIT, ~787ms for interp.
+    Cog           0.19s       0.17s       0.01s
+    Our JIT       3.24s       2.03s       0.25s
+    Our Interp    3.09s       2.00s       0.21s
 
 Our Tier 1 JIT shows ~1x speedup on these benchmarks because the
 bottleneck is send dispatch, not bytecode execution within a method.

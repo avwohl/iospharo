@@ -3540,25 +3540,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
-
-    // Startup grace period: fail quit during the first 120 seconds.
-    // This gives session handlers (including test runners) time to complete
-    // before PharoCommandLineHandler's exitFailure can kill the VM.
-    auto uptime = std::chrono::steady_clock::now() - vmStartTime_;
-    if (uptime < std::chrono::seconds(120)) {
-        static int quitSuppressCount = 0;
-        if (++quitSuppressCount <= 20) {
-            Oop proc = getActiveProcess();
-            Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
-            fprintf(stderr, "[primitiveQuit] Failed during startup (%.1fs, #%d, proc=0x%llx pri=%lld in #%s)\n",
-                    std::chrono::duration<double>(uptime).count(), quitSuppressCount,
-                    (unsigned long long)proc.rawBits(),
-                    pri.isSmallInteger() ? pri.asSmallInteger() : -1,
-                    memory_.selectorOf(method_).c_str());
-        }
-        return PrimitiveResult::Failure;
-    }
-
     running_ = false;
     return PrimitiveResult::Success;
 }
