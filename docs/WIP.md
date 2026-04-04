@@ -1,7 +1,7 @@
 # WIP: JIT Bugs During Session Startup
 
 **Date**: 2026-04-03
-**Status**: Two bugs found, first two fixed, third under investigation
+**Status**: All three bugs found and fixed
 
 ## Bug #1: JIT Loop Exit (FIXED - commit 850b443)
 
@@ -27,21 +27,32 @@ the test runner at priority 90 never executed.
 **Fix**: Compute `bytecodeStart` from method header instead of using
 `instructionPointer_`.
 
-## Bug #3: Infinite #initialize Recursion (INVESTIGATING)
+## Bug #3: Super Send Megacache Conflation (FIXED - commit 54fd5af)
 
-After fixing bug #2, session startup progresses further but hits infinite
-recursion in `#initialize` (same method 0x3002e13a0 calling itself 4000+
-times). This occurs during `startUp` → block → `forContext:priority:` →
-`new` → `initialize` → `initialize` → ...
+After fixing bugs #1 and #2, session startup progressed further but hit
+infinite recursion in `#initialize` (same method calling itself 4000+
+times). The bytecodes of the recursive method:
+```
+4c eb 00 d8 4e cf 58  (push self; super initialize; pop; push false;
+                        store instVar7; return self)
+```
 
-This is likely another JIT bug where a send within `#initialize` is
-incorrectly dispatching back to `#initialize` instead of to the intended
-target. Possibly related to the JIT IC (inline cache) returning the wrong
-cached method for a send inside `#initialize`.
+**Root cause**: The JIT compiler upgraded super sends (0xEB) to
+`stencil_sendPoly`, which uses a global megamorphic cache. The megacache
+key is `(selectorBits, classIndex)` and does NOT distinguish normal sends
+from super sends. A prior normal send of `#initialize` populated the
+megacache with `(#initialize, classIndex -> same #initialize method)`.
+When the JIT hit `super initialize`, the megacache returned the SAME
+method instead of the superclass's method, causing infinite recursion.
 
-### Next Steps
+**Fix**: Exclude `ExtSuperSend` (0xEB) from the `stencil_sendPoly`
+upgrade. Super sends stay as `stencil_send` (deopt to interpreter),
+which does the correct super-class-based lookup. Also added
+`patchJITICAfterSend` to the 0xEB interpreter handler to prevent
+IC patch pointer leakage.
 
-1. Identify which send inside `#initialize` is misdispatching
-2. Check if the JIT IC has a stale or wrong entry
-3. Fix the root cause
-4. Then run JIT-on test suite and compare to JIT-off baseline
+## Next Steps
+
+1. Remove diagnostic traces (sendMustBeBoolean 3-entry log can stay)
+2. Run JIT-on test suite and compare to JIT-off baseline
+3. Record both wall clock time and CPU time per user request

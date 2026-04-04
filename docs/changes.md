@@ -2,6 +2,19 @@
 
 2026-04-03
 
+## Fix JIT Super Send Megacache Conflation
+
+Super sends (0xEB / ExtSuperSend) were upgraded to stencil_sendPoly, which
+probes a global megamorphic cache. The megacache uses (selectorBits, classIndex)
+as its key but does not distinguish normal sends from super sends. A prior normal
+send of `#initialize` populated the megacache with the receiver's class method,
+and then `super initialize` hit that entry instead of looking up in the
+superclass — causing #initialize to call itself infinitely during session startup.
+
+Fix: exclude 0xEB from the sendPoly upgrade so super sends always deopt to the
+interpreter, which does the correct superclass-based lookup. Also added
+patchJITICAfterSend to the 0xEB dispatch handler to prevent IC patch leakage.
+
 ## Fix JIT state.ip for CallPrimitive Methods
 
 `tryJITActivation` used `instructionPointer_` as the JIT's base IP, but
