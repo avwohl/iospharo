@@ -1,6 +1,31 @@
 # Test Results
 
-Last updated: 2026-04-03
+Last updated: 2026-04-04
+
+## JIT vs Interpreter Comparison (2026-04-04)
+
+Fresh Pharo 13 image, 192 test classes, 8275 tests per run.
+Both runs killed by 660s timeout (3 slow reflective tests in SelfVariableTest).
+
+    Mode       Tests   Pass   Fail  Error  Skip  Timeout
+    JIT-OFF    8,275  8,213     23     11    25        3
+    JIT-ON     8,275  8,213     23     11    25        3
+
+    JIT-specific regressions: 0
+    (One run showed WeakIdentityKeyDictionaryTest>>testClearing
+     as an extra JIT failure, but it's nondeterministic — passes
+     on subsequent runs. The underlying count varies with GC timing.)
+
+    Timing (wall clock / user CPU / sys CPU):
+    JIT-OFF:  660s wall  /  619.7s user  /  2.3s sys
+    JIT-ON:   660s wall  /    4.6s user  /  1.6s sys
+
+    CPU reduction: ~99% less user CPU under JIT
+    Both runs complete the same 192 classes before timeout.
+    JIT finishes tests much earlier, then idles; interpreter
+    runs tests for the full 660s.
+
+    JIT stats at run end: 303 compiled, 0 failed, 96% IC hit rate
 
 ## Summary
 
