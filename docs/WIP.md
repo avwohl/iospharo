@@ -1,69 +1,47 @@
-# WIP: JIT Loop Exit Bug Fix (Task #55)
+# WIP: JIT Bugs During Session Startup
 
 **Date**: 2026-04-03
-**Status**: Fix implemented, partially tested
+**Status**: Two bugs found, first two fixed, third under investigation
 
-## Bug Found
+## Bug #1: JIT Loop Exit (FIXED - commit 850b443)
 
-**Root cause of KeyNotFound during SessionManager startup with JIT enabled.**
+The `tryJITActivation` loop broke before processing exit reasons when
+`checkCountdown_ <= 0`. Fix: process exit reason at each `continue` site
+via `goto jit_loop_exit` label.
 
-The `tryJITActivation` loop in Interpreter.cpp had a `checkCountdown_ <= 0` break
-at the TOP of the loop (line 9906). After a successful `tryResume` + `continue`,
-the JIT's new exit reason in `state` was never processed — the break skipped
-straight past the switch statement. This left `instructionPointer_` and
-`stackPointer_` stale, corrupting interpreter state.
+## Bug #2: JIT state.ip Offset (FIXED - commit 6376387)
 
-### How it manifested
+`tryJITActivation` set `state.ip = instructionPointer_`, but for methods
+with `callPrimitive` (0xF8), `activateMethod` already advances IP by 3
+bytes past the callPrimitive. JIT stencils compute exit IPs as
+`state.ip + bcOffset` (where bcOffset is from bytecodeStart). This double-
+counted the callPrimitive skip, causing IP to overshoot.
 
-Dictionary `scanFor:` with key=50 during SessionManager startup:
-1. JIT runs scanFor:, exits for `size` primitive (ExitSendCached)
-2. Primitive succeeds, resume at bcOff=2
-3. `chargeJITBytecodes` pushes `checkCountdown_` below 0
-4. `continue` goes to top of loop
-5. `checkCountdown_ <= 0` → `break` → `return true`
-6. State has unprocessed ExitReturn (scanFor: completed)
-7. Frame not popped, IP/SP stale → execution corrupted
-8. Interpreter sees wrong method ("header" instead of "scanFor:")
-9. Eventually causes KeyNotFound for dictionary key 50
+**Symptom**: `on:do:` blocks (primitive 199) had IP past their byteSize.
+The interpreter's dispatch loop `IP >= bytecodeEnd_` check returned the
+receiver (a Context) as the method's return value. This Context appeared
+where a Boolean was expected, triggering `mustBeBoolean`. Every session
+startup handler using `on:do:` for error recovery silently failed, so
+the test runner at priority 90 never executed.
 
-Keys 20 and 30 worked because their probe sequences were shorter,
-consuming less of the countdown budget.
+**Fix**: Compute `bytecodeStart` from method header instead of using
+`instructionPointer_`.
 
-### Fix Applied (src/vm/Interpreter.cpp)
+## Bug #3: Infinite #initialize Recursion (INVESTIGATING)
 
-1. Removed the `if (checkCountdown_ <= 0) break;` from the top of the JIT chain loop
-2. Added `if (checkCountdown_ <= 0) goto jit_loop_exit;` at each `continue` site
-   (4 locations: after prim success resume, after activateMethod resume,
-   after ExitBlockCreate resume, after ExitArrayCreate resume)
-3. Added `jit_loop_exit:` label after the loop with a switch that properly
-   handles each exit reason:
-   - ExitReturn: popFrame + push returnValue
-   - ExitSend/ExitSendCached/ExitArithOverflow: sync IP/SP, return false
-   - ExitBlockCreate/ExitArrayCreate: sync IP/SP, return false
-   - default (ExitNone): return true
+After fixing bug #2, session startup progresses further but hits infinite
+recursion in `#initialize` (same method 0x3002e13a0 calling itself 4000+
+times). This occurs during `startUp` → block → `forContext:priority:` →
+`new` → `initialize` → `initialize` → ...
 
-### Test Results
-
-- Build: compiles cleanly (19 pre-existing warnings)
-- Runtime: VM gets past SessionManager startup and into world loop
-- No KeyNotFound error observed
-- Still seeing an error caught by handleError:log: during startup — needs investigation
-- Test results file not yet produced (may need longer run or test runner issue)
-
-### Diagnostic traces still in code
-
-These should be cleaned up before final commit:
-- Send trace (first 1000 sends) at sendSelector()
-- JIT-EXIT trace (first 300 exits) at tryJITActivation
-- JIT-RESUME trace (first 100 resumes) at ExitSendCached primitive handler
-- JIT-RESUME-FAIL trace (first 20) at tryResume failure
-- RESUME context chain logging at initialize()
+This is likely another JIT bug where a send within `#initialize` is
+incorrectly dispatching back to `#initialize` instead of to the intended
+target. Possibly related to the JIT IC (inline cache) returning the wrong
+cached method for a send inside `#initialize`.
 
 ### Next Steps
 
-1. Run with longer timeout to see if tests execute
-2. Investigate the handleError:log: error during startup
-3. Check if `tryJITResumeInCaller` has the same pattern (it doesn't — its structure processes exits inline before continuing)
-4. Clean up diagnostic traces
-5. Run full test suite comparison (JIT on vs JIT off)
-6. Commit the fix properly
+1. Identify which send inside `#initialize` is misdispatching
+2. Check if the JIT IC has a stale or wrong entry
+3. Fix the root cause
+4. Then run JIT-on test suite and compare to JIT-off baseline

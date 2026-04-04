@@ -2,6 +2,23 @@
 
 2026-04-03
 
+## Fix JIT state.ip for CallPrimitive Methods
+
+`tryJITActivation` used `instructionPointer_` as the JIT's base IP, but
+`activateMethod` already advances IP past `callPrimitive` (0xF8). JIT stencils
+compute exit IPs as `state.ip + bcOffset` (offsets from bytecodeStart), so using
+the already-advanced pointer double-counted the skip. This corrupted the
+interpreter's IP for all methods with callPrimitive — notably `on:do:` (prim 199)
+and `ensure:` (prim 198). Session startup handlers that use `on:do:` silently
+failed, preventing test runner execution under JIT.
+
+## Debug Trace Cleanup
+
+Removed ~315 lines of diagnostic traces from Interpreter.cpp and Primitives.cpp:
+send traces, JIT exit/resume traces, RESUME context chain dumps, SAMPLE method
+profiling, BYTE-RECV traces, XFER process transfer logging, EXT external call
+logging, PRIM62 traces, and the g_xferReason global.
+
 ## Inline Getter/Setter Dispatch in Stencil Send
 
 IC layout expanded from 72 to 104 bytes per send site (4 entries x [key, method,
