@@ -2,6 +2,29 @@
 
 Last updated: 2026-04-04
 
+## Full Suite — Interpreter (2026-04-04, deadlock fix)
+
+    Fresh Pharo 13 image, 1671 test class candidates, interpreter only.
+    VM exits cleanly via primitiveQuit after test runner completes.
+
+    Classes:   620 (ran to completion; remainder skip-listed or errored during discovery)
+    Tests:  13,702
+    Pass:   13,341  (97.3%)
+    Fail:       15
+    Error:     213
+    Skip:       32
+
+    Wall:  1,538s  (~25.6 min)
+    User:  1,372s
+    Sys:      50s
+    Memory: 4.3 GB peak
+
+    No deadlocks. Previous runs hung at MicrodownSpecComponentTest
+    (all Smalltalk processes blocked, Delay scheduler dead, watchdogs
+    couldn't fire). Fixed by: removing 10-attempt cap on Delay
+    scheduler recovery + fixing primitiveWait to clean up wait list
+    before failing when no process is runnable.
+
 ## JIT vs Interpreter Comparison (2026-04-04)
 
 Fresh Pharo 13 image, 192 test classes, 8275 tests per run.
