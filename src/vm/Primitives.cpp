@@ -3523,34 +3523,17 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
 
-    // Find next runnable process and switch to it.
-    // If no process is runnable, idle-loop polling timers and external signals
-    // until something wakes up. Returning Failure here would corrupt the
-    // scheduler — the process is already on the semaphore's wait list but
-    // would continue executing as the "active" process.
+    // Find next runnable process. In a working Pharo image, the idle process
+    // (priority 10) is always runnable, so this should never return nil.
+    // If it does, remove ourselves from the wait list to avoid corruption
+    // (process on wait list AND still active) and fail the primitive.
     Oop nextProcess = wakeHighestPriority();
     if (nextProcess.isNil()) {
-        // All processes are blocked on semaphores. Poll for timer/signal
-        // events that could make a process runnable.
-        for (int polls = 0; polls < 100000 && running_; polls++) {
-            checkTimerSemaphore();
-            if (hasPendingSignals()) {
-                processPendingSignals();
-            }
-            nextProcess = wakeHighestPriority();
-            if (!nextProcess.isNil()) break;
-            // Brief sleep to avoid burning CPU
-            #ifdef _WIN32
-            Sleep(1);
-            #else
-            usleep(1000);  // 1ms
-            #endif
-        }
-        if (nextProcess.isNil()) {
-            // Still nothing after 100s of polling — remove from wait list and fail
-            removeFirstLinkOfList(semaphore);
-            return PrimitiveResult::Failure;
-        }
+        // No runnable process — this means even the idle process is blocked.
+        // Remove ourselves from the semaphore wait list before failing,
+        // otherwise the process would be on the wait list AND active.
+        removeFirstLinkOfList(semaphore);
+        return PrimitiveResult::Failure;
     }
 
     transferTo(nextProcess);
