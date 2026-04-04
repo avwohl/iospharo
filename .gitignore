@@ -33,6 +33,8 @@ pharo-local/
 
 # Stray files
 stdbuf
+pharo
+pharo-ui
 
 # Xcode derived data
 DerivedData/

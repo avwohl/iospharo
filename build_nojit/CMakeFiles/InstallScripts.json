@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/wohl/src/iospharo/build_nojit/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
