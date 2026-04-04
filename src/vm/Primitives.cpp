@@ -3523,11 +3523,34 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Add current process to semaphore wait list and switch to next runnable
     addLastLinkToList(activeProcess, semaphore);
 
-    // Find next runnable process and switch to it
+    // Find next runnable process and switch to it.
+    // If no process is runnable, idle-loop polling timers and external signals
+    // until something wakes up. Returning Failure here would corrupt the
+    // scheduler — the process is already on the semaphore's wait list but
+    // would continue executing as the "active" process.
     Oop nextProcess = wakeHighestPriority();
     if (nextProcess.isNil()) {
-        // No runnable process - this shouldn't happen in a working system
-        return PrimitiveResult::Failure;
+        // All processes are blocked on semaphores. Poll for timer/signal
+        // events that could make a process runnable.
+        for (int polls = 0; polls < 100000 && running_; polls++) {
+            checkTimerSemaphore();
+            if (hasPendingSignals()) {
+                processPendingSignals();
+            }
+            nextProcess = wakeHighestPriority();
+            if (!nextProcess.isNil()) break;
+            // Brief sleep to avoid burning CPU
+            #ifdef _WIN32
+            Sleep(1);
+            #else
+            usleep(1000);  // 1ms
+            #endif
+        }
+        if (nextProcess.isNil()) {
+            // Still nothing after 100s of polling — remove from wait list and fail
+            removeFirstLinkOfList(semaphore);
+            return PrimitiveResult::Failure;
+        }
     }
 
     transferTo(nextProcess);

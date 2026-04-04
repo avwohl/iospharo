@@ -1581,11 +1581,17 @@ void Interpreter::checkTimerSemaphore() {
                 // Recovery: re-signal the last known timer semaphore.
                 // If the scheduler process is still alive but stuck waiting,
                 // this will wake it up so it can re-arm the timer.
-                if (!lastKnownTimerSemaphore_.isNil() && schedulerRecoveryAttempts_ < 10) {
+                // No attempt limit — keep trying indefinitely. A dead Delay
+                // scheduler deadlocks the entire system (watchdogs use Delay).
+                if (!lastKnownTimerSemaphore_.isNil()) {
                     schedulerRecoveryAttempts_++;
-                    std::cout << "[DELAY-RECOVERY] Re-signaling timer semaphore 0x"
-                              << std::hex << lastKnownTimerSemaphore_.rawBits()
-                              << std::dec << std::endl;
+                    if (schedulerRecoveryAttempts_ <= 3) {
+                        std::cout << "[DELAY-RECOVERY] Re-signaling timer semaphore 0x"
+                                  << std::hex << lastKnownTimerSemaphore_.rawBits()
+                                  << std::dec
+                                  << " (attempt " << schedulerRecoveryAttempts_ << ")"
+                                  << std::endl;
+                    }
                     synchronousSignal(lastKnownTimerSemaphore_);
                     // Give it 5 more seconds to re-arm
                     lastTimerSignalTime_ = std::chrono::steady_clock::now();
