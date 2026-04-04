@@ -597,20 +597,6 @@ void Interpreter::dumpProcessQueues() {
         fprintf(stderr, "  priority=%lld suspCtx=0x%llx\n",
                 prio.isSmallInteger() ? prio.asSmallInteger() : -1,
                 (unsigned long long)ctx.rawBits());
-        // Dump active process's context chain (first 40 contexts)
-        fprintf(stderr, "  Active process context chain:\n");
-        Oop chainCtx = activeContext_;
-        for (int ci = 0; ci < 40 && chainCtx.isObject() && chainCtx.rawBits() > 0x10000; ci++) {
-            ObjectHeader* chdr = chainCtx.asObjectPtr();
-            if (chdr->slotCount() < 6) break;
-            Oop chainMeth = memory_.fetchPointer(3, chainCtx);
-            std::string cmn = "?";
-            cmn = memory_.selectorOf(chainMeth);
-            Oop sender = memory_.fetchPointer(0, chainCtx);
-            fprintf(stderr, "    [%d] ctx=0x%llx method=#%s\n", ci,
-                    (unsigned long long)chainCtx.rawBits(), cmn.c_str());
-            chainCtx = sender;
-        }
     }
     Oop queues = memory_.fetchPointer(0, scheduler);
     if (!queues.isObject()) return;
@@ -4579,54 +4565,6 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
-    // Trace first 1000 message sends to diagnose startup flow
-    static int sendTraceCount = 0;
-    if (sendTraceCount < 1000) {
-        sendTraceCount++;
-        std::string sel = "(?)";
-        if (selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sH = selector.asObjectPtr();
-            if (sH->isBytesObject()) sel = std::string((const char*)sH->bytes(), sH->byteSize());
-        }
-        std::string cls = memory_.classNameOf(rcvr);
-        // Extra detail for hash-related sends and dictionary lookups
-        std::string extra;
-        if (rcvr.isSmallInteger() && (sel == "hash" || sel == "hashMultiply")) {
-            extra = " val=" + std::to_string(rcvr.asSmallInteger());
-        } else if (sel == "at:" || sel == "at:ifAbsent:" || sel == "scanFor:" || sel == "errorKeyNotFound:") {
-            Oop arg = stackValue(argCount - 1);
-            if (arg.isSmallInteger()) {
-                extra = " key=" + std::to_string(arg.asSmallInteger());
-            } else if (arg.isObject() && arg.rawBits() > 0x10000) {
-                extra = " key=obj(0x" + std::to_string(arg.rawBits()) + ")";
-            }
-        }
-        fprintf(stderr, "[SEND#%d] %s >> #%s (args=%d fd=%zu)%s\n",
-                sendTraceCount, cls.c_str(), sel.c_str(), argCount, frameDepth_, extra.c_str());
-    }
-
-    // Debug: trace sends to byte strings (classIndex 52) to find wrong dispatch
-    bool traceByteSend = false;
-    if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000, 1)) {
-        ObjectHeader* rH = rcvr.asObjectPtr();
-        if (__builtin_expect(rH->isBytesObject() && !rH->isCompiledMethod() && rH->classIndex() == 52 && frameDepth_ >= 15, 0)) {
-            static int sendToStr52 = 0;
-            if (sendToStr52++ < 10) {
-                std::string sel = "(?)";
-                if (selector.isObject() && selector.rawBits() > 0x10000) {
-                    ObjectHeader* sH = selector.asObjectPtr();
-                    if (sH->isBytesObject()) sel = std::string((const char*)sH->bytes(), sH->byteSize());
-                }
-                Oop rcvrClass = memory_.classOf(rcvr);
-                fprintf(stderr, "[VM] STR52-SEND #%d: #%s argCount=%d rcvr=0x%llx cls=0x%llx in #%s fd=%zu\n",
-                        sendToStr52, sel.c_str(), argCount, (unsigned long long)rcvr.rawBits(),
-                        (unsigned long long)rcvrClass.rawBits(),
-                        memory_.selectorOf(method_).c_str(), frameDepth_);
-                traceByteSend = true;
-            }
-        }
-    }
-
     // Corruption check (cold path)
     if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
         std::string selName = "(unknown)";
@@ -4693,24 +4631,8 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    if (__builtin_expect(traceByteSend, 0)) {
-        fprintf(stderr, "[VM]   classOf returned 0x%llx\n", (unsigned long long)rcvrClass.rawBits());
-    }
-
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
-
-    if (__builtin_expect(traceByteSend, 0)) {
-        if (cached) {
-            int primIdx = cached->primitiveIndex;
-            fprintf(stderr, "[VM]   CACHE HIT: method=0x%llx prim=%d accessor=%d setter=%d retSelf=%d #%s\n",
-                    (unsigned long long)cached->method.rawBits(), primIdx,
-                    cached->accessorIndex, cached->setterIndex, cached->returnsSelf ? 1 : 0,
-                    memory_.selectorOf(cached->method).c_str());
-        } else {
-            fprintf(stderr, "[VM]   CACHE MISS\n");
-        }
-    }
 
     if (__builtin_expect(cached != nullptr, 1)) {
 
@@ -4790,16 +4712,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             newMethod_ = cached->method;
             PrimitiveResult result = executePrimitive(primIdx, argCount);
             if (result == PrimitiveResult::Success) {
-                if (__builtin_expect(traceByteSend, 0)) {
-                    fprintf(stderr, "[VM]   CACHED PRIM %d SUCCEEDED\n", primIdx);
-                }
 #if PHARO_JIT_ENABLED
                 patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
                 return;
-            }
-            if (__builtin_expect(traceByteSend, 0)) {
-                fprintf(stderr, "[VM]   CACHED PRIM %d FAILED (code=%d)\n", primIdx, primFailCode_);
             }
         }
         if (__builtin_expect(primIdx == 198, 0)) {
@@ -4810,9 +4726,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             invokeObjectAsMethod(cached->method, selector, argCount);
             return;
         }
-        if (__builtin_expect(traceByteSend, 0)) {
-            fprintf(stderr, "[VM]   CACHED ACTIVATING METHOD (prim failed or none)\n");
-        }
 #if PHARO_JIT_ENABLED
         patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
@@ -4822,34 +4735,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     // === FULL LOOKUP ===
     Oop method = lookupMethod(selector, rcvrClass);
-
-    if (__builtin_expect(traceByteSend, 0)) {
-        if (method.isNil()) {
-            fprintf(stderr, "[VM]   LOOKUP: not found\n");
-        } else {
-            int primIdx = primitiveIndexOf(method);
-            fprintf(stderr, "[VM]   LOOKUP: method=0x%llx prim=%d #%s\n",
-                    (unsigned long long)method.rawBits(), primIdx,
-                    memory_.selectorOf(method).c_str());
-            // Dump first bytecodes
-            if (method.isObject() && method.rawBits() > 0x10000) {
-                ObjectHeader* mH = method.asObjectPtr();
-                if (mH->isCompiledMethod()) {
-                    Oop hdr = memory_.fetchPointer(0, method);
-                    if (hdr.isSmallInteger()) {
-                        int nLit = hdr.asSmallInteger() & 0x7FFF;
-                        size_t bcStart = (1 + nLit) * 8;
-                        size_t totalBytes = mH->byteSize();
-                        fprintf(stderr, "[VM]   bytecodes:");
-                        for (size_t b = bcStart; b < totalBytes && b < bcStart + 10; b++) {
-                            fprintf(stderr, " %02x", mH->bytes()[b]);
-                        }
-                        fprintf(stderr, "\n");
-                    }
-                }
-            }
-        }
-    }
 
     if (method.isNil()) {
         sendDoesNotUnderstand(selector, argCount);
@@ -4889,21 +4774,11 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         newMethod_ = method;
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
-            if (__builtin_expect(traceByteSend, 0)) {
-                fprintf(stderr, "[VM]   PRIM %d SUCCEEDED\n", primIndex);
-            }
 #if PHARO_JIT_ENABLED
             patchJITICAfterSend(method, rcvr, selector);
 #endif
             return;
         }
-        if (__builtin_expect(traceByteSend, 0)) {
-            fprintf(stderr, "[VM]   PRIM %d FAILED (code=%d)\n", primIndex, primFailCode_);
-        }
-    }
-
-    if (__builtin_expect(traceByteSend, 0)) {
-        fprintf(stderr, "[VM]   ACTIVATING METHOD (prim failed or none)\n");
     }
 
     if (__builtin_expect(primIndex == 198, 0)) {
@@ -9925,39 +9800,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         // Handle exit reason
-        // JIT debug trace for first 50 exits
-        {
-            static int jitExitTrace = 0;
-            if (jitExitTrace < 300) {
-                jitExitTrace++;
-                const char* reason = "?";
-                switch (state.exitReason) {
-                    case jit::ExitReturn: reason = "Return"; break;
-                    case jit::ExitSend: reason = "Send"; break;
-                    case jit::ExitSendCached: reason = "SendCached"; break;
-                    case jit::ExitArithOverflow: reason = "ArithOvf"; break;
-                    default: break;
-                }
-                std::string meth = memory_.selectorOf(method);
-                fprintf(stderr, "[JIT-EXIT#%d] %s exit=%s sp=%p ip=%p",
-                    jitExitTrace, meth.c_str(), reason,
-                    (void*)state.sp, (void*)state.ip);
-                if (state.exitReason == jit::ExitReturn) {
-                    if (state.returnValue.isSmallInteger())
-                        fprintf(stderr, " retval=%lld", state.returnValue.asSmallInteger());
-                } else if (state.exitReason == jit::ExitSendCached) {
-                    std::string target = memory_.selectorOf(state.cachedTarget);
-                    fprintf(stderr, " target=#%s nArgs=%d", target.c_str(), state.sendArgCount);
-                    // Show receiver of the send
-                    Oop rcv = state.sp[-(state.sendArgCount + 1)];
-                    if (rcv.isSmallInteger())
-                        fprintf(stderr, " rcv=%lld", rcv.asSmallInteger());
-                    else
-                        fprintf(stderr, " rcv=0x%llx", (unsigned long long)rcv.rawBits());
-                }
-                fprintf(stderr, "\n");
-            }
-        }
         switch (state.exitReason) {
         case jit::ExitReturn:
             if (!popFrame()) {
@@ -10051,17 +9893,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Primitive succeeded — resume JIT at bytecode after send
                         jitJ2JActChains_++;
                         uint32_t bcOffset = computeCurrentBCOffset();
-                        {
-                            static int jitResumeTrace = 0;
-                            if (jitResumeTrace < 100) {
-                                jitResumeTrace++;
-                                std::string meth = memory_.selectorOf(method);
-                                fprintf(stderr, "[JIT-RESUME#%d] prim=%d ok in %s bcOff=%u retval=%s(0x%llx)\n",
-                                    jitResumeTrace, primIdx, meth.c_str(), bcOffset,
-                                    stackTop().isSmallInteger() ? "smi" : "obj",
-                                    (unsigned long long)stackTop().rawBits());
-                            }
-                        }
                         if (bcOffset == UINT32_MAX) return true;
                         state.sp = stackPointer_;
                         state.receiver = receiver_;
@@ -10079,16 +9910,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                            {
-                                static int resumeFailTrace = 0;
-                                if (resumeFailTrace < 20) {
-                                    resumeFailTrace++;
-                                    std::string meth = memory_.selectorOf(method);
-                                    fprintf(stderr, "[JIT-RESUME-FAIL#%d] %s bcOff=%u method=0x%llx\n",
-                                        resumeFailTrace, meth.c_str(), bcOffset,
-                                        (unsigned long long)method.rawBits());
-                                }
-                            }
                             return true;
                         }
                         chargeJITBytecodes(state);
