@@ -995,6 +995,56 @@ std::string ObjectMemory::selectorOf(Oop method) const {
     return name.empty() ? "?" : name;
 }
 
+bool ObjectMemory::patchClassMethodToReturnSelf(Oop classObj, const char* selectorName) {
+    if (!classObj.isObject()) return false;
+
+    // Get the metaclass (class of the class object)
+    Oop metaclass = classOf(classObj);
+    if (!metaclass.isObject()) return false;
+
+    // Get method dictionary (slot 1 of metaclass)
+    Oop methodDict = fetchPointer(1, metaclass);
+    if (!methodDict.isObject()) return false;
+
+    ObjectHeader* mdHeader = methodDict.asObjectPtr();
+    size_t mdSlots = mdHeader->slotCount();
+
+    // Scan keys (at slots 2..mdSlots-1 of the MethodDictionary)
+    size_t selectorLen = strlen(selectorName);
+    for (size_t i = 2; i < mdSlots; i++) {
+        Oop key = mdHeader->slotAt(i);
+        if (!key.isObject() || key == nil()) continue;
+
+        ObjectHeader* keyHdr = key.asObjectPtr();
+        if (!keyHdr->isBytesObject()) continue;
+        if (keyHdr->byteSize() != selectorLen) continue;
+        if (memcmp(keyHdr->bytes(), selectorName, selectorLen) != 0) continue;
+
+        // Found the selector — get the method from values array (slot 1)
+        Oop values = fetchPointer(1, methodDict);
+        if (!values.isObject()) return false;
+
+        ObjectHeader* valHdr = values.asObjectPtr();
+        size_t valueIdx = i - 2;
+        if (valueIdx >= valHdr->slotCount()) return false;
+
+        Oop method = valHdr->slotAt(valueIdx);
+        if (!method.isObject()) return false;
+
+        // Patch first bytecode to 0x58 (Sista V1 "return receiver")
+        size_t numLits = numLiteralsOf(method);
+        size_t bytecodeOffset = (1 + numLits) * sizeof(Oop);  // byte offset in object
+        ObjectHeader* methodHdr = method.asObjectPtr();
+        uint8_t* bytes = methodHdr->bytes();
+        if (bytecodeOffset < methodHdr->byteSize()) {
+            bytes[bytecodeOffset] = 0x58;  // return receiver (self)
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
 std::string ObjectMemory::nameOfClass(Oop classObj) const {
     if (!classObj.isObject()) return "?";
     ObjectHeader* clsHdr = classObj.asObjectPtr();

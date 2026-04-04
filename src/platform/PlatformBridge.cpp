@@ -393,6 +393,29 @@ bool vm_loadImage(const char* imagePath) {
     // Setting it here (after image load, before vm_run) eliminates the gap.
     disableSubPixelRendering();
 
+    // Defer FreeType and FFI type startup to first use.
+    // These SessionManager handlers are very slow on our interpreter,
+    // especially on fresh images where ExternalObject recompiles hundreds
+    // of FFI type definitions.  Startup.st handles FreeType configuration;
+    // ExternalObject types are compiled lazily on first FFI call.
+    {
+        #pragma push_macro("nil")
+        #undef nil
+        using namespace pharo;
+        const char* classesToDefer[] = {
+            "FreeTypeSettings", "FreeTypeCache", "ExternalObject", nullptr
+        };
+        for (const char** p = classesToDefer; *p; p++) {
+            Oop cls = gMemory->findGlobal(*p);
+            if (cls.isObject() && !cls.isNil()) {
+                if (gMemory->patchClassMethodToReturnSelf(cls, "startUp:")) {
+                    fprintf(stderr, "[VM] Deferred %s class >> startUp: (will init on first use)\n", *p);
+                }
+            }
+        }
+        #pragma pop_macro("nil")
+    }
+
     // SDL2/cairo libraries are compiled into the binary as stubs.
     // File primitives (primitiveFileExists, primitiveFileAttribute) report
     // these library names as "existing" so Pharo's FFI finder proceeds to

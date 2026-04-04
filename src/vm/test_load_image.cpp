@@ -537,6 +537,11 @@ int main(int argc, char* argv[]) {
         const char* dir = dirname(pathCopy);
         if (chdir(dir) != 0) {
             std::cerr << "Warning: could not chdir to " << dir << std::endl;
+        } else {
+            char cwd[1024];
+            if (getcwd(cwd, sizeof(cwd))) {
+                std::cout << "Working directory: " << cwd << std::endl;
+            }
         }
         free(pathCopy);
     }
@@ -593,7 +598,13 @@ int main(int argc, char* argv[]) {
     auto interpreterPtr = std::make_unique<Interpreter>(memory);
     Interpreter& interpreter = *interpreterPtr;
     memory.setInterpreter(&interpreter);
-    interpreter.setImageName(imagePath);
+    // Resolve image path to real path (resolves symlinks like /tmp -> /private/tmp)
+    // so FileLocator imageDirectory matches the cwd after chdir.
+    {
+        char* resolved = realpath(imagePath, nullptr);
+        interpreter.setImageName(resolved ? resolved : imagePath);
+        if (resolved) free(resolved);
+    }
     interpreter.setOriginalImageHeader(loader.header());
     // Resolve argv[0] to absolute path so Smalltalk vm fullPath works
     {
@@ -605,13 +616,15 @@ int main(int argc, char* argv[]) {
             interpreter.setVMPath(argv[0]);
         }
     }
-    interpreter.setImageArguments(imageArgs);
-
-    // No VM parameters needed — the display is handled by our Metal/display
-    // surface pipeline. Avoid --headless (suppresses display init) and
-    // --interactive (rejected by BasicCommandLineHandler with Exit).
-    // Don't set image arguments unless explicitly provided — this prevents
-    // the BasicCommandLineHandler from rejecting unknown args and calling Exit.
+    // Pass --headless and --interactive, same as PlatformBridge.cpp:
+    // --headless causes PharoCommandLineHandler to activate (loading startup.st)
+    // --interactive tells it to start MorphicUI instead of exiting.
+    interpreter.setVMParameters({"--headless"});
+    if (imageArgs.empty()) {
+        interpreter.setImageArguments({"--interactive"});
+    } else {
+        interpreter.setImageArguments(imageArgs);
+    }
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
@@ -624,43 +637,18 @@ int main(int argc, char* argv[]) {
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
 
-        // Disable sub-pixel rendering before any Smalltalk code runs.
-        // See docs/subpixel-rendering.md for why this is needed.
-        // Uses same algorithm as PlatformBridge.cpp::disableSubPixelRendering().
+        // Defer FreeType and FFI type initialization to first use.
+        // These startup handlers are very slow on our interpreter (~2 min on fresh images).
+        // Patch their startUp: methods to return self immediately.
         {
-            Oop ftClass = memory.findGlobal("FreeTypeSettings");
-            if (ftClass.isObject() && !ftClass.isNil()) {
-                // Find singleton (class instance variable) by scanning class slots
-                Oop singleton = memory.nil();
-                ObjectHeader* ftHdr = ftClass.asObjectPtr();
-                for (size_t i = 0; i < ftHdr->slotCount(); i++) {
-                    Oop slot = memory.fetchPointer(i, ftClass);
-                    if (slot.isObject() && !slot.isNil() &&
-                        memory.nameOfClass(memory.classOf(slot)) == "FreeTypeSettings") {
-                        singleton = slot;
-                        break;
-                    }
-                }
-                if (singleton.isNil() || !singleton.isObject()) {
-                    std::cerr << "[VM] FreeTypeSettings singleton not yet created — startup.st will handle it" << std::endl;
-                } else {
-                    // Navigate FixedLayout → LayoutClassScope to find bitBltSubPixelAvailable
-                    Oop layout = memory.fetchPointer(3, ftClass);
-                    if (layout.isObject() && !layout.isNil()) {
-                        Oop scope = memory.fetchPointer(1, layout);
-                        if (scope.isObject() && !scope.isNil()) {
-                            ObjectHeader* scopeHdr = scope.asObjectPtr();
-                            for (size_t si = 1; si < scopeHdr->slotCount(); si++) {
-                                Oop slotObj = memory.fetchPointer(si, scope);
-                                if (!slotObj.isObject() || slotObj.isNil()) continue;
-                                if (memory.symbolEquals(memory.fetchPointer(0, slotObj), "bitBltSubPixelAvailable")) {
-                                    size_t idx = si - 1;
-                                    memory.storePointer(idx, singleton, memory.falseObject());
-                                    std::cerr << "[VM] Set FreeTypeSettings>>bitBltSubPixelAvailable to false (slot " << idx << ")" << std::endl;
-                                    break;
-                                }
-                            }
-                        }
+            const char* classesToDefer[] = {
+                "FreeTypeSettings", "FreeTypeCache", "ExternalObject", nullptr
+            };
+            for (const char** p = classesToDefer; *p; p++) {
+                Oop cls = memory.findGlobal(*p);
+                if (cls.isObject() && !cls.isNil()) {
+                    if (memory.patchClassMethodToReturnSelf(cls, "startUp:")) {
+                        std::cerr << "[VM] Deferred " << *p << " class >> startUp: (will init on first use)" << std::endl;
                     }
                 }
             }

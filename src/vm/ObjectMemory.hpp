@@ -291,6 +291,12 @@ public:
     /// Returns "?" on failure.
     std::string selectorOf(Oop method) const;
 
+    /// Patch a class-side method to be a no-op (return self).
+    /// Finds `selectorName` in the metaclass's method dictionary and overwrites
+    /// the first bytecode with 0x58 (Sista V1 "return receiver").
+    /// Returns true if the method was found and patched.
+    bool patchClassMethodToReturnSelf(Oop classObj, const char* selectorName);
+
     /// Register a class in the class table, returns assigned index
     uint32_t registerClass(Oop classOop);
 
