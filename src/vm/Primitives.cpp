@@ -185,8 +185,6 @@ static void doFFICall(void* p) {
 
 namespace pharo {
 
-extern const char* g_xferReason;  // defined in Interpreter.cpp
-
 // Forward declarations for LargeInteger arithmetic helpers
 static bool extractInteger(ObjectMemory& memory, Oop oop, std::vector<uint8_t>& magnitude, bool& isNegative);
 static std::vector<uint8_t> addMagnitudes(const std::vector<uint8_t>& a, const std::vector<uint8_t>& b);
@@ -2101,22 +2099,6 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
     // and mirror-side (argCount=1, target object at top, mirror class below)
     Oop rcvr = stackTop();
 
-    // Debug: trace primitive 62 for byte strings (classIndex 52)
-    bool tracePrim62 = false;
-    if (rcvr.isObject() && rcvr.rawBits() > 0x10000 && frameDepth_ >= 15) {
-        ObjectHeader* rHdr = rcvr.asObjectPtr();
-        if (rHdr->classIndex() == 52) {
-            static int p62trace = 0;
-            if (p62trace++ < 5) {
-                fprintf(stderr, "[VM] PRIM62 #%d: rcvr=0x%llx cls=52 fmt=%d argCount=%d fd=%zu sp=%d\n",
-                        p62trace, (unsigned long long)rcvr.rawBits(),
-                        (int)rHdr->format(), argCount, frameDepth_,
-                        (int)(stackPointer_ - stack_.data()));
-                tracePrim62 = true;
-            }
-        }
-    }
-
     if (!rcvr.isObject()) {
         return PrimitiveResult::Failure;  // Immediates fail
     }
@@ -2163,10 +2145,6 @@ PrimitiveResult Interpreter::primitiveSize(int argCount) {
 
     if (!Oop::canBeSmallInteger(static_cast<int64_t>(size))) {
         return PrimitiveResult::Failure;
-    }
-
-    if (tracePrim62) {
-        fprintf(stderr, "[VM] PRIM62 SUCCESS: size=%zu\n", size);
     }
 
     popN(argCount + 1);
@@ -3552,7 +3530,6 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    g_xferReason = "semWait";
     transferTo(nextProcess);
     return PrimitiveResult::Success;
 }
@@ -3564,11 +3541,13 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    // Startup grace period: fail quit during the first 10 seconds.
+    // Startup grace period: fail quit during the first 120 seconds.
+    // This gives session handlers (including test runners) time to complete
+    // before PharoCommandLineHandler's exitFailure can kill the VM.
     auto uptime = std::chrono::steady_clock::now() - vmStartTime_;
-    if (uptime < std::chrono::seconds(10)) {
+    if (uptime < std::chrono::seconds(120)) {
         static int quitSuppressCount = 0;
-        if (++quitSuppressCount <= 5) {
+        if (++quitSuppressCount <= 20) {
             Oop proc = getActiveProcess();
             Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
             fprintf(stderr, "[primitiveQuit] Failed during startup (%.1fs, #%d, proc=0x%llx pri=%lld in #%s)\n",
@@ -8669,6 +8648,8 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
+    // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
+
     // Negative indices: VM parameters (flags like --headless)
     // In the standard Cog VM, VM flags before the image path are at negative indices.
     // Index -1 = vmParameters_[0], -2 = vmParameters_[1], etc.
@@ -12991,11 +12972,6 @@ PrimitiveResult Interpreter::primitiveDLLCall(int argCount) {
 // primitiveExternalCall -> result
 // Calls a primitive defined in an external plugin module
 PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
-    static int extCallLog = 0;
-    if (extCallLog++ < 50) {
-        std::string sel = memory_.selectorOf(newMethod_.isObject() ? newMethod_ : method_);
-        fprintf(stderr, "[EXT] primitiveExternalCall #%d: argCount=%d sel=#%s\n", extCallLog, argCount, sel.c_str());
-    }
     // Use newMethod_ (the method being activated) rather than method_ (the caller)
     // because executePrimitive runs BEFORE activateMethod
     Oop method = newMethod_.isObject() ? newMethod_ : method_;
@@ -13313,17 +13289,6 @@ PrimitiveResult Interpreter::primitiveExternalCall(int argCount) {
         PrimitiveResult ffiResult = primitiveCalloutToFFI(argCount);
         if (ffiResult == PrimitiveResult::Success) {
             return ffiResult;
-        }
-    }
-
-    // Log failed external call dispatch (first 30)
-    {
-        static int extCallFailLog = 0;
-        if (extCallFailLog++ < 30) {
-            std::string sel = memory_.selectorOf(method);
-            fprintf(stderr, "[EXT] FAIL #%d: selector=#%s literals:", extCallFailLog, sel.c_str());
-            for (auto& s : literalStrings) fprintf(stderr, " '%s'", s.c_str());
-            fprintf(stderr, "\n");
         }
     }
 

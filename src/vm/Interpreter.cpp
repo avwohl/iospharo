@@ -78,7 +78,6 @@ namespace pharo {
 constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
-const char* g_xferReason = "unknown";  // Reason for the most recent transferTo call
 
 
 // ===== CONSTRUCTION =====
@@ -227,13 +226,6 @@ bool Interpreter::initialize() {
 
         // Get receiver and method from context
         Oop receiver = memory_.fetchPointer(5, currentCtx);
-        // Always log resume chain for debugging
-        {
-            Oop meth = memory_.fetchPointer(3, currentCtx);
-            std::string sel = meth.isObject() && !meth.isNil() ? memory_.selectorOf(meth) : "?";
-            std::string cls = memory_.classNameOf(receiver);
-            fprintf(stderr, "[RESUME] ctx[%d]: %s>>%s\n", depth, cls.c_str(), sel.c_str());
-        }
         Oop method = memory_.fetchPointer(3, currentCtx);
 
         std::string rcvrClassName = memory_.classNameOf(receiver);
@@ -1251,20 +1243,6 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
-        // === PERIODIC SAMPLING (every ~1K bytecodes) ===
-        if ((totalSteps & 0x3FF) == 0) {
-            static int sampleCount = 0;
-            // Only sample after test trigger (skip first 5K steps = startup)
-            if (sampleCount < 100 && totalSteps > 5000) {
-                if (sampleCount++ < 100) {
-                    std::string sel = memory_.selectorOf(method_);
-                    fprintf(stderr, "[SAMPLE] #%d: #%s fd=%zu steps=%llu\n",
-                            sampleCount, sel.c_str(), frameDepth_,
-                            (unsigned long long)totalSteps);
-                }
-            }
-        }
-
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
@@ -1507,7 +1485,6 @@ void Interpreter::handleForceYield() {
     if (nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits() &&
         nextProcess.rawBits() != activeProcess.rawBits()) {
         putToSleep(activeProcess);
-        g_xferReason = "forceYield";
         transferTo(nextProcess);
     }
 
@@ -1675,7 +1652,6 @@ void Interpreter::synchronousSignal(Oop semaphore) {
         }
 
         if (processPriority > activePriority) {
-            g_xferReason = "semSignal";
             putToSleep(activeProcess);
             transferTo(process);
         } else {
@@ -2283,7 +2259,6 @@ bool Interpreter::step() {
                         (unsigned long long)nextProcess.rawBits());
             }
             putToSleep(activeProcess);
-            g_xferReason = "forceYield";
             transferTo(nextProcess);
         }
 
@@ -5117,46 +5092,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Get receiver from stack (now in the frame)
     receiver_ = argument(0);  // First "argument" slot is actually receiver
 
-    // Debug: catch when #on: activates with a byte receiver
-    // This should never happen — stream methods should get stream instances
-    if (__builtin_expect(receiver_.isObject() && receiver_.rawBits() > 0x10000, 1)) {
-        ObjectHeader* rHdr = receiver_.asObjectPtr();
-        if (__builtin_expect(rHdr->isBytesObject() && !rHdr->isCompiledMethod() && frameDepth_ >= 15, 0)) {
-            static int byteRcvCount = 0;
-            if (byteRcvCount++ < 3) {
-                std::string sel = memory_.selectorOf(method);
-                fprintf(stderr, "[VM] BYTE-RECV #%d: #%s rcvr=0x%llx cls=%u fmt=%d fd=%zu argCount=%d\n",
-                        byteRcvCount, sel.c_str(), (unsigned long long)receiver_.rawBits(),
-                        rHdr->classIndex(), (int)rHdr->format(), frameDepth_, argCount);
-                // Dump the CALLER's state to see what it pushed
-                if (frameDepth_ > 0) {
-                    SavedFrame& caller = savedFrames_[frameDepth_ - 1];
-                    fprintf(stderr, "[VM]   caller=#%s rcvr=0x%llx callerMethod=0x%llx\n",
-                            memory_.selectorOf(caller.savedMethod).c_str(),
-                            (unsigned long long)caller.savedReceiver.rawBits(),
-                            (unsigned long long)caller.savedMethod.rawBits());
-                    // Decode the caller's method to understand what send produced this
-                    if (caller.savedMethod.isObject() && caller.savedMethod.rawBits() > 0x10000) {
-                        ObjectHeader* cmHdr = caller.savedMethod.asObjectPtr();
-                        Oop cmHeader = memory_.fetchPointer(0, caller.savedMethod);
-                        if (cmHeader.isSmallInteger()) {
-                            int nLit = cmHeader.asSmallInteger() & 0x7FFF;
-                            size_t bcStart = (1 + nLit) * 8;
-                            ptrdiff_t callerIP = caller.savedIP - cmHdr->bytes();
-                            fprintf(stderr, "[VM]   callerIP=%td bcStart=%zu bytecodes:", callerIP, bcStart);
-                            // Dump bytecodes around caller's IP
-                            for (ptrdiff_t b = callerIP - 5; b < callerIP + 3; b++) {
-                                if (b >= (ptrdiff_t)bcStart && b < (ptrdiff_t)cmHdr->byteSize())
-                                    fprintf(stderr, "%s%02x", b == callerIP ? " [" : " ", cmHdr->bytes()[b]);
-                                if (b == callerIP) fprintf(stderr, "]");
-                            }
-                            fprintf(stderr, "\n");
-                        }
-                    }
-                }
-            }
-        }
-    }
 
 
 
@@ -6039,7 +5974,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 stopVM("Recursive doesNotUnderstand: and no other runnable process");
                 return;
             }
-            g_xferReason = "dnuCascade";
             transferTo(nextProcess);
             return;
         }
@@ -7312,33 +7246,6 @@ void Interpreter::transferTo(Oop newProcess) {
         return;
     }
 
-    // Debug: log process switches with priorities and method context
-    {
-        static int xferCount = 0;
-        xferCount++;
-        if (xferCount <= 40) {
-            Oop oldPri = memory_.fetchPointer(ProcessPriorityIndex, oldProcess);
-            Oop newPri = memory_.fetchPointer(ProcessPriorityIndex, newProcess);
-
-            // Get the method name for the new process's suspended context
-            std::string newMethodName = "?";
-            Oop newCtx = memory_.fetchPointer(1, newProcess); // suspendedContext
-            if (newCtx.isObject() && !newCtx.isNil() && newCtx.rawBits() > 0x10000) {
-                Oop method = memory_.fetchPointer(3, newCtx); // MethodIndex
-                if (method.isObject() && !method.isNil() && method.rawBits() > 0x10000) {
-                    newMethodName = memory_.selectorOf(method);
-                }
-            }
-
-            fprintf(stderr, "[XFER] #%d %s: pri %lld -> %lld (proc 0x%llx -> 0x%llx) in #%s\n",
-                    xferCount, g_xferReason,
-                    oldPri.isSmallInteger() ? oldPri.asSmallInteger() : -1,
-                    newPri.isSmallInteger() ? newPri.asSmallInteger() : -1,
-                    (unsigned long long)oldProcess.rawBits(),
-                    (unsigned long long)newProcess.rawBits(),
-                    newMethodName.c_str());
-        }
-    }
 
     // Save outgoing process's NLR state if any is active.
     // NLR state is global but logically per-process. Without saving/restoring,
@@ -7578,7 +7485,6 @@ void Interpreter::checkForPreemption() {
         putToSleep(activeProcess);
 
         // Switch to new process
-        g_xferReason = "checkPreemption";
         transferTo(firstProcess);
         return;
     }
