@@ -6128,16 +6128,6 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
-    static int logCount = 0;
-    if (logCount++ < 10) {
-        std::string selStr = memory_.selectorOf(selectors_.mustBeBoolean);
-        std::string valClass = memory_.nameOfClass(memory_.classOf(value));
-        std::string curMethod = memory_.selectorOf(method_);
-        fprintf(stderr, "[MUSTBOOL] fd=%zu sel=#%s value_class=%s value=0x%llx in_method=#%s\n",
-                frameDepth_, selStr.c_str(), valClass.c_str(),
-                (unsigned long long)value.rawBits(), curMethod.c_str());
-        fflush(stderr);
-    }
     (void)value;
     sendSelector(selectors_.mustBeBoolean, 0);
 }
@@ -9650,8 +9640,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.memory = &memory_;
     state.interp = this;
 
-    // IP = bytecodeStart (stencils use ip + bcOffset where bcOffset is from method start)
-    state.ip = instructionPointer_;  // Already at bytecodeStart from activateMethod
+    // IP = bytecodeStart (stencils use ip + bcOffset where bcOffset is from method start).
+    // activateMethod may have advanced instructionPointer_ past callPrimitive (0xF8),
+    // so we must recompute bytecodeStart from the method header instead.
+    {
+        Oop hdr = methObj->slots()[0];
+        int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+        state.ip = methObj->bytes() + (1 + numLits) * 8;
+    }
     state.method = method;
     state.argCount = argCount;
     state.icDataPtr = nullptr;
