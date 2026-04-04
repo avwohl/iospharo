@@ -2807,9 +2807,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = method;
-                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success)
+                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success) {
+#if PHARO_JIT_ENABLED
+                        patchJITICAfterSend(method, receiver_, selector);
+#endif
                         break;
+                    }
                 }
+#if PHARO_JIT_ENABLED
+                patchJITICAfterSend(method, receiver_, selector);
+#endif
                 activateMethod(method, numArgs);
             }
         } else {
@@ -2830,9 +2837,16 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = method;
-                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success)
+                    if (executePrimitive(primIdx, numArgs) == PrimitiveResult::Success) {
+#if PHARO_JIT_ENABLED
+                        patchJITICAfterSend(method, receiver_, selector);
+#endif
                         break;
+                    }
                 }
+#if PHARO_JIT_ENABLED
+                patchJITICAfterSend(method, receiver_, selector);
+#endif
                 activateMethod(method, numArgs);
             }
         }
@@ -6128,6 +6142,12 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
+    static int logCount = 0;
+    if (logCount++ < 3) {
+        std::string valClass = memory_.nameOfClass(memory_.classOf(value));
+        fprintf(stderr, "[MUSTBOOL] fd=%zu value_class=%s in=#%s\n",
+                frameDepth_, valClass.c_str(), memory_.selectorOf(method_).c_str());
+    }
     (void)value;
     sendSelector(selectors_.mustBeBoolean, 0);
 }

@@ -405,15 +405,17 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 break;
             }
             case SistaV1::ExtSuperSend: {
-                // Super send — same encoding as ExtSend, lookup starts at superclass.
-                // IC caching works the same: key=receiverClassIndex, value=resolved method.
-                // On IC miss, the interpreter does a super lookup.
+                // Super send — same encoding as ExtSend but lookup starts at superclass.
+                // IC caching does NOT work for super sends: the megacache conflates
+                // normal and super sends (both use the same selectorBits), so a
+                // normal send's cached method would be returned for a super send.
+                // Super sends stay as stencil_send (deopt) for correct lookup.
                 if (i + 1 >= length) goto done;
                 uint8_t desc = bytecodes[i + 1];
                 bc.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
                 bc.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
                 bc.bcLength = 2;
-                break;  // Fall through to selectStencil → stencil_send → upgrade to sendPoly
+                break;  // Fall through to selectStencil → stencil_send (NOT upgraded to sendPoly)
             }
             case SistaV1::InlinedPrimitive: {
                 // Sista inlined primitive — interpreter treats as nop (skip operand)
@@ -616,9 +618,11 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                     ((bc.opcode >= 0x60 && bc.opcode <= 0x6F) ||
                      (bc.opcode >= 0x70 && bc.opcode <= 0x7F) ||
                      (bc.opcode >= 0x80 && bc.opcode <= 0xAF) ||
-                     bc.opcode == SistaV1::ExtSend ||
-                     bc.opcode == SistaV1::ExtSuperSend)) {
+                     bc.opcode == SistaV1::ExtSend)) {
                     // Real send: upgrade to polymorphic IC stencil
+                    // Note: ExtSuperSend (0xEB) is excluded — the megacache
+                    // conflates normal and super sends, so super sends must
+                    // deopt to the interpreter for correct lookup.
                     int argCount = bc.operand2;
                     bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendPoly);
