@@ -14,6 +14,7 @@ build-vm/
 build-cpp/
 build-test/
 build-nojit/
+build_nojit/
 build-xcframework/
 third-party-build/
 
