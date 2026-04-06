@@ -3364,6 +3364,10 @@ void Interpreter::returnValue(Oop value) {
                         if (pastVal2 > stackPointer_) stackPointer_ = pastVal2;
                     } else {
                         // homeSender is nil/invalid — send cannotReturn: per spec
+                        // Back up IP past return bytecode to prevent dead code execution
+                        if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                            instructionPointer_--;
+                        }
                         stackPointer_ = stackBase_;
                         push(activeContext_);
                         push(savedValue);
@@ -3471,6 +3475,14 @@ terminate_process:
                 // Give error handling 2M steps (~2 seconds), then forcibly terminate.
                 if (cannotReturnCount_ == 1) {
                     cannotReturnDeadline_ = g_stepNum + 2000000;
+                }
+                // Back up IP to the return bytecode. When cannotReturn: returns
+                // and popFrame restores this IP, the return will be retried instead
+                // of falling through into dead code after the return bytecode.
+                // The return bytecodes (0x58-0x5C) are all single-byte, so IP-1
+                // points to the return instruction that triggered this path.
+                if (instructionPointer_ > method_.asObjectPtr()->bytes()) {
+                    instructionPointer_--;
                 }
                 stackPointer_ = stackBase_;
                 push(activeContext_);  // receiver: the context that cannot return
@@ -3854,6 +3866,10 @@ void Interpreter::returnFromMethod() {
             activeContext_ = topCtx;
             frameDepth_ = 0;
         }
+        // Back up IP past return bytecode to prevent dead code execution
+        if (method_.isObject() && instructionPointer_ > method_.asObjectPtr()->bytes()) {
+            instructionPointer_--;
+        }
         push(activeContext_);  // receiver: the context that cannot return
         push(value);           // arg: the value that was being returned
         sendSelector(selectors_.cannotReturn, 1);
@@ -3996,6 +4012,10 @@ void Interpreter::returnFromBlock() {
         Oop topCtx = materializeFrameStack();
         activeContext_ = topCtx;
         frameDepth_ = 0;
+    }
+    // Back up IP past return bytecode to prevent dead code execution
+    if (method_.isObject() && instructionPointer_ > method_.asObjectPtr()->bytes()) {
+        instructionPointer_--;
     }
     push(activeContext_);  // receiver: the context that cannot return
     push(value);           // arg: the value that was being returned
@@ -6098,7 +6118,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Log ALL DNU messages in first 10 occurrences (to debug test runner)
+    // Log first 10 DNU messages to debug startup issues
     {
         static int dnuLogCount = 0;
         if (dnuLogCount++ < 10) {
