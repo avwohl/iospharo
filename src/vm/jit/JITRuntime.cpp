@@ -139,6 +139,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         size_t j2jFallbacks = interp_ ? interp_->jitJ2JFallbacks() : 0;
         size_t j2jActChains = interp_ ? interp_->jitJ2JActChains() : 0;
         size_t j2jActFalls = interp_ ? interp_->jitJ2JActFalls() : 0;
+        size_t j2jDirect = interp_ ? interp_->jitJ2JDirectPatches() : 0;
 
         // Count map diagnostics
         size_t tracked = 0, hot = 0;
@@ -150,13 +151,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         }
         fprintf(stderr, "[JIT] Stats: %zu sends, %zu compiled, %zu failed, "
                 "%zu/%zu KB code | IC: %zu/%zu (%d%% hit, %zu patched, %zu stale) "
-                "| J2J-r: %zu/%zu J2J-a: %zu/%zu | map: %zu tracked, %zu hot\n",
+                "| J2J-r: %zu/%zu J2J-a: %zu/%zu J2J-d: %zu | map: %zu tracked, %zu hot\n",
                 totalEntries, compiler_->methodsCompiled(),
                 compiler_->compilationsFailed(),
                 codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024,
                 icHits, icTotal, hitPct, icPatches, icStale,
                 j2jChains, j2jChains + j2jFallbacks,
                 j2jActChains, j2jActChains + j2jActFalls,
+                j2jDirect,
                 tracked, hot);
 
     }

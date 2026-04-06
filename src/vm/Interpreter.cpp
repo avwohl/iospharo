@@ -9735,6 +9735,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         if (target && target->isExecutable()) {
             uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
             extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+            jitJ2JDirectPatches_++;
         }
     }
 

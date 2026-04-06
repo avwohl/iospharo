@@ -771,6 +771,7 @@ private:
     size_t jitJ2JFallbacks_ = 0;  // JIT-to-JIT fallbacks (resume path)
     size_t jitJ2JActChains_ = 0;  // JIT-to-JIT chain hits (activation path)
     size_t jitJ2JActFalls_ = 0;   // JIT-to-JIT fallbacks (activation path)
+    size_t jitJ2JDirectPatches_ = 0;  // IC entries with J2J direct call bit set
 public:
     size_t jitICHits() const { return jitICHits_; }
     size_t jitICMisses() const { return jitICMisses_; }
@@ -780,6 +781,7 @@ public:
     size_t jitJ2JFallbacks() const { return jitJ2JFallbacks_; }
     size_t jitJ2JActChains() const { return jitJ2JActChains_; }
     size_t jitJ2JActFalls() const { return jitJ2JActFalls_; }
+    size_t jitJ2JDirectPatches() const { return jitJ2JDirectPatches_; }
 
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
