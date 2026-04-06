@@ -9067,6 +9067,9 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("FilePlugin", "primitiveDirectoryCreate", &Interpreter::primitiveDirectoryCreate);
     registerNamedPrimitive("FilePlugin", "primitiveDirectoryLookup", &Interpreter::primitiveDirectoryLookup);
     registerNamedPrimitive("FilePlugin", "primitiveDirectoryDelete", &Interpreter::primitiveDirectoryDelete);
+    registerNamedPrimitive("FilePlugin", "primitiveDirectoryGetMacTypeAndCreator", &Interpreter::primitiveDirectoryGetMacTypeAndCreator);
+    registerNamedPrimitive("FilePlugin", "primitiveGetHomeDirectory", &Interpreter::primitiveGetHomeDirectory);
+    registerNamedPrimitive("FilePlugin", "primitiveGetTempDirectory", &Interpreter::primitiveGetTempDirectory);
 
     // FileAttributesPlugin
     registerNamedPrimitive("FileAttributesPlugin", "primitiveFileMasks", &Interpreter::primitiveFileMasks);
