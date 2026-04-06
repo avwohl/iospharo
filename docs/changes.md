@@ -2,6 +2,15 @@
 
 2026-04-06
 
+## Fix primitiveYield Early-Exit
+
+primitiveYield (prim 167) now returns immediately when no other processes
+exist at the active process's priority. Matches Cog VM behavior. Previously,
+yield in a tight loop would manipulate scheduler state unnecessarily on every
+call. The test runner's use of `relinquishProcessorForMicroseconds:` instead
+of `Processor yield` is a legitimate adaptation (CPU idle vs process switch),
+not a workaround for this bug.
+
 ## Fix NLR Through ensure: — Session Startup Works Clean
 
 Fixed two bugs in non-local return (NLR) handling that broke `Symbol>>intern:`
