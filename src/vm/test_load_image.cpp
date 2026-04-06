@@ -637,21 +637,8 @@ int main(int argc, char* argv[]) {
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
 
-        // Defer FreeType and ExternalObject initialization to first use.
-        // These startup handlers are slow on our interpreter and not needed for headless.
-        {
-            const char* classesToDefer[] = {
-                "FreeTypeSettings", "FreeTypeCache", "ExternalObject", nullptr
-            };
-            for (const char** p = classesToDefer; *p; p++) {
-                Oop cls = memory.findGlobal(*p);
-                if (cls.isObject() && !cls.isNil()) {
-                    if (memory.patchClassMethodToReturnSelf(cls, "startUp:")) {
-                        std::cerr << "[VM] Deferred " << *p << " class >> startUp: (will init on first use)" << std::endl;
-                    }
-                }
-            }
-        }
+        // All session handlers run normally — no patching or deferral.
+        // If a handler fails, Pharo's SessionManager catches the error and continues.
 
         // Create Display Form if it doesn't exist (image may be headless)
         std::cout << "\n=== Creating Display ===" << std::endl;

@@ -77,9 +77,6 @@ else
     exit 1
 fi
 "$INJECT_VM" Pharo.image eval --save "'$BENCH_ST' asFileReference fileIn" > /dev/null 2>&1
-# Second save needed: our VM's snapshot resume requires a two-save image to avoid
-# a snapshot context issue where a P79 process termination kills the benchmark fork.
-"$INJECT_VM" Pharo.image eval --save "true" > /dev/null 2>&1
 echo "  Injected: $BENCH_ST"
 echo ""
 

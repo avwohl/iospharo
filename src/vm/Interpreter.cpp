@@ -231,10 +231,8 @@ bool Interpreter::initialize() {
         std::string rcvrClassName = memory_.classNameOf(receiver);
         std::string methodSelector = memory_.selectorOf(method);
 
-#ifdef DEBUG
         fprintf(stderr, "[RESUME] ctx[%d]: %s>>%s\n", depth,
                 rcvrClassName.c_str(), methodSelector.c_str());
-#endif
 
         // Check if we're in snapshot-related code
         if (rcvrClassName == "SnapshotOperation" || rcvrClassName == "SessionManager" ||
@@ -6075,26 +6073,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
 
         dnuDepth_++;
 
-    // TFFI type autofill protocol: selectors like #tfexternalSizeTType are sent
-    // to whatever tfAutoFillWorkerClass returns. When no TFFI plugin is loaded,
-    // that returns false/nil. The correct answer is nil (no type mapping available).
-    // Without this, the DNU triggers fatal error handling that kills SessionManager.
-    if (selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* selHdr = selector.asObjectPtr();
-        if (selHdr->isBytesObject() && selHdr->byteSize() >= 11) {
-            const char* selBytes = reinterpret_cast<const char*>(selHdr->bytes());
-            if (selHdr->byteSize() >= 11 &&
-                std::memcmp(selBytes, "tfexternal", 10) == 0) {
-                // Pop args and receiver, push nil
-                for (int i = 0; i < argCount; i++) pop();
-                pop();  // receiver
-                push(memory_.nil());
-                dnuDepth_--;
-                return;
-            }
-        }
-    }
-
     // If the selector IS doesNotUnderstand:, we're in a recursive DNU cascade.
     // The standard VM terminates the process in this case — there's no way to recover
     // because the receiver's class doesn't implement doesNotUnderstand: itself.
@@ -6118,19 +6096,33 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Log first 10 DNU messages to debug startup issues
+    // Log first 200 DNU messages to debug startup issues
     {
         static int dnuLogCount = 0;
-        if (dnuLogCount++ < 10) {
+        if (dnuLogCount++ < 200) {
             std::string selName = "(unknown)";
             if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sH = selector.asObjectPtr();
                 if (sH->isBytesObject()) selName = std::string((const char*)sH->bytes(), sH->byteSize());
             }
+            // Full stack dump for first 10 DNUs
+            if (dnuLogCount <= 10) {
+                fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
+                for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
+                    SavedFrame& sf = savedFrames_[f];
+                    std::string mSel = memory_.selectorOf(sf.savedMethod);
+                    std::string rCls = memory_.classNameOf(sf.savedReceiver);
+                    fprintf(stderr, "[DNU-STACK]   [%zu] %s>>%s\n", f, rCls.c_str(), mSel.c_str());
+                }
+                fprintf(stderr, "[DNU-STACK]   [current] #%s fd=%zu\n", memory_.selectorOf(method_).c_str(), frameDepth_);
+            }
             Oop rcvr = stackValue(argCount);
-            fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s\n",
+            Oop currentProc = getActiveProcess();
+            Oop procPri = memory_.fetchPointer(ProcessPriorityIndex, currentProc);
+            int pri = procPri.isSmallInteger() ? (int)procPri.asSmallInteger() : -1;
+            fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s P%d\n",
                     dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
-                    memory_.selectorOf(method_).c_str());
+                    memory_.selectorOf(method_).c_str(), pri);
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                 ObjectHeader* rH = rcvr.asObjectPtr();
                 fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
@@ -6694,6 +6686,18 @@ void Interpreter::terminateCurrentProcess() {
                 (unsigned long long)proc.rawBits(),
                 pri.isSmallInteger() ? pri.asSmallInteger() : -1,
                 frameDepth_, memory_.selectorOf(method_).c_str());
+        // Print call stack
+        for (size_t i = frameDepth_; i > 0 && i > (frameDepth_ > 15 ? frameDepth_ - 15 : 0); i--) {
+            fprintf(stderr, "[TERM]   fd=%zu #%s\n", i, memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
+        }
+        fprintf(stderr, "[TERM]   fd=0 #%s (current)\n", memory_.selectorOf(method_).c_str());
+        // Print C++ callsite
+        void* callsite = __builtin_return_address(0);
+        Dl_info info;
+        if (dladdr(callsite, &info) && info.dli_sname) {
+            fprintf(stderr, "[TERM]   C++ caller: %s+%ld\n", info.dli_sname,
+                    (long)((char*)callsite - (char*)info.dli_saddr));
+        }
     }
     // Clear any pending NLR state
     nlrTargetCtx_ = Oop::nil();

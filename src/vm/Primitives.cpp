@@ -8726,7 +8726,7 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1009: {
             pop();
-            Oop str = memory_.createString("PharoSmalltalk Date: 2025-01-28T00:00:00+00:00");
+            Oop str = memory_.createString("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000");
             push(str);
             return PrimitiveResult::Success;
         }
@@ -25883,7 +25883,7 @@ PrimitiveResult Interpreter::primitiveGetAddressOfOOP(int argCount) {
 PrimitiveResult Interpreter::primitiveInterpreterSourceVersion(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    Oop result = createStringObject(memory_, "iOSPharo VM Date: 2026-02-05T00:00:00+00:00");
+    Oop result = createStringObject(memory_, "v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000");
     if (result.isNil()) return PrimitiveResult::Failure;
 
     popN(1);  // pop receiver
