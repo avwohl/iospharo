@@ -23,7 +23,7 @@ PharoBenchmarkRunner class compile: 'runBenchmarksAsync
         s := ''/tmp/pharo_benchmarks.txt'' asFileReference writeStream.
         [s nextPutAll: ''ERROR: ''; nextPutAll: e messageText] ensure: [s close]].
     Smalltalk exitSuccess
-  ] fork' classified: 'running'
+  ] forkAt: Processor highestPriority - 1' classified: 'running'
 !
 
 PharoBenchmarkRunner class compile: 'runBenchmarks
