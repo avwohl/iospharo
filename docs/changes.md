@@ -2,6 +2,22 @@
 
 2026-04-06
 
+## Fix NLR Through ensure: — Session Startup Works Clean
+
+Fixed two bugs in non-local return (NLR) handling that broke `Symbol>>intern:`
+and caused ALL session startup handlers to fail with `#asSymbol` DNU.
+
+Bug 1: `returnFromBlock` loop condition was `while (fd > homeFrame + 1)` instead
+of `while (fd > homeFrame)`. The +1 caused the NLR value to be pushed on the
+home method's stack instead of its caller's stack. The home method then discarded
+the value via `pop; returnReceiver`.
+
+Bug 2: `returnValue` had no NLR continuation for the `frameDepth_ > 0` path.
+After ensure: cleanup completed and returned normally, `nlrHomeMethod_` was set
+but never checked, silently losing the NLR.
+
+Result: zero DNU messages at startup. All session handlers complete.
+
 ## Benchmark Results (First Measurements)
 
 Session handler benchmarks now working. Results on Apple Silicon M-series:
