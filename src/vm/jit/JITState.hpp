@@ -69,6 +69,12 @@ struct JITState {
     Oop  cachedTarget;        // offset 88: Cached method Oop for IC hit (ExitSendCached)
     uint64_t* icDataPtr;      // offset 96: Pointer to IC data [classIndex, methodOop]
     int  sendArgCount;        // offset 104: Number of args for the current send (IC path)
+
+    // --- SimStack register caching ---
+    // TOS/NOS cached in JITState fields to avoid sp manipulation in
+    // straight-line code. Accessed by SimStack stencil variants only.
+    uint64_t simTOS;          // offset 112: Cached TOS bits
+    uint64_t simNOS;          // offset 120: Cached NOS bits
 };
 
 // Verify expected offsets (stencils depend on these)

@@ -87,6 +87,9 @@ struct JITState {
     Oop           cachedTarget; // offset 88
     uint64_t*     icDataPtr;    // offset 96
     int           sendArgCount; // offset 104
+    // SimStack register caching
+    uint64_t      simTOS;       // offset 112
+    uint64_t      simNOS;       // offset 120
 };
 
 // Tag bit constants (must match Oop.hpp)
@@ -1720,3 +1723,627 @@ extern "C" void stencil_primClass(JITState* s) {
     // Fall through to bytecodes.
     _HOLE_CONTINUE(s);
 }
+
+// =====================================================================
+// SIMSTACK STENCILS — Register-cached TOS/NOS in x19/x20
+// =====================================================================
+//
+// With -ffixed-x19 -ffixed-x20, Clang reserves these registers.
+// We use them to cache the top 1-2 stack values, eliminating
+// redundant memory loads/stores in straight-line code.
+//
+// State convention (suffix):
+//   _E = Empty (x19/x20 are garbage, all values on memory stack)
+//   _1 = One   (x19 = TOS bits, memory stack has the rest)
+//   _2 = Two   (x19 = TOS bits, x20 = NOS bits, memory stack has the rest)
+//
+// SimStack TOS/NOS are cached in JITState fields (simTOS, simNOS).
+// This avoids the ARM64 callee-saved register problem (Clang would
+// save/restore x19/x20 around tail calls, undoing our writes).
+// JITState* is always in the first arg register (x0), so field
+// access is a single LDR/STR at a fixed offset — fast enough.
+
+// Guard: SimStack stencils are only generated for ARM64
+#ifdef __aarch64__
+
+// ----- FLUSH: write cached values to memory stack -----
+
+// State 1 → E: write TOS to stack
+extern "C" void stencil_flush1(JITState* s) {
+    Oop val;
+    val.bits = s->simTOS;
+    *(s->sp) = val;
+    s->sp++;
+    _HOLE_CONTINUE(s);
+}
+
+// State 2 → E: write NOS then TOS to stack
+extern "C" void stencil_flush2(JITState* s) {
+    Oop n, t;
+    n.bits = s->simNOS;
+    t.bits = s->simTOS;
+    s->sp[0] = n;
+    s->sp[1] = t;
+    s->sp += 2;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH TEMP variants -----
+
+// E → 1: load temp into TOS register
+extern "C" void stencil_pushTemp_E(JITState* s) {
+    int idx = OPERAND;
+    s->simTOS = s->tempBase[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// 1 → 2: shift TOS to NOS, load new TOS
+extern "C" void stencil_pushTemp_1(JITState* s) {
+    int idx = OPERAND;
+    s->simNOS = s->simTOS;
+    s->simTOS = s->tempBase[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// 2 → 2: spill NOS to memory, shift TOS to NOS, load new TOS
+extern "C" void stencil_pushTemp_2(JITState* s) {
+    int idx = OPERAND;
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = s->tempBase[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH RECV VAR variants -----
+
+extern "C" void stencil_pushRecvVar_E(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t val;
+    if (static_cast<uint64_t>(idx) < obj->slotCount()) {
+        val = obj->slots()[idx].bits;
+    } else {
+        val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    }
+    s->simTOS = val;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushRecvVar_1(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t val;
+    if (static_cast<uint64_t>(idx) < obj->slotCount()) {
+        val = obj->slots()[idx].bits;
+    } else {
+        val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    }
+    s->simNOS = s->simTOS;
+    s->simTOS = val;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushRecvVar_2(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t val;
+    if (static_cast<uint64_t>(idx) < obj->slotCount()) {
+        val = obj->slots()[idx].bits;
+    } else {
+        val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    }
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = val;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH LIT CONST variants -----
+
+extern "C" void stencil_pushLitConst_E(JITState* s) {
+    int idx = OPERAND;
+    s->simTOS = s->literals[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushLitConst_1(JITState* s) {
+    int idx = OPERAND;
+    s->simNOS = s->simTOS;
+    s->simTOS = s->literals[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushLitConst_2(JITState* s) {
+    int idx = OPERAND;
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = s->literals[idx].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH LIT VAR variants -----
+
+extern "C" void stencil_pushLitVar_E(JITState* s) {
+    int idx = OPERAND;
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    s->simTOS = obj->slots()[1].bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushLitVar_1(JITState* s) {
+    int idx = OPERAND;
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    s->simNOS = s->simTOS;
+    s->simTOS = obj->slots()[1].bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushLitVar_2(JITState* s) {
+    int idx = OPERAND;
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = obj->slots()[1].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH RECEIVER variants -----
+
+extern "C" void stencil_pushReceiver_E(JITState* s) {
+    s->simTOS = s->receiver.bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushReceiver_1(JITState* s) {
+    s->simNOS = s->simTOS;
+    s->simTOS = s->receiver.bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushReceiver_2(JITState* s) {
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = s->receiver.bits;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- PUSH CONSTANT variants (true/false/nil) -----
+
+extern "C" void stencil_pushTrue_E(JITState* s) {
+    s->simTOS = (*(Oop*)&_HOLE_TRUE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushTrue_1(JITState* s) {
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_TRUE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushTrue_2(JITState* s) {
+    Oop spillVal; spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal; s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_TRUE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushFalse_E(JITState* s) {
+    s->simTOS = (*(Oop*)&_HOLE_FALSE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushFalse_1(JITState* s) {
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_FALSE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushFalse_2(JITState* s) {
+    Oop spillVal; spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal; s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_FALSE_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+
+extern "C" void stencil_pushNil_E(JITState* s) {
+    s->simTOS = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushNil_1(JITState* s) {
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+extern "C" void stencil_pushNil_2(JITState* s) {
+    Oop spillVal; spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal; s->sp++;
+    s->simNOS = s->simTOS;
+    s->simTOS = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- POP variants -----
+
+// 2 → 1: discard TOS, NOS becomes new TOS
+extern "C" void stencil_pop_2(JITState* s) {
+    s->simTOS = s->simNOS;
+    _HOLE_CONTINUE(s);
+}
+
+// 1 → E: discard TOS
+extern "C" void stencil_pop_1(JITState* s) {
+    // TOS dropped, state now Empty
+    _HOLE_CONTINUE(s);
+}
+
+// E → E: pop from memory stack
+extern "C" void stencil_pop_E(JITState* s) {
+    s->sp--;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- DUP variants -----
+
+// E → 1: read TOS from memory, keep in register (don't pop)
+extern "C" void stencil_dup_E(JITState* s) {
+    s->simTOS = s->sp[-1].bits;
+    _HOLE_CONTINUE(s);
+}
+
+// 1 → 2: TOS becomes NOS, TOS stays
+extern "C" void stencil_dup_1(JITState* s) {
+    s->simNOS = s->simTOS;
+    _HOLE_CONTINUE(s);
+}
+
+// 2 → 2: spill NOS, NOS = TOS (duplicate TOS)
+extern "C" void stencil_dup_2(JITState* s) {
+    Oop spillVal;
+    spillVal.bits = s->simNOS;
+    *(s->sp) = spillVal;
+    s->sp++;
+    s->simNOS = s->simTOS;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- STORE TEMP variants (store without pop) -----
+
+// 1: store TOS to temp, keep in register
+extern "C" void stencil_storeTemp_1(JITState* s) {
+    int idx = OPERAND;
+    Oop val;
+    val.bits = s->simTOS;
+    s->tempBase[idx] = val;
+    _HOLE_CONTINUE(s);
+}
+
+// 2: store TOS to temp, keep both in registers
+extern "C" void stencil_storeTemp_2(JITState* s) {
+    int idx = OPERAND;
+    Oop val;
+    val.bits = s->simTOS;
+    s->tempBase[idx] = val;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- POP+STORE TEMP variants -----
+
+// 2 → 1: store TOS to temp, drop TOS, NOS becomes TOS
+extern "C" void stencil_popStoreTemp_2(JITState* s) {
+    int idx = OPERAND;
+    Oop val;
+    val.bits = s->simTOS;
+    s->tempBase[idx] = val;
+    s->simTOS = s->simNOS;
+    _HOLE_CONTINUE(s);
+}
+
+// 1 → E: store TOS to temp, drop TOS
+extern "C" void stencil_popStoreTemp_1(JITState* s) {
+    int idx = OPERAND;
+    Oop val;
+    val.bits = s->simTOS;
+    s->tempBase[idx] = val;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- STORE RECV VAR variants -----
+
+// 1: store TOS to receiver field, keep in register
+extern "C" void stencil_storeRecvVar_1(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    Oop val;
+    val.bits = s->simTOS;
+    obj->slots()[idx] = val;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- POP+STORE RECV VAR variants -----
+
+// 2 → 1: store TOS to receiver field, NOS becomes TOS
+extern "C" void stencil_popStoreRecvVar_2(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    Oop val;
+    val.bits = s->simTOS;
+    obj->slots()[idx] = val;
+    s->simTOS = s->simNOS;
+    _HOLE_CONTINUE(s);
+}
+
+// 1 → E: store TOS to receiver field, drop TOS
+extern "C" void stencil_popStoreRecvVar_1(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    Oop val;
+    val.bits = s->simTOS;
+    obj->slots()[idx] = val;
+    _HOLE_CONTINUE(s);
+}
+
+// ----- BINARY ARITHMETIC variants (state 2 → 1) -----
+// These consume NOS (receiver) and TOS (arg), produce result in TOS.
+
+extern "C" void stencil_addSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va + vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            s->simTOS = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    // Fallback: spill to memory stack, use non-SimStack exit
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_subSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va - vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            s->simTOS = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_mulSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        __int128 wide = (__int128)va * vb;
+        int64_t result = (int64_t)wide;
+        if (__builtin_expect(wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            s->simTOS = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// ----- COMPARISON variants (state 2 → 1) -----
+
+extern "C" void stencil_lessThanSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        s->simTOS = va < vb ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_greaterThanSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        s->simTOS = va > vb ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_lessEqualSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        s->simTOS = va <= vb ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_greaterEqualSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        s->simTOS = va >= vb ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_equalSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        s->simTOS = a_bits == b_bits ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+extern "C" void stencil_notEqualSmallInt_2(JITState* s) {
+    uint64_t a_bits = s->simNOS;
+    uint64_t b_bits = s->simTOS;
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        s->simTOS = a_bits != b_bits ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    Oop an, bt;
+    an.bits = a_bits;
+    bt.bits = b_bits;
+    s->sp[0] = an;
+    s->sp[1] = bt;
+    s->sp += 2;
+    _HOLE_RT_ARITH_OVERFLOW(s);
+}
+
+// ----- CONDITIONAL JUMP variants (state 1 → E) -----
+// These consume TOS (boolean) and branch.
+
+extern "C" void stencil_jumpTrue_1(JITState* s) {
+    uint64_t tos_bits = s->simTOS;
+    if (tos_bits == (*(Oop*)&_HOLE_TRUE_OOP).bits) {
+        _HOLE_BRANCH_TARGET(s);
+        return;
+    }
+    if (tos_bits == (*(Oop*)&_HOLE_FALSE_OOP).bits) {
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    // Non-boolean: spill and deopt
+    Oop val; val.bits = tos_bits;
+    *(s->sp) = val;
+    s->sp++;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+extern "C" void stencil_jumpFalse_1(JITState* s) {
+    uint64_t tos_bits = s->simTOS;
+    if (tos_bits == (*(Oop*)&_HOLE_FALSE_OOP).bits) {
+        _HOLE_BRANCH_TARGET(s);
+        return;
+    }
+    if (tos_bits == (*(Oop*)&_HOLE_TRUE_OOP).bits) {
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    // Non-boolean: spill and deopt
+    Oop val; val.bits = tos_bits;
+    *(s->sp) = val;
+    s->sp++;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+// ----- RETURN variants -----
+
+// 1: return TOS (already in register)
+extern "C" void stencil_returnTop_1(JITState* s) {
+    Oop val;
+    val.bits = s->simTOS;
+    s->returnValue = val;
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+// E: return TOS from memory (same as base stencil)
+extern "C" void stencil_returnTop_E(JITState* s) {
+    s->sp--;
+    s->returnValue = *(s->sp);
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+// Return receiver with state 1 (discard TOS, return self)
+extern "C" void stencil_returnReceiver_1(JITState* s) {
+    s->returnValue = s->receiver;
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+#endif // __aarch64__

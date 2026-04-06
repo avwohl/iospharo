@@ -98,6 +98,10 @@ private:
     // Select the stencil for a given bytecode
     uint16_t selectStencil(uint8_t opcode, int operand) const;
 
+    // SimStack register caching: replace base stencils with SimStack variants
+    // where profitable. Inserts flush stencils before sends/returns/branch-targets.
+    void applySimStack(std::vector<DecodedBC>& decoded);
+
     // Patch all relocations for one stencil instance
     bool patchStencilInstance(uint8_t* codeBase, uint32_t stencilOffset,
                               const StencilDef& stencil,
