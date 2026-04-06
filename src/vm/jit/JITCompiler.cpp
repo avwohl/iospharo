@@ -625,7 +625,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                     // deopt to the interpreter for correct lookup.
                     int argCount = bc.operand2;
                     bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
-                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendPoly);
+                    bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendJ2J);
                     bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
                     // operand2Ptr will be set after code zone allocation
                 } else {
@@ -771,6 +771,8 @@ bool JITCompiler::patchStencilInstance(
             case 5: helperAddr = helpers_.trueOopAddr; break;
             case 6: helperAddr = helpers_.falseOopAddr; break;
             case 7: helperAddr = helpers_.megaCacheAddr; break;
+            case 8: helperAddr = helpers_.pushFrame; break;
+            case 9: helperAddr = helpers_.popFrame; break;
             default:
                 fprintf(stderr, "[JIT] Unknown runtime helper ID %d\n", helperId);
                 return false;
@@ -788,7 +790,7 @@ bool JITCompiler::patchStencilInstance(
                     if (!patchARM64(stencilCode, reloc, target)) return false;
                 } else {
                     // GOT load: allocate/reuse literal pool slot.
-                    // For function pointer helpers (1-3): store address of the
+                    // For function pointer helpers (1-3, 8-9): store address of the
                     // helpers_ struct field for double indirection (±4GB range).
                     // For data helpers (4-7): store data address directly.
                     uint64_t poolValue;
@@ -796,6 +798,8 @@ bool JITCompiler::patchStencilInstance(
                     case 1: poolValue = reinterpret_cast<uint64_t>(&helpers_.sendSlow); break;
                     case 2: poolValue = reinterpret_cast<uint64_t>(&helpers_.returnToInterp); break;
                     case 3: poolValue = reinterpret_cast<uint64_t>(&helpers_.arithOverflow); break;
+                    case 8: poolValue = reinterpret_cast<uint64_t>(&helpers_.pushFrame); break;
+                    case 9: poolValue = reinterpret_cast<uint64_t>(&helpers_.popFrame); break;
                     default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
                     }
                     uint64_t poolAddr = allocOrReuseSlot(reloc, poolValue);
@@ -809,6 +813,8 @@ bool JITCompiler::patchStencilInstance(
                 case 1: poolValue = reinterpret_cast<uint64_t>(&helpers_.sendSlow); break;
                 case 2: poolValue = reinterpret_cast<uint64_t>(&helpers_.returnToInterp); break;
                 case 3: poolValue = reinterpret_cast<uint64_t>(&helpers_.arithOverflow); break;
+                case 8: poolValue = reinterpret_cast<uint64_t>(&helpers_.pushFrame); break;
+                case 9: poolValue = reinterpret_cast<uint64_t>(&helpers_.popFrame); break;
                 default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
                 }
                 uint64_t poolAddr = allocPoolSlot(poolValue);
@@ -976,7 +982,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Count send sites for inline cache data allocation
     uint16_t numSendSites = 0;
     for (auto& bc : decoded) {
-        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendPoly)
+        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendJ2J)
             numSendSites++;
     }
 
@@ -1080,7 +1086,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
         uint16_t sendIdx = 0;
         for (auto& bc : decoded) {
-            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendPoly) {
+            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendJ2J) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
 
@@ -1223,7 +1229,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
         // Sends — handled via deopt (stencil sets ip, exits to interpreter)
         case StencilID::stencil_send:
-        case StencilID::stencil_sendPoly:
+        case StencilID::stencil_sendJ2J:
             jitMethod->hasSends = true;  // Track for stats, but doesn't block execution
             break;
 

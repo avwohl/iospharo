@@ -78,6 +78,8 @@ public:
         void* trueOopAddr;      // Address of a memory location holding true Oop
         void* falseOopAddr;     // Address of a memory location holding false Oop
         void* megaCacheAddr;    // Address of mega cache entries array
+        void* pushFrame;        // jit_rt_push_frame (J2J direct call)
+        void* popFrame;         // jit_rt_pop_frame (J2J direct call)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }

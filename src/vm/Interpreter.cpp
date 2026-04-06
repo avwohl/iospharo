@@ -5806,6 +5806,105 @@ bool Interpreter::popFrame() {
     return true;
 }
 
+// ===== J2J FRAME MANAGEMENT =====
+
+void Interpreter::pushFrameForJIT(jit::JITState* state) {
+    // Lightweight frame push for J2J direct calls.
+    // Syncs interpreter state from JITState, pushes a frame, then sets up
+    // callee state in both interpreter and JITState.
+
+    Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
+    int nArgs = state->sendArgCount;
+
+    // Sync interpreter state from JITState (the stencil has been modifying sp)
+    stackPointer_ = state->sp;
+    instructionPointer_ = state->ip;
+
+    // Overflow check (lightweight: skip logging)
+    if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+        // Can't push — signal overflow to the stencil via exitReason
+        state->exitReason = jit::ExitStackOverflow;
+        return;
+    }
+
+    // Save current frame (same fields as pushFrame, skip logging/validation)
+    SavedFrame& frame = savedFrames_[frameDepth_++];
+    frame.savedIP = instructionPointer_;
+    frame.savedBytecodeEnd = bytecodeEnd_;
+    frame.savedMethod = method_;
+    frame.savedHomeMethod = homeMethod_;
+    frame.savedReceiver = receiver_;
+    frame.savedActiveContext = activeContext_;
+    frame.savedFP = framePointer_;
+    frame.savedArgCount = argCount_;
+    frame.savedClosure = closure_;
+    frame.homeFrameDepth = SIZE_MAX;
+    frame.materializedContext = currentFrameMaterializedCtx_;
+    currentFrameMaterializedCtx_ = memory_.nil();
+
+    // Set up callee state in interpreter
+    method_ = targetMethod;
+    homeMethod_ = targetMethod;  // For method frames (not blocks)
+    receiver_ = stackPointer_[-(nArgs + 1)];
+    argCount_ = nArgs;
+    closure_ = memory_.nil();
+    activeContext_ = memory_.nil();
+
+    // Set up frame pointer: args start after receiver
+    // framePointer_ points to the base of the frame (receiver slot)
+    framePointer_ = stackPointer_ - (nArgs + 1);
+
+    // Compute bytecodeStart for the callee method
+    ObjectHeader* methObj = targetMethod.asObjectPtr();
+    Oop hdr = methObj->slotAt(0);
+    int numLits = hdr.isSmallInteger() ? static_cast<int>(hdr.asSmallInteger() & 0x7FFF) : 0;
+    uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
+    instructionPointer_ = bytecodeStart;
+
+    // Allocate temps (zero-fill) — callee may expect temps initialized to nil
+    int numTemps = hdr.isSmallInteger() ? static_cast<int>((hdr.asSmallInteger() >> 18) & 0x3F) : 0;
+    int totalTemps = numTemps;
+    for (int i = nArgs; i < totalTemps; i++) {
+        *stackPointer_ = memory_.nil();
+        stackPointer_++;
+    }
+
+    // Update JITState for callee
+    state->receiver = receiver_;
+    state->literals = methObj->slots() + 1;
+    state->tempBase = framePointer_ + 1;  // args start after receiver
+    state->ip = bytecodeStart;
+    state->method = targetMethod;
+    state->argCount = nArgs;
+    state->sp = stackPointer_;
+    state->exitReason = jit::ExitNone;
+
+    // Look up JITMethod for the target (for jitMethod field)
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(targetMethod.rawBits());
+    state->jitMethod = jm;
+}
+
+void Interpreter::popFrameForJIT(jit::JITState* state) {
+    // Lightweight frame pop for J2J direct calls.
+    if (frameDepth_ == 0) return;
+
+    --frameDepth_;
+    SavedFrame& frame = savedFrames_[frameDepth_];
+
+    // Restore interpreter state from saved frame
+    stackPointer_ = framePointer_;  // Discard callee's locals
+    instructionPointer_ = frame.savedIP;
+    bytecodeEnd_ = frame.savedBytecodeEnd;
+    method_ = frame.savedMethod;
+    homeMethod_ = frame.savedHomeMethod;
+    receiver_ = frame.savedReceiver;
+    closure_ = frame.savedClosure;
+    activeContext_ = frame.savedActiveContext;
+    currentFrameMaterializedCtx_ = frame.materializedContext;
+    framePointer_ = frame.savedFP;
+    argCount_ = frame.savedArgCount;
+}
+
 // ===== VARIABLE ACCESS =====
 
 Oop Interpreter::literal(size_t index) const {
@@ -9596,7 +9695,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         return;  // IC belongs to a different send site — skip
     }
 
-    // Compute lookup key matching stencil_sendPoly:
+    // Compute lookup key matching stencil_sendJ2J:
     // objects → classIndex, immediates → (tag & 7) | 0x80000000
     uint64_t lookupKey;
     uint64_t tag = receiver.rawBits() & 0x7;
@@ -9618,6 +9717,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     //   bit 63: getter — slot index in bits 15:0
     //   bit 62: setter — slot index in bits 15:0
     //   bit 61: returnsSelf
+    //   bit 60: hasJITEntry — bits 47:0 = JIT code entry address
     uint64_t extra = 0;
     {
         TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
@@ -9627,6 +9727,15 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
         else if (tmi.returnsSelf)
             extra = (1ULL << 61);
+    }
+
+    // If not a trivial method, check for JIT-compiled target for J2J direct calls
+    if (extra == 0) {
+        jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
+        if (target && target->isExecutable()) {
+            uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
+            extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+        }
     }
 
     // Find the first empty slot and fill it

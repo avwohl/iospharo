@@ -40,6 +40,19 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
     state->exitReason = ExitArithOverflow;
 }
 
+extern "C" void jit_rt_push_frame(JITState* state) {
+    // J2J direct call: push an interpreter frame for GC root scanning.
+    // Reads cachedTarget (method Oop), sendArgCount, ip from state.
+    Interpreter* interp = state->interp;
+    interp->pushFrameForJIT(state);
+}
+
+extern "C" void jit_rt_pop_frame(JITState* state) {
+    // J2J direct call: pop the interpreter frame after callee returns.
+    Interpreter* interp = state->interp;
+    interp->popFrameForJIT(state);
+}
+
 // ===== JITRuntime =====
 
 JITRuntime::JITRuntime()
@@ -85,6 +98,8 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.trueOopAddr = &trueOopBits;
     helpers.falseOopAddr = &falseOopBits;
     helpers.megaCacheAddr = megaCache_;
+    helpers.pushFrame = reinterpret_cast<void*>(&jit_rt_push_frame);
+    helpers.popFrame = reinterpret_cast<void*>(&jit_rt_pop_frame);
     compiler_->setHelpers(helpers);
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be

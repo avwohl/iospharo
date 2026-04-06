@@ -845,6 +845,205 @@ extern "C" void stencil_sendPoly(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// ----- JIT-TO-JIT SEND STENCIL -----
+//
+// Same as stencil_sendPoly but adds J2J direct calls for IC hits where the
+// target method has compiled JIT code. The IC extra word bit 60 signals a
+// J2J entry: bits 47:0 contain the target's JIT code entry address.
+//
+// When bit 60 is set (and bits 63:61 are clear), the stencil:
+//   1. Saves caller JITState to C stack (Clang handles via callee-saved regs)
+//   2. Calls jit_rt_push_frame to push interpreter frame for GC
+//   3. BLR to target JIT code entry point
+//   4. Callee returns via RET (return stencils preserve LR chain)
+//   5. Calls jit_rt_pop_frame to restore interpreter frame
+//   6. Restores caller JITState, pushes returnValue, continues
+//
+// OPERAND  = (argCount << 16) | bytecodeOffset
+// OPERAND2 = pointer to IC data
+
+// J2J entry bit in IC extra word
+static constexpr uint64_t J2J_ENTRY_BIT = (1ULL << 60);
+static constexpr uint64_t J2J_ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
+
+extern "C" void (*_HOLE_RT_PUSH_FRAME)(JITState*);
+extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
+
+extern "C" void stencil_sendJ2J(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
+
+    // Get receiver: below the args on the stack
+    Oop receiver = s->sp[-(nArgs + 1)];
+
+    // Compute lookup key: classIndex for objects, tag|0x80000000 for immediates
+    uint64_t lookupKey;
+    uint64_t tag = receiver.bits & 0x7;
+    if (tag == 0) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        lookupKey = obj->classIndex();
+    } else {
+        lookupKey = tag | 0x80000000ULL;
+    }
+
+    // Macro for IC hit handling with J2J support
+#define J2J_IC_HIT(entry_idx) do {                                            \
+    uint64_t extra = icData[(entry_idx) * 3 + 2];                             \
+    if (extra != 0 && tag == 0) {                                             \
+        uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);                        \
+        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits);\
+        if (extra & (1ULL << 63)) {                                           \
+            /* Inline getter */                                                \
+            Oop val = recvObj->slotAt(slotIdx);                               \
+            s->sp[-(nArgs + 1)] = val;                                        \
+            s->sp -= nArgs;                                                   \
+            _HOLE_CONTINUE(s);                                                \
+            return;                                                           \
+        }                                                                     \
+        if (extra & (1ULL << 62)) {                                           \
+            /* Inline setter */                                                \
+            Oop arg = s->sp[-(nArgs)];                                        \
+            recvObj->slotAtPut(slotIdx, arg);                                 \
+            s->sp[-(nArgs + 1)] = receiver;                                   \
+            s->sp -= nArgs;                                                   \
+            _HOLE_CONTINUE(s);                                                \
+            return;                                                           \
+        }                                                                     \
+        if (extra & (1ULL << 61)) {                                           \
+            /* returnsSelf */                                                  \
+            s->sp -= nArgs;                                                   \
+            _HOLE_CONTINUE(s);                                                \
+            return;                                                           \
+        }                                                                     \
+    }                                                                         \
+    /* Check for J2J direct call (bit 60, no bits 63:61) */                   \
+    if (extra & J2J_ENTRY_BIT) {                                              \
+        uint64_t entryAddr = extra & J2J_ADDR_MASK;                           \
+        if (entryAddr != 0) {                                                 \
+            /* Save caller JITState fields (Clang spills to stack) */          \
+            Oop* savedSP = s->sp;                                             \
+            Oop savedRecv = s->receiver;                                      \
+            Oop* savedLit = s->literals;                                      \
+            Oop* savedTemp = s->tempBase;                                     \
+            void* savedJM = s->jitMethod;                                     \
+            Oop savedMethod = s->method;                                      \
+            int savedArgCount = s->argCount;                                  \
+            uint8_t* savedIP = s->ip;                                         \
+                                                                              \
+            /* Set up state for push_frame helper */                           \
+            s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
+            s->sendArgCount = nArgs;                                          \
+            s->ip = s->ip + bcOffset;                                         \
+                                                                              \
+            /* Push interpreter frame (C++ helper, ~30 cycles) */             \
+            _HOLE_RT_PUSH_FRAME(s);                                           \
+                                                                              \
+            /* Check if push_frame failed (stack overflow) */                  \
+            if (s->exitReason != 0) {                                         \
+                /* Bail out to interpreter */                                  \
+                s->exitReason = EXIT_SEND;                                    \
+                s->sp = savedSP;                                              \
+                s->ip = savedIP + bcOffset;                                   \
+                s->icDataPtr = icData;                                        \
+                s->sendArgCount = nArgs;                                      \
+                _HOLE_RT_SEND(s);                                             \
+                return;                                                       \
+            }                                                                 \
+                                                                              \
+            /* Direct call to callee JIT code */                              \
+            typedef void (*StencilFn)(JITState*);                             \
+            ((StencilFn)entryAddr)(s);                                        \
+                                                                              \
+            /* Callee returned — check exit reason */                         \
+            if (s->exitReason != EXIT_RETURN) {                               \
+                /* Callee needs interpreter help (send, deopt, etc.) */       \
+                /* Pop the frame we pushed and bail out */                     \
+                _HOLE_RT_POP_FRAME(s);                                        \
+                s->sp = savedSP;                                              \
+                s->receiver = savedRecv;                                      \
+                s->literals = savedLit;                                       \
+                s->tempBase = savedTemp;                                      \
+                s->jitMethod = savedJM;                                       \
+                s->method = savedMethod;                                      \
+                s->argCount = savedArgCount;                                  \
+                s->ip = savedIP + bcOffset;                                   \
+                s->icDataPtr = icData;                                        \
+                s->sendArgCount = nArgs;                                      \
+                s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];          \
+                s->exitReason = EXIT_SEND_CACHED;                             \
+                _HOLE_RT_SEND(s);                                             \
+                return;                                                       \
+            }                                                                 \
+                                                                              \
+            /* Pop interpreter frame */                                       \
+            _HOLE_RT_POP_FRAME(s);                                            \
+                                                                              \
+            /* Restore caller JITState */                                     \
+            s->sp = savedSP;                                                  \
+            s->receiver = savedRecv;                                          \
+            s->literals = savedLit;                                           \
+            s->tempBase = savedTemp;                                          \
+            s->jitMethod = savedJM;                                           \
+            s->method = savedMethod;                                          \
+            s->argCount = savedArgCount;                                      \
+            s->ip = savedIP;                                                  \
+                                                                              \
+            /* Pop args, push return value */                                 \
+            s->sp[-(nArgs + 1)] = s->returnValue;                            \
+            s->sp -= nArgs;                                                   \
+                                                                              \
+            _HOLE_CONTINUE(s);                                                \
+            return;                                                           \
+        }                                                                     \
+    }                                                                         \
+    /* Fallback: exit to C++ with cached target */                            \
+    s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];                       \
+    s->icDataPtr = icData;                                                    \
+    s->sendArgCount = nArgs;                                                  \
+    s->ip = s->ip + bcOffset;                                                 \
+    s->exitReason = EXIT_SEND_CACHED;                                         \
+    _HOLE_RT_SEND(s);                                                         \
+    return;                                                                   \
+} while(0)
+
+    // Check 4 IC entries (unrolled for predictable code size)
+    if (lookupKey == icData[0] && icData[0] != 0) { J2J_IC_HIT(0); }
+    if (lookupKey == icData[3] && icData[3] != 0) { J2J_IC_HIT(1); }
+    if (lookupKey == icData[6] && icData[6] != 0) { J2J_IC_HIT(2); }
+    if (lookupKey == icData[9] && icData[9] != 0) { J2J_IC_HIT(3); }
+
+#undef J2J_IC_HIT
+
+    // IC MISS — probe megamorphic method cache before falling back
+    {
+        uint64_t selectorBits = icData[12];
+        if (selectorBits != 0) {
+            MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
+            size_t hash = (size_t)(selectorBits ^ lookupKey) & 4095;
+            MegaCacheEntry* entry = &cache[hash];
+            if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+                s->cachedTarget.bits = entry->methodBits;
+                s->icDataPtr = icData;
+                s->sendArgCount = nArgs;
+                s->ip = s->ip + bcOffset;
+                s->exitReason = EXIT_SEND_CACHED;
+                _HOLE_RT_SEND(s);
+                return;
+            }
+        }
+    }
+
+    // Mega cache miss — full interpreter lookup
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // ----- REMOTE TEMP STENCILS -----
 //
 // Remote temps are accessed through a temp vector (an Array stored in a local).

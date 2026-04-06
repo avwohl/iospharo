@@ -119,6 +119,12 @@ extern "C" void jit_rt_return(JITState* state);
 // weren't SmallIntegers. Fall back to interpreter for full send.
 extern "C" void jit_rt_arith_overflow(JITState* state);
 
+// J2J direct call helpers: push/pop interpreter frames for GC root scanning.
+// Called from stencil_sendJ2J before/after BLR to callee entry.
+// Reads cachedTarget (method Oop), sendArgCount, ip from state.
+extern "C" void jit_rt_push_frame(JITState* state);
+extern "C" void jit_rt_pop_frame(JITState* state);
+
 } // namespace jit
 } // namespace pharo
 

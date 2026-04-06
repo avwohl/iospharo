@@ -874,6 +874,12 @@ private:
     /// (process completed) and the caller should NOT push a return value.
     bool popFrame();
 
+    /// J2J direct call: lightweight frame push/pop for GC root scanning.
+    /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
+    /// Reads cachedTarget (method), sendArgCount, ip/sp from JITState.
+    void pushFrameForJIT(jit::JITState* state);
+    void popFrameForJIT(jit::JITState* state);
+
     /// Get temporary variable
     Oop temporary(int index) const;
 
