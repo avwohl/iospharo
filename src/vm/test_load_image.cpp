@@ -637,9 +637,8 @@ int main(int argc, char* argv[]) {
                   << interpreter.activeMethod().rawBits() << std::dec << std::endl;
 
 
-        // Defer FreeType and FFI type initialization to first use.
-        // These startup handlers are very slow on our interpreter (~2 min on fresh images).
-        // Patch their startUp: methods to return self immediately.
+        // Defer FreeType and ExternalObject initialization to first use.
+        // These startup handlers are slow on our interpreter and not needed for headless.
         {
             const char* classesToDefer[] = {
                 "FreeTypeSettings", "FreeTypeCache", "ExternalObject", nullptr

@@ -2,6 +2,41 @@
 
 2026-04-06
 
+## Benchmark Results (First Measurements)
+
+Session handler benchmarks now working. Results on Apple Silicon M-series:
+
+    Benchmark           Cog JIT    Our VM     Ratio
+    fib(28)                2 ms    567 ms     283x
+    sieve x100            10 ms    762 ms      76x
+    sort 100K             15 ms   2519 ms     168x
+    dict 50K              10 ms   1722 ms     172x
+    sum 1M                 5 ms    777 ms     155x
+    5000 factorial         0 ms    541 ms       -
+    1M blocks              2 ms    117 ms      59x
+    1M getter+yourself     3 ms    486 ms     162x
+    100K allocations       2 ms    596 ms     298x
+
+    tinyBenchmarks:
+      bytecodes/sec     77.3M      8.3M       9.3x
+      sends/sec       1518.6M     24.4M      62.2x
+
+JIT active during benchmarks: 1137 compiled methods, 75% IC hit, 66% J2J
+activation ratio. Performance is 76-298x slower than Cog — the JIT helps
+with method body dispatch but sends still go through C++ interpreter paths.
+
+## Fix Benchmark Runner Double-Save Requirement
+
+Benchmark session handler (PharoBenchmarkRunner, handler #55 of 56) wasn't
+firing on single-save images. Root cause: LGitLibrary startup (#54) triggers
+FFI method generation which sends asSymbol to Symbol class (DNU), and the
+error cascade terminates the startup process before reaching handler #55.
+
+Fix: run_benchmarks.sh now does a second `eval --save "true"` after injection.
+The first resume (by reference VM) completes all session handlers including
+LGitLibrary's FFI init. On the second resume (by our VM), the init is already
+done and doesn't trigger the DNU.
+
 ## Fix cannotReturn: Dead Code Execution (Startup Stall)
 
 Fixed root cause of ~29M step startup stall. When returnFromMethod() at fd=0

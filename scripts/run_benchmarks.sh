@@ -67,17 +67,19 @@ echo "  Image: $IMAGE_DIR/Pharo.image"
 
 # Inject benchmark runner
 echo "[2/3] Injecting benchmark runner..."
+INJECT_VM=""
 if [ -n "$REF_VM" ]; then
-    "$REF_VM" Pharo.image eval --save "'$BENCH_ST' asFileReference fileIn" > /dev/null 2>&1
-elif [ -x "$OUR_VM" ]; then
-    # If no ref VM, use ref VM from get.pharo.org download (the 'pharo' script)
-    if [ -f ./pharo ]; then
-        ./pharo Pharo.image eval --save "'$BENCH_ST' asFileReference fileIn" > /dev/null 2>&1
-    else
-        echo "  ERROR: No VM available to inject benchmarks"
-        exit 1
-    fi
+    INJECT_VM="$REF_VM"
+elif [ -f ./pharo ]; then
+    INJECT_VM="./pharo"
+else
+    echo "  ERROR: No VM available to inject benchmarks"
+    exit 1
 fi
+"$INJECT_VM" Pharo.image eval --save "'$BENCH_ST' asFileReference fileIn" > /dev/null 2>&1
+# Second save needed: our VM's snapshot resume requires a two-save image to avoid
+# a snapshot context issue where a P79 process termination kills the benchmark fork.
+"$INJECT_VM" Pharo.image eval --save "true" > /dev/null 2>&1
 echo "  Injected: $BENCH_ST"
 echo ""
 
