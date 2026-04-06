@@ -3549,6 +3549,55 @@ terminate_process:
     if (running_) {
         push(value);
 
+        // Continue NLR through ensure: — nlrHomeMethod_ was set by
+        // returnFromBlock when it encountered an ensure: (prim 198)
+        // frame during NLR unwinding. The ensure: cleanup has now
+        // completed; continue the NLR to the home method.
+        if (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil()) {
+            pop();  // Discard ensure: return value
+            Oop nlrVal = nlrValue_;
+            Oop nlrHome = nlrHomeMethod_;
+            nlrHomeMethod_ = Oop::nil();
+            nlrValue_ = Oop::nil();
+
+            // Find home method in saved frames
+            size_t homeFrame = SIZE_MAX;
+            for (size_t i = 0; i < frameDepth_; i++) {
+                if (savedFrames_[i].savedMethod.rawBits() == nlrHome.rawBits()) {
+                    homeFrame = i;
+                    break;
+                }
+            }
+
+            if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
+                // Unwind to home frame, checking for more ensure: frames
+                while (frameDepth_ > homeFrame) {
+                    if (frameDepth_ > 1) {
+                        Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
+                        if (rm.isObject() && !rm.isNil() &&
+                            primitiveIndexOf(rm) == 198) {
+                            // Another ensure: — pause NLR again
+                            nlrHomeMethod_ = nlrHome;
+                            nlrValue_ = nlrVal;
+                            if (!popFrame()) return;
+                            push(nlrVal);
+                            return;
+                        }
+                    }
+                    if (!popFrame()) return;
+                }
+                // At homeFrame: return FROM the home method
+                returnValue(nlrVal);
+                return;
+            }
+
+            // Home frame not in savedFrames_ (e.g., context materialization
+            // during ensure: execution). Re-set for the fd==0 context-based
+            // handler to pick up.
+            nlrHomeMethod_ = nlrHome;
+            nlrValue_ = nlrVal;
+        }
+
 #if PHARO_JIT_ENABLED
         // Try to re-enter JIT execution in the caller method.
         // IP is at the bytecode after the send that just returned.
@@ -3889,8 +3938,10 @@ void Interpreter::returnFromBlock() {
 
     // If homeFrame is valid and we have inline frames, unwind via inline frame stack
     if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
-        // Unwind frames from current down to homeFrame + 1, checking for ensure: at each level
-        while (frameDepth_ > homeFrame + 1) {
+        // Unwind frames from current down to homeFrame, checking for ensure: at each level.
+        // After the loop, fd == homeFrame and current == home method.
+        // returnValue then pops the home method's frame and pushes value on the caller's stack.
+        while (frameDepth_ > homeFrame) {
             // Check if the frame we're about to restore has primitive 198 (ensure:/ifCurtailed:).
             // If so, we must fire its termination block before continuing the NLR.
             if (frameDepth_ > 1) {
@@ -5193,14 +5244,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     }
     } // end if constexpr (ENABLE_DEBUG_LOGGING)
 
-    // NOTE: Previously had a createStartupContext() call here that created a FAKE
-    // context for the caller's method with all-nil temps. This caused the ensure: DNU
-    // on nil in doDrawCycleWith: because when a process switch materialized frames,
-    // this fake context (with nil args/temps) ended up in the sender chain. When restored
-    // via executeFromContext, temp[0] (aBlock) was nil.
-    // The activeContext_ should remain as-is; it's maintained by the normal
-    // materializeFrameStack/executeFromContext path.
-
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
 
@@ -6096,10 +6139,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Log first 200 DNU messages to debug startup issues
+    // Log first 20 DNU messages to debug startup issues
     {
         static int dnuLogCount = 0;
-        if (dnuLogCount++ < 200) {
+        if (dnuLogCount++ < 20) {
             std::string selName = "(unknown)";
             if (selector.isObject() && selector.rawBits() > 0x10000) {
                 ObjectHeader* sH = selector.asObjectPtr();
