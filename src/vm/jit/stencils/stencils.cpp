@@ -1422,3 +1422,301 @@ extern "C" void stencil_notIdentJumpTrue(JITState* s) {
 extern "C" void stencil_nop(JITState* s) {
     _HOLE_CONTINUE(s);
 }
+
+// =====================================================================
+// PRIMITIVE PROLOGUE STENCILS
+// =====================================================================
+//
+// Machine-code fast paths for hot primitive methods. These run as the
+// first stencil in a compiled method. If the type check passes, they
+// set returnValue + EXIT_RETURN and tail-call _HOLE_RT_RETURN (which
+// RETs to the caller via LR — exactly like return stencils). If the
+// type check fails, they fall through to _HOLE_CONTINUE (the bytecodes).
+//
+// With J2J direct calls, this means: caller BLR → prologue → RET.
+// Total ~12 cycles for the common case.
+//
+// Receiver = s->receiver, First arg = s->tempBase[0]
+// (pushFrameForJIT sets tempBase = framePointer + 1, where frame is
+//  [receiver, arg0, arg1, ...] so tempBase[0] = first arg)
+
+// SmallInteger overflow check constant
+// iOS Oop encoding: 3-bit tag, 61-bit value. Max SmallInteger = 2^60-1
+static constexpr int64_t SmallIntMax = (1LL << 60) - 1;
+static constexpr int64_t SmallIntMin = -(1LL << 60);
+
+static inline bool canBeSmallInt(int64_t v) {
+    return v >= SmallIntMin && v <= SmallIntMax;
+}
+
+// ----- Primitive 1: SmallInteger #+ -----
+extern "C" void stencil_primAdd(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        int64_t result = a + b;
+        if (canBeSmallInt(result)) {
+            s->returnValue = fromSmallInteger(result);
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 2: SmallInteger #- -----
+extern "C" void stencil_primSub(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        int64_t result = a - b;
+        if (canBeSmallInt(result)) {
+            s->returnValue = fromSmallInteger(result);
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 3: SmallInteger #< -----
+extern "C" void stencil_primLessThan(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        s->returnValue = (a < b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 4: SmallInteger #> -----
+extern "C" void stencil_primGreaterThan(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        s->returnValue = (a > b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 5: SmallInteger #<= -----
+extern "C" void stencil_primLessEqual(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        s->returnValue = (a <= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 6: SmallInteger #>= -----
+extern "C" void stencil_primGreaterEqual(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        s->returnValue = (a >= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 7: SmallInteger #= -----
+extern "C" void stencil_primEqual(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        s->returnValue = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 8: SmallInteger #~= -----
+extern "C" void stencil_primNotEqual(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        s->returnValue = (rcvr.bits != arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 9: SmallInteger #* -----
+extern "C" void stencil_primMul(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        // Use __int128 to detect overflow
+        __int128 result = (__int128)a * (__int128)b;
+        if (result >= SmallIntMin && result <= SmallIntMax) {
+            s->returnValue = fromSmallInteger((int64_t)result);
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 10: SmallInteger #/ (quotient, must divide evenly) -----
+extern "C" void stencil_primQuo(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        if (b != 0 && (a % b) == 0) {
+            int64_t result = a / b;
+            if (canBeSmallInt(result)) {
+                s->returnValue = fromSmallInteger(result);
+                s->exitReason = EXIT_RETURN;
+                _HOLE_RT_RETURN(s);
+                return;
+            }
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 11: SmallInteger #\\ (modulo) -----
+extern "C" void stencil_primMod(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        if (b != 0) {
+            int64_t result = a % b;
+            // Smalltalk mod: result has same sign as divisor
+            if (result != 0 && ((result ^ b) < 0)) result += b;
+            s->returnValue = fromSmallInteger(result);
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 12: SmallInteger #// (integer divide, truncate toward negative infinity) -----
+extern "C" void stencil_primDiv(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t a = asSmallInteger(rcvr);
+        int64_t b = asSmallInteger(arg);
+        if (b != 0) {
+            // Smalltalk //: truncate toward negative infinity
+            int64_t result = a / b;
+            if ((a % b != 0) && ((a ^ b) < 0)) result--;
+            if (canBeSmallInt(result)) {
+                s->returnValue = fromSmallInteger(result);
+                s->exitReason = EXIT_RETURN;
+                _HOLE_RT_RETURN(s);
+                return;
+            }
+        }
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 14: SmallInteger #bitAnd: -----
+extern "C" void stencil_primBitAnd(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        // Bit ops on tagged values: (a & b) preserves SmallInteger tag
+        s->returnValue.bits = rcvr.bits & arg.bits;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 15: SmallInteger #bitOr: -----
+extern "C" void stencil_primBitOr(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        s->returnValue.bits = rcvr.bits | arg.bits;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 17: SmallInteger #bitShift: -----
+extern "C" void stencil_primBitShift(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
+        int64_t value = asSmallInteger(rcvr);
+        int64_t shift = asSmallInteger(arg);
+        int64_t result;
+        if (shift >= 0) {
+            if (shift >= 63) goto fail;
+            result = value << shift;
+            // Check no bits lost
+            if ((result >> shift) != value || !canBeSmallInt(result)) goto fail;
+        } else {
+            if (shift <= -64) result = (value < 0) ? -1 : 0;
+            else result = value >> (-shift);
+        }
+        s->returnValue = fromSmallInteger(result);
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+fail:
+    _HOLE_CONTINUE(s);
+}
+
+// ----- Primitive 110: Object #== (identity) -----
+extern "C" void stencil_primIdentical(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop arg = s->tempBase[0];
+    s->returnValue = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+// ----- Primitive 111: Object #class -----
+extern "C" void stencil_primClass(JITState* s) {
+    // Class is looked up via ObjectMemory, which we can't access from stencils.
+    // Fall through to bytecodes.
+    _HOLE_CONTINUE(s);
+}

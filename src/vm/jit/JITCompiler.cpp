@@ -832,6 +832,30 @@ bool JITCompiler::patchStencilInstance(
     return true;
 }
 
+// Map primitive index to prologue stencil. Returns StencilID(-1) for unsupported.
+static uint16_t primitivePrologueStencil(int primIndex) {
+    switch (primIndex) {
+    case 1:   return static_cast<uint16_t>(StencilID::stencil_primAdd);
+    case 2:   return static_cast<uint16_t>(StencilID::stencil_primSub);
+    case 3:   return static_cast<uint16_t>(StencilID::stencil_primLessThan);
+    case 4:   return static_cast<uint16_t>(StencilID::stencil_primGreaterThan);
+    case 5:   return static_cast<uint16_t>(StencilID::stencil_primLessEqual);
+    case 6:   return static_cast<uint16_t>(StencilID::stencil_primGreaterEqual);
+    case 7:   return static_cast<uint16_t>(StencilID::stencil_primEqual);
+    case 8:   return static_cast<uint16_t>(StencilID::stencil_primNotEqual);
+    case 9:   return static_cast<uint16_t>(StencilID::stencil_primMul);
+    case 10:  return static_cast<uint16_t>(StencilID::stencil_primQuo);
+    case 11:  return static_cast<uint16_t>(StencilID::stencil_primMod);
+    case 12:  return static_cast<uint16_t>(StencilID::stencil_primDiv);
+    case 14:  return static_cast<uint16_t>(StencilID::stencil_primBitAnd);
+    case 15:  return static_cast<uint16_t>(StencilID::stencil_primBitOr);
+    case 17:  return static_cast<uint16_t>(StencilID::stencil_primBitShift);
+    case 110: return static_cast<uint16_t>(StencilID::stencil_primIdentical);
+    case 111: return static_cast<uint16_t>(StencilID::stencil_primClass);
+    default:  return static_cast<uint16_t>(-1);
+    }
+}
+
 // ===== MAIN COMPILATION =====
 
 JITMethod* JITCompiler::compile(Oop compiledMethod) {
@@ -884,6 +908,31 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     if (decoded.empty()) {
         compilationsFailed_++;
         return nullptr;
+    }
+
+    // Prepend primitive prologue stencil if method has a supported primitive.
+    // The prologue runs the fast path (type check + inline op); on failure
+    // it falls through via _HOLE_CONTINUE to the normal bytecodes.
+    bool hasPrimPrologue = false;
+    if ((headerBits >> 16) & 1) {  // hasPrimitive flag
+        // Extract primitive index from the CallPrimitive bytecode (248 lowByte highByte)
+        if (bcLen >= 3 && bytecodes[0] == 0xF8) {
+            int primIndex = bytecodes[1] | ((bytecodes[2] & 0x1F) << 8);
+            uint16_t prologueStencil = primitivePrologueStencil(primIndex);
+            if (prologueStencil != static_cast<uint16_t>(-1)) {
+                // Insert prologue as the first stencil (bcOffset -1 = synthetic)
+                DecodedBC prologue = {};
+                prologue.opcode = 0;       // synthetic
+                prologue.stencilIdx = prologueStencil;
+                prologue.operand = -1;
+                prologue.operand2 = -1;
+                prologue.branchTarget = -1;
+                prologue.bcOffset = 0;     // same offset as first BC
+                prologue.bcLength = 0;     // doesn't consume any bytecodes
+                decoded.insert(decoded.begin(), prologue);
+                hasPrimPrologue = true;
+            }
+        }
     }
 
     // Peephole: fuse comparison + conditional jump into superinstructions.
@@ -1068,6 +1117,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Extract arg/temp counts from header
     jitMethod->argCount = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
+    jitMethod->hasPrimPrologue = hasPrimPrologue;
 
     // Set up IC data pointers for send sites. The IC data lives at the end
     // of the allocation. Each send site gets 104 bytes initialized to zero

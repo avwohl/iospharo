@@ -117,6 +117,7 @@ struct JITMethod {
     bool        hasRecvFieldAccess; // Reads/writes receiver instance variables
     bool        hasRecvFieldWrite;  // Writes to receiver instance variables
     bool        hasLitVarWrite;     // Writes to literal variables (Associations)
+    bool        hasPrimPrologue;    // Has machine-code primitive fast path at entry
     uint8_t     maxRecvFieldIndex;  // Max receiver slot index accessed (for bounds checking)
 
     // --- Statistics ---
