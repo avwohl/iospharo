@@ -780,6 +780,11 @@ public:
     size_t jitJ2JFallbacks() const { return jitJ2JFallbacks_; }
     size_t jitJ2JActChains() const { return jitJ2JActChains_; }
     size_t jitJ2JActFalls() const { return jitJ2JActFalls_; }
+
+    /// J2J direct call: lightweight frame push/pop for GC root scanning.
+    /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
+    void pushFrameForJIT(jit::JITState* state);
+    void popFrameForJIT(jit::JITState* state);
 private:
 #endif
 
@@ -873,12 +878,6 @@ private:
     /// Pop the current stack frame. Returns false if this was the last frame
     /// (process completed) and the caller should NOT push a return value.
     bool popFrame();
-
-    /// J2J direct call: lightweight frame push/pop for GC root scanning.
-    /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
-    /// Reads cachedTarget (method), sendArgCount, ip/sp from JITState.
-    void pushFrameForJIT(jit::JITState* state);
-    void popFrameForJIT(jit::JITState* state);
 
     /// Get temporary variable
     Oop temporary(int index) const;
