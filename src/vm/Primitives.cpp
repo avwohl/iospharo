@@ -7194,9 +7194,21 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
 PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
     // Clear the method cache to force re-lookups
     // This is called after methods are modified or removed
+    static int flushCount = 0;
+    flushCount++;
+    if (flushCount <= 20) {
+        fprintf(stderr, "[FLUSH-%d] prim89 argCount=%d argCount_=%d sp=%p stackTop=0x%llx fd=%zu\n",
+                flushCount, argCount, argCount_,
+                (void*)stackPointer_, (unsigned long long)stackTop().rawBits(),
+                frameDepth_);
+    }
     flushMethodCache();
     flushJITCaches();
     primitiveSuccess(stackTop());  // Return receiver
+    if (flushCount <= 20) {
+        fprintf(stderr, "[FLUSH-%d] after success sp=%p stackTop=0x%llx\n",
+                flushCount, (void*)stackPointer_, (unsigned long long)stackTop().rawBits());
+    }
     return PrimitiveResult::Success;
 }
 
