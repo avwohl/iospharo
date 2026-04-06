@@ -1350,11 +1350,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         pi++;  // Skip the consumed jump
     }
 
-#ifdef __aarch64__
-    // SimStack: replace base stencils with register-cached variants where
-    // profitable (straight-line code between sends/branches).
-    applySimStack(decoded);
-#endif
+    // SimStack disabled: field-based caching (simTOS/simNOS in JITState) adds
+    // overhead without register caching benefit. Apple's Clang doesn't support
+    // -ffixed-x19/-ffixed-x20 for arm64-apple targets, so we can't use actual
+    // CPU registers for cross-stencil state. The flush stencils before every
+    // barrier (send, return, branch target) cost more than the sp manipulation
+    // they avoid. Measured: 7x regression in steps/cpu-second.
+    // Code retained for when register-based approach becomes feasible.
+    // #ifdef __aarch64__
+    //     applySimStack(decoded);
+    // #endif
 
     // First pass: compute total code size and build bytecode->code offset map
     // We also need a literal pool for GOT-style patching
