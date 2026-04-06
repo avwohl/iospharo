@@ -7546,6 +7546,16 @@ PrimitiveResult Interpreter::primitiveYield(int argCount) {
     }
     Oop priorityList = memory_.fetchPointer(priority - 1, processLists);
 
+    // Early exit: if no other processes at this priority, yield is a no-op.
+    // Matches Cog VM behavior — avoids unnecessary scheduler manipulation
+    // that wastes cycles in tight yield loops.
+    Oop firstInList = memory_.fetchPointer(LinkedListFirstLinkIndex, priorityList);
+    if (firstInList.isNil()) {
+        Oop receiver = stackValue(argCount);
+        primitiveSuccess(receiver);
+        return PrimitiveResult::Success;
+    }
+
     // CRITICAL: Complete the primitive's stack effect BEFORE saving context.
     // Pop receiver (+ args), push result. For yield, result is self (Processor).
     // This ensures the saved context has the correct post-primitive stack state,
