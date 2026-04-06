@@ -2,6 +2,19 @@
 
 2026-04-06
 
+## Fix cannotReturn: Dead Code Execution (Startup Stall)
+
+Fixed root cause of ~29M step startup stall. When returnFromMethod() at fd=0
+couldn't return (nil sender), it sent cannotReturn: which pushed a frame
+saving IP one past the return bytecode. When the handler returned, popFrame
+restored to that IP — landing in dead code after the method's return
+instruction. Garbage bytes were interpreted as sends with nil selectors,
+causing infinite DNU loops that stalled the startup.
+
+Fix: back up IP by 1 before sending cannotReturn: in all 4 return-path sites,
+so the return bytecode is retried if the handler returns. Pharo startup now
+completes to the Morphic world loop.
+
 ## Phase 3: SimStack Register Caching
 
 Added 53 SimStack stencil variants that cache TOS/NOS in JITState fields
