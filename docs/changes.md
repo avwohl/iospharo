@@ -1,5 +1,31 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-06
+
+## Phase 3: SimStack Register Caching
+
+Added 53 SimStack stencil variants that cache TOS/NOS in JITState fields
+(simTOS/simNOS) instead of the memory stack. Eliminates redundant LDR/STR
+pairs between consecutive push/pop/arithmetic stencils in straight-line code.
+
+Uses JITState field-based caching (offset 112/120 from x0) instead of ARM64
+callee-saved registers (x19/x20) because Clang's register save/restore
+around tail-call B instructions undoes cross-stencil state.
+
+Stencil variants: _E (empty→one), _1 (one→two), _2 (two→two with NOS spill).
+Flush stencils (flush1, flush2) write cached values to memory before barriers
+(sends, returns, branch targets, superinstructions).
+
+applySimStack() compiler pass runs after peephole optimization, tracks state
+machine (Empty/One/Two), inserts flush stencils at barriers. ARM64-only
+(guarded by #ifdef __aarch64__).
+
+## Register Missing FilePlugin Directory Primitives
+
+Registered primitiveDirectoryGetMacTypeAndCreator, primitiveGetHomeDirectory,
+primitiveGetTempDirectory as named FilePlugin primitives. These were missing,
+blocking SystemResolver / FileLocator resolution chain needed by benchmarks.
+
 2026-04-03
 
 ## Fix JIT Super Send Megacache Conflation
