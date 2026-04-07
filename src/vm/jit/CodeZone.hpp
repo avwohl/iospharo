@@ -247,7 +247,9 @@ public:
     // Returns the number of bytes freed.
     size_t evictLRU(size_t bytesNeeded,
                     void (*onEvict)(uint64_t methodOop, void* ctx) = nullptr,
-                    void* ctx = nullptr) {
+                    void* ctx = nullptr,
+                    void (*onPreEvict)(JITMethod* m, void* ctx2) = nullptr,
+                    void* ctx2 = nullptr) {
         size_t freed = 0;
         uint32_t threshold = epoch_ > 10 ? epoch_ - 10 : 0;
 
@@ -256,6 +258,7 @@ public:
         while (m && freed < bytesNeeded) {
             JITMethod* next = m->nextInZone;
             if (m->state == MethodState::Compiled && m->lastUsedEpoch < threshold) {
+                if (onPreEvict) onPreEvict(m, ctx2);
                 size_t sz = m->allocationSize();
                 uint64_t oop = freeMethod(m);
                 if (onEvict) onEvict(oop, ctx);
@@ -270,6 +273,7 @@ public:
             while (m && freed < bytesNeeded) {
                 JITMethod* next = m->nextInZone;
                 if (m->state == MethodState::Compiled) {
+                    if (onPreEvict) onPreEvict(m, ctx2);
                     size_t sz = m->allocationSize();
                     uint64_t oop = freeMethod(m);
                     if (onEvict) onEvict(oop, ctx);
@@ -349,6 +353,22 @@ public:
     }
 
     JITMethod* firstMethod() const { return firstMethod_; }
+
+    // Find JIT method containing the given PC address (for crash diagnostics)
+    JITMethod* findMethodByPC(uint64_t pc) const {
+        uint8_t* addr = reinterpret_cast<uint8_t*>(pc);
+        if (addr < zoneStart_ || addr >= zoneEnd_) return nullptr;
+        JITMethod* m = firstMethod_;
+        while (m) {
+            uint8_t* start = m->codeStart();
+            uint8_t* end = start + m->codeSize;
+            if (addr >= start && addr < end) return m;
+            m = m->nextInZone;
+        }
+        return nullptr;
+    }
+
+    uint8_t* zoneStart() const { return zoneStart_; }
 
     // ===== DIAGNOSTICS =====
 

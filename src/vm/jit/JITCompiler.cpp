@@ -1467,30 +1467,25 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // (ADRP+LDR relocations in stencils are not position-independent
         // across non-page-aligned moves).
 
-        // Collect evicted code ranges BEFORE eviction so we can invalidate
-        // only those J2J IC entries pointing to freed code.
+        // Collect evicted code ranges during eviction via pre-eviction callback,
+        // so we capture ALL evicted methods (both first-pass and second-pass).
         struct EvictedRange { uint64_t start; uint64_t end; };
         std::vector<EvictedRange> evictedRanges;
         evictedRanges.reserve(32);
-        {
-            uint32_t threshold = zone_.currentEpoch() > 10 ? zone_.currentEpoch() - 10 : 0;
-            JITMethod* scan = zone_.firstMethod();
-            while (scan) {
-                if (scan->state == MethodState::Compiled && scan->lastUsedEpoch < threshold) {
-                    uint64_t s = reinterpret_cast<uint64_t>(scan->codeStart());
-                    evictedRanges.push_back({s, s + scan->codeSize});
-                }
-                scan = scan->nextInZone;
-            }
-        }
 
         auto evictCallback = [](uint64_t methodOop, void* ctx) {
             auto* map = static_cast<MethodMap*>(ctx);
             map->remove(methodOop);
         };
+        auto preEvictCallback = [](JITMethod* m, void* ctx) {
+            auto* ranges = static_cast<std::vector<EvictedRange>*>(ctx);
+            uint64_t s = reinterpret_cast<uint64_t>(m->codeStart());
+            ranges->push_back({s, s + m->codeSize});
+        };
         // Evict at least 2x what we need (amortize eviction cost)
         size_t evictTarget = allocSize * 2;
-        size_t freed = zone_.evictLRU(evictTarget, evictCallback, &methodMap_);
+        size_t freed = zone_.evictLRU(evictTarget, evictCallback, &methodMap_,
+                                       preEvictCallback, &evictedRanges);
         if (freed > 0) {
             static int evictCount = 0;
             if (++evictCount <= 3 || (evictCount % 500 == 0)) {

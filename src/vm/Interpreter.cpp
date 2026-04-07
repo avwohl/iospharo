@@ -72,6 +72,9 @@ volatile int g_watchdogProcessPriority = 0;  // Current process priority (update
 
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
+// JIT code zone pointer for crash diagnostics — set by Interpreter when JIT initializes
+pharo::jit::CodeZone* g_jitCodeZone = nullptr;
+
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
@@ -9562,6 +9565,8 @@ void Interpreter::initializeJIT() {
         fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
         return;
     }
+    // Expose code zone for crash diagnostics
+    ::g_jitCodeZone = &jitRuntime_.codeZone();
 }
 
 uint32_t Interpreter::computeCurrentBCOffset() {

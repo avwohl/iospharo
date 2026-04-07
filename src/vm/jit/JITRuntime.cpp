@@ -236,9 +236,12 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                             }
                         }
                     }
-                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s)\n",
+                    uint64_t zoneOff = reinterpret_cast<uint64_t>(jm->codeStart())
+                                     - reinterpret_cast<uint64_t>(codeZone_.zoneStart());
+                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s) @0x%llx\n",
                             sel.c_str(), cls.c_str(), countMap_[i].count, jm->codeSize,
-                            jm->hasPrimPrologue ? ", prim" : "");
+                            jm->hasPrimPrologue ? ", prim" : "",
+                            (unsigned long long)zoneOff);
                 }
             }
             return;

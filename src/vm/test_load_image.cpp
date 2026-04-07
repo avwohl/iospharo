@@ -49,6 +49,11 @@ static void activateMacOSApp() {
 // SIGSEGV recovery support - defined in Interpreter.cpp
 extern sigjmp_buf g_sigsegvRecovery;
 extern volatile sig_atomic_t g_sigsegvRecoveryEnabled;
+// JIT code zone for crash diagnostics - set by Interpreter
+#include "jit/CodeZone.hpp"
+#include "jit/JITMethod.hpp"
+extern pharo::jit::CodeZone* g_jitCodeZone;
+using pharo::jit::JITMethod;
 
 // Watchdog step counter - defined in Interpreter.cpp
 extern std::atomic<long long> g_watchdogSteps;
@@ -486,6 +491,28 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
             fprintf(stderr, "%s0x%08x ", i == 0 ? ">>>" : "", pcInsn[i]);
         }
         fprintf(stderr, "\n");
+        // Look up JIT method containing the crash PC
+        if (g_jitCodeZone) {
+            // Can't call virtual methods from signal handler, but findMethodByPC
+            // is a simple pointer scan — safe to call.
+            auto* m = g_jitCodeZone->findMethodByPC(pc);
+            if (m) {
+                fprintf(stderr, "[CRASH] JIT method: oop=0x%llx codeStart=%p codeSize=%u "
+                        "numBC=%u numIC=%u offsetInCode=%lld\n",
+                        (unsigned long long)m->compiledMethodOop,
+                        (void*)m->codeStart(), m->codeSize,
+                        m->numBytecodes, m->numICEntries,
+                        (long long)(pc - reinterpret_cast<uint64_t>(m->codeStart())));
+            } else {
+                fprintf(stderr, "[CRASH] PC not in any active JIT method (evicted?)\n");
+            }
+            auto* lrm = g_jitCodeZone->findMethodByPC(lr);
+            if (lrm && lrm != m) {
+                fprintf(stderr, "[CRASH] LR JIT method: oop=0x%llx codeStart=%p codeSize=%u\n",
+                        (unsigned long long)lrm->compiledMethodOop,
+                        (void*)lrm->codeStart(), lrm->codeSize);
+            }
+        }
     }
 #else
     (void)ctx;
