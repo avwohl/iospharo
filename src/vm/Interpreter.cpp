@@ -73,7 +73,11 @@ volatile int g_watchdogProcessPriority = 0;  // Current process priority (update
 volatile sig_atomic_t g_sigsegvRecoveryEnabled = 0;
 
 // JIT code zone pointer for crash diagnostics — set by Interpreter when JIT initializes
+#if PHARO_JIT_ENABLED
 pharo::jit::CodeZone* g_jitCodeZone = nullptr;
+#else
+void* g_jitCodeZone = nullptr;
+#endif
 
 namespace pharo {
 
@@ -298,6 +302,27 @@ bool Interpreter::initialize() {
                 }
             }
         }
+        // Dump the receiver (SnapshotOperation) slots at load time
+        Oop resumeReceiver = memory_.fetchPointer(5, context);  // slot 5 = receiver
+        if (resumeReceiver.isObject() && !resumeReceiver.isNil()) {
+            Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+            Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
+            ObjectHeader* rHdr = resumeReceiver.asObjectPtr();
+            int slots = static_cast<int>(rHdr->slotCount());
+            fprintf(stderr, "[RESUME-RECV] receiver=0x%llx class=%s slots=%d\n",
+                    (unsigned long long)resumeReceiver.rawBits(),
+                    memory_.classNameOf(resumeReceiver).c_str(), slots);
+            for (int i = 0; i < slots && i < 10; i++) {
+                Oop val = memory_.fetchPointer(i, resumeReceiver);
+                const char* desc = "?";
+                if (val.rawBits() == trueObj.rawBits()) desc = "true";
+                else if (val.rawBits() == falseObj.rawBits()) desc = "false";
+                else if (val.isNil()) desc = "nil";
+                else if (val.isSmallInteger()) desc = "int";
+                else desc = "obj";
+                fprintf(stderr, "[RESUME-RECV]   [%d]: %s (0x%llx)\n", i, desc, (unsigned long long)val.rawBits());
+            }
+        }
     } else {
         fprintf(stderr, "[RESUME] Not in snapshot code — resuming as-is\n");
     }
@@ -322,11 +347,22 @@ bool Interpreter::initialize() {
     // nextWakeupTime_=0 and timerSemaphore_=nil, so checkTimerSemaphore()
     // will never fire. Signal the semaphore once to wake the scheduler,
     // which will then re-arm the timer and maintain itself.
+    //
+    // In headless mode, defer this signal. The saved MorphicRenderLoop (pri-80)
+    // will wake up from its Delay when the timer fires, monopolizing the CPU
+    // and preventing the CommandLineHandler process (pri-40) from ever running.
+    // By deferring the timer signal, the startup handlers complete, deferred
+    // startup actions fire (including BasicCommandLineHandler), and THEN we
+    // start the timer to support Delays in test code.
     {
         Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
         if (timerSema.isObject() && !timerSema.isNil() && timerSema.rawBits() > 0x10000) {
             lastKnownTimerSemaphore_ = timerSema;
-            synchronousSignal(timerSema);
+            if (!isHeadless()) {
+                synchronousSignal(timerSema);
+            } else {
+                fprintf(stderr, "[STARTUP] Headless mode: deferring timer semaphore signal\n");
+            }
         }
     }
 
@@ -1622,6 +1658,20 @@ void Interpreter::checkTimerSemaphore() {
 
 void Interpreter::synchronousSignal(Oop semaphore) {
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+
+    static int signalLog = 0;
+    if (signalLog < 50) {
+        signalLog++;
+        Oop activeProcess = getActiveProcess();
+        int activePri = safeProcessPriority(activeProcess);
+        bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
+        if (hasWaiter) {
+            int waiterPri = safeProcessPriority(firstLink);
+            fprintf(stderr, "[SEM-SIGNAL-%d] sem=0x%llx active-pri=%d waiter=0x%llx waiter-pri=%d\n",
+                    signalLog, (unsigned long long)semaphore.rawBits(), activePri,
+                    (unsigned long long)firstLink.rawBits(), waiterPri);
+        }
+    }
 
     if (firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits()) {
         // No processes waiting - increment excessSignals
@@ -3024,6 +3074,26 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::pushReceiverVariable(int index) {
     Oop result = memory_.fetchPointerUnchecked(index, receiver_);
+    // Trace ReadStream instVar reads
+    {
+        static int rsReadCount = 0;
+        if (rsReadCount < 50 && index <= 2) {
+            std::string rcls = memory_.classNameOf(receiver_);
+            if (rcls.find("ReadStream") != std::string::npos) {
+                rsReadCount++;
+                if (result.isSmallInteger()) {
+                    fprintf(stderr, "[RS-READ] %s slot[%d] = %lld (method=%s)\n",
+                            rcls.c_str(), index, result.asSmallInteger(),
+                            memory_.selectorOf(method_).c_str());
+                } else {
+                    fprintf(stderr, "[RS-READ] %s slot[%d] = 0x%llx non-int (method=%s class=%s)\n",
+                            rcls.c_str(), index, (unsigned long long)result.rawBits(),
+                            memory_.selectorOf(method_).c_str(),
+                            memory_.classNameOf(result).c_str());
+                }
+            }
+        }
+    }
     push(result);
 }
 
@@ -4367,6 +4437,13 @@ void Interpreter::arithmeticSend(int which) {
             switch (which) {
                 case 0: {  // +
                     int64_t result = a + b;
+                    // Temp trace: unconditional +1 logging
+                    static int addDbg = 0;
+                    if (addDbg == 0) {
+                        fprintf(stderr, "[ADD-FIRST] %lld + %lld = %lld\n",
+                                (long long)a, (long long)b, (long long)result);
+                        addDbg = 1;
+                    }
                     if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
                         popN(2);
                         push(Oop::fromSmallInteger(result));
@@ -4697,6 +4774,31 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     }
 
     Oop rcvrClass = memory_.classOf(rcvr);
+
+    // Trace matches: sends
+    {
+        static int matchTraceCount = 0;
+        if (matchTraceCount < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() == 8) {
+                if (memcmp(selHdr->bytes(), "matches:", 8) == 0) {
+                    matchTraceCount++;
+                    std::string rcvrCls = memory_.classNameOf(rcvr);
+                    std::string argCls = memory_.classNameOf(stackValue(0));
+                    std::string argStr = "";
+                    if (stackValue(0).isObject() && stackValue(0).rawBits() > 0x10000) {
+                        ObjectHeader* ah = stackValue(0).asObjectPtr();
+                        if (ah->isBytesObject() && ah->byteSize() <= 40) {
+                            argStr = std::string((char*)ah->bytes(), ah->byteSize());
+                        }
+                    }
+                    fprintf(stderr, "[MATCH-SEND] #matches: rcvr=%s arg='%s'(%s) method=%s\n",
+                            rcvrCls.c_str(), argStr.c_str(), argCls.c_str(),
+                            memory_.selectorOf(method_).c_str());
+                }
+            }
+        }
+    }
 
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
@@ -5901,6 +6003,35 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     static size_t pushCount = 0;
     pushCount++;
 
+    // Trace all J2J calls where caller or target involves peek/atEnd/next on ReadStream
+    {
+        static int peekTraceCount = 0;
+        if (peekTraceCount < 100) {
+            Oop targetM = Oop::fromRawBits(state->cachedTarget.rawBits());
+            std::string targetSel = memory_.selectorOf(targetM);
+            std::string callerSel = memory_.selectorOf(method_);
+            std::string rcls = memory_.classNameOf(state->receiver);
+            bool relevant = (callerSel == "peek" || targetSel == "peek" ||
+                           targetSel == "atEnd" || targetSel == "next") &&
+                          rcls.find("ReadStream") != std::string::npos;
+            if (relevant) {
+                peekTraceCount++;
+                Oop rcv = state->receiver;
+                int64_t pos = -999, rl = -999;
+                if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+                    ObjectHeader* rh = rcv.asObjectPtr();
+                    if (rh->slotCount() >= 3) {
+                        pos = rh->slotAt(1).isSmallInteger() ? rh->slotAt(1).asSmallInteger() : -999;
+                        rl = rh->slotAt(2).isSmallInteger() ? rh->slotAt(2).asSmallInteger() : -999;
+                    }
+                }
+                fprintf(stderr, "[J2J] #%d: %s→%s rcv=%s pos=%lld rl=%lld\n",
+                        peekTraceCount, callerSel.c_str(), targetSel.c_str(),
+                        rcls.c_str(), (long long)pos, (long long)rl);
+            }
+        }
+    }
+
     Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
     int nArgs = state->sendArgCount;
 
@@ -6136,6 +6267,55 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
         return;
     }
 
+    // Temporary debug: trace ALL writes to ANY SnapshotOperation
+    if (receiver_.isObject() && !receiver_.isNil()) {
+        static int snapopCount = 0;
+        std::string clsName = memory_.classNameOf(receiver_);
+        if (clsName == "SnapshotOperation" && snapopCount < 50) {
+            snapopCount++;
+            Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
+            Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
+            const char* valDesc = "?";
+            if (value.rawBits() == trueObj.rawBits()) valDesc = "true";
+            else if (value.rawBits() == falseObj.rawBits()) valDesc = "false";
+            else if (value.isNil()) valDesc = "nil";
+            else valDesc = "obj";
+            fprintf(stderr, "[SNAPOP-%d] 0x%llx slot[%zu] := %s in method=%s\n",
+                    snapopCount, (unsigned long long)receiver_.rawBits(),
+                    index, valDesc, memory_.selectorOf(method_).c_str());
+        }
+    }
+    // Trace ReadStream instVar writes (position = index 1) — delayed activation
+    {
+        static int rsTraceCount = 0;
+        static bool traceActive = false;
+        // Activate after ~180M bytecodes (near the regex matching phase)
+        if (!traceActive && g_stepNum > 100000000ULL) {
+            traceActive = true;
+            fprintf(stderr, "[RS-TRACE] Activated at step %llu\n", g_stepNum);
+        }
+        if (traceActive && rsTraceCount < 200 && index <= 2 && value.isSmallInteger()) {
+            std::string rcls = memory_.classNameOf(receiver_);
+            if (rcls.find("ReadStream") != std::string::npos) {
+                rsTraceCount++;
+                // Also get the collection string if it's small
+                std::string collStr = "";
+                if (index == 1) {  // position write
+                    Oop coll = memory_.fetchPointerUnchecked(0, receiver_);
+                    if (coll.isObject() && coll.rawBits() > 0x10000) {
+                        ObjectHeader* ch = coll.asObjectPtr();
+                        if (ch->isBytesObject() && ch->byteSize() <= 30) {
+                            collStr = std::string((char*)ch->bytes(), ch->byteSize());
+                        }
+                    }
+                }
+                fprintf(stderr, "[RS-STORE] slot[%zu] := %lld (method=%s coll='%s')\n",
+                        index, value.asSmallInteger(),
+                        memory_.selectorOf(method_).c_str(),
+                        collStr.c_str());
+            }
+        }
+    }
     memory_.storePointerUnchecked(index, receiver_, value);
 }
 
@@ -7446,6 +7626,17 @@ void Interpreter::transferTo(Oop newProcess) {
 
     if (oldProcess.rawBits() == newProcess.rawBits()) {
         return;  // Already running this process
+    }
+
+    static int xferLog = 0;
+    if (xferLog < 50) {
+        xferLog++;
+        int oldPri = safeProcessPriority(oldProcess);
+        int newPri = safeProcessPriority(newProcess);
+        fprintf(stderr, "[XFER-%d] old=0x%llx pri=%d -> new=0x%llx pri=%d\n",
+                xferLog,
+                (unsigned long long)oldProcess.rawBits(), oldPri,
+                (unsigned long long)newProcess.rawBits(), newPri);
     }
 
     // Validate newProcess
@@ -9280,6 +9471,15 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    // Temporary debug: count prim 63 calls
+    static int prim63count = 0;
+    if (primitiveIndex == 63) {
+        prim63count++;
+        if (prim63count <= 5 || (prim63count % 10000 == 0)) {
+            fprintf(stderr, "[EXEC-P63] call #%d argCount=%d\n", prim63count, argCount);
+        }
+    }
+
     // Named primitives (index >= 32768) are dispatched via registerNamedPrimitive()
     // during initializePrimitiveTable(). If we see one here, it means it wasn't
     // registered — fail so the method body executes as fallback.

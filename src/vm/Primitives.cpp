@@ -2741,6 +2741,28 @@ PrimitiveResult Interpreter::primitiveNext(int argCount) {
     int64_t position = positionOop.asSmallInteger();
     int64_t limit = limitOop.asSmallInteger();
 
+    // Temporary debug: log ALL stream reads on short strings
+    static int streamDbgCount = 0;
+    if (streamDbgCount < 40 && array.isObject()) {
+        ObjectHeader* ah = array.asObjectPtr();
+        ObjectFormat af = ah->format();
+        if (af >= ObjectFormat::Indexable8 && af <= ObjectFormat::Indexable8_7) {
+            size_t bs = memory_.byteSizeOf(array);
+            if (bs > 0 && bs <= 30) {
+                streamDbgCount++;
+                std::string content;
+                for (size_t i = 0; i < bs && i < 20; i++) {
+                    char c = static_cast<char>(memory_.fetchByte(i, array));
+                    content += (c >= 32 && c < 127) ? c : '.';
+                }
+                uint8_t byteAtPos = (static_cast<size_t>(position) < bs) ? memory_.fetchByte(position, array) : '?';
+                fprintf(stderr, "[P65] '%s' pos=%lld lim=%lld byte=$%c(0x%02x)\n",
+                        content.c_str(), (long long)position, (long long)limit,
+                        (byteAtPos >= 32 && byteAtPos < 127) ? byteAtPos : '.', byteAtPos);
+            }
+        }
+    }
+
     // Check if at end
     if (position >= limit) {
         return PrimitiveResult::Failure;  // At end, let Smalltalk handle it
@@ -3546,6 +3568,55 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // Smalltalk quitPrimitive / Smalltalk exit: exitCode
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
+
+    // Temporary debug: print stack trace when image exits
+    fprintf(stderr, "[QUIT] primitiveQuit called, argCount=%d\n", argCount);
+    if (argCount >= 1) {
+        Oop exitCode = stackTop();
+        if (exitCode.isSmallInteger()) {
+            fprintf(stderr, "[QUIT] exit code = %lld\n", (long long)exitCode.asSmallInteger());
+        }
+    }
+    // Print current method and saved frames
+    fprintf(stderr, "[QUIT] active method: %s\n", memory_.selectorOf(method_).c_str());
+    fprintf(stderr, "[QUIT] receiver class: %s (0x%llx)\n", memory_.classNameOf(receiver_).c_str(),
+            (unsigned long long)receiver_.rawBits());
+    for (int i = frameDepth_ - 1; i >= 0 && i >= frameDepth_ - 20; i--) {
+        fprintf(stderr, "[QUIT] frame[%d]: %s\n", i, memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
+    }
+    // Dump true/false Oop values for verification
+    fprintf(stderr, "[QUIT] true=0x%llx false=0x%llx nil=0x%llx\n",
+            (unsigned long long)memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits(),
+            (unsigned long long)memory_.specialObject(SpecialObjectIndex::FalseObject).rawBits(),
+            (unsigned long long)memory_.specialObject(SpecialObjectIndex::NilObject).rawBits());
+    // Dump receiver's instance variables (useful for SnapshotOperation debugging)
+    if (receiver_.isObject() && !receiver_.isNil()) {
+        ObjectHeader* hdr = receiver_.asObjectPtr();
+        int slots = static_cast<int>(hdr->slotCount());
+        if (slots > 0 && slots <= 20) {
+            fprintf(stderr, "[QUIT] receiver slots (%d):\n", slots);
+            for (int i = 0; i < slots; i++) {
+                Oop val = memory_.fetchPointer(i, receiver_);
+                if (val.isSmallInteger()) {
+                    fprintf(stderr, "[QUIT]   [%d]: SmallInt %lld\n", i, (long long)val.asSmallInteger());
+                } else if (val == memory_.specialObject(SpecialObjectIndex::TrueObject)) {
+                    fprintf(stderr, "[QUIT]   [%d]: true\n", i);
+                } else if (val == memory_.specialObject(SpecialObjectIndex::FalseObject)) {
+                    fprintf(stderr, "[QUIT]   [%d]: false\n", i);
+                } else if (val.isNil()) {
+                    fprintf(stderr, "[QUIT]   [%d]: nil\n", i);
+                } else if (val.isObject()) {
+                    fprintf(stderr, "[QUIT]   [%d]: %s (0x%llx)\n", i, memory_.classNameOf(val).c_str(),
+                            (unsigned long long)val.rawBits());
+                } else {
+                    fprintf(stderr, "[QUIT]   [%d]: raw=0x%llx\n", i, (unsigned long long)val.rawBits());
+                }
+                // Always print raw for verification
+                fprintf(stderr, "[QUIT]        raw=0x%llx\n", (unsigned long long)val.rawBits());
+            }
+        }
+    }
+
     running_ = false;
     return PrimitiveResult::Success;
 }
@@ -4510,6 +4581,24 @@ PrimitiveResult Interpreter::primitiveStringAt(int argCount) {
     ObjectHeader* header = rcvr.asObjectPtr();
     size_t arrayIndex = static_cast<size_t>(idx - 1);
     ObjectFormat format = header->format();
+
+    // Temporary debug: trace primitiveStringAt for short strings
+    static int strAtDbg = 0;
+    if (strAtDbg < 30 && format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
+        size_t bs = header->byteSize();
+        if (bs > 0 && bs <= 30) {
+            strAtDbg++;
+            std::string content;
+            for (size_t i = 0; i < bs && i < 20; i++) {
+                char c = static_cast<char>(header->byteAt(i));
+                content += (c >= 32 && c < 127) ? c : '.';
+            }
+            uint8_t result = (arrayIndex < bs) ? header->byteAt(arrayIndex) : '?';
+            fprintf(stderr, "[P63] idx=%lld arrIdx=%zu byte=0x%02x($%c) str='%s'(%zu)\n",
+                    (long long)idx, arrayIndex, result, (result >= 32 && result < 127) ? result : '.',
+                    content.c_str(), bs);
+        }
+    }
 
     // ByteString: format 16-23 (Indexable8 through Indexable8_7)
     if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
@@ -8642,6 +8731,16 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
+
+    // Temporary debug: log attribute queries for indices 2-10 (image args)
+    static int attrLogCount = 0;
+    if (index >= 2 && index <= 10 && attrLogCount < 30) {
+        attrLogCount++;
+        int argIdx = static_cast<int>(index) - 2;
+        const char* val = (argIdx < static_cast<int>(imageArguments_.size())) ? imageArguments_[argIdx].c_str() : "(nil)";
+        fprintf(stderr, "[ATTR] getSystemAttribute:%lld → %s (caller=%s)\n",
+                (long long)index, val, memory_.selectorOf(method_).c_str());
+    }
 
     // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
 

@@ -246,6 +246,10 @@ public:
     /// Index -1 returns vmParameters_[0], index -2 returns vmParameters_[1], etc.
     void setVMParameters(const std::vector<std::string>& params) { vmParameters_ = params; }
     const std::vector<std::string>& vmParameters() const { return vmParameters_; }
+    bool isHeadless() const {
+        for (const auto& p : vmParameters_) { if (p == "--headless") return true; }
+        return false;
+    }
 
     /// Set a callback for relinquishProcessor to call instead of usleep.
     /// This allows the platform to process its native run loop (e.g., CFRunLoop)

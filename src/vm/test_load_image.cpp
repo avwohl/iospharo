@@ -50,10 +50,14 @@ static void activateMacOSApp() {
 extern sigjmp_buf g_sigsegvRecovery;
 extern volatile sig_atomic_t g_sigsegvRecoveryEnabled;
 // JIT code zone for crash diagnostics - set by Interpreter
+#if PHARO_JIT_ENABLED
 #include "jit/CodeZone.hpp"
 #include "jit/JITMethod.hpp"
 extern pharo::jit::CodeZone* g_jitCodeZone;
 using pharo::jit::JITMethod;
+#else
+extern void* g_jitCodeZone;
+#endif
 
 // Watchdog step counter - defined in Interpreter.cpp
 extern std::atomic<long long> g_watchdogSteps;
@@ -491,10 +495,9 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
             fprintf(stderr, "%s0x%08x ", i == 0 ? ">>>" : "", pcInsn[i]);
         }
         fprintf(stderr, "\n");
+#if PHARO_JIT_ENABLED
         // Look up JIT method containing the crash PC
         if (g_jitCodeZone) {
-            // Can't call virtual methods from signal handler, but findMethodByPC
-            // is a simple pointer scan — safe to call.
             auto* m = g_jitCodeZone->findMethodByPC(pc);
             if (m) {
                 fprintf(stderr, "[CRASH] JIT method: oop=0x%llx codeStart=%p codeSize=%u "
@@ -513,6 +516,7 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                         (void*)lrm->codeStart(), lrm->codeSize);
             }
         }
+#endif
     }
 #else
     (void)ctx;
@@ -667,60 +671,56 @@ int main(int argc, char* argv[]) {
         // All session handlers run normally — no patching or deferral.
         // If a handler fails, Pharo's SessionManager catches the error and continues.
 
-        // Create Display Form if it doesn't exist (image may be headless)
-        std::cout << "\n=== Creating Display ===" << std::endl;
-        interpreter.ensureDisplayForm(1024, 768, 32);
+        // Create Display Form only in interactive (non-test) mode.
+        // In test/headless mode, creating a Display triggers MorphicUIManager to
+        // spawn the MorphicRenderLoop at priority 80, which monopolizes the CPU
+        // and prevents lower-priority processes (like CommandLineHandler at pri 40)
+        // from ever running.
+        if (!testMode) {
+            std::cout << "\n=== Creating Display ===" << std::endl;
+            interpreter.ensureDisplayForm(1024, 768, 32);
+        } else {
+            std::cout << "\n=== Headless test mode — skipping Display creation ===" << std::endl;
+        }
 
-        // Verify Display was created
-        Oop display = memory.findGlobal("Display");
-        std::cout << "Display after ensureDisplayForm: "
-                  << (display.isNil() ? "NOT FOUND" : "created!") << std::endl;
+        if (!testMode) {
+            // Verify Display was created
+            Oop display = memory.findGlobal("Display");
+            std::cout << "Display after ensureDisplayForm: "
+                      << (display.isNil() ? "NOT FOUND" : "created!") << std::endl;
 
-        // Direct BitBlt test - try to fill Display with a color
-        if (!display.isNil() && display.isObject()) {
-            std::cout << "\n=== Direct BitBlt Test ===" << std::endl;
-            // Get Display's bits (Form layout: bits, width, height, depth)
-            Oop bits = memory.fetchPointer(0, display);
-            Oop width = memory.fetchPointer(1, display);
-            Oop height = memory.fetchPointer(2, display);
-            Oop depth = memory.fetchPointer(3, display);
-            std::cout << "Display bits: " << (bits.isObject() ? "object" : bits.isSmallInteger() ? "int" : "other")
-                      << " width: " << (width.isSmallInteger() ? width.asSmallInteger() : -1)
-                      << " height: " << (height.isSmallInteger() ? height.asSmallInteger() : -1)
-                      << " depth: " << (depth.isSmallInteger() ? depth.asSmallInteger() : -1) << std::endl;
-            // Debug: show raw slot values
-            std::cout << "  Raw slots: bits=0x" << std::hex << bits.rawBits()
-                      << " width=0x" << width.rawBits()
-                      << " height=0x" << height.rawBits()
-                      << " depth=0x" << depth.rawBits() << std::dec << std::endl;
-            std::cout << "  Slot types: bits=" << (bits.isObject() ? "obj" : bits.isSmallInteger() ? "smi" : "other")
-                      << " width=" << (width.isObject() ? "obj" : width.isSmallInteger() ? "smi" : "other")
-                      << " height=" << (height.isObject() ? "obj" : height.isSmallInteger() ? "smi" : "other")
-                      << " depth=" << (depth.isObject() ? "obj" : depth.isSmallInteger() ? "smi" : "other") << std::endl;
+            // Direct BitBlt test - try to fill Display with a color
+            if (!display.isNil() && display.isObject()) {
+                std::cout << "\n=== Direct BitBlt Test ===" << std::endl;
+                Oop bits = memory.fetchPointer(0, display);
+                Oop width = memory.fetchPointer(1, display);
+                Oop height = memory.fetchPointer(2, display);
+                Oop depth = memory.fetchPointer(3, display);
+                std::cout << "Display bits: " << (bits.isObject() ? "object" : bits.isSmallInteger() ? "int" : "other")
+                          << " width: " << (width.isSmallInteger() ? width.asSmallInteger() : -1)
+                          << " height: " << (height.isSmallInteger() ? height.asSmallInteger() : -1)
+                          << " depth: " << (depth.isSmallInteger() ? depth.asSmallInteger() : -1) << std::endl;
 
-            // If bits is a Bitmap object, fill the entire display with a gradient
-            if (bits.isObject()) {
-                ObjectHeader* bitsHdr = bits.asObjectPtr();
-                std::cout << "Bitmap format: " << static_cast<int>(bitsHdr->format())
-                          << " byteSize: " << bitsHdr->byteSize() << std::endl;
-                // Format 9 is 64-bit indexable, 10 is 32-bit indexable
-                if (bitsHdr->format() == pharo::ObjectFormat::Indexable32 ||
-                    bitsHdr->format() == pharo::ObjectFormat::Indexable64) {
-                    size_t byteCount = bitsHdr->byteSize();
-                    size_t pixels = byteCount / 4;  // 4 bytes per pixel for 32-bit depth
-                    std::cout << "Filling display with gradient (" << pixels << " pixels)..." << std::endl;
-                    uint32_t* pixelData = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
-                    // Create a gradient to prove full-screen rendering works
-                    for (size_t i = 0; i < pixels; i++) {
-                        int x = i % 1024;
-                        int y = i / 1024;
-                        // Simple gradient: red increases with x, green with y
-                        uint8_t r = static_cast<uint8_t>((x * 255) / 1024);
-                        uint8_t g = static_cast<uint8_t>((y * 255) / 768);
-                        uint8_t b = 128;
-                        pixelData[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                if (bits.isObject()) {
+                    ObjectHeader* bitsHdr = bits.asObjectPtr();
+                    std::cout << "Bitmap format: " << static_cast<int>(bitsHdr->format())
+                              << " byteSize: " << bitsHdr->byteSize() << std::endl;
+                    if (bitsHdr->format() == pharo::ObjectFormat::Indexable32 ||
+                        bitsHdr->format() == pharo::ObjectFormat::Indexable64) {
+                        size_t byteCount = bitsHdr->byteSize();
+                        size_t pixels = byteCount / 4;
+                        std::cout << "Filling display with gradient (" << pixels << " pixels)..." << std::endl;
+                        uint32_t* pixelData = reinterpret_cast<uint32_t*>(bitsHdr->bytes());
+                        for (size_t i = 0; i < pixels; i++) {
+                            int x = i % 1024;
+                            int y = i / 1024;
+                            uint8_t r = static_cast<uint8_t>((x * 255) / 1024);
+                            uint8_t g = static_cast<uint8_t>((y * 255) / 768);
+                            uint8_t b = 128;
+                            pixelData[i] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                        }
+                        std::cout << "Wrote gradient to display bitmap" << std::endl;
                     }
-                    std::cout << "Wrote gradient to display bitmap" << std::endl;
                 }
             }
         }
@@ -761,9 +761,12 @@ int main(int argc, char* argv[]) {
         auto idleStartTime = std::chrono::steady_clock::now();
         bool clickInjected = false;
 
-        // Start heartbeat immediately (needed for Delay scheduling).
-        // interpret() handles all periodic checks internally.
-        if (!heartbeatStarted) {
+        // In test mode, delay heartbeat start to let startup handlers
+        // and deferred actions (including CommandLineHandler) complete first.
+        // The saved MorphicRenderLoop at pri-80 would otherwise monopolize
+        // the CPU, preventing the CommandLineHandler process from running.
+        // In interactive mode, start immediately.
+        if (!testMode && !heartbeatStarted) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }
@@ -797,14 +800,16 @@ int main(int argc, char* argv[]) {
                     clickInjected = true;
                 }
 
-                // Test mode: trigger SUnitRunner>>runAllTests after 10 seconds
-                // of boot time. Uses an atomic flag checked by the interpreter's
-                // main loop — thread-safe, no Smalltalk semaphore needed.
-                static bool testTriggered = false;
-                if (testMode && !testTriggered && elapsed >= 10) {
-                    testTriggered = true;
-                    std::cout << "[TEST] Triggering SUnitRunner>>runAllTests" << std::endl;
-                    interpreter.triggerTestRunner();
+                // Test mode: heartbeat deferred indefinitely.
+                // The saved MorphicRenderLoop (pri-80) wakes from Delay
+                // when the timer fires, monopolizing CPU and starving the
+                // CommandLineHandler (pri-40). Without heartbeat, no timer
+                // signals fire, so startup handlers and CLI processing
+                // run without preemption.
+                // Heartbeat will be started AFTER CLI handler completes
+                // (once we detect the results file).
+                if (testMode && !heartbeatStarted) {
+                    // Don't start heartbeat yet — let CLI handler finish
                 }
 
                 // Stall detection: if steps haven't advanced in 300s
