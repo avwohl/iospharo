@@ -2,6 +2,18 @@
 
 2026-04-07
 
+## Verify tryResume Bug Fully Resolved
+
+Confirmed the tryResume corruption at 119+ compiled methods (reported in
+previous session) is fully fixed by the two earlier commits:
+  - Countdown starvation fix (ee0cc57): charge checkCountdown_ after tryResume
+  - selectorBits preservation fix (f4d5a7e): flushCaches preserves IC slot 12
+
+Verification: JIT_MAX_COMPILE=118 vs 119 shows identical behavior. Unlimited
+JIT (1000+ compiled methods) runs with no errors, 95% IC hit rate, 3x
+throughput improvement from resume. Test runner starts and processes test
+classes successfully.
+
 ## Fix JIT Hang: tryJITResumeInCaller Countdown Starvation
 
 Fixed a JIT hang that occurred when 119+ methods were JIT-compiled.

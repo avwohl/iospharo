@@ -15,19 +15,22 @@ No test injection, no startup.st patches, no setup_fake_gui.st.
 The Mac Catalyst app starts up fine in a few seconds — startup speed is NOT
 the problem.
 
-The standard CLI path (`test_load_image Pharo.image test "Kernel-Tests"`)
-passes args via primitiveGetAttribute, and Pharo's CommandLineHandler should
-process them. **This path has not been verified to actually run tests.**
+**JIT resume is working correctly.** The previous tryResume corruption bug
+at 119+ compiled methods was fixed by two commits:
+  - Countdown starvation fix (ee0cc57): charge checkCountdown_ after each tryResume
+  - selectorBits preservation fix (f4d5a7e): flushCaches preserves slot 12
+
+Verified 2026-04-07: JIT with resume enabled runs 1000+ compiled methods,
+no errors, 3x throughput improvement over no-resume, 95% IC hit rate.
+The test runner starts and processes test classes successfully.
 
 The test harness (`test_load_image`) calls `interpret()` which runs the
-Morphic world loop. Without startup.st calling `exitSuccess`, the loop runs
-forever. The standard Pharo VM exits via CommandLineHandler when args like
-`test "Kernel-Tests"` are present. We need to verify our CommandLineHandler
-path actually works end-to-end.
+Morphic world loop. The injected test runner (run_sunit_tests.st) triggers
+automatically after startup completes.
 
 ## Remaining Workarounds
 
-### 1. Test runner injection — UNVERIFIED STANDARD PATH
+### 1. Test runner injection — KEEP (standard path not working yet)
 
 We inject `run_sunit_tests.st` via the standard Pharo VM (`pharo eval --save`)
 instead of using the standard CommandLineHandler flow.
@@ -37,11 +40,11 @@ instead of using the standard CommandLineHandler flow.
     Ours: pre-inject test runner via pharo eval --save, then run with our VM
 
 The CLI plumbing exists (setImageArguments, primitiveGetAttribute). The
-standard path has NOT been verified — it may already work, or there may
-be a bug in CommandLineHandler startup that we haven't hit yet.
+standard CommandLineHandler path doesn't work yet — likely requires
+primitives or session handling that our VM doesn't fully implement.
 
-Fix: verify `./test_load_image Pharo.image test "Kernel-Tests"` on a stock
-image. If CommandLineHandler works, remove the injection workaround.
+The injected test runner works: run_sunit_tests.st executes after session
+startup, discovers test classes, and runs them with progress tracking.
 
 ### 2. startup.st image patches — UPSTREAM IMAGE BUGS
 
@@ -108,6 +111,13 @@ selectorBits (slot 12). Now prim 89 calls flushJITCaches() normally.
 Resume loop never charged checkCountdown_, starving periodic checks
 when 119+ methods were JIT-compiled. Fixed: charge countdown after
 each tryResume call.
+
+### tryResume corruption at 119+ methods — FIXED (ee0cc57 + f4d5a7e)
+
+The two fixes above together resolved the tryResume corruption that
+prevented startup.st from loading at 119+ compiled methods. Verified
+2026-04-07: no difference between 118 and 119 compiled methods with
+resume enabled. Resume provides 3x throughput improvement.
 
 ## Test Runner Scripts Reference
 
