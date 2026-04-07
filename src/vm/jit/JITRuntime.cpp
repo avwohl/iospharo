@@ -248,7 +248,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
-    // TEMP: verify method map integrity
+    // Verify method map integrity (cheap, catches GC/rehash bugs)
     if (jm->compiledMethodOop != compiledMethod.rawBits()) {
         fprintf(stderr, "[JIT] BUG: methodMap returned wrong JITMethod! "
                 "requested=0x%llx got=0x%llx\n",

@@ -1241,16 +1241,6 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
-        // === STUCK METHOD DIAGNOSTIC (every ~10M bytecodes) ===
-        if (__builtin_expect((totalSteps & 0xFFFFF) == 0, 0)) {
-            static bool diagEnabled = !!getenv("JIT_DIAG");
-            if (diagEnabled) {
-                std::string sel = memory_.selectorOf(method_);
-                fprintf(stderr, "[DIAG] @%lluM: method=#%s\n",
-                        (unsigned long long)(totalSteps / 1000000), sel.c_str());
-            }
-        }
-
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
@@ -9559,7 +9549,6 @@ void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
 
-    // TEMP: skip JIT to test stack overflow in interpreter-only mode
     static bool jitDisabled = (getenv("PHARO_NO_JIT") != nullptr);
     if (jitDisabled) {
         fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
@@ -9597,17 +9586,6 @@ void Interpreter::tryJITResumeInCaller() {
 
         // Validate method_ before using it
         if (!method_.isObject() || method_.rawBits() < 0x10000) break;
-
-        // TEMP: track sp growth across resume iterations
-        {
-            static int resumeLeakLog = 0;
-            ptrdiff_t spOff = stackPointer_ - stack_.data();
-            if (resumeLeakLog < 200 && spOff > 20000 && spOff < 22000) {
-                resumeLeakLog++;
-                fprintf(stderr, "[RESUME] sp=%lld fd=%zu sel=#%s\n",
-                        (long long)spOff, frameDepth_, memory_.selectorOf(method_).c_str());
-            }
-        }
 
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) break;
@@ -9888,16 +9866,6 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
 
-    // JIT activation counter for diagnostics
-    static uint64_t jitActivations = 0;
-    static bool jitActDiag = !!getenv("JIT_DIAG");
-    jitActivations++;
-    if (jitActDiag && (jitActivations & 0xFFFF) == 0) {
-        std::string sel = memory_.selectorOf(method);
-        fprintf(stderr, "[JIT-ACT] %lluK activations, current=#%s fd=%zu\n",
-                (unsigned long long)(jitActivations / 1024), sel.c_str(), frameDepth_);
-    }
-
     // Guard: method must be a valid object pointer
     if (!method.isObject() || method.rawBits() < 0x10000) return false;
 
@@ -9938,13 +9906,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return false;  // Not compiled yet
     }
 
-    // TEMP: track cumulative stack growth per JIT activation.
-    // After ExitReturn, sp should be at entrySP (return value replaces receiver+args).
-    // After ExitSend/ExitSendCached, sp may grow by args for the pending send.
-    // Any net growth > ~20 per activation indicates a leak.
-    static int64_t cumulativeLeak = 0;
-    static int leakReportCount = 0;
-
     // Charge the periodic check countdown for JIT-executed bytecodes.
     // Without this, JIT execution starves the interpreter's periodic checks
     // (GC, timer semaphores, process scheduling, heartbeat) because the
@@ -9969,25 +9930,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     static bool noChain = !!getenv("PHARO_NO_CHAIN");
     int maxChain = noChain ? 1 : 100;
     for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
-
-        // TEMP: Track stack growth across chain loop iterations to find leak
-        {
-            static int leakLogCount = 0;
-            ptrdiff_t spOff = state.sp - stack_.data();
-            // Log EVERY chain iteration when sp is growing in the critical zone (20000-22000)
-            if (leakLogCount < 200 && spOff > 20000 && spOff < 22000) {
-                leakLogCount++;
-                fprintf(stderr, "[CHAIN] #%d exit=%d sp=%lld fd=%zu sel=#%s",
-                        chainLimit, state.exitReason, (long long)spOff,
-                        frameDepth_, memory_.selectorOf(method).c_str());
-                if (state.exitReason == jit::ExitSendCached) {
-                    fprintf(stderr, " cached=#%s nArgs=%d",
-                            memory_.selectorOf(state.cachedTarget).c_str(),
-                            state.sendArgCount);
-                }
-                fprintf(stderr, "\n");
-            }
-        }
 
         // Validate JIT output state — detect stencil corruption early
         if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
