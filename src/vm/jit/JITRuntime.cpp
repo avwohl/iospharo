@@ -317,6 +317,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
 
 bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state) {
     if (!initialized_) return false;
+    static bool noResume = !!getenv("PHARO_NO_RESUME");
+    if (noResume) return false;
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;

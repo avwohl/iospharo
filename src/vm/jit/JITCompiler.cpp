@@ -1274,6 +1274,23 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         return nullptr;
     }
 
+    // Bytecode dump for bisection (JIT_DUMP_BC env var)
+    {
+        static bool dumpBC = !!getenv("JIT_DUMP_BC");
+        if (dumpBC) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            fprintf(stderr, "[JIT-BC] #%s bcLen=%zu bytes:", sel.c_str(), bcLen);
+            for (size_t b = 0; b < bcLen && b < 20; b++)
+                fprintf(stderr, " %02X", bytecodes[b]);
+            fprintf(stderr, "\n");
+            for (size_t d = 0; d < decoded.size(); d++) {
+                fprintf(stderr, "[JIT-BC]   [%zu] op=0x%02X stencil=%u operand=%d bc=%d\n",
+                        d, decoded[d].opcode, decoded[d].stencilIdx,
+                        decoded[d].operand, decoded[d].bcOffset);
+            }
+        }
+    }
+
     // Prepend primitive prologue stencil if method has a supported primitive.
     // The prologue runs the fast path (type check + inline op); on failure
     // it falls through via _HOLE_CONTINUE to the normal bytecodes.

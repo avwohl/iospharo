@@ -9879,6 +9879,16 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
 
+    // JIT activation counter for diagnostics
+    static uint64_t jitActivations = 0;
+    static bool jitActDiag = !!getenv("JIT_DIAG");
+    jitActivations++;
+    if (jitActDiag && (jitActivations & 0xFFFF) == 0) {
+        std::string sel = memory_.selectorOf(method);
+        fprintf(stderr, "[JIT-ACT] %lluK activations, current=#%s fd=%zu\n",
+                (unsigned long long)(jitActivations / 1024), sel.c_str(), frameDepth_);
+    }
+
     // Guard: method must be a valid object pointer
     if (!method.isObject() || method.rawBits() < 0x10000) return false;
 
@@ -9947,7 +9957,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // After tryResume+continue, state holds an unprocessed exit reason
     // that MUST be handled before breaking. The countdown is checked at
     // each continue site instead (after chargeJITBytecodes).
-    for (int chainLimit = 0; chainLimit < 100; chainLimit++) {
+    static bool noChain = !!getenv("PHARO_NO_CHAIN");
+    int maxChain = noChain ? 1 : 100;
+    for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
 
         // TEMP: Track stack growth across chain loop iterations to find leak
         {
