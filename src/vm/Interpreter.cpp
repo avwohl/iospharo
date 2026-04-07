@@ -10062,6 +10062,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     primFailCode_ = 0;
                     newMethod_ = cached;
                     PrimitiveResult result = executePrimitive(primIdx, nArgs);
+                    cached = newMethod_;  // Refresh: GC during prim may have moved it
                     if (result == PrimitiveResult::Success) {
                         // Primitive succeeded — resume JIT at bytecode after send
                         jitJ2JActChains_++;
