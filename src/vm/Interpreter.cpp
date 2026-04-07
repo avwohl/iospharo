@@ -9628,7 +9628,6 @@ void Interpreter::tryJITResumeInCaller() {
             g_stepNum += state.jitMethod->numBytecodes;
         }
 
-        // JIT code ran — handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn:
             // JIT completed the rest of the method and returned.
@@ -9703,6 +9702,10 @@ void Interpreter::tryJITResumeInCaller() {
             jitICHits_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
+
+            // Verbose tracing suppressed
+            bool isNoCheckCaller = false;
+
             uint8_t sendOp = *instructionPointer_;
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
             else if (sendOp == 0xEA || sendOp == 0xEB) instructionPointer_ += 2;
@@ -9841,14 +9844,29 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 61);
     }
 
-    // If not a trivial method, check for JIT-compiled target for J2J direct calls
+    // If not a trivial method, check for JIT-compiled target for J2J direct calls.
+    // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
+    // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
     if (extra == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
-            uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
-            extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
-            jitJ2JDirectPatches_++;
+            // Check if target has a primitive but no prologue
+            bool unsafePrim = false;
+            if (!target->hasPrimPrologue) {
+                ObjectHeader* methObj = resolvedMethod.asObjectPtr();
+                Oop headerOop = methObj->slotAt(0);
+                if (headerOop.isSmallInteger()) {
+                    int64_t hdr = headerOop.asSmallInteger();
+                    if ((hdr >> 16) & 1)  // hasPrimitive flag
+                        unsafePrim = true;
+                }
+            }
+            if (!unsafePrim) {
+                uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
+                extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                jitJ2JDirectPatches_++;
+            }
         }
     }
 
@@ -9932,6 +9950,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // each continue site instead (after chargeJITBytecodes).
     static bool noChain = !!getenv("PHARO_NO_CHAIN");
     int maxChain = noChain ? 1 : 100;
+
     for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
 
         // Validate JIT output state — detect stencil corruption early
@@ -10000,6 +10019,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitSendCached: {
             // IC hit: cached method is in state.cachedTarget. Skip method lookup.
             Oop cached = state.cachedTarget;
+
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — invalidate and fall back to normal send
@@ -10045,6 +10065,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     if (result == PrimitiveResult::Success) {
                         // Primitive succeeded — resume JIT at bytecode after send
                         jitJ2JActChains_++;
+                        method = method_;  // Refresh: GC may have moved the method
                         uint32_t bcOffset = computeCurrentBCOffset();
                         if (bcOffset == UINT32_MAX) return true;
                         state.sp = stackPointer_;
@@ -10085,6 +10106,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Resume JIT execution at the bytecode after the send.
             jitJ2JActChains_++;
             {
+                method = method_;  // Refresh: GC may have moved the method
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
 
@@ -10135,6 +10157,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ += 3;
 
             // Try to resume JIT at next bytecode
+            method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
             if (bcOffset == UINT32_MAX) return true;
 
@@ -10185,6 +10208,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ += 2;
 
             // Try to resume JIT at next bytecode
+            method = method_;  // Refresh: GC may have moved the method
             uint32_t bcOffset = computeCurrentBCOffset();
             if (bcOffset == UINT32_MAX) return true;
 

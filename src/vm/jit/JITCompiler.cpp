@@ -1755,7 +1755,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     {
         std::string sel = interp_.memory().selectorOf(compiledMethod);
         bool isKeysDo = (sel == "keysDo:");
-        if (methodsCompiled_ <= 5 || isKeysDo) {
+        bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:");
+        if (methodsCompiled_ <= 5 || isKeysDo || isDebugTarget) {
             fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes) #%s:\n",
                     methodsCompiled_, totalSize, decoded.size(), sel.c_str());
             for (auto& d : decoded) {
