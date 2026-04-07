@@ -1481,6 +1481,21 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                         evictCount, freed, allocSize,
                         zone_.methodCount(), zone_.freeListFreeBytes());
             }
+            // Flush all ICs — evicted methods may have J2J entries pointing
+            // to freed code. Other methods' IC entries with bit 60 set would
+            // BLR to freed/reused memory, causing SIGSEGV (typically PC=0x0).
+            JITMethod* im = zone_.firstMethod();
+            while (im) {
+                if (im->numICEntries > 0) {
+                    uint8_t* icStart = im->codeStart() + im->codeSize
+                                     - im->numICEntries * 104;
+                    for (uint32_t i = 0; i < im->numICEntries; i++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
+                        std::memset(slots, 0, 12 * sizeof(uint64_t));
+                    }
+                }
+                im = im->nextInZone;
+            }
             jitMethod = zone_.allocate(totalSize, 0);
         }
 

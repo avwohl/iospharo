@@ -9940,6 +9940,36 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
     chargeJITBytecodes(state);
 
+    // Validate JIT state before resume — detect stale pointers from GC.
+    // Returns true if state looks valid. If false, bail to interpreter.
+    auto validateResumeState = [this](const jit::JITState& s, Oop m) -> bool {
+        // sp must be a valid stack address
+        uint64_t spVal = reinterpret_cast<uint64_t>(s.sp);
+        if (spVal < 0x10000 || spVal > 0x1000000000000ULL) {
+            fprintf(stderr, "[JIT] stale sp=%p before resume\n", (void*)s.sp);
+            return false;
+        }
+        // method must match method_
+        if (m.rawBits() != method_.rawBits()) {
+            fprintf(stderr, "[JIT] method mismatch: local=0x%llx method_=0x%llx\n",
+                    (unsigned long long)m.rawBits(), (unsigned long long)method_.rawBits());
+            return false;
+        }
+        // literals must be inside the method object's slot area
+        if (m.isObject() && m.rawBits() > 0x10000) {
+            ObjectHeader* mObj = m.asObjectPtr();
+            Oop* slotsStart = mObj->slots();
+            size_t nSlots = mObj->slotCount();
+            Oop* slotsEnd = slotsStart + nSlots;
+            if (s.literals < slotsStart || s.literals >= slotsEnd) {
+                fprintf(stderr, "[JIT] stale literals=%p not in method slots [%p, %p)\n",
+                        (void*)s.literals, (void*)slotsStart, (void*)slotsEnd);
+                return false;
+            }
+        }
+        return true;
+    };
+
     // Loop to handle chained JIT execution: when an IC-hit send's target
     // completes, resume JIT execution at the next bytecode instead of
     // falling back to the interpreter dispatch loop.
@@ -10084,6 +10114,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
+                        if (!validateResumeState(state, method)) return true;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
@@ -10129,6 +10160,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
 
+                if (!validateResumeState(state, method)) return true;
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;  // No re-entry at this offset; interpreter handles rest
                 }
@@ -10179,6 +10211,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
 
+            if (!validateResumeState(state, method)) return true;
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
             }
@@ -10230,6 +10263,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
 
+            if (!validateResumeState(state, method)) return true;
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
             }
