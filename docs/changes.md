@@ -1,5 +1,24 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-07
+
+## Fix JIT Hang: tryJITResumeInCaller Countdown Starvation
+
+Fixed a JIT hang that occurred when 119+ methods were JIT-compiled.
+Root cause: `tryJITResumeInCaller` never charged `checkCountdown_` after
+calling `tryResume`. With enough compiled methods, the resume loop always
+found a JIT method to resume in and never yielded to the interpreter's
+periodic checks (GC, timer semaphores, process scheduling).
+
+The same charging pattern was already correctly implemented in
+`tryJITActivation`'s chain loop — this was simply missed in the
+`tryJITResumeInCaller` path.
+
+Also cleaned up temporary bisection diagnostics (JIT_DIAG, stack growth
+tracking) while keeping the env var debug flags (JIT_MAX_COMPILE,
+JIT_EXCLUDE, PHARO_NO_RESUME, PHARO_NO_CHAIN, PHARO_NO_J2J) as
+lightweight debugging tools.
+
 2026-04-06
 
 ## Fix primitiveYield Early-Exit
