@@ -7193,10 +7193,7 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
 // Primitive 89: Flush the method cache
 PrimitiveResult Interpreter::primitiveFlushCache(int argCount) {
     flushMethodCache();
-    // Skip flushJITCaches() — zeroing IC data also zeros selectorBits
-    // which permanently breaks megamorphic sends until recompilation.
-    // The interpreter method cache flush is sufficient for correctness
-    // since JIT ICs will re-validate via class index checks.
+    flushJITCaches();
     primitiveSuccess(stackTop());
     return PrimitiveResult::Success;
 }

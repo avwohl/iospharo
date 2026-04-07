@@ -396,13 +396,20 @@ void JITRuntime::flushCaches() {
     // Clear mega cache
     std::memset(megaCache_, 0, sizeof(megaCache_));
 
-    static constexpr uint32_t IC_BYTES_PER_SITE = 104;
+    // Clear IC entries but preserve selectorBits (slot 12 of each 13-slot IC).
+    // selectorBits is written once at compile time and never re-patched,
+    // so zeroing it would permanently disable megamorphic cache probes.
+    // Layout per IC site: 4 entries × [key, method, extra] + selectorBits = 13 uint64_t = 104 bytes
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
         if (m->numICEntries > 0) {
-            uint32_t icSize = m->numICEntries * IC_BYTES_PER_SITE;
-            uint8_t* icStart = m->codeStart() + m->codeSize - icSize;
-            std::memset(icStart, 0, icSize);
+            uint8_t* icStart = m->codeStart() + m->codeSize
+                             - m->numICEntries * 104;
+            for (uint32_t i = 0; i < m->numICEntries; i++) {
+                uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
+                // Zero the 4 IC entries (slots 0-11) but keep slot 12 (selectorBits)
+                std::memset(slots, 0, 12 * sizeof(uint64_t));
+            }
         }
         m = m->nextInZone;
     }
