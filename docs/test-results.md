@@ -1,6 +1,33 @@
 # Test Results
 
-Last updated: 2026-04-04
+Last updated: 2026-04-07
+
+## Kernel-Tests — JIT vs Interpreter Parity (2026-04-07)
+
+Fresh Pharo 13 image, Kernel-Tests package (243 test classes).
+Both modes produce identical results — zero JIT-specific regressions.
+
+    Mode        Classes  Pass   Fail  Err  Skip
+    JIT         243      9,033  7     2    15
+    Interpreter 243      9,033  7     2    15
+
+    JIT stats: 2500+ compiled, 96% IC hit, 0 crashes, 0 SIGSEGV
+
+    Failures (same in both modes):
+    - testSimpleEnsureTestWithUparrow — NLR + ensure
+    - testTerminationDuringNestedUnwindB1 — process termination
+    - testTerminationDuringNestedUnwindWithReturn2 — same
+    - testClearing (x2) — weak ref timing (nondeterministic)
+    - testWeakDoubleAnnouncer — weak ref timing
+    - testWeakObject — weak ref timing
+    Errors:
+    - testFastPointersTo — ShouldNotImplement in Array
+    - testUnoptimisedValueSpecialSendsMessageCapturesSend — nil receiver
+
+    Key fix in this build: unsafe J2J calls to primitive methods without
+    prologue stencils (e.g. noCheckAt:, basicAt:, basicSize) were skipping
+    the primitive entirely. Now patchJITICAfterSend checks hasPrimPrologue
+    before setting the J2J bit.
 
 ## Full Suite — Interpreter (2026-04-04, deadlock fix)
 
