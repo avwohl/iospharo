@@ -9638,6 +9638,15 @@ void Interpreter::tryJITResumeInCaller() {
             break;  // Not JIT-compiled or no re-entry at this offset
         }
 
+        // Charge the periodic check countdown for JIT-executed bytecodes.
+        // Without this, the resume loop starves interpreter periodic checks
+        // (GC, timer semaphores, process scheduling) when enough methods are
+        // JIT-compiled that tryResume always succeeds.
+        if (state.jitMethod) {
+            checkCountdown_ -= state.jitMethod->numBytecodes;
+            g_stepNum += state.jitMethod->numBytecodes;
+        }
+
         // JIT code ran — handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn:
