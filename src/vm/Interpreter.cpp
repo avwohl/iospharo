@@ -1265,7 +1265,7 @@ void Interpreter::interpret() {
                         auto now = std::chrono::steady_clock::now();
                         auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                             now - trackStartTime_).count();
-                        if (wallMs >= 90000) {
+                        if (wallMs >= 600000) {
                             fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
                                     (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
                             trackedProcess_ = Oop::nil();
@@ -2080,7 +2080,7 @@ bool Interpreter::step() {
                     auto wallMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                         now - trackStartTime_).count();
                     // Use wall time (simpler, accounts for all elapsed time)
-                    if (wallMs >= 90000) {
+                    if (wallMs >= 600000) {
                         fprintf(stderr, "[VM-TIMEOUT] Process 0x%llx at P%d stuck for %lldms — terminating\n",
                                 (unsigned long long)currentActive.rawBits(), prio, (long long)wallMs);
                         trackedProcess_ = Oop::nil();
