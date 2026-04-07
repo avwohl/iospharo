@@ -12,29 +12,36 @@ No test injection, no startup.st patches, no setup_fake_gui.st.
 
 ## Current Status (2026-04-07)
 
-The standard CLI path (`test_load_image Pharo.image test "Kernel-Tests"`)
-is plumbed end-to-end: image args are passed via primitiveGetAttribute,
-and Pharo's CommandLineHandler should process them after startup completes.
+The Mac Catalyst app starts up fine in a few seconds — startup speed is NOT
+the problem.
 
-**The blocking issue is speed.** Pharo startup takes <1s on Cog, ~3-5 minutes
-on our VM. The standard path hasn't been verified to completion because we
-can't sit through a 5-minute startup + multi-hour test suite.
+The standard CLI path (`test_load_image Pharo.image test "Kernel-Tests"`)
+passes args via primitiveGetAttribute, and Pharo's CommandLineHandler should
+process them. **This path has not been verified to actually run tests.**
+
+The test harness (`test_load_image`) calls `interpret()` which runs the
+Morphic world loop. Without startup.st calling `exitSuccess`, the loop runs
+forever. The standard Pharo VM exits via CommandLineHandler when args like
+`test "Kernel-Tests"` are present. We need to verify our CommandLineHandler
+path actually works end-to-end.
 
 ## Remaining Workarounds
 
-### 1. Test runner injection — SPEED WORKAROUND
+### 1. Test runner injection — UNVERIFIED STANDARD PATH
 
 We inject `run_sunit_tests.st` via the standard Pharo VM (`pharo eval --save`)
-because our startup is too slow to use the standard CommandLineHandler path
-in practice. This isn't a correctness issue — the CLI plumbing exists and
-args are passed. It's purely a speed problem.
+instead of using the standard CommandLineHandler flow.
 
-    Standard: CommandLineHandler reads args, starts test runner
-    Ours: pre-inject test runner, skip CommandLineHandler entirely
+    Standard: pharo Pharo.image test "Kernel-Tests"
+              → CommandLineHandler reads args → TestCommandLineHandler runs tests
+    Ours: pre-inject test runner via pharo eval --save, then run with our VM
 
-Fix: make the VM fast enough that standard startup completes in reasonable
-time. JIT Phase 4 (J2J direct calls) and Phase 5 (register caching) are
-the path to closing the 100-300x gap.
+The CLI plumbing exists (setImageArguments, primitiveGetAttribute). The
+standard path has NOT been verified — it may already work, or there may
+be a bug in CommandLineHandler startup that we haven't hit yet.
+
+Fix: verify `./test_load_image Pharo.image test "Kernel-Tests"` on a stock
+image. If CommandLineHandler works, remove the injection workaround.
 
 ### 2. startup.st image patches — UPSTREAM IMAGE BUGS
 
