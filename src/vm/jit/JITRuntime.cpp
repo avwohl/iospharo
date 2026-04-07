@@ -14,6 +14,9 @@
 #if PHARO_JIT_ENABLED
 
 namespace pharo {
+}
+
+namespace pharo {
 namespace jit {
 
 // ===== RUNTIME HELPER IMPLEMENTATIONS =====
@@ -198,6 +201,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
+    // TEMP: verify method map integrity
+    if (jm->compiledMethodOop != compiledMethod.rawBits()) {
+        fprintf(stderr, "[JIT] BUG: methodMap returned wrong JITMethod! "
+                "requested=0x%llx got=0x%llx\n",
+                (unsigned long long)compiledMethod.rawBits(),
+                (unsigned long long)jm->compiledMethodOop);
+        return false;
+    }
+
     // Inline getter/setter/yourself sends are dispatched directly in the
     // stencil (stencil_sendPoly IC_HIT macro) without exiting to C++.
     // Non-trivial sends still exit via ExitSendCached, but J2J chaining in
@@ -242,15 +254,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
         }
     }
 
-    // Toggle W^X to executable for the call, then back to writable.
-    // On Apple Silicon this is just a register write (no syscall).
+    // Flush I-cache + toggle W^X to executable, then back to writable.
+    flushICache(jm->codeStart(), jm->codeSize);
     makeExecutable(jm->codeStart(), jm->codeSize);
 
     // Call the compiled code
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart());
     entry(&state);
 
-    // Back to writable so metadata updates (touch, counters) work
+    // Back to writable
     makeWritable(jm->codeStart(), jm->codeSize);
 
     return true;
@@ -315,7 +327,8 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         }
     }
 
-    // Toggle W^X to executable
+    // Flush I-cache + toggle W^X
+    flushICache(jm->codeStart(), jm->codeSize);
     makeExecutable(jm->codeStart(), jm->codeSize);
 
     // Enter at the specified code offset
@@ -334,12 +347,6 @@ void JITRuntime::flushCaches() {
     // Clear mega cache
     std::memset(megaCache_, 0, sizeof(megaCache_));
 
-    // Clear all IC entries in compiled methods.
-    // IC data layout per send site: 4 x [uint64_t key, method, extra] + uint64_t selectorBits
-    // = 4*24 + 8 = 104 bytes. Zero ALL 104 bytes including selectorBits — after GC,
-    // selector Symbol Oops may have moved, making selectorBits stale. The mega cache
-    // probe in stencil_sendPoly skips if selectorBits==0, so this is safe (just slower
-    // until the interpreter repopulates the mega cache on misses).
     static constexpr uint32_t IC_BYTES_PER_SITE = 104;
     JITMethod* m = codeZone_.firstMethod();
     while (m) {

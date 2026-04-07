@@ -1301,7 +1301,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
     // Peephole: fuse comparison + conditional jump into superinstructions.
     // This eliminates the boolean Oop creation/stack-roundtrip between them.
-    for (size_t pi = 0; pi + 1 < decoded.size(); pi++) {
+    // DISABLED: causes +2 sp leak per loop iteration in methods like scanFor:.
+    // The fused stencil binaries are correct (verified via disassembly), so the
+    // bug is likely in how fused stencils interact with the JIT resume path or
+    // in one of the arithmetic fused stencils (88-byte lt/gt/eq/ne variants).
+    for (size_t pi = 0; false && pi + 1 < decoded.size(); pi++) {
         auto& cmp = decoded[pi];
         auto& jmp = decoded[pi + 1];
         auto cmpSid = static_cast<StencilID>(cmp.stencilIdx);
@@ -1370,11 +1374,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     std::vector<uint32_t> bcToCodeOffset(bcLen + 1, 0);
 
     for (auto& bc : decoded) {
-        bcToCodeOffset[bc.bcOffset] = codeSize;
-        // Fill intermediate bytes of multi-byte instructions with the same offset
-        for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
-            bcToCodeOffset[bc.bcOffset + b] = codeSize;
+        // Fused bytecodes (nop placeholders from peephole fusion) must NOT have
+        // valid re-entry points. Their bcToCode entries stay 0, so tryResume
+        // rejects them and the interpreter handles the bytecode. Without this,
+        // resuming at a fused jumpFalse enters the fused stencil's CONTINUE
+        // path unconditionally, ignoring the actual comparison result.
+        if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_nop) {
+            bcToCodeOffset[bc.bcOffset] = codeSize;
+            // Fill intermediate bytes of multi-byte instructions with the same offset
+            for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
+                bcToCodeOffset[bc.bcOffset + b] = codeSize;
+            }
         }
+        // Even nop stencils contribute to code size (they emit a branch instruction)
         const StencilDef& stencil = stencilTable[bc.stencilIdx];
         codeSize += stencil.codeSize;
         // Count literal pool slots needed.
@@ -1723,13 +1735,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     }
 
     // Log first few compiled methods with stencil detail
-    if (methodsCompiled_ <= 5) {
-        fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes):\n",
-                methodsCompiled_, totalSize, decoded.size());
-        for (auto& d : decoded) {
-            const StencilDef& st = stencilTable[d.stencilIdx];
-            fprintf(stderr, "  bc[%d] op=0x%02X -> %s (operand=%d, branch=%d)\n",
-                    d.bcOffset, d.opcode, st.name, d.operand, d.branchTarget);
+    {
+        std::string sel = interp_.memory().selectorOf(compiledMethod);
+        bool isKeysDo = (sel == "keysDo:");
+        if (methodsCompiled_ <= 5 || isKeysDo) {
+            fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes) #%s:\n",
+                    methodsCompiled_, totalSize, decoded.size(), sel.c_str());
+            for (auto& d : decoded) {
+                const StencilDef& st = stencilTable[d.stencilIdx];
+                fprintf(stderr, "  bc[%d] op=0x%02X -> %s (operand=%d, branch=%d)\n",
+                        d.bcOffset, d.opcode, st.name, d.operand, d.branchTarget);
+            }
         }
     }
 

@@ -289,6 +289,14 @@ public:
     /// Push a value onto the stack
     inline void push(Oop value) {
         if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
+            fprintf(stderr, "[VM] Stack overflow! fd=%zu method=#%s rcvr=0x%llx sp_offset=%lld\n",
+                    frameDepth_, memory_.selectorOf(method_).c_str(),
+                    (unsigned long long)receiver_.rawBits(),
+                    (long long)(stackPointer_ - stack_.data()));
+            for (size_t i = frameDepth_; i > 0 && i > frameDepth_ - 20; i--) {
+                fprintf(stderr, "  frame[%zu] method=#%s\n", i,
+                        memory_.selectorOf(savedFrames_[i-1].savedMethod).c_str());
+            }
             stopVM("Stack overflow in push()");
             return;
         }

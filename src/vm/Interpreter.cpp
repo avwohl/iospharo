@@ -5058,6 +5058,26 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     int primIndex = primitiveIndexOf(method);
     TrivialMethodInfo trivial = detectTrivialMethod(method, memory_);
 
+    // Debug: log caching of specific selectors
+    {
+        static int cacheLogCount = 0;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            std::string selName = memory_.oopToString(selector);
+            if (selName == "keys" || selName == "selectors" || selName == "methodDict" ||
+                selName == "allSelectors" || selName == "keysDo:" || selName == "superclass" ||
+                selName == "allTestSelectors") {
+                cacheLogCount++;
+                if (cacheLogCount <= 50) {
+                    fprintf(stderr, "[CACHE-%d] #%s -> getter=%d setter=%d retSelf=%d prim=%d cls=0x%llx method=0x%llx\n",
+                            cacheLogCount, selName.c_str(), trivial.getterIndex, trivial.setterIndex,
+                            trivial.returnsSelf ? 1 : 0, primIndex,
+                            (unsigned long long)clsBits,
+                            (unsigned long long)method.rawBits());
+                }
+            }
+        }
+    }
+
     // Primary slot: use if empty or same key
     size_t h1 = static_cast<size_t>(selBits ^ clsBits) & mask;
     MethodCacheEntry& e1 = methodCache_[h1];
@@ -5868,6 +5888,7 @@ bool Interpreter::popFrame() {
 }
 
 // ===== J2J FRAME MANAGEMENT =====
+#if PHARO_JIT_ENABLED
 
 void Interpreter::pushFrameForJIT(jit::JITState* state) {
     // Lightweight frame push for J2J direct calls.
@@ -5944,7 +5965,9 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(targetMethod.rawBits());
     state->jitMethod = jm;
 }
+#endif // PHARO_JIT_ENABLED
 
+#if PHARO_JIT_ENABLED
 void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Lightweight frame pop for J2J direct calls.
     if (frameDepth_ == 0) return;
@@ -5965,6 +5988,7 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 }
+#endif // PHARO_JIT_ENABLED
 
 // ===== VARIABLE ACCESS =====
 
@@ -9525,6 +9549,13 @@ void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
 
+    // TEMP: skip JIT to test stack overflow in interpreter-only mode
+    static bool jitDisabled = (getenv("PHARO_NO_JIT") != nullptr);
+    if (jitDisabled) {
+        fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
+        return;
+    }
+
     if (!jitRuntime_.initialize(memory_, *this)) {
         fprintf(stderr, "[JIT] Failed to initialize — running interpreted only\n");
         return;
@@ -9556,6 +9587,17 @@ void Interpreter::tryJITResumeInCaller() {
 
         // Validate method_ before using it
         if (!method_.isObject() || method_.rawBits() < 0x10000) break;
+
+        // TEMP: track sp growth across resume iterations
+        {
+            static int resumeLeakLog = 0;
+            ptrdiff_t spOff = stackPointer_ - stack_.data();
+            if (resumeLeakLog < 200 && spOff > 20000 && spOff < 22000) {
+                resumeLeakLog++;
+                fprintf(stderr, "[RESUME] sp=%lld fd=%zu sel=#%s\n",
+                        (long long)spOff, frameDepth_, memory_.selectorOf(method_).c_str());
+            }
+        }
 
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) break;
@@ -9866,6 +9908,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         return false;  // Not compiled yet
     }
 
+    // TEMP: track cumulative stack growth per JIT activation.
+    // After ExitReturn, sp should be at entrySP (return value replaces receiver+args).
+    // After ExitSend/ExitSendCached, sp may grow by args for the pending send.
+    // Any net growth > ~20 per activation indicates a leak.
+    static int64_t cumulativeLeak = 0;
+    static int leakReportCount = 0;
+
     // Charge the periodic check countdown for JIT-executed bytecodes.
     // Without this, JIT execution starves the interpreter's periodic checks
     // (GC, timer semaphores, process scheduling, heartbeat) because the
@@ -9888,6 +9937,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // that MUST be handled before breaking. The countdown is checked at
     // each continue site instead (after chargeJITBytecodes).
     for (int chainLimit = 0; chainLimit < 100; chainLimit++) {
+
+        // TEMP: Track stack growth across chain loop iterations to find leak
+        {
+            static int leakLogCount = 0;
+            ptrdiff_t spOff = state.sp - stack_.data();
+            // Log EVERY chain iteration when sp is growing in the critical zone (20000-22000)
+            if (leakLogCount < 200 && spOff > 20000 && spOff < 22000) {
+                leakLogCount++;
+                fprintf(stderr, "[CHAIN] #%d exit=%d sp=%lld fd=%zu sel=#%s",
+                        chainLimit, state.exitReason, (long long)spOff,
+                        frameDepth_, memory_.selectorOf(method).c_str());
+                if (state.exitReason == jit::ExitSendCached) {
+                    fprintf(stderr, " cached=#%s nArgs=%d",
+                            memory_.selectorOf(state.cachedTarget).c_str(),
+                            state.sendArgCount);
+                }
+                fprintf(stderr, "\n");
+            }
+        }
 
         // Validate JIT output state — detect stencil corruption early
         if (state.exitReason == jit::ExitSend || state.exitReason == jit::ExitArithOverflow ||
