@@ -207,7 +207,17 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     }
                 }
                 // Hit threshold — compile!
+                size_t gcBefore = interp_ ? interp_->memory().statistics().gcCount : 0;
                 JITMethod* jm = compiler_->compile(compiledMethod);
+                if (interp_) {
+                    size_t gcAfter = interp_->memory().statistics().gcCount;
+                    if (gcAfter > gcBefore) {
+                        fprintf(stderr, "[JIT] GC during compile #%zu! "
+                                "(%zu GCs: %zu→%zu)\n",
+                                compiler_->methodsCompiled(),
+                                gcAfter - gcBefore, gcBefore, gcAfter);
+                    }
+                }
                 if (jm) {
                     std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
                     // Get class name from penultimate literal (methodClass association)
@@ -305,9 +315,75 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     flushICache(jm->codeStart(), jm->codeSize);
     makeExecutable(jm->codeStart(), jm->codeSize);
 
+    // CANARY: monitor SparseLargeTable slot 0 for corruption
+    static ObjectHeader* canaryObj = nullptr;
+    static bool canarySearched = false;
+    static uint64_t canaryGoodBase = 0;  // known-good value of slot 0
+    if (!canarySearched && interp_) {
+        canarySearched = true;
+        // Scan heap for SparseLargeTable: 4 slots, slot1=917632, slot2=1024, slot3=0
+        interp_->memory().forEachObjectInOldSpace([&](ObjectHeader* obj) {
+            if (canaryObj) return;
+            if (static_cast<int>(obj->format()) > 5) return;  // not a pointer object
+            size_t sc = obj->slotCount();
+            if (sc < 4) return;  // need at least 4 slots
+            Oop slot1 = obj->slots()[1];
+            Oop slot2 = obj->slots()[2];
+            Oop slot3 = obj->slots()[3];
+            if (slot1.isSmallInteger() && slot1.asSmallInteger() == 917632 &&
+                slot2.isSmallInteger() && slot2.asSmallInteger() == 1024 &&
+                slot3.isSmallInteger() && slot3.asSmallInteger() == 0) {
+                canaryObj = obj;
+                canaryGoodBase = obj->slots()[0].rawBits();
+                fprintf(stderr, "[CANARY] Found SparseLargeTable at %p, "
+                        "slots=%zu fmt=%d base=0x%llx (isObj=%d isSmI=%d)\n",
+                        (void*)obj, sc, (int)obj->format(),
+                        (unsigned long long)canaryGoodBase,
+                        obj->slots()[0].isObject(),
+                        obj->slots()[0].isSmallInteger());
+            }
+        });
+        if (!canaryObj) {
+            fprintf(stderr, "[CANARY] SparseLargeTable NOT FOUND\n");
+        }
+    }
+    bool canaryOK = true;
+    if (canaryObj) {
+        uint64_t val = canaryObj->slots()[0].rawBits();
+        if (val != canaryGoodBase) {
+            canaryOK = false;
+            std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
+            fprintf(stderr, "[CANARY] BEFORE exec #%s: slot0 ALREADY WRONG! "
+                    "expected=0x%llx got=0x%llx (SmallInt=%d val=%lld)\n",
+                    sel.c_str(),
+                    (unsigned long long)canaryGoodBase,
+                    (unsigned long long)val,
+                    canaryObj->slots()[0].isSmallInteger(),
+                    canaryObj->slots()[0].isSmallInteger() ? canaryObj->slots()[0].asSmallInteger() : -999);
+        }
+    }
+
     // Call the compiled code
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart());
     entry(&state);
+
+    // Check canary after execution
+    if (canaryObj && canaryOK) {
+        uint64_t val = canaryObj->slots()[0].rawBits();
+        if (val != canaryGoodBase) {
+            std::string sel2 = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
+            fprintf(stderr, "[CANARY] CORRUPTED by #%s! "
+                    "expected=0x%llx got=0x%llx (SmallInt=%d val=%lld) "
+                    "receiver=0x%llx exit=%d\n",
+                    sel2.c_str(),
+                    (unsigned long long)canaryGoodBase,
+                    (unsigned long long)val,
+                    canaryObj->slots()[0].isSmallInteger(),
+                    canaryObj->slots()[0].isSmallInteger() ? canaryObj->slots()[0].asSmallInteger() : -999,
+                    (unsigned long long)state.receiver.rawBits(),
+                    (int)state.exitReason);
+        }
+    }
 
     // Back to writable
     makeWritable(jm->codeStart(), jm->codeSize);

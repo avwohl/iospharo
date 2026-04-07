@@ -5895,6 +5895,9 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     // Syncs interpreter state from JITState, pushes a frame, then sets up
     // callee state in both interpreter and JITState.
 
+    static size_t pushCount = 0;
+    pushCount++;
+
     Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
     int nArgs = state->sendArgCount;
 
