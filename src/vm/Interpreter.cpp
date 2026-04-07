@@ -1241,6 +1241,16 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
+        // === STUCK METHOD DIAGNOSTIC (every ~10M bytecodes) ===
+        if (__builtin_expect((totalSteps & 0xFFFFF) == 0, 0)) {
+            static bool diagEnabled = !!getenv("JIT_DIAG");
+            if (diagEnabled) {
+                std::string sel = memory_.selectorOf(method_);
+                fprintf(stderr, "[DIAG] @%lluM: method=#%s\n",
+                        (unsigned long long)(totalSteps / 1000000), sel.c_str());
+            }
+        }
+
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
@@ -9842,7 +9852,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     }
 
     // If not a trivial method, check for JIT-compiled target for J2J direct calls
-    if (extra == 0) {
+    static bool j2jEnabled = !getenv("PHARO_NO_J2J");
+    if (extra == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());

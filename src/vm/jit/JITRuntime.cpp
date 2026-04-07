@@ -127,6 +127,13 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 
+    // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
+    static int maxCompile = -2; // -2 = uninitialized
+    if (maxCompile == -2) {
+        const char* env = getenv("JIT_MAX_COMPILE");
+        maxCompile = env ? atoi(env) : -1; // -1 = unlimited
+    }
+
     static size_t totalEntries = 0;
     totalEntries++;
 
@@ -175,12 +182,52 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         if (countMap_[i].key == key) {
             countMap_[i].count++;
             if (countMap_[i].count == CompileThreshold) {
+                // Bisection: stop after N compilations
+                if (maxCompile >= 0 && (int)compiler_->methodsCompiled() >= maxCompile) {
+                    return;
+                }
+                // Selector exclusion: JIT_EXCLUDE=sel1,sel2,...
+                {
+                    static const char* excludeEnv = getenv("JIT_EXCLUDE");
+                    if (excludeEnv && interp_) {
+                        std::string sel = interp_->memory().selectorOf(compiledMethod);
+                        std::string excl(excludeEnv);
+                        // Simple comma-separated check
+                        size_t pos = 0;
+                        while (pos < excl.size()) {
+                            size_t comma = excl.find(',', pos);
+                            if (comma == std::string::npos) comma = excl.size();
+                            std::string token = excl.substr(pos, comma - pos);
+                            if (sel == token) {
+                                fprintf(stderr, "[JIT] EXCLUDED #%s\n", sel.c_str());
+                                return;
+                            }
+                            pos = comma + 1;
+                        }
+                    }
+                }
                 // Hit threshold — compile!
                 JITMethod* jm = compiler_->compile(compiledMethod);
                 if (jm) {
                     std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
-                    fprintf(stderr, "[JIT] Compiled #%s (entry %u, %u bytes%s)\n",
-                            sel.c_str(), countMap_[i].count, jm->codeSize,
+                    // Get class name from penultimate literal (methodClass association)
+                    std::string cls = "?";
+                    if (interp_) {
+                        size_t nLits = interp_->memory().numLiteralsOf(compiledMethod);
+                        if (nLits >= 2) {
+                            // penultimate literal (index nLits, 1-based in literal frame)
+                            Oop assoc = interp_->memory().fetchPointer(nLits, compiledMethod);
+                            if (assoc.isObject() && !assoc.isNil()) {
+                                // Association value is slot 1 (0-based)
+                                Oop classOop = interp_->memory().fetchPointer(1, assoc);
+                                if (classOop.isObject() && !classOop.isNil()) {
+                                    cls = interp_->memory().nameOfClass(classOop);
+                                }
+                            }
+                        }
+                    }
+                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s)\n",
+                            sel.c_str(), cls.c_str(), countMap_[i].count, jm->codeSize,
                             jm->hasPrimPrologue ? ", prim" : "");
                 }
             }
