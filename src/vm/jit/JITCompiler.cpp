@@ -1466,6 +1466,24 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // allocate() will reuse freed space without moving methods
         // (ADRP+LDR relocations in stencils are not position-independent
         // across non-page-aligned moves).
+
+        // Collect evicted code ranges BEFORE eviction so we can invalidate
+        // only those J2J IC entries pointing to freed code.
+        struct EvictedRange { uint64_t start; uint64_t end; };
+        std::vector<EvictedRange> evictedRanges;
+        evictedRanges.reserve(32);
+        {
+            uint32_t threshold = zone_.currentEpoch() > 10 ? zone_.currentEpoch() - 10 : 0;
+            JITMethod* scan = zone_.firstMethod();
+            while (scan) {
+                if (scan->state == MethodState::Compiled && scan->lastUsedEpoch < threshold) {
+                    uint64_t s = reinterpret_cast<uint64_t>(scan->codeStart());
+                    evictedRanges.push_back({s, s + scan->codeSize});
+                }
+                scan = scan->nextInZone;
+            }
+        }
+
         auto evictCallback = [](uint64_t methodOop, void* ctx) {
             auto* map = static_cast<MethodMap*>(ctx);
             map->remove(methodOop);
@@ -1481,9 +1499,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                         evictCount, freed, allocSize,
                         zone_.methodCount(), zone_.freeListFreeBytes());
             }
-            // Flush all ICs — evicted methods may have J2J entries pointing
-            // to freed code. Other methods' IC entries with bit 60 set would
-            // BLR to freed/reused memory, causing SIGSEGV (typically PC=0x0).
+            // Clear only J2J IC entries (bit 60) pointing to evicted code ranges.
+            // This preserves classKey/methodBits/getter/setter IC data for surviving
+            // methods, avoiding the massive re-patching overhead of a full flush.
+            static constexpr uint64_t J2J_BIT = 1ULL << 60;
+            static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
             JITMethod* im = zone_.firstMethod();
             while (im) {
                 if (im->numICEntries > 0) {
@@ -1491,7 +1511,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                                      - im->numICEntries * 104;
                     for (uint32_t i = 0; i < im->numICEntries; i++) {
                         uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
-                        std::memset(slots, 0, 12 * sizeof(uint64_t));
+                        for (int e = 0; e < 4; e++) {
+                            uint64_t extra = slots[e * 3 + 2];
+                            if (!(extra & J2J_BIT)) continue;
+                            uint64_t addr = extra & ADDR_MASK;
+                            for (auto& r : evictedRanges) {
+                                if (addr >= r.start && addr < r.end) {
+                                    slots[e * 3 + 2] = 0;
+                                    break;
+                                }
+                            }
+                        }
                     }
                 }
                 im = im->nextInZone;
