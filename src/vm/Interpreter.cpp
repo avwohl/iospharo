@@ -10568,6 +10568,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 
 void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount) {
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
+    static bool fillEnabled = !getenv("PHARO_NO_IC_FILL");
     if (!j2jEnabled || !icData) return;
 
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
@@ -10597,14 +10598,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         return;
     }
 
-    // Find the matching IC entry and upgrade if extra == 0
+    // Find the matching IC entry and upgrade, or fill an empty slot
+    int firstEmpty = -1;
     for (int e = 0; e < 4; e++) {
         if (icData[e * 3] == lookupKey) {
             uint64_t extra = icData[e * 3 + 2];
             if (extra == 0) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
-                // Encode inline primKind
                 if (target->hasPrimPrologue) {
                     int primIdx = primitiveIndexOf(cachedMethod);
                     uint8_t pk = inlinePrimKind(primIdx);
@@ -10615,6 +10616,30 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             }
             return;
         }
+        if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
+    }
+    // No matching entry found — fill an empty slot with J2J entry.
+    // Only fill for immediate (tagged) receivers — object pointer receivers
+    // cause DNU when the IC entry is used at a polymorphic send site
+    // where a different object type passes through.
+    if (firstEmpty >= 0 && fillEnabled && tag != 0) {
+        uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
+        uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+        if (target->hasPrimPrologue) {
+            int primIdx = primitiveIndexOf(cachedMethod);
+            uint8_t pk = inlinePrimKind(primIdx);
+            if (pk) newExtra |= (uint64_t)pk << 48;
+        }
+        // NOTE: Do NOT detect trivial methods (getter/setter/yourself) for
+        // fill entries. The patchJITICAfterSend path on IC miss already does
+        // this correctly. The fill path uses mega cache hits which may not
+        // have the right context for trivial detection at polymorphic sites.
+
+        icData[firstEmpty * 3] = lookupKey;
+        icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
+        icData[firstEmpty * 3 + 2] = newExtra;
+        if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
+        jitICPatches_++;
     }
 }
 
