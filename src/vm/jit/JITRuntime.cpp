@@ -11,6 +11,9 @@
 #include <cstring>
 #include <cstdio>
 
+namespace pharo { extern uint64_t g_stepNum; }
+using pharo::g_stepNum;
+
 #if PHARO_JIT_ENABLED
 
 namespace pharo {
@@ -127,6 +130,19 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 
+    // Deferral: skip counting for the first N million interpreter steps.
+    // This lets the interpreter run at full speed during startup.
+    // PHARO_JIT_DEFER=N (seconds; default: 0 = no deferral)
+    static int deferSteps = -1; // -1 = uninitialized
+    if (deferSteps == -1) {
+        const char* env = getenv("PHARO_JIT_DEFER");
+        // Convert seconds to approximate step count (~30M steps/sec on interpreter)
+        deferSteps = env ? atoi(env) * 30000000 : 0;
+        if (deferSteps > 0)
+            fprintf(stderr, "[JIT] Deferring compilation for ~%d steps\n", deferSteps);
+    }
+    if (deferSteps > 0 && static_cast<int>(g_stepNum) < deferSteps) return;
+
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
     static int maxCompile = -2; // -2 = uninitialized
     if (maxCompile == -2) {
@@ -181,7 +197,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         size_t i = (idx + probe) % CountMapSize;
         if (countMap_[i].key == key) {
             countMap_[i].count++;
-            if (countMap_[i].count == CompileThreshold) {
+            // Runtime-configurable threshold: PHARO_JIT_THRESHOLD=N (default: CompileThreshold=2)
+            static uint32_t threshold = 0;
+            if (threshold == 0) {
+                const char* env = getenv("PHARO_JIT_THRESHOLD");
+                threshold = env ? static_cast<uint32_t>(atoi(env)) : CompileThreshold;
+                if (threshold < 1) threshold = 1;
+            }
+            if (countMap_[i].count == threshold) {
                 // Bisection: stop after N compilations
                 if (maxCompile >= 0 && (int)compiler_->methodsCompiled() >= maxCompile) {
                     return;
@@ -261,6 +284,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
+    return tryExecute(compiledMethod, state, jm);
+}
+
+bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) {
     // Verify method map integrity (cheap, catches GC/rehash bugs)
     if (jm->compiledMethodOop != compiledMethod.rawBits()) {
         fprintf(stderr, "[JIT] BUG: methodMap returned wrong JITMethod! "
@@ -269,16 +296,6 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
                 (unsigned long long)jm->compiledMethodOop);
         return false;
     }
-
-    // Inline getter/setter/yourself sends are dispatched directly in the
-    // stencil (stencil_sendPoly IC_HIT macro) without exiting to C++.
-    // Non-trivial sends still exit via ExitSendCached, but J2J chaining in
-    // the interpreter handles those without the full activate overhead.
-
-    // Heap writes (storeRecvVar, storeLitVar) are allowed because
-    // generational GC is not implemented — all objects are in old space,
-    // so the write barrier (isOld && isYoung check) is a no-op.
-    // TODO: Add write barrier calls to store stencils when gen GC is added.
 
     // Touch for LRU tracking
     codeZone_.touch(jm);
@@ -315,7 +332,6 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
     }
 
     // Toggle W^X to executable for JIT execution.
-    // ICache was flushed during compilation — no need to re-flush on every call.
     makeExecutable(jm->codeStart(), jm->codeSize);
 
     // Call the compiled code

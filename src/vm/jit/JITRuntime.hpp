@@ -44,6 +44,9 @@ public:
     // the method isn't compiled yet.
     bool tryExecute(Oop compiledMethod, JITState& state);
 
+    // Fast overload: skip methodMap lookup when caller already has the JITMethod.
+    bool tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm);
+
     // Resume JIT execution at a specific bytecodeOffset (for on-stack re-entry
     // after a send returns). Returns true if JIT code ran.
     bool tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state);

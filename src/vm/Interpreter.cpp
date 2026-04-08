@@ -10223,6 +10223,10 @@ void Interpreter::tryJITResumeInCaller() {
         // Validate method_ before using it
         if (!method_.isObject() || method_.rawBits() < 0x10000) break;
 
+        // FAST PATH: check if caller method is compiled before expensive setup
+        jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+        if (!jm || !jm->isExecutable()) break;
+
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) break;
 
@@ -10236,8 +10240,6 @@ void Interpreter::tryJITResumeInCaller() {
         state.tempBase = framePointer_ + 1;
         state.memory = &memory_;
         state.interp = this;
-        // IP must be set to bytecodeStart (not current IP) because stencils
-        // use ip + bcOffset where bcOffset is from method start
         {
             Oop hdr = methObj->slots()[0];
             int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
@@ -10249,7 +10251,7 @@ void Interpreter::tryJITResumeInCaller() {
         state.sendArgCount = 0;
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
-            break;  // Not JIT-compiled or no re-entry at this offset
+            break;  // No re-entry at this offset
         }
 
         // Charge the periodic check countdown for JIT-executed bytecodes.
@@ -10541,26 +10543,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Guard: method must be a valid object pointer
     if (!method.isObject() || method.rawBits() < 0x10000) return false;
 
-    // Try to execute compiled code
+    // FAST PATH: check if method is compiled BEFORE expensive JITState setup.
+    // This avoids ~20 pointer writes per send for non-compiled methods.
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+    if (!jm || !jm->isExecutable()) return false;
+
+    // Method is compiled — set up JITState
     jit::JITState state;
     state.sp = stackPointer_;
     state.receiver = receiver_;
 
-    // Set up literals pointer: slot 1 of CompiledMethod
-    // (slot 0 is the method header)
     ObjectHeader* methObj = method.asObjectPtr();
     state.literals = methObj->slots() + 1;
-
-    // Temp base: arguments start after receiver in the frame
-    // framePointer_ + 1 points to the first arg/temp slot
     state.tempBase = framePointer_ + 1;
 
     state.memory = &memory_;
     state.interp = this;
 
     // IP = bytecodeStart (stencils use ip + bcOffset where bcOffset is from method start).
-    // activateMethod may have advanced instructionPointer_ past callPrimitive (0xF8),
-    // so we must recompute bytecodeStart from the method header instead.
     {
         Oop hdr = methObj->slots()[0];
         int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
@@ -10574,8 +10574,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
 
-    if (!jitRuntime_.tryExecute(method, state)) {
-        return false;  // Not compiled yet
+    if (!jitRuntime_.tryExecute(method, state, jm)) {
+        return false;  // Should not happen — jm was already validated
     }
 
     // Charge the periodic check countdown for JIT-executed bytecodes.
