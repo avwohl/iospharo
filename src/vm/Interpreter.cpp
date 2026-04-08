@@ -7712,6 +7712,17 @@ Oop Interpreter::materializeFrameStack() {
     Oop sender = activeContext_;
     size_t startFrame = 0;
 
+    // J2J FIX: When activeContext_ is nil (set by pushFrameForJIT), use
+    // savedFrames_[0].savedActiveContext as the sender for frame[0]. This
+    // reconnects the context chain so exception handlers in ancestor contexts
+    // can be found during exception propagation.
+    if (sender.isNil() && frameDepth_ > 0) {
+        Oop savedCtx = savedFrames_[0].savedActiveContext;
+        if (savedCtx.isObject() && savedCtx.rawBits() > 0x10000) {
+            sender = savedCtx;
+        }
+    }
+
     if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
