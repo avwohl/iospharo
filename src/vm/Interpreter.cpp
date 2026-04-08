@@ -1570,15 +1570,22 @@ void Interpreter::handleForceYield() {
                     prio, rcvrClass.c_str(), selector.c_str(),
                     (long long)ipOffset_, frameDepth_);
             // Show call stack (up to 20 callers)
-            for (size_t fi = 1; fi <= 20 && fi <= frameDepth_; fi++) {
-                SavedFrame& sf = savedFrames_[frameDepth_ - fi];
-                std::string cname = "(?)";
-                if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil())
-                    cname = memory_.classNameOf(sf.savedReceiver);
-                else if (sf.savedReceiver.isSmallInteger()) cname = "SmallInteger";
-                else if (sf.savedReceiver.isNil()) cname = "nil";
-                std::string ssel = memory_.selectorOf(sf.savedMethod);
-                fprintf(stderr, "[DIAG]   [-%zu] %s>>%s\n", fi, cname.c_str(), ssel.c_str());
+            try {
+                for (size_t fi = 1; fi <= 20 && fi <= frameDepth_; fi++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                    std::string cname = "(?)";
+                    if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil()
+                        && memory_.isValidPointer(sf.savedReceiver))
+                        cname = memory_.classNameOf(sf.savedReceiver);
+                    else if (sf.savedReceiver.isSmallInteger()) cname = "SmallInteger";
+                    else if (sf.savedReceiver.isNil()) cname = "nil";
+                    std::string ssel = "?";
+                    if (sf.savedMethod.isObject() && memory_.isValidPointer(sf.savedMethod))
+                        ssel = memory_.selectorOf(sf.savedMethod);
+                    fprintf(stderr, "[DIAG]   [-%zu] %s>>%s\n", fi, cname.c_str(), ssel.c_str());
+                }
+            } catch (...) {
+                fprintf(stderr, "[DIAG]   (stack trace failed)\n");
             }
             // Timer state diagnostic
             {
@@ -6602,20 +6609,27 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         static int dnuLogCount = 0;
         if (dnuLogCount++ < 20) {
             std::string selName = "(unknown)";
-            if (selector.isObject() && selector.rawBits() > 0x10000) {
-                ObjectHeader* sH = selector.asObjectPtr();
-                if (sH->isBytesObject()) selName = std::string((const char*)sH->bytes(), sH->byteSize());
-            }
+            try {
+                if (selector.isObject() && selector.rawBits() > 0x10000) {
+                    ObjectHeader* sH = selector.asObjectPtr();
+                    if (sH->isBytesObject() && sH->byteSize() < 256)
+                        selName = std::string((const char*)sH->bytes(), sH->byteSize());
+                }
+            } catch (...) { selName = "(corrupt)"; }
             // Full stack dump for first 10 DNUs
             if (dnuLogCount <= 10) {
-                fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
-                for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
-                    SavedFrame& sf = savedFrames_[f];
-                    std::string mSel = memory_.selectorOf(sf.savedMethod);
-                    std::string rCls = memory_.classNameOf(sf.savedReceiver);
-                    fprintf(stderr, "[DNU-STACK]   [%zu] %s>>%s\n", f, rCls.c_str(), mSel.c_str());
+                try {
+                    fprintf(stderr, "[DNU-STACK] Full call stack for #%s (DNU #%d):\n", selName.c_str(), dnuLogCount);
+                    for (size_t f = 0; f <= frameDepth_ && f < 30; f++) {
+                        SavedFrame& sf = savedFrames_[f];
+                        std::string mSel = memory_.selectorOf(sf.savedMethod);
+                        std::string rCls = memory_.classNameOf(sf.savedReceiver);
+                        fprintf(stderr, "[DNU-STACK]   [%zu] %s>>%s\n", f, rCls.c_str(), mSel.c_str());
+                    }
+                    fprintf(stderr, "[DNU-STACK]   [current] #%s fd=%zu\n", memory_.selectorOf(method_).c_str(), frameDepth_);
+                } catch (...) {
+                    fprintf(stderr, "[DNU-STACK]   (stack dump failed)\n");
                 }
-                fprintf(stderr, "[DNU-STACK]   [current] #%s fd=%zu\n", memory_.selectorOf(method_).c_str(), frameDepth_);
             }
             Oop rcvr = stackValue(argCount);
             Oop currentProc = getActiveProcess();

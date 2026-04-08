@@ -971,10 +971,12 @@ size_t ObjectMemory::fixedFieldCountOf(Oop obj) const {
 }
 
 std::string ObjectMemory::oopToString(Oop obj) const {
-    if (!obj.isObject()) return "";
+    if (!obj.isObject() || obj.rawBits() < 0x10000) return "";
     ObjectHeader* hdr = obj.asObjectPtr();
     if (!hdr->isBytesObject()) return "";
-    return std::string(reinterpret_cast<const char*>(hdr->bytes()), hdr->byteSize());
+    size_t sz = hdr->byteSize();
+    if (sz > 4096) return "";  // Guard against corrupted headers
+    return std::string(reinterpret_cast<const char*>(hdr->bytes()), sz);
 }
 
 size_t ObjectMemory::numLiteralsOf(Oop method) const {
