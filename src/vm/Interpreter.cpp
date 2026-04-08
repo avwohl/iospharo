@@ -6306,6 +6306,7 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     // callee state in both interpreter and JITState.
 
     Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
+
     int nArgs = state->sendArgCount;
 
     // Sync interpreter state from JITState (the stencil has been modifying sp)
@@ -10497,8 +10498,16 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
+    // Also skip J2J for class/metaclass receivers (format 1) — these trigger
+    // errorNotIndexable bugs during path resolution. Instance J2J stays enabled.
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
-    if (extra == 0 && j2jEnabled) {
+    bool isClassReceiver = false;
+    if (receiver.isObject() && receiver.rawBits() > 0x10000) {
+        ObjectHeader* rcvObj = receiver.asObjectPtr();
+        if (static_cast<uint8_t>(rcvObj->format()) == 1)
+            isClassReceiver = true;
+    }
+    if (extra == 0 && j2jEnabled && !isClassReceiver) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             // Check if target has a primitive but no prologue
