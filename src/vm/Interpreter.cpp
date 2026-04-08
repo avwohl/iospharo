@@ -4968,6 +4968,57 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
+    // Selector sanity check: must be a bytes object (Symbol/ByteString)
+    if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
+        ObjectHeader* selHdr = selector.asObjectPtr();
+        if (__builtin_expect(!selHdr->isBytesObject(), 0)) {
+            static int badSelCount = 0;
+            if (badSelCount++ < 10) {
+                // Decode the send bytecode to find the literal index
+                uint8_t bc = instructionPointer_ ? *instructionPointer_ : 0;
+                int litIdx = -1;
+                if (bc >= 0x80 && bc <= 0x8F) litIdx = bc & 0xF; // send short
+                else if (bc >= 0x90 && bc <= 0x9F) litIdx = bc & 0xF;
+                else if (bc >= 0xA0 && bc <= 0xAF) litIdx = bc & 0xF;
+                else if (bc == 0xEA || bc == 0xEB) {
+                    uint8_t ext = instructionPointer_ ? instructionPointer_[1] : 0;
+                    litIdx = ext & 0x1F;
+                }
+                fprintf(stderr, "[SEL-CORRUPT #%d] selector fmt=%d cls=%u slots=%zu raw=0x%llx "
+                        "bc=0x%02X litIdx=%d method=0x%llx (#%s) fd=%zu\n",
+                        badSelCount, (int)selHdr->format(), selHdr->classIndex(),
+                        selHdr->slotCount(), (unsigned long long)selector.rawBits(),
+                        bc, litIdx, (unsigned long long)method_.rawBits(),
+                        memory_.selectorOf(method_).c_str(), frameDepth_);
+                // Dump the first 10 literals of the method
+                if (method_.isObject() && method_.rawBits() > 0x10000) {
+                    ObjectHeader* mH = method_.asObjectPtr();
+                    Oop hdr = mH->slots()[0];
+                    int nLit = hdr.isSmallInteger() ? ((int)hdr.asSmallInteger() & 0x7FFF) : 0;
+                    fprintf(stderr, "[SEL-CORRUPT]   %d literals:", nLit);
+                    for (int i = 0; i < nLit && i < 15; i++) {
+                        Oop lit = mH->slots()[1 + i];
+                        ObjectHeader* lH = lit.isObject() && lit.rawBits() > 0x10000
+                            ? lit.asObjectPtr() : nullptr;
+                        if (lH && lH->isBytesObject() && lH->byteSize() < 64)
+                            fprintf(stderr, " [%d]='%.*s'", i,
+                                    (int)lH->byteSize(), (const char*)lH->bytes());
+                        else
+                            fprintf(stderr, " [%d]=0x%llx", i,
+                                    (unsigned long long)lit.rawBits());
+                    }
+                    fprintf(stderr, "\n");
+                }
+#if PHARO_JIT_ENABLED
+                // Check if we just came from JIT
+                fprintf(stderr, "[SEL-CORRUPT]   IP=0x%llx method bytes=%p\n",
+                        (unsigned long long)(uintptr_t)instructionPointer_,
+                        method_.isObject() ? (void*)method_.asObjectPtr()->bytes() : nullptr);
+#endif
+            }
+        }
+    }
+
     // Corruption check (cold path)
     if (__builtin_expect(rcvr.rawBits() == 0, 0)) {
         std::string selName = "(unknown)";
