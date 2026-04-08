@@ -979,22 +979,17 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                                                                               \
             /* Callee returned — check exit reason */                         \
             if (s->exitReason != EXIT_RETURN) {                               \
-                /* Callee needs interpreter help (send, deopt, etc.)       */ \
+                /* Callee needs interpreter help (send, block create, etc.)*/ \
                 /* DON'T pop the frame — the callee's frame and stack     */ \
                 /* state must be preserved so the interpreter can resume  */ \
-                /* the callee at its bail-out point. Popping + re-sending */ \
-                /* from the caller causes DOUBLE EXECUTION of the         */ \
-                /* callee's side effects (field stores, array adds, etc.) */ \
+                /* the callee at its bail-out point.                      */ \
                 /*                                                         */ \
-                /* The callee's stencil already set s->ip/sp/icDataPtr   */ \
-                /* to the bail-out point. The interpreter (via method_    */ \
-                /* set by pushFrameForJIT) handles the callee's send,    */ \
-                /* then continues the callee from where it left off.     */ \
-                /* When the callee eventually returns, the normal return  */ \
-                /* path pops the J2J-pushed frame.                       */ \
-                /*                                                         */ \
-                /* Force EXIT_SEND so interpreter does fresh lookup:     */ \
-                s->exitReason = EXIT_SEND;                                    \
+                /* Pass through the ORIGINAL exit reason (ExitSend,       */ \
+                /* ExitBlockCreate, ExitArrayCreate, etc.) so that        */ \
+                /* tryJITActivation can handle it correctly. Overwriting  */ \
+                /* with EXIT_SEND would cause ExitBlockCreate to be       */ \
+                /* re-interpreted as a raw bytecode without extension     */ \
+                /* byte context, producing wrong block objects.           */ \
                 _HOLE_RT_SEND(s);                                             \
                 return;                                                       \
             }                                                                 \
