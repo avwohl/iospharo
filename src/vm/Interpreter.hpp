@@ -788,6 +788,8 @@ private:
     size_t jitJ2JActChains_ = 0;  // JIT-to-JIT chain hits (activation path)
     size_t jitJ2JActFalls_ = 0;   // JIT-to-JIT fallbacks (activation path)
     size_t jitJ2JDirectPatches_ = 0;  // IC entries with J2J direct call bit set
+    size_t jitJ2JStencilCalls_ = 0;   // Stencil-internal J2J pushFrame calls
+    size_t jitJ2JStencilReturns_ = 0; // Stencil-internal J2J popFrame (successful return)
 
     // J2J ban set: methods whose J2J calls always bail out (callee modifies
     // state before hitting a send, causing double-execution on re-entry).
@@ -807,6 +809,10 @@ public:
     size_t jitJ2JActChains() const { return jitJ2JActChains_; }
     size_t jitJ2JActFalls() const { return jitJ2JActFalls_; }
     size_t jitJ2JDirectPatches() const { return jitJ2JDirectPatches_; }
+    size_t jitJ2JStencilCalls() const { return jitJ2JStencilCalls_; }
+    size_t jitJ2JStencilReturns() const { return jitJ2JStencilReturns_; }
+    void incJ2JStencilCalls() { jitJ2JStencilCalls_++; }
+    void incJ2JStencilReturns() { jitJ2JStencilReturns_++; }
 
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.

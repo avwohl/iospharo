@@ -50,12 +50,14 @@ extern "C" void jit_rt_push_frame(JITState* state) {
     // J2J direct call: push an interpreter frame for GC root scanning.
     // Reads cachedTarget (method Oop), sendArgCount, ip from state.
     Interpreter* interp = state->interp;
+    interp->incJ2JStencilCalls();
     interp->pushFrameForJIT(state);
 }
 
 extern "C" void jit_rt_pop_frame(JITState* state) {
     // J2J direct call: pop the interpreter frame after callee returns.
     Interpreter* interp = state->interp;
+    interp->incJ2JStencilReturns();
     interp->popFrameForJIT(state);
 }
 
@@ -166,6 +168,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         size_t j2jActChains = interp_ ? interp_->jitJ2JActChains() : 0;
         size_t j2jActFalls = interp_ ? interp_->jitJ2JActFalls() : 0;
         size_t j2jDirect = interp_ ? interp_->jitJ2JDirectPatches() : 0;
+        size_t j2jSCalls = interp_ ? interp_->jitJ2JStencilCalls() : 0;
+        size_t j2jSReturns = interp_ ? interp_->jitJ2JStencilReturns() : 0;
 
         // Count map diagnostics
         size_t tracked = 0, hot = 0;
@@ -177,7 +181,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         }
         fprintf(stderr, "[JIT] Stats: %zu sends, %zu compiled, %zu failed, "
                 "%zu/%zu KB code | IC: %zu/%zu (%d%% hit, %zu patched, %zu stale) "
-                "| J2J-r: %zu/%zu J2J-a: %zu/%zu J2J-d: %zu | map: %zu tracked, %zu hot\n",
+                "| J2J-r: %zu/%zu J2J-a: %zu/%zu J2J-d: %zu J2J-s: %zu/%zu"
+                " | map: %zu tracked, %zu hot\n",
                 totalEntries, compiler_->methodsCompiled(),
                 compiler_->compilationsFailed(),
                 codeZone_.usedBytes() / 1024, codeZone_.totalBytes() / 1024,
@@ -185,6 +190,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 j2jChains, j2jChains + j2jFallbacks,
                 j2jActChains, j2jActChains + j2jActFalls,
                 j2jDirect,
+                j2jSReturns, j2jSCalls,
                 tracked, hot);
 
     }
