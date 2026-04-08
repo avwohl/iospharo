@@ -889,6 +889,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
     int nArgs = (packed >> 16) & 0xFF;
+    int bcLen = (packed >> 24) & 0xFF;  // send bytecode length for J2J saved IP
 
     uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
 
@@ -952,7 +953,10 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             /* Set up state for push_frame helper */                           \
             s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
             s->sendArgCount = nArgs;                                          \
-            s->ip = s->ip + bcOffset;                                         \
+            /* Save IP PAST the send bytecode so that when the callee     */ \
+            /* returns through popFrame, the caller resumes at the next   */ \
+            /* bytecode — not at the send (which would cause re-send).    */ \
+            s->ip = s->ip + bcOffset + bcLen;                                 \
                                                                               \
             /* Push interpreter frame (C++ helper, ~30 cycles) */             \
             _HOLE_RT_PUSH_FRAME(s);                                           \
@@ -975,21 +979,22 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                                                                               \
             /* Callee returned — check exit reason */                         \
             if (s->exitReason != EXIT_RETURN) {                               \
-                /* Callee needs interpreter help (send, deopt, etc.) */       \
-                /* Pop the frame we pushed and bail out */                     \
-                _HOLE_RT_POP_FRAME(s);                                        \
-                s->sp = savedSP;                                              \
-                s->receiver = savedRecv;                                      \
-                s->literals = savedLit;                                       \
-                s->tempBase = savedTemp;                                      \
-                s->jitMethod = savedJM;                                       \
-                s->method = savedMethod;                                      \
-                s->argCount = savedArgCount;                                  \
-                s->ip = savedIP + bcOffset;                                   \
-                s->icDataPtr = icData;                                        \
-                s->sendArgCount = nArgs;                                      \
-                s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];          \
-                s->exitReason = EXIT_SEND_CACHED;                             \
+                /* Callee needs interpreter help (send, deopt, etc.)       */ \
+                /* DON'T pop the frame — the callee's frame and stack     */ \
+                /* state must be preserved so the interpreter can resume  */ \
+                /* the callee at its bail-out point. Popping + re-sending */ \
+                /* from the caller causes DOUBLE EXECUTION of the         */ \
+                /* callee's side effects (field stores, array adds, etc.) */ \
+                /*                                                         */ \
+                /* The callee's stencil already set s->ip/sp/icDataPtr   */ \
+                /* to the bail-out point. The interpreter (via method_    */ \
+                /* set by pushFrameForJIT) handles the callee's send,    */ \
+                /* then continues the callee from where it left off.     */ \
+                /* When the callee eventually returns, the normal return  */ \
+                /* path pops the J2J-pushed frame.                       */ \
+                /*                                                         */ \
+                /* Force EXIT_SEND so interpreter does fresh lookup:     */ \
+                s->exitReason = EXIT_SEND;                                    \
                 _HOLE_RT_SEND(s);                                             \
                 return;                                                       \
             }                                                                 \

@@ -626,7 +626,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                     int argCount = bc.operand2;
                     bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendJ2J);
-                    bc.operand = (argCount << 16) | (bc.bcOffset & 0xFFFF);
+                    bc.operand = (bc.bcLength << 24) | (argCount << 16) | (bc.bcOffset & 0xFFFF);
                     // operand2Ptr will be set after code zone allocation
                 } else {
                     // Bail-out or special send: keep stencil_send with bcOffset
