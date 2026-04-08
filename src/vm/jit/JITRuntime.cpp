@@ -51,6 +51,7 @@ extern "C" void jit_rt_push_frame(JITState* state) {
     // Reads cachedTarget (method Oop), sendArgCount, ip from state.
     Interpreter* interp = state->interp;
     interp->incJ2JStencilCalls();
+    interp->trackJ2JEntry(state);
     interp->pushFrameForJIT(state);
 }
 
@@ -58,8 +59,8 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     // J2J direct call: pop the interpreter frame after callee returns.
     Interpreter* interp = state->interp;
     interp->incJ2JStencilReturns();
+    interp->trackJ2JReturn(state);
     interp->popFrameForJIT(state);
-
 }
 
 // ===== JITRuntime =====
@@ -155,6 +156,15 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
     static size_t totalEntries = 0;
     totalEntries++;
+
+    // Debug: log first few entries for specific selectors
+    if (totalEntries <= 5000 && interp_) {
+        std::string sel = interp_->memory().selectorOf(compiledMethod);
+        if (sel == "benchFib" || sel.find("fib") != std::string::npos || sel.find("Fib") != std::string::npos) {
+            fprintf(stderr, "[NOTE] #%zu #%s method=0x%llx\n",
+                    totalEntries, sel.c_str(), (unsigned long long)compiledMethod.rawBits());
+        }
+    }
 
     // Periodic stats (every ~64K entries)
     if ((totalEntries & 0xFFFF) == 0) {

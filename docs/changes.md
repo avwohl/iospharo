@@ -2,6 +2,41 @@
 
 2026-04-08
 
+## Session Handler Fix: isImageStarting + P80 Startup Boost
+
+Fixed two bugs preventing Pharo session handlers from firing on image resume:
+
+1. **isImageStarting = false on resume**: `SnapshotOperation>>doSnapshot` stores
+   `isImageStarting := snapshotPrimitive result` at bytecode pc=59. On resume,
+   our VM patched the stack top to `true` but the receiver's slot 0 stayed
+   `false`. `performSnapshot` then called `quitPrimitive` instead of running
+   session handlers. Fix: walk the context chain on resume and patch slot 0 of
+   ALL SnapshotOperation receivers to `true`.
+
+2. **P80 priority needed, not P100**: The startup process was boosted to P100
+   but `safeProcessPriority()` rejected priorities > 80 as "corrupt" (returning
+   -1). This caused `synchronousSignal` to yield our P80→"P-1" process to the
+   P80 Delay scheduler. Additionally, `putToSleep` at P100 would read past the
+   end of the scheduler's 80-entry priority array. Fix: boost to P80 (the
+   maximum valid priority = timingPriority).
+
+**Benchmark results** (fib(28), FibRunner at system priority 5):
+
+  VM                    fib(28)    Ratio vs Cog
+  Reference Cog VM      2ms        1x
+  Our VM (JIT)          61ms       30x slower
+  Our interpreter        —         (not tested separately)
+
+The 30x gap is the target for Phase 1 J2J optimization. Each recursive
+benchFib send exits to C++, does frame management, and re-enters JIT.
+fib(28) makes ~1.2M recursive calls ≈ 50ns/call ≈ 150 cycles on Apple
+Silicon. Cog does ~5 cycles/call.
+
+Note: a separate crash (Character '/' dereferenced as pointer) prevents
+later session handlers (File, DiskStore, FileLocator) from completing.
+FibRunner was registered at system priority 5 to run before the crash.
+The crash is tracked separately — it blocks the SUnit test runner too.
+
 ## Phase 1 J2J: IC Fill from Mega Cache Hits
 
 Added IC fill path in `upgradeICToJ2J()`: when ExitSendCached fires for a
@@ -28,6 +63,15 @@ path's benefit will increase with more diverse call sites.
 
 JIT stats at benchmark time: 299 compiled methods, 95% IC hit rate,
 78% J2J activation rate, 52% J2J return rate.
+
+New primitive prologues: stencil_primAt (60), stencil_primAtPut (61),
+stencil_primSize (62). Handle Array (format 2) operations inline in the
+JIT prologue. Enables J2J direct calls for array access methods that
+were previously blocked by the unsafePrim guard.
+
+JIT-internal J2J metrics: 97% stencil success rate during fib(28),
+confirming recursive calls stay in machine code. Sort benchmark shows
+lower improvement due to push_frame/pop_frame overhead per array access.
 
 Environment variable controls:
   PHARO_NO_JIT=1      - disable JIT entirely

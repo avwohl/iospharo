@@ -302,25 +302,38 @@ bool Interpreter::initialize() {
                 }
             }
         }
-        // Dump the receiver (SnapshotOperation) slots at load time
-        Oop resumeReceiver = memory_.fetchPointer(5, context);  // slot 5 = receiver
-        if (resumeReceiver.isObject() && !resumeReceiver.isNil()) {
+        // Patch isImageStarting=true on ALL SnapshotOperation receivers in
+        // the context chain. SnapshotOperation>>doSnapshot stores
+        //   isImageStarting := snapshotPrimitive
+        // but its receiver may differ from performSnapshot's receiver (the
+        // inner call creates a separate context with a cloned or block-local
+        // receiver). performSnapshot reads isImageStarting (slot 0) to
+        // decide whether to call quitPrimitive. If slot 0 is false, it quits
+        // before running session startup handlers — breaking FibRunner, SUnit
+        // runner, and all other session handlers.
+        {
             Oop trueObj = memory_.specialObject(SpecialObjectIndex::TrueObject);
-            Oop falseObj = memory_.specialObject(SpecialObjectIndex::FalseObject);
-            ObjectHeader* rHdr = resumeReceiver.asObjectPtr();
-            int slots = static_cast<int>(rHdr->slotCount());
-            fprintf(stderr, "[RESUME-RECV] receiver=0x%llx class=%s slots=%d\n",
-                    (unsigned long long)resumeReceiver.rawBits(),
-                    memory_.classNameOf(resumeReceiver).c_str(), slots);
-            for (int i = 0; i < slots && i < 10; i++) {
-                Oop val = memory_.fetchPointer(i, resumeReceiver);
-                const char* desc = "?";
-                if (val.rawBits() == trueObj.rawBits()) desc = "true";
-                else if (val.rawBits() == falseObj.rawBits()) desc = "false";
-                else if (val.isNil()) desc = "nil";
-                else if (val.isSmallInteger()) desc = "int";
-                else desc = "obj";
-                fprintf(stderr, "[RESUME-RECV]   [%d]: %s (0x%llx)\n", i, desc, (unsigned long long)val.rawBits());
+            Oop walkCtx = context;
+            int patchCount = 0;
+            for (int d = 0; d < 20 && walkCtx.isObject() && !walkCtx.isNil(); d++) {
+                Oop rcv = memory_.fetchPointer(5, walkCtx);
+                if (rcv.isObject() && !rcv.isNil()) {
+                    std::string cls = memory_.classNameOf(rcv);
+                    if (cls == "SnapshotOperation") {
+                        Oop slot0 = memory_.fetchPointer(0, rcv);
+                        bool isTrue = slot0.rawBits() == trueObj.rawBits();
+                        fprintf(stderr, "[RESUME] Found SnapshotOperation 0x%llx at ctx depth %d, isImageStarting=%s\n",
+                                (unsigned long long)rcv.rawBits(), d, isTrue ? "true" : "false");
+                        if (!isTrue) {
+                            memory_.storePointer(0, rcv, trueObj);
+                            patchCount++;
+                        }
+                    }
+                }
+                walkCtx = memory_.fetchPointer(0, walkCtx);  // sender
+            }
+            if (patchCount > 0) {
+                fprintf(stderr, "[RESUME] Patched isImageStarting on %d SnapshotOperation(s)\n", patchCount);
             }
         }
     } else {
@@ -336,11 +349,23 @@ bool Interpreter::initialize() {
         memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
     }
 
-    // In headless mode, keep the startup process at its original priority (79).
-    // Session handlers create new P40 processes (e.g., MorphicRenderLoop). If the
-    // startup process is lowered to P40, it round-robins with these new processes
-    // and may never finish iterating all handlers. At P79, the startup process
-    // completes all session handlers before any P40 process runs.
+    // In headless mode, boost the startup process to timingPriority (80).
+    // Session handlers may fork processes at timingPriority (80) — e.g.,
+    // DelaySemaphoreScheduler. If the startup process runs at its default
+    // priority (79), the forked P80 process preempts it and the remaining
+    // session handlers never execute. At P80, semaphore signals to P80
+    // waiters use putToSleep (same priority = no preemption), so the startup
+    // process completes ALL handlers before yielding.
+    // NOTE: Cannot use >80 — the scheduler list array has exactly 80 entries.
+    if (isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
+        Oop currentPri = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        if (currentPri.isSmallInteger()) {
+            int pri = static_cast<int>(currentPri.asSmallInteger());
+            fprintf(stderr, "[STARTUP] Boosting startup process 0x%llx from P%d to P80\n",
+                    (unsigned long long)activeProcess.rawBits(), pri);
+            memory_.storePointer(ProcessPriorityIndex, activeProcess, Oop::fromSmallInteger(80));
+        }
+    }
     //
     // Demote existing P40 processes to P10 to prevent the saved Morphic loop from
     // competing with newly created session processes.
@@ -6297,6 +6322,39 @@ bool Interpreter::popFrame() {
     return true;
 }
 
+// J2J diagnostics — lightweight per-method tracking
+#if PHARO_JIT_ENABLED
+namespace {
+struct J2JMethodStats { size_t enters = 0; size_t returns = 0; };
+static std::unordered_map<uint64_t, J2JMethodStats> g_j2jMethodStats;
+static size_t g_j2jLastDump = 0;
+}
+
+void Interpreter::trackJ2JEntry(jit::JITState* state) {
+    uint64_t methodBits = state->cachedTarget.rawBits();
+    g_j2jMethodStats[methodBits].enters++;
+
+    size_t total = jitJ2JStencilCalls_;
+    if (total - g_j2jLastDump >= 50000) {
+        g_j2jLastDump = total;
+        fprintf(stderr, "[J2J-DIAG] === at %zu calls ===\n", total);
+        for (auto& [mb, ms] : g_j2jMethodStats) {
+            if (ms.enters > 10) {
+                std::string sel = memory_.selectorOf(Oop::fromRawBits(mb));
+                fprintf(stderr, "[J2J-DIAG]   #%-30s E=%zu R=%zu (%.0f%%)\n",
+                        sel.c_str(), ms.enters, ms.returns,
+                        ms.enters ? 100.0 * ms.returns / ms.enters : 0.0);
+            }
+        }
+    }
+}
+
+void Interpreter::trackJ2JReturn(jit::JITState* state) {
+    uint64_t methodBits = method_.rawBits();
+    g_j2jMethodStats[methodBits].returns++;
+}
+#endif
+
 // ===== J2J FRAME MANAGEMENT =====
 #if PHARO_JIT_ENABLED
 
@@ -6382,35 +6440,7 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
 void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Lightweight frame pop for J2J direct calls.
     if (frameDepth_ == 0) return;
-
-    // Track J2J success/failure per method. If a method always bails out
-    // (callee modifies heap state before hitting a send, causing double-execution
-    // on re-entry), ban it from future J2J to prevent incorrect results.
-    {
-        // Use a simple per-method counter. Key = method oop bits.
-        // Structure: [successCount, failCount]
-        struct J2JStats { int ok = 0; int fail = 0; };
-        static std::unordered_map<uint64_t, J2JStats> j2jStats;
-        static int totalBanned = 0;
-
-        uint64_t methodBits = state->method.rawBits();
-        auto& stats = j2jStats[methodBits];
-        if (state->exitReason == jit::ExitReturn) {
-            stats.ok++;
-        } else {
-            stats.fail++;
-            // After 3 consecutive failures with no successes, ban this method
-            if (stats.ok == 0 && stats.fail >= 3 && j2jBannedMethods_.count(methodBits) == 0) {
-                j2jBannedMethods_.insert(methodBits);
-                totalBanned++;
-                if (totalBanned <= 20) {
-                    std::string sel = memory_.selectorOf(state->method);
-                    fprintf(stderr, "[J2J-BAN] Banned #%s (fail=%d ok=%d total_banned=%d)\n",
-                            sel.c_str(), stats.fail, stats.ok, totalBanned);
-                }
-            }
-        }
-    }
+    (void)state;
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
@@ -9158,6 +9188,19 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
+    {
+        static int efcLog = 0;
+        if (efcLog < 200) {
+            Oop method = context.isObject() && !context.isNil() ? memory_.fetchPointer(3, context) : Oop::nil();
+            std::string sel = method.isObject() && !method.isNil() ? memory_.selectorOf(method) : "?";
+            Oop pcOop = context.isObject() && !context.isNil() ? memory_.fetchPointer(1, context) : Oop::nil();
+            int pc = pcOop.isSmallInteger() ? (int)pcOop.asSmallInteger() : -1;
+            Oop rcv = context.isObject() && !context.isNil() ? memory_.fetchPointer(5, context) : Oop::nil();
+            std::string rcls = rcv.isObject() && !rcv.isNil() ? memory_.classNameOf(rcv) : "nil";
+            fprintf(stderr, "[EFC %d] #%s pc=%d rcv=%s\n", efcLog, sel.c_str(), pc, rcls.c_str());
+            efcLog++;
+        }
+    }
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
     if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
@@ -10442,6 +10485,9 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 8:  return 8;   // notEqual
     case 9:  return 9;   // mul
     case 110: return 10; // identical
+    case 14: return 11;  // bitAnd
+    case 15: return 12;  // bitOr
+    case 17: return 13;  // bitShift
     default: return 0;
     }
 }
@@ -10560,6 +10606,14 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
+            // Debug: log J2J patches for high-frequency methods
+            static int logCount = 0;
+            if ((extra & (1ULL << 60)) && logCount < 30) {
+                logCount++;
+                std::string sel = memory_.selectorOf(resolvedMethod);
+                fprintf(stderr, "[IC-PATCH] #%s J2J=1 key=0x%llx extra=0x%llx\n",
+                        sel.c_str(), (unsigned long long)lookupKey, (unsigned long long)extra);
+            }
             return;
         }
     }
@@ -10572,6 +10626,18 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     if (!j2jEnabled || !icData) return;
 
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
+
+    // Debug: log high-frequency upgrade attempts
+    static size_t upgradeAttempts = 0;
+    upgradeAttempts++;
+    if (upgradeAttempts <= 50 || (upgradeAttempts % 100000 == 0)) {
+        std::string sel = memory_.selectorOf(cachedMethod);
+        fprintf(stderr, "[IC-UPG-TRY] #%d #%s compiled=%d banned=%d\n",
+                (int)upgradeAttempts, sel.c_str(),
+                (target && target->isExecutable()) ? 1 : 0,
+                isJ2JBanned(cachedMethod.rawBits()) ? 1 : 0);
+    }
+
     if (!target || !target->isExecutable()) return;
     if (isJ2JBanned(cachedMethod.rawBits())) return;
 
@@ -10604,6 +10670,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         if (icData[e * 3] == lookupKey) {
             uint64_t extra = icData[e * 3 + 2];
             if (extra == 0) {
+                // Debug: log upgrade
+                static int upgradeLog = 0;
+                if (upgradeLog < 30) {
+                    upgradeLog++;
+                    std::string sel = memory_.selectorOf(cachedMethod);
+                    fprintf(stderr, "[IC-UPGRADE] #%s key=0x%llx → J2J\n",
+                            sel.c_str(), (unsigned long long)lookupKey);
+                }
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 if (target->hasPrimPrologue) {

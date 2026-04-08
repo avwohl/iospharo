@@ -813,6 +813,8 @@ public:
     size_t jitJ2JStencilReturns() const { return jitJ2JStencilReturns_; }
     void incJ2JStencilCalls() { jitJ2JStencilCalls_++; }
     void incJ2JStencilReturns() { jitJ2JStencilReturns_++; }
+    void trackJ2JEntry(jit::JITState* state);
+    void trackJ2JReturn(jit::JITState* state);
 
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.

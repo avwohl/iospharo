@@ -985,6 +985,28 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                     result = (rcv.bits == arg.bits) ?                         \
                         s->trueOop : s->falseOop;                            \
                     ok = true;                                                \
+                } else if (primKind == 11) { /* bitAnd */                    \
+                    /* SmallInt & SmallInt: just AND the raw bits.           */ \
+                    /* Tag bits (low 3 = 001) are preserved by AND.         */ \
+                    result.bits = rcv.bits & arg.bits;                        \
+                    ok = true;                                                \
+                } else if (primKind == 12) { /* bitOr */                     \
+                    /* SmallInt | SmallInt: OR raw bits preserves tag.       */ \
+                    result.bits = rcv.bits | arg.bits;                        \
+                    ok = true;                                                \
+                } else if (primKind == 13) { /* bitShift */                  \
+                    /* arg (b) is the shift amount. Positive=left, neg=right*/ \
+                    if (b >= 0 && b < 61) {                                  \
+                        int64_t r = a << b;                                  \
+                        if ((r >> b) == a) { /* no overflow */               \
+                            result.bits = (uint64_t)(r << 3) | 1;           \
+                            ok = true;                                       \
+                        }                                                    \
+                    } else if (b < 0 && b > -64) {                          \
+                        int64_t r = a >> (-b);                               \
+                        result.bits = (uint64_t)(r << 3) | 1;               \
+                        ok = true;                                           \
+                    }                                                        \
                 }                                                             \
                 if (ok) {                                                     \
                     s->sp[-2] = result;                                       \
