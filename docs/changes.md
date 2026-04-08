@@ -2,6 +2,21 @@
 
 2026-04-08
 
+## Fix Test Mode End-to-End
+
+`./build/test_load_image <image> test "Kernel-Tests"` now works.
+799 classes, 16,453 pass (99.7%) in 600s timeout.
+
+Three issues fixed:
+- **Auto-disable JIT in test mode**: JIT adds ~26x overhead for cold code
+  (heavy C++ JIT entry/exit transitions per send). Tests now run at full
+  interpreter speed. Override with PHARO_NO_JIT=0 to force JIT.
+- **Always create Display**: MorphicRenderLoop runs at P40 (not P80 as
+  previously assumed). Without Display it spins doing empty cycles.
+- **Always pass --interactive**: Passing "test" as image args activated
+  STCommandLineHandler which installed NonInteractiveUIManager, conflicting
+  with the SUnitRunner session handler.
+
 ## Fix JIT Session Startup (3 bugs)
 
 Three bugs prevented session startup handlers from completing with JIT:

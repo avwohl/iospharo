@@ -2,6 +2,34 @@
 
 Last updated: 2026-04-08
 
+## Test Mode End-to-End (2026-04-08)
+
+`./build/test_load_image <image> test "Kernel-Tests"` now works.
+Fresh Pharo 13 image + SUnitRunner session handler, 600s timeout.
+JIT auto-disabled in test mode (26x cold-code overhead, see below).
+
+    Classes  Pass     Fail  Err  Skip  Rate
+    799      16,453   23    21   39    99.7%
+
+799 of 1671 class tiers completed in the 600s window (vs 535 previously).
+Remaining classes are slow tests (Fuel serialization, file system, etc.).
+
+All failures are known non-VM issues: testSimpleEnsureTestWithUparrow (NLR),
+testFastPointersTo (ShouldNotImplement), testClearing (weak ref GC timing),
+Fuel WideString/WideSymbol, Calypso query tests, VM path meta-tests.
+
+Fixes: always create Display (MorphicRenderLoop is P40 not P80), always pass
+--interactive (avoid STCommandLineHandler conflict), auto-disable JIT.
+
+## JIT Cold-Code Overhead (2026-04-08)
+
+JIT causes ~26x slowdown on cold test workloads. Root cause: every Smalltalk
+send goes through heavy C++ JIT entry/exit transitions (JITState setup,
+MethodMap lookup, IC patching) that overwhelm the benefit of executing machine
+code. On micro-benchmarks (fib, sort) where methods are hot, JIT is ~5% faster
+than interpreter. On test suites with thousands of cold methods, the overhead
+dominates. PHARO_NO_JIT=1 avoids this; test mode auto-sets it.
+
 ## Full Suite — JIT vs Interpreter Parity (2026-04-08)
 
 Fresh Pharo 13 image, full test suite (1671 class tiers).
