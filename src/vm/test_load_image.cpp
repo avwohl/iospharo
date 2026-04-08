@@ -761,12 +761,12 @@ int main(int argc, char* argv[]) {
         auto idleStartTime = std::chrono::steady_clock::now();
         bool clickInjected = false;
 
-        // In test mode, delay heartbeat start to let startup handlers
-        // and deferred actions (including CommandLineHandler) complete first.
-        // The saved MorphicRenderLoop at pri-80 would otherwise monopolize
-        // the CPU, preventing the CommandLineHandler process from running.
-        // In interactive mode, start immediately.
-        if (!testMode && !heartbeatStarted) {
+        // Start heartbeat immediately. The deferred timer semaphore signal
+        // (fires at ~5M steps) prevents MorphicRenderLoop from monopolizing
+        // startup, and aging-based preemption in the yield handler ensures
+        // lower-priority processes get CPU time even when high-priority
+        // processes (like FFI struct compilation at pri-79) run for minutes.
+        if (!heartbeatStarted) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }

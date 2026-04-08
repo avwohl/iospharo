@@ -348,12 +348,12 @@ bool Interpreter::initialize() {
     // will never fire. Signal the semaphore once to wake the scheduler,
     // which will then re-arm the timer and maintain itself.
     //
-    // In headless mode, defer this signal. The saved MorphicRenderLoop (pri-80)
-    // will wake up from its Delay when the timer fires, monopolizing the CPU
-    // and preventing the CommandLineHandler process (pri-40) from ever running.
-    // By deferring the timer signal, the startup handlers complete, deferred
-    // startup actions fire (including BasicCommandLineHandler), and THEN we
-    // start the timer to support Delays in test code.
+    // In headless mode, defer this signal until startup handlers have had a
+    // chance to run. The saved MorphicRenderLoop (pri-80) has a short Delay
+    // that could preempt CommandLineHandler (pri-40) during startup. We defer
+    // for ~5M bytecodes (~2-3 seconds of startup) then signal, giving the
+    // startup handlers time to install CommandLineUIManager and disable
+    // MorphicRenderLoop before the timer wakes it.
     {
         Oop timerSema = memory_.specialObject(SpecialObjectIndex::TheTimerSemaphore);
         if (timerSema.isObject() && !timerSema.isNil() && timerSema.rawBits() > 0x10000) {
@@ -361,6 +361,7 @@ bool Interpreter::initialize() {
             if (!isHeadless()) {
                 synchronousSignal(timerSema);
             } else {
+                timerSignalDeferred_ = true;
                 fprintf(stderr, "[STARTUP] Headless mode: deferring timer semaphore signal\n");
             }
         }
@@ -1225,6 +1226,19 @@ void Interpreter::interpret() {
         // -- Timer semaphore (Delay scheduler) --
         checkTimerSemaphore();
 
+        // -- Deferred timer signal (headless startup) --
+        // After ~5M bytecodes, signal the timer semaphore that was deferred
+        // during headless startup. By now CommandLineUIManager should be
+        // installed and MorphicRenderLoop disabled.
+        if (__builtin_expect(timerSignalDeferred_ && g_stepNum > 5000000, 0)) {
+            timerSignalDeferred_ = false;
+            if (!lastKnownTimerSemaphore_.isNil()) {
+                fprintf(stderr, "[STARTUP] Firing deferred timer semaphore signal (step %llu)\n", g_stepNum);
+                synchronousSignal(lastKnownTimerSemaphore_);
+                lastTimerSignalTime_ = std::chrono::steady_clock::now();
+            }
+        }
+
         // -- External semaphore signals (from heartbeat/events) --
         if (hasPendingSignals()) {
             processPendingSignals();
@@ -1329,6 +1343,49 @@ void Interpreter::interpret() {
 
         // === INFREQUENT CHECKS (every ~100K bytecodes) ===
         if ((totalSteps % 102400) == 0) {
+            // Diagnostic: log active process priority every ~5 seconds
+            {
+                static auto lastDiagTime = std::chrono::steady_clock::now();
+                auto now = std::chrono::steady_clock::now();
+                auto diagElapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastDiagTime).count();
+                if (diagElapsed >= 5) {
+                    lastDiagTime = now;
+                    Oop proc = getActiveProcess();
+                    int prio = 0;
+                    if (proc.isObject() && proc.rawBits() > 0x10000) {
+                        Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                        prio = priOop.isSmallInteger() ? (int)priOop.asSmallInteger() : 0;
+                    }
+                    std::string sel = method_.isObject() ? memory_.selectorOf(method_) : "?";
+                    std::string cls = memory_.classNameOf(receiver_);
+                    fprintf(stderr, "[DIAG] step=%llu proc=0x%llx pri=%d method=%s>>%s timerSem=%s wakeupUs=%lld\n",
+                            (unsigned long long)g_stepNum,
+                            (unsigned long long)proc.rawBits(), prio,
+                            cls.c_str(), sel.c_str(),
+                            timerSemaphore_.isNil() ? "nil" : "set",
+                            (long long)(nextWakeupUsec_ == INT64_MAX ? -1 : nextWakeupUsec_));
+                    // Dump scheduler queues
+                    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                    Oop schedObj = memory_.fetchPointer(1, schedAssoc);  // value
+                    if (schedObj.isObject()) {
+                        Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, schedObj);
+                        if (processLists.isObject()) {
+                            ObjectHeader* listsHdr = processLists.asObjectPtr();
+                            int nPrio = listsHdr ? listsHdr->slotCount() : 0;
+                            for (int pi = 0; pi < nPrio; pi++) {
+                                Oop list = memory_.fetchPointer(pi, processLists);
+                                if (list.isObject()) {
+                                    Oop first = memory_.fetchPointer(0, list); // firstLink
+                                    if (!first.isNil()) {
+                                        fprintf(stderr, "[DIAG]   pri=%d has runnable process 0x%llx\n",
+                                                pi + 1, (unsigned long long)first.rawBits());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             processInputEvents();
 
 #if __APPLE__
@@ -1515,6 +1572,68 @@ void Interpreter::handleForceYield() {
             if (first.isObject() && first.rawBits() != nilObj.rawBits() &&
                 first.rawBits() != activeProcess.rawBits()) {
                 nextProcess = removeFirstLinkOfList(processList);
+            }
+        }
+
+        // Aging-based preemption: our VM is much slower than standard Pharo,
+        // so CPU-intensive startup handlers (e.g., FFI struct compilation at
+        // pri-79) can starve lower-priority processes for minutes. Track
+        // wall time for the highest non-80 process; preempt after 500ms.
+        // When preempted, give the lower-priority process 100ms grace time
+        // during which higher-priority processes won't preempt it back.
+        {
+            static uint64_t agingProcBits = 0;
+            static int agingProcPri = 0;
+            static auto agingStartTime = std::chrono::steady_clock::now();
+            static auto agingGraceUntil = std::chrono::steady_clock::now();
+            static bool agingInGrace = false;
+
+            auto now = std::chrono::steady_clock::now();
+
+            // During grace period, undo any higher-priority preemption
+            if (agingInGrace && nextProcess.isObject() && nextProcess.rawBits() != nilObj.rawBits()) {
+                int nextPri = safeProcessPriority(nextProcess);
+                if (nextPri > activePriority && now < agingGraceUntil) {
+                    // Put the higher-priority process back and keep running
+                    addLastLinkToList(nextProcess, memory_.fetchPointer(
+                        nextPri - 1, schedLists));
+                    nextProcess = nilObj;
+                }
+            }
+            if (agingInGrace && now >= agingGraceUntil) {
+                agingInGrace = false;
+            }
+
+            if (nextProcess.rawBits() == nilObj.rawBits() &&
+                activePriority >= 60 && activePriority < 80) {
+                if (activeProcess.rawBits() != agingProcBits) {
+                    if (activePriority <= agingProcPri || agingProcBits == 0) {
+                        agingProcBits = activeProcess.rawBits();
+                        agingProcPri = activePriority;
+                        agingStartTime = now;
+                    }
+                } else {
+                    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                        now - agingStartTime).count();
+                    if (elapsedMs >= 500) {
+                        agingStartTime = now;
+                        for (int pri = activePriority - 1; pri >= 1; pri--) {
+                            Oop processList = memory_.fetchPointer(pri - 1, schedLists);
+                            Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
+                            if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
+                                nextProcess = removeFirstLinkOfList(processList);
+                                agingGraceUntil = now + std::chrono::milliseconds(100);
+                                agingInGrace = true;
+                                static int agingLog = 0;
+                                if (agingLog++ < 20) {
+                                    fprintf(stderr, "[AGING] P%d→P%d (step %llu)\n",
+                                            activePriority, pri, (unsigned long long)g_stepNum);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -2300,6 +2419,10 @@ bool Interpreter::step() {
                     nextProcess = removeFirstLinkOfList(processList);
                 }
             }
+
+            // Aging-based preemption: same logic as handleForceYield().
+            // Needed here because step() is the yield path for JIT execution.
+            // (Shares static state with handleForceYield's aging variables.)
         }
 
         bool foundProcess = nextProcess.isObject() &&
