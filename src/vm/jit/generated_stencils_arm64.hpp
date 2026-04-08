@@ -1536,6 +1536,59 @@ static const Relocation stencil_primClass_relocs[] = {
     { 0, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
 };
 
+// ----- stencil_primAt (124 bytes, 3 relocs) -----
+static const uint8_t stencil_primAt_code[] = {
+    0x08, 0x0C, 0x40, 0xF9, 0x09, 0x01, 0x40, 0xF9, 0x28, 0x09, 0x40, 0x92, 0x1F, 0x05, 0x00, 0xF1,
+    0x41, 0x02, 0x00, 0x54, 0x08, 0x04, 0x40, 0xF9, 0x0A, 0x09, 0x40, 0x92, 0x1F, 0x41, 0x40, 0xF1,
+    0x40, 0x29, 0x40, 0xFA, 0xA1, 0x01, 0x00, 0x54, 0x0A, 0x01, 0x40, 0xF9, 0x4B, 0x11, 0x68, 0x92,
+    0x0C, 0x40, 0xA0, 0x52, 0x7F, 0x01, 0x0C, 0xEB, 0x01, 0x01, 0x00, 0x54, 0x4A, 0xFD, 0x78, 0xD3,
+    0x5F, 0xFD, 0x03, 0xF1, 0xA0, 0x00, 0x00, 0x54, 0x29, 0xFD, 0x43, 0x93, 0x3F, 0x05, 0x00, 0xF1,
+    0x22, 0xA1, 0x4A, 0xFA, 0x49, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x08, 0x79, 0x69, 0xF8,
+    0x08, 0x28, 0x00, 0xF9, 0x28, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9, 0x08, 0x00, 0x00, 0x90,
+    0x08, 0x01, 0x40, 0xF9, 0x01, 0x01, 0x40, 0xF9, 0x20, 0x00, 0x1F, 0xD6,
+};
+
+static const Relocation stencil_primAt_relocs[] = {
+    { 112, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 2 },
+    { 108, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 2 },
+    { 88, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+};
+
+// ----- stencil_primAtPut (132 bytes, 3 relocs) -----
+static const uint8_t stencil_primAtPut_code[] = {
+    0x08, 0x0C, 0x40, 0xF9, 0x0A, 0x01, 0x40, 0xF9, 0x49, 0x09, 0x40, 0x92, 0x3F, 0x05, 0x00, 0xF1,
+    0x61, 0x02, 0x00, 0x54, 0x09, 0x04, 0x40, 0xF9, 0x2B, 0x09, 0x40, 0x92, 0x3F, 0x41, 0x40, 0xF1,
+    0x60, 0x29, 0x40, 0xFA, 0xC1, 0x01, 0x00, 0x54, 0x2B, 0x01, 0x40, 0xF9, 0x6C, 0x11, 0x68, 0x92,
+    0x0D, 0x40, 0xA0, 0x52, 0x9F, 0x01, 0x0D, 0xEB, 0x21, 0x01, 0x00, 0x54, 0x0B, 0x01, 0xB8, 0x37,
+    0x6B, 0xFD, 0x78, 0xD3, 0x7F, 0xFD, 0x03, 0xF1, 0xA0, 0x00, 0x00, 0x54, 0x4A, 0xFD, 0x43, 0x93,
+    0x5F, 0x05, 0x00, 0xF1, 0x42, 0xA1, 0x4B, 0xFA, 0x49, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14,
+    0x08, 0x05, 0x40, 0xF9, 0x28, 0x79, 0x2A, 0xF8, 0x08, 0x28, 0x00, 0xF9, 0x28, 0x00, 0x80, 0x52,
+    0x08, 0x4C, 0x00, 0xB9, 0x08, 0x00, 0x00, 0x90, 0x08, 0x01, 0x40, 0xF9, 0x01, 0x01, 0x40, 0xF9,
+    0x20, 0x00, 0x1F, 0xD6,
+};
+
+static const Relocation stencil_primAtPut_relocs[] = {
+    { 120, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 2 },
+    { 116, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 2 },
+    { 92, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+};
+
+// ----- stencil_primSize (88 bytes, 3 relocs) -----
+static const uint8_t stencil_primSize_code[] = {
+    0x08, 0x04, 0x40, 0xF9, 0x09, 0x09, 0x40, 0x92, 0x1F, 0x41, 0x40, 0xF1, 0x20, 0x29, 0x40, 0xFA,
+    0x21, 0x01, 0x00, 0x54, 0x08, 0x01, 0x40, 0xF9, 0x09, 0x11, 0x68, 0x92, 0x0A, 0x40, 0xA0, 0x52,
+    0x3F, 0x01, 0x0A, 0xEB, 0x81, 0x00, 0x00, 0x54, 0x08, 0xFD, 0x78, 0xD3, 0x1F, 0xFD, 0x03, 0xF1,
+    0x41, 0x00, 0x00, 0x54, 0x00, 0x00, 0x00, 0x14, 0x29, 0x00, 0x80, 0x52, 0x28, 0x0D, 0x08, 0xAA,
+    0x08, 0x28, 0x00, 0xF9, 0x09, 0x4C, 0x00, 0xB9, 0x08, 0x00, 0x00, 0x90, 0x08, 0x01, 0x40, 0xF9,
+    0x01, 0x01, 0x40, 0xF9, 0x20, 0x00, 0x1F, 0xD6,
+};
+
+static const Relocation stencil_primSize_relocs[] = {
+    { 76, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::RuntimeHelper, 2 },
+    { 72, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::RuntimeHelper, 2 },
+    { 52, RelocType::ARM64_BRANCH26, HoleKind::Continue, 0 },
+};
+
 // ----- stencil_flush1 (20 bytes, 1 relocs) -----
 static const uint8_t stencil_flush1_code[] = {
     0x08, 0x38, 0x40, 0xF9, 0x09, 0x00, 0x40, 0xF9, 0x28, 0x85, 0x00, 0xF8, 0x09, 0x00, 0x00, 0xF9,
@@ -2244,7 +2297,7 @@ static const Relocation stencil_returnReceiver_1_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 138;
+static constexpr int NumStencils = 141;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -2332,59 +2385,62 @@ enum class StencilID : uint16_t {
     stencil_primBitShift = 82,
     stencil_primIdentical = 83,
     stencil_primClass = 84,
-    stencil_flush1 = 85,
-    stencil_flush2 = 86,
-    stencil_pushTemp_E = 87,
-    stencil_pushTemp_1 = 88,
-    stencil_pushTemp_2 = 89,
-    stencil_pushRecvVar_E = 90,
-    stencil_pushRecvVar_1 = 91,
-    stencil_pushRecvVar_2 = 92,
-    stencil_pushLitConst_E = 93,
-    stencil_pushLitConst_1 = 94,
-    stencil_pushLitConst_2 = 95,
-    stencil_pushLitVar_E = 96,
-    stencil_pushLitVar_1 = 97,
-    stencil_pushLitVar_2 = 98,
-    stencil_pushReceiver_E = 99,
-    stencil_pushReceiver_1 = 100,
-    stencil_pushReceiver_2 = 101,
-    stencil_pushTrue_E = 102,
-    stencil_pushTrue_1 = 103,
-    stencil_pushTrue_2 = 104,
-    stencil_pushFalse_E = 105,
-    stencil_pushFalse_1 = 106,
-    stencil_pushFalse_2 = 107,
-    stencil_pushNil_E = 108,
-    stencil_pushNil_1 = 109,
-    stencil_pushNil_2 = 110,
-    stencil_pop_2 = 111,
-    stencil_pop_1 = 112,
-    stencil_pop_E = 113,
-    stencil_dup_E = 114,
-    stencil_dup_1 = 115,
-    stencil_dup_2 = 116,
-    stencil_storeTemp_1 = 117,
-    stencil_storeTemp_2 = 118,
-    stencil_popStoreTemp_2 = 119,
-    stencil_popStoreTemp_1 = 120,
-    stencil_storeRecvVar_1 = 121,
-    stencil_popStoreRecvVar_2 = 122,
-    stencil_popStoreRecvVar_1 = 123,
-    stencil_addSmallInt_2 = 124,
-    stencil_subSmallInt_2 = 125,
-    stencil_mulSmallInt_2 = 126,
-    stencil_lessThanSmallInt_2 = 127,
-    stencil_greaterThanSmallInt_2 = 128,
-    stencil_lessEqualSmallInt_2 = 129,
-    stencil_greaterEqualSmallInt_2 = 130,
-    stencil_equalSmallInt_2 = 131,
-    stencil_notEqualSmallInt_2 = 132,
-    stencil_jumpTrue_1 = 133,
-    stencil_jumpFalse_1 = 134,
-    stencil_returnTop_1 = 135,
-    stencil_returnTop_E = 136,
-    stencil_returnReceiver_1 = 137,
+    stencil_primAt = 85,
+    stencil_primAtPut = 86,
+    stencil_primSize = 87,
+    stencil_flush1 = 88,
+    stencil_flush2 = 89,
+    stencil_pushTemp_E = 90,
+    stencil_pushTemp_1 = 91,
+    stencil_pushTemp_2 = 92,
+    stencil_pushRecvVar_E = 93,
+    stencil_pushRecvVar_1 = 94,
+    stencil_pushRecvVar_2 = 95,
+    stencil_pushLitConst_E = 96,
+    stencil_pushLitConst_1 = 97,
+    stencil_pushLitConst_2 = 98,
+    stencil_pushLitVar_E = 99,
+    stencil_pushLitVar_1 = 100,
+    stencil_pushLitVar_2 = 101,
+    stencil_pushReceiver_E = 102,
+    stencil_pushReceiver_1 = 103,
+    stencil_pushReceiver_2 = 104,
+    stencil_pushTrue_E = 105,
+    stencil_pushTrue_1 = 106,
+    stencil_pushTrue_2 = 107,
+    stencil_pushFalse_E = 108,
+    stencil_pushFalse_1 = 109,
+    stencil_pushFalse_2 = 110,
+    stencil_pushNil_E = 111,
+    stencil_pushNil_1 = 112,
+    stencil_pushNil_2 = 113,
+    stencil_pop_2 = 114,
+    stencil_pop_1 = 115,
+    stencil_pop_E = 116,
+    stencil_dup_E = 117,
+    stencil_dup_1 = 118,
+    stencil_dup_2 = 119,
+    stencil_storeTemp_1 = 120,
+    stencil_storeTemp_2 = 121,
+    stencil_popStoreTemp_2 = 122,
+    stencil_popStoreTemp_1 = 123,
+    stencil_storeRecvVar_1 = 124,
+    stencil_popStoreRecvVar_2 = 125,
+    stencil_popStoreRecvVar_1 = 126,
+    stencil_addSmallInt_2 = 127,
+    stencil_subSmallInt_2 = 128,
+    stencil_mulSmallInt_2 = 129,
+    stencil_lessThanSmallInt_2 = 130,
+    stencil_greaterThanSmallInt_2 = 131,
+    stencil_lessEqualSmallInt_2 = 132,
+    stencil_greaterEqualSmallInt_2 = 133,
+    stencil_equalSmallInt_2 = 134,
+    stencil_notEqualSmallInt_2 = 135,
+    stencil_jumpTrue_1 = 136,
+    stencil_jumpFalse_1 = 137,
+    stencil_returnTop_1 = 138,
+    stencil_returnTop_E = 139,
+    stencil_returnReceiver_1 = 140,
 };
 
 static const StencilDef stencilTable[] = {
@@ -2473,6 +2529,9 @@ static const StencilDef stencilTable[] = {
     { "stencil_primBitShift", stencil_primBitShift_code, 136, stencil_primBitShift_relocs, 3, 1 },
     { "stencil_primIdentical", stencil_primIdentical_code, 68, stencil_primIdentical_relocs, 6, 1 },
     { "stencil_primClass", stencil_primClass_code, 4, stencil_primClass_relocs, 1, 1 },
+    { "stencil_primAt", stencil_primAt_code, 124, stencil_primAt_relocs, 3, 1 },
+    { "stencil_primAtPut", stencil_primAtPut_code, 132, stencil_primAtPut_relocs, 3, 1 },
+    { "stencil_primSize", stencil_primSize_code, 88, stencil_primSize_relocs, 3, 1 },
     { "stencil_flush1", stencil_flush1_code, 20, stencil_flush1_relocs, 1, 1 },
     { "stencil_flush2", stencil_flush2_code, 24, stencil_flush2_relocs, 1, 1 },
     { "stencil_pushTemp_E", stencil_pushTemp_E_code, 24, stencil_pushTemp_E_relocs, 3, 1 },

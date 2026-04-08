@@ -59,6 +59,7 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     Interpreter* interp = state->interp;
     interp->incJ2JStencilReturns();
     interp->popFrameForJIT(state);
+
 }
 
 // ===== JITRuntime =====

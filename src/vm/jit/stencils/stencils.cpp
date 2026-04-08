@@ -1809,6 +1809,76 @@ extern "C" void stencil_primClass(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// ----- Primitive 60: Object #at: -----
+// Fast path for Array (format 2, no fixed fields).
+// Handles only pointer-indexable objects with slotCount < 255 (no overflow header).
+extern "C" void stencil_primAt(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop idx = s->tempBase[0];
+    // Index must be SmallInteger
+    if ((idx.bits & 7) != 1) { _HOLE_CONTINUE(s); return; }
+    // Receiver must be an object pointer (tag == 0, not immediate)
+    if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
+    // Read object header directly
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
+    uint64_t fmt = (header >> 24) & 0x1F;
+    // Only handle format 2 (Indexable, no fixed fields) for now
+    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    // Bail on overflow slot count
+    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    int64_t i = (int64_t)idx.bits >> 3;  // 1-based index
+    if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
+    // Read slot (slots start at header + 8)
+    Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
+    s->returnValue = slots[i - 1];
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+// ----- Primitive 61: Object #at:put: -----
+// Fast path for Array (format 2, no fixed fields, not immutable).
+extern "C" void stencil_primAtPut(JITState* s) {
+    Oop rcvr = s->receiver;
+    Oop idx = s->tempBase[0];
+    Oop val = s->tempBase[1];
+    // Index must be SmallInteger
+    if ((idx.bits & 7) != 1) { _HOLE_CONTINUE(s); return; }
+    // Receiver must be an object pointer
+    if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
+    uint64_t fmt = (header >> 24) & 0x1F;
+    // Only handle format 2 (Indexable, no fixed fields)
+    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
+    // Check not immutable (bit 23)
+    if (header & (1ULL << 23)) { _HOLE_CONTINUE(s); return; }
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    int64_t i = (int64_t)idx.bits >> 3;
+    if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
+    Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
+    slots[i - 1] = val;
+    s->returnValue = val;
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
+// ----- Primitive 62: Object #size -----
+// Fast path for format 2 (Indexable, no overflow).
+extern "C" void stencil_primSize(JITState* s) {
+    Oop rcvr = s->receiver;
+    if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
+    uint64_t fmt = (header >> 24) & 0x1F;
+    // Only handle format 2 (Indexable, no fixed fields)
+    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    s->returnValue.bits = (slotCount << 3) | 1;  // SmallInteger encoding
+    s->exitReason = EXIT_RETURN;
+    _HOLE_RT_RETURN(s);
+}
+
 // =====================================================================
 // SIMSTACK STENCILS — Register-cached TOS/NOS in x19/x20
 // =====================================================================
