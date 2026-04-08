@@ -6018,32 +6018,6 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     static size_t pushCount = 0;
     pushCount++;
 
-    // Trace all J2J calls where caller or target involves peek/atEnd/next on ReadStream
-    {
-        static int peekTraceCount = 0;
-        if (peekTraceCount < 100) {
-            Oop targetM = Oop::fromRawBits(state->cachedTarget.rawBits());
-            std::string targetSel = memory_.selectorOf(targetM);
-            std::string callerSel = memory_.selectorOf(method_);
-            std::string rcls = memory_.classNameOf(state->receiver);
-            bool relevant = (callerSel == "peek");
-            if (relevant) {
-                peekTraceCount++;
-                Oop rcv = state->receiver;
-                int64_t pos = -999, rl = -999;
-                if (rcv.isObject() && rcv.rawBits() > 0x10000) {
-                    ObjectHeader* rh = rcv.asObjectPtr();
-                    if (rh->slotCount() >= 3) {
-                        pos = rh->slotAt(1).isSmallInteger() ? rh->slotAt(1).asSmallInteger() : -999;
-                        rl = rh->slotAt(2).isSmallInteger() ? rh->slotAt(2).asSmallInteger() : -999;
-                    }
-                }
-                fprintf(stderr, "[J2J] #%d: %s→%s rcv=%s pos=%lld rl=%lld\n",
-                        peekTraceCount, callerSel.c_str(), targetSel.c_str(),
-                        rcls.c_str(), (long long)pos, (long long)rl);
-            }
-        }
-    }
 
     Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
     int nArgs = state->sendArgCount;
@@ -6121,6 +6095,35 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
 void Interpreter::popFrameForJIT(jit::JITState* state) {
     // Lightweight frame pop for J2J direct calls.
     if (frameDepth_ == 0) return;
+
+    // Track J2J success/failure per method. If a method always bails out
+    // (callee modifies heap state before hitting a send, causing double-execution
+    // on re-entry), ban it from future J2J to prevent incorrect results.
+    {
+        // Use a simple per-method counter. Key = method oop bits.
+        // Structure: [successCount, failCount]
+        struct J2JStats { int ok = 0; int fail = 0; };
+        static std::unordered_map<uint64_t, J2JStats> j2jStats;
+        static int totalBanned = 0;
+
+        uint64_t methodBits = state->method.rawBits();
+        auto& stats = j2jStats[methodBits];
+        if (state->exitReason == jit::ExitReturn) {
+            stats.ok++;
+        } else {
+            stats.fail++;
+            // After 3 consecutive failures with no successes, ban this method
+            if (stats.ok == 0 && stats.fail >= 3 && j2jBannedMethods_.count(methodBits) == 0) {
+                j2jBannedMethods_.insert(methodBits);
+                totalBanned++;
+                if (totalBanned <= 20) {
+                    std::string sel = memory_.selectorOf(state->method);
+                    fprintf(stderr, "[J2J-BAN] Banned #%s (fail=%d ok=%d total_banned=%d)\n",
+                            sel.c_str(), stats.fail, stats.ok, totalBanned);
+                }
+            }
+        }
+    }
 
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
@@ -10114,7 +10117,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                         unsafePrim = true;
                 }
             }
-            if (!unsafePrim) {
+            if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 jitJ2JDirectPatches_++;

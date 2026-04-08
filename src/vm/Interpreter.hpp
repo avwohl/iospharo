@@ -74,6 +74,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <thread>
 #include <deque>
 #include <vector>
@@ -784,7 +785,16 @@ private:
     size_t jitJ2JActChains_ = 0;  // JIT-to-JIT chain hits (activation path)
     size_t jitJ2JActFalls_ = 0;   // JIT-to-JIT fallbacks (activation path)
     size_t jitJ2JDirectPatches_ = 0;  // IC entries with J2J direct call bit set
+
+    // J2J ban set: methods whose J2J calls always bail out (callee modifies
+    // state before hitting a send, causing double-execution on re-entry).
+    // Key = method oop raw bits. Checked in patchJITICAfterSend to avoid
+    // setting the J2J entry bit for these methods.
+    std::unordered_set<uint64_t> j2jBannedMethods_;
 public:
+    bool isJ2JBanned(uint64_t methodBits) const {
+        return j2jBannedMethods_.count(methodBits) > 0;
+    }
     size_t jitICHits() const { return jitICHits_; }
     size_t jitICMisses() const { return jitICMisses_; }
     size_t jitICPatches() const { return jitICPatches_; }
