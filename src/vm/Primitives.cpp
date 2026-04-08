@@ -8761,14 +8761,26 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
-    // Temporary debug: log attribute queries for indices 2-10 (image args)
-    static int attrLogCount = 0;
-    if (index >= 2 && index <= 10 && attrLogCount < 30) {
-        attrLogCount++;
-        int argIdx = static_cast<int>(index) - 2;
-        const char* val = (argIdx < static_cast<int>(imageArguments_.size())) ? imageArguments_[argIdx].c_str() : "(nil)";
-        fprintf(stderr, "[ATTR] getSystemAttribute:%lld → %s (caller=%s)\n",
-                (long long)index, val, memory_.selectorOf(method_).c_str());
+    // Temporary debug: log ALL attribute queries (especially negative = VM params)
+    {
+        static int attrLogCount = 0;
+        // Always log negative indices (VM params like --headless)
+        // For positive, limit to first 200
+        if (index < 0 || attrLogCount < 200) {
+            if (index >= 0) attrLogCount++;
+            std::string val = "(?)";
+            if (index < 0) {
+                int paramIdx = static_cast<int>(-index) - 1;
+                if (paramIdx >= 0 && paramIdx < static_cast<int>(vmParameters_.size()))
+                    val = vmParameters_[paramIdx];
+                else val = "(nil/no param)";
+            } else if (index >= 2 && index < 1000) {
+                int argIdx = static_cast<int>(index) - 2;
+                val = (argIdx < static_cast<int>(imageArguments_.size())) ? imageArguments_[argIdx] : "(nil)";
+            }
+            fprintf(stderr, "[ATTR] getSystemAttribute:%lld → %s\n",
+                    (long long)index, val.c_str());
+        }
     }
 
     // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
