@@ -6663,8 +6663,33 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             try {
                 if (selector.isObject() && selector.rawBits() > 0x10000) {
                     ObjectHeader* sH = selector.asObjectPtr();
-                    if (sH->isBytesObject() && sH->byteSize() < 256)
+                    if (sH->isBytesObject() && sH->byteSize() < 256) {
                         selName = std::string((const char*)sH->bytes(), sH->byteSize());
+                    } else if (sH->isWordsObject() && (sH->byteSize() / 4) < 128) {
+                        // WideSymbol: 32-bit chars, extract ASCII portion
+                        uint32_t* words = (uint32_t*)sH->bytes();
+                        size_t nw = sH->byteSize() / 4;
+                        selName = "";
+                        for (size_t i = 0; i < nw; i++) {
+                            uint32_t ch = words[i];
+                            selName += (ch < 128) ? (char)ch : '?';
+                        }
+                        selName = "#wide:" + selName;
+                    } else {
+                        char buf[64];
+                        snprintf(buf, sizeof(buf), "(sel fmt=%d size=%zu cls=%u raw=0x%llx)",
+                                 (int)sH->format(), sH->byteSize(), sH->classIndex(),
+                                 (unsigned long long)selector.rawBits());
+                        selName = buf;
+                    }
+                } else if (selector.isSmallInteger()) {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "(sel=SmallInt %lld)", selector.asSmallInteger());
+                    selName = buf;
+                } else {
+                    char buf[64];
+                    snprintf(buf, sizeof(buf), "(sel raw=0x%llx)", (unsigned long long)selector.rawBits());
+                    selName = buf;
                 }
             } catch (...) { selName = "(corrupt)"; }
             // Full stack dump for first 10 DNUs
