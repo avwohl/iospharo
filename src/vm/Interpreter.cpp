@@ -1343,49 +1343,6 @@ void Interpreter::interpret() {
 
         // === INFREQUENT CHECKS (every ~100K bytecodes) ===
         if ((totalSteps % 102400) == 0) {
-            // Diagnostic: log active process priority every ~5 seconds
-            {
-                static auto lastDiagTime = std::chrono::steady_clock::now();
-                auto now = std::chrono::steady_clock::now();
-                auto diagElapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastDiagTime).count();
-                if (diagElapsed >= 5) {
-                    lastDiagTime = now;
-                    Oop proc = getActiveProcess();
-                    int prio = 0;
-                    if (proc.isObject() && proc.rawBits() > 0x10000) {
-                        Oop priOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
-                        prio = priOop.isSmallInteger() ? (int)priOop.asSmallInteger() : 0;
-                    }
-                    std::string sel = method_.isObject() ? memory_.selectorOf(method_) : "?";
-                    std::string cls = memory_.classNameOf(receiver_);
-                    fprintf(stderr, "[DIAG] step=%llu proc=0x%llx pri=%d method=%s>>%s timerSem=%s wakeupUs=%lld\n",
-                            (unsigned long long)g_stepNum,
-                            (unsigned long long)proc.rawBits(), prio,
-                            cls.c_str(), sel.c_str(),
-                            timerSemaphore_.isNil() ? "nil" : "set",
-                            (long long)(nextWakeupUsec_ == INT64_MAX ? -1 : nextWakeupUsec_));
-                    // Dump scheduler queues
-                    Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
-                    Oop schedObj = memory_.fetchPointer(1, schedAssoc);  // value
-                    if (schedObj.isObject()) {
-                        Oop processLists = memory_.fetchPointer(SchedulerProcessListsIndex, schedObj);
-                        if (processLists.isObject()) {
-                            ObjectHeader* listsHdr = processLists.asObjectPtr();
-                            int nPrio = listsHdr ? listsHdr->slotCount() : 0;
-                            for (int pi = 0; pi < nPrio; pi++) {
-                                Oop list = memory_.fetchPointer(pi, processLists);
-                                if (list.isObject()) {
-                                    Oop first = memory_.fetchPointer(0, list); // firstLink
-                                    if (!first.isNil()) {
-                                        fprintf(stderr, "[DIAG]   pri=%d has runnable process 0x%llx\n",
-                                                pi + 1, (unsigned long long)first.rawBits());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
             processInputEvents();
 
 #if __APPLE__
