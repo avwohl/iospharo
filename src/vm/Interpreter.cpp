@@ -1723,11 +1723,15 @@ void Interpreter::handleForceYield() {
                 agingInGrace = false;
             }
 
-            // Determine aging thresholds based on mode
+            // Determine aging thresholds based on mode.
+            // In headless mode, don't age the startup process (P79). Session
+            // handlers must complete before lower-priority processes run.
+            // The old 5ms threshold aged the startup process mid-handler-iteration,
+            // causing session startup to never complete.
             bool headless = isHeadless();
             int agingMinPri = headless ? 41 : 60;
-            int agingMaxPri = headless ? 80 : 79;
-            int agingThresholdMs = headless ? 5 : 500;
+            int agingMaxPri = headless ? 78 : 79;  // Exclude P79 startup process
+            int agingThresholdMs = headless ? 500 : 500;
             int agingGraceMs = headless ? 500 : 100;
 
             if (nextProcess.rawBits() == nilObj.rawBits() &&
@@ -4958,6 +4962,7 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
+
     // Selector sanity check: must be a bytes object (Symbol/ByteString)
     if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
         ObjectHeader* selHdr = selector.asObjectPtr();
@@ -7325,6 +7330,23 @@ void Interpreter::terminateCurrentProcess() {
     {
         Oop proc = getActiveProcess();
         Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
+        // If high-priority process terminates, dump extended context
+        if (pri.isSmallInteger() && pri.asSmallInteger() >= 60) {
+            fprintf(stderr, "[TERM-P%lld] HIGH PRIORITY PROCESS TERMINATING!\n", pri.asSmallInteger());
+            // Walk the context chain to find the original error
+            if (activeContext_.isObject() && !activeContext_.isNil()) {
+                Oop ctx = activeContext_;
+                for (int i = 0; i < 30 && ctx.isObject() && !ctx.isNil(); i++) {
+                    Oop method = memory_.fetchPointer(3, ctx);
+                    std::string sel = method.isObject() ? memory_.selectorOf(method) : "?";
+                    Oop receiver = memory_.fetchPointer(5, ctx);
+                    std::string rcvrClass = memory_.classNameOf(receiver);
+                    fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s\n",
+                            pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str());
+                    ctx = memory_.fetchPointer(0, ctx);
+                }
+            }
+        }
         fprintf(stderr, "[TERM] terminateCurrentProcess: proc=0x%llx pri=%lld fd=%zu method=#%s\n",
                 (unsigned long long)proc.rawBits(),
                 pri.isSmallInteger() ? pri.asSmallInteger() : -1,

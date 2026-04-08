@@ -851,7 +851,9 @@ static uint16_t primitivePrologueStencil(int primIndex) {
     case 15:  return static_cast<uint16_t>(StencilID::stencil_primBitOr);
     case 17:  return static_cast<uint16_t>(StencilID::stencil_primBitShift);
     case 110: return static_cast<uint16_t>(StencilID::stencil_primIdentical);
-    case 111: return static_cast<uint16_t>(StencilID::stencil_primClass);
+    // case 111: stencil_primClass is a no-op stub (needs ObjectMemory for class table
+    // lookup which isn't available in stencils). Without a real prologue, J2J is
+    // correctly blocked for class methods by the unsafePrim guard.
     default:  return static_cast<uint16_t>(-1);
     }
 }
