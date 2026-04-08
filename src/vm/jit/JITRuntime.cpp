@@ -462,10 +462,9 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         m = m->nextInZone;
     }
 
-    // Clear count map — keys are stale CompiledMethod Oop bits.
-    // Methods will re-accumulate counts naturally. Since the compile
-    // threshold is only 2, this is a minor transient cost.
-    std::memset(countMap_, 0, sizeof(countMap_));
+    // Count map keys (CompiledMethod Oop bits) were updated in-place by
+    // forEachRoot during compaction. No need to clear — methods preserve
+    // their accumulated counts across GC.
 }
 
 } // namespace jit

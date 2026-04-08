@@ -29,6 +29,8 @@ class ObjectMemory;
 
 namespace jit {
 
+static constexpr size_t CountMapSize = 16384;
+
 class JITRuntime {
 public:
     JITRuntime();
@@ -73,6 +75,13 @@ public:
 
     bool isInitialized() const { return initialized_; }
 
+    // Count map entry access (for GC root scanning)
+    struct CountEntry {
+        uint64_t key;
+        uint32_t count;
+    };
+    CountEntry& countMapEntry(size_t i) { return countMap_[i]; }
+
     // Megamorphic method cache — probed by stencils after PIC miss
     MegaCacheEntry* megaCache() { return megaCache_; }
 
@@ -93,12 +102,6 @@ private:
     bool        initialized_ = false;
 
     // Execution count tracking for compilation triggering
-    // Simple hash map: CompiledMethod Oop bits -> count
-    static constexpr size_t CountMapSize = 16384;
-    struct CountEntry {
-        uint64_t key;
-        uint32_t count;
-    };
     CountEntry countMap_[CountMapSize];
 };
 

@@ -2286,6 +2286,17 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             }
             m = m->nextInZone;
         }
+
+        // Count map: keys are CompiledMethod Oop bits (needs GC update).
+        // Preserving counts across GC lets methods accumulate toward the
+        // compile threshold instead of resetting to zero every GC.
+        for (size_t i = 0; i < jit::CountMapSize; i++) {
+            auto& entry = jitRuntime_.countMapEntry(i);
+            if (entry.key != 0) {
+                Oop& keyOop = *reinterpret_cast<Oop*>(&entry.key);
+                visitor(keyOop);
+            }
+        }
     }
 #endif
 
