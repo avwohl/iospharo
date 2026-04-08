@@ -1569,6 +1569,42 @@ void Interpreter::handleForceYield() {
             fprintf(stderr, "[DIAG] P%d %s>>%s ip=%lld fd=%d\n",
                     prio, rcvrClass.c_str(), selector.c_str(),
                     (long long)ipOffset_, frameDepth_);
+            // Show call stack (up to 20 callers)
+            for (size_t fi = 1; fi <= 20 && fi <= frameDepth_; fi++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                std::string cname = "(?)";
+                if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil())
+                    cname = memory_.classNameOf(sf.savedReceiver);
+                else if (sf.savedReceiver.isSmallInteger()) cname = "SmallInteger";
+                else if (sf.savedReceiver.isNil()) cname = "nil";
+                std::string ssel = memory_.selectorOf(sf.savedMethod);
+                fprintf(stderr, "[DIAG]   [-%zu] %s>>%s\n", fi, cname.c_str(), ssel.c_str());
+            }
+            // Timer state diagnostic
+            {
+                bool usecArmed = (nextWakeupUsec_ != INT64_MAX && !timerSemaphore_.isNil());
+                bool msArmed = (nextWakeupTime_ != 0 && !timerSemaphore_.isNil());
+                auto sinceSignal = std::chrono::steady_clock::now() - lastTimerSignalTime_;
+                auto sigSecs = std::chrono::duration_cast<std::chrono::seconds>(sinceSignal).count();
+                fprintf(stderr, "[DIAG-TIMER] usecArmed=%d msArmed=%d timerWasArmed=%d timerSem=%s "
+                        "lastSignal=%llds ago nextUsec=0x%llx nextMs=%lld\n",
+                        usecArmed, msArmed, (int)timerWasArmed_,
+                        timerSemaphore_.isNil() ? "nil" : "set",
+                        (long long)sigSecs,
+                        (unsigned long long)nextWakeupUsec_,
+                        (long long)nextWakeupTime_);
+                if (usecArmed) {
+                    // Show how far in the future the wakeup is
+                    static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
+                    auto nowClock = std::chrono::system_clock::now();
+                    int64_t unixUsec = std::chrono::duration_cast<std::chrono::microseconds>(
+                        nowClock.time_since_epoch()).count();
+                    int64_t currentUsec = unixUsec + kSmalltalkEpochOffset;
+                    int64_t deltaUsec = nextWakeupUsec_ - currentUsec;
+                    fprintf(stderr, "[DIAG-TIMER] wakeup delta=%lld usec (%.3f sec)\n",
+                            (long long)deltaUsec, deltaUsec / 1000000.0);
+                }
+            }
         }
     }
 

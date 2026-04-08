@@ -108,7 +108,7 @@ static constexpr size_t MaxPICEntries = 6;
 // A simple direct-mapped cache probed by JIT stencils when the 4-entry
 // PIC misses. Keyed on (selectorBits, classIndex).
 
-static constexpr size_t MegaCacheSize = 4096;  // Must be power of 2
+static constexpr size_t MegaCacheSize = 65536;  // Must be power of 2
 
 struct MegaCacheEntry {
     uint64_t selectorBits;

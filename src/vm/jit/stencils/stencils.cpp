@@ -826,8 +826,21 @@ extern "C" void stencil_sendPoly(JITState* s) {
         uint64_t selectorBits = icData[12];  // Stored at end of IC data by compiler
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
-            size_t hash = (size_t)(selectorBits ^ lookupKey) & 4095;
+            // Primary probe
+            size_t hash = (size_t)(selectorBits ^ lookupKey) & 65535;
             MegaCacheEntry* entry = &cache[hash];
+            if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+                s->cachedTarget.bits = entry->methodBits;
+                s->icDataPtr = icData;
+                s->sendArgCount = nArgs;
+                s->ip = s->ip + bcOffset;
+                s->exitReason = EXIT_SEND_CACHED;
+                _HOLE_RT_SEND(s);
+                return;
+            }
+            // Secondary probe (rotated hash)
+            size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
+            entry = &cache[hash2];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
                 s->cachedTarget.bits = entry->methodBits;
                 s->icDataPtr = icData;
@@ -1025,8 +1038,21 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         uint64_t selectorBits = icData[12];
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
-            size_t hash = (size_t)(selectorBits ^ lookupKey) & 4095;
+            // Primary probe
+            size_t hash = (size_t)(selectorBits ^ lookupKey) & 65535;
             MegaCacheEntry* entry = &cache[hash];
+            if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+                s->cachedTarget.bits = entry->methodBits;
+                s->icDataPtr = icData;
+                s->sendArgCount = nArgs;
+                s->ip = s->ip + bcOffset;
+                s->exitReason = EXIT_SEND_CACHED;
+                _HOLE_RT_SEND(s);
+                return;
+            }
+            // Secondary probe (rotated hash)
+            size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
+            entry = &cache[hash2];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
                 s->cachedTarget.bits = entry->methodBits;
                 s->icDataPtr = icData;

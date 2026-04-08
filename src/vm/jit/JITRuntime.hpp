@@ -87,10 +87,24 @@ public:
 
     // Add entry to mega cache (called by interpreter after method lookup)
     void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex, uint64_t methodBits) {
+        // Primary probe (matches stencil hash)
         size_t h = static_cast<size_t>(selectorBits ^ classIndex) & (MegaCacheSize - 1);
-        megaCache_[h].selectorBits = selectorBits;
-        megaCache_[h].classIndex = classIndex;
-        megaCache_[h].methodBits = methodBits;
+        // Secondary probe (rotated hash, matches stencil)
+        size_t h2 = static_cast<size_t>((selectorBits >> 3) ^ (classIndex << 2) ^ classIndex) & (MegaCacheSize - 1);
+        // Insert into whichever slot is empty or has a different entry
+        // Prefer primary; use secondary if primary is occupied by different entry
+        if (megaCache_[h].selectorBits == selectorBits && megaCache_[h].classIndex == classIndex) {
+            megaCache_[h].methodBits = methodBits;  // Update existing
+        } else if (megaCache_[h2].selectorBits == selectorBits && megaCache_[h2].classIndex == classIndex) {
+            megaCache_[h2].methodBits = methodBits;  // Update existing in secondary
+        } else if (megaCache_[h].selectorBits == 0) {
+            megaCache_[h] = {selectorBits, classIndex, methodBits};
+        } else if (megaCache_[h2].selectorBits == 0) {
+            megaCache_[h2] = {selectorBits, classIndex, methodBits};
+        } else {
+            // Both occupied — evict primary
+            megaCache_[h] = {selectorBits, classIndex, methodBits};
+        }
     }
 
 private:
