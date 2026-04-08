@@ -2,6 +2,36 @@
 
 2026-04-08
 
+## Fix J2J Metaclass Bug
+
+J2J IC patching for class/metaclass receivers (format-1 objects) caused
+`errorNotIndexable` on `RelativePath class` during path resolution. When
+a bail-out re-executes the callee from scratch, metaclass state gets corrupted.
+
+Fix: skip J2J IC patching for format-1 (class) receivers in
+`patchJITICAfterSend`. Instance-level J2J stays enabled. With this fix,
+J2J runs clean for 6.7B+ interpreter steps with zero errors and zero bans.
+
+## JIT Benchmark Profiling
+
+Measured JIT overhead vs interpreter and Cog:
+
+  Mode                    fib(28)  sort(10K)  dict(5K)  sum(10K)
+  Cog JIT                 ~2ms     ~1ms       ~1ms      ~0ms
+  Our Interpreter (P60)   43ms     21ms       7ms       0ms
+  JIT no-J2J (defer 3s)   49ms     23ms       7ms       0ms
+  JIT no-J2J (no defer)   114ms    (timeout)  -         -
+
+Root cause: C++ entry/exit overhead per send (~500ns per activation vs
+interpreter's ~30ns dispatch). JIT stencils execute at the same speed as
+interpreter bytecodes but add massive per-send overhead. J2J saves the
+method cache lookup but adds equivalent frame management overhead
+(pushFrameForJIT/popFrameForJIT ~500ns each).
+
+Key insight: the copy-and-patch stencils are not the bottleneck. The
+bottleneck is 100% in C++ glue between interpreter and JIT. To close the
+gap with Cog, need to minimize or eliminate C++ transitions.
+
 ## Fix Test Mode End-to-End
 
 `./build/test_load_image <image> test "Kernel-Tests"` now works.
