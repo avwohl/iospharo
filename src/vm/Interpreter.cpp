@@ -2387,21 +2387,6 @@ skip_yield:
     g_watchdogLastBytecode = bytecode;
     g_watchdogSubphase = 15;
 
-    // TRACE: bytecodes dispatched while method_ is peek
-    {
-        static int peekBCTrace = 0;
-        if (peekBCTrace < 20) {
-            std::string msel = memory_.selectorOf(method_);
-            if (msel == "peek") {
-                peekBCTrace++;
-                fprintf(stderr, "[PEEK-BC] #%d: bc=0x%02x pending=%s fd=%zu\n",
-                        peekBCTrace, bytecode,
-                        pendingICPatch_ ? "SET" : "NULL",
-                        frameDepth_);
-            }
-        }
-    }
-
     inExtension_ = false;
 
     dispatchBytecode(bytecode);
@@ -10018,21 +10003,6 @@ void Interpreter::tryJITResumeInCaller() {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
-    // Trace ALL calls to patchJITICAfterSend for atEnd
-    {
-        static int atEndCallTrace = 0;
-        if (atEndCallTrace < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* sh = selector.asObjectPtr();
-            if (sh->isBytesObject() && sh->byteSize() == 5 && memcmp(sh->bytes(), "atEnd", 5) == 0) {
-                atEndCallTrace++;
-                std::string rcls = memory_.classNameOf(receiver);
-                fprintf(stderr, "[IC-ATEND-CALL] #%d: sel=atEnd rcv=%s pending=%s caller=%s\n",
-                        atEndCallTrace, rcls.c_str(),
-                        pendingICPatch_ ? "SET" : "NULL",
-                        memory_.selectorOf(method_).c_str());
-            }
-        }
-    }
     if (!pendingICPatch_) return;
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
@@ -10132,22 +10102,6 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
-
-            // Trace IC patching for atEnd and peek-related sends
-            {
-                static int icTraceCount = 0;
-                if (icTraceCount < 20) {
-                    std::string selName = memory_.selectorOf(resolvedMethod);
-                    if (selName == "atEnd" || selName == "peek" || selName == "next") {
-                        icTraceCount++;
-                        std::string rcls = memory_.classNameOf(receiver);
-                        fprintf(stderr, "[IC-PATCH] #%d: #%s on %s extra=0x%llx (getter=%d j2j=%d)\n",
-                                icTraceCount, selName.c_str(), rcls.c_str(),
-                                (unsigned long long)extra,
-                                (int)((extra >> 63) & 1), (int)((extra >> 60) & 1));
-                    }
-                }
-            }
             return;
         }
     }
@@ -10244,37 +10198,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn: {
-            // TRACE: peek return value
-            static int peekRetTrace = 0;
-            static int peekRetNonNil = 0;
-            if (peekRetTrace < 100) {
-                std::string msel = memory_.selectorOf(method);
-                std::string m2sel = memory_.selectorOf(method_);
-                if (msel == "peek" || m2sel == "peek") {
-                    peekRetTrace++;
-                    Oop rv = state.returnValue;
-                    std::string rvStr;
-                    if (rv.isSmallInteger()) {
-                        rvStr = "int:" + std::to_string(rv.asSmallInteger());
-                    } else if (rv.isCharacter()) {
-                        char ch = (char)rv.asCharacter();
-                        rvStr = std::string("char:'") + ch + "'(" + std::to_string((int)(unsigned char)ch) + ")";
-                    } else if (rv.rawBits() == memory_.nil().rawBits()) {
-                        rvStr = "nil";
-                    } else if (rv.rawBits() == memory_.trueObject().rawBits()) {
-                        rvStr = "true";
-                    } else if (rv.rawBits() == memory_.falseObject().rawBits()) {
-                        rvStr = "false";
-                    } else {
-                        rvStr = "obj:0x" + std::to_string(rv.rawBits());
-                    }
-                    if (rvStr != "nil") peekRetNonNil++;
-                    fprintf(stderr, "[PEEK-RET] #%d: rv=%s method=%s method_=%s chain=%d (nonNil=%d)\n",
-                            peekRetTrace, rvStr.c_str(),
-                            msel.c_str(), m2sel.c_str(),
-                            chainLimit, peekRetNonNil);
-                }
-            }
             if (!popFrame()) {
                 // fd=0: follow context sender chain
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -10306,43 +10229,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
-            // TRACE: peek ExitSend
-            {
-                static int peekExitTrace = 0;
-                std::string msel = memory_.selectorOf(method);
-                if (peekExitTrace < 10 && msel == "peek") {
-                    peekExitTrace++;
-                    // Figure out which send bytecode caused the exit
-                    uint8_t bc = state.ip ? *state.ip : 0xFF;
-                    // If it's a special send 0x70-0x7F, decode the selector index
-                    std::string sendSel = "?";
-                    if (bc >= 0x70 && bc <= 0x7F) {
-                        int idx = (bc - 0x70 + 16) * 2;
-                        Oop ssArr = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
-                        if (ssArr.isObject()) {
-                            ObjectHeader* ah = ssArr.asObjectPtr();
-                            if ((size_t)idx < ah->slotCount()) {
-                                Oop sel = ah->slotAt(idx);
-                                sendSel = memory_.oopToString(sel);
-                            }
-                        }
-                    } else if (bc >= 0x60 && bc <= 0x6F) {
-                        int idx = (bc - 0x60) * 2;
-                        Oop ssArr = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
-                        if (ssArr.isObject()) {
-                            ObjectHeader* ah = ssArr.asObjectPtr();
-                            if ((size_t)idx < ah->slotCount()) {
-                                Oop sel = ah->slotAt(idx);
-                                sendSel = memory_.oopToString(sel);
-                            }
-                        }
-                    }
-                    fprintf(stderr, "[PEEK-EXIT] #%d: ExitSend bc=0x%02x sel=%s method_=%s icData=%p sendArgs=%d\n",
-                            peekExitTrace, bc, sendSel.c_str(),
-                            memory_.selectorOf(method_).c_str(),
-                            (void*)state.icDataPtr, state.sendArgCount);
-                }
-            }
             if (state.icDataPtr) {
                 bool hasEmpty = false;
                 for (int e = 0; e < 4; e++) {
@@ -10359,22 +10245,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitSendCached: {
             // IC hit: cached method is in state.cachedTarget. Skip method lookup.
             Oop cached = state.cachedTarget;
-            // TRACE: ExitSendCached for peek
-            {
-                static int peekCachedTrace = 0;
-                if (peekCachedTrace < 10 && cached.isObject() && cached.rawBits() > 0x10000) {
-                    std::string csel = memory_.selectorOf(cached);
-                    if (csel == "peek") {
-                        peekCachedTrace++;
-                        fprintf(stderr, "[PEEK-CACHED] #%d: caller=%s method_=%s prim=%d pending=%s fd=%zu\n",
-                                peekCachedTrace, memory_.selectorOf(method).c_str(),
-                                memory_.selectorOf(method_).c_str(),
-                                primitiveIndexOf(cached),
-                                pendingICPatch_ ? "SET" : "NULL",
-                                frameDepth_);
-                    }
-                }
-            }
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — invalidate and fall back to normal send
@@ -10461,27 +10331,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Target completed (JIT handled it end-to-end).
             // Resume JIT execution at the bytecode after the send.
             jitJ2JActChains_++;
-            // TRACE: peek send completion in ExitSendCached
-            {
-                static int peekSendCompleteTrace = 0;
-                if (peekSendCompleteTrace < 30) {
-                    std::string msel = memory_.selectorOf(method);
-                    if (msel == "peek") {
-                        std::string cachedSel = memory_.selectorOf(cached);
-                        Oop topVal = *(stackPointer_ - 1);
-                        std::string tvStr;
-                        if (topVal.rawBits() == memory_.trueObject().rawBits()) tvStr = "true";
-                        else if (topVal.rawBits() == memory_.falseObject().rawBits()) tvStr = "false";
-                        else if (topVal.rawBits() == memory_.nil().rawBits()) tvStr = "nil";
-                        else if (topVal.isSmallInteger()) tvStr = "int:" + std::to_string(topVal.asSmallInteger());
-                        else if (topVal.isCharacter()) tvStr = "char:" + std::to_string(topVal.asCharacter());
-                        else tvStr = "obj:0x" + std::to_string(topVal.rawBits());
-                        peekSendCompleteTrace++;
-                        fprintf(stderr, "[PEEK-SEND-OK] #%d: cached=%s result=%s\n",
-                                peekSendCompleteTrace, cachedSel.c_str(), tvStr.c_str());
-                    }
-                }
-            }
             {
                 method = method_;  // Refresh: GC may have moved the method
                 uint32_t bcOffset = computeCurrentBCOffset();
@@ -10506,38 +10355,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.exitReason = jit::ExitNone;
 
                 // TRACE: peek resume after send
-                {
-                    static int peekResumeTrace = 0;
-                    if (peekResumeTrace < 20) {
-                        std::string msel = memory_.selectorOf(method);
-                        if (msel == "peek") {
-                            peekResumeTrace++;
-                            Oop topVal = state.sp > state.tempBase ? *(state.sp - 1) : Oop::nil();
-                            std::string tvStr;
-                            if (topVal.rawBits() == memory_.trueObject().rawBits()) tvStr = "true";
-                            else if (topVal.rawBits() == memory_.falseObject().rawBits()) tvStr = "false";
-                            else if (topVal.rawBits() == memory_.nil().rawBits()) tvStr = "nil";
-                            else if (topVal.isSmallInteger()) tvStr = "int:" + std::to_string(topVal.asSmallInteger());
-                            else tvStr = "obj:0x" + std::to_string(topVal.rawBits());
-                            uint8_t nextBC = state.ip ? *(state.ip + bcOffset) : 0xFF;
-                            fprintf(stderr, "[PEEK-RESUME] #%d: bcOff=%u nextBC=0x%02x stackTop=%s\n",
-                                    peekResumeTrace, bcOffset, nextBC, tvStr.c_str());
-                        }
-                    }
-                }
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                    // TRACE: resume failure for peek
-                    {
-                        static int peekResFail = 0;
-                        if (peekResFail < 20) {
-                            std::string msel = memory_.selectorOf(method);
-                            if (msel == "peek") {
-                                peekResFail++;
-                                fprintf(stderr, "[PEEK-RESUME-FAIL] #%d: bcOff=%u\n",
-                                        peekResFail, bcOffset);
-                            }
-                        }
-                    }
                     return true;  // No re-entry at this offset; interpreter handles rest
                 }
                 chargeJITBytecodes(state);
