@@ -75,6 +75,12 @@ struct JITState {
     // straight-line code. Accessed by SimStack stencil variants only.
     uint64_t simTOS;          // offset 112: Cached TOS bits
     uint64_t simNOS;          // offset 120: Cached NOS bits
+
+    // --- Inline primitive support ---
+    // True/false Oops for comparison results in lightweight J2J path.
+    // Set once in tryJITActivation, constant for the image lifetime.
+    Oop trueOop;              // offset 128
+    Oop falseOop;             // offset 136
 };
 
 // Verify expected offsets (stencils depend on these)

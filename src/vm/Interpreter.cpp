@@ -10428,6 +10428,24 @@ void Interpreter::tryJITResumeInCaller() {
     inJITResume_ = false;
 }
 
+// Map primitive index to inline primKind for lightweight J2J dispatch.
+// Returns 0 if the primitive can't be inlined.
+static uint8_t inlinePrimKind(int primIndex) {
+    switch (primIndex) {
+    case 1:  return 1;   // add
+    case 2:  return 2;   // sub
+    case 3:  return 3;   // lessThan
+    case 4:  return 4;   // greaterThan
+    case 5:  return 5;   // lessEqual
+    case 6:  return 6;   // greaterEqual
+    case 7:  return 7;   // equal
+    case 8:  return 8;   // notEqual
+    case 9:  return 9;   // mul
+    case 110: return 10; // identical
+    default: return 0;
+    }
+}
+
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
     if (!pendingICPatch_) return;
     uint64_t* icData = pendingICPatch_;
@@ -10524,6 +10542,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                // Encode inline primKind in bits 52:48 for lightweight J2J
+                if (target->hasPrimPrologue) {
+                    int primIdx = primitiveIndexOf(resolvedMethod);
+                    uint8_t pk = inlinePrimKind(primIdx);
+                    if (pk) extra |= (uint64_t)pk << 48;
+                }
                 jitJ2JDirectPatches_++;
             }
         }
@@ -10579,7 +10603,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             uint64_t extra = icData[e * 3 + 2];
             if (extra == 0) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
-                icData[e * 3 + 2] = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                // Encode inline primKind
+                if (target->hasPrimPrologue) {
+                    int primIdx = primitiveIndexOf(cachedMethod);
+                    uint8_t pk = inlinePrimKind(primIdx);
+                    if (pk) newExtra |= (uint64_t)pk << 48;
+                }
+                icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
             }
             return;
@@ -10620,6 +10651,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.argCount = argCount;
     state.icDataPtr = nullptr;
     state.sendArgCount = 0;
+    state.trueOop = memory_.trueObject();
+    state.falseOop = memory_.falseObject();
 
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;

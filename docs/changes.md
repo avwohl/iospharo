@@ -2,6 +2,32 @@
 
 2026-04-08
 
+## Fix JIT Non-Local Return (NLR) Bug in FullBlocks
+
+Bytecodes 0x58-0x5C (ReturnReceiver through ReturnTop) in FullBlocks were
+incorrectly compiled as simple block returns. In Sista V1, these are
+Non-Local Returns that must return from the enclosing method. The JIT
+now deopts to the interpreter for these bytecodes in FullBlocks.
+
+This was the root cause of the MAX_COMPILE=115 startup failure: a
+bounds-checking block on Object was JIT-compiled and its NLR (^self)
+was mishandled, corrupting the session startup chain and causing
+DNU "#+ not understood by nil".
+
+## Updated Benchmark Results (after NLR fix)
+
+  Benchmark         Interpreter   JIT (warm)   JIT speedup
+  fib(28) cold      99ms          312ms        -3.2x (compilation overhead)
+  fib(28) warm      57ms          60ms         ~1.0x (break even)
+  sort(10K) cold    30ms          246ms        -8.2x (compilation overhead)
+  sort(10K) warm    29ms          29ms         ~1.0x (break even)
+  dict(5K) cold     15ms          37ms         -2.5x (compilation overhead)
+  dict(5K) warm     14ms          13ms         ~1.0x (break even)
+
+JIT warm performance matches interpreter — confirms the stencils execute
+at interpreter speed but every send exits to C++. Phase 1 (J2J direct
+calls) is needed to see actual speedup.
+
 ## Fix J2J Metaclass Bug
 
 J2J IC patching for class/metaclass receivers (format-1 objects) caused

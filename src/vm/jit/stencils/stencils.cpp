@@ -90,6 +90,9 @@ struct JITState {
     // SimStack register caching
     uint64_t      simTOS;       // offset 112
     uint64_t      simNOS;       // offset 120
+    // Inline primitive support
+    Oop           trueOop;      // offset 128
+    Oop           falseOop;     // offset 136
 };
 
 // Tag bit constants (must match Oop.hpp)
@@ -934,6 +937,62 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             s->sp -= nArgs;                                                   \
             _HOLE_CONTINUE(s);                                                \
             return;                                                           \
+        }                                                                     \
+    }                                                                         \
+    /* Lightweight inline primitive (bits 52:48 = primKind, no frame needed)*/ \
+    if ((extra & J2J_ENTRY_BIT) && nArgs == 1) {                              \
+        uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);                   \
+        if (primKind != 0) {                                                  \
+            Oop rcv = s->sp[-2];                                              \
+            Oop arg = s->sp[-1];                                              \
+            /* Both must be SmallInteger: (bits & 7) == 1 */                  \
+            if ((rcv.bits & 7) == 1 && (arg.bits & 7) == 1) {                \
+                int64_t a = (int64_t)rcv.bits >> 3;                           \
+                int64_t b = (int64_t)arg.bits >> 3;                           \
+                bool ok = false;                                              \
+                Oop result;                                                   \
+                if (primKind <= 2) { /* add(1), sub(2) */                     \
+                    int64_t r = (primKind == 1) ? a + b : a - b;             \
+                    /* Overflow: result must fit in 61-bit signed value */    \
+                    if (r >= -(1LL << 60) && r < (1LL << 60)) {              \
+                        result.bits = (uint64_t)(r << 3) | 1;                \
+                        ok = true;                                            \
+                    }                                                         \
+                } else if (primKind <= 8) { /* comparisons 3-8 */            \
+                    /* For SmallIntegers with same tag, raw signed           */ \
+                    /* comparison works: both have tag 1 in low 3 bits       */ \
+                    bool cmp;                                                 \
+                    int64_t sa = (int64_t)rcv.bits;                           \
+                    int64_t sb = (int64_t)arg.bits;                           \
+                    switch (primKind) {                                       \
+                    case 3: cmp = sa < sb; break;                            \
+                    case 4: cmp = sa > sb; break;                            \
+                    case 5: cmp = sa <= sb; break;                           \
+                    case 6: cmp = sa >= sb; break;                           \
+                    case 7: cmp = sa == sb; break;                           \
+                    case 8: cmp = sa != sb; break;                           \
+                    default: cmp = false;                                     \
+                    }                                                         \
+                    result = cmp ? s->trueOop : s->falseOop;                 \
+                    ok = true;                                                \
+                } else if (primKind == 9) { /* mul */                        \
+                    __int128 r128 = (__int128)a * (__int128)b;               \
+                    if (r128 >= -(1LL << 60) && r128 < (1LL << 60)) {       \
+                        result.bits = (uint64_t)((int64_t)r128 << 3) | 1;   \
+                        ok = true;                                            \
+                    }                                                         \
+                } else if (primKind == 10) { /* identical */                 \
+                    result = (rcv.bits == arg.bits) ?                         \
+                        s->trueOop : s->falseOop;                            \
+                    ok = true;                                                \
+                }                                                             \
+                if (ok) {                                                     \
+                    s->sp[-2] = result;                                       \
+                    s->sp--;                                                  \
+                    _HOLE_CONTINUE(s);                                        \
+                    return;                                                   \
+                }                                                             \
+            }                                                                 \
         }                                                                     \
     }                                                                         \
     /* Check for J2J direct call (bit 60, no bits 63:61) */                   \
