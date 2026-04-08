@@ -1,6 +1,23 @@
 # Test Results
 
-Last updated: 2026-04-07
+Last updated: 2026-04-08
+
+## Full Suite — JIT vs Interpreter Parity (2026-04-08)
+
+Fresh Pharo 13 image, full test suite (1671 class tiers).
+Both JIT (no-J2J) and interpreter produce identical results.
+
+    Mode       Classes  Pass     Fail  Err  Skip  Rate
+    JIT(noJ2J) 535      12,531   13    3    29    99.6%
+    No-JIT     535      12,531   13    3    29    99.6%
+
+Zero JIT-specific regressions. 535 of 1671 class tiers completed
+in the 600s timeout window. The JIT compiles and correctly executes
+all Kernel, Collection, Compiler, and many system test classes.
+
+J2J (JIT-to-JIT direct calls) disabled during this run due to a
+context chain materialization bug that prevents exception propagation
+through J2J frames. Fix in progress.
 
 ## Code Zone Eviction Stress Test (2026-04-07)
 
