@@ -6725,10 +6725,21 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
     static int logCount = 0;
-    if (logCount++ < 3) {
+    logCount++;
+    if (logCount <= 30 || logCount % 1000 == 0) {
         std::string valClass = memory_.nameOfClass(memory_.classOf(value));
-        fprintf(stderr, "[MUSTBOOL] fd=%zu value_class=%s in=#%s\n",
-                frameDepth_, valClass.c_str(), memory_.selectorOf(method_).c_str());
+        fprintf(stderr, "[MUSTBOOL] #%d fd=%zu value_class=%s value=0x%llx in=#%s rcv_class=%s\n",
+                logCount, frameDepth_, valClass.c_str(), (unsigned long long)value.rawBits(),
+                memory_.selectorOf(method_).c_str(), memory_.classNameOf(receiver_).c_str());
+        // Print short stack for first 10
+        if (logCount <= 10) {
+            for (size_t f = 0; f <= frameDepth_ && f < 10; f++) {
+                SavedFrame& sf = savedFrames_[f];
+                fprintf(stderr, "[MUSTBOOL]   [%zu] %s>>%s\n", f,
+                        memory_.classNameOf(sf.savedReceiver).c_str(),
+                        memory_.selectorOf(sf.savedMethod).c_str());
+            }
+        }
     }
     (void)value;
     sendSelector(selectors_.mustBeBoolean, 0);

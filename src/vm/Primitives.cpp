@@ -3594,6 +3594,22 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     for (int i = frameDepth_ - 1; i >= 0 && i >= frameDepth_ - 20; i--) {
         fprintf(stderr, "[QUIT] frame[%d]: %s\n", i, memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
     }
+    // Walk the Smalltalk context chain (slot 0 = sender, slot 3 = method)
+    {
+        Oop ctx = activeContext_;
+        for (int depth = 0; depth < 40 && ctx.isObject() && !ctx.isNil(); depth++) {
+            Oop m = memory_.fetchPointer(3, ctx);
+            std::string sel = memory_.selectorOf(m);
+            std::string cls = "(?)";
+            Oop rcv = memory_.fetchPointer(5, ctx);  // slot 5 = receiver
+            if (rcv.isObject() && !rcv.isNil()) cls = memory_.classNameOf(rcv);
+            else if (rcv.isSmallInteger()) cls = "SmallInt(" + std::to_string(rcv.asSmallInteger()) + ")";
+            else if (rcv.isNil()) cls = "nil";
+            fprintf(stderr, "[QUIT] ctx[%d]: %s>>%s (rcv=0x%llx)\n", depth, cls.c_str(), sel.c_str(),
+                    (unsigned long long)rcv.rawBits());
+            ctx = memory_.fetchPointer(0, ctx);  // slot 0 = sender
+        }
+    }
     // Dump true/false Oop values for verification
     fprintf(stderr, "[QUIT] true=0x%llx false=0x%llx nil=0x%llx\n",
             (unsigned long long)memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits(),
