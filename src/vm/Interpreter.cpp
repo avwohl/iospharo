@@ -336,25 +336,15 @@ bool Interpreter::initialize() {
         memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
     }
 
-    // In headless mode, lower the startup process priority to 40 (the standard
-    // In headless mode, lower all P40 processes (except the active one) to P10.
-    // The Morphic UI Process at P40 round-robins with the startup process,
-    // stealing ~50% of CPU for display updates that go nowhere. Without this,
-    // session handlers take minutes and the isHeadless check never runs.
-    // The active process (startup/snapshot) stays at its original priority.
+    // In headless mode, keep the startup process at its original priority (79).
+    // Session handlers create new P40 processes (e.g., MorphicRenderLoop). If the
+    // startup process is lowered to P40, it round-robins with these new processes
+    // and may never finish iterating all handlers. At P79, the startup process
+    // completes all session handlers before any P40 process runs.
+    //
+    // Demote existing P40 processes to P10 to prevent the saved Morphic loop from
+    // competing with newly created session processes.
     if (isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
-        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
-        if (prioOop.isSmallInteger()) {
-            int64_t prio = prioOop.asSmallInteger();
-            if (prio > 40 && prio < 80) {
-                fprintf(stderr, "[STARTUP] Headless mode: lowering startup process priority from %lld to 40\n",
-                        (long long)prio);
-                memory_.storePointer(ProcessPriorityIndex, activeProcess,
-                                    Oop::fromSmallInteger(40));
-            }
-        }
-        // Demote all processes in the P40 ready queue (except active) to P10.
-        // This prevents MorphicRenderLoop from competing with startup.
         Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
         if (schedLists.isObject() && !schedLists.isNil()) {
             // P40 is at index 39 (0-based)
