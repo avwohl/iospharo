@@ -2240,10 +2240,11 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     }
 
 
-    // JIT code zone: compiledMethodOop in each JITMethod header.
-    // These must be GC roots so (a) referenced CompiledMethods aren't collected
-    // and (b) Oops are updated in-place when compaction moves methods.
-    // Skip invalidated entries (failed compilations) — their Oop is zeroed.
+    // JIT code zone: compiledMethodOop + selectorOop in each JITMethod header,
+    // AND method Oops + selector Oops in inline cache entries.
+    // These must be GC roots so (a) referenced objects aren't collected
+    // and (b) Oops are updated in-place when compaction moves objects.
+    // This keeps IC entries valid across GC, avoiding a full IC flush.
 #if PHARO_JIT_ENABLED
     if (jitRuntime_.isInitialized()) {
         jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();
@@ -2251,6 +2252,37 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             if (m->compiledMethodOop != 0) {
                 Oop& methodOop = *reinterpret_cast<Oop*>(&m->compiledMethodOop);
                 visitor(methodOop);
+            }
+            if (m->selectorOop != 0) {
+                Oop& selOop = *reinterpret_cast<Oop*>(&m->selectorOop);
+                visitor(selOop);
+            }
+            // Visit IC entries: each IC site has 4 entries × [key, method, extra]
+            // + selectorBits = 13 uint64_t = 104 bytes.
+            // key = classIndex (stable, not an Oop)
+            // method = CompiledMethod Oop (needs GC update)
+            // extra = flags + slot/address (not an Oop)
+            // selectorBits = Symbol Oop (needs GC update)
+            if (m->numICEntries > 0) {
+                uint8_t* icStart = m->codeStart() + m->codeSize
+                                 - m->numICEntries * 104;
+                for (uint32_t i = 0; i < m->numICEntries; i++) {
+                    uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
+                    // Visit method Oops in slots 1, 4, 7, 10 (4 entries × stride 3)
+                    for (int e = 0; e < 4; e++) {
+                        uint64_t& methodBits = slots[e * 3 + 1];
+                        if (methodBits != 0) {
+                            Oop& mOop = *reinterpret_cast<Oop*>(&methodBits);
+                            visitor(mOop);
+                        }
+                    }
+                    // Visit selector Oop in slot 12
+                    uint64_t& selBits = slots[12];
+                    if (selBits != 0) {
+                        Oop& sOop = *reinterpret_cast<Oop*>(&selBits);
+                        visitor(sOop);
+                    }
+                }
             }
             m = m->nextInZone;
         }

@@ -183,6 +183,16 @@ static void doFFICall(void* p) {
 }
 #endif
 
+// File-scope buffer for IMAGE output (stdout/stderr from the Pharo image)
+static std::string g_imageOutputBuffer;
+
+void flushImageOutputBuffer() {
+    if (!g_imageOutputBuffer.empty()) {
+        fprintf(stderr, "[IMAGE] %s\n", g_imageOutputBuffer.c_str());
+        g_imageOutputBuffer.clear();
+    }
+}
+
 namespace pharo {
 
 // Forward declarations for LargeInteger arithmetic helpers
@@ -3616,6 +3626,9 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
             }
         }
     }
+
+    // Flush pending IMAGE output buffer before shutting down
+    ::flushImageOutputBuffer();
 
     running_ = false;
     return PrimitiveResult::Success;
@@ -11381,23 +11394,22 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
 
     // For stdout/stderr, buffer line output with [IMAGE] prefix
     if (fileId == 1 || fileId == 2) {
-        static std::string imageOutputBuffer;
         for (size_t i = 0; i < static_cast<size_t>(count); i++) {
             char c = static_cast<char>(tempBuffer[i]);
             if (c == '\n' || c == '\r') {
-                if (!imageOutputBuffer.empty()) {
-                    fprintf(stderr, "[IMAGE] %s\n", imageOutputBuffer.c_str());
-                    imageOutputBuffer.clear();
+                if (!g_imageOutputBuffer.empty()) {
+                    fprintf(stderr, "[IMAGE] %s\n", g_imageOutputBuffer.c_str());
+                    g_imageOutputBuffer.clear();
                 }
             } else if (c >= 32 && c < 127) {  // printable ASCII only
-                imageOutputBuffer += c;
+                g_imageOutputBuffer += c;
             }
             // Skip ANSI escape sequences silently
         }
         // Flush partial lines if buffer gets large
-        if (imageOutputBuffer.size() > 200) {
-            fprintf(stderr, "[IMAGE] %s\n", imageOutputBuffer.c_str());
-            imageOutputBuffer.clear();
+        if (g_imageOutputBuffer.size() > 200) {
+            fprintf(stderr, "[IMAGE] %s\n", g_imageOutputBuffer.c_str());
+            g_imageOutputBuffer.clear();
         }
     }
 

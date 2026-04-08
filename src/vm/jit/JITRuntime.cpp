@@ -440,15 +440,19 @@ void JITRuntime::flushCaches() {
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
 
-    // 1. Flush all caches (ICs contain stale method Oops, mega cache stale too)
-    flushCaches();
+    // IC entries (method Oops, selector Oops) were updated in-place by
+    // forEachRoot during compaction. No need to flush them.
+    // Only clear the mega cache: it's a hash table keyed by selectorBits,
+    // and those bits changed, making hash positions stale. Cheaper to flush
+    // than rehash.
+    std::memset(megaCache_, 0, sizeof(megaCache_));
 
-    // 2. Update nil/true/false bits (GC may have moved them)
+    // Update nil/true/false bits (GC may have moved them)
     updateSpecialOops(memory);
 
-    // 3. Rebuild MethodMap — keys are compiledMethodOop bits which were updated
-    //    in-place by forEachRoot during updatePointersAfterCompact, but the
-    //    MethodMap hash table still has the old key values.
+    // Rebuild MethodMap — keys are compiledMethodOop bits which were updated
+    // in-place by forEachRoot during updatePointersAfterCompact, but the
+    // MethodMap hash table still has the old key values.
     methodMap_.clear();
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
@@ -458,9 +462,9 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         m = m->nextInZone;
     }
 
-    // 4. Clear count map — keys are stale CompiledMethod Oop bits.
-    //    Methods will re-accumulate counts naturally. Since the compile
-    //    threshold is only 2, this is a minor transient cost.
+    // Clear count map — keys are stale CompiledMethod Oop bits.
+    // Methods will re-accumulate counts naturally. Since the compile
+    // threshold is only 2, this is a minor transient cost.
     std::memset(countMap_, 0, sizeof(countMap_));
 }
 
