@@ -1514,6 +1514,64 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::handleForceYield() {
+    // Periodic diagnostic: log active method every 10 seconds
+    {
+        static auto lastDiagTime = std::chrono::steady_clock::now();
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastDiagTime).count();
+        if (elapsed >= 10) {
+            lastDiagTime = now;
+            Oop proc = getActiveProcess();
+            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
+            int prio = prioOop.isSmallInteger() ? static_cast<int>(prioOop.asSmallInteger()) : -1;
+            std::string rcvrClass = "(unknown)";
+            if (receiver_.isObject() && !receiver_.isNil()) {
+                rcvrClass = memory_.classNameOf(receiver_);
+            } else if (receiver_.isSmallInteger()) {
+                rcvrClass = "SmallInteger";
+            } else if (receiver_.isNil()) {
+                rcvrClass = "nil";
+            }
+            // Try to get method selector from penultimate literal
+            std::string selector = "?";
+            if (method_.isObject() && !method_.isNil()) {
+                int numLits = (int)memory_.numLiteralsOf(method_);
+                if (numLits >= 2) {
+                    Oop penLit = memory_.fetchPointer(numLits - 2, method_);
+                    if (penLit.isObject() && !penLit.isNil()) {
+                        int fmt = (int)penLit.asObjectPtr()->format();
+                        if (fmt >= 16) {
+                            // It's a byte object (likely a Symbol)
+                            size_t sz = memory_.byteSizeOf(penLit);
+                            if (sz < 200) {
+                                selector.clear();
+                                for (size_t i = 0; i < sz && i < 60; i++)
+                                    selector += (char)memory_.fetchByte(i, penLit);
+                            }
+                        } else {
+                            // Might be AdditionalMethodState - get selector from slot 1
+                            Oop sel = memory_.fetchPointer(1, penLit);
+                            if (sel.isObject() && !sel.isNil()) {
+                                int sfmt = (int)sel.asObjectPtr()->format();
+                                if (sfmt >= 16) {
+                                    size_t ssz = memory_.byteSizeOf(sel);
+                                    if (ssz < 200) {
+                                        selector.clear();
+                                        for (size_t j = 0; j < ssz && j < 60; j++)
+                                            selector += (char)memory_.fetchByte(j, sel);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[DIAG] P%d %s>>%s ip=%lld fd=%d\n",
+                    prio, rcvrClass.c_str(), selector.c_str(),
+                    (long long)ipOffset_, frameDepth_);
+        }
+    }
+
     // Process forced yield from heartbeat thread.
     // Check scheduler queues for higher-priority or same-priority processes.
     Oop activeProcess = getActiveProcess();
@@ -6431,6 +6489,27 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
 
 void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
     const int MAX_DNU_DEPTH = 10;
+
+    // Fast path: nil findNextHandlerContext → return nil
+    // UndefinedObject doesn't implement this method in Pharo 13,
+    // but the expected behavior is to return nil (terminate handler chain).
+    // Without this, each DNU triggers a cascade of exception handling DNUs,
+    // creating ~400-frame deep stacks and wasting huge amounts of CPU.
+    if (argCount == 0 && receiver_.isNil()) {
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* selHdr = selector.asObjectPtr();
+            if (selHdr->isBytesObject() && selHdr->byteSize() == 25) {
+                // Quick check: "findNextHandlerContext" is 25 chars
+                const char* bytes = (const char*)selHdr->bytes();
+                if (memcmp(bytes, "findNextHandlerContext", 22) == 0) {
+                    // Pop the receiver, push nil as return value
+                    popN(argCount + 1);
+                    push(memory_.nil());
+                    return;
+                }
+            }
+        }
+    }
 
         dnuDepth_++;
 
