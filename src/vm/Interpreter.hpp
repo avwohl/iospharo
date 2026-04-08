@@ -812,6 +812,10 @@ public:
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
     void pushFrameForJIT(jit::JITState* state);
     void popFrameForJIT(jit::JITState* state);
+
+    /// Upgrade an IC entry to J2J direct call if the target is now JIT-compiled.
+    /// Called from ExitSendCached handlers when an IC hit goes through C++.
+    void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount);
 private:
 #endif
 

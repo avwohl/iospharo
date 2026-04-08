@@ -10335,8 +10335,8 @@ void Interpreter::tryJITResumeInCaller() {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
 
-            // Verbose tracing suppressed
-            bool isNoCheckCaller = false;
+            // Upgrade IC entry to J2J if target is now JIT-compiled
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount);
 
             uint8_t sendOp = *instructionPointer_;
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
@@ -10542,6 +10542,51 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // All 4 slots full — megamorphic, don't patch
 }
 
+void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount) {
+    static bool j2jEnabled = !getenv("PHARO_NO_J2J");
+    if (!j2jEnabled || !icData) return;
+
+    jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
+    if (!target || !target->isExecutable()) return;
+    if (isJ2JBanned(cachedMethod.rawBits())) return;
+
+    // Check unsafe prim: has primitive but no JIT prologue
+    if (!target->hasPrimPrologue) {
+        ObjectHeader* methObj = cachedMethod.asObjectPtr();
+        Oop hdr = methObj->slotAt(0);
+        if (hdr.isSmallInteger() && ((hdr.asSmallInteger() >> 16) & 1))
+            return;  // unsafe primitive
+    }
+
+    // Find the receiver on the stack to compute the lookup key
+    Oop receiver = stackPointer_[-(sendArgCount + 1)];
+    uint64_t lookupKey;
+    uint64_t tag = receiver.rawBits() & 0x7;
+    if (tag == 0 && receiver.rawBits() >= 0x10000) {
+        ObjectHeader* rcvObj = receiver.asObjectPtr();
+        // Skip J2J for class/metaclass receivers (format 1) — known bug source
+        if (static_cast<uint8_t>(rcvObj->format()) == 1) return;
+        lookupKey = rcvObj->classIndex();
+    } else if (tag != 0) {
+        lookupKey = tag | 0x80000000ULL;
+    } else {
+        return;
+    }
+
+    // Find the matching IC entry and upgrade if extra == 0
+    for (int e = 0; e < 4; e++) {
+        if (icData[e * 3] == lookupKey) {
+            uint64_t extra = icData[e * 3 + 2];
+            if (extra == 0) {
+                uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
+                icData[e * 3 + 2] = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                jitJ2JDirectPatches_++;
+            }
+            return;
+        }
+    }
+}
+
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
 
@@ -10695,6 +10740,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             jitICHits_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
+
+            // Upgrade IC entry to J2J if target is now JIT-compiled
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount);
 
             {
                 uint8_t sendOp = *instructionPointer_;
