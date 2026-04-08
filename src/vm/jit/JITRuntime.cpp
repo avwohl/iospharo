@@ -229,6 +229,21 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         }
                     }
                 }
+                // Skip specific compilation by number: JIT_SKIP_N=115
+                {
+                    static int skipN = -2;
+                    static int attemptCount = 0;
+                    if (skipN == -2) {
+                        const char* env = getenv("JIT_SKIP_N");
+                        skipN = env ? atoi(env) : -1;
+                    }
+                    attemptCount++;
+                    if (skipN >= 0 && attemptCount == skipN) {
+                        fprintf(stderr, "[JIT] SKIPPED compilation #%d (method=0x%llx)\n",
+                                attemptCount, (unsigned long long)compiledMethod.rawBits());
+                        return;
+                    }
+                }
                 // Hit threshold — compile!
                 size_t gcBefore = interp_ ? interp_->memory().statistics().gcCount : 0;
                 JITMethod* jm = compiler_->compile(compiledMethod);
@@ -261,10 +276,33 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     }
                     uint64_t zoneOff = reinterpret_cast<uint64_t>(jm->codeStart())
                                      - reinterpret_cast<uint64_t>(codeZone_.zoneStart());
-                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s) @0x%llx\n",
+                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s) @0x%llx method=0x%llx\n",
                             sel.c_str(), cls.c_str(), countMap_[i].count, jm->codeSize,
                             jm->hasPrimPrologue ? ", prim" : "",
-                            (unsigned long long)zoneOff);
+                            (unsigned long long)zoneOff,
+                            (unsigned long long)jm->compiledMethodOop);
+                    // Dump literals for blocks (sel="?") to identify the method
+                    if (sel == "?" && interp_) {
+                        size_t nLits = interp_->memory().numLiteralsOf(compiledMethod);
+                        fprintf(stderr, "[JIT]   literals(%zu):", nLits);
+                        ObjectHeader* methH = compiledMethod.asObjectPtr();
+                        for (size_t li = 0; li < nLits && li < 15; li++) {
+                            Oop lit = methH->slots()[1 + li];
+                            if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* lH = lit.asObjectPtr();
+                                if (lH->isBytesObject() && lH->byteSize() < 80) {
+                                    fprintf(stderr, " '%.*s'", (int)lH->byteSize(), (const char*)lH->bytes());
+                                } else {
+                                    fprintf(stderr, " obj(cls=%u,fmt=%d)", lH->classIndex(), (int)lH->format());
+                                }
+                            } else if (lit.isSmallInteger()) {
+                                fprintf(stderr, " %lld", (long long)lit.asSmallInteger());
+                            } else {
+                                fprintf(stderr, " 0x%llx", (unsigned long long)lit.rawBits());
+                            }
+                        }
+                        fprintf(stderr, "\n");
+                    }
                 }
             }
             return;
