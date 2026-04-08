@@ -24,8 +24,14 @@ Fixed two bugs preventing Pharo session handlers from firing on image resume:
 
   VM                    fib(28)    Ratio vs Cog
   Reference Cog VM      2ms        1x
-  Our VM (JIT)          61ms       30x slower
-  Our interpreter        —         (not tested separately)
+  Our interpreter       47ms       24x slower
+  Our VM (JIT)          61ms       30x slower (slower than interp!)
+
+The JIT is slower than the interpreter because every non-trivial send
+exits to C++, does heavy frame management, and re-enters JIT. The send
+overhead (~50ns) exceeds the bytecode execution savings. This confirms
+Phase 1 J2J direct calls are essential — without them, the JIT is net
+negative on send-heavy code like fib.
 
 The 30x gap is the target for Phase 1 J2J optimization. Each recursive
 benchFib send exits to C++, does frame management, and re-enters JIT.
