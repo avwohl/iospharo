@@ -1,5 +1,33 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-08
+
+## Fix JIT Session Startup (3 bugs)
+
+Three bugs prevented session startup handlers from completing with JIT:
+
+1. **stencil_primClass no-op prologue** (J2J-specific): The primitive 111
+   prologue stencil was a no-op stub that fell through to bytecodes without
+   computing the class. Via J2J, the primitive never ran, causing species to
+   return wrong values (ByteString instance instead of class), triggering
+   #new: DNU in DiskStore>>startUp:. Fix: removed case 111 from
+   primitivePrologueStencil() so class methods aren't marked as having a
+   prologue. The unsafePrim guard then blocks J2J correctly.
+
+2. **Aging threshold too aggressive**: Headless mode used 5ms aging threshold
+   which aged the P79 startup process after just 5ms. Fix: exclude P79 from
+   aging (agingMaxPri 80→78) and increase headless threshold to 500ms.
+
+3. **J2J exception handler context chain broken** (IN PROGRESS): When a J2J
+   callee triggers an exception, the exception handler search fails to find
+   handlers in ancestor contexts. The `onErrorDo:` wrapper in
+   `executeStoringError:` is not found, causing UnhandledError. Workaround:
+   use PHARO_NO_J2J=1 to disable J2J during test runs. Root cause under
+   investigation — likely related to context materialization when J2J frames
+   are on the savedFrames_ stack.
+
+**Status**: Test suite runs with JIT enabled (J2J disabled). Full results pending.
+
 2026-04-07
 
 ## Verify tryResume Bug Fully Resolved
