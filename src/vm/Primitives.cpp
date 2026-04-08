@@ -11179,7 +11179,8 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
     }
 
     static int fileOpenLog = 0;
-    if (fileOpenLog++ < 20) {
+    fileOpenLog++;
+    if (fileOpenLog <= 20 || (fileOpenLog % 10000 == 0)) {
         bool writable2 = (writableOop == memory_.trueObject());
         fprintf(stderr, "[FILE] primitiveFileOpen #%d: '%s' writable=%d argCount=%d\n",
                 fileOpenLog, filename.c_str(), writable2, argCount);

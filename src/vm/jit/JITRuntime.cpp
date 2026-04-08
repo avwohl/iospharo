@@ -314,15 +314,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
         }
     }
 
-    // Flush I-cache + toggle W^X to executable, then back to writable.
-    flushICache(jm->codeStart(), jm->codeSize);
+    // Toggle W^X to executable for JIT execution.
+    // ICache was flushed during compilation — no need to re-flush on every call.
     makeExecutable(jm->codeStart(), jm->codeSize);
 
     // Call the compiled code
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart());
     entry(&state);
 
-    // Back to writable
+    // Back to writable (for IC patching etc.)
     makeWritable(jm->codeStart(), jm->codeSize);
 
     return true;
@@ -389,14 +389,14 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         }
     }
 
-    // Flush I-cache + toggle W^X
-    flushICache(jm->codeStart(), jm->codeSize);
+    // Toggle W^X to executable for JIT execution.
+    // ICache was flushed during compilation — no need to re-flush on every call.
     makeExecutable(jm->codeStart(), jm->codeSize);
 
     // Enter at the specified code offset
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
 
-    // Final sp validation just before entry (verify it wasn't corrupted since the check above)
+    // Final sp validation just before entry
     if (reinterpret_cast<uint64_t>(state.sp) < 0x10000) {
         makeWritable(jm->codeStart(), jm->codeSize);
         fprintf(stderr, "[JIT] BUG: sp=%p just before stencil entry (bc=%u code=%u)\n",
@@ -406,7 +406,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     entry(&state);
 
-    // Back to writable
+    // Back to writable (for IC patching etc.)
     makeWritable(jm->codeStart(), jm->codeSize);
 
     return true;
