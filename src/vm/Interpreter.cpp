@@ -10630,16 +10630,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle exit reason
         switch (state.exitReason) {
         case jit::ExitReturn: {
-            // Diagnostic: trace JIT nil returns during startup
-            if (state.returnValue.rawBits() == 0) {
-                static int nilReturnCount = 0;
-                if (nilReturnCount++ < 20) {
-                    std::string sel = memory_.selectorOf(state.method);
-                    fprintf(stderr, "[JIT-NIL-RET #%d] method=0x%llx sel=#%s fd=%zu\n",
-                            nilReturnCount, (unsigned long long)state.method.rawBits(),
-                            sel.c_str(), frameDepth_);
-                }
-            }
             if (!popFrame()) {
                 // fd=0: follow context sender chain
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
