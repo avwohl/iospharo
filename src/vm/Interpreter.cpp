@@ -336,6 +336,25 @@ bool Interpreter::initialize() {
         memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
     }
 
+    // In headless mode, lower the startup process priority to 40 (the standard
+    // Pharo user process priority). The saved image may have the active process
+    // at a high priority (e.g., 79) which would starve lower-priority processes
+    // like the CommandLineHandler. Standard Pharo images typically resume at
+    // the default priority, but our startup flow sometimes inherits from
+    // high-priority background processes.
+    if (isHeadless() && activeProcess.isObject() && !activeProcess.isNil()) {
+        Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
+        if (prioOop.isSmallInteger()) {
+            int64_t prio = prioOop.asSmallInteger();
+            if (prio > 40 && prio < 80) {
+                fprintf(stderr, "[STARTUP] Headless mode: lowering startup process priority from %lld to 40\n",
+                        (long long)prio);
+                memory_.storePointer(ProcessPriorityIndex, activeProcess,
+                                    Oop::fromSmallInteger(40));
+            }
+        }
+    }
+
     // Initialize JIT before execution starts so noteMethodEntry works from first send
 #if PHARO_JIT_ENABLED
     initializeJIT();
@@ -1533,11 +1552,12 @@ void Interpreter::handleForceYield() {
         }
 
         // Aging-based preemption: our VM is much slower than standard Pharo,
-        // so CPU-intensive startup handlers (e.g., FFI struct compilation at
-        // pri-79) can starve lower-priority processes for minutes. Track
-        // wall time for the highest non-80 process; preempt after 500ms.
-        // When preempted, give the lower-priority process 100ms grace time
-        // during which higher-priority processes won't preempt it back.
+        // so CPU-intensive processes can starve lower-priority ones for minutes.
+        // MorphicRenderLoop (pri-80) never yields via Delay when cycles > 16ms.
+        // FFI struct compilation (pri-79) runs for 5+ minutes.
+        //
+        // In headless mode: age pri-41+ after 50ms, grace 200ms (75% to lower pri).
+        // In GUI mode: age pri-60-79 after 500ms, grace 100ms (~17% to lower pri).
         {
             static uint64_t agingProcBits = 0;
             static int agingProcPri = 0;
@@ -1561,8 +1581,15 @@ void Interpreter::handleForceYield() {
                 agingInGrace = false;
             }
 
+            // Determine aging thresholds based on mode
+            bool headless = isHeadless();
+            int agingMinPri = headless ? 41 : 60;
+            int agingMaxPri = headless ? 80 : 79;
+            int agingThresholdMs = headless ? 5 : 500;
+            int agingGraceMs = headless ? 500 : 100;
+
             if (nextProcess.rawBits() == nilObj.rawBits() &&
-                activePriority >= 60 && activePriority < 80) {
+                activePriority >= agingMinPri && activePriority <= agingMaxPri) {
                 if (activeProcess.rawBits() != agingProcBits) {
                     if (activePriority <= agingProcPri || agingProcBits == 0) {
                         agingProcBits = activeProcess.rawBits();
@@ -1572,14 +1599,14 @@ void Interpreter::handleForceYield() {
                 } else {
                     auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                         now - agingStartTime).count();
-                    if (elapsedMs >= 500) {
+                    if (elapsedMs >= agingThresholdMs) {
                         agingStartTime = now;
                         for (int pri = activePriority - 1; pri >= 1; pri--) {
                             Oop processList = memory_.fetchPointer(pri - 1, schedLists);
                             Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, processList);
                             if (first.isObject() && first.rawBits() != nilObj.rawBits()) {
                                 nextProcess = removeFirstLinkOfList(processList);
-                                agingGraceUntil = now + std::chrono::milliseconds(100);
+                                agingGraceUntil = now + std::chrono::milliseconds(agingGraceMs);
                                 agingInGrace = true;
                                 static int agingLog = 0;
                                 if (agingLog++ < 20) {
