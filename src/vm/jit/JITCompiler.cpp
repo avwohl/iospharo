@@ -238,7 +238,18 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             extA = 0; extB = 0;
             continue;
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
-            // 0x58-0x5C: return bytecodes, no operand
+            // 0x58-0x5C: method return bytecodes (return receiver/true/false/nil/top).
+            // In a FullBlock these are Non-Local Returns (return from the enclosing
+            // method, not just the block).  NLR is complex — deopt to interpreter.
+            if (isFullBlock) {
+                bc.operand = bc.bcOffset;
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
+                decoded.push_back(bc);
+                i += bc.bcLength;
+                extA = 0; extB = 0;
+                continue;
+            }
+            // In a method (not a block): simple return — fall through to selectStencil.
         } else if (op == 0x5D || op == 0x5E) {
             if (isFullBlock && extA == 0) {
                 // In a FullBlock with no enclosing levels: these are simple returns.
