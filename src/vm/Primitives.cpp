@@ -11341,11 +11341,6 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    static int fileWriteLog = 0;
-    if (fileWriteLog++ < 20) {
-        fprintf(stderr, "[FILE] primitiveFileWrite #%d: argCount=%d\n", fileWriteLog, argCount);
-    }
-
     Oop countOop = stackValue(0);
     Oop startOop = stackValue(1);
     Oop bufferOop = stackValue(2);
@@ -11382,6 +11377,28 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
     std::vector<uint8_t> tempBuffer(count);
     for (int64_t i = 0; i < count; i++) {
         tempBuffer[i] = memory_.fetchByte(start - 1 + i, bufferOop);
+    }
+
+    // For stdout/stderr, buffer line output with [IMAGE] prefix
+    if (fileId == 1 || fileId == 2) {
+        static std::string imageOutputBuffer;
+        for (size_t i = 0; i < static_cast<size_t>(count); i++) {
+            char c = static_cast<char>(tempBuffer[i]);
+            if (c == '\n' || c == '\r') {
+                if (!imageOutputBuffer.empty()) {
+                    fprintf(stderr, "[IMAGE] %s\n", imageOutputBuffer.c_str());
+                    imageOutputBuffer.clear();
+                }
+            } else if (c >= 32 && c < 127) {  // printable ASCII only
+                imageOutputBuffer += c;
+            }
+            // Skip ANSI escape sequences silently
+        }
+        // Flush partial lines if buffer gets large
+        if (imageOutputBuffer.size() > 200) {
+            fprintf(stderr, "[IMAGE] %s\n", imageOutputBuffer.c_str());
+            imageOutputBuffer.clear();
+        }
     }
 
     size_t bytesWritten = fwrite(tempBuffer.data(), 1, count, it->second);
