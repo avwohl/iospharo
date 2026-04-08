@@ -2,6 +2,38 @@
 
 2026-04-08
 
+## Phase 1 J2J: IC Fill from Mega Cache Hits
+
+Added IC fill path in `upgradeICToJ2J()`: when ExitSendCached fires for a
+JIT-compiled method not yet in any IC entry, create a new IC entry in an
+empty slot. Restricted to immediate receivers (SmallInteger tag=1, Character
+tag=3, SmallFloat tag=5) because object-pointer fills cause DNU at
+polymorphic send sites where different object types share the IC.
+
+Benchmark results (fib(28)x8 + sort(10K)x3):
+
+  Config                   Real     User CPU    Sys
+  Reference Cog VM         0.20s    0.18s       0.02s
+  JIT + J2J + IC fill      4.46s    1.08s       0.27s
+  JIT + J2J (no fill)      4.45s    1.08s       0.26s
+  Interpreter only         5.49s    2.46s       0.33s
+
+JIT vs Interpreter speedup: 2.28x on user CPU time. The Cog VM is still
+~6x faster (0.18s vs 1.08s), but our VM total includes heavy startup
+overhead (~0.6s). Benchmark-only speedup is higher.
+
+IC fill adds only 2 extra J2J entries (9 vs 7) — most IC entries are
+already populated by the normal patchJITICAfterSend path. The fill
+path's benefit will increase with more diverse call sites.
+
+JIT stats at benchmark time: 299 compiled methods, 95% IC hit rate,
+78% J2J activation rate, 52% J2J return rate.
+
+Environment variable controls:
+  PHARO_NO_JIT=1      - disable JIT entirely
+  PHARO_NO_J2J=1      - disable J2J optimization
+  PHARO_NO_IC_FILL=1  - disable IC fill from mega cache
+
 ## Fix JIT Non-Local Return (NLR) Bug in FullBlocks
 
 Bytecodes 0x58-0x5C (ReturnReceiver through ReturnTop) in FullBlocks were
