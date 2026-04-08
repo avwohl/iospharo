@@ -559,6 +559,16 @@ int main(int argc, char* argv[]) {
 
     // Detect test mode: first image arg is "test"
     bool testMode = (!imageArgs.empty() && imageArgs[0] == "test");
+
+    // In test mode, auto-disable JIT unless explicitly overridden.
+    // JIT adds ~26x overhead for cold code (test suites call thousands of methods
+    // once, triggering heavy C++ JIT entry/exit transitions on every send).
+    // Override with PHARO_NO_JIT=0 to force JIT in test mode.
+    if (testMode && !getenv("PHARO_NO_JIT")) {
+        setenv("PHARO_NO_JIT", "1", 0);
+        std::cout << "[TEST] Auto-disabled JIT for test mode (override with PHARO_NO_JIT=0)" << std::endl;
+    }
+
     std::cout << "\nLoading image: " << imagePath << std::endl;
 
     // Change working directory to image's directory so Pharo's
@@ -651,11 +661,12 @@ int main(int argc, char* argv[]) {
     // --headless causes PharoCommandLineHandler to activate (loading startup.st)
     // --interactive tells it to start MorphicUI instead of exiting.
     interpreter.setVMParameters({"--headless"});
-    if (imageArgs.empty()) {
-        interpreter.setImageArguments({"--interactive"});
-    } else {
-        interpreter.setImageArguments(imageArgs);
-    }
+    // Always pass --interactive so Pharo starts MorphicUI normally.
+    // In test mode, SUnitRunner (session handler) runs tests automatically.
+    // Passing "test Kernel-Tests" as image args would activate Pharo's
+    // STCommandLineHandler, which installs NonInteractiveUIManager and
+    // conflicts with SUnitRunner (100x slower execution).
+    interpreter.setImageArguments({"--interactive"});
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
@@ -671,17 +682,13 @@ int main(int argc, char* argv[]) {
         // All session handlers run normally — no patching or deferral.
         // If a handler fails, Pharo's SessionManager catches the error and continues.
 
-        // Create Display Form only in interactive (non-test) mode.
-        // In test/headless mode, creating a Display triggers MorphicUIManager to
-        // spawn the MorphicRenderLoop at priority 80, which monopolizes the CPU
-        // and prevents lower-priority processes (like CommandLineHandler at pri 40)
-        // from ever running.
-        if (!testMode) {
-            std::cout << "\n=== Creating Display ===" << std::endl;
-            interpreter.ensureDisplayForm(1024, 768, 32);
-        } else {
-            std::cout << "\n=== Headless test mode — skipping Display creation ===" << std::endl;
-        }
+        // Create Display Form in all modes. MorphicRenderLoop runs at P40
+        // (userSchedulingPriority), not P80 as previously assumed. Without a
+        // Display, MorphicRenderLoop still spawns but spins doing empty cycles,
+        // dropping the step rate 10x. With Display, it renders and sleeps via
+        // Delay, giving CPU to tests at the same priority.
+        std::cout << "\n=== Creating Display ===" << std::endl;
+        interpreter.ensureDisplayForm(1024, 768, 32);
 
         if (!testMode) {
             // Verify Display was created
@@ -798,18 +805,6 @@ int main(int argc, char* argv[]) {
                     std::cout << "\n=== Injecting Right-Click (World Menu) ===" << std::endl;
                     injectMouseClick(50, 300, 2);
                     clickInjected = true;
-                }
-
-                // Test mode: heartbeat deferred indefinitely.
-                // The saved MorphicRenderLoop (pri-80) wakes from Delay
-                // when the timer fires, monopolizing CPU and starving the
-                // CommandLineHandler (pri-40). Without heartbeat, no timer
-                // signals fire, so startup handlers and CLI processing
-                // run without preemption.
-                // Heartbeat will be started AFTER CLI handler completes
-                // (once we detect the results file).
-                if (testMode && !heartbeatStarted) {
-                    // Don't start heartbeat yet — let CLI handler finish
                 }
 
                 // Stall detection: if steps haven't advanced in 300s
