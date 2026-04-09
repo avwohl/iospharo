@@ -11041,15 +11041,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Safe because GC/process-switch cannot trigger during JIT execution
     // (stencils don't allocate, no timer checks).
     {
+        // Field order is tuned for the self-recursive hot path: fields stored
+        // on EVERY call are packed at offsets 0-47 so Clang can emit STP/LDP
+        // pair instructions. Non-self-recursive-only fields (literals, argCount,
+        // bcStart) live at the end.
         struct J2JSave {
-            Oop* sp; Oop receiver; Oop* literals; Oop* tempBase;
-            jit::JITMethod* jitMethod; int argCount;
-            uint8_t* ip; int sendArgCount;
-            uint8_t* resumeAddr;  // Precomputed JIT code address to resume at
-            uint8_t* bcStart;     // Precomputed bytecodeStart (for state.ip reset on resume)
+            // --- Always stored (hot path) ---
+            Oop* sp;                  // 0
+            Oop receiver;             // 8
+            Oop* tempBase;            // 16  (pair with ip)
+            uint8_t* ip;              // 24
+            jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
+            uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
+            int sendArgCount;         // 48  (packed with argCount)
+            int argCount;             // 52  (non-self-recursive only)
+            // --- Non-self-recursive only (cold-ish) ---
+            Oop* literals;            // 56
+            uint8_t* bcStart;         // 64  Precomputed bytecodeStart
             // Note: method Oop is derivable from jitMethod->compiledMethodOop,
             // so we don't save it (saves 8 bytes + 2 memory ops per call).
         };
+        static_assert(sizeof(struct J2JSave) == 72, "J2JSave should be 72 bytes");
         static constexpr int MaxJ2JDepth = 256;
         J2JSave j2jStack[MaxJ2JDepth];
         int j2jDepth = 0;
