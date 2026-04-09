@@ -11161,18 +11161,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint32_t bcOffset = static_cast<uint32_t>(save.ip - callerBCStart);
                 uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
 
-                if (codeOffset == 0 || codeOffset >= callerJM->codeSize) {
-                    // Can't resume — fall back to interpreter
+                if (__builtin_expect(codeOffset == 0 || codeOffset >= callerJM->codeSize, 0)) {
                     state.exitReason = jit::ExitReturn;
                     break;
                 }
 
                 state.exitReason = jit::ExitNone;
-                // Reset ip to bytecodeStart so the resumed stencil chain
-                // computes correct offsets (stencils do ip += bcOffset).
                 state.ip = callerBCStart;
-                uint8_t* resumeAddr = callerJM->codeStart() + codeOffset;
-                JIT_CALL(resumeAddr, &state);
+                JIT_CALL(callerJM->codeStart() + codeOffset, &state);
             }
 
             // Check countdown — let interpreter periodic checks run
