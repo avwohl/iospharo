@@ -131,13 +131,21 @@ extern "C" {
     // compiler generates GOT-style adrp+ldr (±4GB range) instead of
     // direct BL (BRANCH26, ±128MB range which is too small when the
     // code zone is far from the helper functions in memory).
-    extern void (*_HOLE_RT_SEND)(JITState*);
-    extern void (*_HOLE_RT_RETURN)(JITState*);
     extern void (*_HOLE_RT_ARITH_OVERFLOW)(JITState*);
 
     // Megamorphic method cache (address resolved via literal pool)
     extern char _HOLE_MEGA_CACHE;
 }
+
+// _HOLE_RT_SEND / _HOLE_RT_RETURN used to tail-call jit_rt_send /
+// jit_rt_return helpers. Those helpers were empty no-ops: stencil set
+// state.exitReason, then branched through a 3-load GOT indirection to
+// a helper that just returned. Since a void stencil function naturally
+// returns to its caller, we can skip the helper entirely — define these
+// as empty macros so Clang drops the adrp+ldr+ldr+br sequence at each
+// exit site (~4 instructions saved per send/return, ~4M exits per fib(28)).
+#define _HOLE_RT_SEND(s)    do { (void)(s); } while (0)
+#define _HOLE_RT_RETURN(s)  do { (void)(s); } while (0)
 
 // Helper to get operand value (address of hole symbol = the operand integer)
 #define OPERAND  ((int)(uintptr_t)&_HOLE_OPERAND)
