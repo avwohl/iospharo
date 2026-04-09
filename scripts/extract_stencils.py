@@ -345,6 +345,77 @@ def compile_stencils(arch: str) -> Path:
     return obj
 
 
+# SimStack stencils that use x19/x20 via inline asm (ARM64 only).
+# These rely on the compiler NOT using x19/x20 for its own purposes.
+# After compilation, we verify this by checking for STP/LDP save/restore.
+SIMSTACK_STENCILS = {
+    "stencil_flush1", "stencil_flush2",
+    "stencil_pushTemp_E", "stencil_pushTemp_1", "stencil_pushTemp_2",
+    "stencil_pushRecvVar_E", "stencil_pushRecvVar_1", "stencil_pushRecvVar_2",
+    "stencil_pushLitConst_E", "stencil_pushLitConst_1", "stencil_pushLitConst_2",
+    "stencil_pushLitVar_E", "stencil_pushLitVar_1", "stencil_pushLitVar_2",
+    "stencil_pushReceiver_E", "stencil_pushReceiver_1", "stencil_pushReceiver_2",
+    "stencil_pushTrue_E", "stencil_pushTrue_1", "stencil_pushTrue_2",
+    "stencil_pushFalse_E", "stencil_pushFalse_1", "stencil_pushFalse_2",
+    "stencil_pushNil_E", "stencil_pushNil_1", "stencil_pushNil_2",
+    "stencil_pop_2", "stencil_pop_1", "stencil_pop_E",
+    "stencil_dup_E", "stencil_dup_1", "stencil_dup_2",
+    "stencil_storeTemp_1", "stencil_storeTemp_2",
+    "stencil_popStoreTemp_2", "stencil_popStoreTemp_1",
+    "stencil_storeRecvVar_1",
+    "stencil_popStoreRecvVar_2", "stencil_popStoreRecvVar_1",
+    "stencil_addSmallInt_2", "stencil_subSmallInt_2", "stencil_mulSmallInt_2",
+    "stencil_lessThanSmallInt_2", "stencil_greaterThanSmallInt_2",
+    "stencil_lessEqualSmallInt_2", "stencil_greaterEqualSmallInt_2",
+    "stencil_equalSmallInt_2", "stencil_notEqualSmallInt_2",
+    "stencil_jumpTrue_1", "stencil_jumpFalse_1",
+    "stencil_returnTop_1", "stencil_returnTop_E", "stencil_returnReceiver_1",
+}
+
+
+def verify_simstack_register_safety(stencils: List[StencilInfo], arch: str):
+    """Verify that SimStack stencils don't have compiler-generated x19/x20 save/restore.
+
+    The register-based SimStack approach relies on the compiler NOT touching
+    x19/x20 in these small tail-call functions. If the compiler generates
+    STP/LDP for x19/x20, our inline asm writes would be undone by the restore.
+    """
+    if arch != "arm64":
+        return  # Only relevant for ARM64
+
+    # ARM64 STP/LDP encoding for x19/x20:
+    # STP x20, x19, [sp, #imm]! : 0xA9xx4FF4 (pre-indexed) or 0xA90x4FF4
+    # LDP x20, x19, [sp], #imm  : 0xA8xx4FF4 (post-indexed)
+    # We check for any STP/LDP involving x19 (register 19 = 0x13) or x20 (0x14)
+    # in the Rt/Rt2 fields.
+    issues = []
+    for s in stencils:
+        if s.name not in SIMSTACK_STENCILS:
+            continue
+        code = s.code
+        for i in range(0, len(code) - 3, 4):
+            insn = struct.unpack_from("<I", code, i)[0]
+            # STP/LDP GP 64-bit: bits 31:25 = 1010100 = 0x54
+            # This distinguishes from MOV/ORR (0x55) which shares bits 31:26
+            is_stp_ldp = ((insn >> 25) & 0x7F) == 0x54
+            if is_stp_ldp:
+                rt = insn & 0x1F
+                rt2 = (insn >> 10) & 0x1F
+                if rt in (19, 20) or rt2 in (19, 20):
+                    issues.append(f"  {s.name} @ offset {i}: STP/LDP with x{rt}/x{rt2}")
+
+    if issues:
+        print("ERROR: SimStack stencils have compiler-generated x19/x20 save/restore!", file=sys.stderr)
+        print("The compiler used callee-saved registers, which defeats register caching.", file=sys.stderr)
+        for issue in issues:
+            print(issue, file=sys.stderr)
+        print("\nThis usually means a stencil is too complex for the compiler to", file=sys.stderr)
+        print("fit in caller-saved registers (x0-x18). Simplify the stencil.", file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"  SimStack register safety: OK ({len(SIMSTACK_STENCILS)} stencils verified)")
+
+
 def detect_arch(data: bytes) -> str:
     """Detect the architecture from the Mach-O header."""
     cputype = struct.unpack_from("<I", data, 4)[0]
@@ -581,12 +652,13 @@ def main():
         print(f"--- {arch} ---")
 
         # Step 1: Compile
-        print(f"[1/3] Compiling stencils ({arch})...")
+        steps = 4 if arch == "arm64" else 3
+        print(f"[1/{steps}] Compiling stencils ({arch})...")
         obj_path = compile_stencils(arch)
         print()
 
         # Step 2: Extract
-        print(f"[2/3] Extracting stencils from Mach-O ({arch})...")
+        print(f"[2/{steps}] Extracting stencils from Mach-O ({arch})...")
         stencils = extract_stencils(obj_path, arch)
         print(f"  Found {len(stencils)} stencils:")
         total_code = 0
@@ -598,8 +670,14 @@ def main():
         print(f"  Total: {total_code} bytes code, {total_relocs} relocations")
         print()
 
-        # Step 3: Generate arch-specific header
-        print(f"[3/3] Generating header ({arch})...")
+        # Step 3: Verify SimStack register safety (ARM64 only)
+        if arch == "arm64":
+            print(f"[3/{steps}] Verifying SimStack register safety...")
+            verify_simstack_register_safety(stencils, arch)
+            print()
+
+        # Generate arch-specific header
+        print(f"[{steps}/{steps}] Generating header ({arch})...")
         header = generate_header(stencils, arch)
         arch_hpp = output_dir / f"generated_stencils_{arch}.hpp"
         arch_hpp.write_text(header)

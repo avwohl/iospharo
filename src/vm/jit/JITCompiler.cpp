@@ -926,13 +926,11 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
     int state = 0;  // Start Empty
 
     for (size_t i = 0; i < decoded.size(); i++) {
-        auto& bc = decoded[i];
-        auto sid = static_cast<StencilID>(bc.stencilIdx);
+        // NOTE: We must NOT capture `auto& bc = decoded[i]` here because
+        // insertions below invalidate references. Capture AFTER insertions.
 
         // Branch targets must enter as Empty
         if (isBranchTarget[i] && state != 0) {
-            // Insert a flush stencil before this instruction.
-            // We do this by inserting a synthetic DecodedBC.
             DecodedBC flush;
             flush.opcode = 0;
             flush.stencilIdx = (state == 2)
@@ -942,16 +940,16 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             flush.operand2 = -1;
             flush.operand2Ptr = 0;
             flush.branchTarget = -1;
-            flush.bcOffset = bc.bcOffset;  // Same offset (won't break bcToCode map)
+            flush.bcOffset = decoded[i].bcOffset;
             flush.bcLength = 0;
             decoded.insert(decoded.begin() + i, flush);
-            // Update isBranchTarget vector too
             isBranchTarget.insert(isBranchTarget.begin() + i, false);
             i++;  // Skip past the flush we just inserted, process the original
             state = 0;
         }
 
         // Determine if this instruction is a "barrier" that requires Empty state
+        auto sid = static_cast<StencilID>(decoded[i].stencilIdx);
         bool isBarrier = false;
         switch (sid) {
         case StencilID::stencil_send:
@@ -1004,13 +1002,17 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             flush.operand2 = -1;
             flush.operand2Ptr = 0;
             flush.branchTarget = -1;
-            flush.bcOffset = bc.bcOffset;
+            flush.bcOffset = decoded[i].bcOffset;
             flush.bcLength = 0;
             decoded.insert(decoded.begin() + i, flush);
             isBranchTarget.insert(isBranchTarget.begin() + i, false);
             i++;  // Process the original after the flush
             state = 0;
         }
+
+        // Capture reference AFTER all potential insertions above
+        auto& bc = decoded[i];
+        sid = static_cast<StencilID>(bc.stencilIdx);
 
         // Now select SimStack variant based on current state
         switch (sid) {
@@ -1157,11 +1159,11 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
                 DecodedBC flush; flush.opcode = 0;
                 flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
                 flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
+                flush.branchTarget = -1; flush.bcOffset = decoded[i].bcOffset; flush.bcLength = 0;
                 decoded.insert(decoded.begin() + i, flush);
                 isBranchTarget.insert(isBranchTarget.begin() + i, false);
                 i++; state = 0;
-                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_E);
+                decoded[i].stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_E);
             } else if (state == 1) {
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_1);
             } else {
@@ -1407,16 +1409,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         pi++;  // Skip the consumed jump
     }
 
-    // SimStack disabled: field-based caching (simTOS/simNOS in JITState) adds
-    // overhead without register caching benefit. Apple's Clang doesn't support
-    // -ffixed-x19/-ffixed-x20 for arm64-apple targets, so we can't use actual
-    // CPU registers for cross-stencil state. The flush stencils before every
-    // barrier (send, return, branch target) cost more than the sp manipulation
-    // they avoid. Measured: 7x regression in steps/cpu-second.
-    // Code retained for when register-based approach becomes feasible.
-    // #ifdef __aarch64__
-    //     applySimStack(decoded);
-    // #endif
+    // SimStack: register-based TOS/NOS caching in x19/x20.
+    // Stencils use inline asm to read/write x19/x20 without clobber lists.
+    // The compiler doesn't touch callee-saved regs in these tail-call
+    // functions. extract_stencils.py verifies this statically.
+#ifdef __aarch64__
+    applySimStack(decoded);
+#endif
 
     // First pass: compute total code size and build bytecode->code offset map
     // We also need a literal pool for GOT-style patching
