@@ -11055,6 +11055,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         int j2jDepth = 0;
         size_t j2jBaseFrameDepth = frameDepth_;
 
+        // Cache Interpreter member fields into locals so the compiler keeps
+        // them in registers across JIT_CALL invocations. The asm volatile
+        // with "memory" clobber in JIT_CALL would otherwise force a reload
+        // through `this` on every loop iteration.
+        size_t localFrameDepth = frameDepth_;
+        size_t localCalls = 0;
+        size_t localReturns = 0;
+
         // Toggle W^X to executable once for the entire trampoline loop.
         // The loop only reads JIT code (executable) and writes to C stack (always writable).
 #if defined(__APPLE__) && defined(__arm64__)
@@ -11074,7 +11082,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     break;
                 }
 
-                jitJ2JStencilCalls_++;
+                localCalls++;
 
                 // Pre-load fields used both for the save and the callee setup.
                 jit::JITMethod* callerJM = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
@@ -11126,13 +11134,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         : callerJM->codeStart() + codeOffset;
                 }
 
-                // Lazy frame: just increment depth, no SavedFrame write
-                if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+                // Lazy frame: just increment local depth, no SavedFrame write.
+                // frameDepth_ is synced back to the member at loop exit.
+                if (__builtin_expect(localFrameDepth >= StackOverflowLimit, 0)) {
                     j2jDepth--;
                     state.exitReason = jit::ExitStackOverflow;
                     break;
                 }
-                frameDepth_++;
+                localFrameDepth++;
 
                 // Set up callee in JITState (lightweight — no interpreter sync)
                 Oop targetMethod = state.cachedTarget;
@@ -11179,9 +11188,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---
-                jitJ2JStencilReturns_++;
+                localReturns++;
                 j2jDepth--;
-                frameDepth_--;
+                localFrameDepth--;
 
                 Oop retVal = state.returnValue;
                 J2JSave& save = j2jStack[j2jDepth];
@@ -11232,8 +11241,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #if defined(__APPLE__) && defined(__arm64__)
         pthread_jit_write_protect_np(0);
 #endif
+        // Sync cached locals back to Interpreter member fields.
+        frameDepth_ = localFrameDepth;
+        jitJ2JStencilCalls_ += localCalls;
+        jitJ2JStencilReturns_ += localReturns;
         // Charge bytecodes for all J2J calls + returns in bulk
-        checkCountdown_ -= static_cast<int>(jitJ2JStencilCalls_ + jitJ2JStencilReturns_) * 10;
+        checkCountdown_ -= static_cast<int>(localCalls + localReturns) * 10;
 
         // Reconstruct state.method from state.jitMethod — we skip updating it
         // in the hot loop for speed, but fall-through paths need it current.
