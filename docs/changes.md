@@ -19,17 +19,43 @@ tracking from the per-call hot path:
    methodHeader and tempCount fields instead of re-decoding the method header
    Oop on every call.
 
-4. **j2jCall merged helper (WIP)**: Added jit_rt_j2j_call infrastructure
-   (helper ID 10) for future use. Currently unused due to a cascading bailout
-   issue with deeply nested J2J calls.
+4. **Merged j2j_call helper**: Combined push_frame + callee_call + pop_frame
+   into a single `jit_rt_j2j_call` C++ function (helper ID 10). The stencil
+   now saves only `origIP` before calling the merged helper, down from 8
+   save/restore pairs with the old separate-helper approach.
+
+5. **IP corruption fix**: Root cause of the j2j_call crash across sessions.
+   The stencil advanced `s->ip` past the send BEFORE calling j2j_call. The
+   helper saved the modified IP and restored it on success, shifting all
+   subsequent IP computations. Fix: stencil saves `origIP = s->ip` before
+   modification and restores `s->ip = origIP` after successful return. The
+   bail path does NOT restore (needs innermost callee's state for interpreter).
+
+6. **Inline arithmetic stencils**: Bytecodes 0x60-0x6F (Send Arithmetic
+   Message) are handled by dedicated stencils (stencil_addSmallInt,
+   stencil_subSmallInt, stencil_lessThanSmallInt, etc.) that perform
+   SmallInteger operations inline without message sends. In fib(28), only
+   2 of 18 bytecodes use stencil_sendJ2J (the recursive calls); all
+   arithmetic uses inline stencils.
 
 **Benchmark results** (fib(28), 5 runs):
 
-  Configuration    Time      Speedup vs interpreter
-  Interpreter      ~50ms     1.0x
-  JIT (before)     ~24ms     2.1x
-  JIT (after)      ~22ms     2.3x
-  Cog (ref)        ~2ms      25x
+  Configuration       Time      Speedup vs interpreter
+  Interpreter         ~50ms     1.0x
+  JIT (hash map)      ~24ms     2.1x
+  JIT (ptr arith)     ~22ms     2.3x
+  JIT (merged j2j)    ~20ms     2.5x
+  Cog (ref)           ~2ms      25x
+
+**Remaining bottleneck** (~60 cycles/J2J call at 1.03M calls):
+
+  SavedFrame save/restore    ~22 cycles   11 stores + 10 loads (GC roots)
+  JITState save/restore      ~16 cycles   8 fields in j2j_call locals
+  Function call overhead     ~15 cycles   1 indirect GOT call
+  pushFrame setup            ~7 cycles    bytecodeStart, callee init
+
+To reach 5ms target: need lazy frame materialization (only push interpreter
+frame when GC requests it).
 
 ## PHARO_BENCH Mode for Benchmarking
 
