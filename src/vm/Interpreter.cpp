@@ -11246,8 +11246,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 JIT_CALL(save.resumeAddr, &state);
             }
 
-            // Check countdown — let interpreter periodic checks run
-            if (checkCountdown_ <= 0) break;
+            // No checkCountdown_ check here: nothing inside the loop body
+            // modifies it (stencils don't touch Interpreter member fields,
+            // and we only charge cumulative counts at loop exit). Reading it
+            // forced a memory reload every iteration via JIT_CALL's "memory"
+            // clobber. The outer interpret() loop handles countdown expiry
+            // between trampoline sessions.
         }
         // Toggle back to writable after trampoline loop
 #if defined(__APPLE__) && defined(__arm64__)
