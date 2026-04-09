@@ -835,6 +835,11 @@ public:
         // Lightweight frame push for J2J direct calls.
         // Syncs interpreter state from JITState, pushes a frame, then sets up
         // callee state in both interpreter and JITState.
+        //
+        // Optimized: during J2J chains, closure_, activeContext_, and
+        // currentFrameMaterializedCtx_ are always nil (set by previous
+        // pushFrameForJIT, never changed by JIT code). We load nil once
+        // and store it directly, avoiding 3 interpreter field reads.
 
         Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
         int nArgs = state->sendArgCount;
@@ -849,31 +854,35 @@ public:
             return;
         }
 
-        // Save current frame
+        // Load nil once for all nil stores
+        Oop nil = memory_.nil();
+
+        // Save current frame — GC-critical Oop fields + IP/bytecodeEnd
         SavedFrame& frame = savedFrames_[frameDepth_++];
         frame.savedIP = instructionPointer_;
         frame.savedBytecodeEnd = bytecodeEnd_;
         frame.savedMethod = method_;
         frame.savedHomeMethod = homeMethod_;
         frame.savedReceiver = receiver_;
-        frame.savedActiveContext = activeContext_;
+        // closure_, activeContext_, materializedContext_ are always nil during J2J
+        frame.savedClosure = nil;
+        frame.savedActiveContext = nil;
+        frame.materializedContext = nil;
         frame.savedFP = framePointer_;
         frame.savedArgCount = argCount_;
-        frame.savedClosure = closure_;
         frame.homeFrameDepth = SIZE_MAX;
-        frame.materializedContext = currentFrameMaterializedCtx_;
-        currentFrameMaterializedCtx_ = memory_.nil();
 
         // Set up callee state in interpreter
         method_ = targetMethod;
         homeMethod_ = targetMethod;
-        receiver_ = stackPointer_[-(nArgs + 1)];
+        Oop calleeRecv = stackPointer_[-(nArgs + 1)];
+        receiver_ = calleeRecv;
         argCount_ = nArgs;
-        closure_ = memory_.nil();
-        activeContext_ = memory_.nil();
+        // closure_ and activeContext_ are already nil — skip writing
 
         // Frame pointer: base of the frame (receiver slot)
-        framePointer_ = stackPointer_ - (nArgs + 1);
+        Oop* fp = stackPointer_ - (nArgs + 1);
+        framePointer_ = fp;
 
         // Derive JITMethod* from entry address
         jit::JITMethod* jm = reinterpret_cast<jit::JITMethod*>(
@@ -885,17 +894,19 @@ public:
         uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
         instructionPointer_ = bytecodeStart;
 
-        // Allocate temps
+        // Allocate temps (skipped for most methods where nArgs == tempCount)
         int totalTemps = jm->tempCount;
-        for (int i = nArgs; i < totalTemps; i++) {
-            *stackPointer_ = memory_.nil();
-            stackPointer_++;
+        if (__builtin_expect(nArgs < totalTemps, 0)) {
+            for (int i = nArgs; i < totalTemps; i++) {
+                *stackPointer_ = nil;
+                stackPointer_++;
+            }
         }
 
         // Update JITState for callee
-        state->receiver = receiver_;
+        state->receiver = calleeRecv;
         state->literals = methObj->slots() + 1;
-        state->tempBase = framePointer_ + 1;
+        state->tempBase = fp + 1;
         state->ip = bytecodeStart;
         state->method = targetMethod;
         state->argCount = nArgs;
