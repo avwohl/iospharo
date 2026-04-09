@@ -669,10 +669,24 @@ private:
 
     // ===== BENCHMARK MODE =====
     bool benchMode_ = false; // Set when PHARO_BENCH is active
+    int traceAtAllPut_ = 0;  // >0 = trace bytecodes inside atAllPut: (counts calls)
     int benchRunCount_ = 0;  // -1=warmup, 0-4=timed runs, 5=done
     std::chrono::high_resolution_clock::time_point benchStartTime_;
+    Oop findMethod(const char* className, const char* selector);
     Oop findBenchFibMethod();  // Re-lookups Integer>>benchFib (GC-safe)
     void handleBenchComplete();  // Benchmark run completion handler
+    // Multi-benchmark support
+    struct BenchSpec {
+        std::string name;
+        const char* className;
+        const char* selector;
+        int64_t arg;  // SmallInteger argument to method
+        int runs;     // number of timed runs
+    };
+    std::vector<BenchSpec> benchSpecs_;
+    int benchSpecIdx_ = 0;
+    void startBench(const BenchSpec& spec);
+    void setupBenchContext();
 
     // ===== BOOTSTRAP STARTUP STATE =====
     bool imageBooted_ = false;
@@ -921,9 +935,13 @@ public:
     /// Caller is responsible for restoring JITState fields.
     inline void j2jPopFrame(Oop callerMethod, Oop callerRecv) {
         --frameDepth_;
+        SavedFrame& frame = savedFrames_[frameDepth_];
         method_ = callerMethod;
         homeMethod_ = callerMethod;
         receiver_ = callerRecv;
+        framePointer_ = frame.savedFP;
+        argCount_ = frame.savedArgCount;
+        bytecodeEnd_ = frame.savedBytecodeEnd;
     }
 
     /// Upgrade an IC entry to J2J direct call if the target is now JIT-compiled.
