@@ -11045,6 +11045,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             Oop* sp; Oop receiver; Oop* literals; Oop* tempBase;
             jit::JITMethod* jitMethod; Oop method; int argCount;
             uint8_t* ip; int sendArgCount;
+            uint8_t* resumeAddr;  // Precomputed JIT code address to resume at
+            uint8_t* bcStart;     // Precomputed bytecodeStart (for state.ip reset on resume)
         };
         static constexpr int MaxJ2JDepth = 256;
         J2JSave j2jStack[MaxJ2JDepth];
@@ -11078,11 +11080,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 save.receiver = state.receiver;
                 save.literals = state.literals;
                 save.tempBase = state.tempBase;
-                save.jitMethod = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                jit::JITMethod* callerJM = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                save.jitMethod = callerJM;
                 save.method = state.method;
                 save.argCount = state.argCount;
                 save.ip = state.ip;
                 save.sendArgCount = state.sendArgCount;
+
+                // Precompute resume JIT code address (avoids bcToCode lookup on return)
+                {
+                    ObjectHeader* callerMethObj = state.method.asObjectPtr();
+                    int callerNumLits = static_cast<int>(callerJM->methodHeader & 0x7FFF);
+                    uint8_t* callerBCStart = callerMethObj->bytes() + (1 + callerNumLits) * 8;
+                    save.bcStart = callerBCStart;
+                    uint32_t bcOffset = static_cast<uint32_t>(state.ip - callerBCStart);
+                    uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
+                    save.resumeAddr = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
+                        ? nullptr
+                        : callerJM->codeStart() + codeOffset;
+                }
 
                 // Lazy frame: just increment depth, no SavedFrame write
                 if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
@@ -11098,22 +11114,21 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint8_t* entryAddr = reinterpret_cast<uint8_t*>(state.returnValue.rawBits());
                 jit::JITMethod* calleeJM = reinterpret_cast<jit::JITMethod*>(
                     entryAddr - sizeof(jit::JITMethod));
-
                 ObjectHeader* methObj = targetMethod.asObjectPtr();
-                int numLits = static_cast<int>(calleeJM->methodHeader & 0x7FFF);
-                uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
-
                 Oop calleeRecv = state.sp[-(nArgs + 1)];
                 Oop* fp = state.sp - (nArgs + 1);
 
                 state.receiver = calleeRecv;
                 state.literals = methObj->slots() + 1;
                 state.tempBase = fp + 1;
-                state.ip = bytecodeStart;
-                state.method = targetMethod;
                 state.argCount = nArgs;
-                state.jitMethod = calleeJM;
                 state.exitReason = jit::ExitNone;
+                state.method = targetMethod;
+                state.jitMethod = calleeJM;
+
+                // IP = bytecodeStart of callee
+                int numLits = static_cast<int>(calleeJM->methodHeader & 0x7FFF);
+                state.ip = methObj->bytes() + (1 + numLits) * 8;
 
                 // Allocate temps if needed
                 int totalTemps = calleeJM->tempCount;
@@ -11153,22 +11168,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.sp[-(save.sendArgCount + 1)] = retVal;
                 state.sp -= save.sendArgCount;
 
-                // Resume caller's JIT at bytecode after send
-                jit::JITMethod* callerJM = save.jitMethod;
-                ObjectHeader* callerMethObj = save.method.asObjectPtr();
-                int callerNumLits = static_cast<int>(callerJM->methodHeader & 0x7FFF);
-                uint8_t* callerBCStart = callerMethObj->bytes() + (1 + callerNumLits) * 8;
-                uint32_t bcOffset = static_cast<uint32_t>(save.ip - callerBCStart);
-                uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
-
-                if (__builtin_expect(codeOffset == 0 || codeOffset >= callerJM->codeSize, 0)) {
+                // Resume caller's JIT at bytecode after send (precomputed on call path)
+                if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
                     state.exitReason = jit::ExitReturn;
                     break;
                 }
 
                 state.exitReason = jit::ExitNone;
-                state.ip = callerBCStart;
-                JIT_CALL(callerJM->codeStart() + codeOffset, &state);
+                state.ip = save.bcStart;
+                JIT_CALL(save.resumeAddr, &state);
             }
 
             // Check countdown — let interpreter periodic checks run
