@@ -1,5 +1,57 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-09
+
+## Lazy J2J Frame Materialization (WIP)
+
+Eliminated pushFrame/popFrame from the J2J hot path entirely. The new
+jit_rt_j2j_call performs only a "lite" callee setup — writes receiver,
+literals, tempBase, ip, method, argCount into JITState and BLRs directly
+to the callee stencil. No SavedFrame is created, and the interpreter's
+fields (method_, receiver_, etc.) are NOT synced.
+
+On the fast path (ExitReturn, ~99.99% of calls), the caller's JITState
+is restored from C locals and control returns immediately — zero frame
+overhead.
+
+On bail-out (ExitReason != ExitReturn), a new pushFrameForJIT_deferred()
+creates the SavedFrame retroactively so the interpreter can unwind. This
+uses the caller's SP/IP saved in C locals plus the interpreter's still-
+valid caller state (since the lazy path never updated interpreter fields).
+
+Expected impact: eliminates ~22 cycles/call of SavedFrame save/restore
+and ~7 cycles/call of pushFrame setup. Combined with the existing 16-cycle
+function prologue floor, this should bring J2J overhead from ~60 cycles
+to ~20 cycles per call.
+
+## SimStack Phase 3: Register-Based TOS/NOS Caching
+
+Cache top-of-stack values in ARM64 callee-saved registers x19 (TOS) and
+x20 (NOS) to eliminate redundant memory loads/stores in straight-line
+push-arithmetic sequences. 53 SimStack stencil variants cover: push (E/1/2),
+pop, dup, store, arithmetic, comparison, conditional jumps, and returns.
+
+Key design:
+
+- Stencils write x19/x20 via inline asm WITHOUT clobber lists. The compiler
+  doesn't emit STP/LDP save/restore because stencils are leaf/tail-call
+  functions with enough caller-saved regs available.
+
+- JIT_CALL macro in JITRuntime.cpp uses inline asm BLR with x19/x20 in
+  the clobber list, so the C++ compiler saves/restores them around calls
+  into JIT code.
+
+- extract_stencils.py has a build-time safety check that verifies no
+  SimStack stencil contains STP/LDP with x19/x20.
+
+Bug fixed: applySimStack had a dangling reference — `auto& bc` was captured
+before vector insertions (flush stencils), then used after insert+i++ to
+modify the flush instead of the original bytecode.
+
+fib(28) = 20ms (unchanged — fib is send-dominated, SimStack saves are offset
+by J2J x19/x20 save/restore overhead). Benefits expected for longer
+straight-line methods (sort, dict, sieve benchmarks).
+
 2026-04-08
 
 ## J2J Overhead Analysis
