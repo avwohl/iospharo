@@ -831,7 +831,78 @@ public:
 
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
-    void pushFrameForJIT(jit::JITState* state);
+    inline void pushFrameForJIT(jit::JITState* state) {
+        // Lightweight frame push for J2J direct calls.
+        // Syncs interpreter state from JITState, pushes a frame, then sets up
+        // callee state in both interpreter and JITState.
+
+        Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
+        int nArgs = state->sendArgCount;
+
+        // Sync interpreter state from JITState (the stencil has been modifying sp)
+        stackPointer_ = state->sp;
+        instructionPointer_ = state->ip;
+
+        // Overflow check
+        if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+            state->exitReason = jit::ExitStackOverflow;
+            return;
+        }
+
+        // Save current frame
+        SavedFrame& frame = savedFrames_[frameDepth_++];
+        frame.savedIP = instructionPointer_;
+        frame.savedBytecodeEnd = bytecodeEnd_;
+        frame.savedMethod = method_;
+        frame.savedHomeMethod = homeMethod_;
+        frame.savedReceiver = receiver_;
+        frame.savedActiveContext = activeContext_;
+        frame.savedFP = framePointer_;
+        frame.savedArgCount = argCount_;
+        frame.savedClosure = closure_;
+        frame.homeFrameDepth = SIZE_MAX;
+        frame.materializedContext = currentFrameMaterializedCtx_;
+        currentFrameMaterializedCtx_ = memory_.nil();
+
+        // Set up callee state in interpreter
+        method_ = targetMethod;
+        homeMethod_ = targetMethod;
+        receiver_ = stackPointer_[-(nArgs + 1)];
+        argCount_ = nArgs;
+        closure_ = memory_.nil();
+        activeContext_ = memory_.nil();
+
+        // Frame pointer: base of the frame (receiver slot)
+        framePointer_ = stackPointer_ - (nArgs + 1);
+
+        // Derive JITMethod* from entry address
+        jit::JITMethod* jm = reinterpret_cast<jit::JITMethod*>(
+            reinterpret_cast<uint8_t*>(state->jitMethod) - sizeof(jit::JITMethod));
+
+        // Compute bytecodeStart using cached methodHeader from JITMethod
+        ObjectHeader* methObj = targetMethod.asObjectPtr();
+        int numLits = static_cast<int>(jm->methodHeader & 0x7FFF);
+        uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
+        instructionPointer_ = bytecodeStart;
+
+        // Allocate temps
+        int totalTemps = jm->tempCount;
+        for (int i = nArgs; i < totalTemps; i++) {
+            *stackPointer_ = memory_.nil();
+            stackPointer_++;
+        }
+
+        // Update JITState for callee
+        state->receiver = receiver_;
+        state->literals = methObj->slots() + 1;
+        state->tempBase = framePointer_ + 1;
+        state->ip = bytecodeStart;
+        state->method = targetMethod;
+        state->argCount = nArgs;
+        state->sp = stackPointer_;
+        state->exitReason = jit::ExitNone;
+        state->jitMethod = jm;
+    }
     void popFrameForJIT(jit::JITState* state);
 
     /// Minimal frame pop for J2J fast path (ExitReturn).

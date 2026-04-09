@@ -941,7 +941,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         }                                                                     \
     }                                                                         \
     /* Lightweight inline primitive (bits 52:48 = primKind, no frame needed)*/ \
-    if ((extra & J2J_ENTRY_BIT) && nArgs == 1) {                              \
+    if ((extra >> 48) & 0x1F) {                                               \
         uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);                   \
         if (primKind != 0) {                                                  \
             Oop rcv = s->sp[-2];                                              \

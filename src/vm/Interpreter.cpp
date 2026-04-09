@@ -6437,83 +6437,7 @@ void Interpreter::trackJ2JReturn(jit::JITState* state) {
 // ===== J2J FRAME MANAGEMENT =====
 #if PHARO_JIT_ENABLED
 
-void Interpreter::pushFrameForJIT(jit::JITState* state) {
-    // Lightweight frame push for J2J direct calls.
-    // Syncs interpreter state from JITState, pushes a frame, then sets up
-    // callee state in both interpreter and JITState.
-
-    Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
-
-    int nArgs = state->sendArgCount;
-
-    // Sync interpreter state from JITState (the stencil has been modifying sp)
-    stackPointer_ = state->sp;
-    instructionPointer_ = state->ip;
-
-    // Overflow check (lightweight: skip logging)
-    if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
-        // Can't push — signal overflow to the stencil via exitReason
-        state->exitReason = jit::ExitStackOverflow;
-        return;
-    }
-
-    // Save current frame (same fields as pushFrame, skip logging/validation)
-    SavedFrame& frame = savedFrames_[frameDepth_++];
-    frame.savedIP = instructionPointer_;
-    frame.savedBytecodeEnd = bytecodeEnd_;
-    frame.savedMethod = method_;
-    frame.savedHomeMethod = homeMethod_;
-    frame.savedReceiver = receiver_;
-    frame.savedActiveContext = activeContext_;
-    frame.savedFP = framePointer_;
-    frame.savedArgCount = argCount_;
-    frame.savedClosure = closure_;
-    frame.homeFrameDepth = SIZE_MAX;
-    frame.materializedContext = currentFrameMaterializedCtx_;
-    currentFrameMaterializedCtx_ = memory_.nil();
-
-    // Set up callee state in interpreter
-    method_ = targetMethod;
-    homeMethod_ = targetMethod;  // For method frames (not blocks)
-    receiver_ = stackPointer_[-(nArgs + 1)];
-    argCount_ = nArgs;
-    closure_ = memory_.nil();
-    activeContext_ = memory_.nil();
-
-    // Set up frame pointer: args start after receiver
-    // framePointer_ points to the base of the frame (receiver slot)
-    framePointer_ = stackPointer_ - (nArgs + 1);
-
-    // Derive JITMethod* from entry address passed by stencil via jitMethod field.
-    // codeStart() = (uint8_t*)jm + sizeof(JITMethod), so jm = entry - sizeof(JITMethod).
-    // This eliminates the hash map lookup that was here before.
-    jit::JITMethod* jm = reinterpret_cast<jit::JITMethod*>(
-        reinterpret_cast<uint8_t*>(state->jitMethod) - sizeof(jit::JITMethod));
-
-    // Compute bytecodeStart using cached methodHeader from JITMethod
-    ObjectHeader* methObj = targetMethod.asObjectPtr();
-    int numLits = static_cast<int>(jm->methodHeader & 0x7FFF);
-    uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
-    instructionPointer_ = bytecodeStart;
-
-    // Allocate temps using cached tempCount from JITMethod
-    int totalTemps = jm->tempCount;
-    for (int i = nArgs; i < totalTemps; i++) {
-        *stackPointer_ = memory_.nil();
-        stackPointer_++;
-    }
-
-    // Update JITState for callee
-    state->receiver = receiver_;
-    state->literals = methObj->slots() + 1;
-    state->tempBase = framePointer_ + 1;  // args start after receiver
-    state->ip = bytecodeStart;
-    state->method = targetMethod;
-    state->argCount = nArgs;
-    state->sp = stackPointer_;
-    state->exitReason = jit::ExitNone;
-    state->jitMethod = jm;
-}
+// pushFrameForJIT is now inline in Interpreter.hpp for cross-TU inlining into j2j_call.
 #endif // PHARO_JIT_ENABLED
 
 #if PHARO_JIT_ENABLED
@@ -10650,6 +10574,15 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 61);
     }
 
+    // Set inline primKind bits for methods with inlineable primitives,
+    // regardless of JIT compilation status. This allows the stencil to
+    // handle SmallInteger arithmetic inline without any function call.
+    if (extra == 0) {  // Not a getter/setter/yourself
+        int primIdx = primitiveIndexOf(resolvedMethod);
+        uint8_t pk = inlinePrimKind(primIdx);
+        if (pk) extra |= (uint64_t)pk << 48;
+    }
+
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
@@ -10662,7 +10595,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         if (static_cast<uint8_t>(rcvObj->format()) == 1)
             isClassReceiver = true;
     }
-    if (extra == 0 && j2jEnabled && !isClassReceiver) {
+    if ((extra & (1ULL << 60)) == 0 && j2jEnabled && !isClassReceiver) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             // Check if target has a primitive but no prologue
@@ -10678,13 +10611,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             }
             if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
-                extra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
-                // Encode inline primKind in bits 52:48 for lightweight J2J
-                if (target->hasPrimPrologue) {
-                    int primIdx = primitiveIndexOf(resolvedMethod);
-                    uint8_t pk = inlinePrimKind(primIdx);
-                    if (pk) extra |= (uint64_t)pk << 48;
-                }
+                // Preserve primKind bits (52:48) already set above
+                extra |= (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 jitJ2JDirectPatches_++;
             }
         }
