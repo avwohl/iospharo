@@ -11137,7 +11137,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 state.receiver = calleeRecv;
                 state.tempBase = fp + 1;
-                state.exitReason = jit::ExitNone;
+                // Note: state.exitReason is NOT cleared here. Stencils only
+                // WRITE exitReason — they never read it on entry. The callee
+                // will set exitReason before RETing (via return or exit-send
+                // stencils), so clearing it beforehand is redundant.
                 if (__builtin_expect(!selfRecursive, 0)) {
                     state.literals = methObj->slots() + 1;
                     state.argCount = nArgs;
@@ -11209,7 +11212,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     break;
                 }
 
-                state.exitReason = jit::ExitNone;
+                // exitReason NOT cleared — stencils only write it, never read.
                 state.ip = save.bcStart;
                 JIT_CALL(save.resumeAddr, &state);
             }
