@@ -149,6 +149,7 @@ static constexpr int EXIT_SEND = 2;
 static constexpr int EXIT_SEND_CACHED = 7;
 static constexpr int EXIT_BLOCK_CREATE = 8;
 static constexpr int EXIT_ARRAY_CREATE = 9;
+static constexpr int EXIT_J2J_CALL = 10;
 
 // =====================================================================
 // STENCILS
@@ -1022,32 +1023,13 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     if (extra & J2J_ENTRY_BIT) {                                              \
         uint64_t entryAddr = extra & J2J_ADDR_MASK;                           \
         if (entryAddr != 0) {                                                 \
-            /* Save original IP so we can restore after successful call */     \
-            uint8_t* origIP = s->ip;                                          \
-                                                                              \
-            /* Set up state for merged J2J helper */                           \
+            /* Exit to trampoline which handles frame push + callee entry */   \
             s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
             s->sendArgCount = nArgs;                                          \
-            s->ip = origIP + bcOffset + bcLen;                                \
+            s->ip = s->ip + bcOffset + bcLen;                                 \
             s->returnValue.bits = entryAddr;                                  \
-                                                                              \
-            /* Merged push+call+pop in C++ (saves/restores JITState) */       \
-            _HOLE_RT_J2J_CALL(s);                                             \
-                                                                              \
-            if (s->exitReason != 0) {                                         \
-                /* Callee bailed — interpreter handles the send */            \
-                _HOLE_RT_SEND(s);                                             \
-                return;                                                       \
-            }                                                                 \
-                                                                              \
-            /* Restore original IP for correct continuation */                \
-            s->ip = origIP;                                                   \
-                                                                              \
-            /* Pop args, push return value */                                 \
-            s->sp[-(nArgs + 1)] = s->returnValue;                            \
-            s->sp -= nArgs;                                                   \
-                                                                              \
-            _HOLE_CONTINUE(s);                                                \
+            s->exitReason = EXIT_J2J_CALL;                                    \
+            _HOLE_RT_SEND(s);                                                 \
             return;                                                           \
         }                                                                     \
     }                                                                         \

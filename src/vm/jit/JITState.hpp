@@ -113,6 +113,9 @@ enum ExitReason : int {
     ExitSendCached  = 7,  // IC hit — cachedTarget has resolved method, skip lookup
     ExitBlockCreate = 8,  // PushFullBlock — cachedTarget has packed (litIndex | flags<<32)
     ExitArrayCreate = 9,  // PushArray — cachedTarget has desc byte (arraySize | popIntoArray<<7)
+    ExitJ2JCall     = 10, // J2J send: cachedTarget=method, returnValue=entry addr,
+                          //   sendArgCount=nArgs, ip=past send bytecode.
+                          //   Trampoline pushes frame, sets up callee, re-enters JIT.
 };
 
 // ===== STENCIL FUNCTION SIGNATURE =====

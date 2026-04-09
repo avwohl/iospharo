@@ -31,6 +31,7 @@
 #include <algorithm>
 #include <atomic>
 #include <dlfcn.h>
+#include <pthread.h>
 
 // Flag set by FFI.cpp when Emergency Debugger window is created
 extern std::atomic<bool> g_emergencyDebuggerTriggered;
@@ -11030,6 +11031,192 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     };
 
     chargeJITBytecodes(state);
+
+    // ===== J2J TRAMPOLINE =====
+    // Handles ExitJ2JCall / ExitReturn in a tight loop WITHOUT recursive C++
+    // calls. Eliminates jit_rt_j2j_call's 12-register prologue/epilogue per
+    // send. Frames are "lazy" — only frameDepth_ is incremented, SavedFrame
+    // is NOT written. On bailout we materialize frames from the save stack.
+    //
+    // Safe because GC/process-switch cannot trigger during JIT execution
+    // (stencils don't allocate, no timer checks).
+    {
+        struct J2JSave {
+            Oop* sp; Oop receiver; Oop* literals; Oop* tempBase;
+            jit::JITMethod* jitMethod; Oop method; int argCount;
+            uint8_t* ip; int sendArgCount;
+        };
+        static constexpr int MaxJ2JDepth = 256;
+        J2JSave j2jStack[MaxJ2JDepth];
+        int j2jDepth = 0;
+        size_t j2jBaseFrameDepth = frameDepth_;
+
+        while (state.exitReason == jit::ExitJ2JCall ||
+               (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+
+            if (state.exitReason == jit::ExitJ2JCall) {
+                // --- J2J Call: save caller, push lazy frame, enter callee ---
+                if (j2jDepth >= MaxJ2JDepth) {
+                    // Too deep — fall back to interpreter
+                    state.exitReason = jit::ExitSendCached;
+                    break;
+                }
+
+                jitJ2JStencilCalls_++;
+
+                // Save caller JITState to save stack
+                J2JSave& save = j2jStack[j2jDepth++];
+                save.sp = state.sp;
+                save.receiver = state.receiver;
+                save.literals = state.literals;
+                save.tempBase = state.tempBase;
+                save.jitMethod = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                save.method = state.method;
+                save.argCount = state.argCount;
+                save.ip = state.ip;
+                save.sendArgCount = state.sendArgCount;
+
+                // Lazy frame: just increment depth, no SavedFrame write
+                if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
+                    j2jDepth--;
+                    state.exitReason = jit::ExitStackOverflow;
+                    break;
+                }
+                frameDepth_++;
+
+                // Set up callee in JITState (lightweight — no interpreter sync)
+                Oop targetMethod = state.cachedTarget;
+                int nArgs = state.sendArgCount;
+                uint8_t* entryAddr = reinterpret_cast<uint8_t*>(state.returnValue.rawBits());
+                jit::JITMethod* calleeJM = reinterpret_cast<jit::JITMethod*>(
+                    entryAddr - sizeof(jit::JITMethod));
+
+                ObjectHeader* methObj = targetMethod.asObjectPtr();
+                int numLits = static_cast<int>(calleeJM->methodHeader & 0x7FFF);
+                uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
+
+                Oop calleeRecv = state.sp[-(nArgs + 1)];
+                Oop* fp = state.sp - (nArgs + 1);
+
+                state.receiver = calleeRecv;
+                state.literals = methObj->slots() + 1;
+                state.tempBase = fp + 1;
+                state.ip = bytecodeStart;
+                state.method = targetMethod;
+                state.argCount = nArgs;
+                state.jitMethod = calleeJM;
+                state.exitReason = jit::ExitNone;
+
+                // Allocate temps if needed
+                int totalTemps = calleeJM->tempCount;
+                if (__builtin_expect(nArgs < totalTemps, 0)) {
+                    Oop nil = memory_.nil();
+                    for (int i = nArgs; i < totalTemps; i++) {
+                        *state.sp = nil;
+                        state.sp++;
+                    }
+                }
+
+                // Enter callee JIT code (W^X: toggle to executable)
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(1);
+#endif
+                reinterpret_cast<jit::StencilFunc>(entryAddr)(&state);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(0);
+#endif
+                chargeJITBytecodes(state);
+
+            } else {
+                // --- J2J Return: pop frame, resume caller ---
+                jitJ2JStencilReturns_++;
+                j2jDepth--;
+                frameDepth_--;
+
+                Oop retVal = state.returnValue;
+                J2JSave& save = j2jStack[j2jDepth];
+
+                // Restore caller JITState
+                state.sp = save.sp;
+                state.receiver = save.receiver;
+                state.literals = save.literals;
+                state.tempBase = save.tempBase;
+                state.jitMethod = save.jitMethod;
+                state.method = save.method;
+                state.argCount = save.argCount;
+                state.ip = save.ip;
+
+                // Pop args, push return value
+                state.sp[-(save.sendArgCount + 1)] = retVal;
+                state.sp -= save.sendArgCount;
+
+                // Resume caller's JIT at bytecode after send
+                jit::JITMethod* callerJM = save.jitMethod;
+                ObjectHeader* callerMethObj = save.method.asObjectPtr();
+                int callerNumLits = static_cast<int>(callerJM->methodHeader & 0x7FFF);
+                uint8_t* callerBCStart = callerMethObj->bytes() + (1 + callerNumLits) * 8;
+                uint32_t bcOffset = static_cast<uint32_t>(save.ip - callerBCStart);
+                uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
+
+                if (codeOffset == 0 || codeOffset >= callerJM->codeSize) {
+                    // Can't resume — fall back to interpreter
+                    state.exitReason = jit::ExitReturn;
+                    break;
+                }
+
+                state.exitReason = jit::ExitNone;
+                jit::StencilFunc resume = reinterpret_cast<jit::StencilFunc>(
+                    callerJM->codeStart() + codeOffset);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(1);
+#endif
+                resume(&state);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(0);
+#endif
+                chargeJITBytecodes(state);
+            }
+
+            // Check countdown — let interpreter periodic checks run
+            if (checkCountdown_ <= 0) break;
+        }
+
+        // If we bailed out with pending J2J frames, materialize them
+        // so the interpreter can see them.
+        if (j2jDepth > 0) {
+            // Materialize SavedFrames from save stack (oldest first)
+            Oop nil = memory_.nil();
+            for (int i = 0; i < j2jDepth; i++) {
+                J2JSave& save = j2jStack[i];
+                SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
+
+                jit::JITMethod* saveJM = save.jitMethod;
+                ObjectHeader* saveMethObj = save.method.asObjectPtr();
+                int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+
+                frame.savedIP = save.ip;
+                frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                frame.savedMethod = save.method;
+                frame.savedHomeMethod = save.method;
+                frame.savedReceiver = save.receiver;
+                frame.savedClosure = nil;
+                frame.savedActiveContext = nil;
+                frame.materializedContext = nil;
+                frame.savedFP = save.tempBase - 1;
+                frame.savedArgCount = save.argCount;
+                frame.homeFrameDepth = SIZE_MAX;
+            }
+            // Sync interpreter from current JITState (innermost frame)
+            method_ = state.method;
+            homeMethod_ = state.method;
+            receiver_ = state.receiver;
+            stackPointer_ = state.sp;
+            instructionPointer_ = state.ip;
+            framePointer_ = state.tempBase - 1;
+            argCount_ = state.argCount;
+        }
+    }
 
     // Loop to handle chained JIT execution: when an IC-hit send's target
     // completes, resume JIT execution at the next bytecode instead of
