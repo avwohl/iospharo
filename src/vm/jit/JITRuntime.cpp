@@ -14,29 +14,7 @@
 namespace pharo { extern uint64_t g_stepNum; }
 using pharo::g_stepNum;
 
-// SimStack stencils clobber x19/x20 via inline asm (without clobber lists).
-// When calling JIT code from C++, we must tell the compiler that x19/x20
-// may be modified, so it saves/restores them around the call.
-#ifdef __aarch64__
-#define JIT_CALL(entry_ptr, state_ptr) do { \
-    void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
-    void* _jit_s = reinterpret_cast<void*>(state_ptr); \
-    asm volatile( \
-        "mov x0, %[s]\n\t" \
-        "blr %[e]" \
-        : \
-        : [s] "r"(_jit_s), [e] "r"(_jit_e) \
-        : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
-          "x12","x13","x14","x15","x16","x17","x19","x20","x30", \
-          "memory","cc" \
-    ); \
-} while(0)
-#else
-#define JIT_CALL(entry_ptr, state_ptr) do { \
-    typedef void (*JitFn_)(pharo::jit::JITState*); \
-    ((JitFn_)(entry_ptr))(state_ptr); \
-} while(0)
-#endif
+// JIT_CALL is now defined in JITState.hpp (shared with Interpreter.cpp)
 
 #if PHARO_JIT_ENABLED
 

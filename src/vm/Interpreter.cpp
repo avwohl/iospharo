@@ -11051,6 +11051,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         int j2jDepth = 0;
         size_t j2jBaseFrameDepth = frameDepth_;
 
+        // Toggle W^X to executable once for the entire trampoline loop.
+        // The loop only reads JIT code (executable) and writes to C stack (always writable).
+#if defined(__APPLE__) && defined(__arm64__)
+        if (state.exitReason == jit::ExitJ2JCall ||
+            (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+            pthread_jit_write_protect_np(1);
+        }
+#endif
         while (state.exitReason == jit::ExitJ2JCall ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
 
@@ -11117,15 +11125,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
 
-                // Enter callee JIT code (W^X: toggle to executable)
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(1);
-#endif
-                reinterpret_cast<jit::StencilFunc>(entryAddr)(&state);
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(0);
-#endif
-                chargeJITBytecodes(state);
+                // Enter callee JIT code (already executable from loop start)
+                JIT_CALL(entryAddr, &state);
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---
@@ -11146,7 +11147,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.argCount = save.argCount;
                 state.ip = save.ip;
 
-                // Pop args, push return value
+                // Pop receiver+args, push return value
+                // Stack layout: sp[-(nArgs+1)]=receiver, sp[-nArgs]=arg1, ..., sp[-1]=TOS
+                // sp points to next free slot. Replace receiver with retVal, adjust down.
                 state.sp[-(save.sendArgCount + 1)] = retVal;
                 state.sp -= save.sendArgCount;
 
@@ -11165,21 +11168,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
 
                 state.exitReason = jit::ExitNone;
-                jit::StencilFunc resume = reinterpret_cast<jit::StencilFunc>(
-                    callerJM->codeStart() + codeOffset);
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(1);
-#endif
-                resume(&state);
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(0);
-#endif
-                chargeJITBytecodes(state);
+                // Reset ip to bytecodeStart so the resumed stencil chain
+                // computes correct offsets (stencils do ip += bcOffset).
+                state.ip = callerBCStart;
+                uint8_t* resumeAddr = callerJM->codeStart() + codeOffset;
+                JIT_CALL(resumeAddr, &state);
             }
 
             // Check countdown — let interpreter periodic checks run
             if (checkCountdown_ <= 0) break;
         }
+        // Toggle back to writable after trampoline loop
+#if defined(__APPLE__) && defined(__arm64__)
+        pthread_jit_write_protect_np(0);
+#endif
+        // Charge bytecodes for all J2J calls + returns in bulk
+        checkCountdown_ -= static_cast<int>(jitJ2JStencilCalls_ + jitJ2JStencilReturns_) * 10;
 
         // If we bailed out with pending J2J frames, materialize them
         // so the interpreter can see them.
