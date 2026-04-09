@@ -535,8 +535,9 @@ void Interpreter::handleBenchComplete() {
     }
     if (benchRunCount_ >= 5) {
 #if PHARO_JIT_ENABLED
-        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu\n",
-            jitICHits_, jitICMisses_);
+        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu stale=%zu | J2J patches=%zu stencilCalls=%zu/%zu\n",
+            jitICHits_, jitICMisses_, jitICStale_,
+            jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
 #endif
         fprintf(stderr, "[BENCH] Done. 5 runs complete.\n");
         stop();
