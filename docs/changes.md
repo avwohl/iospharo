@@ -2,6 +2,36 @@
 
 2026-04-08
 
+## J2J Overhead Analysis
+
+Investigated the per-call overhead of j2j_call for fib(28) (5.93M calls/run).
+Measured a theoretical floor of 16ms with NO frame management (just JITState
+save/restore + callee BLR). Production overhead: 20ms. The 4ms gap is frame
+management (SavedFrame + interpreter state sync).
+
+Key findings:
+
+1. SavedFrame stores are nearly FREE — the ARM64 store buffer hides them
+   behind the callee stencil execution (~0.5 cycles of 10 cycles/call).
+
+2. The REAL overhead is j2j_call's function prologue/epilogue: 12 callee-saved
+   registers (6 STP/LDP pairs) are needed for the 8 JITState fields + interp
+   pointer + computation intermediates. This costs ~2 cycles per call.
+
+3. Inlining pushFrame/popFrame into j2j_call does NOT help — the compiler
+   still uses all 12 callee-saved regs because the 8 JITState save fields
+   alone nearly fill them.
+
+4. Reducing register pressure by reading from SavedFrame on the success path
+   (safe because GC can't fire during pure JIT) doesn't help either — the
+   compiler allocates the same number of regs regardless.
+
+To reach the 5ms target: must eliminate j2j_call as a C++ function entirely.
+This requires lazy frame materialization (only push frames when GC/bail
+demands it) with stencil-internal J2J (save JITState in stencil's own
+callee-saved regs, BLR directly to callee, leaf-function helpers for
+frame management).
+
 ## J2J Hot Path Optimization
 
 Reduced J2J direct call overhead by eliminating hash map lookups and diagnostic
