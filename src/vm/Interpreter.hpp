@@ -84,6 +84,9 @@
 struct _VMCallbackContext;
 typedef struct _VMCallbackContext VMCallbackContext;
 
+// Forward declaration for friend access from j2j_call
+extern "C" void jit_rt_j2j_call(pharo::jit::JITState* state);
+
 namespace pharo {
 
 /// Maximum stack depth
@@ -178,6 +181,8 @@ struct WellKnownSelectors {
 };
 
 class Interpreter {
+    // Allow j2j_call to access private interpreter state directly
+    friend void ::jit_rt_j2j_call(jit::JITState* state);
 public:
     explicit Interpreter(ObjectMemory& memory);
 
