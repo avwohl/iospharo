@@ -1802,8 +1802,12 @@ extern "C" void stencil_primAt(JITState* s) {
     // Only handle format 2 (Indexable, no fixed fields) for now
     if (fmt != 2) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
-    // Bail on overflow slot count
-    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    if (slotCount == 255) {
+        // Overflow: actual slot count in the 8 bytes before the object header.
+        // Mask off top byte (Spur puts 0xFF there as a marker).
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvr.bits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
     int64_t i = (int64_t)idx.bits >> 3;  // 1-based index
     if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
     // Read slot (slots start at header + 8)
@@ -1830,7 +1834,10 @@ extern "C" void stencil_primAtPut(JITState* s) {
     // Check not immutable (bit 23)
     if (header & (1ULL << 23)) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
-    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    if (slotCount == 255) {
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvr.bits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
     int64_t i = (int64_t)idx.bits >> 3;
     if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
     Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
@@ -1841,7 +1848,7 @@ extern "C" void stencil_primAtPut(JITState* s) {
 }
 
 // ----- Primitive 62: Object #size -----
-// Fast path for format 2 (Indexable, no overflow).
+// Fast path for format 2 (Indexable, no fixed fields).
 extern "C" void stencil_primSize(JITState* s) {
     Oop rcvr = s->receiver;
     if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
@@ -1850,7 +1857,10 @@ extern "C" void stencil_primSize(JITState* s) {
     // Only handle format 2 (Indexable, no fixed fields)
     if (fmt != 2) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
-    if (slotCount == 255) { _HOLE_CONTINUE(s); return; }
+    if (slotCount == 255) {
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvr.bits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
     s->returnValue.bits = (slotCount << 3) | 1;  // SmallInteger encoding
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);

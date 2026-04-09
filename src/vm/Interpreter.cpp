@@ -10873,17 +10873,21 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
 
-    // Debug: log upgrade attempts for benchFib specifically
-    {
-        std::string sel = memory_.selectorOf(cachedMethod);
-        if (sel == "benchFib") {
-            static int bfLog = 0;
-            if (bfLog < 5) {
-                bfLog++;
-                fprintf(stderr, "[BF-UPG] benchFib upgrade: compiled=%d exec=%d banned=%d key=0x%llx\n",
-                        target != nullptr, target && target->isExecutable(),
-                        isJ2JBanned(cachedMethod.rawBits()),
-                        (unsigned long long)(cachedMethod.rawBits()));
+    // Eager compilation: if the target has a supported primitive prologue but
+    // isn't JIT-compiled yet, compile it now. Primitive methods never reach the
+    // compile threshold via noteMethodEntry because the primitive succeeds before
+    // bytecodes execute. Without eager compilation, at:/at:put:/size/arithmetic
+    // methods can never be called via J2J with their fast-path prologues.
+    if ((!target || !target->isExecutable()) && jitRuntime_.compiler()) {
+        // Check if method has a primitive
+        ObjectHeader* methObj = cachedMethod.asObjectPtr();
+        Oop hdr = methObj->slotAt(0);
+        bool hasPrim = hdr.isSmallInteger() && ((hdr.asSmallInteger() >> 16) & 1);
+        if (hasPrim) {
+            int primIdx = primitiveIndexOf(cachedMethod);
+            if (primIdx > 0 && primIdx < 200) {
+                target = jitRuntime_.compiler()->compile(cachedMethod);
+                if (target && !target->hasPrimPrologue) target = nullptr;
             }
         }
     }
@@ -10920,14 +10924,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         if (icData[e * 3] == lookupKey) {
             uint64_t extra = icData[e * 3 + 2];
             if (extra == 0) {
-                // Debug: log upgrade
-                static int upgradeLog = 0;
-                if (upgradeLog < 30) {
-                    upgradeLog++;
-                    std::string sel = memory_.selectorOf(cachedMethod);
-                    fprintf(stderr, "[IC-UPGRADE] #%s key=0x%llx → J2J\n",
-                            sel.c_str(), (unsigned long long)lookupKey);
-                }
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 if (target->hasPrimPrologue) {
@@ -10943,10 +10939,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
     }
     // No matching entry found — fill an empty slot with J2J entry.
-    // Only fill for immediate (tagged) receivers — object pointer receivers
-    // cause DNU when the IC entry is used at a polymorphic send site
-    // where a different object type passes through.
-    if (firstEmpty >= 0 && fillEnabled && tag != 0) {
+    if (firstEmpty >= 0 && fillEnabled) {
         uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
         uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
         if (target->hasPrimPrologue) {
