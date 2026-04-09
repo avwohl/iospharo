@@ -11,25 +11,53 @@ The sendJ2J stencil calls jit_rt_j2j_call which pushes an interpreter
 frame (pushFrameForJIT), BLRs to the callee, and pops the frame
 (j2jPopFrame) on ExitReturn.
 
-Key bugs fixed:
-- j2jPopFrame was not restoring framePointer_, argCount_, or bytecodeEnd_
-  after the callee returned, causing frame corruption in the chain loop
-- _2 SimStack stencil variants were missing s->ip update in overflow paths,
-  causing ArithOverflow re-execution at wrong bytecode position
-- Clang cold-section splitting orphaned overflow paths; restructured
-  stencils to keep both paths in a single function body
+### Performance optimizations (20ms → 16ms)
 
-Benchmark results (2026-04-09):
+1. LTO + minimal j2jPopFrame: Replaced full popFrameForJIT (11 state
+   restores) with minimal pop (decrement frameDepth + restore
+   method/receiver for GC). LTO inlines pushFrameForJIT across TUs.
+   Together: fib(28) 20ms → 17ms.
 
-  fib(28)          sieve x3
-    Interpreter:  47ms       3.2ms
-    JIT no-J2J:  85ms       3.2ms
-    JIT + J2J:   16ms       3.2ms
-    Cog:          2ms        -
+2. Inline pushFrameForJIT: Moved to Interpreter.hpp for cross-TU
+   inlining. Added primKind bits (52:48) to IC extra word during patch,
+   independent of JIT compilation — SmallInteger arithmetic methods
+   bypassed noteMethodEntry so primKind was never set.
+
+3. pushFrameForJIT micro-opts: Cache nil locally (skip 3 interpreter
+   field reads during J2J chains), mark temp alloc as unlikely. No
+   measurable change — bottleneck is the ~49-cycle dependency chain
+   (state→interp→frameDepth→SavedFrame address).
+
+### Bugs fixed
+
+- j2jPopFrame not restoring framePointer_, argCount_, or bytecodeEnd_
+  after callee returned — caused frame corruption in the chain loop.
+  Symptom: FP jumped from 15 to 22 between chain iterations during
+  sieve's from:to:put: J2J call to min:.
+
+- _2 SimStack stencil variants missing s->ip update in overflow paths,
+  causing ArithOverflow re-execution at wrong bytecode position.
+
+- Clang -O2 cold-section splitting orphaned overflow code in
+  addSmallInt_2 and mulSmallInt_2. Restructured to use bool-flag
+  pattern that keeps both paths in a single function body.
+
+### Benchmark results (2026-04-09)
+
+                  fib(28)   sieve x3
+  Interpreter:    47ms       3.2ms
+  JIT no-J2J:    85ms       3.2ms
+  JIT + J2J:     16ms       3.2ms
+  Cog:            2ms        -
 
 J2J gives 5.3x speedup over JIT-without-J2J for send-heavy code (fib).
 JIT-without-J2J is slower than interpreter because C++ round-trip per
-send (~360 cycles) dominates. Still 8x from Cog.
+send (~360 cycles) dominates. 6.17M J2J calls for fib(28) with near-
+perfect return rate (23 bailouts from cold IC). Still 8x from Cog.
+
+16ms is the ceiling for C++ j2j_call architecture (~49 cycles/call with
+12 callee-saved register spills). Next: Phase 2 primitive prologues for
+sieve/sort/dict, then asm J2J trampoline for fib-class benchmarks.
 
 ## SimStack Phase 3: Register-Based TOS/NOS Caching
 
