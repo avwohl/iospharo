@@ -11158,13 +11158,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Restore caller JITState (state.method is NOT stored in J2JSave
                 // — stencils don't read it; reconstructed on bailout from jitMethod).
+                // state.ip is NOT restored here — on the fast path we go straight
+                // to save.bcStart below; on the rare null-resumeAddr fallback we
+                // restore save.ip inside that branch.
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.literals = save.literals;
                 state.tempBase = save.tempBase;
                 state.jitMethod = save.jitMethod;
                 state.argCount = save.argCount;
-                state.ip = save.ip;
 
                 // Pop receiver+args, push return value
                 // Stack layout: sp[-(nArgs+1)]=receiver, sp[-nArgs]=arg1, ..., sp[-1]=TOS
@@ -11174,6 +11176,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Resume caller's JIT at bytecode after send (precomputed on call path)
                 if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
+                    state.ip = save.ip;  // interpreter needs post-send IP
                     state.exitReason = jit::ExitReturn;
                     break;
                 }
