@@ -2,6 +2,21 @@
 
 2026-04-08
 
+## PHARO_BENCH Mode for Benchmarking
+
+Added dedicated benchmark mode (PHARO_BENCH=1 env var) for reproducible
+JIT performance measurements. Features:
+
+- PHARO_FIB_N env var to set fib argument (default 28)
+- Process switching suppressed during benchmark for clean timings
+- Extracted handleBenchComplete() for benchmark result reporting
+- Interpreter fib(28) baseline: ~47ms
+
+JIT benchmarks currently hang due to a J2J chain loop bug: ExitSend fires
+incorrectly for the fib base case (fib(1)/fib(0)), causing the chain to
+loop instead of returning the base value. J2J nested return optimization
+is the next priority.
+
 ## Session Handler Fix: isImageStarting + P80 Startup Boost
 
 Fixed two bugs preventing Pharo session handlers from firing on image resume:

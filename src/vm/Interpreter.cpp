@@ -10395,7 +10395,12 @@ void Interpreter::tryJITResumeInCaller() {
                         continue;  // Try to resume in sender's JIT code
                     }
                 }
-                // No valid sender — terminate process and reschedule
+                // No valid sender — top of context chain
+                if (benchMode_) {
+                    inJITResume_ = false;
+                    handleBenchComplete();
+                    return;
+                }
                 terminateCurrentProcess();
                 if (tryReschedule()) {
                     inJITResume_ = false;
