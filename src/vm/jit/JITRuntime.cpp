@@ -27,7 +27,7 @@ using pharo::g_stepNum;
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
-          "x12","x13","x14","x15","x16","x17","x18","x19","x20","x30", \
+          "x12","x13","x14","x15","x16","x17","x19","x20","x30", \
           "memory","cc" \
     ); \
 } while(0)
@@ -133,7 +133,12 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
 
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
         interp->incJ2JStencilReturns();
-        interp->popFrameForJIT(state);
+
+        // Minimal frame pop: decrement depth and restore GC-critical interpreter
+        // fields from C locals (already saved above).  We skip the full
+        // popFrameForJIT which restores 11 interpreter fields — those are only
+        // needed when the interpreter resumes, and tryJITActivation syncs them.
+        interp->j2jPopFrame(savedMethod, savedRecv);
 
         state->sp = savedSP;
         state->receiver = savedRecv;

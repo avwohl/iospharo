@@ -834,6 +834,16 @@ public:
     void pushFrameForJIT(jit::JITState* state);
     void popFrameForJIT(jit::JITState* state);
 
+    /// Minimal frame pop for J2J fast path (ExitReturn).
+    /// Only decrements frameDepth and restores GC-critical interpreter fields.
+    /// Caller is responsible for restoring JITState fields.
+    inline void j2jPopFrame(Oop callerMethod, Oop callerRecv) {
+        --frameDepth_;
+        method_ = callerMethod;
+        homeMethod_ = callerMethod;
+        receiver_ = callerRecv;
+    }
+
     /// Upgrade an IC entry to J2J direct call if the target is now JIT-compiled.
     /// Called from ExitSendCached handlers when an IC hit goes through C++.
     void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount);
