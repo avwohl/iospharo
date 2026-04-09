@@ -6484,16 +6484,20 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     // framePointer_ points to the base of the frame (receiver slot)
     framePointer_ = stackPointer_ - (nArgs + 1);
 
-    // Compute bytecodeStart for the callee method
+    // Derive JITMethod* from entry address passed by stencil via jitMethod field.
+    // codeStart() = (uint8_t*)jm + sizeof(JITMethod), so jm = entry - sizeof(JITMethod).
+    // This eliminates the hash map lookup that was here before.
+    jit::JITMethod* jm = reinterpret_cast<jit::JITMethod*>(
+        reinterpret_cast<uint8_t*>(state->jitMethod) - sizeof(jit::JITMethod));
+
+    // Compute bytecodeStart using cached methodHeader from JITMethod
     ObjectHeader* methObj = targetMethod.asObjectPtr();
-    Oop hdr = methObj->slotAt(0);
-    int numLits = hdr.isSmallInteger() ? static_cast<int>(hdr.asSmallInteger() & 0x7FFF) : 0;
+    int numLits = static_cast<int>(jm->methodHeader & 0x7FFF);
     uint8_t* bytecodeStart = methObj->bytes() + (1 + numLits) * 8;
     instructionPointer_ = bytecodeStart;
 
-    // Allocate temps (zero-fill) — callee may expect temps initialized to nil
-    int numTemps = hdr.isSmallInteger() ? static_cast<int>((hdr.asSmallInteger() >> 18) & 0x3F) : 0;
-    int totalTemps = numTemps;
+    // Allocate temps using cached tempCount from JITMethod
+    int totalTemps = jm->tempCount;
     for (int i = nArgs; i < totalTemps; i++) {
         *stackPointer_ = memory_.nil();
         stackPointer_++;
@@ -6508,9 +6512,6 @@ void Interpreter::pushFrameForJIT(jit::JITState* state) {
     state->argCount = nArgs;
     state->sp = stackPointer_;
     state->exitReason = jit::ExitNone;
-
-    // Look up JITMethod for the target (for jitMethod field)
-    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(targetMethod.rawBits());
     state->jitMethod = jm;
 }
 #endif // PHARO_JIT_ENABLED

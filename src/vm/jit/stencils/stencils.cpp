@@ -887,6 +887,7 @@ static constexpr uint64_t J2J_ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
 
 extern "C" void (*_HOLE_RT_PUSH_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
+extern "C" void (*_HOLE_RT_J2J_CALL)(JITState*);
 
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
@@ -1034,12 +1035,15 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             /* Set up state for push_frame helper */                           \
             s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
             s->sendArgCount = nArgs;                                          \
+            /* Pass entry address via jitMethod so pushFrameForJIT can    */ \
+            /* derive JITMethod* without a hash lookup                    */ \
+            s->jitMethod = (void*)entryAddr;                                  \
             /* Save IP PAST the send bytecode so that when the callee     */ \
             /* returns through popFrame, the caller resumes at the next   */ \
             /* bytecode — not at the send (which would cause re-send).    */ \
             s->ip = s->ip + bcOffset + bcLen;                                 \
                                                                               \
-            /* Push interpreter frame (C++ helper, ~30 cycles) */             \
+            /* Push interpreter frame (C++ helper) */                         \
             _HOLE_RT_PUSH_FRAME(s);                                           \
                                                                               \
             /* Check if push_frame failed (stack overflow) */                  \
@@ -1061,16 +1065,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             /* Callee returned — check exit reason */                         \
             if (s->exitReason != EXIT_RETURN) {                               \
                 /* Callee needs interpreter help (send, block create, etc.)*/ \
-                /* DON'T pop the frame — the callee's frame and stack     */ \
-                /* state must be preserved so the interpreter can resume  */ \
-                /* the callee at its bail-out point.                      */ \
-                /*                                                         */ \
-                /* Pass through the ORIGINAL exit reason (ExitSend,       */ \
-                /* ExitBlockCreate, ExitArrayCreate, etc.) so that        */ \
-                /* tryJITActivation can handle it correctly. Overwriting  */ \
-                /* with EXIT_SEND would cause ExitBlockCreate to be       */ \
-                /* re-interpreted as a raw bytecode without extension     */ \
-                /* byte context, producing wrong block objects.           */ \
+                /* DON'T pop the frame — callee's state is preserved.    */ \
                 _HOLE_RT_SEND(s);                                             \
                 return;                                                       \
             }                                                                 \

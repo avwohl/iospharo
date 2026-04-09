@@ -2,6 +2,35 @@
 
 2026-04-08
 
+## J2J Hot Path Optimization
+
+Reduced J2J direct call overhead by eliminating hash map lookups and diagnostic
+tracking from the per-call hot path:
+
+1. **Removed trackJ2JEntry/trackJ2JReturn**: These did unordered_map lookups on
+   every J2J call/return. Removed from jit_rt_push_frame and jit_rt_pop_frame.
+
+2. **JITMethod derivation by pointer arithmetic**: pushFrameForJIT now derives
+   JITMethod* from the entry address (entry - sizeof(JITMethod)) instead of
+   looking up the method map. The stencil passes the entry address via
+   state->jitMethod before calling the helper.
+
+3. **Cached method header and temp count**: Uses JITMethod's pre-cached
+   methodHeader and tempCount fields instead of re-decoding the method header
+   Oop on every call.
+
+4. **j2jCall merged helper (WIP)**: Added jit_rt_j2j_call infrastructure
+   (helper ID 10) for future use. Currently unused due to a cascading bailout
+   issue with deeply nested J2J calls.
+
+**Benchmark results** (fib(28), 5 runs):
+
+  Configuration    Time      Speedup vs interpreter
+  Interpreter      ~50ms     1.0x
+  JIT (before)     ~24ms     2.1x
+  JIT (after)      ~22ms     2.3x
+  Cog (ref)        ~2ms      25x
+
 ## PHARO_BENCH Mode for Benchmarking
 
 Added dedicated benchmark mode (PHARO_BENCH=1 env var) for reproducible

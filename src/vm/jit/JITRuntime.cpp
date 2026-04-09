@@ -51,7 +51,6 @@ extern "C" void jit_rt_push_frame(JITState* state) {
     // Reads cachedTarget (method Oop), sendArgCount, ip from state.
     Interpreter* interp = state->interp;
     interp->incJ2JStencilCalls();
-    interp->trackJ2JEntry(state);
     interp->pushFrameForJIT(state);
 }
 
@@ -59,8 +58,68 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     // J2J direct call: pop the interpreter frame after callee returns.
     Interpreter* interp = state->interp;
     interp->incJ2JStencilReturns();
-    interp->trackJ2JReturn(state);
     interp->popFrameForJIT(state);
+}
+
+extern "C" void jit_rt_j2j_call(JITState* state) {
+    // Merged J2J call: push frame, call callee, pop frame in one C++ call.
+    // NOTE: Currently unused — the stencil uses separate push/pop calls.
+    // This helper has a cascading bailout issue with deeply nested J2J calls
+    // that needs investigation before it can be used.
+    //
+    // On entry: cachedTarget = method Oop, sendArgCount = nArgs,
+    //           returnValue.bits = entry address, ip = past send bytecode.
+    // On exit (success): exitReason=0, returnValue set, JITState restored to caller.
+    // On exit (bailout): exitReason!=0, JITState has callee's state.
+
+    Interpreter* interp = state->interp;
+    interp->incJ2JStencilCalls();
+
+    Oop* savedSP = state->sp;
+    Oop savedRecv = state->receiver;
+    Oop* savedLit = state->literals;
+    Oop* savedTemp = state->tempBase;
+    JITMethod* savedJM = state->jitMethod;
+    Oop savedMethod = state->method;
+    int savedArgCount = state->argCount;
+    uint8_t* savedIP = state->ip;
+
+    uint8_t* entryAddr = reinterpret_cast<uint8_t*>(state->returnValue.rawBits());
+    state->jitMethod = reinterpret_cast<JITMethod*>(entryAddr);
+
+    interp->pushFrameForJIT(state);
+
+    if (__builtin_expect(state->exitReason != 0, 0)) {
+        state->sp = savedSP;
+        state->receiver = savedRecv;
+        state->literals = savedLit;
+        state->tempBase = savedTemp;
+        state->jitMethod = savedJM;
+        state->method = savedMethod;
+        state->argCount = savedArgCount;
+        state->ip = savedIP;
+        return;
+    }
+
+    typedef void (*StencilFn)(JITState*);
+    ((StencilFn)entryAddr)(state);
+
+    if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
+        interp->incJ2JStencilReturns();
+        interp->popFrameForJIT(state);
+
+        state->sp = savedSP;
+        state->receiver = savedRecv;
+        state->literals = savedLit;
+        state->tempBase = savedTemp;
+        state->jitMethod = savedJM;
+        state->method = savedMethod;
+        state->argCount = savedArgCount;
+        state->ip = savedIP;
+        state->exitReason = ExitNone;
+    }
+    // Non-ExitReturn: leave callee's state in JITState for interpreter bailout.
+    // The interpreter's saved frame has the caller's state for later restoration.
 }
 
 // ===== JITRuntime =====
@@ -110,6 +169,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.megaCacheAddr = megaCache_;
     helpers.pushFrame = reinterpret_cast<void*>(&jit_rt_push_frame);
     helpers.popFrame = reinterpret_cast<void*>(&jit_rt_pop_frame);
+    helpers.j2jCall = reinterpret_cast<void*>(&jit_rt_j2j_call);
     compiler_->setHelpers(helpers);
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be
