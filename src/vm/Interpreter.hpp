@@ -906,7 +906,7 @@ public:
 
     /// Minimal frame pop for J2J fast path (ExitReturn).
     /// Only decrements frameDepth and restores GC-critical interpreter fields.
-    /// Caller is responsible for restoring JITState fields.
+    /// Caller is responsible for restoring JITState fields from C locals.
     inline void j2jPopFrame(Oop callerMethod, Oop callerRecv) {
         --frameDepth_;
         SavedFrame& frame = savedFrames_[frameDepth_];

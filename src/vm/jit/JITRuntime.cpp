@@ -93,11 +93,11 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
     // On exit (success): exitReason=0, returnValue set, JITState restored.
     // On exit (bailout): exitReason!=0, JITState has callee's state.
     //
-    // Performance note: at 5.9M calls/run for fib(28), the overhead is ~3.5ns
-    // per call (~10 cycles). SavedFrame stores are nearly free (hidden in store
-    // buffer). The dominant cost is j2j_call's function prologue/epilogue (12
-    // callee-saved regs). Further optimization requires eliminating the function
-    // call entirely (lazy frame materialization or stencil-internal J2J).
+    // Performance: at 6.17M calls/run for fib(28), total overhead is ~16ms
+    // (~2.6ns per call). Apple Silicon's store buffer and branch predictor
+    // make Clang's 14-register prologue nearly free — tested alternatives
+    // (noinline wrappers, SavedFrame-based state) are net-negative.
+    // Breaking below 16ms requires lazy frame materialization.
 
     Interpreter* interp = state->interp;
     interp->incJ2JStencilCalls();
@@ -134,10 +134,6 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
         interp->incJ2JStencilReturns();
 
-        // Minimal frame pop: decrement depth and restore GC-critical interpreter
-        // fields from C locals (already saved above).  We skip the full
-        // popFrameForJIT which restores 11 interpreter fields — those are only
-        // needed when the interpreter resumes, and tryJITActivation syncs them.
         interp->j2jPopFrame(savedMethod, savedRecv);
 
         state->sp = savedSP;
