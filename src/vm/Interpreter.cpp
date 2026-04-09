@@ -11103,14 +11103,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     Oop::fromRawBits(callerJM->compiledMethodOop).asObjectPtr();
                 uint8_t* callerBCStart =
                     callerMethObj->bytes() + (1 + callerNumLits) * 8;
-                save.bcStart = callerBCStart;
                 if (__builtin_expect(selfRecursive, 1)) {
+                    // Self-recursive: calleeBCStart == callerBCStart. On a
+                    // clean return, state.ip will still equal callerBCStart
+                    // (stencils don't touch state.ip on the fast path), so
+                    // we don't need to save bcStart OR restore state.ip on
+                    // return. Skip both stores.
                     save.jitMethod = reinterpret_cast<jit::JITMethod*>(
                         reinterpret_cast<uintptr_t>(callerJM) | 1ULL);
                 } else {
                     save.jitMethod = callerJM;
                     save.literals = state.literals;
                     save.argCount = state.argCount;
+                    save.bcStart = callerBCStart;
                 }
                 // Precompute resume JIT code address (avoids bcToCode lookup on return)
                 {
@@ -11183,20 +11188,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                 // Restore caller JITState (state.method is NOT stored in J2JSave
                 // — stencils don't read it; reconstructed on bailout from jitMethod).
-                // state.ip is NOT restored here — on the fast path we go straight
-                // to save.bcStart below; on the rare null-resumeAddr fallback we
-                // restore save.ip inside that branch.
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.tempBase = save.tempBase;
                 // Low bit of save.jitMethod = 1 marks a self-recursive save:
-                // literals, argCount, jitMethod are unchanged. Skip restore.
+                // literals, argCount, jitMethod are unchanged. Also, state.ip
+                // is already equal to callerBCStart (same method, stencils
+                // don't modify ip on the fast path), so we don't need to
+                // restore it — and save.bcStart wasn't even written for
+                // self-recursive saves.
                 uintptr_t savedJMBits =
                     reinterpret_cast<uintptr_t>(save.jitMethod);
                 if (__builtin_expect((savedJMBits & 1) == 0, 0)) {
                     state.literals = save.literals;
                     state.jitMethod = save.jitMethod;
                     state.argCount = save.argCount;
+                    // Non-self: must reset state.ip from calleeBCStart to
+                    // callerBCStart before resuming caller's stencils.
+                    state.ip = save.bcStart;
                 }
 
                 // Pop receiver+args, push return value
@@ -11213,7 +11222,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
 
                 // exitReason NOT cleared — stencils only write it, never read.
-                state.ip = save.bcStart;
                 JIT_CALL(save.resumeAddr, &state);
             }
 
