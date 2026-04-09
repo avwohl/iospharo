@@ -2,27 +2,34 @@
 
 2026-04-09
 
-## Lazy J2J Frame Materialization (WIP)
+## J2J Direct Calls — Working and Benchmarked
 
-Eliminated pushFrame/popFrame from the J2J hot path entirely. The new
-jit_rt_j2j_call performs only a "lite" callee setup — writes receiver,
-literals, tempBase, ip, method, argCount into JITState and BLRs directly
-to the callee stencil. No SavedFrame is created, and the interpreter's
-fields (method_, receiver_, etc.) are NOT synced.
+J2J (JIT-to-JIT) direct calls eliminate the C++ round-trip for sends
+between JIT-compiled methods. When an IC hit targets a JIT-compiled
+method, bit 60 in the IC extra word encodes the JIT entry address.
+The sendJ2J stencil calls jit_rt_j2j_call which pushes an interpreter
+frame (pushFrameForJIT), BLRs to the callee, and pops the frame
+(j2jPopFrame) on ExitReturn.
 
-On the fast path (ExitReturn, ~99.99% of calls), the caller's JITState
-is restored from C locals and control returns immediately — zero frame
-overhead.
+Key bugs fixed:
+- j2jPopFrame was not restoring framePointer_, argCount_, or bytecodeEnd_
+  after the callee returned, causing frame corruption in the chain loop
+- _2 SimStack stencil variants were missing s->ip update in overflow paths,
+  causing ArithOverflow re-execution at wrong bytecode position
+- Clang cold-section splitting orphaned overflow paths; restructured
+  stencils to keep both paths in a single function body
 
-On bail-out (ExitReason != ExitReturn), a new pushFrameForJIT_deferred()
-creates the SavedFrame retroactively so the interpreter can unwind. This
-uses the caller's SP/IP saved in C locals plus the interpreter's still-
-valid caller state (since the lazy path never updated interpreter fields).
+Benchmark results (2026-04-09):
 
-Expected impact: eliminates ~22 cycles/call of SavedFrame save/restore
-and ~7 cycles/call of pushFrame setup. Combined with the existing 16-cycle
-function prologue floor, this should bring J2J overhead from ~60 cycles
-to ~20 cycles per call.
+  fib(28)          sieve x3
+    Interpreter:  47ms       3.2ms
+    JIT no-J2J:  85ms       3.2ms
+    JIT + J2J:   16ms       3.2ms
+    Cog:          2ms        -
+
+J2J gives 5.3x speedup over JIT-without-J2J for send-heavy code (fib).
+JIT-without-J2J is slower than interpreter because C++ round-trip per
+send (~360 cycles) dominates. Still 8x from Cog.
 
 ## SimStack Phase 3: Register-Based TOS/NOS Caching
 
