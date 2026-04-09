@@ -15,6 +15,7 @@
 #include "Interpreter.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
+#include "jit/TrampolineAsm.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
@@ -11083,6 +11084,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             pthread_jit_write_protect_np(1);
         }
 #endif
+
+#if defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
+        // Hand-written ARM64 loop: pins state/save-cursor/counters in
+        // callee-saved registers across BLR to stencils. Only runs the loop
+        // if we're actually entering it; otherwise the C++ fall-through below
+        // is a no-op (matches the while-condition in the fallback version).
+        if (state.exitReason == jit::ExitJ2JCall ||
+            (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+            pharo_jit_j2j_trampoline(
+                &state,
+                j2jStack,
+                &localFrameDepth,
+                &localCalls,
+                &localReturns,
+                memory_.nil().rawBits());
+            // Recover j2jDepth from the frameDepth delta — the asm keeps
+            // both counters in lockstep, so `(localFrameDepth -
+            // j2jBaseFrameDepth)` is the number of unpopped save slots.
+            j2jDepth = static_cast<int>(localFrameDepth - j2jBaseFrameDepth);
+        }
+#else
         while (state.exitReason == jit::ExitJ2JCall ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
 
@@ -11253,6 +11275,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // clobber. The outer interpret() loop handles countdown expiry
             // between trampoline sessions.
         }
+#endif // PHARO_ASM_TRAMPOLINE
         // Toggle back to writable after trampoline loop
 #if defined(__APPLE__) && defined(__arm64__)
         pthread_jit_write_protect_np(0);

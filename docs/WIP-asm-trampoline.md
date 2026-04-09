@@ -1,9 +1,61 @@
 # WIP: Assembly J2J Trampoline
 
 **Date started**: 2026-04-09
-**Status**: Not started. Baseline captured, design sketch only.
+**Status**: **Phase 1 complete, mixed result. Phase 2 pending.**
 **Goal**: Break the 10.4ms fib(28) wall by hand-writing the J2J trampoline
 hot loop in ARM64 assembly.
+
+## Phase 1 outcome (2026-04-09)
+
+Files landed:
+    src/vm/jit/TrampolineAsm.S       hand-written ARM64 asm loop (~390 lines)
+    src/vm/jit/TrampolineAsm.hpp     extern "C" declaration
+    src/vm/Interpreter.cpp           #ifdef PHARO_ASM_TRAMPOLINE path
+    CMakeLists.txt                   -DPHARO_ASM_TRAMPOLINE=ON switch,
+                                     LANGUAGES C CXX OBJC ASM
+
+Interleaved A/B (50 samples each, fresh builds, alternating):
+
+    Build  min    p25    median  p75    max    mean   stdev
+    CPP    10012  10140  10206   10278  10408  10202   100
+    ASM     9595   9933  10336   10702  11026  10349   427
+
+  ASM best:    -4.17% vs CPP (genuine lower bound drops)
+  ASM median:  +1.28% vs CPP
+  ASM mean:    +1.44% vs CPP
+  ASM stdev:   4x higher than CPP
+
+Correctness: stencil call counts identical (6170696/6170673) between CPP
+and ASM, benchmark completes all 5 runs without deopt or bailout.
+
+Full Kernel-Tests suite **could not be run** against either binary: the
+fresh Pharo 13.0 image triggers a non-boolean receiver in Array sort during
+WorkingSession>>runStartup, which cascades into an infinite recursion of
+NonBooleanReceiver->signalerContext->findContextSuchThat: warnings. Both
+CPP and ASM fail IDENTICALLY on this path, so it is not a Phase 1
+regression — it's a pre-existing image/VM incompatibility with fresh 13.0
+images that has drifted since the last successful full-suite run
+(2026-04-08, 99.7% on a different image snapshot). Correctness parity is
+the load-bearing claim here, not "all tests pass on this image".
+
+Interpretation: Phase 1 isolated lower bound is real (9.6ms vs 10.0ms),
+but the median is noisier. The asm pins x21-x28 for state/cursor/counters,
+but stencils still clobber x0-x17/x19/x20 on every BLR, so the wins from
+cross-BLR register caching are diluted by the per-BLR spill/reload cost
+the stencils impose. Phase 2 (stencil ABI change to pin state.sp, receiver,
+tempBase in callee-saved regs directly) is where the real savings are.
+
+**Do not retry Phase 1 micro-tuning before understanding the variance
+increase.** The 4x stdev jump suggests some samples land in a worse
+scheduling window — maybe x21-x28 pinning makes Clang's surrounding
+frame-materialization code fight for registers, or the inlining decision
+tree in tryJITActivation changed. Before Phase 2, profile a sample of
+"fast" vs "slow" ASM runs and see if the variance comes from inside the
+trampoline or from the surrounding bailout/materialization path.
+
+## Original plan (below) remains the spec for Phase 2.
+
+---
 
 ---
 

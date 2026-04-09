@@ -1,6 +1,6 @@
 # PharoVM - Clean C++ VM for macOS and iOS
 cmake_minimum_required(VERSION 3.20)
-project(PharoVM LANGUAGES C CXX OBJC)
+project(PharoVM LANGUAGES C CXX OBJC ASM)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -50,6 +50,13 @@ set(VM_SOURCES
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp
+    src/vm/jit/TrampolineAsm.S
+)
+
+# Ensure the .S file is treated as a C-preprocessed assembly source so the
+# #define constants inside resolve at build time.
+set_source_files_properties(src/vm/jit/TrampolineAsm.S PROPERTIES
+    LANGUAGE ASM
 )
 
 # Mark Objective-C sources explicitly
@@ -94,6 +101,18 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
 else()
     target_compile_definitions(PharoVMCore PUBLIC PHARO_JIT_ENABLED=1)
     message(STATUS "JIT: enabled")
+endif()
+
+# PHARO_ASM_TRAMPOLINE: use the hand-written ARM64 J2J trampoline instead of
+# the C++ while-loop inside Interpreter::tryJITActivation. Default OFF so
+# baseline behavior is preserved; flip ON for benchmarking and correctness
+# tests (`-DPHARO_ASM_TRAMPOLINE=ON`).
+option(PHARO_ASM_TRAMPOLINE "Use hand-written ARM64 J2J trampoline" OFF)
+if(PHARO_ASM_TRAMPOLINE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    target_compile_definitions(PharoVMCore PUBLIC PHARO_ASM_TRAMPOLINE=1)
+    message(STATUS "J2J trampoline: ARM64 hand-written")
+else()
+    message(STATUS "J2J trampoline: C++ fallback")
 endif()
 
 # Pass PHARO_WITH_CRYPTO as a compile definition
