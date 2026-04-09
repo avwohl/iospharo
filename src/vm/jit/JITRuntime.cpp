@@ -334,16 +334,14 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     }
 
     // Guard: immediate receivers can't have instance variables.
-    // Methods with pushRecvVar/storeRecvVar dereference receiver as an object.
     if ((state.receiver.isSmallInteger() || state.receiver.isCharacter()) && jm->hasRecvFieldAccess) {
-        return false;  // Let interpreter handle it
+        return false;
     }
 
     // Bounds-check: receiver must have enough slots for the max field index
     if (jm->hasRecvFieldAccess && state.receiver.isObject()) {
         ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(state.receiver.rawBits());
-        size_t slotCount = recvObj->slotCount();
-        if (jm->maxRecvFieldIndex >= slotCount) {
+        if (jm->maxRecvFieldIndex >= recvObj->slotCount()) {
             return false;
         }
     }

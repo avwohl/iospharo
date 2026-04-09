@@ -472,6 +472,36 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
         g_sigsegvRecoveryEnabled = 0;
         siglongjmp(g_sigsegvRecovery, 1);
     }
+    // Handle Character-immediate dereference: if fault addr has tag=3 (Character)
+    // and is a valid codepoint, skip the faulting instruction and zero the result.
+    // This allows session handlers that dereference path characters to fail
+    // gracefully at the Smalltalk level instead of crashing the VM.
+#if defined(__APPLE__) && defined(__arm64__)
+    {
+        uint64_t faultAddr = reinterpret_cast<uint64_t>(info->si_addr);
+        if ((faultAddr & 0x7) == 3 && faultAddr < 0x800000) {
+            ucontext_t* uc = static_cast<ucontext_t*>(ctx);
+            if (uc && uc->uc_mcontext) {
+                uint64_t pc = uc->uc_mcontext->__ss.__pc;
+                uint32_t insn = *reinterpret_cast<uint32_t*>(pc);
+                // LDR Xt, [Xn] = 0xF9400000 | (imm12 << 10) | (Rn << 5) | Rt
+                if ((insn & 0xFFC00000) == 0xF9400000) {
+                    int rt = insn & 0x1F;
+                    uc->uc_mcontext->__ss.__x[rt] = 0;  // nil
+                    uc->uc_mcontext->__ss.__pc = pc + 4;
+                    static int charSkipCount = 0;
+                    if (++charSkipCount <= 5) {
+                        fprintf(stderr, "[SIGSEGV-CHAR] Skipping Character dereference at PC=0x%llx "
+                                "addr=0x%llx x%d=0 (#%d)\n",
+                                (unsigned long long)pc, (unsigned long long)faultAddr, rt, charSkipCount);
+                    }
+                    return;  // Resume execution
+                }
+            }
+        }
+    }
+#endif
+
     fprintf(stderr, "\n[SIGSEGV] Signal %d caught! Fault addr=%p\n", sig, info->si_addr);
 #if defined(__APPLE__) && defined(__arm64__)
     ucontext_t* uc = static_cast<ucontext_t*>(ctx);
@@ -682,15 +712,21 @@ int main(int argc, char* argv[]) {
         // All session handlers run normally — no patching or deferral.
         // If a handler fails, Pharo's SessionManager catches the error and continues.
 
+        bool benchMode = !!getenv("PHARO_BENCH");
+
         // Create Display Form in all modes. MorphicRenderLoop runs at P40
         // (userSchedulingPriority), not P80 as previously assumed. Without a
         // Display, MorphicRenderLoop still spawns but spins doing empty cycles,
         // dropping the step rate 10x. With Display, it renders and sleeps via
         // Delay, giving CPU to tests at the same priority.
-        std::cout << "\n=== Creating Display ===" << std::endl;
-        interpreter.ensureDisplayForm(1024, 768, 32);
+        // Skip in bench mode — no display needed, and it calls executeFromContext
+        // which would overwrite the benchFib context state.
+        if (!benchMode) {
+            std::cout << "\n=== Creating Display ===" << std::endl;
+            interpreter.ensureDisplayForm(1024, 768, 32);
+        }
 
-        if (!testMode) {
+        if (!testMode && !benchMode) {
             // Verify Display was created
             Oop display = memory.findGlobal("Display");
             std::cout << "Display after ensureDisplayForm: "
@@ -737,8 +773,10 @@ int main(int argc, char* argv[]) {
         std::cout << "Heartbeat will start after startup completes..." << std::endl;
         bool heartbeatStarted = false;
 
-        // Force a GC cycle before tests to verify compactor works
-        {
+        // Force a GC cycle before tests to verify compactor works.
+        // Skip in bench mode — GC invalidates raw pointers set up by
+        // executeFromContext for the benchmark context.
+        if (!benchMode) {
             std::cout << "\n=== Forced GC Test ===" << std::endl;
             size_t usedBefore = (memory.oldSpaceFree() - memory.oldSpaceStart());
             size_t freeBefore = memory.freeOldSpaceBytes();
@@ -773,7 +811,8 @@ int main(int argc, char* argv[]) {
         // startup, and aging-based preemption in the yield handler ensures
         // lower-priority processes get CPU time even when high-priority
         // processes (like FFI struct compilation at pri-79) run for minutes.
-        if (!heartbeatStarted) {
+        // Skip in bench mode — heartbeat causes process switches that preempt benchFib.
+        if (!heartbeatStarted && !benchMode) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }

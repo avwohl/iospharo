@@ -66,6 +66,7 @@
 #endif
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <csetjmp>
 #include <cstdint>
 #include <cstdio>
@@ -660,6 +661,13 @@ private:
     int dnuDepth_ = 0;
     int wakeLowerCount_ = 0;
     long long lastHeartbeatSteps_ = -1;
+
+    // ===== BENCHMARK MODE =====
+    bool benchMode_ = false; // Set when PHARO_BENCH is active
+    int benchRunCount_ = 0;  // -1=warmup, 0-4=timed runs, 5=done
+    std::chrono::high_resolution_clock::time_point benchStartTime_;
+    Oop findBenchFibMethod();  // Re-lookups Integer>>benchFib (GC-safe)
+    void handleBenchComplete();  // Benchmark run completion handler
 
     // ===== BOOTSTRAP STARTUP STATE =====
     bool imageBooted_ = false;

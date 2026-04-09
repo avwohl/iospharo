@@ -193,6 +193,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
     int extA = 0;  // Extension A accumulator (Sista V1 prefix 0xE0)
     int extB = 0;  // Extension B accumulator (Sista V1 prefix 0xE1)
 
+    int maxBranchTarget = -1;  // Track furthest forward jump to detect dead code
     size_t i = 0;
     while (i < length) {
         DecodedBC bc;
@@ -660,10 +661,27 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 bc.operand = bc.bcOffset;
             }
         }
+        // Track branch targets and detect dead code after returns
+        if (bc.branchTarget > maxBranchTarget)
+            maxBranchTarget = bc.branchTarget;
         decoded.push_back(bc);
         i += bc.bcLength;
         extA = 0;
         extB = 0;
+
+        // Stop decoding after an unconditional return if no branch targets
+        // point past this position. Everything beyond is dead code.
+        {
+            auto sid = static_cast<StencilID>(bc.stencilIdx);
+            if ((sid == StencilID::stencil_returnTop ||
+                 sid == StencilID::stencil_returnReceiver ||
+                 sid == StencilID::stencil_returnTrue ||
+                 sid == StencilID::stencil_returnFalse ||
+                 sid == StencilID::stencil_returnNil) &&
+                static_cast<int>(i) > maxBranchTarget) {
+                break;  // Dead code follows — stop decoding
+            }
+        }
     }
 
 done:

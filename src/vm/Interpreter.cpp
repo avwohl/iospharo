@@ -455,6 +455,29 @@ bool Interpreter::initialize() {
     // Image is booted (valid snapshot context being resumed)
     imageBooted_ = true;
 
+    // PHARO_BENCH: replace resume context with benchFib to bypass session handlers.
+    // interpret() will run benchFib; terminate_process handler manages timing and repetition.
+    // We suppress process switching (huge checkCountdown_) so the UI/idle processes
+    // can't preempt benchFib — otherwise it never completes.
+    if (getenv("PHARO_BENCH")) {
+        Oop method = findBenchFibMethod();
+        if (!method.isNil()) {
+            fprintf(stderr, "[BENCH] Found Integer>>benchFib, starting benchmark mode\n");
+            benchMode_ = true;
+            benchRunCount_ = -1;  // -1 = warmup run
+            checkCountdown_ = INT32_MAX;  // Suppress process switching during benchmark
+            int fibN = 28;
+            const char* fibEnv = getenv("PHARO_FIB_N");
+            if (fibEnv) fibN = atoi(fibEnv);
+            fprintf(stderr, "[BENCH] Running fib(%d)\n", fibN);
+            Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(fibN));
+            if (!ctx.isNil()) {
+                return executeFromContext(ctx);
+            }
+        }
+        fprintf(stderr, "[BENCH] Could not find Integer>>benchFib\n");
+    }
+
     // Now execute from the original context
     return executeFromContext(context);
 }
@@ -472,6 +495,71 @@ void Interpreter::initializeDisplayForm() {
         memset(pixels, 0, width * height * 4);
         pharo::gDisplaySurface->update();
     }
+}
+
+Oop Interpreter::findBenchFibMethod() {
+    Oop intClass = memory_.findGlobal("Integer");
+    if (!intClass.isObject() || intClass.isNil()) return Oop::nil();
+    Oop methodDict = memory_.fetchPointer(1, intClass);
+    if (!methodDict.isObject()) return Oop::nil();
+    ObjectHeader* mdHdr = methodDict.asObjectPtr();
+    size_t mdSlots = mdHdr->slotCount();
+    for (size_t i = 2; i < mdSlots; i++) {
+        Oop key = mdHdr->slotAt(i);
+        if (!key.isObject() || key.isNil()) continue;
+        ObjectHeader* kHdr = key.asObjectPtr();
+        if (kHdr->isBytesObject() && kHdr->byteSize() == 8 &&
+            memcmp(kHdr->bytes(), "benchFib", 8) == 0) {
+            Oop values = memory_.fetchPointer(1, methodDict);
+            if (values.isObject()) {
+                ObjectHeader* vHdr = values.asObjectPtr();
+                if (i - 2 < vHdr->slotCount()) {
+                    return vHdr->slotAt(i - 2);
+                }
+            }
+            break;
+        }
+    }
+    return Oop::nil();
+}
+
+void Interpreter::handleBenchComplete() {
+    if (benchRunCount_ == -1) {
+        fprintf(stderr, "[BENCH] Warmup done. Starting timed runs...\n");
+        benchRunCount_ = 0;
+    } else if (benchRunCount_ >= 0 && benchRunCount_ < 5) {
+        auto now = std::chrono::high_resolution_clock::now();
+        long us = std::chrono::duration_cast<std::chrono::microseconds>(now - benchStartTime_).count();
+        fprintf(stderr, "[BENCH] fib(28) run %d: %ld us (%ld ms)\n", benchRunCount_, us, us / 1000);
+        benchRunCount_++;
+    }
+    if (benchRunCount_ >= 5) {
+#if PHARO_JIT_ENABLED
+        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu\n",
+            jitICHits_, jitICMisses_);
+#endif
+        fprintf(stderr, "[BENCH] Done. 5 runs complete.\n");
+        stop();
+        return;
+    }
+    // Set up next run
+    checkCountdown_ = INT32_MAX;
+    benchStartTime_ = std::chrono::high_resolution_clock::now();
+    Oop method = findBenchFibMethod();
+    if (!method.isNil()) {
+        stackPointer_ = stackBase_;
+        frameDepth_ = 0;
+        int fibN = 28;
+        const char* fibEnv = getenv("PHARO_FIB_N");
+        if (fibEnv) fibN = atoi(fibEnv);
+        Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(fibN));
+        if (!ctx.isNil()) {
+            executeFromContext(ctx);
+            return;
+        }
+    }
+    fprintf(stderr, "[BENCH] Failed to find/create benchFib context\n");
+    stop();
 }
 
 void Interpreter::ensureDisplayForm(int width, int height, int depth) {
@@ -813,10 +901,9 @@ void Interpreter::interpret() {
         tableInit = true;
     }
 
-    checkCountdown_ = 1024;
+    checkCountdown_ = benchMode_ ? INT32_MAX : 1024;
     uint64_t totalSteps = 0;
     uint8_t bytecode;
-
     // --- Bytecode pair profiling (compile-time flag) ---
 #ifndef PROFILE_BYTECODE_PAIRS
 #define PROFILE_BYTECODE_PAIRS 0
@@ -1242,7 +1329,7 @@ void Interpreter::interpret() {
 
     // ====== PERIODIC CHECKS (every 1024 bytecodes) ======
     periodic_checks: {
-        checkCountdown_ = 1024;
+        checkCountdown_ = benchMode_ ? INT32_MAX : 1024;
         totalSteps += 1024;
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
@@ -3799,6 +3886,11 @@ void Interpreter::returnValue(Oop value) {
         }
 
 terminate_process:
+        if (benchMode_) {
+            handleBenchComplete();
+            return;
+        }
+
                 // Per reference VM spec: send cannotReturn: instead of silently terminating.
         // This gives Smalltalk's exception handling a chance to handle the situation.
         // Guard: limit cannotReturn: events per process. The error handler from
@@ -4715,13 +4807,6 @@ void Interpreter::arithmeticSend(int which) {
             switch (which) {
                 case 0: {  // +
                     int64_t result = a + b;
-                    // Temp trace: unconditional +1 logging
-                    static int addDbg = 0;
-                    if (addDbg == 0) {
-                        fprintf(stderr, "[ADD-FIRST] %lld + %lld = %lld\n",
-                                (long long)a, (long long)b, (long long)result);
-                        addDbg = 1;
-                    }
                     if (result >= Oop::smallIntegerMin() && result <= Oop::smallIntegerMax()) {
                         popN(2);
                         push(Oop::fromSmallInteger(result));
@@ -5159,13 +5244,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
                                  rcvr.asObjectPtr()->isBytesObject(), 0)) {
                 // Byte object: fall through to normal dispatch
-                static int getterByteGuard = 0;
-                if (getterByteGuard++ < 5) {
-                    std::string sel = memory_.selectorOf(cached->method);
-                    fprintf(stderr, "[VM] GETTER-BYTE-GUARD #%d: #%s accessor=%d on bytes-obj cls=%u\n",
-                            getterByteGuard, sel.c_str(), cached->accessorIndex,
-                            rcvr.asObjectPtr()->classIndex());
-                }
             } else {
 #if PHARO_JIT_ENABLED
                 patchJITICAfterSend(cached->method, rcvr, selector);
@@ -8712,6 +8790,7 @@ bool Interpreter::bootstrapStartup() {
         return Oop::nil();
     };
 
+
     // First try: SmalltalkImage >> recordStartupStamp
     if (startupAttempt_ == 1) {
         // SmalltalkImage is the class; we need to find "Smalltalk" which is the instance
@@ -9188,19 +9267,6 @@ Oop Interpreter::findSelector(const char* name) {
 
 
 bool Interpreter::executeFromContext(Oop context) {
-    {
-        static int efcLog = 0;
-        if (efcLog < 200) {
-            Oop method = context.isObject() && !context.isNil() ? memory_.fetchPointer(3, context) : Oop::nil();
-            std::string sel = method.isObject() && !method.isNil() ? memory_.selectorOf(method) : "?";
-            Oop pcOop = context.isObject() && !context.isNil() ? memory_.fetchPointer(1, context) : Oop::nil();
-            int pc = pcOop.isSmallInteger() ? (int)pcOop.asSmallInteger() : -1;
-            Oop rcv = context.isObject() && !context.isNil() ? memory_.fetchPointer(5, context) : Oop::nil();
-            std::string rcls = rcv.isObject() && !rcv.isNil() ? memory_.classNameOf(rcv) : "nil";
-            fprintf(stderr, "[EFC %d] #%s pc=%d rcv=%s\n", efcLog, sel.c_str(), pc, rcls.c_str());
-            efcLog++;
-        }
-    }
     // Set up SIGSEGV recovery point - if we crash accessing unrelocated pointers,
     // we'll longjmp back here and return false instead of terminating the VM
     if (sigsetjmp(g_sigsegvRecovery, 1) != 0) {
@@ -10253,9 +10319,11 @@ void Interpreter::tryJITResumeInCaller() {
     // After a send returns, we're in the caller's frame with IP at the
     // bytecode after the send and the return value on the stack. If the
     // caller has JIT code, resume execution in JIT from this bytecode.
-    if (inJITResume_) return;  // Prevent re-entrancy from returnValue
+    if (inJITResume_) return;  // Prevent re-entrancy from returnValue or tryJITActivation
     inJITResume_ = true;
+    int resumeIter = 0;
     while (running_ && jitRuntime_.isInitialized()) {
+        if (++resumeIter > 10000) break;  // Safety limit
         // Break out if checkCountdown_ expired — let interpret() periodic
         // checks run (GC, timer, process scheduling, test triggers, etc.)
         if (checkCountdown_ <= 0) break;
@@ -10497,6 +10565,22 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
+    // Debug: log benchFib patches
+    {
+        std::string sel = memory_.selectorOf(resolvedMethod);
+        if (sel == "benchFib") {
+            static int bfPatchLog = 0;
+            if (bfPatchLog < 5) {
+                bfPatchLog++;
+                jit::JITMethod* tgt = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
+                uint64_t tag = receiver.rawBits() & 0x7;
+                fprintf(stderr, "[BF-PATCH] benchFib IC patch: compiled=%d exec=%d tag=%llu icData=%p\n",
+                        tgt != nullptr, tgt && tgt->isExecutable(),
+                        (unsigned long long)tag, (void*)icData);
+            }
+        }
+    }
+
     // Verify the IC belongs to this send by checking that the IC's stored
     // selector matches the send's selector. If they don't match, the
     // pendingICPatch_ was stale (set by a different send in a nested JIT
@@ -10627,15 +10711,19 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
 
-    // Debug: log high-frequency upgrade attempts
-    static size_t upgradeAttempts = 0;
-    upgradeAttempts++;
-    if (upgradeAttempts <= 50 || (upgradeAttempts % 100000 == 0)) {
+    // Debug: log upgrade attempts for benchFib specifically
+    {
         std::string sel = memory_.selectorOf(cachedMethod);
-        fprintf(stderr, "[IC-UPG-TRY] #%d #%s compiled=%d banned=%d\n",
-                (int)upgradeAttempts, sel.c_str(),
-                (target && target->isExecutable()) ? 1 : 0,
-                isJ2JBanned(cachedMethod.rawBits()) ? 1 : 0);
+        if (sel == "benchFib") {
+            static int bfLog = 0;
+            if (bfLog < 5) {
+                bfLog++;
+                fprintf(stderr, "[BF-UPG] benchFib upgrade: compiled=%d exec=%d banned=%d key=0x%llx\n",
+                        target != nullptr, target && target->isExecutable(),
+                        isJ2JBanned(cachedMethod.rawBits()),
+                        (unsigned long long)(cachedMethod.rawBits()));
+            }
+        }
     }
 
     if (!target || !target->isExecutable()) return;
@@ -10719,7 +10807,22 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
+    static bool noJit = getenv("PHARO_NOJIT") != nullptr;
+    if (noJit) return false;
 
+    // Suppress tryJITResumeInCaller while the chain loop is active.
+    // Both mechanisms resume JIT after sends return; having both active
+    // simultaneously creates infinite mutual recursion.
+    bool wasInJITResume = inJITResume_;
+    inJITResume_ = true;
+    struct ResumeGuard {
+        bool& flag; bool prev;
+        ~ResumeGuard() { flag = prev; }
+    } resumeGuard{inJITResume_, wasInJITResume};
+
+    static int jitActivationDepth = 0;
+    jitActivationDepth++;
+    struct DepthGuard { ~DepthGuard() { jitActivationDepth--; } } depthGuard;
     // Guard: method must be a valid object pointer
     if (!method.isObject() || method.rawBits() < 0x10000) return false;
 
@@ -10805,6 +10908,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         // Handle exit reason
+        Oop chainTarget;  // Set by ExitSend/ExitSendCached, used by shared chain code after switch
         switch (state.exitReason) {
         case jit::ExitReturn: {
             if (!popFrame()) {
@@ -10825,7 +10929,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         return true;
                     }
                 }
-                // No sender — terminate and reschedule
+                // No sender — top of context chain.
+                if (benchMode_) {
+                    // PHARO_BENCH: handle benchmark completion inline
+                    handleBenchComplete();
+                    return true;
+                }
                 terminateCurrentProcess();
                 tryReschedule();
                 return true;
@@ -10835,20 +10944,54 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitSend: {
+            // IC miss: do method lookup, patch IC, and chain into callee
+            // instead of bailing to interpreter (which loses JIT continuity).
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
-            if (state.icDataPtr) {
-                bool hasEmpty = false;
-                for (int e = 0; e < 4; e++) {
-                    if (state.icDataPtr[e * 3] == 0) { hasEmpty = true; break; }
-                }
-                if (hasEmpty) {
-                    pendingICPatch_ = state.icDataPtr;
-                    pendingICSendArgCount_ = state.sendArgCount;
-                }
+            // Get selector from IC data (stored at offset 12 by compiler)
+            if (!state.icDataPtr) return false;
+            Oop sendSel = Oop::fromRawBits(state.icDataPtr[12]);
+            if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) return false;
+
+            int nArgs = state.sendArgCount;
+            Oop rcvr = stackValue(nArgs);
+            Oop rcvrClass = memory_.classOf(rcvr);
+
+            // Method lookup — global method cache first, then full lookup
+            Oop resolved;
+            MethodCacheEntry* ce = probeCache(sendSel, rcvrClass);
+            if (ce) {
+                resolved = ce->method;
+            } else {
+                resolved = lookupMethod(sendSel, rcvrClass);
+                if (resolved.isNil()) return false;  // DNU — interpreter handles
+                cacheMethod(sendSel, rcvrClass, resolved);
             }
-            return false;
+
+            if (!resolved.isObject() || resolved.rawBits() < 0x10000 ||
+                resolved.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                return false;  // Non-standard method — interpreter handles
+            }
+
+            // Patch IC immediately so next hit is ExitSendCached
+            pendingICPatch_ = state.icDataPtr;
+            pendingICSendArgCount_ = nArgs;
+            patchJITICAfterSend(resolved, rcvr, sendSel);
+
+            // Populate mega cache for JIT stencil probes
+            {
+                uint64_t tag = rcvr.rawBits() & 0x7;
+                uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
+                    ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
+                    : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+                if (megaKey != 0)
+                    jitRuntime_.megaCacheAdd(sendSel.rawBits(), megaKey, resolved.rawBits());
+            }
+
+            chainTarget = resolved;
+            jitRuntime_.noteMethodEntry(resolved);
+            break;  // → shared send-chain code after switch
         }
 
         case jit::ExitSendCached: {
@@ -10876,104 +11019,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Upgrade IC entry to J2J if target is now JIT-compiled
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount);
 
-            {
-                uint8_t sendOp = *instructionPointer_;
-                if (sendOp >= 0x80 && sendOp <= 0xAF) {
-                    instructionPointer_ += 1;
-                } else if (sendOp == 0xEA || sendOp == 0xEB) {
-                    instructionPointer_ += 2;  // ExtSend / ExtSuperSend
-                } else {
-                    instructionPointer_ += 1;
-                }
-            }
-            int nArgs = state.sendArgCount;
+            chainTarget = cached;
             jitRuntime_.noteMethodEntry(cached);
-
-            // Try primitive before activateMethod — primitive methods should
-            // execute their primitive, not fallback bytecodes.
-            {
-                int primIdx = primitiveIndexOf(cached);
-                if (primIdx > 0) {
-                    argCount_ = nArgs;
-                    primitiveFailed_ = false;
-                    primFailCode_ = 0;
-                    newMethod_ = cached;
-                    PrimitiveResult result = executePrimitive(primIdx, nArgs);
-                    cached = newMethod_;  // Refresh: GC during prim may have moved it
-                    if (result == PrimitiveResult::Success) {
-                        // Primitive succeeded — resume JIT at bytecode after send
-                        jitJ2JActChains_++;
-                        method = method_;  // Refresh: GC may have moved the method
-                        uint32_t bcOffset = computeCurrentBCOffset();
-                        if (bcOffset == UINT32_MAX) return true;
-                        state.sp = stackPointer_;
-                        state.receiver = receiver_;
-                        methObj = method.asObjectPtr();
-                        state.literals = methObj->slots() + 1;
-                        state.tempBase = framePointer_ + 1;
-                        {
-                            Oop hdr = methObj->slots()[0];
-                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                            state.ip = methObj->bytes() + (1 + numLits) * 8;
-                        }
-                        state.method = method;
-                        state.argCount = argCount;
-                        state.icDataPtr = nullptr;
-                        state.sendArgCount = 0;
-                        state.exitReason = jit::ExitNone;
-                        if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                            return true;
-                        }
-                        chargeJITBytecodes(state);
-                        if (checkCountdown_ <= 0) goto jit_loop_exit;
-                        continue;
-                    }
-                }
-            }
-
-            size_t callerDepth = frameDepth_;
-            activateMethod(cached, nArgs);
-
-            if (frameDepth_ != callerDepth) {
-                // Target has an active frame — dispatch loop handles it
-                jitJ2JActFalls_++;
-                return true;
-            }
-
-            // Target completed (JIT handled it end-to-end).
-            // Resume JIT execution at the bytecode after the send.
-            jitJ2JActChains_++;
-            {
-                method = method_;  // Refresh: GC may have moved the method
-                uint32_t bcOffset = computeCurrentBCOffset();
-                if (bcOffset == UINT32_MAX) return true;
-
-                // Re-setup JIT state from current interpreter state
-                state.sp = stackPointer_;
-                state.receiver = receiver_;
-                methObj = method.asObjectPtr();
-                state.literals = methObj->slots() + 1;
-                state.tempBase = framePointer_ + 1;
-                // state.ip must be bytecodeStart (stencils use ip + bcOffset)
-                {
-                    Oop hdr = methObj->slots()[0];
-                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                    state.ip = methObj->bytes() + (1 + numLits) * 8;
-                }
-                state.method = method;
-                state.argCount = argCount;
-                state.icDataPtr = nullptr;
-                state.sendArgCount = 0;
-                state.exitReason = jit::ExitNone;
-
-                // TRACE: peek resume after send
-                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                    return true;  // No re-entry at this offset; interpreter handles rest
-                }
-                chargeJITBytecodes(state);
-                if (checkCountdown_ <= 0) goto jit_loop_exit;
-                continue;  // Loop to handle the new exit reason
-            }
+            break;  // → shared send-chain code after switch
         }
 
         case jit::ExitBlockCreate: {
@@ -11089,6 +11137,107 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         default:
             return false;
         }
+
+        // --- Shared send-chain code (reached via break from ExitSend/ExitSendCached) ---
+        // chainTarget holds the resolved method. Advance IP past the send bytecode,
+        // try primitive execution, then activateMethod and resume JIT.
+        {
+            // Advance IP past send bytecode
+            uint8_t sendOp = *instructionPointer_;
+            if (sendOp >= 0x80 && sendOp <= 0xAF) {
+                instructionPointer_ += 1;
+            } else if (sendOp == 0xEA || sendOp == 0xEB) {
+                instructionPointer_ += 2;  // ExtSend / ExtSuperSend
+            } else {
+                instructionPointer_ += 1;
+            }
+
+            int nArgs = state.sendArgCount;
+
+            // Try primitive before activateMethod — primitive methods should
+            // execute their primitive, not fallback bytecodes.
+            {
+                int primIdx = primitiveIndexOf(chainTarget);
+                if (primIdx > 0) {
+                    argCount_ = nArgs;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = chainTarget;
+                    PrimitiveResult result = executePrimitive(primIdx, nArgs);
+                    chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
+                    if (result == PrimitiveResult::Success) {
+                        // Primitive succeeded — resume JIT at bytecode after send
+                        jitJ2JActChains_++;
+                        method = method_;
+                        uint32_t bcOffset = computeCurrentBCOffset();
+                        if (bcOffset == UINT32_MAX) return true;
+                        state.sp = stackPointer_;
+                        state.receiver = receiver_;
+                        methObj = method.asObjectPtr();
+                        state.literals = methObj->slots() + 1;
+                        state.tempBase = framePointer_ + 1;
+                        {
+                            Oop hdr = methObj->slots()[0];
+                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            state.ip = methObj->bytes() + (1 + numLits) * 8;
+                        }
+                        state.method = method;
+                        state.argCount = argCount;
+                        state.icDataPtr = nullptr;
+                        state.sendArgCount = 0;
+                        state.exitReason = jit::ExitNone;
+                        if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                            return true;
+                        }
+                        chargeJITBytecodes(state);
+                        if (checkCountdown_ <= 0) goto jit_loop_exit;
+                        continue;
+                    }
+                }
+            }
+
+            // Non-primitive or primitive failed — activate the method
+            size_t callerDepth = frameDepth_;
+            activateMethod(chainTarget, nArgs);
+
+            if (frameDepth_ != callerDepth) {
+                // Target pushed a frame — interpreter dispatch loop handles it
+                jitJ2JActFalls_++;
+                return true;
+            }
+
+            // Target completed (JIT or trivial method handled it end-to-end).
+            // Resume JIT execution at the bytecode after the send.
+            jitJ2JActChains_++;
+            {
+                method = method_;  // Refresh: GC may have moved the method
+                uint32_t bcOffset = computeCurrentBCOffset();
+                if (bcOffset == UINT32_MAX) return true;
+
+                state.sp = stackPointer_;
+                state.receiver = receiver_;
+                methObj = method.asObjectPtr();
+                state.literals = methObj->slots() + 1;
+                state.tempBase = framePointer_ + 1;
+                {
+                    Oop hdr = methObj->slots()[0];
+                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    state.ip = methObj->bytes() + (1 + numLits) * 8;
+                }
+                state.method = method;
+                state.argCount = argCount;
+                state.icDataPtr = nullptr;
+                state.sendArgCount = 0;
+                state.exitReason = jit::ExitNone;
+
+                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                    return true;
+                }
+                chargeJITBytecodes(state);
+                if (checkCountdown_ <= 0) goto jit_loop_exit;
+                continue;
+            }
+        }
     }
     // Chain limit reached — fall through to handle unprocessed exit
 
@@ -11114,6 +11263,10 @@ jit_loop_exit:
                     if (pastVal > stackPointer_) stackPointer_ = pastVal;
                     return true;
                 }
+            }
+            if (benchMode_) {
+                handleBenchComplete();
+                return true;
             }
             terminateCurrentProcess();
             tryReschedule();
