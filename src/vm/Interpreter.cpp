@@ -11043,10 +11043,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     {
         struct J2JSave {
             Oop* sp; Oop receiver; Oop* literals; Oop* tempBase;
-            jit::JITMethod* jitMethod; Oop method; int argCount;
+            jit::JITMethod* jitMethod; int argCount;
             uint8_t* ip; int sendArgCount;
             uint8_t* resumeAddr;  // Precomputed JIT code address to resume at
             uint8_t* bcStart;     // Precomputed bytecodeStart (for state.ip reset on resume)
+            // Note: method Oop is derivable from jitMethod->compiledMethodOop,
+            // so we don't save it (saves 8 bytes + 2 memory ops per call).
         };
         static constexpr int MaxJ2JDepth = 256;
         J2JSave j2jStack[MaxJ2JDepth];
@@ -11082,14 +11084,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 save.tempBase = state.tempBase;
                 jit::JITMethod* callerJM = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
                 save.jitMethod = callerJM;
-                save.method = state.method;
                 save.argCount = state.argCount;
                 save.ip = state.ip;
                 save.sendArgCount = state.sendArgCount;
 
                 // Precompute resume JIT code address (avoids bcToCode lookup on return)
                 {
-                    ObjectHeader* callerMethObj = state.method.asObjectPtr();
+                    Oop callerMethod = Oop::fromRawBits(callerJM->compiledMethodOop);
+                    ObjectHeader* callerMethObj = callerMethod.asObjectPtr();
                     int callerNumLits = static_cast<int>(callerJM->methodHeader & 0x7FFF);
                     uint8_t* callerBCStart = callerMethObj->bytes() + (1 + callerNumLits) * 8;
                     save.bcStart = callerBCStart;
@@ -11123,8 +11125,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.tempBase = fp + 1;
                 state.argCount = nArgs;
                 state.exitReason = jit::ExitNone;
-                state.method = targetMethod;
                 state.jitMethod = calleeJM;
+                // Note: state.method is NOT updated here. Stencils don't read it,
+                // and we reconstruct from state.jitMethod->compiledMethodOop
+                // after the trampoline loop exits.
 
                 // IP = bytecodeStart of callee
                 int numLits = static_cast<int>(calleeJM->methodHeader & 0x7FFF);
@@ -11152,13 +11156,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 Oop retVal = state.returnValue;
                 J2JSave& save = j2jStack[j2jDepth];
 
-                // Restore caller JITState
+                // Restore caller JITState (state.method is NOT stored in J2JSave
+                // — stencils don't read it; reconstructed on bailout from jitMethod).
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.literals = save.literals;
                 state.tempBase = save.tempBase;
                 state.jitMethod = save.jitMethod;
-                state.method = save.method;
                 state.argCount = save.argCount;
                 state.ip = save.ip;
 
@@ -11189,6 +11193,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Charge bytecodes for all J2J calls + returns in bulk
         checkCountdown_ -= static_cast<int>(jitJ2JStencilCalls_ + jitJ2JStencilReturns_) * 10;
 
+        // Reconstruct state.method from state.jitMethod — we skip updating it
+        // in the hot loop for speed, but fall-through paths need it current.
+        if (state.jitMethod) {
+            state.method = Oop::fromRawBits(
+                reinterpret_cast<jit::JITMethod*>(state.jitMethod)->compiledMethodOop);
+        }
+
         // If we bailed out with pending J2J frames, materialize them
         // so the interpreter can see them.
         if (j2jDepth > 0) {
@@ -11199,14 +11210,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
 
                 jit::JITMethod* saveJM = save.jitMethod;
-                ObjectHeader* saveMethObj = save.method.asObjectPtr();
+                Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
                 int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
                 uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
 
                 frame.savedIP = save.ip;
                 frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
-                frame.savedMethod = save.method;
-                frame.savedHomeMethod = save.method;
+                frame.savedMethod = saveMethod;
+                frame.savedHomeMethod = saveMethod;
                 frame.savedReceiver = save.receiver;
                 frame.savedClosure = nil;
                 frame.savedActiveContext = nil;
