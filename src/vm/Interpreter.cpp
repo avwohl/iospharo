@@ -455,27 +455,40 @@ bool Interpreter::initialize() {
     // Image is booted (valid snapshot context being resumed)
     imageBooted_ = true;
 
-    // PHARO_BENCH: replace resume context with benchFib to bypass session handlers.
-    // interpret() will run benchFib; terminate_process handler manages timing and repetition.
-    // We suppress process switching (huge checkCountdown_) so the UI/idle processes
-    // can't preempt benchFib — otherwise it never completes.
+    // PHARO_BENCH: replace resume context with benchmark(s) to bypass session handlers.
+    // PHARO_BENCH=1 or PHARO_BENCH=fib: run fibonacci only
+    // PHARO_BENCH=sieve: run sieve only
+    // PHARO_BENCH=all: run fib + sieve
+    // PHARO_FIB_N: override fibonacci argument (default 28)
     if (getenv("PHARO_BENCH")) {
-        Oop method = findBenchFibMethod();
-        if (!method.isNil()) {
-            fprintf(stderr, "[BENCH] Found Integer>>benchFib, starting benchmark mode\n");
-            benchMode_ = true;
-            benchRunCount_ = -1;  // -1 = warmup run
-            checkCountdown_ = INT32_MAX;  // Suppress process switching during benchmark
-            int fibN = 28;
-            const char* fibEnv = getenv("PHARO_FIB_N");
-            if (fibEnv) fibN = atoi(fibEnv);
-            fprintf(stderr, "[BENCH] Running fib(%d)\n", fibN);
-            Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(fibN));
-            if (!ctx.isNil()) {
-                return executeFromContext(ctx);
-            }
-        }
-        fprintf(stderr, "[BENCH] Could not find Integer>>benchFib\n");
+        const char* benchType = getenv("PHARO_BENCH");
+        fprintf(stderr, "[BENCH] PHARO_BENCH=%s detected\n", benchType);
+        int fibN = 28;
+        const char* fibEnv = getenv("PHARO_FIB_N");
+        if (fibEnv) fibN = atoi(fibEnv);
+
+        bool wantFib = (strcmp(benchType, "1") == 0 || strcmp(benchType, "fib") == 0 || strcmp(benchType, "all") == 0);
+        bool wantSieve = (strcmp(benchType, "sieve") == 0 || strcmp(benchType, "all") == 0);
+        bool wantEven = (strcmp(benchType, "even") == 0);
+
+        if (wantFib)
+            benchSpecs_.push_back({"fib(" + std::to_string(fibN) + ")", "Integer", "benchFib", fibN, 5});
+        if (wantSieve)
+            benchSpecs_.push_back({"sieve x3", "Integer", "benchmark", 3, 1});
+        if (wantEven)
+            benchSpecs_.push_back({"even", "Integer", "even", 42, 3});
+        if (strcmp(benchType, "factorial") == 0)
+            benchSpecs_.push_back({"factorial", "Integer", "factorial", 100, 5});
+
+        // Default to fib if unrecognized
+        if (benchSpecs_.empty())
+            benchSpecs_.push_back({"fib(" + std::to_string(fibN) + ")", "Integer", "benchFib", fibN, 5});
+
+        benchMode_ = true;
+        benchSpecIdx_ = 0;
+        fprintf(stderr, "[BENCH] Starting %zu benchmark(s)\n", benchSpecs_.size());
+        startBench(benchSpecs_[0]);
+        return true;
     }
 
     // Now execute from the original context
@@ -497,19 +510,20 @@ void Interpreter::initializeDisplayForm() {
     }
 }
 
-Oop Interpreter::findBenchFibMethod() {
-    Oop intClass = memory_.findGlobal("Integer");
-    if (!intClass.isObject() || intClass.isNil()) return Oop::nil();
-    Oop methodDict = memory_.fetchPointer(1, intClass);
+Oop Interpreter::findMethod(const char* className, const char* selector) {
+    Oop cls = memory_.findGlobal(className);
+    if (!cls.isObject() || cls.isNil()) return Oop::nil();
+    Oop methodDict = memory_.fetchPointer(1, cls);
     if (!methodDict.isObject()) return Oop::nil();
     ObjectHeader* mdHdr = methodDict.asObjectPtr();
     size_t mdSlots = mdHdr->slotCount();
+    size_t selLen = strlen(selector);
     for (size_t i = 2; i < mdSlots; i++) {
         Oop key = mdHdr->slotAt(i);
         if (!key.isObject() || key.isNil()) continue;
         ObjectHeader* kHdr = key.asObjectPtr();
-        if (kHdr->isBytesObject() && kHdr->byteSize() == 8 &&
-            memcmp(kHdr->bytes(), "benchFib", 8) == 0) {
+        if (kHdr->isBytesObject() && kHdr->byteSize() == selLen &&
+            memcmp(kHdr->bytes(), selector, selLen) == 0) {
             Oop values = memory_.fetchPointer(1, methodDict);
             if (values.isObject()) {
                 ObjectHeader* vHdr = values.asObjectPtr();
@@ -523,44 +537,81 @@ Oop Interpreter::findBenchFibMethod() {
     return Oop::nil();
 }
 
-void Interpreter::handleBenchComplete() {
-    if (benchRunCount_ == -1) {
-        fprintf(stderr, "[BENCH] Warmup done. Starting timed runs...\n");
-        benchRunCount_ = 0;
-    } else if (benchRunCount_ >= 0 && benchRunCount_ < 5) {
-        auto now = std::chrono::high_resolution_clock::now();
-        long us = std::chrono::duration_cast<std::chrono::microseconds>(now - benchStartTime_).count();
-        fprintf(stderr, "[BENCH] fib(28) run %d: %ld us (%ld ms)\n", benchRunCount_, us, us / 1000);
-        benchRunCount_++;
-    }
-    if (benchRunCount_ >= 5) {
-#if PHARO_JIT_ENABLED
-        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu stale=%zu | J2J patches=%zu stencilCalls=%zu/%zu\n",
-            jitICHits_, jitICMisses_, jitICStale_,
-            jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
-#endif
-        fprintf(stderr, "[BENCH] Done. 5 runs complete.\n");
-        stop();
-        return;
-    }
-    // Set up next run
+Oop Interpreter::findBenchFibMethod() {
+    return findMethod("Integer", "benchFib");
+}
+
+void Interpreter::startBench(const BenchSpec& spec) {
+    fprintf(stderr, "[BENCH] === %s ===\n", spec.name.c_str());
+    benchRunCount_ = -1;  // warmup
+    setupBenchContext();
+}
+
+void Interpreter::setupBenchContext() {
+    const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
     checkCountdown_ = INT32_MAX;
     benchStartTime_ = std::chrono::high_resolution_clock::now();
-    Oop method = findBenchFibMethod();
+    Oop method = findMethod(spec.className, spec.selector);
+    fprintf(stderr, "[BENCH] setupBenchContext: %s>>%s method=0x%llx\n",
+            spec.className, spec.selector, (unsigned long long)method.rawBits());
+    if (!method.isNil()) {
+        Oop cls = memory_.findGlobal(spec.className);
+        fprintf(stderr, "[BENCH]   class=0x%llx\n", (unsigned long long)cls.rawBits());
+        if (cls.isObject() && !cls.isNil()) {
+            Oop mDict = memory_.fetchPointer(1, cls);
+            fprintf(stderr, "[BENCH]   methodDict=0x%llx\n", (unsigned long long)mDict.rawBits());
+        }
+    }
     if (!method.isNil()) {
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
-        int fibN = 28;
-        const char* fibEnv = getenv("PHARO_FIB_N");
-        if (fibEnv) fibN = atoi(fibEnv);
-        Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(fibN));
+        Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(spec.arg));
         if (!ctx.isNil()) {
             executeFromContext(ctx);
             return;
         }
     }
-    fprintf(stderr, "[BENCH] Failed to find/create benchFib context\n");
-    stop();
+    fprintf(stderr, "[BENCH] Failed to find %s>>%s\n", spec.className, spec.selector);
+    // Skip to next benchmark
+    benchSpecIdx_++;
+    if (benchSpecIdx_ < (int)benchSpecs_.size()) {
+        startBench(benchSpecs_[benchSpecIdx_]);
+    } else {
+        stop();
+    }
+}
+
+void Interpreter::handleBenchComplete() {
+    fprintf(stderr, "[BENCH] handleBenchComplete called (specIdx=%d runCount=%d)\n", benchSpecIdx_, benchRunCount_);
+    const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
+    if (benchRunCount_ == -1) {
+        fprintf(stderr, "[BENCH] %s warmup done\n", spec.name.c_str());
+        benchRunCount_ = 0;
+    } else if (benchRunCount_ >= 0 && benchRunCount_ < spec.runs) {
+        auto now = std::chrono::high_resolution_clock::now();
+        long us = std::chrono::duration_cast<std::chrono::microseconds>(now - benchStartTime_).count();
+        fprintf(stderr, "[BENCH] %s run %d: %ld us (%ld ms)\n", spec.name.c_str(), benchRunCount_, us, us / 1000);
+        benchRunCount_++;
+    }
+    if (benchRunCount_ >= spec.runs) {
+        // Move to next benchmark
+        benchSpecIdx_++;
+        if (benchSpecIdx_ < (int)benchSpecs_.size()) {
+            startBench(benchSpecs_[benchSpecIdx_]);
+            return;
+        }
+        // All benchmarks done
+#if PHARO_JIT_ENABLED
+        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu stale=%zu | J2J patches=%zu stencilCalls=%zu/%zu\n",
+            jitICHits_, jitICMisses_, jitICStale_,
+            jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
+#endif
+        fprintf(stderr, "[BENCH] All benchmarks complete.\n");
+        stop();
+        return;
+    }
+    // Set up next run of same benchmark
+    setupBenchContext();
 }
 
 void Interpreter::ensureDisplayForm(int width, int height, int depth) {
@@ -951,6 +1002,19 @@ void Interpreter::interpret() {
         if (!running_) { goto cg_exit; }
     }
     bytecode = *instructionPointer_++;
+    // Debug: trace bytecodes when inside atAllPut: (2nd+ call)
+    if (__builtin_expect(traceAtAllPut_ >= 2 && traceAtAllPut_ <= 3 && frameDepth_ >= 1, 0)) {
+        static int aapBCCount = 0;
+        if (aapBCCount < 40) {
+            aapBCCount++;
+            ptrdiff_t off = (instructionPointer_ - 1) - method_.asObjectPtr()->bytes();
+            fprintf(stderr, "[BC #%d] fd=%zu 0x%02X @off=%td SP=%ld top=0x%llx method=#%s\n",
+                    aapBCCount, frameDepth_, bytecode, off,
+                    (long)(stackPointer_ - stackBase_),
+                    (stackPointer_ > stackBase_) ? (unsigned long long)(stackPointer_[-1].rawBits()) : 0ULL,
+                    memory_.selectorOf(method_).c_str());
+        }
+    }
     if constexpr (ENABLE_DEBUG_LOGGING) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
@@ -3570,6 +3634,12 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    // Debug: trace during atAllPut: debugging
+    if (benchMode_ && traceAtAllPut_ >= 2) {
+        std::string sel = memory_.selectorOf(method_);
+        fprintf(stderr, "[RV] returnValue from #%s fd=%zu val=0x%llx\n",
+                sel.c_str(), frameDepth_, (unsigned long long)value.rawBits());
+    }
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check for pending NLR through ensure:.
@@ -3985,6 +4055,16 @@ terminate_process:
             }
         }
     } else {
+        // Debug: track returns from atAllPut:-related methods
+        if (benchMode_ && traceAtAllPut_ > 0) {
+            std::string retSel = memory_.selectorOf(method_);
+            if (retSel == "atAllPut:" || retSel == "from:to:put:" || retSel == "size") {
+                std::string resumeSel = (frameDepth_ > 0) ? memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod) : "(base)";
+                fprintf(stderr, "[RET] #%s → resuming #%s fd=%zu SP=%ld FP=%ld\n",
+                        retSel.c_str(), resumeSel.c_str(), frameDepth_,
+                        (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
+            }
+        }
         // Pop frame and push result
         if (!popFrame()) return;  // Process terminated and rescheduled
     }
@@ -4053,6 +4133,13 @@ terminate_process:
 }
 
 void Interpreter::returnFromMethod() {
+    // Debug: trace returns during atAllPut: debugging
+    if (benchMode_ && traceAtAllPut_ >= 2) {
+        std::string sel = memory_.selectorOf(method_);
+        fprintf(stderr, "[RFM] returnFromMethod from #%s fd=%zu SP=%ld FP=%ld\n",
+                sel.c_str(), frameDepth_,
+                (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
+    }
     Oop value = pop();
 
     // Check if we're executing inside a block (CompiledBlock)
@@ -5073,6 +5160,54 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
+    // Debug trace for sieve benchmark nil arg bug
+    if (benchMode_ && selector.isObject() && selector.rawBits() > 0x10000) {
+        ObjectHeader* sh = selector.asObjectPtr();
+        size_t selLen = sh->isBytesObject() ? sh->byteSize() : 0;
+        // Trace new: to verify Array allocation
+        if (selLen == 4 && memcmp(sh->bytes(), "new:", 4) == 0) {
+            fprintf(stderr, "[TRACE] new: rcvr=0x%llx arg=0x%llx (%s)\n",
+                    (unsigned long long)rcvr.rawBits(),
+                    (unsigned long long)stackValue(0).rawBits(),
+                    stackValue(0).isSmallInteger() ? "SmallInt" : "object");
+        }
+        // Trace atAllPut:
+        if (selLen == 9 && memcmp(sh->bytes(), "atAllPut:", 9) == 0) {
+            traceAtAllPut_++;
+            fprintf(stderr, "[TRACE] atAllPut: #%d rcvr=0x%llx (%s) arg=0x%llx SP=%ld FP=%ld fd=%zu\n",
+                    traceAtAllPut_,
+                    (unsigned long long)rcvr.rawBits(),
+                    rcvr.isSmallInteger() ? "SmallInt" : memory_.classNameOf(rcvr).c_str(),
+                    (unsigned long long)stackValue(0).rawBits(),
+                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_),
+                    frameDepth_);
+        }
+        // Trace size sends on Arrays for debugging
+        if (selLen == 4 && memcmp(sh->bytes(), "size", 4) == 0 && rcvr.isObject() && !rcvr.isNil()) {
+            std::string rcls = memory_.classNameOf(rcvr);
+            if (rcls == "Array") {
+                fprintf(stderr, "[TRACE] Array>>size rcvr=0x%llx\n", (unsigned long long)rcvr.rawBits());
+            }
+        }
+        // Trace #> sends
+        if (selLen == 1 && sh->bytes()[0] == '>' && rcvr.rawBits() == memory_.nil().rawBits()) {
+            fprintf(stderr, "[TRACE] nil > ... DETECTED! fd=%zu method=#%s\n",
+                    frameDepth_, memory_.selectorOf(method_).c_str());
+        }
+        if (selLen == 12 && memcmp(sh->bytes(), "from:to:put:", 12) == 0) {
+            fprintf(stderr, "[TRACE] from:to:put: argCount=%d rcvr=0x%llx\n",
+                    argCount, (unsigned long long)rcvr.rawBits());
+            for (int i = 0; i < argCount; i++) {
+                Oop a = stackValue(argCount - 1 - i);
+                fprintf(stderr, "[TRACE]   arg[%d]=0x%llx (%s)\n", i,
+                        (unsigned long long)a.rawBits(),
+                        a.isSmallInteger() ? "SmallInt" : a.isNil() ? "nil" : "object");
+            }
+            fprintf(stderr, "[TRACE]   SP=%p FP=%p base=%p spOff=%ld fpOff=%ld\n",
+                    (void*)stackPointer_, (void*)framePointer_, (void*)stackBase_,
+                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
+        }
+    }
 
     // Selector sanity check: must be a bytes object (Symbol/ByteString)
     if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
@@ -5259,6 +5394,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         // Skip method activation — store arg in inst var, leave receiver on stack
         // Same byte-object guard as getter path.
         if (cached->setterIndex >= 0 && argCount == 1) {
+            // Debug: detect setter fast-path on unexpected selectors
+            if (benchMode_ && selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* _sh = selector.asObjectPtr();
+                if (_sh->isBytesObject() && _sh->byteSize() == 9 && memcmp(_sh->bytes(), "atAllPut:", 9) == 0) {
+                    fprintf(stderr, "[BUG-SETTER] atAllPut: hitting setter fast path! setterIdx=%d rcvr=0x%llx method=0x%llx\n",
+                            cached->setterIndex, (unsigned long long)rcvr.rawBits(), (unsigned long long)cached->method.rawBits());
+                }
+            }
             if (__builtin_expect(rcvr.isObject() && rcvr.rawBits() > 0x10000 &&
                                  rcvr.asObjectPtr()->isBytesObject(), 0)) {
                 // Byte object: fall through to normal dispatch
@@ -5283,6 +5426,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         int primIdx = cached->primitiveIndex;
+        // Debug: trace atAllPut: cache path
+        if (benchMode_ && selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* _sh2 = selector.asObjectPtr();
+            if (_sh2->isBytesObject() && _sh2->byteSize() == 9 && memcmp(_sh2->bytes(), "atAllPut:", 9) == 0) {
+                fprintf(stderr, "[CACHE-HIT] atAllPut: prim=%d getter=%d setter=%d retSelf=%d method=0x%llx\n",
+                        primIdx, cached->accessorIndex, cached->setterIndex,
+                        cached->returnsSelf ? 1 : 0, (unsigned long long)cached->method.rawBits());
+            }
+        }
         if (primIdx > 0) {
             argCount_ = argCount;
             primitiveFailed_ = false;
@@ -5777,6 +5929,64 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     } // end if constexpr (ENABLE_DEBUG_LOGGING)
+
+    // Debug: trace atAllPut: activation
+    if (benchMode_ && traceAtAllPut_ > 0) {
+        std::string sel = memory_.selectorOf(method);
+        if (sel == "atAllPut:") {
+            fprintf(stderr, "[ACT-AAP] #%d activateMethod atAllPut: fd=%zu SP=%ld FP=%ld rcvr=0x%llx\n",
+                    traceAtAllPut_, frameDepth_,
+                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_),
+                    (unsigned long long)receiver_.rawBits());
+            // Dump stack around FP
+            for (int i = -2; i <= 5; i++) {
+                Oop* slot = framePointer_ + i;
+                if (slot >= stackBase_ && slot < stackBase_ + 1024) {
+                    fprintf(stderr, "[ACT-AAP]   FP[%d]=0x%llx%s\n", i,
+                            (unsigned long long)slot->rawBits(),
+                            slot->isSmallInteger() ? " (smi)" : slot->isNil() ? " (nil)" : "");
+                }
+            }
+            // Dump bytecodes of the method on first call
+            if (traceAtAllPut_ == 1) {
+                ObjectHeader* mHdr = method.asObjectPtr();
+                Oop hdr = memory_.fetchPointer(0, method);
+                if (hdr.isSmallInteger()) {
+                    int64_t hBits = hdr.asSmallInteger();
+                    int nLits = hBits & 0x7FFF;
+                    int nTemps = (hBits >> 18) & 0x3F;
+                    int nArgs = (hBits >> 24) & 0xF;
+                    bool hasPrim = (hBits >> 16) & 1;
+                    size_t bcStart = (1 + nLits) * 8;
+                    size_t totalBytes = mHdr->byteSize();
+                    fprintf(stderr, "[AAP-BC] method=0x%llx nLits=%d nTemps=%d nArgs=%d hasPrim=%d\n",
+                            (unsigned long long)method.rawBits(), nLits, nTemps, nArgs, hasPrim);
+                    fprintf(stderr, "[AAP-BC] bytecodes (%zu bytes):", totalBytes - bcStart);
+                    uint8_t* bytes = mHdr->bytes();
+                    for (size_t i = bcStart; i < totalBytes && i < bcStart + 30; i++) {
+                        fprintf(stderr, " %02X", bytes[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    // Also dump literals
+                    fprintf(stderr, "[AAP-BC] literals:");
+                    for (int li = 1; li <= nLits && li <= 10; li++) {
+                        Oop lit = memory_.fetchPointer(li, method);
+                        if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            if (lh->isBytesObject() && lh->byteSize() < 40) {
+                                fprintf(stderr, " [%d]='%.*s'", li, (int)lh->byteSize(), (char*)lh->bytes());
+                            } else {
+                                fprintf(stderr, " [%d]=0x%llx", li, (unsigned long long)lit.rawBits());
+                            }
+                        } else {
+                            fprintf(stderr, " [%d]=0x%llx", li, (unsigned long long)lit.rawBits());
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
 
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
@@ -6797,6 +7007,23 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         rH->classIndex(), (int)rH->format(), memory_.classNameOf(rcvr).c_str());
             } else if (rcvr.isSmallInteger()) {
                 fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
+            }
+            // Dump args and frame info for debugging
+            if (dnuLogCount <= 3) {
+                for (int ai = 0; ai < argCount && ai < 5; ai++) {
+                    Oop arg = stackValue(argCount - 1 - ai);
+                    fprintf(stderr, "[DNU]   arg[%d] = 0x%llx (%s)\n", ai,
+                            (unsigned long long)arg.rawBits(),
+                            arg.isSmallInteger() ? "SmallInt" : arg.isNil() ? "nil" : "object");
+                }
+                fprintf(stderr, "[DNU]   FP=%p SP=%p base=%p\n", (void*)framePointer_, (void*)stackPointer_, (void*)stackBase_);
+                fprintf(stderr, "[DNU]   receiver_=0x%llx method_=0x%llx\n",
+                        (unsigned long long)receiver_.rawBits(), (unsigned long long)method_.rawBits());
+                // Dump a few frame pointer values
+                for (int fi = -2; fi <= 10; fi++) {
+                    Oop v = framePointer_[fi];
+                    fprintf(stderr, "[DNU]   FP[%d] = 0x%llx\n", fi, (unsigned long long)v.rawBits());
+                }
             }
         }
     }
@@ -11059,10 +11286,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             continue;  // Loop to handle the new exit reason
         }
 
-        case jit::ExitArithOverflow:
+        case jit::ExitArithOverflow: {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             return false;
+        }
 
         case jit::ExitPrimFail:
         case jit::ExitDeopt:

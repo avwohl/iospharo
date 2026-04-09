@@ -2277,21 +2277,27 @@ extern "C" void stencil_addSmallInt_2(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         int64_t result = va + vb;
-        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            _HOLE_CONTINUE(s);
-            return;
+        if (result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    Oop an, bt;
-    an.bits = a_bits; bt.bits = b_bits;
-    s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
-    _HOLE_RT_ARITH_OVERFLOW(s);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        _HOLE_CONTINUE(s);
+    } else {
+        Oop an, bt;
+        an.bits = a_bits; bt.bits = b_bits;
+        s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
+        s->ip = s->ip + OPERAND;
+        _HOLE_RT_ARITH_OVERFLOW(s);
+    }
 }
 
 extern "C" void stencil_subSmallInt_2(JITState* s) {
@@ -2312,6 +2318,7 @@ extern "C" void stencil_subSmallInt_2(JITState* s) {
     Oop an, bt;
     an.bits = a_bits; bt.bits = b_bits;
     s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -2319,22 +2326,28 @@ extern "C" void stencil_mulSmallInt_2(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         __int128 wide = (__int128)va * vb;
         int64_t result = (int64_t)wide;
-        if (__builtin_expect(wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            _HOLE_CONTINUE(s);
-            return;
+        if (wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    Oop an, bt;
-    an.bits = a_bits; bt.bits = b_bits;
-    s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
-    _HOLE_RT_ARITH_OVERFLOW(s);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        _HOLE_CONTINUE(s);
+    } else {
+        Oop an, bt;
+        an.bits = a_bits; bt.bits = b_bits;
+        s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
+        s->ip = s->ip + OPERAND;
+        _HOLE_RT_ARITH_OVERFLOW(s);
+    }
 }
 
 // ----- COMPARISON variants (state 2 → 1) -----
@@ -2356,6 +2369,7 @@ extern "C" void name(JITState* s) { \
     Oop an, bt; \
     an.bits = a_bits; bt.bits = b_bits; \
     s->sp[0] = an; s->sp[1] = bt; s->sp += 2; \
+    s->ip = s->ip + OPERAND; \
     _HOLE_RT_ARITH_OVERFLOW(s); \
 }
 
@@ -2380,6 +2394,7 @@ extern "C" void stencil_equalSmallInt_2(JITState* s) {
     s->sp[0] = an;
     s->sp[1] = bt;
     s->sp += 2;
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 
@@ -2396,6 +2411,7 @@ extern "C" void stencil_notEqualSmallInt_2(JITState* s) {
     Oop an, bt;
     an.bits = a_bits; bt.bits = b_bits;
     s->sp[0] = an; s->sp[1] = bt; s->sp += 2;
+    s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
 

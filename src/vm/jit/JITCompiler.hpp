@@ -109,6 +109,7 @@ private:
                               const DecodedBC& bc,
                               uint8_t* methodCode, uint32_t totalCodeSize,
                               const std::vector<uint32_t>& bcToCodeOffset,
+                              const std::vector<uint32_t>& bcToBranchOffset,
                               uint64_t* literalPool, uint32_t literalPoolOffset,
                               uint32_t& nextLiteralSlot);
 

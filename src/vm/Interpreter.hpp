@@ -311,32 +311,6 @@ public:
             stopVM("Stack overflow in push()");
             return;
         }
-        if (__builtin_expect(value.rawBits() == 0, 0)) {
-            static int pushZeroCount = 0;
-            if (pushZeroCount++ < 3) {
-                uint8_t bc = (instructionPointer_ > (uint8_t*)0x10000) ? instructionPointer_[-1] : 0;
-                fprintf(stderr, "[VM] PUSH-ZERO #%d in #%s fd=%zu bc=0x%02x rcvr=0x%llx\n",
-                        pushZeroCount, memory_.selectorOf(method_).c_str(), frameDepth_, bc,
-                        (unsigned long long)receiver_.rawBits());
-                if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
-                    ObjectHeader* rHdr = receiver_.asObjectPtr();
-                    fprintf(stderr, "[VM]   rcvr classIdx=%u slots=%zu fmt=%d\n",
-                            rHdr->classIndex(), rHdr->slotCount(), (int)rHdr->format());
-                    size_t nSlots = rHdr->slotCount() < 6 ? rHdr->slotCount() : 6;
-                    fprintf(stderr, "[VM]   rcvr slots:");
-                    for (size_t i = 0; i < nSlots; i++) {
-                        Oop s = rHdr->slotAt(i);
-                        fprintf(stderr, " [%zu]=0x%llx", i, (unsigned long long)s.rawBits());
-                    }
-                    fprintf(stderr, "\n");
-                    Oop rcvCls = memory_.classOf(receiver_);
-                    fprintf(stderr, "[VM]   rcvr class: 0x%llx (classIdx of class: %u)\n",
-                            (unsigned long long)rcvCls.rawBits(),
-                            (rcvCls.isObject() && rcvCls.rawBits() > 0x10000) ?
-                            rcvCls.asObjectPtr()->classIndex() : 0);
-                }
-            }
-        }
         *stackPointer_++ = value;
     }
 

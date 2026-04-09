@@ -228,15 +228,15 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // Deferral: skip counting for the first N million interpreter steps.
     // This lets the interpreter run at full speed during startup.
     // PHARO_JIT_DEFER=N (seconds; default: 0 = no deferral)
-    static int deferSteps = -1; // -1 = uninitialized
+    static int64_t deferSteps = -1; // -1 = uninitialized
     if (deferSteps == -1) {
         const char* env = getenv("PHARO_JIT_DEFER");
         // Convert seconds to approximate step count (~30M steps/sec on interpreter)
-        deferSteps = env ? atoi(env) * 30000000 : 0;
+        deferSteps = env ? (int64_t)atoi(env) * 30000000 : 0;
         if (deferSteps > 0)
-            fprintf(stderr, "[JIT] Deferring compilation for ~%d steps\n", deferSteps);
+            fprintf(stderr, "[JIT] Deferring compilation for ~%lld steps\n", (long long)deferSteps);
     }
-    if (deferSteps > 0 && static_cast<int>(g_stepNum) < deferSteps) return;
+    if (deferSteps > 0 && (int64_t)g_stepNum < deferSteps) return;
 
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
     static int maxCompile = -2; // -2 = uninitialized

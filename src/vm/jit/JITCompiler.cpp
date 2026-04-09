@@ -280,7 +280,7 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             extA = 0; extB = 0;
             continue;
         } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
-            bc.operand = op & 0x0F;                            // arithmetic selector
+            bc.operand = bc.bcOffset;                          // bytecode offset (for ArithOverflow ip)
             bc.operand2 = 1;                                   // all arith selectors are 1-arg
         } else if (op >= 0x70 && op <= 0x7F) {
             bc.operand = op - 0x70;                            // send special 16-31
@@ -696,6 +696,7 @@ bool JITCompiler::patchStencilInstance(
     const DecodedBC& bc,
     uint8_t* methodCode, uint32_t totalCodeSize,
     const std::vector<uint32_t>& bcToCodeOffset,
+    const std::vector<uint32_t>& bcToBranchOffset,
     uint64_t* literalPool, uint32_t literalPoolOffset,
     uint32_t& nextLiteralSlot)
 {
@@ -759,10 +760,16 @@ bool JITCompiler::patchStencilInstance(
             }
             // Clamp to end-of-method if branch targets past the last bytecode
             int target = bc.branchTarget;
-            if (target >= (int)bcToCodeOffset.size()) {
-                target = (int)bcToCodeOffset.size() - 1;
+            if (target >= (int)bcToBranchOffset.size()) {
+                target = (int)bcToBranchOffset.size() - 1;
             }
-            uint32_t targetOff = bcToCodeOffset[target];
+            // Use branch offset table (first-write-wins) so jumps land at
+            // SimStack flushes that precede the original stencil.
+            uint32_t targetOff = bcToBranchOffset[target];
+            if (targetOff == UINT32_MAX) {
+                // Fallback to tryResume table
+                targetOff = bcToCodeOffset[target];
+            }
             uint64_t targetAddr = reinterpret_cast<uint64_t>(codeBase + targetOff);
             if (!patchOne(reloc, targetAddr)) return false;
             break;
@@ -1322,9 +1329,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                 fprintf(stderr, " %02X", bytecodes[b]);
             fprintf(stderr, "\n");
             for (size_t d = 0; d < decoded.size(); d++) {
-                fprintf(stderr, "[JIT-BC]   [%zu] op=0x%02X stencil=%u operand=%d bc=%d\n",
+                fprintf(stderr, "[JIT-BC]   [%zu] op=0x%02X stencil=%u operand=%d bc=%d br=%d\n",
                         d, decoded[d].opcode, decoded[d].stencilIdx,
-                        decoded[d].operand, decoded[d].bcOffset);
+                        decoded[d].operand, decoded[d].bcOffset, decoded[d].branchTarget);
             }
         }
     }
@@ -1422,8 +1429,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     uint32_t codeSize = 0;
     uint32_t maxLiteralSlots = 0;
 
-    // Map from bytecode offset to machine code offset
+    // Map from bytecode offset to machine code offset.
+    // Two maps:
+    //   bcToCodeOffset: last-write-wins — points to the "real" stencil at each bcOffset.
+    //     Used by tryResume (re-entering JIT from interpreter with Empty SimStack state).
+    //   bcToBranchOffset: first-write-wins — points to the first stencil (flush) at each bcOffset.
+    //     Used by branch target resolution (jumps must go through flushes).
+    // When SimStack inserts a flush before a branch-target stencil at the same
+    // bcOffset, the flush precedes the original in the decoded array. Branches
+    // must land at the flush; tryResume must land at the original stencil.
     std::vector<uint32_t> bcToCodeOffset(bcLen + 1, 0);
+    std::vector<uint32_t> bcToBranchOffset(bcLen + 1, UINT32_MAX);
 
     for (auto& bc : decoded) {
         // Fused bytecodes (nop placeholders from peephole fusion) must NOT have
@@ -1432,10 +1448,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // resuming at a fused jumpFalse enters the fused stencil's CONTINUE
         // path unconditionally, ignoring the actual comparison result.
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_nop) {
+            // Last-write-wins for tryResume table (original stencil overwrites flush)
             bcToCodeOffset[bc.bcOffset] = codeSize;
-            // Fill intermediate bytes of multi-byte instructions with the same offset
             for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
                 bcToCodeOffset[bc.bcOffset + b] = codeSize;
+            }
+            // First-write-wins for branch target table (flush gets priority)
+            if (bcToBranchOffset[bc.bcOffset] == UINT32_MAX) {
+                bcToBranchOffset[bc.bcOffset] = codeSize;
+            }
+            for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
+                if (bcToBranchOffset[bc.bcOffset + b] == UINT32_MAX) {
+                    bcToBranchOffset[bc.bcOffset + b] = codeSize;
+                }
             }
         }
         // Even nop stencils contribute to code size (they emit a branch instruction)
@@ -1459,6 +1484,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     }
     // Sentinel: code offset for "one past the last bytecode"
     bcToCodeOffset[bcLen] = codeSize;
+    bcToBranchOffset[bcLen] = codeSize;
 
     // Literal pool lives after the code, 8-byte aligned
     uint32_t literalPoolOffset = (codeSize + 7) & ~7u;
@@ -1784,6 +1810,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // Patch relocations
         if (!patchStencilInstance(codeBase, offset, stencil, bc,
                                   codeBase, totalSize, bcToCodeOffset,
+                                  bcToBranchOffset,
                                   literalPool, literalPoolOffset,
                                   nextLiteralSlot)) {
             compilationsFailed_++;
