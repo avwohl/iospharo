@@ -63,12 +63,9 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
 
 extern "C" void jit_rt_j2j_call(JITState* state) {
     // Merged J2J call: push frame, call callee, pop frame in one C++ call.
-    // NOTE: Currently unused — the stencil uses separate push/pop calls.
-    // This helper has a cascading bailout issue with deeply nested J2J calls
-    // that needs investigation before it can be used.
     //
     // On entry: cachedTarget = method Oop, sendArgCount = nArgs,
-    //           returnValue.bits = entry address, ip = past send bytecode.
+    //           returnValue = entry address bits, ip = past send bytecode.
     // On exit (success): exitReason=0, returnValue set, JITState restored to caller.
     // On exit (bailout): exitReason!=0, JITState has callee's state.
 

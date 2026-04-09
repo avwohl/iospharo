@@ -1022,66 +1022,26 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     if (extra & J2J_ENTRY_BIT) {                                              \
         uint64_t entryAddr = extra & J2J_ADDR_MASK;                           \
         if (entryAddr != 0) {                                                 \
-            /* Save caller JITState fields (Clang spills to stack) */          \
-            Oop* savedSP = s->sp;                                             \
-            Oop savedRecv = s->receiver;                                      \
-            Oop* savedLit = s->literals;                                      \
-            Oop* savedTemp = s->tempBase;                                     \
-            void* savedJM = s->jitMethod;                                     \
-            Oop savedMethod = s->method;                                      \
-            int savedArgCount = s->argCount;                                  \
-            uint8_t* savedIP = s->ip;                                         \
+            /* Save original IP so we can restore after successful call */     \
+            uint8_t* origIP = s->ip;                                          \
                                                                               \
-            /* Set up state for push_frame helper */                           \
+            /* Set up state for merged J2J helper */                           \
             s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
             s->sendArgCount = nArgs;                                          \
-            /* Pass entry address via jitMethod so pushFrameForJIT can    */ \
-            /* derive JITMethod* without a hash lookup                    */ \
-            s->jitMethod = (void*)entryAddr;                                  \
-            /* Save IP PAST the send bytecode so that when the callee     */ \
-            /* returns through popFrame, the caller resumes at the next   */ \
-            /* bytecode — not at the send (which would cause re-send).    */ \
-            s->ip = s->ip + bcOffset + bcLen;                                 \
+            s->ip = origIP + bcOffset + bcLen;                                \
+            s->returnValue.bits = entryAddr;                                  \
                                                                               \
-            /* Push interpreter frame (C++ helper) */                         \
-            _HOLE_RT_PUSH_FRAME(s);                                           \
+            /* Merged push+call+pop in C++ (saves/restores JITState) */       \
+            _HOLE_RT_J2J_CALL(s);                                             \
                                                                               \
-            /* Check if push_frame failed (stack overflow) */                  \
             if (s->exitReason != 0) {                                         \
-                /* Bail out to interpreter */                                  \
-                s->exitReason = EXIT_SEND;                                    \
-                s->sp = savedSP;                                              \
-                s->ip = savedIP + bcOffset;                                   \
-                s->icDataPtr = icData;                                        \
-                s->sendArgCount = nArgs;                                      \
+                /* Callee bailed — interpreter handles the send */            \
                 _HOLE_RT_SEND(s);                                             \
                 return;                                                       \
             }                                                                 \
                                                                               \
-            /* Direct call to callee JIT code */                              \
-            typedef void (*StencilFn)(JITState*);                             \
-            ((StencilFn)entryAddr)(s);                                        \
-                                                                              \
-            /* Callee returned — check exit reason */                         \
-            if (s->exitReason != EXIT_RETURN) {                               \
-                /* Callee needs interpreter help (send, block create, etc.)*/ \
-                /* DON'T pop the frame — callee's state is preserved.    */ \
-                _HOLE_RT_SEND(s);                                             \
-                return;                                                       \
-            }                                                                 \
-                                                                              \
-            /* Pop interpreter frame */                                       \
-            _HOLE_RT_POP_FRAME(s);                                            \
-                                                                              \
-            /* Restore caller JITState */                                     \
-            s->sp = savedSP;                                                  \
-            s->receiver = savedRecv;                                          \
-            s->literals = savedLit;                                           \
-            s->tempBase = savedTemp;                                          \
-            s->jitMethod = savedJM;                                           \
-            s->method = savedMethod;                                          \
-            s->argCount = savedArgCount;                                      \
-            s->ip = savedIP;                                                  \
+            /* Restore original IP for correct continuation */                \
+            s->ip = origIP;                                                   \
                                                                               \
             /* Pop args, push return value */                                 \
             s->sp[-(nArgs + 1)] = s->returnValue;                            \
