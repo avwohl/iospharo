@@ -1,9 +1,58 @@
 # WIP: Assembly J2J Trampoline
 
 **Date started**: 2026-04-09
-**Status**: **Phase 1 complete, mixed result. Phase 2 pending.**
+**Status**: **Phase 1 + Phase 1.5 complete. ASM now 3% faster at median.**
 **Goal**: Break the 10.4ms fib(28) wall by hand-writing the J2J trampoline
 hot loop in ARM64 assembly.
+
+## Phase 1.5 outcome (2026-04-09 — same day)
+
+Three micro-opts on top of Phase 1:
+
+  1. `.p2align 4` before `Ltramp_loop` head (loop entry now 16-byte
+     aligned at 0x10000f390 instead of 0x10000f388). The two added nops
+     run exactly once per trampoline entry — both back-edges
+     (`b 0x10000f390`) jump past the nops.
+
+  2. Return path: load `save.jitMethod` and `save.resumeAddr` together
+     via `ldp x11, x7, [x23, #JSV_JITMETHOD]`. JSV_JITMETHOD(32) and
+     JSV_RESUMEADDR(40) are adjacent. Hoists the resume-address load
+     to the very top of the return path so its load latency is fully
+     hidden behind the self-recursive restore. retVal moves from x7
+     to x17 (caller-saved IP1, free since we never cross a BLR with
+     it live).
+
+  3. Call path: load `state.sp` and `state.receiver` together via
+     `ldp x10, x11, [x21]`. JS_SP(0) and JS_RECEIVER(8) are adjacent.
+
+Net instruction count: same as Phase 1 (LDPs save 2 insts, alignment
+adds 2 nops). All wins come from scheduling and alignment, not
+instruction count.
+
+Interleaved A/B (50 samples each, fresh builds, alternating):
+
+    Build   min   p10   p25   median  p75   p90   max    mean  stdev
+    CPP     9591  9733  9768  9857    9937  9984  10101  9852  111
+    ASM15   9090  9204  9268  9561    9697  9808   9833  9505  229
+
+  ASM best:    -5.22% vs CPP
+  ASM p10:     -5.44% vs CPP
+  ASM median:  -3.00% vs CPP   ← was +1.28% in Phase 1
+  ASM mean:    -3.53% vs CPP
+  ASM stdev:    2.07x CPP      ← was 4.27x in Phase 1 (halved)
+
+Stencil counts identical: 6170696/6170673 in both binaries.
+
+The variance halving is the most striking result. Hypothesis: the
+unaligned loop head in Phase 1 was straddling a 16-byte fetch block
+boundary, so some `ldr w0, [x21, #EXITREASON] / cmp / b.eq` sequences
+needed two fetch cycles instead of one. Aligning the head ensures
+single-fetch dispatch every iteration.
+
+ASM median (9561us) is now decisively below CPP median (9857us) on
+fresh interleaved samples, and the lower bound (9090us) is the
+fastest fib(28) we've ever measured. Phase 2 (stencil ABI change)
+remains the bigger lever, but Phase 1.5 alone justifies the trampoline.
 
 ## Phase 1 outcome (2026-04-09)
 

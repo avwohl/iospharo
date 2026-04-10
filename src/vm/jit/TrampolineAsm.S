@@ -135,6 +135,11 @@ SYMBOL(pharo_jit_j2j_trampoline):
     mov     x28, x5                   // nil Oop bits
 
 // ======== Dispatch loop ========
+// Align loop head to a 16-byte fetch block boundary so the 4 decode slots
+// {ldr/cmp/b.eq/cmp} land in a single fetch group. (Tried .p2align 6 for
+// cache-line alignment: adds 14 nops which regressed measurably — stick
+// with 4.)
+    .p2align 4
 Ltramp_loop:
     ldr     w0, [x21, #JS_EXITREASON]
     cmp     w0, #EXIT_J2JCALL
@@ -151,12 +156,17 @@ Ltramp_return:
     sub     x23, x23, #JSV_SIZE       // pop save slot; now points to just-popped
     sub     x24, x24, #1              // localFrameDepth--
 
-    ldr     x7,  [x21, #JS_RETURNVALUE]   // retVal
+    // retVal lives in x17 (caller-saved IP1) — we never cross a BLR between
+    // this load and the store below, so no spill needed. Frees x7 to be
+    // loaded early as the precomputed resume address.
+    ldr     x17, [x21, #JS_RETURNVALUE]   // retVal
 
-    // Load save fields
+    // Load save fields. JSV_JITMETHOD(32) and JSV_RESUMEADDR(40) are
+    // adjacent — LDP hoists the resume address load all the way up here so
+    // the load latency is fully hidden behind the self-recursive restore.
     ldp     x8, x9, [x23, #JSV_SP]         // x8=save.sp, x9=save.receiver
     ldr     x10, [x23, #JSV_TEMPBASE]      // x10=save.tempBase
-    ldr     x11, [x23, #JSV_JITMETHOD]     // x11=save.jitMethod (tagged?)
+    ldp     x11, x7, [x23, #JSV_JITMETHOD] // x11=save.jitMethod, x7=save.resumeAddr
 
     str     x9,  [x21, #JS_RECEIVER]
     str     x10, [x21, #JS_TEMPBASE]
@@ -180,12 +190,11 @@ Lret_after_restore:
     ldr     w13, [x23, #JSV_SENDARGCOUNT]
     add     w15, w13, #1
     sub     x16, x8, w15, uxtw #3          // &retVal slot
-    str     x7,  [x16]                     // *slot = retVal
+    str     x17, [x16]                     // *slot = retVal (x17)
     sub     x14, x8, w13, uxtw #3          // final sp
     str     x14, [x21, #JS_SP]
 
-    // Check precomputed resume address
-    ldr     x7,  [x23, #JSV_RESUMEADDR]
+    // Resume address already loaded into x7 by the LDP above
     cbz     x7,  Lret_null_resume
 
     // BLR to resumeAddr. Stencils clobber x0-x17, x19, x20, x30.
@@ -216,9 +225,10 @@ Ltramp_call:
     sub     x8,  x7, #JM_SIZE              // calleeJM = entryAddr - sizeof(JITMethod)
     ldr     w9,  [x21, #JS_SENDARGCOUNT]   // nArgs
 
-    // Save caller JITState into current slot
-    ldr     x10, [x21, #JS_SP]
-    ldr     x11, [x21, #JS_RECEIVER]
+    // Save caller JITState into current slot.
+    // JS_SP(0) and JS_RECEIVER(8) are adjacent → LDP. JS_TEMPBASE(24) and
+    // JS_IP(48) are NOT adjacent so the second pair stays split.
+    ldp     x10, x11, [x21]                // x10=state.sp, x11=state.receiver
     stp     x10, x11, [x23, #JSV_SP]       // save.sp, save.receiver
     ldr     x10, [x21, #JS_TEMPBASE]
     ldr     x11, [x21, #JS_IP]
