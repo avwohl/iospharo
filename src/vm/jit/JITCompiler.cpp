@@ -763,13 +763,10 @@ bool JITCompiler::patchStencilInstance(
             if (target >= (int)bcToBranchOffset.size()) {
                 target = (int)bcToBranchOffset.size() - 1;
             }
-            // Use branch offset table (first-write-wins) so jumps land at
-            // SimStack flushes that precede the original stencil.
+            // Both tables are last-write-wins and point to the real stencil
+            // at each bcOffset. Jumps bypass any SimStack fallthrough-flush
+            // inserted before the real stencil (see bcToBranchOffset init).
             uint32_t targetOff = bcToBranchOffset[target];
-            if (targetOff == UINT32_MAX) {
-                // Fallback to tryResume table
-                targetOff = bcToCodeOffset[target];
-            }
             uint64_t targetAddr = reinterpret_cast<uint64_t>(codeBase + targetOff);
             if (!patchOne(reloc, targetAddr)) return false;
             break;
@@ -1184,11 +1181,32 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             state = 0;
             break;
 
-        // --- UNCONDITIONAL JUMP: state passes through ---
+        // --- UNCONDITIONAL JUMP: must flush cached values before jumping ---
         case StencilID::stencil_jump:
-            // Jump target will be Empty (we flush before branch targets).
-            // State at jump doesn't matter — we already flushed if target needs it.
-            state = 0;  // After jump, next instruction (if any) starts fresh
+            // Branch targets enter in state 0 (memory-only stack), and jumps
+            // land on the REAL stencil via last-write-wins bcToBranchOffset,
+            // bypassing any flush inserted in front of the target. So if we
+            // have values cached in x19/x20 at the jump site, we must flush
+            // them to memory BEFORE jumping — otherwise those logical stack
+            // slots are lost and the target reads the wrong values from
+            // memory.
+            if (state != 0) {
+                DecodedBC flush;
+                flush.opcode = 0;
+                flush.stencilIdx = (state == 2)
+                    ? static_cast<uint16_t>(StencilID::stencil_flush2)
+                    : static_cast<uint16_t>(StencilID::stencil_flush1);
+                flush.operand = -1;
+                flush.operand2 = -1;
+                flush.operand2Ptr = 0;
+                flush.branchTarget = -1;
+                flush.bcOffset = decoded[i].bcOffset;
+                flush.bcLength = 0;
+                decoded.insert(decoded.begin() + i, flush);
+                isBranchTarget.insert(isBranchTarget.begin() + i, false);
+                i++;  // Skip past the flush we just inserted
+                state = 0;
+            }
             break;
 
         // --- SUPERINSTRUCTIONS (comparison+jump fused): handled as barriers above ---
@@ -1303,6 +1321,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     uint32_t methodClassIndex = methObj->classIndex();
     bool isFullBlock = (methodClassIndex == interp_.compiledBlockClassIndex());
 
+    // Bisection: PHARO_JIT_NO_BLOCKS=1 skips JIT compilation for CompiledBlocks.
+    // Used to check whether the JIT bug is in block compilation specifically.
+    if (isFullBlock) {
+        static bool noBlocks = getenv("PHARO_JIT_NO_BLOCKS") != nullptr;
+        if (noBlocks) {
+            compilationsFailed_++;
+            return nullptr;
+        }
+    }
+
     // Decode bytecodes
     std::vector<DecodedBC> decoded;
     uint8_t failedOpcode = 0;
@@ -1322,10 +1350,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Bytecode dump for bisection (JIT_DUMP_BC env var)
     {
         static bool dumpBC = !!getenv("JIT_DUMP_BC");
-        if (dumpBC) {
-            std::string sel = interp_.memory().selectorOf(compiledMethod);
+        static const char* dumpBCPre = getenv("JIT_DUMP_BC_PRE");
+        std::string sel;
+        bool doDump = dumpBC;
+        if (!doDump && dumpBCPre && *dumpBCPre) {
+            sel = interp_.memory().selectorOf(compiledMethod);
+            doDump = (sel == dumpBCPre);
+        }
+        if (doDump) {
+            if (sel.empty()) sel = interp_.memory().selectorOf(compiledMethod);
             fprintf(stderr, "[JIT-BC] #%s bcLen=%zu bytes:", sel.c_str(), bcLen);
-            for (size_t b = 0; b < bcLen && b < 20; b++)
+            for (size_t b = 0; b < bcLen; b++)
                 fprintf(stderr, " %02X", bytecodes[b]);
             fprintf(stderr, "\n");
             for (size_t d = 0; d < decoded.size(); d++) {
@@ -1448,7 +1483,46 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // The compiler doesn't touch callee-saved regs in these tail-call
     // functions. extract_stencils.py verifies this statically.
 #ifdef __aarch64__
-    applySimStack(decoded);
+    {
+        static bool noSimStack = getenv("PHARO_JIT_NO_SIMSTACK") != nullptr;
+        // Per-selector SimStack disable for bisection:
+        // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...
+        bool skipSimStackHere = noSimStack;
+        if (!skipSimStackHere) {
+            static const char* skipSimStackEnv = getenv("PHARO_JIT_NO_SIMSTACK_SELECTORS");
+            if (skipSimStackEnv && *skipSimStackEnv) {
+                std::string sel = interp_.memory().selectorOf(compiledMethod);
+                const char* p = skipSimStackEnv;
+                while (*p) {
+                    const char* end = p;
+                    while (*end && *end != ',') end++;
+                    if ((size_t)(end - p) == sel.size() &&
+                        std::memcmp(p, sel.data(), sel.size()) == 0) {
+                        skipSimStackHere = true;
+                        break;
+                    }
+                    p = (*end == ',') ? end + 1 : end;
+                }
+            }
+        }
+        if (!skipSimStackHere) applySimStack(decoded);
+
+        // Post-SimStack dump (JIT_DUMP_BC_POST=selectorName)
+        {
+            static const char* dumpSel = getenv("JIT_DUMP_BC_POST");
+            if (dumpSel && *dumpSel) {
+                std::string sel = interp_.memory().selectorOf(compiledMethod);
+                if (sel == dumpSel) {
+                    fprintf(stderr, "[JIT-BC-POST] #%s post-SimStack stencils:\n", sel.c_str());
+                    for (size_t d = 0; d < decoded.size(); d++) {
+                        fprintf(stderr, "[JIT-BC-POST]   [%zu] stencil=%u operand=%d bc=%d br=%d\n",
+                                d, decoded[d].stencilIdx, decoded[d].operand,
+                                decoded[d].bcOffset, decoded[d].branchTarget);
+                    }
+                }
+            }
+        }
+    }
 #endif
 
     // First pass: compute total code size and build bytecode->code offset map
@@ -1460,13 +1534,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     // Two maps:
     //   bcToCodeOffset: last-write-wins — points to the "real" stencil at each bcOffset.
     //     Used by tryResume (re-entering JIT from interpreter with Empty SimStack state).
-    //   bcToBranchOffset: first-write-wins — points to the first stencil (flush) at each bcOffset.
-    //     Used by branch target resolution (jumps must go through flushes).
-    // When SimStack inserts a flush before a branch-target stencil at the same
-    // bcOffset, the flush precedes the original in the decoded array. Branches
-    // must land at the flush; tryResume must land at the original stencil.
+    //   bcToBranchOffset: ALSO last-write-wins — points to the real stencil at each
+    //     bcOffset, bypassing any SimStack flushes inserted before it.
+    //
+    // Why last-write-wins for branches: a SimStack fallthrough-flush inserted
+    // before a branch target assumes x19/x20 hold live cached values. But when
+    // a jump-taken predecessor arrives, x19/x20 are stale (jumps don't touch
+    // them), and running flush1/flush2 writes stale registers to the stack,
+    // corrupting TOS. The only sound layout is: jumps land on the REAL stencil
+    // (state 0 entry); fallthrough still runs through the inserted flush
+    // because the flush is emitted earlier in linear code order. So both
+    // tables use last-write-wins and, in fact, are identical.
     std::vector<uint32_t> bcToCodeOffset(bcLen + 1, 0);
-    std::vector<uint32_t> bcToBranchOffset(bcLen + 1, UINT32_MAX);
+    std::vector<uint32_t> bcToBranchOffset(bcLen + 1, 0);
 
     for (auto& bc : decoded) {
         // Fused bytecodes (nop placeholders from peephole fusion) must NOT have
@@ -1475,19 +1555,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         // resuming at a fused jumpFalse enters the fused stencil's CONTINUE
         // path unconditionally, ignoring the actual comparison result.
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_nop) {
-            // Last-write-wins for tryResume table (original stencil overwrites flush)
+            // Last-write-wins: the real stencil at bcOffset X overwrites any
+            // SimStack flush inserted before it, so jumps and tryResume both
+            // land on the real stencil (Empty SimStack state at entry).
             bcToCodeOffset[bc.bcOffset] = codeSize;
+            bcToBranchOffset[bc.bcOffset] = codeSize;
             for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
                 bcToCodeOffset[bc.bcOffset + b] = codeSize;
-            }
-            // First-write-wins for branch target table (flush gets priority)
-            if (bcToBranchOffset[bc.bcOffset] == UINT32_MAX) {
-                bcToBranchOffset[bc.bcOffset] = codeSize;
-            }
-            for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
-                if (bcToBranchOffset[bc.bcOffset + b] == UINT32_MAX) {
-                    bcToBranchOffset[bc.bcOffset + b] = codeSize;
-                }
+                bcToBranchOffset[bc.bcOffset + b] = codeSize;
             }
         }
         // Even nop stencils contribute to code size (they emit a branch instruction)
@@ -1884,10 +1959,35 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     {
         std::string sel = interp_.memory().selectorOf(compiledMethod);
         bool isKeysDo = (sel == "keysDo:");
-        bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:");
+        bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:" || sel == "hasChanged" || sel == "hasPrimitive" || sel == "primitive");
         if (methodsCompiled_ <= 5 || isKeysDo || isDebugTarget) {
             fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes) #%s:\n",
                     methodsCompiled_, totalSize, decoded.size(), sel.c_str());
+            if (isDebugTarget) {
+                fprintf(stderr, "  methodOop=0x%llx numLits=%d fmt=%u bcLen=%zu header=0x%llx\n",
+                        (unsigned long long)compiledMethod.rawBits(),
+                        numLiterals, (unsigned)fmt, bcLen,
+                        (unsigned long long)headerBits);
+                for (int li = 1; li <= numLiterals; li++) {
+                    Oop lit = methObj->slotAt(li);
+                    fprintf(stderr, "    lit[%d]=0x%llx", li,
+                            (unsigned long long)lit.rawBits());
+                    if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                        ObjectHeader* lh = lit.asObjectPtr();
+                        fprintf(stderr, " class=%u", lh->classIndex());
+                        if (lh->isBytesObject() && lh->byteSize() < 80) {
+                            fprintf(stderr, " bytes=\"%.*s\"",
+                                    (int)lh->byteSize(),
+                                    (const char*)lh->bytes());
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+                fprintf(stderr, "  raw bytecodes:");
+                for (size_t b = 0; b < bcLen && b < 40; b++)
+                    fprintf(stderr, " %02x", bytecodes[b]);
+                fprintf(stderr, "\n");
+            }
             for (auto& d : decoded) {
                 const StencilDef& st = stencilTable[d.stencilIdx];
                 fprintf(stderr, "  bc[%d] op=0x%02X -> %s (operand=%d, branch=%d)\n",

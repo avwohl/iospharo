@@ -7222,15 +7222,30 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 memory_.selectorOf(method_).c_str(),
                 memory_.classNameOf(receiver_).c_str(),
                 (unsigned long long)method_.rawBits(), numLits, ipOff);
-        // Dump literals of current method
-        if (logCount == 1 && method_.isObject()) {
+        // Dump literals of current method (once per unique method)
+        static std::set<uint64_t> dumpedMethods;
+        bool firstForMethod = method_.isObject() &&
+            dumpedMethods.insert(method_.rawBits()).second;
+        if (firstForMethod) {
             ObjectHeader* mh = method_.asObjectPtr();
-            fprintf(stderr, "[MUSTBOOL] method header=0x%llx slotCount=%zu\n",
-                    (unsigned long long)mh->slotAt(0).rawBits(), mh->slotCount());
-            for (size_t i = 0; i <= numLits && i <= 12; i++) {
+            fprintf(stderr, "[MUSTBOOL] method header=0x%llx slotCount=%zu "
+                    "method_class=%s method_format=%u method_classIdx=%u\n",
+                    (unsigned long long)mh->slotAt(0).rawBits(), mh->slotCount(),
+                    memory_.nameOfClass(memory_.classOf(method_)).c_str(),
+                    (unsigned)mh->format(), mh->classIndex());
+            // For CompiledMethod/CompiledBlock, slots 0..numLits are
+            // header+literals (Oop), slots numLits+1..end are raw bytecode
+            // bytes (NOT Oops — never call asObjectPtr on them).
+            size_t totalSlots = mh->slotCount();
+            size_t maxOopSlot = (mh->isCompiledMethod()) ? numLits : (totalSlots - 1);
+            for (size_t i = 0; i < totalSlots && i < 16; i++) {
                 Oop lit = mh->slotAt(i);
                 fprintf(stderr, "[MUSTBOOL]   slot[%zu]=0x%llx", i,
                         (unsigned long long)lit.rawBits());
+                if (i > maxOopSlot) {
+                    fprintf(stderr, " (raw bytecode bytes)\n");
+                    continue;
+                }
                 if (lit.isObject() && lit.rawBits() >= 0x10000) {
                     ObjectHeader* lh = lit.asObjectPtr();
                     fprintf(stderr, " class=%u format=%u",
@@ -7253,13 +7268,39 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                     fprintf(stderr, " %02x", bcStart[i]);
                 }
                 fprintf(stderr, "\n");
+                // Dump full bytecodes
+                size_t bcLen = mh->byteSize() - (1 + numLits) * 8;
+                // Compute trailing pad bytes (trailer byte gives count - 1)
+                if (bcLen > 0) {
+                    uint8_t trailer = bcStart[bcLen - 1];
+                    long pad = (long)(trailer & 0x7) + 1;
+                    if (pad < (long)bcLen) bcLen -= pad;
+                }
+                fprintf(stderr, "[MUSTBOOL] full bytecodes (%zu):", bcLen);
+                for (size_t i = 0; i < bcLen && i < 200; i++) {
+                    if (i % 32 == 0) fprintf(stderr, "\n  %3zu:", i);
+                    fprintf(stderr, " %02x", bcStart[i]);
+                }
+                fprintf(stderr, "\n");
+            }
+            // Dump stack neighborhood
+            fprintf(stderr, "[MUSTBOOL] stack: sp=%p fp=%p depth=%zu\n",
+                    (void*)stackPointer_, (void*)framePointer_, frameDepth_);
+            for (int k = -3; k <= 1; k++) {
+                Oop* slot = stackPointer_ + k;
+                Oop v = *slot;
+                std::string vc = (v.rawBits() == 0) ? "<zero>" : memory_.nameOfClass(memory_.classOf(v));
+                fprintf(stderr, "[MUSTBOOL]   sp[%d]=0x%llx (%s)\n", k,
+                        (unsigned long long)v.rawBits(), vc.c_str());
             }
         }
-        // Print short stack for first 10
+        // Print short stack for first 10 — show MOST RECENT frames (the
+        // immediate caller is at savedFrames_[frameDepth_-1]).
         if (logCount <= 10) {
-            for (size_t f = 0; f <= frameDepth_ && f < 10; f++) {
+            size_t lo = frameDepth_ >= 10 ? frameDepth_ - 10 : 0;
+            for (size_t f = lo; f < frameDepth_; f++) {
                 SavedFrame& sf = savedFrames_[f];
-                fprintf(stderr, "[MUSTBOOL]   [%zu] %s>>%s\n", f,
+                fprintf(stderr, "[MUSTBOOL]   recent[%zu] %s>>%s\n", f,
                         memory_.classNameOf(sf.savedReceiver).c_str(),
                         memory_.selectorOf(sf.savedMethod).c_str());
             }
@@ -10713,13 +10754,24 @@ void Interpreter::tryJITResumeInCaller() {
             {
                 int primIdx = primitiveIndexOf(cached);
                 if (primIdx > 0) {
+                    size_t primCallerDepth = frameDepth_;
                     argCount_ = state.sendArgCount;
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
                     newMethod_ = cached;
                     PrimitiveResult result = executePrimitive(primIdx, state.sendArgCount);
                     if (result == PrimitiveResult::Success) {
-                        // Primitive succeeded — resume JIT at bytecode after send
+                        // Frame-pushing primitives (closure activation prims 81/82/
+                        // 201-209, perform: prims 83/84, etc.) call activateBlock/
+                        // pushFrame inside executePrimitive. The new frame must run
+                        // before the caller resumes — bail to interpreter so the
+                        // dispatch loop drives the activated frame to completion.
+                        if (frameDepth_ != primCallerDepth) {
+                            jitJ2JFallbacks_++;
+                            inJITResume_ = false;
+                            return;
+                        }
+                        // Primitive completed in place — resume JIT at bytecode after send
                         continue;
                     }
                 }
@@ -10816,6 +10868,32 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     if (!pendingICPatch_) return;
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
+
+    // DEBUG: Selector-based J2J fill skip (PHARO_J2J_SKIP_SELECTORS).
+    // Same skip used by upgradeICToJ2J — uses the IC's send-site selector
+    // (passed in directly here), which is reliable.
+    {
+        static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
+        if (skipEnv && *skipEnv) {
+            std::string sel;
+            if (selector.isObject() && selector.rawBits() > 0x10000) {
+                ObjectHeader* sh = selector.asObjectPtr();
+                if (sh->isBytesObject() && sh->byteSize() < 80) {
+                    sel = std::string((char*)sh->bytes(), sh->byteSize());
+                }
+            }
+            const char* p = skipEnv;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size() &&
+                    std::memcmp(p, sel.data(), sel.size()) == 0) {
+                    return;
+                }
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
+    }
 
     // Debug: log benchFib patches
     {
@@ -10970,10 +11048,26 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // Lets us bisect which method's J2J upgrade triggers a bug. Note that
     // PHARO_JIT_SKIP_SELECTORS prevents JIT compilation entirely; this only
     // prevents the J2J fast-path patch.
+    //
+    // We compare against the IC's selector (icData[12]) rather than
+    // selectorOf(cachedMethod), because the latter is unreliable for some
+    // primitive methods (e.g. at:/at:put: returned "?" via numLiteralsOf,
+    // making the bisection mis-fire).
     {
         static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
         if (skipEnv && *skipEnv) {
-            std::string sel = memory_.selectorOf(cachedMethod);
+            std::string sel;
+            uint64_t icSelBits = icData[12];
+            if (icSelBits != 0 && icSelBits > 0x10000) {
+                Oop sOop = Oop::fromRawBits(icSelBits);
+                if (sOop.isObject()) {
+                    ObjectHeader* sh = sOop.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                        sel = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                }
+            }
+            if (sel.empty()) sel = memory_.selectorOf(cachedMethod);
             const char* p = skipEnv;
             while (*p) {
                 const char* end = p;
@@ -10994,7 +11088,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // compile threshold via noteMethodEntry because the primitive succeeds before
     // bytecodes execute. Without eager compilation, at:/at:put:/size/arithmetic
     // methods can never be called via J2J with their fast-path prologues.
-    if ((!target || !target->isExecutable()) && jitRuntime_.compiler()) {
+    static bool noEagerCompile = !!getenv("PHARO_NO_EAGER_COMPILE");
+    if (!noEagerCompile && (!target || !target->isExecutable()) && jitRuntime_.compiler()) {
         // Check if method has a primitive
         ObjectHeader* methObj = cachedMethod.asObjectPtr();
         Oop hdr = methObj->slotAt(0);
@@ -11085,24 +11180,176 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
     }
     // No matching entry found — fill an empty slot with J2J entry.
-    if (firstEmpty >= 0 && fillEnabled) {
-        uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
-        uint64_t newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
-        if (target->hasPrimPrologue) {
-            int primIdx = primitiveIndexOf(cachedMethod);
-            uint8_t pk = inlinePrimKind(primIdx);
-            if (pk) newExtra |= (uint64_t)pk << 48;
+    // EXPERIMENT: skip fill for primitive prologue methods
+    static bool noFillPrim = !!getenv("PHARO_NO_IC_FILL_PRIM");
+    // EXPERIMENT: skip fill for non-prim methods (bisection of findContextSuchThat: bug)
+    static bool noFillNonPrim = !!getenv("PHARO_NO_IC_FILL_NONPRIM");
+    if (firstEmpty >= 0 && fillEnabled &&
+        !(noFillPrim && target->hasPrimPrologue) &&
+        !(noFillNonPrim && !target->hasPrimPrologue)) {
+        // DIAGNOSTIC: Dump cachedMethod metadata for the FILL-MISMATCH case
+        {
+            static int fillLog = 0;
+            uint64_t icSelBits = icData[12];
+            std::string cachedSel = memory_.selectorOf(cachedMethod);
+            std::string icSel = "(none)";
+            if (icSelBits != 0 && icSelBits > 0x10000) {
+                Oop sOop = Oop::fromRawBits(icSelBits);
+                if (sOop.isObject()) {
+                    ObjectHeader* sh = sOop.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() < 80) {
+                        icSel = std::string((char*)sh->bytes(), sh->byteSize());
+                    }
+                }
+            }
+            bool mismatch = icSelBits != 0 && icSel != cachedSel && icSel != "(none)";
+            if (mismatch && fillLog < 10) {
+                fillLog++;
+                ObjectHeader* mh = cachedMethod.asObjectPtr();
+                fprintf(stderr,
+                    "[FILL-MISMATCH] cached=0x%llx classIdx=%u fmt=%u cachedSel=#%s ic_sel=#%s key=0x%llx caller=#%s\n",
+                    (unsigned long long)cachedMethod.rawBits(),
+                    mh->classIndex(), (unsigned)mh->format(),
+                    cachedSel.c_str(), icSel.c_str(),
+                    (unsigned long long)lookupKey,
+                    callerMethod.rawBits() ? memory_.selectorOf(callerMethod).c_str() : "?");
+                size_t numLits = memory_.numLiteralsOf(cachedMethod);
+                fprintf(stderr, "  numLits=%zu hdr=0x%llx\n", numLits,
+                        (unsigned long long)mh->slotAt(0).rawBits());
+                for (size_t i = 1; i <= numLits && i <= 20; i++) {
+                    Oop lit = mh->slotAt(i);
+                    fprintf(stderr, "  lit[%zu]=0x%llx", i, (unsigned long long)lit.rawBits());
+                    if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                        ObjectHeader* lh = lit.asObjectPtr();
+                        if (lh->isBytesObject() && lh->byteSize() < 60) {
+                            fprintf(stderr, " bytes=\"%.*s\"",
+                                    (int)lh->byteSize(), (char*)lh->bytes());
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
         }
-        // NOTE: Do NOT detect trivial methods (getter/setter/yourself) for
-        // fill entries. The patchJITICAfterSend path on IC miss already does
-        // this correctly. The fill path uses mega cache hits which may not
-        // have the right context for trivial detection at polymorphic sites.
+        // Detect trivial getter/setter/returnsSelf — for these, set inline
+        // bits 63/62/61 instead of the J2J direct call bit 60. The inline path
+        // in stencil_sendJ2J's J2J_IC_HIT macro reads receiver->slotAt(idx)
+        // directly without calling the JIT-compiled method, avoiding bugs in
+        // the J2J trampoline call path for trivial methods (e.g., the
+        // Context>>sender / findContextSuchThat: mustBeBoolean bug).
+        uint64_t newExtra = 0;
+        {
+            TrivialMethodInfo tmi = detectTrivialMethod(cachedMethod, memory_);
+            if (tmi.getterIndex >= 0)
+                newExtra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
+            else if (tmi.setterIndex >= 0)
+                newExtra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
+            else if (tmi.returnsSelf)
+                newExtra = (1ULL << 61);
+        }
+        if (newExtra == 0) {
+            // Not trivial — set J2J direct-call entry plus inline primKind bits
+            uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
+            newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+            if (target->hasPrimPrologue) {
+                int primIdx = primitiveIndexOf(cachedMethod);
+                uint8_t pk = inlinePrimKind(primIdx);
+                if (pk) newExtra |= (uint64_t)pk << 48;
+            }
+            // EXPERIMENT: drop J2J bit from fill (test if J2J path or fill itself is buggy)
+            static bool noJ2JBit = !!getenv("PHARO_FILL_NO_J2J_BIT");
+            if (noJ2JBit) newExtra &= ~(1ULL << 60);
+        }
 
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
         icData[firstEmpty * 3 + 2] = newExtra;
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
         jitICPatches_++;
+        // DEBUG: trace ALL FILL events when caller is mergeFirst
+        {
+            static int mfFillLog = 0;
+            if (mfFillLog < 60 && callerMethod.rawBits()) {
+                std::string callerSel2 = memory_.selectorOf(callerMethod);
+                if (callerSel2 == "mergeFirst:middle:last:into:by:" ||
+                    callerSel2 == "findContextSuchThat:") {
+                    mfFillLog++;
+                    std::string cachedSel2 = memory_.selectorOf(cachedMethod);
+                    uint64_t icSelBits2 = icData[12];
+                    std::string icSel2 = "(none)";
+                    if (icSelBits2 != 0 && icSelBits2 > 0x10000) {
+                        Oop sOop = Oop::fromRawBits(icSelBits2);
+                        if (sOop.isObject()) {
+                            ObjectHeader* sh = sOop.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80) {
+                                icSel2 = std::string((char*)sh->bytes(), sh->byteSize());
+                            }
+                        }
+                    }
+                    int primIdx = primitiveIndexOf(cachedMethod);
+                    // Get receiver class name for sanity check
+                    Oop recvForLog = stackPointer_[-(sendArgCount + 1)];
+                    std::string recvClsName = memory_.classNameOf(recvForLog);
+                    // Sanity check: do an explicit lookup of icSel on rcvr's class
+                    // and compare to cachedMethod
+                    Oop fresh = Oop::fromRawBits(0);
+                    if (icSelBits2 != 0 && icSelBits2 > 0x10000) {
+                        Oop icSelOop = Oop::fromRawBits(icSelBits2);
+                        Oop rcvCls = memory_.classOf(recvForLog);
+                        fresh = lookupMethod(icSelOop, rcvCls);
+                    }
+                    bool freshMatches = (fresh.rawBits() == cachedMethod.rawBits());
+                    fprintf(stderr,
+                        "[MF-FILL #%d] slot=%d ic_sel=#%s cached_sel=#%s key=0x%llx prim=%d "
+                        "hasPrimPrologue=%d extra=0x%llx ic=%p rcvCls=%s rcv=0x%llx "
+                        "cachedMeth=0x%llx freshLookup=0x%llx match=%d\n",
+                        mfFillLog, firstEmpty, icSel2.c_str(), cachedSel2.c_str(),
+                        (unsigned long long)lookupKey, primIdx,
+                        target->hasPrimPrologue ? 1 : 0,
+                        (unsigned long long)newExtra, (void*)icData,
+                        recvClsName.c_str(),
+                        (unsigned long long)recvForLog.rawBits(),
+                        (unsigned long long)cachedMethod.rawBits(),
+                        (unsigned long long)fresh.rawBits(),
+                        freshMatches ? 1 : 0);
+                    // Dump bytecodes of cachedMethod
+                    {
+                        ObjectHeader* mh = cachedMethod.asObjectPtr();
+                        size_t numL = memory_.numLiteralsOf(cachedMethod);
+                        uint8_t* bcStart = mh->bytes() + (1 + numL) * 8;
+                        size_t bcLen = mh->byteSize() - (1 + numL) * 8;
+                        if (bcLen > 0) {
+                            uint8_t trailer = bcStart[bcLen - 1];
+                            long pad = (long)(trailer & 0x7) + 1;
+                            if (pad < (long)bcLen) bcLen -= pad;
+                        }
+                        fprintf(stderr, "  cachedMeth bytecodes (%zu):", bcLen);
+                        for (size_t i = 0; i < bcLen && i < 32; i++) {
+                            fprintf(stderr, " %02x", bcStart[i]);
+                        }
+                        fprintf(stderr, " hdr=0x%llx primIdx=%d numL=%zu\n",
+                                (unsigned long long)mh->slotAt(0).rawBits(),
+                                primIdx, numL);
+                        // Dump all literals to see the methodClass association
+                        for (size_t li = 1; li <= numL; li++) {
+                            Oop lit = mh->slotAt(li);
+                            fprintf(stderr, "    lit[%zu]=0x%llx", li,
+                                    (unsigned long long)lit.rawBits());
+                            if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                                ObjectHeader* lh = lit.asObjectPtr();
+                                fprintf(stderr, " cls=%u fmt=%u",
+                                        lh->classIndex(), (unsigned)lh->format());
+                                if (lh->isBytesObject() && lh->byteSize() < 60) {
+                                    fprintf(stderr, " bytes=\"%.*s\"",
+                                            (int)lh->byteSize(),
+                                            (const char*)lh->bytes());
+                                }
+                            }
+                            fprintf(stderr, "\n");
+                        }
+                    }
+                }
+            }
+        }
         if (dbgUpg) {
             std::string callerSel = callerMethod.rawBits()
                 ? memory_.selectorOf(callerMethod) : std::string("?");
@@ -11878,6 +12125,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             {
                 int primIdx = primitiveIndexOf(chainTarget);
                 if (primIdx > 0) {
+                    size_t primCallerDepth = frameDepth_;
                     argCount_ = nArgs;
                     primitiveFailed_ = false;
                     primFailCode_ = 0;
@@ -11885,7 +12133,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     PrimitiveResult result = executePrimitive(primIdx, nArgs);
                     chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
                     if (result == PrimitiveResult::Success) {
-                        // Primitive succeeded — resume JIT at bytecode after send
+                        // Frame-pushing primitives (closure activation prims 81/82/
+                        // 201-209, perform: prims 83/84, etc.) call activateBlock/
+                        // pushFrame inside executePrimitive. The new frame must run
+                        // before the caller resumes — bail to interpreter so the
+                        // dispatch loop drives the activated frame to completion.
+                        if (frameDepth_ != primCallerDepth) {
+                            jitJ2JActFalls_++;
+                            return true;
+                        }
+                        // Primitive completed in place — resume JIT at bytecode after send
                         jitJ2JActChains_++;
                         method = method_;
                         uint32_t bcOffset = computeCurrentBCOffset();
