@@ -556,6 +556,51 @@ void Interpreter::setupBenchContext() {
     Oop method = findMethod(spec.className, spec.selector);
     fprintf(stderr, "[BENCH] setupBenchContext: %s>>%s method=0x%llx\n",
             spec.className, spec.selector, (unsigned long long)method.rawBits());
+    // Dump literal slot[7] of bench method to see if it's already corrupt
+    if (method.isObject() && !method.isNil()) {
+        ObjectHeader* mh = method.asObjectPtr();
+        size_t numLits = memory_.numLiteralsOf(method);
+        fprintf(stderr, "[BENCH]   numLits=%zu slotCount=%zu\n",
+                numLits, mh->slotCount());
+        for (size_t i = 0; i <= numLits && i <= 12; i++) {
+            Oop lit = mh->slotAt(i);
+            fprintf(stderr, "[BENCH]   slot[%zu]=0x%llx", i,
+                    (unsigned long long)lit.rawBits());
+            if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                ObjectHeader* lh = lit.asObjectPtr();
+                fprintf(stderr, " class=%u fmt=%u",
+                        lh->classIndex(), (unsigned)lh->format());
+                if (lh->isBytesObject() && lh->byteSize() < 80) {
+                    fprintf(stderr, " bytes=\"%.*s\"",
+                            (int)lh->byteSize(),
+                            (const char*)lh->bytes());
+                }
+            }
+            fprintf(stderr, "\n");
+        }
+        // Dump full bytecode array of the bench method
+        uint8_t* bcStart = mh->bytes() + (1 + numLits) * 8;
+        size_t bcSize = mh->byteSize() - (1 + numLits) * 8;
+        // Strip trailing 0-7 bytes per Spur format flags
+        size_t headerFmt = (size_t)mh->format();
+        if (headerFmt >= 16 && headerFmt <= 23) bcSize -= (headerFmt - 16);
+        fprintf(stderr, "[BENCH]   bytecodes (size=%zu):", bcSize);
+        for (size_t i = 0; i < bcSize; i++) {
+            if (i % 16 == 0) fprintf(stderr, "\n[BENCH]   %4zu:", i);
+            fprintf(stderr, " %02x", bcStart[i]);
+        }
+        fprintf(stderr, "\n");
+        // Also decode method header for tempCount/argCount
+        Oop hdr = mh->slotAt(0);
+        if (hdr.isSmallInteger()) {
+            int64_t hdrVal = hdr.asSmallInteger();
+            int nLits = (int)(hdrVal & 0x7FFF);
+            int nTemps = (int)((hdrVal >> 18) & 0x3F);
+            int nArgs = (int)((hdrVal >> 24) & 0x0F);
+            fprintf(stderr, "[BENCH]   header: numLits=%d numTemps=%d numArgs=%d\n",
+                    nLits, nTemps, nArgs);
+        }
+    }
     if (!method.isNil()) {
         Oop cls = memory_.findGlobal(spec.className);
         fprintf(stderr, "[BENCH]   class=0x%llx\n", (unsigned long long)cls.rawBits());
@@ -7160,9 +7205,53 @@ void Interpreter::sendMustBeBoolean(Oop value) {
     logCount++;
     if (logCount <= 30 || logCount % 1000 == 0) {
         std::string valClass = memory_.nameOfClass(memory_.classOf(value));
-        fprintf(stderr, "[MUSTBOOL] #%d fd=%zu value_class=%s value=0x%llx in=#%s rcv_class=%s\n",
-                logCount, frameDepth_, valClass.c_str(), (unsigned long long)value.rawBits(),
-                memory_.selectorOf(method_).c_str(), memory_.classNameOf(receiver_).c_str());
+        // Compute IP offset relative to bytecode start
+        long ipOff = -1;
+        size_t numLits = memory_.numLiteralsOf(method_);
+        if (method_.isObject()) {
+            uint8_t* bcStart = method_.asObjectPtr()->bytes() + (1 + numLits) * 8;
+            ipOff = instructionPointer_ - bcStart;
+        }
+        fprintf(stderr, "[MUSTBOOL] #%d fd=%zu value_class=%s value=0x%llx in=#%s "
+                "rcv_class=%s method=0x%llx numLits=%zu ipOff=%ld\n",
+                logCount, frameDepth_, valClass.c_str(),
+                (unsigned long long)value.rawBits(),
+                memory_.selectorOf(method_).c_str(),
+                memory_.classNameOf(receiver_).c_str(),
+                (unsigned long long)method_.rawBits(), numLits, ipOff);
+        // Dump literals of current method
+        if (logCount == 1 && method_.isObject()) {
+            ObjectHeader* mh = method_.asObjectPtr();
+            fprintf(stderr, "[MUSTBOOL] method header=0x%llx slotCount=%zu\n",
+                    (unsigned long long)mh->slotAt(0).rawBits(), mh->slotCount());
+            for (size_t i = 0; i <= numLits && i <= 12; i++) {
+                Oop lit = mh->slotAt(i);
+                fprintf(stderr, "[MUSTBOOL]   slot[%zu]=0x%llx", i,
+                        (unsigned long long)lit.rawBits());
+                if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                    ObjectHeader* lh = lit.asObjectPtr();
+                    fprintf(stderr, " class=%u format=%u",
+                            lh->classIndex(), (unsigned)lh->format());
+                    if (lh->isBytesObject() && lh->byteSize() < 80) {
+                        fprintf(stderr, " bytes=\"%.*s\"",
+                                (int)lh->byteSize(),
+                                (const char*)lh->bytes());
+                    }
+                }
+                fprintf(stderr, "\n");
+            }
+            // Dump bytecodes near ipOff
+            if (numLits > 0) {
+                uint8_t* bcStart = mh->bytes() + (1 + numLits) * 8;
+                fprintf(stderr, "[MUSTBOOL] bytecodes near ipOff=%ld:", ipOff);
+                long lo = std::max(0L, ipOff - 8);
+                long hi = ipOff + 4;
+                for (long i = lo; i <= hi; i++) {
+                    fprintf(stderr, " %02x", bcStart[i]);
+                }
+                fprintf(stderr, "\n");
+            }
+        }
         // Print short stack for first 10
         if (logCount <= 10) {
             for (size_t f = 0; f <= frameDepth_ && f < 10; f++) {
@@ -10607,7 +10696,7 @@ void Interpreter::tryJITResumeInCaller() {
             stackPointer_ = state.sp;
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
-            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount);
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
 
             uint8_t sendOp = *instructionPointer_;
             if (sendOp >= 0x80 && sendOp <= 0xAF) instructionPointer_ += 1;
@@ -10868,10 +10957,32 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // All 4 slots full — megamorphic, don't patch
 }
 
-void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount) {
+void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
+                                  Oop callerMethod) {
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
     static bool fillEnabled = !getenv("PHARO_NO_IC_FILL");
     if (!j2jEnabled || !icData) return;
+
+    // DEBUG: Selector-based J2J upgrade skip (PHARO_J2J_SKIP_SELECTORS).
+    // Lets us bisect which method's J2J upgrade triggers a bug. Note that
+    // PHARO_JIT_SKIP_SELECTORS prevents JIT compilation entirely; this only
+    // prevents the J2J fast-path patch.
+    {
+        static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
+        if (skipEnv && *skipEnv) {
+            std::string sel = memory_.selectorOf(cachedMethod);
+            const char* p = skipEnv;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size() &&
+                    std::memcmp(p, sel.data(), sel.size()) == 0) {
+                    return;
+                }
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
+    }
 
     jit::JITMethod* target = jitRuntime_.methodMap().lookup(cachedMethod.rawBits());
 
@@ -10920,6 +11031,20 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         return;
     }
 
+    // DEBUG: trace upgrades for suspect methods
+    static bool upgTrace = !!getenv("PHARO_UPGRADE_TRACE");
+    static bool upgTraceAll = !!getenv("PHARO_UPGRADE_TRACE_ALL");
+    bool dbgUpg = false;
+    std::string upgSel;
+    if (upgTrace || upgTraceAll) {
+        upgSel = memory_.selectorOf(cachedMethod);
+        if (upgTraceAll || upgSel == "min:" || upgSel == "from:to:put:" ||
+            upgSel == "replaceFrom:to:with:startingAt:" ||
+            upgSel == "atAllPut:" || upgSel == "at:" || upgSel == "at:put:") {
+            dbgUpg = true;
+        }
+    }
+
     // Find the matching IC entry and upgrade, or fill an empty slot
     int firstEmpty = -1;
     for (int e = 0; e < 4; e++) {
@@ -10935,6 +11060,22 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
+                if (dbgUpg) {
+                    std::string callerSel = callerMethod.rawBits()
+                        ? memory_.selectorOf(callerMethod) : std::string("?");
+                    fprintf(stderr,
+                        "[UPG] %s slot=%d UPGRADE key=0x%llx extra=0x%llx ic=%p caller=#%s callerOop=0x%llx\n",
+                        upgSel.c_str(), e, (unsigned long long)lookupKey,
+                        (unsigned long long)newExtra, (void*)icData,
+                        callerSel.c_str(), (unsigned long long)callerMethod.rawBits());
+                }
+            } else if (dbgUpg) {
+                std::string callerSel = callerMethod.rawBits()
+                    ? memory_.selectorOf(callerMethod) : std::string("?");
+                fprintf(stderr,
+                    "[UPG] %s slot=%d ALREADY-SET extra=0x%llx ic=%p caller=#%s\n",
+                    upgSel.c_str(), e, (unsigned long long)extra, (void*)icData,
+                    callerSel.c_str());
             }
             return;
         }
@@ -10959,6 +11100,15 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         icData[firstEmpty * 3 + 2] = newExtra;
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
         jitICPatches_++;
+        if (dbgUpg) {
+            std::string callerSel = callerMethod.rawBits()
+                ? memory_.selectorOf(callerMethod) : std::string("?");
+            fprintf(stderr,
+                "[UPG] %s slot=%d FILL key=0x%llx extra=0x%llx ic=%p caller=#%s callerOop=0x%llx\n",
+                upgSel.c_str(), firstEmpty, (unsigned long long)lookupKey,
+                (unsigned long long)newExtra, (void*)icData,
+                callerSel.c_str(), (unsigned long long)callerMethod.rawBits());
+        }
     }
 }
 
@@ -11217,8 +11367,68 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
 
+                // DEBUG: dump state for ALL J2J calls
+                static int j2jDbg = !!getenv("PHARO_J2J_DEBUG_TRACE");
+                static int j2jDbgCount = 0;
+                bool dbgThisCall = false;
+                std::string dbgSel;
+                // FILTER: trace only min:/from:to:put:/replaceFrom:to:with:startingAt:
+                // when MIN_TRACE env var is set
+                static bool minTrace = !!getenv("PHARO_MIN_TRACE");
+                static int minTraceCount = 0;
+                bool dbgMin = false;
+                if (minTrace && minTraceCount < 50) {
+                    std::string sel = memory_.selectorOf(targetMethod);
+                    if (sel == "min:" || sel == "from:to:put:" ||
+                        sel == "replaceFrom:to:with:startingAt:") {
+                        dbgMin = true;
+                        minTraceCount++;
+                        Oop arg = (nArgs >= 1) ? save.sp[-1] : Oop::fromRawBits(0);
+                        fprintf(stderr,
+                            "[MIN-CALL #%d %s] caller=%s nArgs=%d "
+                            "rcv=0x%llx arg=0x%llx\n",
+                            minTraceCount, sel.c_str(),
+                            memory_.selectorOf(Oop::fromRawBits(callerJM->compiledMethodOop)).c_str(),
+                            nArgs,
+                            (unsigned long long)calleeRecv.rawBits(),
+                            (unsigned long long)arg.rawBits());
+                    }
+                }
+                if (j2jDbg && j2jDbgCount < 200) {
+                    dbgThisCall = true;
+                    j2jDbgCount++;
+                    dbgSel = memory_.selectorOf(targetMethod);
+                    Oop arg = (nArgs >= 1) ? save.sp[-1] : Oop::fromRawBits(0);
+                    fprintf(stderr,
+                        "[J2J-CALL #%d %s] caller=%s nArgs=%d "
+                        "sp=%p ip=%p selfRec=%d "
+                        "rcv=0x%llx arg=0x%llx entry=%p resume=%p\n",
+                        j2jDbgCount, dbgSel.c_str(),
+                        memory_.selectorOf(Oop::fromRawBits(callerJM->compiledMethodOop)).c_str(),
+                        nArgs,
+                        (void*)state.sp, (void*)state.ip,
+                        selfRecursive ? 1 : 0,
+                        (unsigned long long)calleeRecv.rawBits(),
+                        (unsigned long long)arg.rawBits(),
+                        (void*)entryAddr, (void*)save.resumeAddr);
+                }
+
                 // Enter callee JIT code (already executable from loop start)
                 JIT_CALL(entryAddr, &state);
+
+                if (dbgMin) {
+                    fprintf(stderr,
+                        "[MIN-CALL #%d AFTER] exitReason=%d retVal=0x%llx\n",
+                        minTraceCount, (int)state.exitReason,
+                        (unsigned long long)state.returnValue.rawBits());
+                }
+                if (dbgThisCall) {
+                    fprintf(stderr,
+                        "[J2J-CALL #%d %s AFTER] exitReason=%d retVal=0x%llx sp=%p\n",
+                        j2jDbgCount, dbgSel.c_str(), (int)state.exitReason,
+                        (unsigned long long)state.returnValue.rawBits(),
+                        (void*)state.sp);
+                }
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---
@@ -11249,6 +11459,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // Non-self: must reset state.ip from calleeBCStart to
                     // callerBCStart before resuming caller's stencils.
                     state.ip = save.bcStart;
+                }
+
+                // DEBUG: dump return state for all J2J returns
+                static int j2jRetDbg = !!getenv("PHARO_J2J_DEBUG_TRACE");
+                static int j2jRetDbgCount = 0;
+                if (j2jRetDbg && j2jRetDbgCount < 200) {
+                    Oop slotBefore = state.sp[-(save.sendArgCount + 1)];
+                    j2jRetDbgCount++;
+                    fprintf(stderr,
+                        "[J2J-RET #%d] sendArgCount=%d sp=%p slotBefore=0x%llx "
+                        "retVal=0x%llx selfRec=%d resume=%p\n",
+                        j2jRetDbgCount, save.sendArgCount, (void*)state.sp,
+                        (unsigned long long)slotBefore.rawBits(),
+                        (unsigned long long)retVal.rawBits(),
+                        ((savedJMBits & 1) != 0) ? 1 : 0,
+                        (void*)save.resumeAddr);
                 }
 
                 // Pop receiver+args, push return value
@@ -11373,7 +11599,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         // Handle exit reason
-        Oop chainTarget;  // Set by ExitSend/ExitSendCached, used by shared chain code after switch
+        Oop chainTarget;  // Set by ExitSend/ExitSendCached/ExitJ2JCall, used by shared chain code after switch
+        bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
         switch (state.exitReason) {
         case jit::ExitReturn: {
             if (!popFrame()) {
@@ -11482,7 +11709,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             stackPointer_ = state.sp;
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
-            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount);
+            upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
 
             chainTarget = cached;
             jitRuntime_.noteMethodEntry(cached);
@@ -11595,6 +11822,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             return false;
         }
 
+        case jit::ExitJ2JCall: {
+            // J2J IC hit during chain resume — stencil set bit 60 in a prior
+            // upgradeICToJ2J, but the J2J trampoline only runs once (before the
+            // chain loop).  Handle as a regular method activation.  IP is already
+            // past the send bytecode (stencil sets ip = ip + bcOffset + bcLen).
+            Oop j2jCached = state.cachedTarget;
+            if (!j2jCached.isObject() || j2jCached.rawBits() < 0x10000 ||
+                j2jCached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                instructionPointer_ = state.ip;
+                stackPointer_ = state.sp;
+                return false;
+            }
+            jitICHits_++;
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            chainTarget = j2jCached;
+            jitRuntime_.noteMethodEntry(j2jCached);
+            ipAlreadyAdvanced = true;
+            break;  // → shared send-chain code after switch
+        }
+
         case jit::ExitPrimFail:
         case jit::ExitDeopt:
             stackPointer_ = entrySP;
@@ -11604,18 +11852,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             return false;
         }
 
-        // --- Shared send-chain code (reached via break from ExitSend/ExitSendCached) ---
+        // --- Shared send-chain code (reached via break from ExitSend/ExitSendCached/ExitJ2JCall) ---
         // chainTarget holds the resolved method. Advance IP past the send bytecode,
         // try primitive execution, then activateMethod and resume JIT.
         {
-            // Advance IP past send bytecode
-            uint8_t sendOp = *instructionPointer_;
-            if (sendOp >= 0x80 && sendOp <= 0xAF) {
-                instructionPointer_ += 1;
-            } else if (sendOp == 0xEA || sendOp == 0xEB) {
-                instructionPointer_ += 2;  // ExtSend / ExtSuperSend
-            } else {
-                instructionPointer_ += 1;
+            // Advance IP past send bytecode (ExitJ2JCall: stencil already did this)
+            if (!ipAlreadyAdvanced) {
+                uint8_t sendOp = *instructionPointer_;
+                if (sendOp >= 0x80 && sendOp <= 0xAF) {
+                    instructionPointer_ += 1;
+                } else if (sendOp == 0xEA || sendOp == 0xEB) {
+                    instructionPointer_ += 2;  // ExtSend / ExtSuperSend
+                } else {
+                    instructionPointer_ += 1;
+                }
             }
 
             int nArgs = state.sendArgCount;

@@ -1336,6 +1336,33 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         }
     }
 
+    // Selector-based JIT skip for bisection: PHARO_JIT_SKIP_SELECTORS=sel1,sel2,...
+    // Skips JIT compilation for methods with these selectors. Useful for narrowing
+    // down which compiled method causes a regression.
+    {
+        static const char* skipEnv = getenv("PHARO_JIT_SKIP_SELECTORS");
+        if (skipEnv && *skipEnv) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            // Match selector against comma-separated list (exact match per token).
+            const char* p = skipEnv;
+            while (*p) {
+                const char* end = p;
+                while (*end && *end != ',') end++;
+                if ((size_t)(end - p) == sel.size() &&
+                    std::memcmp(p, sel.data(), sel.size()) == 0) {
+                    static int skipCount = 0;
+                    if (++skipCount <= 10) {
+                        fprintf(stderr, "[JIT] Skipping #%s (PHARO_JIT_SKIP_SELECTORS)\n",
+                                sel.c_str());
+                    }
+                    compilationsFailed_++;
+                    return nullptr;
+                }
+                p = (*end == ',') ? end + 1 : end;
+            }
+        }
+    }
+
     // Prepend primitive prologue stencil if method has a supported primitive.
     // The prologue runs the fast path (type check + inline op); on failure
     // it falls through via _HOLE_CONTINUE to the normal bytecodes.

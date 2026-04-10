@@ -920,7 +920,9 @@ public:
 
     /// Upgrade an IC entry to J2J direct call if the target is now JIT-compiled.
     /// Called from ExitSendCached handlers when an IC hit goes through C++.
-    void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount);
+    /// callerMethod is the JIT method whose IC is being filled (for debug only).
+    void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
+                        Oop callerMethod = Oop::fromRawBits(0));
 private:
 #endif
 
