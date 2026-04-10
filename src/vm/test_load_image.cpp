@@ -24,6 +24,7 @@
 #include <unistd.h>
 #include <thread>
 #include <atomic>
+#include <fstream>
 
 #ifdef __APPLE__
 #include <dlfcn.h>
@@ -589,14 +590,21 @@ int main(int argc, char* argv[]) {
 
     // Detect test mode: first image arg is "test"
     bool testMode = (!imageArgs.empty() && imageArgs[0] == "test");
+    // Detect eval mode: first image arg is "eval"
+    bool evalMode = (!imageArgs.empty() && imageArgs[0] == "eval");
+    // Detect headless CLI mode: image args present and not --interactive
+    bool headlessMode = !imageArgs.empty() && imageArgs[0] != "--interactive";
 
-    // In test mode, auto-disable JIT unless explicitly overridden.
+    // In test/eval mode, auto-disable JIT unless explicitly overridden.
     // JIT adds ~26x overhead for cold code (test suites call thousands of methods
     // once, triggering heavy C++ JIT entry/exit transitions on every send).
-    // Override with PHARO_NO_JIT=0 to force JIT in test mode.
-    if (testMode && !getenv("PHARO_NO_JIT")) {
+    // Eval is one-shot so JIT compilation overhead is pure waste.
+    // Override with PHARO_NO_JIT=0 to force JIT in these modes.
+    if ((testMode || evalMode) && !getenv("PHARO_NO_JIT")) {
         setenv("PHARO_NO_JIT", "1", 0);
-        std::cout << "[TEST] Auto-disabled JIT for test mode (override with PHARO_NO_JIT=0)" << std::endl;
+        if (testMode) {
+            std::cout << "[TEST] Auto-disabled JIT for test mode (override with PHARO_NO_JIT=0)" << std::endl;
+        }
     }
 
     std::cout << "\nLoading image: " << imagePath << std::endl;
@@ -615,6 +623,37 @@ int main(int argc, char* argv[]) {
             }
         }
         free(pathCopy);
+    }
+
+    // In eval mode, write a startup.st that evaluates the expression and exits.
+    // Pharo's StartupPreferencesLoader automatically loads startup.st from the
+    // image directory during session startup — no stock Pharo VM needed.
+    std::string startupStPath;
+    if (evalMode) {
+        std::string expr;
+        for (size_t i = 1; i < imageArgs.size(); i++) {
+            if (!expr.empty()) expr += ' ';
+            expr += imageArgs[i];
+        }
+        // Escape single quotes for Smalltalk string literal (double them)
+        std::string escaped;
+        for (char c : expr) {
+            escaped += c;
+            if (c == '\'') escaped += '\'';
+        }
+        // Write startup.st next to the image (CWD is already image dir)
+        startupStPath = "startup.st";
+        {
+            std::ofstream f(startupStPath);
+            f << "| result |\n"
+              << "[\n"
+              << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
+              << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
+              << "] on: Error do: [:e |\n"
+              << "  Stdio stderr nextPutAll: 'Error: ', e printString; lf; flush].\n"
+              << "Smalltalk exitSuccess.\n";
+            f.close();
+        }
     }
 
     // Initialize memory (4 GB virtual via mmap lazy commit)
@@ -657,12 +696,17 @@ int main(int argc, char* argv[]) {
         std::cout << "  " << className << ": " << (cls.isNil() ? "NOT FOUND" : "found") << std::endl;
     }
 
-    // Create test display surface for Morphic rendering
-    std::cout << "\n=== Display Surface Setup ===" << std::endl;
-    gTestSurface = new TestDisplaySurface(1024, 768);
-    gDisplaySurface = gTestSurface;  // Set global for VM to use
-    std::cout << "Created " << gTestSurface->width() << "x" << gTestSurface->height()
-              << " test display surface" << std::endl;
+    // Create test display surface for Morphic rendering (skip in headless mode
+    // so Morphic's render loop detects no display and CLI handlers activate)
+    if (!headlessMode) {
+        std::cout << "\n=== Display Surface Setup ===" << std::endl;
+        gTestSurface = new TestDisplaySurface(1024, 768);
+        gDisplaySurface = gTestSurface;
+        std::cout << "Created " << gTestSurface->width() << "x" << gTestSurface->height()
+                  << " test display surface" << std::endl;
+    } else {
+        std::cout << "\n=== Headless Mode (no display) ===" << std::endl;
+    }
 
     // Try to initialize interpreter
     std::cout << "\n=== Interpreter Initialization ===" << std::endl;
@@ -719,14 +763,12 @@ int main(int argc, char* argv[]) {
 
         bool benchMode = !!getenv("PHARO_BENCH");
 
-        // Create Display Form in all modes. MorphicRenderLoop runs at P40
-        // (userSchedulingPriority), not P80 as previously assumed. Without a
-        // Display, MorphicRenderLoop still spawns but spins doing empty cycles,
-        // dropping the step rate 10x. With Display, it renders and sleeps via
-        // Delay, giving CPU to tests at the same priority.
-        // Skip in bench mode — no display needed, and it calls executeFromContext
-        // which would overwrite the benchFib context state.
-        if (!benchMode) {
+        // Create Display Form in all modes except bench/eval. MorphicRenderLoop
+        // runs at P40 (userSchedulingPriority). Without a Display, it spins doing
+        // empty cycles, dropping the step rate 10x. With Display, it renders and
+        // sleeps via Delay, giving CPU to tests at the same priority.
+        // Skip in bench mode (calls executeFromContext) and eval mode (exits early).
+        if (!benchMode && !evalMode) {
             std::cout << "\n=== Creating Display ===" << std::endl;
             interpreter.ensureDisplayForm(1024, 768, 32);
         }
@@ -960,6 +1002,11 @@ int main(int argc, char* argv[]) {
         delete gTestSurface;
         gTestSurface = nullptr;
         gDisplaySurface = nullptr;
+    }
+
+    // Clean up eval startup.st if we wrote one
+    if (!startupStPath.empty()) {
+        std::remove(startupStPath.c_str());
     }
 
     std::cout << "\n=== Test Complete ===" << std::endl;
