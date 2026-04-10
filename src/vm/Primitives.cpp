@@ -2751,28 +2751,6 @@ PrimitiveResult Interpreter::primitiveNext(int argCount) {
     int64_t position = positionOop.asSmallInteger();
     int64_t limit = limitOop.asSmallInteger();
 
-    // Temporary debug: log ALL stream reads on short strings
-    static int streamDbgCount = 0;
-    if (streamDbgCount < 40 && array.isObject()) {
-        ObjectHeader* ah = array.asObjectPtr();
-        ObjectFormat af = ah->format();
-        if (af >= ObjectFormat::Indexable8 && af <= ObjectFormat::Indexable8_7) {
-            size_t bs = memory_.byteSizeOf(array);
-            if (bs > 0 && bs <= 30) {
-                streamDbgCount++;
-                std::string content;
-                for (size_t i = 0; i < bs && i < 20; i++) {
-                    char c = static_cast<char>(memory_.fetchByte(i, array));
-                    content += (c >= 32 && c < 127) ? c : '.';
-                }
-                uint8_t byteAtPos = (static_cast<size_t>(position) < bs) ? memory_.fetchByte(position, array) : '?';
-                fprintf(stderr, "[P65] '%s' pos=%lld lim=%lld byte=$%c(0x%02x)\n",
-                        content.c_str(), (long long)position, (long long)limit,
-                        (byteAtPos >= 32 && byteAtPos < 127) ? byteAtPos : '.', byteAtPos);
-            }
-        }
-    }
-
     // Check if at end
     if (position >= limit) {
         return PrimitiveResult::Failure;  // At end, let Smalltalk handle it
@@ -3579,70 +3557,6 @@ PrimitiveResult Interpreter::primitiveQuit(int argCount) {
     // On iOS, std::exit() from a background thread causes SIGABRT.
     // Instead, stop the interpreter loop and let the app handle cleanup.
 
-    // Temporary debug: print stack trace when image exits
-    fprintf(stderr, "[QUIT] primitiveQuit called, argCount=%d\n", argCount);
-    if (argCount >= 1) {
-        Oop exitCode = stackTop();
-        if (exitCode.isSmallInteger()) {
-            fprintf(stderr, "[QUIT] exit code = %lld\n", (long long)exitCode.asSmallInteger());
-        }
-    }
-    // Print current method and saved frames
-    fprintf(stderr, "[QUIT] active method: %s\n", memory_.selectorOf(method_).c_str());
-    fprintf(stderr, "[QUIT] receiver class: %s (0x%llx)\n", memory_.classNameOf(receiver_).c_str(),
-            (unsigned long long)receiver_.rawBits());
-    for (int i = frameDepth_ - 1; i >= 0 && i >= frameDepth_ - 20; i--) {
-        fprintf(stderr, "[QUIT] frame[%d]: %s\n", i, memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
-    }
-    // Walk the Smalltalk context chain (slot 0 = sender, slot 3 = method)
-    {
-        Oop ctx = activeContext_;
-        for (int depth = 0; depth < 40 && ctx.isObject() && !ctx.isNil(); depth++) {
-            Oop m = memory_.fetchPointer(3, ctx);
-            std::string sel = memory_.selectorOf(m);
-            std::string cls = "(?)";
-            Oop rcv = memory_.fetchPointer(5, ctx);  // slot 5 = receiver
-            if (rcv.isObject() && !rcv.isNil()) cls = memory_.classNameOf(rcv);
-            else if (rcv.isSmallInteger()) cls = "SmallInt(" + std::to_string(rcv.asSmallInteger()) + ")";
-            else if (rcv.isNil()) cls = "nil";
-            fprintf(stderr, "[QUIT] ctx[%d]: %s>>%s (rcv=0x%llx)\n", depth, cls.c_str(), sel.c_str(),
-                    (unsigned long long)rcv.rawBits());
-            ctx = memory_.fetchPointer(0, ctx);  // slot 0 = sender
-        }
-    }
-    // Dump true/false Oop values for verification
-    fprintf(stderr, "[QUIT] true=0x%llx false=0x%llx nil=0x%llx\n",
-            (unsigned long long)memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits(),
-            (unsigned long long)memory_.specialObject(SpecialObjectIndex::FalseObject).rawBits(),
-            (unsigned long long)memory_.specialObject(SpecialObjectIndex::NilObject).rawBits());
-    // Dump receiver's instance variables (useful for SnapshotOperation debugging)
-    if (receiver_.isObject() && !receiver_.isNil()) {
-        ObjectHeader* hdr = receiver_.asObjectPtr();
-        int slots = static_cast<int>(hdr->slotCount());
-        if (slots > 0 && slots <= 20) {
-            fprintf(stderr, "[QUIT] receiver slots (%d):\n", slots);
-            for (int i = 0; i < slots; i++) {
-                Oop val = memory_.fetchPointer(i, receiver_);
-                if (val.isSmallInteger()) {
-                    fprintf(stderr, "[QUIT]   [%d]: SmallInt %lld\n", i, (long long)val.asSmallInteger());
-                } else if (val == memory_.specialObject(SpecialObjectIndex::TrueObject)) {
-                    fprintf(stderr, "[QUIT]   [%d]: true\n", i);
-                } else if (val == memory_.specialObject(SpecialObjectIndex::FalseObject)) {
-                    fprintf(stderr, "[QUIT]   [%d]: false\n", i);
-                } else if (val.isNil()) {
-                    fprintf(stderr, "[QUIT]   [%d]: nil\n", i);
-                } else if (val.isObject()) {
-                    fprintf(stderr, "[QUIT]   [%d]: %s (0x%llx)\n", i, memory_.classNameOf(val).c_str(),
-                            (unsigned long long)val.rawBits());
-                } else {
-                    fprintf(stderr, "[QUIT]   [%d]: raw=0x%llx\n", i, (unsigned long long)val.rawBits());
-                }
-                // Always print raw for verification
-                fprintf(stderr, "[QUIT]        raw=0x%llx\n", (unsigned long long)val.rawBits());
-            }
-        }
-    }
-
     // Flush pending IMAGE output buffer before shutting down
     ::flushImageOutputBuffer();
 
@@ -3671,7 +3585,6 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
     // With 0 args: return array of all parameters
     // With 1 arg (index): return parameter at index
     // With 2 args (index, value): set parameter and return old value
-
     const int paramsArraySize = 86;
 
     // Helper to get a parameter value
@@ -3705,8 +3618,14 @@ PrimitiveResult Interpreter::primitiveVMParameter(int argCount) {
                 return Oop::fromSmallInteger(22003584);
             case 46: // Cog code size
                 return Oop::fromSmallInteger(0);  // No JIT
-            case 48: // VM flags
-                return Oop::fromSmallInteger(0);
+            case 48: { // VM flags (bit 0=fullscreen, bit 1=headless)
+                int flags = 0;
+                for (const auto& p : vmParameters_) {
+                    if (p == "--headless") flags |= 2;
+                }
+                fprintf(stderr, "[DIAG] vmParam 48 → %d (headless=%d)\n", flags, !!(flags & 2));
+                return Oop::fromSmallInteger(flags);
+            }
             case 49: { // Max external semaphores table size
                 Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
                 size_t size = 0;
@@ -4092,7 +4011,6 @@ PrimitiveResult Interpreter::primitiveKeyboardNext(int argCount) {
 }
 
 PrimitiveResult Interpreter::primitiveBeDisplay(int argCount) {
-    fprintf(stderr, "[primitiveBeDisplay] called with argCount=%d\n", argCount);
     if (argCount != 0) return PrimitiveResult::Failure;
 
     // Get the receiver (a Form object)
@@ -8761,28 +8679,6 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
-    // Temporary debug: log ALL attribute queries (especially negative = VM params)
-    {
-        static int attrLogCount = 0;
-        // Always log negative indices (VM params like --headless)
-        // For positive, limit to first 200
-        if (index < 0 || attrLogCount < 200) {
-            if (index >= 0) attrLogCount++;
-            std::string val = "(?)";
-            if (index < 0) {
-                int paramIdx = static_cast<int>(-index) - 1;
-                if (paramIdx >= 0 && paramIdx < static_cast<int>(vmParameters_.size()))
-                    val = vmParameters_[paramIdx];
-                else val = "(nil/no param)";
-            } else if (index >= 2 && index < 1000) {
-                int argIdx = static_cast<int>(index) - 2;
-                val = (argIdx < static_cast<int>(imageArguments_.size())) ? imageArguments_[argIdx] : "(nil)";
-            }
-            fprintf(stderr, "[ATTR] getSystemAttribute:%lld → %s\n",
-                    (long long)index, val.c_str());
-        }
-    }
-
     // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
 
     // Negative indices: VM parameters (flags like --headless)
@@ -11190,14 +11086,6 @@ PrimitiveResult Interpreter::primitiveFileOpen(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    static int fileOpenLog = 0;
-    fileOpenLog++;
-    if (fileOpenLog <= 20 || (fileOpenLog % 10000 == 0)) {
-        bool writable2 = (writableOop == memory_.trueObject());
-        fprintf(stderr, "[FILE] primitiveFileOpen #%d: '%s' writable=%d argCount=%d\n",
-                fileOpenLog, filename.c_str(), writable2, argCount);
-    }
-
     // Determine mode based on writable flag
     bool writable = (writableOop == memory_.trueObject());
     const char* mode = writable ? "r+b" : "rb";
@@ -11697,17 +11585,10 @@ PrimitiveResult Interpreter::primitiveDirectoryGetMacTypeAndCreator(int argCount
 // primitiveGetCurrentWorkingDirectory - named primitive (no module)
 // Takes 1 arg: a ByteArray buffer. Fills it with getcwd() result and returns a String.
 PrimitiveResult Interpreter::primitiveGetCurrentWorkingDirectory(int argCount) {
-    static int cwdLog = 0;
-    if (cwdLog++ < 5) {
-        fprintf(stderr, "[CWD] primitiveGetCurrentWorkingDirectory called! argCount=%d\n", argCount);
-    }
     char buf[1024];
     if (!getcwd(buf, sizeof(buf))) {
-        if (cwdLog <= 5) fprintf(stderr, "[CWD] getcwd failed!\n");
         return PrimitiveResult::Failure;
     }
-    if (cwdLog <= 5) fprintf(stderr, "[CWD] result='%s' len=%zu\n", buf, strlen(buf));
-
     Oop result = createStringObject(memory_, std::string(buf));
     if (result.isNil()) {
         return PrimitiveResult::Failure;
