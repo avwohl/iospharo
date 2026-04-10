@@ -5859,8 +5859,6 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
-    // Save current state
-
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
         handleStackOverflow(argCount);
         return;
@@ -10703,11 +10701,12 @@ void Interpreter::tryJITResumeInCaller() {
             }
             continue;  // Try to resume in the next caller
 
-        case jit::ExitSend:
+        case jit::ExitSend: {
             // JIT hit a send. Let interpreter handle it.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
+
             // Patch IC on miss if any slot is empty
             if (state.icDataPtr) {
                 bool hasEmpty = false;
@@ -10721,6 +10720,7 @@ void Interpreter::tryJITResumeInCaller() {
             }
             inJITResume_ = false;
             return;
+        }
 
         case jit::ExitSendCached: {
             // IC hit during resume — activate cached method, then resume caller
@@ -10753,6 +10753,21 @@ void Interpreter::tryJITResumeInCaller() {
             // execute their primitive, not fallback bytecodes.
             {
                 int primIdx = primitiveIndexOf(cached);
+
+                // DEBUG: detect P60 on byte objects from resume-cached path
+                if (primIdx == 60 && state.sendArgCount == 1) {
+                    Oop rcRcv = stackValue(1);
+                    if (rcRcv.isObject() && rcRcv.rawBits() > 0x10000 &&
+                        rcRcv.asObjectPtr()->isBytesObject()) {
+                        Oop rcIdx = stackValue(0);
+                        fprintf(stderr, "[RESUME-CACHED-P60-BYTE] idx=0x%llx(isInt=%d) "
+                                "rcv byteSize=%zu callerMethod='%s'\n",
+                                (unsigned long long)rcIdx.rawBits(), rcIdx.isSmallInteger(),
+                                rcRcv.asObjectPtr()->byteSize(),
+                                memory_.selectorOf(state.method).c_str());
+                    }
+                }
+
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
                     argCount_ = state.sendArgCount;
@@ -10773,6 +10788,16 @@ void Interpreter::tryJITResumeInCaller() {
                         }
                         // Primitive completed in place — resume JIT at bytecode after send
                         continue;
+                    }
+
+                    // DEBUG: P60 failure on byte object
+                    if (primIdx == 60 && state.sendArgCount == 1) {
+                        Oop rcRcv = stackValue(1); // after failure, stack unchanged
+                        if (rcRcv.isObject() && rcRcv.rawBits() > 0x10000 &&
+                            rcRcv.asObjectPtr()->isBytesObject()) {
+                            fprintf(stderr, "[RESUME-CACHED-P60-BYTE] FAILED! failCode=%d\n",
+                                    primFailCode_);
+                        }
                     }
                 }
             }
@@ -11733,9 +11758,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             stackPointer_ = state.sp;
             jitICMisses_++;
             // Get selector from IC data (stored at offset 12 by compiler)
-            if (!state.icDataPtr) return false;
+            if (!state.icDataPtr) {
+                static int noIC = 0;
+                if (++noIC <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] no icDataPtr! returning false\n");
+                return false;
+            }
             Oop sendSel = Oop::fromRawBits(state.icDataPtr[12]);
-            if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) return false;
+            if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {
+                static int badSel = 0;
+                if (++badSel <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] bad selector bits=0x%llx! returning false\n",
+                    (unsigned long long)sendSel.rawBits());
+                return false;
+            }
 
             int nArgs = state.sendArgCount;
             Oop rcvr = stackValue(nArgs);
@@ -11965,6 +11999,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // execute their primitive, not fallback bytecodes.
             {
                 int primIdx = primitiveIndexOf(chainTarget);
+
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
                     argCount_ = nArgs;
@@ -11973,6 +12008,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     newMethod_ = chainTarget;
                     PrimitiveResult result = executePrimitive(primIdx, nArgs);
                     chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
+
                     if (result == PrimitiveResult::Success) {
                         // Frame-pushing primitives (closure activation prims 81/82/
                         // 201-209, perform: prims 83/84, etc.) call activateBlock/

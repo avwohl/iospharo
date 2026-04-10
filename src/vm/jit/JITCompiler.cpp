@@ -1419,6 +1419,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                 prologue.bcLength = 0;     // doesn't consume any bytecodes
                 decoded.insert(decoded.begin(), prologue);
                 hasPrimPrologue = true;
+            } else {
+                // CRITICAL: Don't JIT-compile methods with unsupported primitives.
+                // The CallPrimitive bytecode becomes NOP in JIT code, so the fallback
+                // bytecodes run unconditionally. Via J2J (direct call), activateMethod
+                // is bypassed and the primitive is never tried. For methods like
+                // Object>>at: whose fallback is errorSubscriptBounds:, this causes
+                // false errors. Keep these methods interpreter-only so the primitive
+                // is always tried first.
+                compilationsFailed_++;
+                return nullptr;
             }
         }
     }

@@ -1930,6 +1930,15 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Diagnostic: log unexpected fallthrough
+    static int fallthroughCount = 0;
+    if (fallthroughCount < 10) {
+        fallthroughCount++;
+        std::string cn = memory_.classNameOf(rcvr);
+        fprintf(stderr, "[P60-FALLTHROUGH] idx=%lld fmt=%d slots=%zu class='%s' isBytes=%d isPtrs=%d isCM=%d\n",
+                (long long)idx, static_cast<int>(fmt), slots, cn.c_str(),
+                header->isBytesObject(), header->isPointersObject(), header->isCompiledMethod());
+    }
     return PrimitiveResult::Failure;
 }
 
@@ -2769,6 +2778,14 @@ PrimitiveResult Interpreter::primitiveNext(int argCount) {
     if (format >= ObjectFormat::Indexable8 && format <= ObjectFormat::Indexable8_7) {
         // Byte array or String - return Character
         size_t byteCount = memory_.byteSizeOf(array);
+        // Diagnostic: log first few reads from byte streams
+        static int p65ByteLog = 0;
+        if (p65ByteLog < 20) {
+            p65ByteLog++;
+            std::string cn = memory_.classNameOf(array);
+            fprintf(stderr, "[P65] next on %s: pos=%lld limit=%lld byteCount=%zu\n",
+                    cn.c_str(), (long long)position, (long long)limit, byteCount);
+        }
         if (static_cast<size_t>(position) >= byteCount) {
             return PrimitiveResult::Failure;
         }
@@ -8678,6 +8695,13 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     }
 
     int64_t index = indexOop.asSmallInteger();
+
+    // Diagnostic: log attribute queries during startup
+    static int attrQueryCount = 0;
+    if (attrQueryCount < 100) {
+        attrQueryCount++;
+        fprintf(stderr, "[P149] getSystemAttribute: %lld\n", (long long)index);
+    }
 
     // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
 

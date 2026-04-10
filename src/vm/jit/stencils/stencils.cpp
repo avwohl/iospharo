@@ -1789,8 +1789,6 @@ extern "C" void stencil_primAt(JITState* s) {
     // Read object header directly
     uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
     uint64_t fmt = (header >> 24) & 0x1F;
-    // Only handle format 2 (Indexable, no fixed fields) for now
-    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
     if (slotCount == 255) {
         // Overflow: actual slot count in the 8 bytes before the object header.
@@ -1799,12 +1797,30 @@ extern "C" void stencil_primAt(JITState* s) {
         slotCount = (raw << 8) >> 8;
     }
     int64_t i = (int64_t)idx.bits >> 3;  // 1-based index
-    if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
-    // Read slot (slots start at header + 8)
-    Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
-    s->returnValue = slots[i - 1];
-    s->exitReason = EXIT_RETURN;
-    _HOLE_RT_RETURN(s);
+    if (fmt == 2) {
+        // Format 2: Indexable (Array, no fixed fields) — read Oop slot
+        if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
+        Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
+        s->returnValue = slots[i - 1];
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    if (fmt >= 16 && fmt <= 23) {
+        // Formats 16-23: Byte objects (ByteArray, ByteString, etc.)
+        // byteSize = slotCount * 8 - (fmt - 16)
+        uint64_t byteSize = slotCount * 8 - (fmt - 16);
+        if (i < 1 || (uint64_t)i > byteSize) { _HOLE_CONTINUE(s); return; }
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
+        uint8_t byte = bytes[i - 1];
+        // Return as SmallInteger: (value << 3) | 1
+        s->returnValue.bits = ((uint64_t)byte << 3) | 1;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    // Unsupported format — fall through to bytecodes
+    _HOLE_CONTINUE(s); return;
 }
 
 // ----- Primitive 61: Object #at:put: -----
@@ -1819,8 +1835,6 @@ extern "C" void stencil_primAtPut(JITState* s) {
     if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
     uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
     uint64_t fmt = (header >> 24) & 0x1F;
-    // Only handle format 2 (Indexable, no fixed fields)
-    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
     // Check not immutable (bit 23)
     if (header & (1ULL << 23)) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
@@ -1829,29 +1843,55 @@ extern "C" void stencil_primAtPut(JITState* s) {
         slotCount = (raw << 8) >> 8;
     }
     int64_t i = (int64_t)idx.bits >> 3;
-    if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
-    Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
-    slots[i - 1] = val;
-    s->returnValue = val;
-    s->exitReason = EXIT_RETURN;
-    _HOLE_RT_RETURN(s);
+    if (fmt == 2) {
+        // Format 2: Indexable (Array) — store Oop slot
+        if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
+        Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
+        slots[i - 1] = val;
+        s->returnValue = val;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    if (fmt >= 16 && fmt <= 23) {
+        // Formats 16-23: Byte objects — value must be SmallInteger 0-255
+        if ((val.bits & 7) != 1) { _HOLE_CONTINUE(s); return; }
+        int64_t byteVal = (int64_t)val.bits >> 3;
+        if (byteVal < 0 || byteVal > 255) { _HOLE_CONTINUE(s); return; }
+        uint64_t byteSize = slotCount * 8 - (fmt - 16);
+        if (i < 1 || (uint64_t)i > byteSize) { _HOLE_CONTINUE(s); return; }
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
+        bytes[i - 1] = (uint8_t)byteVal;
+        s->returnValue = val;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    // Unsupported format — fall through to bytecodes
+    _HOLE_CONTINUE(s); return;
 }
 
 // ----- Primitive 62: Object #size -----
-// Fast path for format 2 (Indexable, no fixed fields).
+// Fast path for format 2 (Indexable) and formats 16-23 (byte objects).
 extern "C" void stencil_primSize(JITState* s) {
     Oop rcvr = s->receiver;
     if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
     uint64_t header = *reinterpret_cast<uint64_t*>(rcvr.bits);
     uint64_t fmt = (header >> 24) & 0x1F;
-    // Only handle format 2 (Indexable, no fixed fields)
-    if (fmt != 2) { _HOLE_CONTINUE(s); return; }
     uint64_t slotCount = (header >> 56) & 0xFF;
     if (slotCount == 255) {
         uint64_t raw = *reinterpret_cast<uint64_t*>(rcvr.bits - 8);
         slotCount = (raw << 8) >> 8;
     }
-    s->returnValue.bits = (slotCount << 3) | 1;  // SmallInteger encoding
+    uint64_t size;
+    if (fmt == 2) {
+        size = slotCount;
+    } else if (fmt >= 16 && fmt <= 23) {
+        size = slotCount * 8 - (fmt - 16);
+    } else {
+        _HOLE_CONTINUE(s); return;
+    }
+    s->returnValue.bits = (size << 3) | 1;  // SmallInteger encoding
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
