@@ -738,7 +738,11 @@ int main(int argc, char* argv[]) {
     interpreter.setVMParameters({"--headless"});
     // Forward argv[2+] verbatim. With no args, default to --interactive so the
     // Morphic GUI starts (matches the Cog VM's behavior when invoked bare).
-    if (imageArgs.empty()) {
+    // In eval mode, don't forward args — startup.st handles everything, and
+    // forwarding "eval" confuses Pharo's SessionAccessModeResolver.
+    if (evalMode) {
+        interpreter.setImageArguments({"--interactive"});
+    } else if (imageArgs.empty()) {
         interpreter.setImageArguments({"--interactive"});
     } else {
         std::vector<std::string> forwarded;
