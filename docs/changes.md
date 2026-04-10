@@ -1,5 +1,26 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-10
+
+## test_load_image: forward CLI args to Pharo image
+
+`test_load_image` now forwards `argv[2+]` directly to `setImageArguments()`
+instead of hardcoding `{"--interactive"}`. With `--headless` set as a VM
+parameter, Pharo's PharoCommandLineHandler activates and dispatches to its
+standard subhandlers (`eval`, `test`, etc.). Empty args still default to
+`{"--interactive"}` so bare invocation launches the Morphic GUI.
+
+Verified (with `PHARO_NO_JIT=1`):
+- `./build/test_load_image image eval "1 + 2"` → `3`
+- `./build/test_load_image image eval "1 benchmark printString"` → `'1028'`
+- `./build/test_load_image image test "Kernel-Tests"` → STCommandLineHandler runs
+
+JIT-enabled CLI invocation still hits a `mustBeBoolean` loop in
+`Array>>mergeFirst:middle:last:into:by:` / `Context>>findContextSuchThat:` along
+the SubscriptOutOfBounds error path. The bench harness avoids it, so JIT bench
+still works; the env-var bench harness will be removed once that JIT bug is
+fixed.
+
 2026-04-09
 
 ## J2J Direct Calls — Working and Benchmarked

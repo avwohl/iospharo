@@ -687,16 +687,21 @@ int main(int argc, char* argv[]) {
             interpreter.setVMPath(argv[0]);
         }
     }
-    // Pass --headless and --interactive, same as PlatformBridge.cpp:
-    // --headless causes PharoCommandLineHandler to activate (loading startup.st)
-    // --interactive tells it to start MorphicUI instead of exiting.
+    // Pass --headless to the VM (consumed via negative attribute indices).
+    // PharoCommandLineHandler activates when --headless is set, then dispatches
+    // image arguments (positive attribute indices) to subhandlers like
+    // EvaluatingCommandLineHandler ("eval") or STCommandLineHandler ("test").
     interpreter.setVMParameters({"--headless"});
-    // Always pass --interactive so Pharo starts MorphicUI normally.
-    // In test mode, SUnitRunner (session handler) runs tests automatically.
-    // Passing "test Kernel-Tests" as image args would activate Pharo's
-    // STCommandLineHandler, which installs NonInteractiveUIManager and
-    // conflicts with SUnitRunner (100x slower execution).
-    interpreter.setImageArguments({"--interactive"});
+    // Forward argv[2+] verbatim. With no args, default to --interactive so the
+    // Morphic GUI starts (matches the Cog VM's behavior when invoked bare).
+    if (imageArgs.empty()) {
+        interpreter.setImageArguments({"--interactive"});
+    } else {
+        std::vector<std::string> forwarded;
+        forwarded.reserve(imageArgs.size());
+        for (const auto& a : imageArgs) forwarded.push_back(a);
+        interpreter.setImageArguments(forwarded);
+    }
 
     // Set up event callback BEFORE initialization
     gTestInterpreter = &interpreter;
