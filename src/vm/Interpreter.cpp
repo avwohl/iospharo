@@ -472,6 +472,7 @@ bool Interpreter::initialize() {
         bool wantFib = (strcmp(benchType, "1") == 0 || strcmp(benchType, "fib") == 0 || strcmp(benchType, "all") == 0);
         bool wantSieve = (strcmp(benchType, "sieve") == 0 || strcmp(benchType, "all") == 0);
         bool wantEven = (strcmp(benchType, "even") == 0);
+        bool wantTiny = (strcmp(benchType, "tiny") == 0 || strcmp(benchType, "tinyBenchmarks") == 0);
 
         if (wantFib)
             benchSpecs_.push_back({"fib(" + std::to_string(fibN) + ")", "Integer", "benchFib", fibN, 5});
@@ -481,6 +482,8 @@ bool Interpreter::initialize() {
             benchSpecs_.push_back({"even", "Integer", "even", 42, 3});
         if (strcmp(benchType, "factorial") == 0)
             benchSpecs_.push_back({"factorial", "Integer", "factorial", 100, 5});
+        if (wantTiny)
+            benchSpecs_.push_back({"tinyBenchmarks", "Integer", "tinyBenchmarks", 0, 1});
 
         // Default to fib if unrecognized
         if (benchSpecs_.empty())
