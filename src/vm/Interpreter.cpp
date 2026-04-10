@@ -477,7 +477,7 @@ bool Interpreter::initialize() {
         if (wantFib)
             benchSpecs_.push_back({"fib(" + std::to_string(fibN) + ")", "Integer", "benchFib", fibN, 5});
         if (wantSieve)
-            benchSpecs_.push_back({"sieve x3", "Integer", "benchmark", 3, 1});
+            benchSpecs_.push_back({"sieve x3", "Integer", "benchmark", 3, 5});
         if (wantEven)
             benchSpecs_.push_back({"even", "Integer", "even", 42, 3});
         if (strcmp(benchType, "factorial") == 0)
