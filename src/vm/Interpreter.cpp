@@ -10947,47 +10947,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         }
     }
 
-    // Debug: log benchFib patches
-    {
-        std::string sel = memory_.selectorOf(resolvedMethod);
-        if (sel == "benchFib") {
-            static int bfPatchLog = 0;
-            if (bfPatchLog < 5) {
-                bfPatchLog++;
-                jit::JITMethod* tgt = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
-                uint64_t tag = receiver.rawBits() & 0x7;
-                fprintf(stderr, "[BF-PATCH] benchFib IC patch: compiled=%d exec=%d tag=%llu icData=%p\n",
-                        tgt != nullptr, tgt && tgt->isExecutable(),
-                        (unsigned long long)tag, (void*)icData);
-            }
-        }
-    }
-
     // Verify the IC belongs to this send by checking that the IC's stored
     // selector matches the send's selector. If they don't match, the
     // pendingICPatch_ was stale (set by a different send in a nested JIT
     // execution or process switch) — patching would corrupt the IC.
     uint64_t icSelectorBits = icData[12];
     if (icSelectorBits != 0 && icSelectorBits != selector.rawBits()) {
-        // Trace mismatches for atEnd
-        static int mismatchCount = 0;
-        if (mismatchCount < 10) {
-            std::string selStr = memory_.selectorOf(resolvedMethod);
-            std::string icSelStr = "(unknown)";
-            if (icSelectorBits > 0x10000) {
-                Oop icSel = Oop::fromRawBits(icSelectorBits);
-                if (icSel.isObject()) {
-                    ObjectHeader* sh = icSel.asObjectPtr();
-                    if (sh->isBytesObject() && sh->byteSize() < 50)
-                        icSelStr = std::string((char*)sh->bytes(), sh->byteSize());
-                }
-            }
-            if (selStr == "atEnd" || icSelStr == "atEnd") {
-                mismatchCount++;
-                fprintf(stderr, "[IC-MISMATCH] #%d: send=#%s ic_stored=#%s\n",
-                        mismatchCount, selStr.c_str(), icSelStr.c_str());
-            }
-        }
         return;  // IC belongs to a different send site — skip
     }
 
@@ -11181,20 +11146,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         return;
     }
 
-    // DEBUG: trace upgrades for suspect methods
-    static bool upgTrace = !!getenv("PHARO_UPGRADE_TRACE");
-    static bool upgTraceAll = !!getenv("PHARO_UPGRADE_TRACE_ALL");
-    bool dbgUpg = false;
-    std::string upgSel;
-    if (upgTrace || upgTraceAll) {
-        upgSel = memory_.selectorOf(cachedMethod);
-        if (upgTraceAll || upgSel == "min:" || upgSel == "from:to:put:" ||
-            upgSel == "replaceFrom:to:with:startingAt:" ||
-            upgSel == "atAllPut:" || upgSel == "at:" || upgSel == "at:put:") {
-            dbgUpg = true;
-        }
-    }
-
     // Find the matching IC entry and upgrade, or fill an empty slot
     int firstEmpty = -1;
     for (int e = 0; e < 4; e++) {
@@ -11210,78 +11161,13 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
-                if (dbgUpg) {
-                    std::string callerSel = callerMethod.rawBits()
-                        ? memory_.selectorOf(callerMethod) : std::string("?");
-                    fprintf(stderr,
-                        "[UPG] %s slot=%d UPGRADE key=0x%llx extra=0x%llx ic=%p caller=#%s callerOop=0x%llx\n",
-                        upgSel.c_str(), e, (unsigned long long)lookupKey,
-                        (unsigned long long)newExtra, (void*)icData,
-                        callerSel.c_str(), (unsigned long long)callerMethod.rawBits());
-                }
-            } else if (dbgUpg) {
-                std::string callerSel = callerMethod.rawBits()
-                    ? memory_.selectorOf(callerMethod) : std::string("?");
-                fprintf(stderr,
-                    "[UPG] %s slot=%d ALREADY-SET extra=0x%llx ic=%p caller=#%s\n",
-                    upgSel.c_str(), e, (unsigned long long)extra, (void*)icData,
-                    callerSel.c_str());
             }
             return;
         }
         if (firstEmpty < 0 && icData[e * 3] == 0) firstEmpty = e;
     }
     // No matching entry found — fill an empty slot with J2J entry.
-    // EXPERIMENT: skip fill for primitive prologue methods
-    static bool noFillPrim = !!getenv("PHARO_NO_IC_FILL_PRIM");
-    // EXPERIMENT: skip fill for non-prim methods (bisection of findContextSuchThat: bug)
-    static bool noFillNonPrim = !!getenv("PHARO_NO_IC_FILL_NONPRIM");
-    if (firstEmpty >= 0 && fillEnabled &&
-        !(noFillPrim && target->hasPrimPrologue) &&
-        !(noFillNonPrim && !target->hasPrimPrologue)) {
-        // DIAGNOSTIC: Dump cachedMethod metadata for the FILL-MISMATCH case
-        {
-            static int fillLog = 0;
-            uint64_t icSelBits = icData[12];
-            std::string cachedSel = memory_.selectorOf(cachedMethod);
-            std::string icSel = "(none)";
-            if (icSelBits != 0 && icSelBits > 0x10000) {
-                Oop sOop = Oop::fromRawBits(icSelBits);
-                if (sOop.isObject()) {
-                    ObjectHeader* sh = sOop.asObjectPtr();
-                    if (sh->isBytesObject() && sh->byteSize() < 80) {
-                        icSel = std::string((char*)sh->bytes(), sh->byteSize());
-                    }
-                }
-            }
-            bool mismatch = icSelBits != 0 && icSel != cachedSel && icSel != "(none)";
-            if (mismatch && fillLog < 10) {
-                fillLog++;
-                ObjectHeader* mh = cachedMethod.asObjectPtr();
-                fprintf(stderr,
-                    "[FILL-MISMATCH] cached=0x%llx classIdx=%u fmt=%u cachedSel=#%s ic_sel=#%s key=0x%llx caller=#%s\n",
-                    (unsigned long long)cachedMethod.rawBits(),
-                    mh->classIndex(), (unsigned)mh->format(),
-                    cachedSel.c_str(), icSel.c_str(),
-                    (unsigned long long)lookupKey,
-                    callerMethod.rawBits() ? memory_.selectorOf(callerMethod).c_str() : "?");
-                size_t numLits = memory_.numLiteralsOf(cachedMethod);
-                fprintf(stderr, "  numLits=%zu hdr=0x%llx\n", numLits,
-                        (unsigned long long)mh->slotAt(0).rawBits());
-                for (size_t i = 1; i <= numLits && i <= 20; i++) {
-                    Oop lit = mh->slotAt(i);
-                    fprintf(stderr, "  lit[%zu]=0x%llx", i, (unsigned long long)lit.rawBits());
-                    if (lit.isObject() && lit.rawBits() >= 0x10000) {
-                        ObjectHeader* lh = lit.asObjectPtr();
-                        if (lh->isBytesObject() && lh->byteSize() < 60) {
-                            fprintf(stderr, " bytes=\"%.*s\"",
-                                    (int)lh->byteSize(), (char*)lh->bytes());
-                        }
-                    }
-                    fprintf(stderr, "\n");
-                }
-            }
-        }
+    if (firstEmpty >= 0 && fillEnabled) {
         // Detect trivial getter/setter/returnsSelf — for these, set inline
         // bits 63/62/61 instead of the J2J direct call bit 60. The inline path
         // in stencil_sendJ2J's J2J_IC_HIT macro reads receiver->slotAt(idx)
@@ -11307,9 +11193,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 uint8_t pk = inlinePrimKind(primIdx);
                 if (pk) newExtra |= (uint64_t)pk << 48;
             }
-            // EXPERIMENT: drop J2J bit from fill (test if J2J path or fill itself is buggy)
-            static bool noJ2JBit = !!getenv("PHARO_FILL_NO_J2J_BIT");
-            if (noJ2JBit) newExtra &= ~(1ULL << 60);
         }
 
         icData[firstEmpty * 3] = lookupKey;
@@ -11317,100 +11200,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         icData[firstEmpty * 3 + 2] = newExtra;
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
         jitICPatches_++;
-        // DEBUG: trace ALL FILL events when caller is mergeFirst
-        {
-            static int mfFillLog = 0;
-            if (mfFillLog < 60 && callerMethod.rawBits()) {
-                std::string callerSel2 = memory_.selectorOf(callerMethod);
-                if (callerSel2 == "mergeFirst:middle:last:into:by:" ||
-                    callerSel2 == "findContextSuchThat:") {
-                    mfFillLog++;
-                    std::string cachedSel2 = memory_.selectorOf(cachedMethod);
-                    uint64_t icSelBits2 = icData[12];
-                    std::string icSel2 = "(none)";
-                    if (icSelBits2 != 0 && icSelBits2 > 0x10000) {
-                        Oop sOop = Oop::fromRawBits(icSelBits2);
-                        if (sOop.isObject()) {
-                            ObjectHeader* sh = sOop.asObjectPtr();
-                            if (sh->isBytesObject() && sh->byteSize() < 80) {
-                                icSel2 = std::string((char*)sh->bytes(), sh->byteSize());
-                            }
-                        }
-                    }
-                    int primIdx = primitiveIndexOf(cachedMethod);
-                    // Get receiver class name for sanity check
-                    Oop recvForLog = stackPointer_[-(sendArgCount + 1)];
-                    std::string recvClsName = memory_.classNameOf(recvForLog);
-                    // Sanity check: do an explicit lookup of icSel on rcvr's class
-                    // and compare to cachedMethod
-                    Oop fresh = Oop::fromRawBits(0);
-                    if (icSelBits2 != 0 && icSelBits2 > 0x10000) {
-                        Oop icSelOop = Oop::fromRawBits(icSelBits2);
-                        Oop rcvCls = memory_.classOf(recvForLog);
-                        fresh = lookupMethod(icSelOop, rcvCls);
-                    }
-                    bool freshMatches = (fresh.rawBits() == cachedMethod.rawBits());
-                    fprintf(stderr,
-                        "[MF-FILL #%d] slot=%d ic_sel=#%s cached_sel=#%s key=0x%llx prim=%d "
-                        "hasPrimPrologue=%d extra=0x%llx ic=%p rcvCls=%s rcv=0x%llx "
-                        "cachedMeth=0x%llx freshLookup=0x%llx match=%d\n",
-                        mfFillLog, firstEmpty, icSel2.c_str(), cachedSel2.c_str(),
-                        (unsigned long long)lookupKey, primIdx,
-                        target->hasPrimPrologue ? 1 : 0,
-                        (unsigned long long)newExtra, (void*)icData,
-                        recvClsName.c_str(),
-                        (unsigned long long)recvForLog.rawBits(),
-                        (unsigned long long)cachedMethod.rawBits(),
-                        (unsigned long long)fresh.rawBits(),
-                        freshMatches ? 1 : 0);
-                    // Dump bytecodes of cachedMethod
-                    {
-                        ObjectHeader* mh = cachedMethod.asObjectPtr();
-                        size_t numL = memory_.numLiteralsOf(cachedMethod);
-                        uint8_t* bcStart = mh->bytes() + (1 + numL) * 8;
-                        size_t bcLen = mh->byteSize() - (1 + numL) * 8;
-                        if (bcLen > 0) {
-                            uint8_t trailer = bcStart[bcLen - 1];
-                            long pad = (long)(trailer & 0x7) + 1;
-                            if (pad < (long)bcLen) bcLen -= pad;
-                        }
-                        fprintf(stderr, "  cachedMeth bytecodes (%zu):", bcLen);
-                        for (size_t i = 0; i < bcLen && i < 32; i++) {
-                            fprintf(stderr, " %02x", bcStart[i]);
-                        }
-                        fprintf(stderr, " hdr=0x%llx primIdx=%d numL=%zu\n",
-                                (unsigned long long)mh->slotAt(0).rawBits(),
-                                primIdx, numL);
-                        // Dump all literals to see the methodClass association
-                        for (size_t li = 1; li <= numL; li++) {
-                            Oop lit = mh->slotAt(li);
-                            fprintf(stderr, "    lit[%zu]=0x%llx", li,
-                                    (unsigned long long)lit.rawBits());
-                            if (lit.isObject() && lit.rawBits() >= 0x10000) {
-                                ObjectHeader* lh = lit.asObjectPtr();
-                                fprintf(stderr, " cls=%u fmt=%u",
-                                        lh->classIndex(), (unsigned)lh->format());
-                                if (lh->isBytesObject() && lh->byteSize() < 60) {
-                                    fprintf(stderr, " bytes=\"%.*s\"",
-                                            (int)lh->byteSize(),
-                                            (const char*)lh->bytes());
-                                }
-                            }
-                            fprintf(stderr, "\n");
-                        }
-                    }
-                }
-            }
-        }
-        if (dbgUpg) {
-            std::string callerSel = callerMethod.rawBits()
-                ? memory_.selectorOf(callerMethod) : std::string("?");
-            fprintf(stderr,
-                "[UPG] %s slot=%d FILL key=0x%llx extra=0x%llx ic=%p caller=#%s callerOop=0x%llx\n",
-                upgSel.c_str(), firstEmpty, (unsigned long long)lookupKey,
-                (unsigned long long)newExtra, (void*)icData,
-                callerSel.c_str(), (unsigned long long)callerMethod.rawBits());
-        }
     }
 }
 
