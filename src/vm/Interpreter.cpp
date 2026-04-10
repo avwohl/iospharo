@@ -11483,68 +11483,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
 
-                // DEBUG: dump state for ALL J2J calls
-                static int j2jDbg = !!getenv("PHARO_J2J_DEBUG_TRACE");
-                static int j2jDbgCount = 0;
-                bool dbgThisCall = false;
-                std::string dbgSel;
-                // FILTER: trace only min:/from:to:put:/replaceFrom:to:with:startingAt:
-                // when MIN_TRACE env var is set
-                static bool minTrace = !!getenv("PHARO_MIN_TRACE");
-                static int minTraceCount = 0;
-                bool dbgMin = false;
-                if (minTrace && minTraceCount < 50) {
-                    std::string sel = memory_.selectorOf(targetMethod);
-                    if (sel == "min:" || sel == "from:to:put:" ||
-                        sel == "replaceFrom:to:with:startingAt:") {
-                        dbgMin = true;
-                        minTraceCount++;
-                        Oop arg = (nArgs >= 1) ? save.sp[-1] : Oop::fromRawBits(0);
-                        fprintf(stderr,
-                            "[MIN-CALL #%d %s] caller=%s nArgs=%d "
-                            "rcv=0x%llx arg=0x%llx\n",
-                            minTraceCount, sel.c_str(),
-                            memory_.selectorOf(Oop::fromRawBits(callerJM->compiledMethodOop)).c_str(),
-                            nArgs,
-                            (unsigned long long)calleeRecv.rawBits(),
-                            (unsigned long long)arg.rawBits());
-                    }
-                }
-                if (j2jDbg && j2jDbgCount < 200) {
-                    dbgThisCall = true;
-                    j2jDbgCount++;
-                    dbgSel = memory_.selectorOf(targetMethod);
-                    Oop arg = (nArgs >= 1) ? save.sp[-1] : Oop::fromRawBits(0);
-                    fprintf(stderr,
-                        "[J2J-CALL #%d %s] caller=%s nArgs=%d "
-                        "sp=%p ip=%p selfRec=%d "
-                        "rcv=0x%llx arg=0x%llx entry=%p resume=%p\n",
-                        j2jDbgCount, dbgSel.c_str(),
-                        memory_.selectorOf(Oop::fromRawBits(callerJM->compiledMethodOop)).c_str(),
-                        nArgs,
-                        (void*)state.sp, (void*)state.ip,
-                        selfRecursive ? 1 : 0,
-                        (unsigned long long)calleeRecv.rawBits(),
-                        (unsigned long long)arg.rawBits(),
-                        (void*)entryAddr, (void*)save.resumeAddr);
-                }
-
                 // Enter callee JIT code (already executable from loop start)
                 JIT_CALL(entryAddr, &state);
-
-                if (dbgMin) {
-                    fprintf(stderr,
-                        "[MIN-CALL #%d AFTER] exitReason=%d retVal=0x%llx\n",
-                        minTraceCount, (int)state.exitReason,
-                        (unsigned long long)state.returnValue.rawBits());
-                }
-                if (dbgThisCall) {
-                    fprintf(stderr,
-                        "[J2J-CALL #%d %s AFTER] exitReason=%d retVal=0x%llx sp=%p\n",
-                        j2jDbgCount, dbgSel.c_str(), (int)state.exitReason,
-                        (unsigned long long)state.returnValue.rawBits(),
-                        (void*)state.sp);
-                }
 
             } else {
                 // --- J2J Return: pop frame, resume caller ---
@@ -11575,22 +11515,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     // Non-self: must reset state.ip from calleeBCStart to
                     // callerBCStart before resuming caller's stencils.
                     state.ip = save.bcStart;
-                }
-
-                // DEBUG: dump return state for all J2J returns
-                static int j2jRetDbg = !!getenv("PHARO_J2J_DEBUG_TRACE");
-                static int j2jRetDbgCount = 0;
-                if (j2jRetDbg && j2jRetDbgCount < 200) {
-                    Oop slotBefore = state.sp[-(save.sendArgCount + 1)];
-                    j2jRetDbgCount++;
-                    fprintf(stderr,
-                        "[J2J-RET #%d] sendArgCount=%d sp=%p slotBefore=0x%llx "
-                        "retVal=0x%llx selfRec=%d resume=%p\n",
-                        j2jRetDbgCount, save.sendArgCount, (void*)state.sp,
-                        (unsigned long long)slotBefore.rawBits(),
-                        (unsigned long long)retVal.rawBits(),
-                        ((savedJMBits & 1) != 0) ? 1 : 0,
-                        (void*)save.resumeAddr);
                 }
 
                 // Pop receiver+args, push return value

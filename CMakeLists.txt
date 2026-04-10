@@ -107,7 +107,7 @@ endif()
 # the C++ while-loop inside Interpreter::tryJITActivation. Default OFF so
 # baseline behavior is preserved; flip ON for benchmarking and correctness
 # tests (`-DPHARO_ASM_TRAMPOLINE=ON`).
-option(PHARO_ASM_TRAMPOLINE "Use hand-written ARM64 J2J trampoline" OFF)
+option(PHARO_ASM_TRAMPOLINE "Use hand-written ARM64 J2J trampoline" ON)
 if(PHARO_ASM_TRAMPOLINE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     target_compile_definitions(PharoVMCore PUBLIC PHARO_ASM_TRAMPOLINE=1)
     message(STATUS "J2J trampoline: ARM64 hand-written")

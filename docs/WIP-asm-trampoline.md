@@ -1,9 +1,22 @@
 # WIP: Assembly J2J Trampoline
 
 **Date started**: 2026-04-09
-**Status**: **Phase 1 + Phase 1.5 complete. ASM now 3% faster at median.**
+**Status**: **Phase 1 + Phase 1.5 complete. ASM now 19% faster on fib(28) (9.7ms vs 12ms).**
 **Goal**: Break the 10.4ms fib(28) wall by hand-writing the J2J trampoline
 hot loop in ARM64 assembly.
+
+## Post-IC-fill results (2026-04-10)
+
+IC fill + byte-object stencil fixes changed the equation. More methods stay in JIT,
+so trampoline overhead matters MORE, making the ASM win larger:
+
+    Config                          fib(28)   sieve x3   tinyBenchmarks
+    C++ trampoline (current):       12ms      3.1ms      6509ms
+    ASM trampoline (Phase 1.5):     9.7ms     TBD        TBD
+    Interpreter (no JIT):           43ms      2.95ms     5724ms
+
+ASM trampoline is 19% faster than C++ on fib(28), up from the previous 3%.
+The improvement scales with JIT utilization — more JIT = more trampoline calls = more ASM wins.
 
 ## Phase 1.5 outcome (2026-04-09 — same day)
 
