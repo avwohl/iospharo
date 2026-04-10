@@ -10835,6 +10835,58 @@ void Interpreter::tryJITResumeInCaller() {
             inJITResume_ = false;
             return;
 
+        case jit::ExitJ2JCall: {
+            // J2J IC hit during resume — ip is already past the send bytecode.
+            // Handle like ExitSendCached: activate the cached method directly.
+            Oop cached = state.cachedTarget;
+            if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+                cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
+                // Stale IC entry — sync state and bail to interpreter
+                instructionPointer_ = state.ip;
+                stackPointer_ = state.sp;
+                inJITResume_ = false;
+                return;
+            }
+            jitICHits_++;
+            instructionPointer_ = state.ip;  // Already past the send
+            stackPointer_ = state.sp;
+
+            jitRuntime_.noteMethodEntry(cached);
+
+            // Try primitive before activateMethod — primitive methods should
+            // execute their primitive, not fallback bytecodes.
+            {
+                int primIdx = primitiveIndexOf(cached);
+                if (primIdx > 0) {
+                    size_t primCallerDepth = frameDepth_;
+                    argCount_ = state.sendArgCount;
+                    primitiveFailed_ = false;
+                    primFailCode_ = 0;
+                    newMethod_ = cached;
+                    PrimitiveResult result = executePrimitive(primIdx, state.sendArgCount);
+                    if (result == PrimitiveResult::Success) {
+                        if (frameDepth_ != primCallerDepth) {
+                            jitJ2JFallbacks_++;
+                            inJITResume_ = false;
+                            return;
+                        }
+                        // Primitive completed in place — resume JIT
+                        continue;
+                    }
+                }
+            }
+
+            size_t callerDepth = frameDepth_;
+            activateMethod(cached, state.sendArgCount);
+            if (frameDepth_ == callerDepth) {
+                jitJ2JChains_++;
+                continue;
+            }
+            jitJ2JFallbacks_++;
+            inJITResume_ = false;
+            return;
+        }
+
         default:
             inJITResume_ = false;
             return;
