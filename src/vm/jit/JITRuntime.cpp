@@ -484,6 +484,9 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // Set up JIT state
     state.jitMethod = jm;
     state.exitReason = ExitNone;
+    // j2jDepth is zeroed here; j2jSaveCursor/j2jSaveLimit are set by
+    // tryJITActivation before calling tryExecute.
+    state.j2jDepth = 0;
 
     // Validate JITState fields
     if (reinterpret_cast<uint64_t>(state.sp) < 0x10000 ||
@@ -555,6 +558,15 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // Set up JIT state
     state.jitMethod = jm;
     state.exitReason = ExitNone;
+    // Zero J2J state — stencils check j2jDepth on return and compare
+    // j2jSaveCursor >= j2jSaveLimit on send. Both must be sane.
+    // Setting cursor == limit == nullptr ensures: (1) return stencils
+    // skip J2J_INLINE_RETURN (depth 0), (2) send stencils skip
+    // stencil J2J (0 >= 0 is true → bail to EXIT_SEND_CACHED).
+    state.j2jDepth = 0;
+    state.j2jTotalCalls = 0;
+    state.j2jSaveCursor = nullptr;
+    state.j2jSaveLimit = nullptr;
 
     // Validate IC data area is within code zone
     if (jm->numICEntries > 0) {

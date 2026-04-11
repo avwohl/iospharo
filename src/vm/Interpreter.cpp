@@ -11282,9 +11282,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.trueOop = memory_.trueObject();
     state.falseOop = memory_.falseObject();
 
-    // J2J stencil-to-stencil save stack (allocated below in the trampoline block)
-    state.j2jSaveCursor = nullptr;
-    state.j2jSaveLimit = nullptr;
+    // J2J stencil-to-stencil save stack — must be set up BEFORE tryExecute
+    // because stencils may hit J2J sends during the initial execution.
+    struct J2JSave {
+        // --- Always stored (hot path) ---
+        Oop* sp;                  // 0
+        Oop receiver;             // 8
+        Oop* tempBase;            // 16  (pair with ip)
+        uint8_t* ip;              // 24
+        jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
+        uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
+        int sendArgCount;         // 48  (packed with argCount)
+        int argCount;             // 52  (non-self-recursive only)
+        // --- Non-self-recursive only (cold-ish) ---
+        Oop* literals;            // 56
+        uint8_t* bcStart;         // 64  Precomputed bytecodeStart
+    };
+    static_assert(sizeof(struct J2JSave) == 72, "J2JSave should be 72 bytes");
+    static constexpr int MaxJ2JDepth = 256;
+    J2JSave j2jStack[MaxJ2JDepth];
+
+    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jStack[0]);
+    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jStack[MaxJ2JDepth]);
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
 
@@ -11317,38 +11336,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Safe because GC/process-switch cannot trigger during JIT execution
     // (stencils don't allocate, no timer checks).
     {
-        // Field order is tuned for the self-recursive hot path: fields stored
-        // on EVERY call are packed at offsets 0-47 so Clang can emit STP/LDP
-        // pair instructions. Non-self-recursive-only fields (literals, argCount,
-        // bcStart) live at the end.
-        struct J2JSave {
-            // --- Always stored (hot path) ---
-            Oop* sp;                  // 0
-            Oop receiver;             // 8
-            Oop* tempBase;            // 16  (pair with ip)
-            uint8_t* ip;              // 24
-            jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
-            uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
-            int sendArgCount;         // 48  (packed with argCount)
-            int argCount;             // 52  (non-self-recursive only)
-            // --- Non-self-recursive only (cold-ish) ---
-            Oop* literals;            // 56
-            uint8_t* bcStart;         // 64  Precomputed bytecodeStart
-            // Note: method Oop is derivable from jitMethod->compiledMethodOop,
-            // so we don't save it (saves 8 bytes + 2 memory ops per call).
-        };
-        static_assert(sizeof(struct J2JSave) == 72, "J2JSave should be 72 bytes");
-        static constexpr int MaxJ2JDepth = 256;
-        J2JSave j2jStack[MaxJ2JDepth];
+        // j2jStack and MaxJ2JDepth are declared above (before tryExecute)
+        // so stencils can use them during initial execution.
         int j2jDepth = 0;
         size_t j2jBaseFrameDepth = frameDepth_;
-
-        // Point JITState's J2J save stack at our C-stack allocation so
-        // stencils can push/pop J2J frames directly (stencil-to-stencil calls).
-        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jStack[0]);
-        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jStack[MaxJ2JDepth]);
-        state.j2jDepth = 0;
-        state.j2jTotalCalls = 0;
 
         // Cache Interpreter member fields into locals so the compiler keeps
         // them in registers across JIT_CALL invocations. The asm volatile
