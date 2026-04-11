@@ -11696,9 +11696,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.exitReason = jit::ExitNone;
                     state.j2jDepth = 0;
                     state.j2jTotalCalls = 0;
-                    // Re-enable J2J for resumed caller (yield check prevents starvation)
-                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                    state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                    // Disable J2J in chain loop — stencil J2J calls break the
+                    // chain loop's assumption that method_ matches state.ip.
+                    // The J2J trampoline handles J2J before the chain loop runs.
+                    state.j2jSaveCursor = nullptr;
+                    state.j2jSaveLimit = nullptr;
                     state.yieldCountdown = 1000;
 #if defined(__APPLE__) && defined(__arm64__)
                     pthread_jit_write_protect_np(1);
@@ -11875,9 +11877,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
-            // Re-enable J2J for resumed method (safe: yield check prevents starvation)
-            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+            // Disable J2J in chain loop — see ExitReturn handler comment
+            state.j2jSaveCursor = nullptr;
+            state.j2jSaveLimit = nullptr;
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
@@ -11929,9 +11931,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
-            // Re-enable J2J for resumed method
-            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+            // Disable J2J in chain loop — see ExitReturn handler comment
+            state.j2jSaveCursor = nullptr;
+            state.j2jSaveLimit = nullptr;
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
@@ -11973,71 +11975,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
             // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
             jitYieldCount_++;
-
-            // If yield fired from within nested J2J calls, materialize the
-            // J2J frames so interpreter state is consistent.  Without this,
-            // method_ refers to the chain loop's outer method while state.ip
-            // points into the innermost called method, producing a bogus
-            // bcOffset that crashes the VM.
-            if (state.j2jDepth > 0) {
-                // Reconstruct state.method from state.jitMethod
-                if (state.jitMethod) {
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                    jmBits &= ~static_cast<uintptr_t>(1);
-                    state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
-                    state.method = Oop::fromRawBits(state.jitMethod->compiledMethodOop);
-                }
-
-                // Materialize SavedFrames from J2J save stack (oldest first)
-                J2JSave* j2jSaves = &j2jPool_[j2jPoolBase];
-                Oop nil = memory_.nil();
-                for (int i = 0; i < state.j2jDepth; i++) {
-                    J2JSave& save = j2jSaves[i];
-                    SavedFrame& frame = savedFrames_[frameDepth_ + i];
-
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                    bool isSelfRecursive = (jmBits & 1) != 0;
-                    jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                        jmBits & ~static_cast<uintptr_t>(1));
-                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                    ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                    int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                    uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
-                    int frameArgCount =
-                        isSelfRecursive ? saveJM->argCount : save.argCount;
-
-                    frame.savedIP = save.ip;
-                    frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
-                    frame.savedMethod = saveMethod;
-                    frame.savedHomeMethod = saveMethod;
-                    frame.savedReceiver = save.receiver;
-                    frame.savedClosure = nil;
-                    frame.savedActiveContext = nil;
-                    frame.materializedContext = nil;
-                    frame.savedFP = save.tempBase - 1;
-                    frame.savedArgCount = frameArgCount;
-                    frame.homeFrameDepth = SIZE_MAX;
-                }
-                frameDepth_ += state.j2jDepth;
-
-                // Sync interpreter from innermost JITState
-                method_ = state.method;
-                homeMethod_ = state.method;
-                receiver_ = state.receiver;
-                stackPointer_ = state.sp;
-                instructionPointer_ = state.ip;
-                framePointer_ = state.tempBase - 1;
-                argCount_ = state.argCount;
-
-                // Charge checkCountdown_ for JIT bytecodes executed
-                if (state.jitMethod) {
-                    int charge = 1000 * state.jitMethod->numBytecodes;
-                    checkCountdown_ -= charge;
-                    g_stepNum += charge;
-                }
-                return true;  // Bail to interpreter dispatch loop
-            }
-
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             if (state.jitMethod) {
@@ -12048,13 +11985,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
             if (checkCountdown_ <= 0) goto jit_loop_exit;
 
-            // Reset yield counter, J2J save stack, and resume at the branch target
+            // Reset yield counter and resume at the branch target.
+            // J2J is disabled in chain loop — see ExitReturn handler comment.
             state.yieldCountdown = 1000;
             state.exitReason = jit::ExitNone;
             state.j2jDepth = 0;
             state.j2jTotalCalls = 0;
-            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+            state.j2jSaveCursor = nullptr;
+            state.j2jSaveLimit = nullptr;
             {
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -12326,9 +12264,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
-                        // Re-enable J2J for resumed method after prim
-                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                        state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                        // Disable J2J in chain loop
+                        state.j2jSaveCursor = nullptr;
+                        state.j2jSaveLimit = nullptr;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
@@ -12377,9 +12315,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.icDataPtr = nullptr;
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
-                // Re-enable J2J for resumed method after activate
-                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
-                state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+                // Disable J2J in chain loop
+                state.j2jSaveCursor = nullptr;
+                state.j2jSaveLimit = nullptr;
 
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;
