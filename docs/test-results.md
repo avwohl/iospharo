@@ -1,6 +1,34 @@
 # Test Results
 
-Last updated: 2026-04-08
+Last updated: 2026-04-10
+
+## AWFY Benchmark Suite (2026-04-10)
+
+Are We Fast Yet (AWFY) — 11 benchmarks compiled via SomLoader into Pharo 13.
+Run via PHARO_BENCH=awfy harness. 1 warmup + 5 timed runs each, median reported.
+GC between runs to prevent heap exhaustion on allocation-heavy benchmarks.
+
+    Benchmark    Cog (us)   JIT (us)  NO_JIT (us)  JIT/Cog  JIT/NOJIT
+    Richards      247,069 14,139,253  14,132,184     57.2x      1.00x
+    DeltaBlue      46,859  1,766,485   1,753,622     37.7x      1.01x
+    Mandelbrot    257,271  2,083,151   2,096,088      8.1x      0.99x
+    NBody         231,766  7,179,255   7,246,797     31.0x      0.99x
+    Bounce         91,009  1,923,959   1,920,422     21.1x      1.00x
+    Permute        79,126  2,950,917   2,921,041     37.3x      1.01x
+    Queens         69,607  5,905,082   5,979,641     84.8x      0.99x
+    Sieve         164,834    833,144     785,336      5.1x      1.06x
+    Storage       115,321  2,711,917   2,766,013     23.5x      0.98x
+    Towers         73,369  5,509,941   5,549,239     75.1x      0.99x
+    List           92,855  5,336,920   5,316,089     57.5x      1.00x
+    Geomean                                          30.1x      1.00x
+
+Key findings:
+- JIT vs NO_JIT: 1.00x geomean — JIT provides no net speedup on AWFY yet
+- Our VM vs Cog: 30x slower geomean (range 5x-85x)
+- Best: Sieve (5.1x), Mandelbrot (8.1x) — arithmetic-heavy, less dispatch
+- Worst: Queens (84.8x), Towers (75.1x) — heavily recursive, dispatch-bound
+- JIT stats: 213 compiled, 99.9% IC hit, 2B IC hits, 47.6M J2J stencil calls
+- The bottleneck is method dispatch overhead, not bytecode execution speed
 
 ## Test Mode End-to-End (2026-04-08)
 
