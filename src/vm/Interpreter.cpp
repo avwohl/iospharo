@@ -12080,6 +12080,171 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             int nArgs = state.sendArgCount;
 
+            // ===== Inline one-shot J2J call =====
+            // If the target is JIT-compiled and safe, call it directly from
+            // the chain loop using the existing JITState. Avoids activateMethod
+            // overhead (pushFrame, full JITState setup, 18KB j2jStack alloc
+            // per recursive tryJITActivation).
+            //
+            // Fast path (~93%): callee returns with ExitReturn — restore
+            // caller state inline and resume JIT.
+            //
+            // Fallback (~7%): callee exits with non-ExitReturn — push a
+            // SavedFrame for the caller and bail to interpreter.
+#if PHARO_JIT_ENABLED
+            {
+                static bool chainJ2J = !getenv("PHARO_NO_CHAIN_J2J");
+                jit::JITMethod* chainJM = chainJ2J
+                    ? jitRuntime_.methodMap().lookup(chainTarget.rawBits()) : nullptr;
+                if (chainJM && chainJM->isExecutable()) {
+                    bool chainHasPrim = (chainJM->methodHeader >> 16) & 1;
+                    if (!chainHasPrim || chainJM->hasPrimPrologue) {
+                        // --- Save caller state ---
+                        Oop* savedSP = state.sp;
+                        Oop savedRecv = state.receiver;
+                        Oop* savedTempBase = state.tempBase;
+                        Oop* savedLiterals = state.literals;
+                        jit::JITMethod* savedJitMethod =
+                            reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                        int savedArgCount = state.argCount;
+                        Oop savedMethod = state.method;
+                        // instructionPointer_ is already past-send (caller resume point)
+
+                        // --- Set up callee in JITState ---
+                        Oop calleeRecv = stackPointer_[-(nArgs + 1)];
+                        ObjectHeader* calleeMethObj = chainTarget.asObjectPtr();
+                        Oop* fp = stackPointer_ - (nArgs + 1);
+
+                        state.sp = stackPointer_;
+                        state.receiver = calleeRecv;
+                        state.literals = calleeMethObj->slots() + 1;
+                        state.tempBase = fp + 1;
+                        state.argCount = nArgs;
+                        state.jitMethod = chainJM;
+                        state.method = chainTarget;
+
+                        int numLits = static_cast<int>(chainJM->methodHeader & 0x7FFF);
+                        state.ip = calleeMethObj->bytes() + (1 + numLits) * 8;
+
+                        // Allocate temps if needed
+                        int totalTemps = chainJM->tempCount;
+                        if (__builtin_expect(nArgs < totalTemps, 0)) {
+                            Oop nil = memory_.nil();
+                            for (int i = nArgs; i < totalTemps; i++) {
+                                *state.sp = nil;
+                                state.sp++;
+                            }
+                        }
+
+                        // Disable stencil J2J for callee (no save stack available)
+                        state.j2jSaveCursor = nullptr;
+                        state.j2jSaveLimit = nullptr;
+                        state.j2jDepth = 0;
+                        state.j2jTotalCalls = 0;
+
+                        // --- Enter callee JIT code ---
+#if defined(__APPLE__) && defined(__arm64__)
+                        pthread_jit_write_protect_np(1);
+#endif
+                        JIT_CALL(chainJM->codeStart(), &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                        pthread_jit_write_protect_np(0);
+#endif
+                        chargeJITBytecodes(state);
+                        jitJ2JStencilCalls_++;
+
+                        if (__builtin_expect(
+                                state.exitReason == jit::ExitReturn, 1)) {
+                            // === FAST PATH: callee returned ===
+                            Oop retVal = state.returnValue;
+                            jitJ2JStencilReturns_++;
+
+                            // Restore caller state
+                            state.sp = savedSP;
+                            state.receiver = savedRecv;
+                            state.tempBase = savedTempBase;
+                            state.literals = savedLiterals;
+                            state.jitMethod = savedJitMethod;
+                            state.argCount = savedArgCount;
+                            state.method = savedMethod;
+
+                            // Pop receiver+args, push return value
+                            state.sp[-(nArgs + 1)] = retVal;
+                            state.sp -= nArgs;
+
+                            // Sync interpreter state for resume
+                            stackPointer_ = state.sp;
+                            // instructionPointer_ is still past-send (set above)
+
+                            // Restore state.ip to caller's bcStart (for tryResume)
+                            {
+                                ObjectHeader* cMO = savedMethod.asObjectPtr();
+                                Oop hdr = cMO->slots()[0];
+                                int cNL = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                                state.ip = cMO->bytes() + (1 + cNL) * 8;
+                            }
+
+                            // Resume JIT at bytecode after send
+                            jitJ2JActChains_++;
+                            method = method_;
+                            uint32_t bcOffset = computeCurrentBCOffset();
+                            if (bcOffset == UINT32_MAX) return true;
+
+                            state.sp = stackPointer_;
+                            state.icDataPtr = nullptr;
+                            state.sendArgCount = 0;
+                            state.exitReason = jit::ExitNone;
+
+                            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                                return true;
+                            }
+                            chargeJITBytecodes(state);
+                            if (checkCountdown_ <= 0) goto jit_loop_exit;
+                            continue;
+                        }
+
+                        // === FALLBACK: callee exited with non-ExitReturn ===
+                        // Push a SavedFrame for the caller so the interpreter
+                        // can return to it, then bail to interpreter for the
+                        // callee's remaining work.
+                        if (frameDepth_ < StackOverflowLimit) {
+                            ObjectHeader* sMO = savedMethod.asObjectPtr();
+                            SavedFrame& frame = savedFrames_[frameDepth_++];
+                            frame.savedIP = instructionPointer_;  // past-send
+                            frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
+                            frame.savedMethod = savedMethod;
+                            frame.savedHomeMethod = savedMethod;
+                            frame.savedReceiver = savedRecv;
+                            frame.savedClosure = memory_.nil();
+                            frame.savedActiveContext = memory_.nil();
+                            frame.materializedContext = memory_.nil();
+                            frame.savedFP = savedTempBase - 1;
+                            frame.savedArgCount = savedArgCount;
+                            frame.homeFrameDepth = SIZE_MAX;
+                        }
+
+                        // Set up interpreter state from callee's exit
+                        method_ = chainTarget;
+                        homeMethod_ = chainTarget;
+                        receiver_ = state.receiver;
+                        stackPointer_ = state.sp;
+                        instructionPointer_ = state.ip;
+                        framePointer_ = state.tempBase - 1;
+                        argCount_ = nArgs;
+                        {
+                            ObjectHeader* tMO = chainTarget.asObjectPtr();
+                            bytecodeEnd_ = tMO->bytes() + tMO->byteSize();
+                        }
+                        closure_ = memory_.nil();
+                        jitJ2JActFalls_++;
+
+                        // Bail: let interpreter dispatch handle the callee
+                        return true;
+                    }
+                }
+            }
+#endif // PHARO_JIT_ENABLED
+
             // Try primitive before activateMethod — primitive methods should
             // execute their primitive, not fallback bytecodes.
             {
