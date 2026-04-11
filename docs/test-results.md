@@ -30,6 +30,26 @@ Key findings:
 - JIT stats: 213 compiled, 99.9% IC hit, 2B IC hits, 47.6M J2J stencil calls
 - The bottleneck is method dispatch overhead, not bytecode execution speed
 
+## AWFY v3: Compile methods with unsupported primitives (2026-04-10)
+
+Allowing methods with unsupported primitives (prim 71=basicNew, 256+=accessors)
+to compile their fallback bytecodes. J2J is blocked by unsafePrim guard.
+304 methods now compile (was 232). JIT provides 8% geomean speedup over interp.
+
+    Benchmark    Cog (ms)  JITv3 (ms)  NO_JIT (ms)  v3/Cog  v3/NOJIT
+    Richards        247ms     13264ms      14132ms    53.7x     0.94x
+    DeltaBlue        47ms      1603ms       1754ms    34.2x     0.91x
+    Mandelbrot      257ms      2062ms       2096ms     8.0x     0.98x
+    NBody           232ms      6909ms       7247ms    29.8x     0.95x
+    Bounce           91ms      1880ms       1920ms    20.7x     0.98x
+    Permute          79ms      2846ms       2921ms    36.0x     0.97x
+    Queens           70ms      4610ms       5980ms    66.2x     0.77x
+    Sieve           165ms       716ms        785ms     4.3x     0.91x
+    Storage         115ms      2290ms       2766ms    19.9x     0.83x
+    Towers           73ms      5491ms       5549ms    74.8x     0.99x
+    List             93ms      5005ms       5316ms    53.9x     0.94x
+    Geomean                                           27.7x     0.92x
+
 ## Test Mode End-to-End (2026-04-08)
 
 `./build/test_load_image <image> test "Kernel-Tests"` now works.
