@@ -2,6 +2,24 @@
 
 2026-04-10
 
+## Stencil-to-stencil J2J calls (Phase 4)
+
+Stencils now handle J2J sends and returns inline via tail-calls, eliminating
+the C trampoline overhead for JIT-to-JIT method calls. The J2J_IC_HIT macro
+pushes a 72-byte save frame and tail-calls the callee entry. Return stencils
+(J2J_INLINE_RETURN) pop the save frame and tail-call back to the caller's
+resume point.
+
+Key changes:
+- JITState gained 4 fields: j2jSaveCursor, j2jSaveLimit, j2jDepth, j2jTotalCalls
+- HoleKind::ResumeAddr added for storing next-stencil address as DATA
+- J2JSave stack allocated before tryExecute (was after, causing nullptr SEGV)
+- tryResume zeroes all J2J fields (prevents garbage pointer dereferences)
+- extract_stencils.py: -mllvm -hot-cold-split=false to prevent Clang code splitting
+
+Performance: fib(28)=10ms (vs 9ms ASM trampoline), sieve=3ms, tinyBench=5545ms.
+Test suite: 23141/23286 pass (99.3%), identical to NO_JIT — zero regressions.
+
 ## test_load_image: forward CLI args to Pharo image
 
 `test_load_image` now forwards `argv[2+]` directly to `setImageArguments()`
