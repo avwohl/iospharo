@@ -444,7 +444,7 @@ private:
         uint8_t* bcStart;         // 64  Precomputed bytecodeStart
     };
     static_assert(sizeof(J2JSave) == 72, "J2JSave should be 72 bytes");
-    static constexpr int J2JSlotPerEntry = 8;   // max J2J depth per tryJITActivation
+    static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image)
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
