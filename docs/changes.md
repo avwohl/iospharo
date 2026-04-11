@@ -2,6 +2,36 @@
 
 2026-04-11
 
+## JIT per-send overhead reduction + stencil-J2J always-on
+
+Made stencil-J2J (register-resident caller save/restore for sends) always-on,
+removing the PHARO_CHAIN_J2J env var gate. Without it, sends fell through to
+the inline chain activation path which is ~2.5x slower due to SavedFrame
+push/pop overhead.
+
+Also applied: pool-allocated j2jStack (eliminating 18KB per-call stack alloc),
+inline chain activation (eliminating recursive tryJITActivation), and inlined
+tryExecute/tryResume in the chain loop hot path.
+
+AWFY results (median of 5, Pharo-awfy-v5.image):
+
+  Benchmark    Our(ms)  Cog(ms)  Ratio
+  Richards      23006    247      93x
+  DeltaBlue      3814     47      81x
+  Mandelbrot     2092    257       8x
+  NBody          6432    232      28x
+  Bounce         5100     91      56x
+  Permute        3126     79      40x
+  Queens         1889     70      27x
+  Sieve           546    165       3x
+  Storage        6829    115      59x
+  Towers         8138     73     112x
+  List           7049     93      76x
+  Geomean                         37x
+
+The 37x gap vs Cog is architectural: every send exits JIT, goes through C chain
+loop, re-enters JIT. Method inlining is needed to close this gap.
+
 ## AWFY optimization: inline quick primitives and relax class-receiver restriction
 
 Reduced JIT per-send overhead by inlining quick primitives (256-519) in the IC
