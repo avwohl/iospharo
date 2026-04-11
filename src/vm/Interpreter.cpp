@@ -11827,8 +11827,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
 
-                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                    return true;
+                // Inline tryResume — skip redundant lookup/validation
+                {
+                    jit::JITMethod* callerJM = jitRuntime_.methodMap().lookup(
+                        method.rawBits());
+                    if (!callerJM || !callerJM->isExecutable()) return true;
+                    uint32_t codeOff = callerJM->codeOffsetForBC(bcOffset);
+                    if (codeOff == 0 || codeOff >= callerJM->codeSize) return true;
+                    state.jitMethod = callerJM;
+                    state.exitReason = jit::ExitNone;
+                    state.j2jDepth = 0;
+                    state.j2jSaveCursor = nullptr;
+                    state.j2jSaveLimit = nullptr;
+#if defined(__APPLE__) && defined(__arm64__)
+                    pthread_jit_write_protect_np(1);
+#endif
+                    JIT_CALL(callerJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                    pthread_jit_write_protect_np(0);
+#endif
                 }
                 chargeJITBytecodes(state);
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
@@ -12404,12 +12421,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
 
-                        // Enter callee JIT
-                        if (!jitRuntime_.tryExecute(chainTarget, state, targetJM)) {
-                            // Shouldn't fail (jm validated), but if it does unwind
-                            popFrame();
-                            goto chain_activate_fallback;
+                        // Enter callee JIT (inlined — skip tryExecute's redundant
+                        // lookup/validation; jitMethod, exitReason already set above)
+                        state.j2jDepth = 0;
+                        // Receiver field bounds check
+                        if (targetJM->hasRecvFieldAccess) {
+                            if (calleeRecv.isSmallInteger() || calleeRecv.isCharacter()) {
+                                popFrame();
+                                goto chain_activate_fallback;
+                            }
+                            ObjectHeader* ro = reinterpret_cast<ObjectHeader*>(calleeRecv.rawBits());
+                            if (targetJM->maxRecvFieldIndex >= ro->slotCount()) {
+                                popFrame();
+                                goto chain_activate_fallback;
+                            }
                         }
+#if defined(__APPLE__) && defined(__arm64__)
+                        pthread_jit_write_protect_np(1);
+#endif
+                        JIT_CALL(targetJM->codeStart(), &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                        pthread_jit_write_protect_np(0);
+#endif
                         chargeJITBytecodes(state);
                         chainCallDepth++;
 
