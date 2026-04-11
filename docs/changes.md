@@ -2,6 +2,21 @@
 
 2026-04-11
 
+## J2J save stack depth 8→32 (fib 33% faster)
+
+Increased J2JSlotPerEntry from 8 to 32. For deeply recursive code like fib(28),
+the 8-deep save stack exhausted after 8 levels, forcing every subsequent send
+through the C chain loop (249K activations, 15,631 stencil falls). With 32 slots,
+fib(28) completes entirely in stencil-J2J with 0 chain loop falls and only 15 C
+activations. fib(28): 10ms (was 15ms).
+
+AWFY neutral: these benchmarks have shallow call stacks that don't exhaust 8 slots.
+Pool trade-off: 1024/32=32 concurrent entries (was 128). Since deeper save stack
+means fewer recursive tryJITActivation calls, this is the right trade-off.
+
+Also removed dead inline chain activation code (~100 lines) from the chain loop.
+Diagnostic counters confirmed 0 entries across all AWFY benchmarks.
+
 ## Chain loop diagnostic counters and optimization investigation
 
 Added per-path diagnostic counters to the chain loop in tryJITActivation to
