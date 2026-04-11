@@ -1,5 +1,40 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-11
+
+## AWFY optimization: inline quick primitives and relax class-receiver restriction
+
+Reduced JIT per-send overhead by inlining quick primitives (256-519) in the IC
+extra word, eliminating ~500M C++ chain loop exits per full AWFY suite run.
+
+Root cause: quick prim methods (return instVar[N], return self/true/false/nil)
+had `hasPrimitive` flag set but no JIT prologue stencil, causing
+`upgradeICToJ2J` to classify them as "unsafe primitives" and refuse to set
+inline IC bits. All 568M such sends went through the slow chain loop (exit JIT
+→ C++ → executePrimitive → rebuild state → re-enter JIT).
+
+Fix: detect quick prims in `upgradeICToJ2J` and map them to existing inline
+paths — prim 264+ → inline getter (bit 63, slotIdx = primIdx-264), prim 256 →
+returnsSelf (bit 61). Also relaxed the class-receiver (format 1) restriction:
+only block J2J direct calls (bit 60), allow inline getter/setter/returnsSelf
+(bits 63/62/61) which are safe since they don't push J2J frames.
+
+AWFY results (median of 5, vs previous v5):
+
+  Benchmark    v5 (ms)  v6 (ms)  change
+  Richards      13379    12751    -4.7%
+  DeltaBlue      1610     1569    -2.5%
+  Mandelbrot     2084     2068    -0.8%
+  NBody          6697     6419    -4.1%
+  Bounce         1868     1873    +0.3%
+  Permute        2771     2766    -0.2%
+  Queens         2541     2588    +1.9%
+  Sieve           578      579    +0.2%
+  Storage        2252     2278    +1.2%
+  Towers         5248     4655   -11.3%
+  List           4925     2815   -42.8%
+  Geomean vs Cog: 23.6x (was 25.3x, -6.8% improvement)
+
 2026-04-10
 
 ## Stencil-to-stencil J2J calls (Phase 4)
