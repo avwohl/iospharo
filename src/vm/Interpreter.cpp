@@ -485,6 +485,22 @@ bool Interpreter::initialize() {
         if (wantTiny)
             benchSpecs_.push_back({"tinyBenchmarks", "Integer", "tinyBenchmarks", 0, 1});
 
+        bool wantAWFY = (strcmp(benchType, "awfy") == 0);
+        if (wantAWFY) {
+            // Are We Fast Yet benchmarks — each is a class with innerBenchmarkLoop:
+            benchSpecs_.push_back({"Richards",    "Richards",    "innerBenchmarkLoop:", 100,    5, true});
+            benchSpecs_.push_back({"DeltaBlue",   "DeltaBlue",   "innerBenchmarkLoop:", 12000,  5, true});
+            benchSpecs_.push_back({"Mandelbrot",  "Mandelbrot",  "innerBenchmarkLoop:", 500,    5, true});
+            benchSpecs_.push_back({"NBody",       "NBody",       "innerBenchmarkLoop:", 250000, 5, true});
+            benchSpecs_.push_back({"Bounce",      "Bounce",      "innerBenchmarkLoop:", 1500,   5, true});
+            benchSpecs_.push_back({"Permute",     "Permute",     "innerBenchmarkLoop:", 1000,   5, true});
+            benchSpecs_.push_back({"Queens",      "Queens",      "innerBenchmarkLoop:", 1000,   5, true});
+            benchSpecs_.push_back({"Sieve",       "Sieve",       "innerBenchmarkLoop:", 3000,   5, true});
+            benchSpecs_.push_back({"Storage",     "Storage",     "innerBenchmarkLoop:", 1000,   5, true});
+            benchSpecs_.push_back({"Towers",      "Towers",      "innerBenchmarkLoop:", 600,    5, true});
+            benchSpecs_.push_back({"List",        "List",        "innerBenchmarkLoop:", 1500,   5, true});
+        }
+
         // Default to fib if unrecognized
         if (benchSpecs_.empty())
             benchSpecs_.push_back({"fib(" + std::to_string(fibN) + ")", "Integer", "benchFib", fibN, 5});
@@ -542,6 +558,61 @@ Oop Interpreter::findMethod(const char* className, const char* selector) {
     return Oop::nil();
 }
 
+Oop Interpreter::findMethodInHierarchy(Oop cls, const char* selector) {
+    size_t selLen = strlen(selector);
+    Oop current = cls;
+    for (int depth = 0; depth < 20 && current.isObject() && !current.isNil(); depth++) {
+        Oop methodDict = memory_.fetchPointer(1, current);
+        if (methodDict.isObject() && !methodDict.isNil()) {
+            ObjectHeader* mdHdr = methodDict.asObjectPtr();
+            size_t mdSlots = mdHdr->slotCount();
+            for (size_t i = 2; i < mdSlots; i++) {
+                Oop key = mdHdr->slotAt(i);
+                if (!key.isObject() || key.isNil()) continue;
+                ObjectHeader* kHdr = key.asObjectPtr();
+                if (kHdr->isBytesObject() && kHdr->byteSize() == selLen &&
+                    memcmp(kHdr->bytes(), selector, selLen) == 0) {
+                    Oop values = memory_.fetchPointer(1, methodDict);
+                    if (values.isObject()) {
+                        ObjectHeader* vHdr = values.asObjectPtr();
+                        if (i - 2 < vHdr->slotCount()) {
+                            return vHdr->slotAt(i - 2);
+                        }
+                    }
+                    return Oop::nil();
+                }
+            }
+        }
+        // Walk to superclass (slot 0)
+        current = memory_.fetchPointer(0, current);
+    }
+    return Oop::nil();
+}
+
+Oop Interpreter::allocateInstance(const char* className) {
+    Oop cls = memory_.findGlobal(className);
+    if (!cls.isObject() || cls.isNil()) return Oop::nil();
+    uint32_t classIdx = memory_.indexOfClass(cls);
+    if (classIdx == 0) classIdx = memory_.registerClass(cls);
+    if (classIdx == 0) return Oop::nil();
+    // Read instance spec to get fixed field count
+    ObjectHeader* classHdr = cls.asObjectPtr();
+    size_t numSlots = 0;
+    if (classHdr->slotCount() >= 3) {
+        Oop instSpec = classHdr->slotAt(2);
+        if (instSpec.isSmallInteger())
+            numSlots = static_cast<size_t>(instSpec.asSmallInteger() & 0xFFFF);
+    }
+    Oop instance = memory_.allocateSlots(classIdx, numSlots, ObjectFormat::FixedSize);
+    if (!instance.isNil()) {
+        // Initialize all slots to nil
+        ObjectHeader* hdr = instance.asObjectPtr();
+        for (size_t i = 0; i < numSlots; i++)
+            hdr->slotAtPut(i, Oop::nil());
+    }
+    return instance;
+}
+
 Oop Interpreter::findBenchFibMethod() {
     return findMethod("Integer", "benchFib");
 }
@@ -556,72 +627,40 @@ void Interpreter::setupBenchContext() {
     const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
     checkCountdown_ = INT32_MAX;
     benchStartTime_ = std::chrono::high_resolution_clock::now();
-    Oop method = findMethod(spec.className, spec.selector);
-    fprintf(stderr, "[BENCH] setupBenchContext: %s>>%s method=0x%llx\n",
-            spec.className, spec.selector, (unsigned long long)method.rawBits());
-    // Dump literal slot[7] of bench method to see if it's already corrupt
-    if (method.isObject() && !method.isNil()) {
-        ObjectHeader* mh = method.asObjectPtr();
-        size_t numLits = memory_.numLiteralsOf(method);
-        fprintf(stderr, "[BENCH]   numLits=%zu slotCount=%zu\n",
-                numLits, mh->slotCount());
-        for (size_t i = 0; i <= numLits && i <= 12; i++) {
-            Oop lit = mh->slotAt(i);
-            fprintf(stderr, "[BENCH]   slot[%zu]=0x%llx", i,
-                    (unsigned long long)lit.rawBits());
-            if (lit.isObject() && lit.rawBits() >= 0x10000) {
-                ObjectHeader* lh = lit.asObjectPtr();
-                fprintf(stderr, " class=%u fmt=%u",
-                        lh->classIndex(), (unsigned)lh->format());
-                if (lh->isBytesObject() && lh->byteSize() < 80) {
-                    fprintf(stderr, " bytes=\"%.*s\"",
-                            (int)lh->byteSize(),
-                            (const char*)lh->bytes());
-                }
-            }
-            fprintf(stderr, "\n");
-        }
-        // Dump full bytecode array of the bench method
-        uint8_t* bcStart = mh->bytes() + (1 + numLits) * 8;
-        size_t bcSize = mh->byteSize() - (1 + numLits) * 8;
-        // Strip trailing 0-7 bytes per Spur format flags
-        size_t headerFmt = (size_t)mh->format();
-        if (headerFmt >= 16 && headerFmt <= 23) bcSize -= (headerFmt - 16);
-        fprintf(stderr, "[BENCH]   bytecodes (size=%zu):", bcSize);
-        for (size_t i = 0; i < bcSize; i++) {
-            if (i % 16 == 0) fprintf(stderr, "\n[BENCH]   %4zu:", i);
-            fprintf(stderr, " %02x", bcStart[i]);
-        }
-        fprintf(stderr, "\n");
-        // Also decode method header for tempCount/argCount
-        Oop hdr = mh->slotAt(0);
-        if (hdr.isSmallInteger()) {
-            int64_t hdrVal = hdr.asSmallInteger();
-            int nLits = (int)(hdrVal & 0x7FFF);
-            int nTemps = (int)((hdrVal >> 18) & 0x3F);
-            int nArgs = (int)((hdrVal >> 24) & 0x0F);
-            fprintf(stderr, "[BENCH]   header: numLits=%d numTemps=%d numArgs=%d\n",
-                    nLits, nTemps, nArgs);
-        }
-    }
-    if (!method.isNil()) {
+
+    Oop method;
+    if (spec.instanceReceiver) {
+        // Walk superclass chain to find inherited methods (e.g., innerBenchmarkLoop: on Benchmark)
         Oop cls = memory_.findGlobal(spec.className);
-        fprintf(stderr, "[BENCH]   class=0x%llx\n", (unsigned long long)cls.rawBits());
-        if (cls.isObject() && !cls.isNil()) {
-            Oop mDict = memory_.fetchPointer(1, cls);
-            fprintf(stderr, "[BENCH]   methodDict=0x%llx\n", (unsigned long long)mDict.rawBits());
-        }
+        method = (cls.isObject() && !cls.isNil()) ? findMethodInHierarchy(cls, spec.selector) : Oop::nil();
+    } else {
+        method = findMethod(spec.className, spec.selector);
     }
+    fprintf(stderr, "[BENCH] setupBenchContext: %s>>%s method=0x%llx%s\n",
+            spec.className, spec.selector, (unsigned long long)method.rawBits(),
+            spec.instanceReceiver ? " (instance)" : "");
+
     if (!method.isNil()) {
         stackPointer_ = stackBase_;
         frameDepth_ = 0;
-        Oop ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(spec.arg));
+        Oop ctx;
+        if (spec.instanceReceiver) {
+            Oop receiver = allocateInstance(spec.className);
+            if (receiver.isNil()) {
+                fprintf(stderr, "[BENCH] Failed to allocate instance of %s\n", spec.className);
+                goto skip;
+            }
+            ctx = memory_.createStartupContextWithArg(method, receiver, Oop::fromSmallInteger(spec.arg));
+        } else {
+            ctx = memory_.createStartupContext(method, Oop::fromSmallInteger(spec.arg));
+        }
         if (!ctx.isNil()) {
             executeFromContext(ctx);
             return;
         }
     }
-    fprintf(stderr, "[BENCH] Failed to find %s>>%s\n", spec.className, spec.selector);
+skip:
+    fprintf(stderr, "[BENCH] Failed to find %s>>%s — skipping\n", spec.className, spec.selector);
     // Skip to next benchmark
     benchSpecIdx_++;
     if (benchSpecIdx_ < (int)benchSpecs_.size()) {

@@ -647,6 +647,8 @@ private:
     int benchRunCount_ = 0;  // -1=warmup, 0-4=timed runs, 5=done
     std::chrono::high_resolution_clock::time_point benchStartTime_;
     Oop findMethod(const char* className, const char* selector);
+    Oop findMethodInHierarchy(Oop cls, const char* selector);  // walks superclass chain
+    Oop allocateInstance(const char* className);  // allocate zero-slot instance
     Oop findBenchFibMethod();  // Re-lookups Integer>>benchFib (GC-safe)
     void handleBenchComplete();  // Benchmark run completion handler
     // Multi-benchmark support
@@ -656,6 +658,7 @@ private:
         const char* selector;
         int64_t arg;  // SmallInteger argument to method
         int runs;     // number of timed runs
+        bool instanceReceiver = false;  // true: allocate instance of className as receiver, pass arg separately
     };
     std::vector<BenchSpec> benchSpecs_;
     int benchSpecIdx_ = 0;
