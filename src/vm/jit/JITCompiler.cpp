@@ -1311,6 +1311,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     Oop headerOop = methObj->slotAt(0);
     if (!headerOop.isSmallInteger()) {
         compilationsFailed_++;
+        fprintf(stderr, "[JIT] FAIL: bad header for 0x%llx\n", (unsigned long long)compiledMethod.rawBits());
         return nullptr;
     }
 
@@ -1327,6 +1328,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
 
     if (bcLen == 0 || bcLen > MaxCompilableBytecodes) {
         compilationsFailed_++;
+        fprintf(stderr, "[JIT] FAIL: bcLen=%zu (max=%zu)\n", bcLen, (size_t)MaxCompilableBytecodes);
         return nullptr;
     }
 
@@ -1435,15 +1437,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
                 decoded.insert(decoded.begin(), prologue);
                 hasPrimPrologue = true;
             } else {
-                // CRITICAL: Don't JIT-compile methods with unsupported primitives.
-                // The CallPrimitive bytecode becomes NOP in JIT code, so the fallback
-                // bytecodes run unconditionally. Via J2J (direct call), activateMethod
-                // is bypassed and the primitive is never tried. For methods like
-                // Object>>at: whose fallback is errorSubscriptBounds:, this causes
-                // false errors. Keep these methods interpreter-only so the primitive
-                // is always tried first.
-                compilationsFailed_++;
-                return nullptr;
+                // Method has a primitive we can't inline. The CallPrimitive
+                // bytecode becomes NOP in JIT code. This is safe because:
+                // 1. The interpreter always tries the primitive before entering JIT
+                //    (tryExecute only fires AFTER primitive failure)
+                // 2. J2J is blocked for these methods by the unsafePrim guard
+                //    in IC patching (hasPrimPrologue == false)
+                // So we compile the fallback bytecodes without a prologue.
             }
         }
     }
