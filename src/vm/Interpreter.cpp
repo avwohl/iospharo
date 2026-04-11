@@ -88,24 +88,9 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
-// Debug counters for ExitSendCached → J2J conversion (remove after investigation)
-static size_t convAttempts_ = 0, convHits_ = 0, convMissNoMap_ = 0;
-static size_t convMissNotCompiled_ = 0, convMissUnsafePrim_ = 0;
 
-// Chain loop exit-reason counters (remove after investigation)
-static size_t chainExitSend_ = 0, chainExitCached_ = 0, chainExitJ2J_ = 0;
-static size_t chainExitReturn_ = 0, chainExitOther_ = 0;
-static size_t chainPrimSuccess_ = 0, chainPrimFail_ = 0, chainActFall_ = 0;
 
-// upgradeICToJ2J failure reason counters (remove after investigation)
-static size_t icUpgNotCompiled_ = 0, icUpgBanned_ = 0, icUpgUnsafePrim_ = 0;
-static size_t icUpgClassRcv_ = 0, icUpgBadRcv_ = 0, icUpgAlreadyJ2J_ = 0;
-static size_t icUpgFilled_ = 0, icUpgNoEmpty_ = 0;
-static size_t icUpgQuickPrimWritten_ = 0;
-static size_t dbgNoProl_ = 0, dbgHasPrim_ = 0, dbgQPSet_ = 0, dbgQPClassRcv_ = 0;
 
-// Primitive histogram for chain loop sends (remove after investigation)
-static size_t chainPrimHisto_[300] = {};  // primIdx → count of successful prim executions
 
 
 // ===== CONSTRUCTION =====
@@ -727,35 +712,6 @@ void Interpreter::handleBenchComplete() {
             jitActivations_ > 0 ? 100.0 * jitActivationHits_ / jitActivations_ : 0.0,
             jitICHits_, jitICMisses_, jitICStale_,
             jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
-        fprintf(stderr, "[BENCH] Convert stats: attempts=%zu hits=%zu noMap=%zu notCompiled=%zu unsafePrim=%zu\n",
-            convAttempts_, convHits_, convMissNoMap_, convMissNotCompiled_, convMissUnsafePrim_);
-        fprintf(stderr, "[BENCH] Chain exits: send=%zu cached=%zu j2j=%zu return=%zu other=%zu\n",
-            chainExitSend_, chainExitCached_, chainExitJ2J_, chainExitReturn_, chainExitOther_);
-        fprintf(stderr, "[BENCH] Chain acts: primOK=%zu primFail=%zu actFall=%zu actChain=%zu\n",
-            chainPrimSuccess_, chainPrimFail_, jitJ2JActFalls_, jitJ2JActChains_);
-        fprintf(stderr, "[BENCH] IC upgrade: notCompiled=%zu banned=%zu unsafePrim=%zu classRcv=%zu badRcv=%zu alreadyJ2J=%zu filled=%zu noEmpty=%zu quickPrimW=%zu\n",
-            icUpgNotCompiled_, icUpgBanned_, icUpgUnsafePrim_, icUpgClassRcv_, icUpgBadRcv_,
-            icUpgAlreadyJ2J_, icUpgFilled_, icUpgNoEmpty_, icUpgQuickPrimWritten_);
-        fprintf(stderr, "[BENCH] DBG: noProl=%zu hasPrim=%zu QPset=%zu QPclassRcv=%zu\n",
-            dbgNoProl_, dbgHasPrim_, dbgQPSet_, dbgQPClassRcv_);
-        fprintf(stderr, "[BENCH] Hot prims in chain (top 10):\n");
-        {
-            struct PH { int idx; size_t cnt; };
-            PH top[10] = {};
-            for (int i = 0; i < 300; i++) {
-                if (chainPrimHisto_[i] > 0) {
-                    for (int t = 0; t < 10; t++) {
-                        if (chainPrimHisto_[i] > top[t].cnt) {
-                            for (int s = 9; s > t; s--) top[s] = top[s-1];
-                            top[t] = {i, chainPrimHisto_[i]};
-                            break;
-                        }
-                    }
-                }
-            }
-            for (int t = 0; t < 10 && top[t].cnt > 0; t++)
-                fprintf(stderr, "  prim %3d: %zu\n", top[t].idx, top[t].cnt);
-        }
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
@@ -11251,31 +11207,26 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         }
     }
 
-    if (!target || !target->isExecutable()) { icUpgNotCompiled_++; return; }
-    if (isJ2JBanned(cachedMethod.rawBits())) { icUpgBanned_++; return; }
+    if (!target || !target->isExecutable()) return;
+    if (isJ2JBanned(cachedMethod.rawBits())) return;
 
     // Check unsafe prim: has primitive but no JIT prologue.
     // Quick primitives (256-519) are trivial — handle them via existing
     // inline getter/returnsSelf IC paths instead of bailing out.
     uint64_t quickPrimExtra = 0;  // Non-zero if quick prim detected
     if (!target->hasPrimPrologue) {
-        dbgNoProl_++;
         ObjectHeader* methObj = cachedMethod.asObjectPtr();
         Oop hdr = methObj->slotAt(0);
         if (hdr.isSmallInteger() && ((hdr.asSmallInteger() >> 16) & 1)) {
-            dbgHasPrim_++;
             int primIdx = primitiveIndexOf(cachedMethod);
             if (primIdx >= 264 && primIdx <= 519) {
                 // Quick instVar getter → inline getter (bit 63)
                 quickPrimExtra = (1ULL << 63) | static_cast<uint16_t>(primIdx - 264);
-                dbgQPSet_++;
             } else if (primIdx == 256) {
                 // Quick returnSelf → inline returnsSelf (bit 61)
                 quickPrimExtra = (1ULL << 61);
-                dbgQPSet_++;
             }
             if (quickPrimExtra == 0) {
-                icUpgUnsafePrim_++;
                 return;  // unsafe primitive we can't inline
             }
             // Fall through to IC search with quickPrimExtra
@@ -11295,7 +11246,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     } else if (tag != 0) {
         lookupKey = tag | 0x80000000ULL;
     } else {
-        icUpgBadRcv_++;
         return;
     }
 
@@ -11308,7 +11258,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 uint64_t newExtra;
                 if (quickPrimExtra != 0) {
                     newExtra = quickPrimExtra;
-                    icUpgQuickPrimWritten_++;
                 } else if (!isClassReceiver) {
                     uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                     newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
@@ -11318,13 +11267,10 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                         if (pk) newExtra |= (uint64_t)pk << 48;
                     }
                 } else {
-                    icUpgClassRcv_++;
-                    return;
+                    return;  // class receiver — block J2J direct call
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
-            } else {
-                icUpgAlreadyJ2J_++;
             }
             return;
         }
@@ -11357,19 +11303,13 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             }
         }
 
-        if (newExtra == 0) {
-            // Nothing to set (class receiver with non-trivial method)
-            icUpgClassRcv_++;
-            return;
-        }
+        if (newExtra == 0) return;  // class receiver, non-trivial method
+
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
         icData[firstEmpty * 3 + 2] = newExtra;
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
-        icUpgFilled_++;
         jitICPatches_++;
-    } else if (firstEmpty < 0) {
-        icUpgNoEmpty_++;
     }
 }
 
@@ -11380,26 +11320,23 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 // ExitJ2JCall, and returns 1. Otherwise returns 0.
 // NOTE: Does NOT advance IP — the trampoline call path does that.
 extern "C" int pharo_jit_convert_send(jit::JITState* state) {
-    convAttempts_++;
     auto* mm = reinterpret_cast<jit::MethodMap*>(state->methodMapPtr);
-    if (!mm) { convMissNoMap_++; return 0; }
+    if (!mm) return 0;
 
     uint64_t targetBits = state->cachedTarget.rawBits();
-    // Quick reject: not a valid object pointer
-    if (targetBits < 0x10000 || (targetBits & 7) != 0) { convMissNoMap_++; return 0; }
+    if (targetBits < 0x10000 || (targetBits & 7) != 0) return 0;
 
     jit::JITMethod* target = mm->lookup(targetBits);
-    if (!target || !target->isExecutable()) { convMissNotCompiled_++; return 0; }
+    if (!target || !target->isExecutable()) return 0;
 
     // Check unsafe prim: has primitive flag set but no JIT prologue stencil
     bool hasPrim = (target->methodHeader >> 16) & 1;
-    if (hasPrim && !target->hasPrimPrologue) { convMissUnsafePrim_++; return 0; }
+    if (hasPrim && !target->hasPrimPrologue) return 0;
 
     // Convert to J2J call
     state->returnValue = Oop::fromRawBits(
         reinterpret_cast<uint64_t>(target->codeStart()));
     state->exitReason = jit::ExitJ2JCall;
-    convHits_++;
     return 1;
 }
 
@@ -11859,7 +11796,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
         switch (state.exitReason) {
         case jit::ExitReturn: {
-            chainExitReturn_++;
             if (!popFrame()) {
                 // fd=0: follow context sender chain
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -11893,7 +11829,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitSend: {
-            chainExitSend_++;
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
             instructionPointer_ = state.ip;
@@ -11954,7 +11889,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitSendCached: {
-            chainExitCached_++;
             // IC hit: cached method is in state.cachedTarget. Skip method lookup.
             Oop cached = state.cachedTarget;
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
@@ -11985,7 +11919,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitBlockCreate: {
-            chainExitOther_++;
             // PushFullBlock exit: create the closure, then resume JIT.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
@@ -12092,7 +12025,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitJ2JCall: {
-            chainExitJ2J_++;
             // J2J IC hit during chain resume — stencil set bit 60 in a prior
             // upgradeICToJ2J, but the J2J trampoline only runs once (before the
             // chain loop).  Handle as a regular method activation.  IP is already
@@ -12155,8 +12087,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     chainTarget = newMethod_;  // Refresh: GC during prim may have moved it
 
                     if (result == PrimitiveResult::Success) {
-                        chainPrimSuccess_++;
-                        if (primIdx >= 0 && primIdx < 300) chainPrimHisto_[primIdx]++;
                         // Frame-pushing primitives (closure activation prims 81/82/
                         // 201-209, perform: prims 83/84, etc.) call activateBlock/
                         // pushFrame inside executePrimitive. The new frame must run
@@ -12197,7 +12127,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
 
             // Non-primitive or primitive failed — activate the method
-            chainPrimFail_++;
             size_t callerDepth = frameDepth_;
             activateMethod(chainTarget, nArgs);
 
