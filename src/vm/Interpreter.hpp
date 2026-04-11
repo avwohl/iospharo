@@ -783,6 +783,10 @@ private:
     // (caller should NOT proceed with interpreter execution).
     bool tryJITActivation(Oop method, int argCount);
 
+    // On-stack replacement: at interpreter backward jumps, check if the
+    // current method is JIT-compiled and transfer execution to JIT.
+    void tryOSRAtBackwardJump();
+
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).
     void tryJITResumeInCaller();
@@ -831,6 +835,8 @@ private:
     size_t jitStencilFallJ2JCall_ = 0;
     size_t jitStencilFallOther_ = 0;
     size_t jitYieldCount_ = 0;  // ExitYield hits (backward-jump yield check)
+    size_t jitOSREntries_ = 0;  // On-stack replacement entries from backward jumps
+    int osrCountdown_ = 0;      // OSR sampling: only check every N backward jumps
 
     // J2J ban set: methods whose J2J calls always bail out (callee modifies
     // state before hitting a send, causing double-execution on re-entry).

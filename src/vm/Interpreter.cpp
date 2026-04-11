@@ -721,6 +721,7 @@ void Interpreter::handleBenchComplete() {
         fprintf(stderr, "[BENCH]   prim: chains=%zu falls=%zu | activate: chains=%zu falls=%zu | yields=%zu\n",
             jitChainPrimChains_, jitChainPrimFalls_,
             jitChainActivateChains_, jitChainActivateFalls_, jitYieldCount_);
+        fprintf(stderr, "[BENCH]   OSR: entries=%zu\n", jitOSREntries_);
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
@@ -3446,6 +3447,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extB_ = 0;
         instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+        if (offset < 0) tryOSRAtBackwardJump();
+#endif
         break;
     }
     case 0xEE: { // Pop and Jump On True #i (+ extB * 256)
@@ -3456,6 +3460,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop value = pop();
         if (isTrue(value)) {
             instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+            if (offset < 0) tryOSRAtBackwardJump();
+#endif
         } else if (!isFalse(value)) {
             push(value);
             sendMustBeBoolean(value);
@@ -3470,6 +3477,9 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop value = pop();
         if (isFalse(value)) {
             instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+            if (offset < 0) tryOSRAtBackwardJump();
+#endif
         } else if (!isTrue(value)) {
             push(value);
             sendMustBeBoolean(value);
@@ -4867,6 +4877,9 @@ void Interpreter::shortJumpIfFalse(int offset) {
 void Interpreter::longJump() {
     int16_t offset = static_cast<int16_t>(fetchTwoBytes());
     instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+    if (offset < 0) tryOSRAtBackwardJump();
+#endif
 }
 
 void Interpreter::longJumpIfTrue() {
@@ -4874,6 +4887,9 @@ void Interpreter::longJumpIfTrue() {
     Oop value = pop();
     if (isTrue(value)) {
         instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+        if (offset < 0) tryOSRAtBackwardJump();
+#endif
     } else if (!isFalse(value)) {
         push(value);
         sendMustBeBoolean(value);
@@ -4885,6 +4901,9 @@ void Interpreter::longJumpIfFalse() {
     Oop value = pop();
     if (isFalse(value)) {
         instructionPointer_ += offset;
+#if PHARO_JIT_ENABLED
+        if (offset < 0) tryOSRAtBackwardJump();
+#endif
     } else if (!isTrue(value)) {
         push(value);
         sendMustBeBoolean(value);
@@ -10504,6 +10523,36 @@ void Interpreter::initializeJIT() {
     }
     // Expose code zone for crash diagnostics
     ::g_jitCodeZone = &jitRuntime_.codeZone();
+}
+
+void Interpreter::tryOSRAtBackwardJump() {
+    static bool noOSR = !!getenv("PHARO_NO_OSR");
+    if (noOSR) return;
+    if (!jitRuntime_.isInitialized()) return;
+    if (inJITResume_) return;  // Already inside JIT resume loop
+
+    // Sampling: only check every 64 backward jumps to amortize overhead.
+    // Counter is reset to 64 after each successful OSR entry (JIT takes over
+    // and handles subsequent backward jumps via stencil yield checks).
+    if (--osrCountdown_ > 0) return;
+    osrCountdown_ = 64;
+
+    if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+
+    jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+    if (!jm || !jm->isExecutable()) {
+        // Not compiled yet — trigger compilation via noteMethodEntry.
+        // With threshold=2, this compiles after 2 backward jumps of the
+        // 64-sample window (128 actual backward jumps).
+        jitRuntime_.noteMethodEntry(method_);
+        // After noteMethodEntry, re-check: was the method just compiled?
+        jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+        if (!jm || !jm->isExecutable()) return;
+    }
+
+    // Method is compiled — enter JIT at current IP (OSR)
+    jitOSREntries_++;
+    tryJITResumeInCaller();
 }
 
 uint32_t Interpreter::computeCurrentBCOffset() {
