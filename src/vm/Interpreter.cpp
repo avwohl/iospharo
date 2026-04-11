@@ -12034,14 +12034,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
             if (checkCountdown_ <= 0) goto jit_loop_exit;
 
-            // Reset yield counter and resume at the branch target.
-            // J2J is disabled in chain loop — see ExitReturn handler comment.
+            // Reset yield counter and resume with J2J enabled. This lets
+            // stencils handle sends directly via stencil-to-stencil calls
+            // instead of exiting to C++ on every send.
             state.yieldCountdown = 1000;
             state.exitReason = jit::ExitNone;
             state.j2jDepth = 0;
             state.j2jTotalCalls = 0;
-            state.j2jSaveCursor = nullptr;
-            state.j2jSaveLimit = nullptr;
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
             {
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -12059,6 +12060,58 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 pthread_jit_write_protect_np(0);
 #endif
             }
+            // Charge stencil J2J calls from this segment
+            jitJ2JStencilCalls_ += state.j2jTotalCalls;
+            checkCountdown_ -= state.j2jTotalCalls * 10;
+
+            // If stencil J2J calls left pending frames, materialize them
+            // so the interpreter/chain loop can see them.
+            if (state.j2jDepth > 0) {
+                Oop nil = memory_.nil();
+                size_t baseDepth = frameDepth_;
+                for (int i = 0; i < state.j2jDepth; i++) {
+                    J2JSave& save = j2jStack[i];
+                    SavedFrame& frame = savedFrames_[baseDepth + i];
+                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+                    bool isSelfRec = (jmBits & 1) != 0;
+                    jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
+                        jmBits & ~static_cast<uintptr_t>(1));
+                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                    ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
+                    int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                    uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+                    frame.savedIP = save.ip;
+                    frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                    frame.savedMethod = saveMethod;
+                    frame.savedHomeMethod = saveMethod;
+                    frame.savedReceiver = save.receiver;
+                    frame.savedClosure = nil;
+                    frame.savedActiveContext = nil;
+                    frame.materializedContext = nil;
+                    frame.savedFP = save.tempBase - 1;
+                    frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                    frame.homeFrameDepth = SIZE_MAX;
+                }
+                frameDepth_ = baseDepth + state.j2jDepth;
+                chainCallDepth += state.j2jDepth;
+                // Sync interpreter from innermost frame
+                if (state.jitMethod) {
+                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+                    jmBits &= ~static_cast<uintptr_t>(1);
+                    state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
+                    state.method = Oop::fromRawBits(
+                        reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                }
+                method_ = state.method;
+                method = state.method;
+                homeMethod_ = state.method;
+                receiver_ = state.receiver;
+                stackPointer_ = state.sp;
+                instructionPointer_ = state.ip;
+                framePointer_ = state.tempBase - 1;
+                argCount_ = state.argCount;
+            }
+
             chargeJITBytecodes(state);
             if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;
