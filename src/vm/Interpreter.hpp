@@ -820,6 +820,19 @@ private:
     size_t jitActivations_ = 0;       // tryJITActivation calls
     size_t jitActivationHits_ = 0;    // tryJITActivation entered JIT code
 
+    // --- Chain loop path diagnostics ---
+    size_t jitChainInlineActs_ = 0;      // Inline chain activation entries
+    size_t jitChainInlineReturns_ = 0;   // ExitReturn at chainCallDepth>0
+    size_t jitChainPrimChains_ = 0;      // Primitives that chained (no frame push)
+    size_t jitChainPrimFalls_ = 0;       // Primitives that pushed frame → bail
+    size_t jitChainActivateFalls_ = 0;   // activateMethod pushed frame → bail
+    size_t jitChainActivateChains_ = 0;  // activateMethod completed in-place → chain
+    // Stencil-J2J non-return exit breakdown
+    size_t jitStencilFallSendCached_ = 0;
+    size_t jitStencilFallSend_ = 0;
+    size_t jitStencilFallJ2JCall_ = 0;
+    size_t jitStencilFallOther_ = 0;
+
     // J2J ban set: methods whose J2J calls always bail out (callee modifies
     // state before hitting a send, causing double-execution on re-entry).
     // Key = method oop raw bits. Checked in patchJITICAfterSend to avoid

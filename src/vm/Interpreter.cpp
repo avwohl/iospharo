@@ -712,6 +712,19 @@ void Interpreter::handleBenchComplete() {
             jitActivations_ > 0 ? 100.0 * jitActivationHits_ / jitActivations_ : 0.0,
             jitICHits_, jitICMisses_, jitICStale_,
             jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
+        fprintf(stderr, "[BENCH] Chain paths: actChains=%zu actFalls=%zu (%.1f%% continuity)\n",
+            jitJ2JActChains_, jitJ2JActFalls_,
+            (jitJ2JActChains_ + jitJ2JActFalls_) > 0
+                ? 100.0 * jitJ2JActChains_ / (jitJ2JActChains_ + jitJ2JActFalls_) : 0.0);
+        fprintf(stderr, "[BENCH]   stencil: returns=%zu falls=%zu [cached=%zu send=%zu j2j=%zu other=%zu]\n",
+            jitJ2JStencilReturns_,
+            jitStencilFallSendCached_ + jitStencilFallSend_ + jitStencilFallJ2JCall_ + jitStencilFallOther_,
+            jitStencilFallSendCached_, jitStencilFallSend_, jitStencilFallJ2JCall_, jitStencilFallOther_);
+        fprintf(stderr, "[BENCH]   prim: chains=%zu falls=%zu | activate: chains=%zu falls=%zu\n",
+            jitChainPrimChains_, jitChainPrimFalls_,
+            jitChainActivateChains_, jitChainActivateFalls_);
+        fprintf(stderr, "[BENCH]   inline-chain: entries=%zu returns=%zu\n",
+            jitChainInlineActs_, jitChainInlineReturns_);
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
@@ -11782,12 +11795,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 fprintf(stderr, "[JIT] BAD state.ip=0x%llx after exit %d, method=0x%llx\n",
                         (unsigned long long)ipVal, state.exitReason,
                         (unsigned long long)method.rawBits());
-                return false;
+                goto chain_bail_false;
             }
             if (spVal < 0x10000 || spVal > 0x1000000000000ULL) {
                 fprintf(stderr, "[JIT] BAD state.sp=0x%llx after exit %d\n",
                         (unsigned long long)spVal, state.exitReason);
-                return false;
+                goto chain_bail_false;
             }
         }
 
@@ -11801,6 +11814,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 popFrame();
                 push(state.returnValue);
                 chainCallDepth--;
+                jitChainInlineReturns_++;
 
                 // Restore locals from interpreter state (set by popFrame)
                 method = method_;
@@ -11836,9 +11850,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     if (codeOff == 0 || codeOff >= callerJM->codeSize) return true;
                     state.jitMethod = callerJM;
                     state.exitReason = jit::ExitNone;
+                    // Restore J2J save stack so resumed method can do
+                    // stencil-J2J sends within JIT (fast inline path).
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
                     state.j2jDepth = 0;
-                    state.j2jSaveCursor = nullptr;
-                    state.j2jSaveLimit = nullptr;
+                    state.j2jTotalCalls = 0;
 #if defined(__APPLE__) && defined(__arm64__)
                     pthread_jit_write_protect_np(1);
 #endif
@@ -11847,6 +11864,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     pthread_jit_write_protect_np(0);
 #endif
                 }
+                jitJ2JStencilCalls_ += state.j2jTotalCalls;
                 chargeJITBytecodes(state);
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
                 continue;
@@ -11894,14 +11912,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (!state.icDataPtr) {
                 static int noIC = 0;
                 if (++noIC <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] no icDataPtr! returning false\n");
-                return false;
+                goto chain_bail_false;
             }
             Oop sendSel = Oop::fromRawBits(state.icDataPtr[12]);
             if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {
                 static int badSel = 0;
                 if (++badSel <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] bad selector bits=0x%llx! returning false\n",
                     (unsigned long long)sendSel.rawBits());
-                return false;
+                goto chain_bail_false;
             }
 
             int nArgs = state.sendArgCount;
@@ -11915,13 +11933,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 resolved = ce->method;
             } else {
                 resolved = lookupMethod(sendSel, rcvrClass);
-                if (resolved.isNil()) return false;  // DNU — interpreter handles
+                if (resolved.isNil()) goto chain_bail_false;  // DNU — interpreter handles
                 cacheMethod(sendSel, rcvrClass, resolved);
             }
 
             if (!resolved.isObject() || resolved.rawBits() < 0x10000 ||
                 resolved.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
-                return false;  // Non-standard method — interpreter handles
+                goto chain_bail_false;  // Non-standard method — interpreter handles
             }
 
             // Patch IC immediately so next hit is ExitSendCached
@@ -11960,7 +11978,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp;
-                return false;
+                goto chain_bail_false;
             }
             jitICHits_++;
             instructionPointer_ = state.ip;
@@ -12013,11 +12031,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.argCount = argCount;
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
-            state.exitReason = jit::ExitNone;
-
-            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                return true;  // Can't resume; interpreter handles rest
+            {
+                jit::JITMethod* blkResumeJM = jitRuntime_.methodMap().lookup(
+                    method.rawBits());
+                if (!blkResumeJM || !blkResumeJM->isExecutable()) return true;
+                uint32_t codeOff = blkResumeJM->codeOffsetForBC(bcOffset);
+                if (codeOff == 0 || codeOff >= blkResumeJM->codeSize) return true;
+                state.jitMethod = blkResumeJM;
+                state.exitReason = jit::ExitNone;
+                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
+                state.j2jDepth = 0;
+                state.j2jTotalCalls = 0;
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(1);
+#endif
+                JIT_CALL(blkResumeJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(0);
+#endif
             }
+            jitJ2JStencilCalls_ += state.j2jTotalCalls;
             chargeJITBytecodes(state);
             if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
@@ -12064,11 +12098,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.argCount = argCount;
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
-            state.exitReason = jit::ExitNone;
-
-            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                return true;  // Can't resume; interpreter handles rest
+            {
+                jit::JITMethod* arrResumeJM = jitRuntime_.methodMap().lookup(
+                    method.rawBits());
+                if (!arrResumeJM || !arrResumeJM->isExecutable()) return true;
+                uint32_t codeOff = arrResumeJM->codeOffsetForBC(bcOffset);
+                if (codeOff == 0 || codeOff >= arrResumeJM->codeSize) return true;
+                state.jitMethod = arrResumeJM;
+                state.exitReason = jit::ExitNone;
+                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
+                state.j2jDepth = 0;
+                state.j2jTotalCalls = 0;
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(1);
+#endif
+                JIT_CALL(arrResumeJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(0);
+#endif
             }
+            jitJ2JStencilCalls_ += state.j2jTotalCalls;
             chargeJITBytecodes(state);
             if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
@@ -12077,7 +12127,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitArithOverflow: {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
-            return false;
+            goto chain_bail_false;
         }
 
         case jit::ExitJ2JCall: {
@@ -12090,7 +12140,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 j2jCached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 instructionPointer_ = state.ip;
                 stackPointer_ = state.sp;
-                return false;
+                goto chain_bail_false;
             }
             jitICHits_++;
             instructionPointer_ = state.ip;
@@ -12103,16 +12153,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
         case jit::ExitPrimFail:
         case jit::ExitDeopt:
-            // Unwind any inline chain frames
-            while (chainCallDepth > 0) {
-                popFrame();
-                chainCallDepth--;
-            }
-            stackPointer_ = entrySP;
-            return false;
+            goto chain_bail_false;
 
         default:
-            return false;
+            goto chain_bail_false;
         }
 
         // --- Shared send-chain code (reached via break from ExitSend/ExitSendCached/ExitJ2JCall) ---
@@ -12188,9 +12232,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
                         }
 
-                        // Disable stencil J2J for callee (no save stack available)
-                        state.j2jSaveCursor = nullptr;
-                        state.j2jSaveLimit = nullptr;
+                        // Restore J2J save stack for callee — fresh slice
+                        // so callee can do stencil-J2J sends within JIT.
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
 
@@ -12202,8 +12247,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #if defined(__APPLE__) && defined(__arm64__)
                         pthread_jit_write_protect_np(0);
 #endif
+                        jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
                         chargeJITBytecodes(state);
-                        jitJ2JStencilCalls_++;
 
                         if (__builtin_expect(
                                 state.exitReason == jit::ExitReturn, 1)) {
@@ -12245,11 +12290,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             state.sp = stackPointer_;
                             state.icDataPtr = nullptr;
                             state.sendArgCount = 0;
-                            state.exitReason = jit::ExitNone;
-
-                            if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                                return true;
+                            // Inline tryResume with save stack restore
+                            {
+                                jit::JITMethod* resumeJM = jitRuntime_.methodMap().lookup(
+                                    method.rawBits());
+                                if (!resumeJM || !resumeJM->isExecutable()) return true;
+                                uint32_t codeOff = resumeJM->codeOffsetForBC(bcOffset);
+                                if (codeOff == 0 || codeOff >= resumeJM->codeSize) return true;
+                                state.jitMethod = resumeJM;
+                                state.exitReason = jit::ExitNone;
+                                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                                state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
+                                state.j2jDepth = 0;
+                                state.j2jTotalCalls = 0;
+#if defined(__APPLE__) && defined(__arm64__)
+                                pthread_jit_write_protect_np(1);
+#endif
+                                JIT_CALL(resumeJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                                pthread_jit_write_protect_np(0);
+#endif
                             }
+                            jitJ2JStencilCalls_ += state.j2jTotalCalls;
                             chargeJITBytecodes(state);
                             if (checkCountdown_ <= 0) goto jit_loop_exit;
                             continue;
@@ -12288,10 +12350,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             bytecodeEnd_ = tMO->bytes() + tMO->byteSize();
                         }
                         closure_ = memory_.nil();
-                        jitJ2JActFalls_++;
+                        // Track stencil-J2J non-return exit reason
+                        switch (state.exitReason) {
+                        case jit::ExitSendCached: jitStencilFallSendCached_++; break;
+                        case jit::ExitSend:       jitStencilFallSend_++; break;
+                        case jit::ExitJ2JCall:    jitStencilFallJ2JCall_++; break;
+                        default:                  jitStencilFallOther_++; break;
+                        }
 
-                        // Bail: let interpreter dispatch handle the callee
-                        return true;
+                        // Continue chain loop: handle callee's exit in
+                        // the next iteration instead of bailing.  The
+                        // caller's SavedFrame is already pushed (above),
+                        // and interpreter state reflects the callee.
+                        chainCallDepth++;
+                        continue;
                     }
                 }
             }
@@ -12319,10 +12391,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // dispatch loop drives the activated frame to completion.
                         if (frameDepth_ != primCallerDepth) {
                             jitJ2JActFalls_++;
+                            jitChainPrimFalls_++;
                             return true;
                         }
                         // Primitive completed in place — resume JIT at bytecode after send
                         jitJ2JActChains_++;
+                        jitChainPrimChains_++;
                         method = method_;
                         uint32_t bcOffset = computeCurrentBCOffset();
                         if (bcOffset == UINT32_MAX) return true;
@@ -12340,10 +12414,28 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.argCount = argCount;
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
-                        state.exitReason = jit::ExitNone;
-                        if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                            return true;
+                        // Inline tryResume with save stack restore
+                        {
+                            jit::JITMethod* primResumeJM = jitRuntime_.methodMap().lookup(
+                                method.rawBits());
+                            if (!primResumeJM || !primResumeJM->isExecutable()) return true;
+                            uint32_t codeOff = primResumeJM->codeOffsetForBC(bcOffset);
+                            if (codeOff == 0 || codeOff >= primResumeJM->codeSize) return true;
+                            state.jitMethod = primResumeJM;
+                            state.exitReason = jit::ExitNone;
+                            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                            state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
+                            state.j2jDepth = 0;
+                            state.j2jTotalCalls = 0;
+#if defined(__APPLE__) && defined(__arm64__)
+                            pthread_jit_write_protect_np(1);
+#endif
+                            JIT_CALL(primResumeJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                            pthread_jit_write_protect_np(0);
+#endif
                         }
+                        jitJ2JStencilCalls_ += state.j2jTotalCalls;
                         chargeJITBytecodes(state);
                         if (checkCountdown_ <= 0) goto jit_loop_exit;
                         continue;
@@ -12420,9 +12512,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
 
-                        // Enter callee JIT (inlined — skip tryExecute's redundant
-                        // lookup/validation; jitMethod, exitReason already set above)
+                        // Enter callee JIT with fresh save stack
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
                         state.j2jDepth = 0;
+                        state.j2jTotalCalls = 0;
                         // Receiver field bounds check
                         if (targetJM->hasRecvFieldAccess) {
                             if (calleeRecv.isSmallInteger() || calleeRecv.isCharacter()) {
@@ -12444,6 +12538,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #endif
                         chargeJITBytecodes(state);
                         chainCallDepth++;
+                        jitChainInlineActs_++;
 
                         // Update locals for the callee's context
                         method = chainTarget;
@@ -12467,12 +12562,14 @@ chain_activate_fallback:
                 if (frameDepth_ != callerDepth) {
                     // Target pushed a frame — interpreter dispatch loop handles it
                     jitJ2JActFalls_++;
+                    jitChainActivateFalls_++;
                     return true;
                 }
 
                 // Target completed (JIT or trivial method handled it end-to-end).
                 // Resume JIT execution at the bytecode after the send.
                 jitJ2JActChains_++;
+                jitChainActivateChains_++;
                 method = method_;  // Refresh: GC may have moved the method
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -12491,11 +12588,28 @@ chain_activate_fallback:
                 state.argCount = argCount;
                 state.icDataPtr = nullptr;
                 state.sendArgCount = 0;
-                state.exitReason = jit::ExitNone;
-
-                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
-                    return true;
+                // Inline tryResume with save stack restore
+                {
+                    jit::JITMethod* actResumeJM = jitRuntime_.methodMap().lookup(
+                        method.rawBits());
+                    if (!actResumeJM || !actResumeJM->isExecutable()) return true;
+                    uint32_t codeOff = actResumeJM->codeOffsetForBC(bcOffset);
+                    if (codeOff == 0 || codeOff >= actResumeJM->codeSize) return true;
+                    state.jitMethod = actResumeJM;
+                    state.exitReason = jit::ExitNone;
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(j2jStack + J2JSlotPerEntry);
+                    state.j2jDepth = 0;
+                    state.j2jTotalCalls = 0;
+#if defined(__APPLE__) && defined(__arm64__)
+                    pthread_jit_write_protect_np(1);
+#endif
+                    JIT_CALL(actResumeJM->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                    pthread_jit_write_protect_np(0);
+#endif
                 }
+                jitJ2JStencilCalls_ += state.j2jTotalCalls;
                 chargeJITBytecodes(state);
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
                 continue;
@@ -12503,6 +12617,16 @@ chain_activate_fallback:
         }
     }
     // Chain limit reached — fall through to handle unprocessed exit
+
+chain_bail_false:
+    // Unwind any inline chain frames before bailing with return false.
+    // At depth 0 this is a no-op.
+    while (chainCallDepth > 0) {
+        popFrame();
+        chainCallDepth--;
+    }
+    stackPointer_ = entrySP;
+    return false;
 
 jit_loop_exit:
     // If at inline depth, handle the unprocessed exit and bail to interpreter.
