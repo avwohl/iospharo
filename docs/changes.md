@@ -2,6 +2,26 @@
 
 2026-04-11
 
+## Chain loop diagnostic counters and optimization investigation
+
+Added per-path diagnostic counters to the chain loop in tryJITActivation to
+identify the next optimization target. Key findings:
+
+- 158.5M (99.5%) of stencil-J2J non-return exits are ExitSendCached
+- 159.5M primitives chain in-place, 32.1M push frames (then bail)
+- Inline chain activation: DEAD CODE (0 entries across all AWFY benchmarks)
+- activateMethod path: essentially unused (8 falls, 0 chains)
+
+Two optimization attempts measured and reverted:
+1. Chain loop continuation (stencil-J2J non-returns continue chain loop instead
+   of bailing): hangs Richards, 2x regression on fib(28). The chain loop return
+   path is more expensive than interpreter dispatch for recursive code.
+2. Save stack restore for chain loop JIT_CALLs: 2x regression on Richards.
+   j2jStack pool slots conflict between initial trampoline and chain loop entries.
+
+Conclusion: the stencil-J2J register-resident path is near-optimal for the
+current architecture. The 37x gap vs Cog requires method inlining to close.
+
 ## JIT per-send overhead reduction + stencil-J2J always-on
 
 Made stencil-J2J (register-resident caller save/restore for sends) always-on,
