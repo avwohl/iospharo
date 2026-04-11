@@ -667,9 +667,30 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         m = m->nextInZone;
     }
 
-    // Count map keys (CompiledMethod Oop bits) were updated in-place by
-    // forEachRoot during compaction. No need to clear — methods preserve
-    // their accumulated counts across GC.
+    // Count map: keys were updated in-place by forEachRoot during compaction,
+    // but hash positions are stale (same issue as methodMap and megaCache).
+    // Rehash to fix positions. Methods that are already compiled (in methodMap)
+    // don't need counting anymore — drop them to reduce future probe overhead.
+    {
+        // Heap-allocate temp because CountMapSize*sizeof(CountEntry) = 196KB
+        auto* temp = new CountEntry[CountMapSize];
+        std::memcpy(temp, countMap_, sizeof(countMap_));
+        std::memset(countMap_, 0, sizeof(countMap_));
+        for (size_t i = 0; i < CountMapSize; i++) {
+            if (temp[i].key == 0) continue;
+            // Skip entries for methods already compiled — no need to count them
+            if (methodMap_.lookup(temp[i].key)) continue;
+            size_t idx = (temp[i].key >> 3) % CountMapSize;
+            for (size_t probe = 0; probe < 8; probe++) {
+                size_t slot = (idx + probe) % CountMapSize;
+                if (countMap_[slot].key == 0) {
+                    countMap_[slot] = temp[i];
+                    break;
+                }
+            }
+        }
+        delete[] temp;
+    }
 }
 
 } // namespace jit

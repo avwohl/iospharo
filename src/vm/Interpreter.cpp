@@ -11400,28 +11400,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.trueOop = memory_.trueObject();
     state.falseOop = memory_.falseObject();
 
-    // J2J stencil-to-stencil save stack — must be set up BEFORE tryExecute
-    // because stencils may hit J2J sends during the initial execution.
-    struct J2JSave {
-        // --- Always stored (hot path) ---
-        Oop* sp;                  // 0
-        Oop receiver;             // 8
-        Oop* tempBase;            // 16  (pair with ip)
-        uint8_t* ip;              // 24
-        jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
-        uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
-        int sendArgCount;         // 48  (packed with argCount)
-        int argCount;             // 52  (non-self-recursive only)
-        // --- Non-self-recursive only (cold-ish) ---
-        Oop* literals;            // 56
-        uint8_t* bcStart;         // 64  Precomputed bytecodeStart
-    };
-    static_assert(sizeof(struct J2JSave) == 72, "J2JSave should be 72 bytes");
-    static constexpr int MaxJ2JDepth = 256;
-    J2JSave j2jStack[MaxJ2JDepth];
+    // J2J stencil-to-stencil save stack — carved from shared j2jPool_ to avoid
+    // per-call stack allocation (was 18KB at depth 256, now zero stack cost).
+    int j2jPoolBase = j2jPoolCursor_;
+    int j2jPoolEnd = std::min(j2jPoolBase + J2JSlotPerEntry, MaxJ2JPoolSize);
+    J2JSave* j2jStack = &j2jPool_[j2jPoolBase];
+    j2jPoolCursor_ = j2jPoolEnd;  // Reserve our slice; recursive entries continue after
+    struct J2JPoolGuard {
+        int& cursor; int base;
+        ~J2JPoolGuard() { cursor = base; }
+    } j2jPoolGuard{j2jPoolCursor_, j2jPoolBase};
 
-    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jStack[0]);
-    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jStack[MaxJ2JDepth]);
+    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+    state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
     state.methodMapPtr = &jitRuntime_.methodMap();
@@ -11456,8 +11447,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Safe because GC/process-switch cannot trigger during JIT execution
     // (stencils don't allocate, no timer checks).
     {
-        // j2jStack and MaxJ2JDepth are declared above (before tryExecute)
-        // so stencils can use them during initial execution.
+        // j2jStack is carved from j2jPool_ above (before tryExecute);
+        // J2JSlotPerEntry limits depth per entry.
         int j2jDepth = 0;
         size_t j2jBaseFrameDepth = frameDepth_;
 
@@ -11510,7 +11501,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             if (state.exitReason == jit::ExitJ2JCall) {
                 // --- J2J Call: save caller, push lazy frame, enter callee ---
-                if (j2jDepth >= MaxJ2JDepth) {
+                if (j2jDepth >= J2JSlotPerEntry) {
                     // Too deep — fall back to interpreter
                     state.exitReason = jit::ExitSendCached;
                     break;
@@ -12083,8 +12074,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // ===== Inline one-shot J2J call =====
             // If the target is JIT-compiled and safe, call it directly from
             // the chain loop using the existing JITState. Avoids activateMethod
-            // overhead (pushFrame, full JITState setup, 18KB j2jStack alloc
-            // per recursive tryJITActivation).
+            // overhead (pushFrame, full JITState setup per recursive
+            // tryJITActivation).
             //
             // Fast path (~93%): callee returns with ExitReturn — restore
             // caller state inline and resume JIT.
@@ -12093,7 +12084,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // SavedFrame for the caller and bail to interpreter.
 #if PHARO_JIT_ENABLED
             {
-                static bool chainJ2J = !getenv("PHARO_NO_CHAIN_J2J");
+                static bool chainJ2J = !!getenv("PHARO_CHAIN_J2J");
                 jit::JITMethod* chainJM = chainJ2J
                     ? jitRuntime_.methodMap().lookup(chainTarget.rawBits()) : nullptr;
                 if (chainJM && chainJM->isExecutable()) {
