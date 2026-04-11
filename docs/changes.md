@@ -2,6 +2,33 @@
 
 2026-04-11
 
+## Yield check fix + J2J for resumed methods + debug cleanup
+
+Fixed ExitYield checkCountdown_ charging: each yield now charges
+1000 × numBytecodes (was just numBytecodes), properly representing
+the ~1000 backward-jump iterations executed between yields. With
+checkCountdown_ = INT32_MAX in benchMode_, the old 1× charge could
+never exhaust it (would take ~23B backward jumps).
+
+J2J save stack is now re-enabled for all chain loop resume sites
+(ExitBlockCreate, ExitArrayCreate, ExitPrimFail, activate, ExitReturn,
+ExitYield). tryResume no longer clears j2jSaveCursor/limit or resets
+yieldCountdown — callers control both.
+
+Removed all traceAtAllPut_ debug instrumentation (~150 lines) from
+sendSelector, returnValue, returnFromMethod, and activateMethod. Also
+removed [YIELD], [RESUME], [RESUME-CACHED-P60] debug logging.
+
+Benchmarks: fib(28) 10.7ms, sieve 3.1ms — no starvation, no hangs.
+
+## Backward-jump yield check — prevent timer starvation in stencil-J2J
+
+New stencils (jumpBack, jumpTrueBack, jumpFalseBack + SimStack _1 variants)
+decrement yieldCountdown on backward jumps. When it hits 0, exit with
+ExitYield so the chain loop can charge checkCountdown_ and run scheduler
+checks. This prevents timer/process starvation when stencil-J2J handles
+long-running loops without returning to C.
+
 ## J2J save stack depth 8→32 (fib 33% faster)
 
 Increased J2JSlotPerEntry from 8 to 32. For deeply recursive code like fib(28),
