@@ -619,6 +619,8 @@ Oop Interpreter::findBenchFibMethod() {
 
 void Interpreter::startBench(const BenchSpec& spec) {
     fprintf(stderr, "[BENCH] === %s ===\n", spec.name.c_str());
+    // GC between benchmarks to avoid heap exhaustion (especially after Storage)
+    memory_.fullGC();
     benchRunCount_ = -1;  // warmup
     setupBenchContext();
 }
@@ -699,6 +701,8 @@ void Interpreter::handleBenchComplete() {
         stop();
         return;
     }
+    // GC between runs to avoid heap exhaustion from allocation-heavy benchmarks
+    memory_.fullGC();
     // Set up next run of same benchmark
     setupBenchContext();
 }
