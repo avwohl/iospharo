@@ -63,6 +63,103 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     interp->popFrameForJIT(state);
 }
 
+// Out-of-line array primitive handler for IC hit path.
+// Called from sendJ2J stencil when primKind >= 14 (at:/at:put:/size).
+// info = (primKind << 8) | nArgs
+// Returns 1 on success (result written to sp), 0 on failure.
+//
+// Note: JITState uses pharo::Oop but stencils define their own Oop
+// with public .bits field. We work with rawBits() here and use
+// Oop::fromRawBits() to write back.
+extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
+    uint8_t primKind = (uint8_t)(info >> 8);
+    int nArgs = (int)(info & 0xFF);
+
+    uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
+
+    // Receiver must be an object pointer (tag == 0, not immediate)
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000)
+        return 0;
+
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
+    uint64_t fmt = (header >> 24) & 0x1F;
+    uint64_t slotCount = (header >> 56) & 0xFF;
+    if (slotCount == 255) {
+        uint64_t raw = *reinterpret_cast<uint64_t*>(rcvBits - 8);
+        slotCount = (raw << 8) >> 8;
+    }
+
+    if (primKind == 14) {
+        // at: — read from Array or byte object
+        uint64_t idxBits = s->sp[-nArgs].rawBits();
+        if ((idxBits & 7) != 1) return 0;
+        int64_t i = (int64_t)idxBits >> 3;
+        if (fmt == 2) {
+            if (i < 1 || (uint64_t)i > slotCount) return 0;
+            Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
+            s->sp[-(nArgs + 1)] = slots[i - 1];
+            s->sp -= nArgs;
+            return 1;
+        }
+        if (fmt >= 16 && fmt <= 23) {
+            uint64_t byteSize = slotCount * 8 - (fmt - 16);
+            if (i < 1 || (uint64_t)i > byteSize) return 0;
+            uint8_t byte = reinterpret_cast<uint8_t*>(rcvBits + 8)[i - 1];
+            s->sp[-(nArgs + 1)] = Oop::fromRawBits(((uint64_t)byte << 3) | 1);
+            s->sp -= nArgs;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (primKind == 15) {
+        // at:put: — write to Array or byte object
+        uint64_t idxBits = s->sp[-nArgs].rawBits();
+        Oop val = s->sp[-(nArgs - 1)];
+        if ((idxBits & 7) != 1) return 0;
+        if (header & (1ULL << 23)) return 0;  // immutable
+        int64_t i = (int64_t)idxBits >> 3;
+        if (fmt == 2) {
+            if (i < 1 || (uint64_t)i > slotCount) return 0;
+            Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
+            slots[i - 1] = val;
+            s->sp[-(nArgs + 1)] = val;
+            s->sp -= nArgs;
+            return 1;
+        }
+        if (fmt >= 16 && fmt <= 23) {
+            uint64_t valBits = val.rawBits();
+            if ((valBits & 7) != 1) return 0;
+            int64_t byteVal = (int64_t)valBits >> 3;
+            if (byteVal < 0 || byteVal > 255) return 0;
+            uint64_t byteSize = slotCount * 8 - (fmt - 16);
+            if (i < 1 || (uint64_t)i > byteSize) return 0;
+            reinterpret_cast<uint8_t*>(rcvBits + 8)[i - 1] = (uint8_t)byteVal;
+            s->sp[-(nArgs + 1)] = val;
+            s->sp -= nArgs;
+            return 1;
+        }
+        return 0;
+    }
+
+    if (primKind == 16) {
+        // size — return slot count or byte size
+        uint64_t size;
+        if (fmt == 2) {
+            size = slotCount;
+        } else if (fmt >= 16 && fmt <= 23) {
+            size = slotCount * 8 - (fmt - 16);
+        } else {
+            return 0;
+        }
+        s->sp[-(nArgs + 1)] = Oop::fromRawBits((size << 3) | 1);
+        s->sp -= nArgs;
+        return 1;
+    }
+
+    return 0;
+}
+
 extern "C" void jit_rt_j2j_call(JITState* state) {
     // Merged J2J call: push frame, call callee, pop frame in one C++ call.
     //
@@ -175,6 +272,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.pushFrame = reinterpret_cast<void*>(&jit_rt_push_frame);
     helpers.popFrame = reinterpret_cast<void*>(&jit_rt_pop_frame);
     helpers.j2jCall = reinterpret_cast<void*>(&jit_rt_j2j_call);
+    helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
     compiler_->setHelpers(helpers);
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be

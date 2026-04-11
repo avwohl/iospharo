@@ -10937,6 +10937,9 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 14: return 11;  // bitAnd
     case 15: return 12;  // bitOr
     case 17: return 13;  // bitShift
+    case 60: return 14;  // at:
+    case 61: return 15;  // at:put:
+    case 62: return 16;  // size
     default: return 0;
     }
 }

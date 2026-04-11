@@ -128,6 +128,7 @@ HOLE_KIND_MAP = {
     "__HOLE_RT_PUSH_FRAME": "HoleKind::RuntimeHelper",
     "__HOLE_RT_POP_FRAME": "HoleKind::RuntimeHelper",
     "__HOLE_RT_J2J_CALL": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_ARRAY_PRIM": "HoleKind::RuntimeHelper",
 }
 
 # Finer-grained runtime helper IDs for distinguishing helper functions.
@@ -147,6 +148,7 @@ RUNTIME_HELPER_ID = {
     "__HOLE_RT_PUSH_FRAME": 8,
     "__HOLE_RT_POP_FRAME": 9,
     "__HOLE_RT_J2J_CALL": 10,
+    "__HOLE_RT_ARRAY_PRIM": 11,
 }
 
 

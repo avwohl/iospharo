@@ -897,6 +897,7 @@ static constexpr uint64_t J2J_ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
 extern "C" void (*_HOLE_RT_PUSH_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_J2J_CALL)(JITState*);
+extern "C" uint64_t (*_HOLE_RT_ARRAY_PRIM)(JITState*, uint64_t);
 
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
@@ -919,7 +920,12 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         lookupKey = tag | 0x80000000ULL;
     }
 
-    // Macro for IC hit handling with J2J support
+    // Macro for IC hit handling with J2J support.
+    // For primKind >= 14 (array ops at:/at:put:/size), calls the shared
+    // runtime helper via GOT. On success, continues; on failure, the
+    // SmallInt tag check naturally fails (receiver is an object, tag=0)
+    // and execution falls through to J2J/SEND_CACHED.
+
 #define J2J_IC_HIT(entry_idx) do {                                            \
     uint64_t extra = icData[(entry_idx) * 3 + 2];                             \
     if (extra != 0 && tag == 0) {                                             \
@@ -953,6 +959,15 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     if ((extra >> 48) & 0x1F) {                                               \
         uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);                   \
         if (primKind != 0) {                                                  \
+            /* Array prims (at:/at:put:/size) — out-of-line helper call */    \
+            if (primKind >= 14) {                                             \
+                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs; \
+                if (_HOLE_RT_ARRAY_PRIM(s, info)) {                           \
+                    _HOLE_CONTINUE(s);                                        \
+                    return;                                                   \
+                }                                                             \
+                /* Failure: fall through to J2J/SEND_CACHED below */          \
+            }                                                                 \
             Oop rcv = s->sp[-2];                                              \
             Oop arg = s->sp[-1];                                              \
             /* Both must be SmallInteger: (bits & 7) == 1 */                  \

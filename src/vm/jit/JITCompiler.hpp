@@ -81,6 +81,7 @@ public:
         void* pushFrame;        // jit_rt_push_frame (J2J direct call)
         void* popFrame;         // jit_rt_pop_frame (J2J direct call)
         void* j2jCall;          // jit_rt_j2j_call (merged push+call+pop)
+        void* arrayPrim;        // jit_rt_array_prim (out-of-line at:/at:put:/size)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }
