@@ -641,7 +641,7 @@ void Interpreter::startBench(const BenchSpec& spec) {
 
 void Interpreter::setupBenchContext() {
     const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
-    checkCountdown_ = INT32_MAX;
+    checkCountdown_ = 1024;
     benchStartTime_ = std::chrono::high_resolution_clock::now();
 
     Oop method;
@@ -1071,7 +1071,7 @@ void Interpreter::interpret() {
         tableInit = true;
     }
 
-    checkCountdown_ = benchMode_ ? INT32_MAX : 1024;
+    checkCountdown_ = 1024;
     uint64_t totalSteps = 0;
     uint8_t bytecode;
     // --- Bytecode pair profiling (compile-time flag) ---
@@ -1499,7 +1499,7 @@ void Interpreter::interpret() {
 
     // ====== PERIODIC CHECKS (every 1024 bytecodes) ======
     periodic_checks: {
-        checkCountdown_ = benchMode_ ? INT32_MAX : 1024;
+        checkCountdown_ = 1024;
         totalSteps += 1024;
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
@@ -11973,6 +11973,71 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
             // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
             jitYieldCount_++;
+
+            // If yield fired from within nested J2J calls, materialize the
+            // J2J frames so interpreter state is consistent.  Without this,
+            // method_ refers to the chain loop's outer method while state.ip
+            // points into the innermost called method, producing a bogus
+            // bcOffset that crashes the VM.
+            if (state.j2jDepth > 0) {
+                // Reconstruct state.method from state.jitMethod
+                if (state.jitMethod) {
+                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+                    jmBits &= ~static_cast<uintptr_t>(1);
+                    state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
+                    state.method = Oop::fromRawBits(state.jitMethod->compiledMethodOop);
+                }
+
+                // Materialize SavedFrames from J2J save stack (oldest first)
+                J2JSave* j2jSaves = &j2jPool_[j2jPoolBase];
+                Oop nil = memory_.nil();
+                for (int i = 0; i < state.j2jDepth; i++) {
+                    J2JSave& save = j2jSaves[i];
+                    SavedFrame& frame = savedFrames_[frameDepth_ + i];
+
+                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+                    bool isSelfRecursive = (jmBits & 1) != 0;
+                    jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
+                        jmBits & ~static_cast<uintptr_t>(1));
+                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                    ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
+                    int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                    uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+                    int frameArgCount =
+                        isSelfRecursive ? saveJM->argCount : save.argCount;
+
+                    frame.savedIP = save.ip;
+                    frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                    frame.savedMethod = saveMethod;
+                    frame.savedHomeMethod = saveMethod;
+                    frame.savedReceiver = save.receiver;
+                    frame.savedClosure = nil;
+                    frame.savedActiveContext = nil;
+                    frame.materializedContext = nil;
+                    frame.savedFP = save.tempBase - 1;
+                    frame.savedArgCount = frameArgCount;
+                    frame.homeFrameDepth = SIZE_MAX;
+                }
+                frameDepth_ += state.j2jDepth;
+
+                // Sync interpreter from innermost JITState
+                method_ = state.method;
+                homeMethod_ = state.method;
+                receiver_ = state.receiver;
+                stackPointer_ = state.sp;
+                instructionPointer_ = state.ip;
+                framePointer_ = state.tempBase - 1;
+                argCount_ = state.argCount;
+
+                // Charge checkCountdown_ for JIT bytecodes executed
+                if (state.jitMethod) {
+                    int charge = 1000 * state.jitMethod->numBytecodes;
+                    checkCountdown_ -= charge;
+                    g_stepNum += charge;
+                }
+                return true;  // Bail to interpreter dispatch loop
+            }
+
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             if (state.jitMethod) {
