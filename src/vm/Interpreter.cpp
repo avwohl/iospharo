@@ -12065,7 +12065,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (chainJM && chainJM->isExecutable()) {
                     bool chainHasPrim = (chainJM->methodHeader >> 16) & 1;
                     if (!chainHasPrim || chainJM->hasPrimPrologue) {
-                        // --- Save caller state ---
+                        // --- Save caller state + precompute resume ---
                         Oop* savedSP = state.sp;
                         Oop savedRecv = state.receiver;
                         Oop* savedTempBase = state.tempBase;
@@ -12075,6 +12075,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         int savedArgCount = state.argCount;
                         Oop savedMethod = state.method;
                         // instructionPointer_ is already past-send (caller resume point)
+
+                        // Precompute caller's resume address to avoid expensive
+                        // tryResume on the fast path (~93% of calls).
+                        uint8_t* savedBcStart = nullptr;
+                        uint8_t* savedResumeEntry = nullptr;
+                        if (savedJitMethod) {
+                            ObjectHeader* sMO = savedMethod.asObjectPtr();
+                            Oop sHdr = sMO->slots()[0];
+                            int sNL = sHdr.isSmallInteger() ? (sHdr.asSmallInteger() & 0x7FFF) : 0;
+                            savedBcStart = sMO->bytes() + (1 + sNL) * 8;
+                            uint32_t pastSendOff = static_cast<uint32_t>(
+                                instructionPointer_ - savedBcStart);
+                            uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
+                            if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
+                                savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                        }
 
                         // --- Set up callee in JITState ---
                         Oop calleeRecv = stackPointer_[-(nArgs + 1)];
@@ -12110,19 +12126,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.yieldCountdown = 1000;
 
                         // --- Enter callee JIT code ---
+                        // W^X → executable (stays exec through fast path)
 #if defined(__APPLE__) && defined(__arm64__)
                         pthread_jit_write_protect_np(1);
 #endif
                         JIT_CALL(chainJM->codeStart(), &state);
-#if defined(__APPLE__) && defined(__arm64__)
-                        pthread_jit_write_protect_np(0);
-#endif
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_++;
 
                         if (__builtin_expect(
                                 state.exitReason == jit::ExitReturn, 1)) {
                             // === FAST PATH: callee returned ===
+                            // Still in executable mode — no JIT page writes needed
                             Oop retVal = state.returnValue;
                             jitJ2JStencilReturns_++;
 
@@ -12141,27 +12156,48 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                             // Sync interpreter state for resume
                             stackPointer_ = state.sp;
-                            // instructionPointer_ is still past-send (set above)
 
-                            // Restore state.ip to caller's bcStart (for tryResume)
+                            // Use precomputed resume to skip tryResume overhead
+                            if (__builtin_expect(savedResumeEntry != nullptr, 1)) {
+                                state.ip = savedBcStart;
+                                state.sp = stackPointer_;
+                                state.icDataPtr = nullptr;
+                                state.sendArgCount = 0;
+                                state.exitReason = jit::ExitNone;
+                                state.j2jDepth = 0;
+                                state.j2jTotalCalls = 0;
+                                state.j2jSaveCursor = nullptr;
+                                state.j2jSaveLimit = nullptr;
+                                state.yieldCountdown = 1000;
+                                // Direct resume — no hash lookup or codeOffsetForBC
+                                JIT_CALL(savedResumeEntry, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                                pthread_jit_write_protect_np(0);
+#endif
+                                jitJ2JActChains_++;
+                                chargeJITBytecodes(state);
+                                if (checkCountdown_ <= 0) goto jit_loop_exit;
+                                continue;
+                            }
+
+                            // Precompute failed — fall back to tryResume
+#if defined(__APPLE__) && defined(__arm64__)
+                            pthread_jit_write_protect_np(0);
+#endif
                             {
                                 ObjectHeader* cMO = savedMethod.asObjectPtr();
                                 Oop hdr = cMO->slots()[0];
                                 int cNL = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
                                 state.ip = cMO->bytes() + (1 + cNL) * 8;
                             }
-
-                            // Resume JIT at bytecode after send
                             jitJ2JActChains_++;
                             method = method_;
                             uint32_t bcOffset = computeCurrentBCOffset();
                             if (bcOffset == UINT32_MAX) return true;
-
                             state.sp = stackPointer_;
                             state.icDataPtr = nullptr;
                             state.sendArgCount = 0;
                             state.exitReason = jit::ExitNone;
-
                             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                                 return true;
                             }
@@ -12169,6 +12205,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             if (checkCountdown_ <= 0) goto jit_loop_exit;
                             continue;
                         }
+                        // Not fast path — switch to writable for fallback
+#if defined(__APPLE__) && defined(__arm64__)
+                        pthread_jit_write_protect_np(0);
+#endif
 
                         // === FALLBACK: callee exited with non-ExitReturn ===
                         // Push a SavedFrame for the caller so the interpreter
