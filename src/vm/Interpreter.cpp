@@ -10928,6 +10928,20 @@ void Interpreter::tryJITResumeInCaller() {
             inJITResume_ = false;
             return;
 
+        case jit::ExitYield:
+            // Backward-jump yield during resume — charge countdown and continue
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            if (state.jitMethod) {
+                checkCountdown_ -= state.jitMethod->numBytecodes;
+                g_stepNum += state.jitMethod->numBytecodes;
+            }
+            if (checkCountdown_ <= 0) {
+                inJITResume_ = false;
+                return;
+            }
+            continue;  // Re-enter resume loop (will setup new JITState + tryResume)
+
         case jit::ExitJ2JCall: {
             // J2J IC hit during resume — ip is already past the send bytecode.
             // Handle like ExitSendCached: activate the cached method directly.
@@ -11425,6 +11439,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
     state.methodMapPtr = &jitRuntime_.methodMap();
+    state.yieldCountdown = 1000;
 
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
@@ -11848,6 +11863,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.j2jDepth = 0;
                     state.j2jSaveCursor = nullptr;
                     state.j2jSaveLimit = nullptr;
+                    state.yieldCountdown = 1000;
 #if defined(__APPLE__) && defined(__arm64__)
                     pthread_jit_write_protect_np(1);
 #endif
@@ -12110,6 +12126,43 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             break;  // → shared send-chain code after switch
         }
 
+        case jit::ExitYield: {
+            // Backward-jump yield: stencil decremented yieldCountdown to 0.
+            // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
+            // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            if (state.jitMethod) {
+                checkCountdown_ -= state.jitMethod->numBytecodes;
+                g_stepNum += state.jitMethod->numBytecodes;
+            }
+            if (checkCountdown_ <= 0) goto jit_loop_exit;
+
+            // Reset yield counter and resume at the branch target
+            state.yieldCountdown = 1000;
+            state.exitReason = jit::ExitNone;
+            {
+                uint32_t bcOffset = computeCurrentBCOffset();
+                if (bcOffset == UINT32_MAX) return true;
+                jit::JITMethod* jm = jitRuntime_.methodMap().lookup(
+                    method.rawBits());
+                if (!jm || !jm->isExecutable()) return true;
+                uint32_t codeOff = jm->codeOffsetForBC(bcOffset);
+                if (codeOff == 0 || codeOff >= jm->codeSize) return true;
+                state.jitMethod = jm;
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(1);
+#endif
+                JIT_CALL(jm->codeStart() + codeOff, &state);
+#if defined(__APPLE__) && defined(__arm64__)
+                pthread_jit_write_protect_np(0);
+#endif
+            }
+            chargeJITBytecodes(state);
+            if (checkCountdown_ <= 0) goto jit_loop_exit;
+            continue;
+        }
+
         case jit::ExitPrimFail:
         case jit::ExitDeopt:
             // Unwind any inline chain frames
@@ -12202,6 +12255,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.j2jSaveLimit = nullptr;
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
+                        state.yieldCountdown = 1000;
 
                         // --- Enter callee JIT code ---
 #if defined(__APPLE__) && defined(__arm64__)
@@ -12479,6 +12533,12 @@ jit_loop_exit:
     case jit::ExitBlockCreate:
     case jit::ExitArrayCreate:
         // These exits need interpreter handling; sync state
+        instructionPointer_ = state.ip;
+        stackPointer_ = state.sp;
+        return false;
+
+    case jit::ExitYield:
+        // Yield after chain limit / countdown expired — let interpreter run
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp;
         return false;

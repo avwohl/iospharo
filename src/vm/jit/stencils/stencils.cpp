@@ -98,6 +98,10 @@ struct JITState {
     uint8_t*      j2jSaveLimit;  // offset 152
     int32_t       j2jDepth;      // offset 160
     int32_t       j2jTotalCalls; // offset 164
+    // Trampoline helper
+    void*         methodMapPtr;  // offset 168
+    // Yield support
+    int32_t       yieldCountdown; // offset 176
 };
 
 // J2JSave matches the struct in Interpreter.cpp exactly (72 bytes).
@@ -183,6 +187,7 @@ static constexpr int EXIT_RETURN = 1;
 static constexpr int EXIT_SEND = 2;
 static constexpr int EXIT_SEND_CACHED = 7;
 static constexpr int EXIT_BLOCK_CREATE = 8;
+static constexpr int EXIT_YIELD = 11;
 static constexpr int EXIT_ARRAY_CREATE = 9;
 static constexpr int EXIT_J2J_CALL = 10;
 
@@ -512,6 +517,55 @@ extern "C" void stencil_jumpTrue(JITState* s) {
     Oop cond = *(s->sp);
     Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
     if (cond.bits == trueObj.bits) {
+        _HOLE_BRANCH_TARGET(s);
+    } else {
+        _HOLE_CONTINUE(s);
+    }
+}
+
+// ----- BACKWARD JUMP STENCILS (yield check) -----
+// These are used for backward branches (loop back-edges). They decrement
+// yieldCountdown and exit with ExitYield when it reaches 0, allowing the
+// chain loop to run scheduler checks. OPERAND = branch target bytecode offset.
+
+// Unconditional backward jump with yield check
+extern "C" void stencil_jumpBack(JITState* s) {
+    if (--s->yieldCountdown <= 0) {
+        s->ip = s->ip + OPERAND;
+        s->exitReason = EXIT_YIELD;
+        return;
+    }
+    _HOLE_BRANCH_TARGET(s);
+}
+
+// Conditional backward jump (true) with yield check
+extern "C" void stencil_jumpTrueBack(JITState* s) {
+    s->sp--;
+    Oop cond = *(s->sp);
+    Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
+    if (cond.bits == trueObj.bits) {
+        if (--s->yieldCountdown <= 0) {
+            s->ip = s->ip + OPERAND;
+            s->exitReason = EXIT_YIELD;
+            return;
+        }
+        _HOLE_BRANCH_TARGET(s);
+    } else {
+        _HOLE_CONTINUE(s);
+    }
+}
+
+// Conditional backward jump (false) with yield check
+extern "C" void stencil_jumpFalseBack(JITState* s) {
+    s->sp--;
+    Oop cond = *(s->sp);
+    Oop falseObj = *(Oop*)&_HOLE_FALSE_OOP;
+    if (cond.bits == falseObj.bits) {
+        if (--s->yieldCountdown <= 0) {
+            s->ip = s->ip + OPERAND;
+            s->exitReason = EXIT_YIELD;
+            return;
+        }
         _HOLE_BRANCH_TARGET(s);
     } else {
         _HOLE_CONTINUE(s);
@@ -2646,6 +2700,57 @@ extern "C" void stencil_jumpFalse_1(JITState* s) {
     uint64_t tos_bits;
     asm volatile("mov %0, x19" : "=r"(tos_bits));
     if (tos_bits == (*(Oop*)&_HOLE_FALSE_OOP).bits) {
+        _HOLE_BRANCH_TARGET(s);
+        return;
+    }
+    if (tos_bits == (*(Oop*)&_HOLE_TRUE_OOP).bits) {
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    // Non-boolean: spill and deopt
+    Oop val; val.bits = tos_bits;
+    *(s->sp) = val;
+    s->sp++;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+// ----- BACKWARD JUMP variants (state 1 → E, yield check) -----
+// SimStack state 1: TOS in x19 (boolean condition to test)
+
+extern "C" void stencil_jumpTrueBack_1(JITState* s) {
+    uint64_t tos_bits;
+    asm volatile("mov %0, x19" : "=r"(tos_bits));
+    if (tos_bits == (*(Oop*)&_HOLE_TRUE_OOP).bits) {
+        if (--s->yieldCountdown <= 0) {
+            s->ip = s->ip + OPERAND;
+            s->exitReason = EXIT_YIELD;
+            return;
+        }
+        _HOLE_BRANCH_TARGET(s);
+        return;
+    }
+    if (tos_bits == (*(Oop*)&_HOLE_FALSE_OOP).bits) {
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    // Non-boolean: spill and deopt
+    Oop val; val.bits = tos_bits;
+    *(s->sp) = val;
+    s->sp++;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+extern "C" void stencil_jumpFalseBack_1(JITState* s) {
+    uint64_t tos_bits;
+    asm volatile("mov %0, x19" : "=r"(tos_bits));
+    if (tos_bits == (*(Oop*)&_HOLE_FALSE_OOP).bits) {
+        if (--s->yieldCountdown <= 0) {
+            s->ip = s->ip + OPERAND;
+            s->exitReason = EXIT_YIELD;
+            return;
+        }
         _HOLE_BRANCH_TARGET(s);
         return;
     }

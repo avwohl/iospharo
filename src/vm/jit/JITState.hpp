@@ -96,6 +96,14 @@ struct JITState {
     // Used by the C helper pharo_jit_convert_send() to look up cached targets
     // without needing access to Interpreter private members.
     void* methodMapPtr;      // offset 168: MethodMap* for trampoline conversion
+
+    // --- Yield support ---
+    // Backward-jump stencils decrement this counter. When it reaches 0,
+    // the stencil exits with ExitYield so the chain loop can run scheduler
+    // checks (checkCountdown_, timer semaphore, process switch). This
+    // enables J2J save stack for resumed methods without starving the
+    // scheduler on long-running loops.
+    int32_t yieldCountdown;  // offset 176: backward-jump yield counter
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -116,6 +124,7 @@ static_assert(offsetof(JITState, j2jSaveLimit)  == 152, "j2jSaveLimit offset");
 static_assert(offsetof(JITState, j2jDepth)      == 160, "j2jDepth offset");
 static_assert(offsetof(JITState, j2jTotalCalls) == 164, "j2jTotalCalls offset");
 static_assert(offsetof(JITState, methodMapPtr)  == 168, "methodMapPtr offset");
+static_assert(offsetof(JITState, yieldCountdown) == 176, "yieldCountdown offset");
 
 // ===== EXIT REASONS =====
 //
@@ -136,6 +145,8 @@ enum ExitReason : int {
     ExitJ2JCall     = 10, // J2J send: cachedTarget=method, returnValue=entry addr,
                           //   sendArgCount=nArgs, ip=past send bytecode.
                           //   Trampoline pushes frame, sets up callee, re-enters JIT.
+    ExitYield       = 11, // Backward-jump yield — ip points to branch target bytecode.
+                          //   Chain loop resets yieldCountdown and resumes JIT.
 };
 
 // ===== TRAMPOLINE HELPER =====

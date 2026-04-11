@@ -567,6 +567,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     state.j2jTotalCalls = 0;
     state.j2jSaveCursor = nullptr;
     state.j2jSaveLimit = nullptr;
+    state.yieldCountdown = 1000;
 
     // Validate IC data area is within code zone
     if (jm->numICEntries > 0) {

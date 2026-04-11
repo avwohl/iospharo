@@ -1171,6 +1171,32 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             }
             break;
 
+        // --- BACKWARD CONDITIONAL JUMPS: same SimStack handling as forward ---
+        case StencilID::stencil_jumpTrueBack:
+            if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpTrueBack_1); state = 0; }
+            else if (state == 2) {
+                DecodedBC flush; flush.opcode = 0;
+                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
+                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
+                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
+                decoded.insert(decoded.begin() + i, flush);
+                isBranchTarget.insert(isBranchTarget.begin() + i, false);
+                i++; state = 0;
+            }
+            break;
+        case StencilID::stencil_jumpFalseBack:
+            if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalseBack_1); state = 0; }
+            else if (state == 2) {
+                DecodedBC flush; flush.opcode = 0;
+                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
+                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
+                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
+                decoded.insert(decoded.begin() + i, flush);
+                isBranchTarget.insert(isBranchTarget.begin() + i, false);
+                i++; state = 0;
+            }
+            break;
+
         // --- RETURNS ---
         case StencilID::stencil_returnTop:
             if (state == 2) {
@@ -1198,6 +1224,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
 
         // --- UNCONDITIONAL JUMP: must flush cached values before jumping ---
         case StencilID::stencil_jump:
+        case StencilID::stencil_jumpBack:
             // Branch targets enter in state 0 (memory-only stack), and jumps
             // land on the REAL stencil via last-write-wins bcToBranchOffset,
             // bypassing any flush inserted in front of the target. So if we
@@ -1501,6 +1528,26 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         jmp.stencilIdx = static_cast<uint16_t>(StencilID::stencil_nop);
         jmp.branchTarget = -1;
         pi++;  // Skip the consumed jump
+    }
+
+    // Backward-jump upgrade: replace forward-jump stencils with yield-checking
+    // backward-jump stencils for branches targeting earlier bytecodes.
+    // OPERAND = branch target bytecode offset (for ip update on ExitYield).
+    for (size_t bi = 0; bi < decoded.size(); bi++) {
+        auto& bc = decoded[bi];
+        if (bc.branchTarget < 0) continue;
+        if (bc.branchTarget >= bc.bcOffset) continue;  // Forward jump — no change
+        auto sid = static_cast<StencilID>(bc.stencilIdx);
+        if (sid == StencilID::stencil_jump) {
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpBack);
+            bc.operand = bc.branchTarget;  // bytecode offset of branch target
+        } else if (sid == StencilID::stencil_jumpTrue) {
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpTrueBack);
+            bc.operand = bc.branchTarget;
+        } else if (sid == StencilID::stencil_jumpFalse) {
+            bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalseBack);
+            bc.operand = bc.branchTarget;
+        }
     }
 
     // SimStack: register-based TOS/NOS caching in x19/x20.
@@ -1856,6 +1903,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_jump:
         case StencilID::stencil_jumpFalse:
         case StencilID::stencil_jumpTrue:
+        case StencilID::stencil_jumpBack:
+        case StencilID::stencil_jumpTrueBack:
+        case StencilID::stencil_jumpFalseBack:
             break;  // safe
 
         // Arithmetic — may exit with ExitArithOverflow on non-SmallInteger,
