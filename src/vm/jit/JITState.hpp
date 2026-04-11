@@ -90,6 +90,12 @@ struct JITState {
     uint8_t* j2jSaveLimit;   // offset 152: base + maxDepth * sizeof(J2JSave)
     int32_t  j2jDepth;       // offset 160: current nesting depth
     int32_t  j2jTotalCalls;  // offset 164: total J2J calls (for charging)
+
+    // --- Trampoline helper support ---
+    // Pointer to MethodMap, set by tryJITActivation before the trampoline.
+    // Used by the C helper pharo_jit_convert_send() to look up cached targets
+    // without needing access to Interpreter private members.
+    void* methodMapPtr;      // offset 168: MethodMap* for trampoline conversion
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -109,6 +115,7 @@ static_assert(offsetof(JITState, j2jSaveCursor) == 144, "j2jSaveCursor offset");
 static_assert(offsetof(JITState, j2jSaveLimit)  == 152, "j2jSaveLimit offset");
 static_assert(offsetof(JITState, j2jDepth)      == 160, "j2jDepth offset");
 static_assert(offsetof(JITState, j2jTotalCalls) == 164, "j2jTotalCalls offset");
+static_assert(offsetof(JITState, methodMapPtr)  == 168, "methodMapPtr offset");
 
 // ===== EXIT REASONS =====
 //
@@ -130,6 +137,14 @@ enum ExitReason : int {
                           //   sendArgCount=nArgs, ip=past send bytecode.
                           //   Trampoline pushes frame, sets up callee, re-enters JIT.
 };
+
+// ===== TRAMPOLINE HELPER =====
+// Called from the ASM trampoline (via BL) when exitReason == ExitSendCached.
+// Looks up cachedTarget in the MethodMap; if the target is compiled and safe,
+// converts to ExitJ2JCall (sets returnValue + exitReason) and returns 1.
+// Otherwise returns 0 (trampoline should exit to chain loop).
+// Defined in Interpreter.cpp.
+extern "C" int pharo_jit_convert_send(JITState* state);
 
 // ===== STENCIL FUNCTION SIGNATURE =====
 

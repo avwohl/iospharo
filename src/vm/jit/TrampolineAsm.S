@@ -144,6 +144,8 @@ Ltramp_loop:
     ldr     w0, [x21, #JS_EXITREASON]
     cmp     w0, #EXIT_J2JCALL
     b.eq    Ltramp_call
+    cmp     w0, #EXIT_SENDCACHED
+    b.eq    Ltramp_convert
     cmp     w0, #EXIT_RETURN
     b.ne    Ltramp_exit
     cmp     x23, x22                  // j2jDepth > 0 ?
@@ -218,6 +220,18 @@ Ltramp_call:
     b.hs    Lcall_save_overflow
 
     add     x25, x25, #1                   // localCalls++
+
+    // Advance IP past send bytecode BEFORE saving it. Stencils set
+    // state.ip = bcStart + bcOffset (pointing TO the send). We must
+    // advance past it so save.ip and the resume address point to the
+    // NEXT bytecode. 1-byte sends (0x80-0xAF), 2-byte (0xEA-0xEB).
+    ldr     x10, [x21, #JS_IP]
+    ldrb    w11, [x10]
+    add     x10, x10, #1                   // advance 1 byte (default)
+    sub     w12, w11, #0xEA
+    cmp     w12, #1                         // 0xEA→0, 0xEB→1: both ≤ 1
+    cinc    x10, x10, ls                    // advance 1 more if 2-byte send
+    str     x10, [x21, #JS_IP]
 
     // Load call-path locals
     ldr     x6,  [x21, #JS_JITMETHOD]      // callerJM
@@ -360,6 +374,18 @@ Lcall_enter_callee:
     mov     x0,  x21                       // JITState* arg
     blr     x7
     b       Ltramp_loop
+
+
+// ======== ExitSendCached → ExitJ2JCall conversion ========
+// Call a C helper to check if cachedTarget is JIT-compiled. If so,
+// the helper converts state to ExitJ2JCall and we branch to the call
+// path. Otherwise exit to the chain loop.
+// BL preserves callee-saved x19-x28, so our pinned registers survive.
+Ltramp_convert:
+    mov     x0, x21                         // JITState* arg
+    bl      SYMBOL(pharo_jit_convert_send)
+    cbz     w0, Ltramp_exit                 // conversion failed → exit
+    b       Ltramp_call                     // succeeded → handle as J2JCall
 
 
 // ======== Error / overflow exits ========

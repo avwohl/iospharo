@@ -486,19 +486,29 @@ bool Interpreter::initialize() {
             benchSpecs_.push_back({"tinyBenchmarks", "Integer", "tinyBenchmarks", 0, 1});
 
         bool wantAWFY = (strcmp(benchType, "awfy") == 0);
+        // PHARO_AWFY_ONLY=Name1,Name2 — run only named AWFY benchmarks
+        const char* awfyOnly = getenv("PHARO_AWFY_ONLY");
         if (wantAWFY) {
             // Are We Fast Yet benchmarks — each is a class with innerBenchmarkLoop:
-            benchSpecs_.push_back({"Richards",    "Richards",    "innerBenchmarkLoop:", 100,    5, true});
-            benchSpecs_.push_back({"DeltaBlue",   "DeltaBlue",   "innerBenchmarkLoop:", 12000,  5, true});
-            benchSpecs_.push_back({"Mandelbrot",  "Mandelbrot",  "innerBenchmarkLoop:", 500,    5, true});
-            benchSpecs_.push_back({"NBody",       "NBody",       "innerBenchmarkLoop:", 250000, 5, true});
-            benchSpecs_.push_back({"Bounce",      "Bounce",      "innerBenchmarkLoop:", 1500,   5, true});
-            benchSpecs_.push_back({"Permute",     "Permute",     "innerBenchmarkLoop:", 1000,   5, true});
-            benchSpecs_.push_back({"Queens",      "Queens",      "innerBenchmarkLoop:", 1000,   5, true});
-            benchSpecs_.push_back({"Sieve",       "Sieve",       "innerBenchmarkLoop:", 3000,   5, true});
-            benchSpecs_.push_back({"Storage",     "Storage",     "innerBenchmarkLoop:", 1000,   5, true});
-            benchSpecs_.push_back({"Towers",      "Towers",      "innerBenchmarkLoop:", 600,    5, true});
-            benchSpecs_.push_back({"List",        "List",        "innerBenchmarkLoop:", 1500,   5, true});
+            struct AWFYSpec { const char* name; const char* cls; int64_t arg; };
+            AWFYSpec allAWFY[] = {
+                {"Richards",   "Richards",   100},
+                {"DeltaBlue",  "DeltaBlue",  12000},
+                {"Mandelbrot", "Mandelbrot", 500},
+                {"NBody",      "NBody",      250000},
+                {"Bounce",     "Bounce",     1500},
+                {"Permute",    "Permute",    1000},
+                {"Queens",     "Queens",     1000},
+                {"Sieve",      "Sieve",      3000},
+                {"Storage",    "Storage",    1000},
+                {"Towers",     "Towers",     600},
+                {"List",       "List",       1500},
+            };
+            std::string filter(awfyOnly ? awfyOnly : "");
+            for (auto& a : allAWFY) {
+                if (filter.empty() || filter.find(a.name) != std::string::npos)
+                    benchSpecs_.push_back({a.name, a.cls, "innerBenchmarkLoop:", a.arg, 5, true});
+            }
         }
 
         // Default to fib if unrecognized
@@ -693,7 +703,9 @@ void Interpreter::handleBenchComplete() {
         }
         // All benchmarks done
 #if PHARO_JIT_ENABLED
-        fprintf(stderr, "[BENCH] JIT stats: IC hits=%zu misses=%zu stale=%zu | J2J patches=%zu stencilCalls=%zu/%zu\n",
+        fprintf(stderr, "[BENCH] JIT stats: activations=%zu/%zu (%.1f%% hit) | IC hits=%zu misses=%zu stale=%zu | J2J patches=%zu stencilCalls=%zu/%zu\n",
+            jitActivationHits_, jitActivations_,
+            jitActivations_ > 0 ? 100.0 * jitActivationHits_ / jitActivations_ : 0.0,
             jitICHits_, jitICMisses_, jitICStale_,
             jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
 #endif
@@ -11274,10 +11286,39 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     }
 }
 
+// ===== Trampoline helper: convert ExitSendCached → ExitJ2JCall =====
+// Called from the ASM trampoline via BL (callee-saved regs preserved).
+// Looks up cachedTarget in the MethodMap. If the target is compiled and
+// has no unsafe primitive, sets returnValue = entry addr, exitReason =
+// ExitJ2JCall, and returns 1. Otherwise returns 0.
+// NOTE: Does NOT advance IP — the trampoline call path does that.
+extern "C" int pharo_jit_convert_send(jit::JITState* state) {
+    auto* mm = reinterpret_cast<jit::MethodMap*>(state->methodMapPtr);
+    if (!mm) return 0;
+
+    uint64_t targetBits = state->cachedTarget.rawBits();
+    // Quick reject: not a valid object pointer
+    if (targetBits < 0x10000 || (targetBits & 7) != 0) return 0;
+
+    jit::JITMethod* target = mm->lookup(targetBits);
+    if (!target || !target->isExecutable()) return 0;
+
+    // Check unsafe prim: has primitive flag set but no JIT prologue stencil
+    bool hasPrim = (target->methodHeader >> 16) & 1;
+    if (hasPrim && !target->hasPrimPrologue) return 0;
+
+    // Convert to J2J call
+    state->returnValue = Oop::fromRawBits(
+        reinterpret_cast<uint64_t>(target->codeStart()));
+    state->exitReason = jit::ExitJ2JCall;
+    return 1;
+}
+
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
     static bool noJit = getenv("PHARO_NOJIT") != nullptr;
     if (noJit) return false;
+    jitActivations_++;
 
     // Suppress tryJITResumeInCaller while the chain loop is active.
     // Both mechanisms resume JIT after sends return; having both active
@@ -11349,6 +11390,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jStack[MaxJ2JDepth]);
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
+    state.methodMapPtr = &jitRuntime_.methodMap();
 
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
@@ -11356,6 +11398,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.tryExecute(method, state, jm)) {
         return false;  // Should not happen — jm was already validated
     }
+    jitActivationHits_++;
 
     // Charge the periodic check countdown for JIT-executed bytecodes.
     // Without this, JIT execution starves the interpreter's periodic checks
@@ -11422,7 +11465,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 #else
         while (state.exitReason == jit::ExitJ2JCall ||
+               state.exitReason == jit::ExitSendCached ||
                (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
+
+            // --- ExitSendCached → ExitJ2JCall conversion ---
+            if (state.exitReason == jit::ExitSendCached) {
+                if (!pharo_jit_convert_send(&state)) break;
+                // Fall through to J2JCall handler
+            }
 
             if (state.exitReason == jit::ExitJ2JCall) {
                 // --- J2J Call: save caller, push lazy frame, enter callee ---
@@ -11440,6 +11490,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 jit::JITMethod* calleeJM = reinterpret_cast<jit::JITMethod*>(
                     entryAddr - sizeof(jit::JITMethod));
                 int nArgs = state.sendArgCount;
+
+                // Advance IP past send bytecode. Stencils set state.ip
+                // to the send bytecode; we need it past the send for both
+                // save.ip (used on null-resume bailout) and resume address.
+                {
+                    uint8_t sendOp = *state.ip;
+                    if (sendOp >= 0xEA && sendOp <= 0xEB) state.ip += 2;
+                    else state.ip += 1;
+                }
 
                 // Save caller JITState to save stack. For self-recursive calls
                 // (caller JIT method == callee JIT method), we skip saving
@@ -11475,7 +11534,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     save.argCount = state.argCount;
                     save.bcStart = callerBCStart;
                 }
-                // Precompute resume JIT code address (avoids bcToCode lookup on return)
+                // Precompute resume JIT code address from the advanced IP.
+                // bcOffset = (advancedIP - callerBCStart) gives the next
+                // bytecode, so bcToCode maps to the stencil AFTER the send.
                 {
                     uint32_t bcOffset = static_cast<uint32_t>(state.ip - callerBCStart);
                     uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
@@ -11596,6 +11657,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #if defined(__APPLE__) && defined(__arm64__)
         pthread_jit_write_protect_np(0);
 #endif
+
         // Merge stencil-managed J2J depth with trampoline-managed depth.
         // Stencils push/pop frames via state.j2jDepth; the trampoline uses
         // j2jDepth directly.  Take whichever is larger (normally only one
