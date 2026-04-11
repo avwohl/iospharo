@@ -12146,9 +12146,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // SavedFrame for the caller and bail to interpreter.
 #if PHARO_JIT_ENABLED
             {
-                static bool chainJ2J = !!getenv("PHARO_CHAIN_J2J");
-                jit::JITMethod* chainJM = chainJ2J
-                    ? jitRuntime_.methodMap().lookup(chainTarget.rawBits()) : nullptr;
+                jit::JITMethod* chainJM =
+                    jitRuntime_.methodMap().lookup(chainTarget.rawBits());
                 if (chainJM && chainJM->isExecutable()) {
                     bool chainHasPrim = (chainJM->methodHeader >> 16) & 1;
                     if (!chainHasPrim || chainJM->hasPrimPrologue) {
