@@ -11768,7 +11768,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // that MUST be handled before breaking. The countdown is checked at
     // each continue site instead (after chargeJITBytecodes).
     static bool noChain = !!getenv("PHARO_NO_CHAIN");
-    int maxChain = noChain ? 1 : 100;
+    int maxChain = noChain ? 1 : 10000;
+    int chainCallDepth = 0;  // Inline activation depth (frames pushed by chain loop itself)
 
     for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
 
@@ -11795,6 +11796,45 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
         switch (state.exitReason) {
         case jit::ExitReturn: {
+            if (chainCallDepth > 0) {
+                // Inline callee returned — pop frame, resume caller in JIT
+                popFrame();
+                push(state.returnValue);
+                chainCallDepth--;
+
+                // Restore locals from interpreter state (set by popFrame)
+                method = method_;
+                argCount = argCount_;
+                methObj = method.asObjectPtr();
+                entrySP = stackPointer_;
+
+                // Rebuild JITState for caller and resume
+                state.sp = stackPointer_;
+                state.receiver = receiver_;
+                state.literals = methObj->slots() + 1;
+                state.tempBase = framePointer_ + 1;
+                {
+                    Oop hdr = methObj->slots()[0];
+                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    state.ip = methObj->bytes() + (1 + numLits) * 8;
+                }
+                state.method = method;
+                state.argCount = argCount;
+                state.icDataPtr = nullptr;
+                state.sendArgCount = 0;
+                state.exitReason = jit::ExitNone;
+
+                uint32_t bcOffset = computeCurrentBCOffset();
+                if (bcOffset == UINT32_MAX) return true;
+
+                if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                    return true;
+                }
+                chargeJITBytecodes(state);
+                if (checkCountdown_ <= 0) goto jit_loop_exit;
+                continue;
+            }
+
             if (!popFrame()) {
                 // fd=0: follow context sender chain
                 if (activeContext_.isObject() && !activeContext_.isNil()) {
@@ -12046,6 +12086,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
         case jit::ExitPrimFail:
         case jit::ExitDeopt:
+            // Unwind any inline chain frames
+            while (chainCallDepth > 0) {
+                popFrame();
+                chainCallDepth--;
+            }
             stackPointer_ = entrySP;
             return false;
 
@@ -12290,20 +12335,112 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
             }
 
-            // Non-primitive or primitive failed — activate the method
-            size_t callerDepth = frameDepth_;
-            activateMethod(chainTarget, nArgs);
-
-            if (frameDepth_ != callerDepth) {
-                // Target pushed a frame — interpreter dispatch loop handles it
-                jitJ2JActFalls_++;
-                return true;
-            }
-
-            // Target completed (JIT or trivial method handled it end-to-end).
-            // Resume JIT execution at the bytecode after the send.
-            jitJ2JActChains_++;
+            // ===== Inline chain activation =====
+            // For JIT-compiled non-primitive targets, push a frame and enter
+            // the callee directly in this chain loop instead of recursing
+            // through activateMethod → tryJITActivation. Eliminates the per-
+            // send C function call overhead (~100 cycles × 649M sends).
             {
+                jit::JITMethod* targetJM = jitRuntime_.methodMap().lookup(
+                    chainTarget.rawBits());
+                if (targetJM && targetJM->isExecutable()) {
+                    bool hasPrim = (targetJM->methodHeader >> 16) & 1;
+                    if (!hasPrim || targetJM->hasPrimPrologue) {
+                        // Push SavedFrame for caller
+                        if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0))
+                            goto chain_activate_fallback;
+
+                        Oop nil = memory_.nil();
+                        SavedFrame& frame = savedFrames_[frameDepth_++];
+                        frame.savedIP = instructionPointer_;
+                        frame.savedBytecodeEnd = bytecodeEnd_;
+                        frame.savedMethod = method_;
+                        frame.savedHomeMethod = homeMethod_;
+                        frame.savedReceiver = receiver_;
+                        frame.savedClosure = nil;
+                        frame.savedActiveContext = nil;
+                        frame.materializedContext = nil;
+                        frame.savedFP = framePointer_;
+                        frame.savedArgCount = argCount_;
+                        frame.homeFrameDepth = SIZE_MAX;
+
+                        // Set up callee interpreter state
+                        Oop calleeRecv = stackPointer_[-(nArgs + 1)];
+                        Oop* fp = stackPointer_ - (nArgs + 1);
+                        method_ = chainTarget;
+                        homeMethod_ = chainTarget;
+                        receiver_ = calleeRecv;
+                        argCount_ = nArgs;
+                        framePointer_ = fp;
+                        closure_ = nil;
+                        activeContext_ = nil;
+                        currentFrameMaterializedCtx_ = nil;
+
+                        ObjectHeader* calleeMethObj = chainTarget.asObjectPtr();
+                        int numLits = static_cast<int>(targetJM->methodHeader & 0x7FFF);
+                        uint8_t* bcStart = calleeMethObj->bytes() + (1 + numLits) * 8;
+                        instructionPointer_ = bcStart;
+                        bytecodeEnd_ = calleeMethObj->bytes() + calleeMethObj->byteSize();
+
+                        // Allocate temps
+                        int totalTemps = targetJM->tempCount;
+                        if (__builtin_expect(nArgs < totalTemps, 0)) {
+                            for (int i = nArgs; i < totalTemps; i++) {
+                                *stackPointer_ = nil;
+                                stackPointer_++;
+                            }
+                        }
+
+                        // Set up JITState for callee
+                        state.sp = stackPointer_;
+                        state.receiver = calleeRecv;
+                        state.literals = calleeMethObj->slots() + 1;
+                        state.tempBase = fp + 1;
+                        state.ip = bcStart;
+                        state.method = chainTarget;
+                        state.argCount = nArgs;
+                        state.jitMethod = targetJM;
+                        state.icDataPtr = nullptr;
+                        state.sendArgCount = 0;
+                        state.exitReason = jit::ExitNone;
+
+                        // Enter callee JIT
+                        if (!jitRuntime_.tryExecute(chainTarget, state, targetJM)) {
+                            // Shouldn't fail (jm validated), but if it does unwind
+                            popFrame();
+                            goto chain_activate_fallback;
+                        }
+                        chargeJITBytecodes(state);
+                        chainCallDepth++;
+
+                        // Update locals for the callee's context
+                        method = chainTarget;
+                        argCount = nArgs;
+                        methObj = calleeMethObj;
+                        entrySP = stackPointer_;
+
+                        if (checkCountdown_ <= 0) goto jit_loop_exit;
+                        continue;  // Handle callee's exit in this chain loop
+                    }
+                }
+            }
+            // ===== End inline chain activation =====
+
+chain_activate_fallback:
+            {
+                // Fallback: non-JIT target or unsafe prim — use activateMethod
+                size_t callerDepth = frameDepth_;
+                activateMethod(chainTarget, nArgs);
+
+                if (frameDepth_ != callerDepth) {
+                    // Target pushed a frame — interpreter dispatch loop handles it
+                    jitJ2JActFalls_++;
+                    return true;
+                }
+
+                // Target completed (JIT or trivial method handled it end-to-end).
+                // Resume JIT execution at the bytecode after the send.
+                jitJ2JActChains_++;
                 method = method_;  // Refresh: GC may have moved the method
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -12336,6 +12473,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Chain limit reached — fall through to handle unprocessed exit
 
 jit_loop_exit:
+    // If at inline depth, handle the unprocessed exit and bail to interpreter.
+    // The inline frames are standard SavedFrames — the interpreter dispatch
+    // loop will pop them naturally as methods return.
+    if (chainCallDepth > 0) {
+        if (state.exitReason == jit::ExitReturn) {
+            // Callee returned — pop one frame, push return value.
+            // Remaining inline frames (if any) are left for the interpreter.
+            popFrame();
+            push(state.returnValue);
+        } else {
+            // Non-return exit — sync callee's state so interpreter can continue.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+        }
+        return true;  // Interpreter dispatch loop handles the rest
+    }
     // The loop exited (chain limit or countdown expired) with an
     // unprocessed exit reason in state.  Process it now so the
     // interpreter state is consistent.
