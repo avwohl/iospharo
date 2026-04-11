@@ -49,6 +49,7 @@ enum class HoleKind : uint8_t {
     RuntimeHelper,  // Address of a C++ runtime helper function
     ICEntry,        // Address of this send's inline cache entry
     ReturnToInterp, // Address of the interpreter re-entry stub
+    ResumeAddr,     // Address of next stencil as DATA (for J2J save stack)
 };
 
 // ===== RELOCATION TYPES =====

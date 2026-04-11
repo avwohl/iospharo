@@ -93,7 +93,28 @@ struct JITState {
     // Inline primitive support
     Oop           trueOop;      // offset 128
     Oop           falseOop;     // offset 136
+    // J2J stencil-to-stencil support
+    uint8_t*      j2jSaveCursor; // offset 144
+    uint8_t*      j2jSaveLimit;  // offset 152
+    int32_t       j2jDepth;      // offset 160
+    int32_t       j2jTotalCalls; // offset 164
 };
+
+// J2JSave matches the struct in Interpreter.cpp exactly (72 bytes).
+// Field order: hot fields first for STP/LDP pairing.
+struct J2JSave {
+    Oop*     sp;              // 0
+    Oop      receiver;        // 8
+    Oop*     tempBase;        // 16
+    uint8_t* ip;              // 24
+    void*    jitMethod;       // 32 (bit 0 = self-recursive marker)
+    uint8_t* resumeAddr;      // 40
+    int      sendArgCount;    // 48
+    int      argCount;        // 52
+    Oop*     literals;        // 56
+    uint8_t* bcStart;         // 64
+};
+static_assert(sizeof(J2JSave) == 72, "J2JSave must be 72 bytes");
 
 // Tag bit constants (must match Oop.hpp)
 static constexpr uint64_t SmallIntegerTag = 0x1;     // bit 0 = 1, bits 2:1 = 00
@@ -135,6 +156,11 @@ extern "C" {
 
     // Megamorphic method cache (address resolved via literal pool)
     extern char _HOLE_MEGA_CACHE;
+
+    // Resume address: address of the next stencil, used as a DATA value
+    // (stored in J2JSave.resumeAddr) rather than a branch target.
+    // Patched with the same value as _HOLE_CONTINUE.
+    extern char _HOLE_RESUME_ADDR;
 }
 
 // _HOLE_RT_SEND / _HOLE_RT_RETURN used to tail-call jit_rt_send /
@@ -150,6 +176,7 @@ extern "C" {
 // Helper to get operand value (address of hole symbol = the operand integer)
 #define OPERAND  ((int)(uintptr_t)&_HOLE_OPERAND)
 #define OPERAND2 ((int)(uintptr_t)&_HOLE_OPERAND2)
+#define RESUME_ADDR ((uint8_t*)(uintptr_t)&_HOLE_RESUME_ADDR)
 
 // ===== EXIT REASONS (must match ExitReason enum) =====
 static constexpr int EXIT_RETURN = 1;
@@ -158,6 +185,14 @@ static constexpr int EXIT_SEND_CACHED = 7;
 static constexpr int EXIT_BLOCK_CREATE = 8;
 static constexpr int EXIT_ARRAY_CREATE = 9;
 static constexpr int EXIT_J2J_CALL = 10;
+
+// ===== JITMethod field offsets (must match JITMethod.hpp) =====
+// Used for raw pointer access from stencils (no header include).
+static constexpr int JM_COMPILED_METHOD = 0;   // uint64_t compiledMethodOop
+static constexpr int JM_METHOD_HEADER   = 16;  // uint64_t methodHeader
+static constexpr int JM_TEMP_COUNT      = 35;  // uint8_t  tempCount
+static constexpr int JM_ARG_COUNT       = 34;  // uint8_t  argCount
+static constexpr int JM_SIZE            = 80;  // sizeof(JITMethod)
 
 // =====================================================================
 // STENCILS
@@ -358,11 +393,51 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 
 // ----- RETURN STENCILS -----
 
+// J2J inline return: if j2jDepth > 0, pop save frame and tail-call
+// to caller's resume stencil.  Otherwise fall through to normal exit.
+// retVal is the Oop to push onto the caller's stack.
+#define J2J_INLINE_RETURN(s, retVal) do {                                     \
+    if (s->j2jDepth > 0) {                                                   \
+        s->j2jDepth--;                                                        \
+        s->j2jSaveCursor -= sizeof(J2JSave);                                 \
+        J2JSave* _sv = (J2JSave*)s->j2jSaveCursor;                          \
+        /* Restore caller state */                                           \
+        s->receiver = _sv->receiver;                                          \
+        s->tempBase = _sv->tempBase;                                         \
+        uintptr_t _jmBits = (uintptr_t)_sv->jitMethod;                      \
+        if ((_jmBits & 1) == 0) {                                            \
+            /* Non-self-recursive: restore literals, jitMethod, argCount,    \
+               ip (bcStart) */                                               \
+            s->literals = _sv->literals;                                      \
+            s->jitMethod = _sv->jitMethod;                                   \
+            s->argCount = _sv->argCount;                                     \
+            s->ip = _sv->bcStart;                                            \
+        }                                                                     \
+        /* Pop receiver+args, push retVal */                                 \
+        int _nArgs = _sv->sendArgCount;                                      \
+        _sv->sp[-(_nArgs + 1)] = retVal;                                     \
+        s->sp = _sv->sp - _nArgs;                                           \
+        /* Tail-call to caller's resume stencil */                           \
+        uint8_t* _resume = _sv->resumeAddr;                                  \
+        if (_resume != 0) {                                                  \
+            ((void(*)(JITState*))_resume)(s);                                \
+            return;                                                           \
+        }                                                                     \
+        /* Null resume: bail to interpreter */                               \
+        s->ip = _sv->ip;                                                     \
+        s->returnValue = retVal;                                              \
+        s->exitReason = EXIT_RETURN;                                          \
+        return;                                                               \
+    }                                                                         \
+} while(0)
+
 // Return top of stack
 // Bytecode: 0x5C
 extern "C" void stencil_returnTop(JITState* s) {
     s->sp--;
-    s->returnValue = *(s->sp);
+    Oop retVal = *(s->sp);
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -370,7 +445,9 @@ extern "C" void stencil_returnTop(JITState* s) {
 // Return receiver (self)
 // Bytecode: 0x58
 extern "C" void stencil_returnReceiver(JITState* s) {
-    s->returnValue = s->receiver;
+    Oop retVal = s->receiver;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -378,7 +455,9 @@ extern "C" void stencil_returnReceiver(JITState* s) {
 // Return true
 // Bytecode: 0x59
 extern "C" void stencil_returnTrue(JITState* s) {
-    s->returnValue = *(Oop*)&_HOLE_TRUE_OOP;
+    Oop retVal = *(Oop*)&_HOLE_TRUE_OOP;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -386,7 +465,9 @@ extern "C" void stencil_returnTrue(JITState* s) {
 // Return false
 // Bytecode: 0x5A
 extern "C" void stencil_returnFalse(JITState* s) {
-    s->returnValue = *(Oop*)&_HOLE_FALSE_OOP;
+    Oop retVal = *(Oop*)&_HOLE_FALSE_OOP;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -394,7 +475,9 @@ extern "C" void stencil_returnFalse(JITState* s) {
 // Return nil
 // Bytecode: 0x5B
 extern "C" void stencil_returnNil(JITState* s) {
-    s->returnValue = *(Oop*)&_HOLE_NIL_OOP;
+    Oop retVal = *(Oop*)&_HOLE_NIL_OOP;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -1046,13 +1129,78 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     if (extra & J2J_ENTRY_BIT) {                                              \
         uint64_t entryAddr = extra & J2J_ADDR_MASK;                           \
         if (entryAddr != 0) {                                                 \
-            /* Exit to trampoline which handles frame push + callee entry */   \
-            s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];              \
-            s->sendArgCount = nArgs;                                          \
-            s->ip = s->ip + bcOffset + bcLen;                                 \
-            s->returnValue.bits = entryAddr;                                  \
-            s->exitReason = EXIT_J2J_CALL;                                    \
-            _HOLE_RT_SEND(s);                                                 \
+            /* Stencil-to-stencil J2J: push frame and tail-call callee */     \
+            if ((uintptr_t)s->j2jSaveCursor >=                               \
+                (uintptr_t)s->j2jSaveLimit) {                                \
+                /* Save stack full — bail to interpreter */                   \
+                s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];          \
+                s->sendArgCount = nArgs;                                      \
+                s->ip = s->ip + bcOffset;                                     \
+                s->exitReason = EXIT_SEND_CACHED;                             \
+                return;                                                       \
+            }                                                                 \
+            J2JSave* _save = (J2JSave*)s->j2jSaveCursor;                     \
+            _save->sp = s->sp;                                                \
+            _save->receiver = s->receiver;                                    \
+            _save->tempBase = s->tempBase;                                    \
+            _save->ip = s->ip + bcOffset + bcLen;                            \
+            _save->sendArgCount = nArgs;                                      \
+            _save->resumeAddr = RESUME_ADDR;                                 \
+            /* Detect self-recursive: calleeJM = entryAddr - JM_SIZE */      \
+            uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;             \
+            void* _callerJM = s->jitMethod;                                  \
+            if (_callerJM == (void*)_calleeJM) {                             \
+                _save->jitMethod =                                           \
+                    (void*)((uintptr_t)_callerJM | 1ULL);                    \
+            } else {                                                         \
+                _save->jitMethod = _callerJM;                                \
+                _save->literals = s->literals;                               \
+                _save->argCount = s->argCount;                               \
+                /* callerBCStart from JITMethod fields */                    \
+                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM             \
+                                            + JM_METHOD_HEADER);             \
+                int _nl = (int)(_mh & 0x7FFF);                               \
+                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM            \
+                                             + JM_COMPILED_METHOD);          \
+                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;            \
+            }                                                                 \
+            s->j2jSaveCursor += sizeof(J2JSave);                             \
+            s->j2jDepth++;                                                    \
+            s->j2jTotalCalls++;                                              \
+            /* Setup callee */                                               \
+            Oop _calleeRecv = s->sp[-(nArgs + 1)];                          \
+            Oop* _fp = s->sp - (nArgs + 1);                                 \
+            s->receiver = _calleeRecv;                                       \
+            s->tempBase = _fp + 1;                                           \
+            if (_callerJM != (void*)_calleeJM) {                             \
+                uint64_t _methBits = icData[(entry_idx) * 3 + 1];           \
+                ObjectHeader* _mo = (ObjectHeader*)_methBits;                \
+                s->literals = _mo->slots() + 1;                              \
+                s->argCount = nArgs;                                         \
+                s->jitMethod = (void*)_calleeJM;                             \
+                uint64_t _ch = _mo->slotAt(0).bits;                         \
+                int _cnl = (_ch & 1) ? (int)((_ch >> 3) & 0x7FFF) : 0;     \
+                s->ip = (uint8_t*)_mo + 8 + (1 + _cnl) * 8;                \
+            } else {                                                         \
+                /* Self-recursive: ip = callerBCStart */                     \
+                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM             \
+                                            + JM_METHOD_HEADER);             \
+                int _nl = (int)(_mh & 0x7FFF);                               \
+                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM            \
+                                             + JM_COMPILED_METHOD);          \
+                s->ip = (uint8_t*)_cmo + (_nl + 2) * 8;                     \
+            }                                                                 \
+            /* Allocate temps if needed */                                   \
+            uint8_t _tc = *((uint8_t*)_calleeJM + JM_TEMP_COUNT);          \
+            if (nArgs < (int)_tc) {                                         \
+                Oop _nil = *(Oop*)&_HOLE_NIL_OOP;                           \
+                for (int _t = nArgs; _t < (int)_tc; _t++) {                 \
+                    *(s->sp) = _nil;                                         \
+                    s->sp++;                                                  \
+                }                                                             \
+            }                                                                 \
+            /* Tail-call to callee JIT entry */                              \
+            ((void(*)(JITState*))entryAddr)(s);                              \
             return;                                                           \
         }                                                                     \
     }                                                                         \
@@ -2519,7 +2667,10 @@ extern "C" void stencil_jumpFalse_1(JITState* s) {
 extern "C" void stencil_returnTop_1(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
-    s->returnValue.bits = tos;
+    Oop retVal;
+    retVal.bits = tos;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -2527,14 +2678,18 @@ extern "C" void stencil_returnTop_1(JITState* s) {
 // E: return TOS from memory (same as base stencil)
 extern "C" void stencil_returnTop_E(JITState* s) {
     s->sp--;
-    s->returnValue = *(s->sp);
+    Oop retVal = *(s->sp);
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
 
 // Return receiver with state 1 (discard x19, return self)
 extern "C" void stencil_returnReceiver_1(JITState* s) {
-    s->returnValue = s->receiver;
+    Oop retVal = s->receiver;
+    J2J_INLINE_RETURN(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }

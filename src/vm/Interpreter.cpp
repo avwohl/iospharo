@@ -11282,6 +11282,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.trueOop = memory_.trueObject();
     state.falseOop = memory_.falseObject();
 
+    // J2J stencil-to-stencil save stack (allocated below in the trampoline block)
+    state.j2jSaveCursor = nullptr;
+    state.j2jSaveLimit = nullptr;
+    state.j2jDepth = 0;
+    state.j2jTotalCalls = 0;
+
     // Save entry SP so we can restore it on ExitDeopt/ExitPrimFail.
     Oop* entrySP = stackPointer_;
 
@@ -11336,6 +11342,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         J2JSave j2jStack[MaxJ2JDepth];
         int j2jDepth = 0;
         size_t j2jBaseFrameDepth = frameDepth_;
+
+        // Point JITState's J2J save stack at our C-stack allocation so
+        // stencils can push/pop J2J frames directly (stencil-to-stencil calls).
+        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jStack[0]);
+        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jStack[MaxJ2JDepth]);
+        state.j2jDepth = 0;
+        state.j2jTotalCalls = 0;
 
         // Cache Interpreter member fields into locals so the compiler keeps
         // them in registers across JIT_CALL invocations. The asm volatile
@@ -11549,18 +11562,33 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #if defined(__APPLE__) && defined(__arm64__)
         pthread_jit_write_protect_np(0);
 #endif
+        // Merge stencil-managed J2J depth with trampoline-managed depth.
+        // Stencils push/pop frames via state.j2jDepth; the trampoline uses
+        // j2jDepth directly.  Take whichever is larger (normally only one
+        // mechanism is active at a time).
+        if (state.j2jDepth > j2jDepth) {
+            j2jDepth = state.j2jDepth;
+            // Stencil-managed calls also need frameDepth_ adjustment
+            localFrameDepth = j2jBaseFrameDepth + j2jDepth;
+        }
+
         // Sync cached locals back to Interpreter member fields.
         frameDepth_ = localFrameDepth;
-        jitJ2JStencilCalls_ += localCalls;
+        jitJ2JStencilCalls_ += localCalls + state.j2jTotalCalls;
         jitJ2JStencilReturns_ += localReturns;
         // Charge bytecodes for all J2J calls + returns in bulk
         checkCountdown_ -= static_cast<int>(localCalls + localReturns) * 10;
+        checkCountdown_ -= state.j2jTotalCalls * 10;
 
         // Reconstruct state.method from state.jitMethod — we skip updating it
         // in the hot loop for speed, but fall-through paths need it current.
         if (state.jitMethod) {
+            // Mask off possible self-recursive bit 0 from stencil J2J
+            uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+            jmBits &= ~static_cast<uintptr_t>(1);
+            state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
             state.method = Oop::fromRawBits(
-                reinterpret_cast<jit::JITMethod*>(state.jitMethod)->compiledMethodOop);
+                reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
         }
 
         // If we bailed out with pending J2J frames, materialize them

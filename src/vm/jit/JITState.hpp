@@ -81,6 +81,15 @@ struct JITState {
     // Set once in tryJITActivation, constant for the image lifetime.
     Oop trueOop;              // offset 128
     Oop falseOop;             // offset 136
+
+    // --- J2J stencil-to-stencil call support ---
+    // Stencils handle J2J sends inline via tail-calls instead of exiting
+    // to the C trampoline.  The save stack lives on the C stack in
+    // tryJITActivation; stencils push/pop frames here directly.
+    uint8_t* j2jSaveCursor;  // offset 144: current position in save stack
+    uint8_t* j2jSaveLimit;   // offset 152: base + maxDepth * sizeof(J2JSave)
+    int32_t  j2jDepth;       // offset 160: current nesting depth
+    int32_t  j2jTotalCalls;  // offset 164: total J2J calls (for charging)
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -96,6 +105,10 @@ static_assert(offsetof(JITState, method)    == 64, "method offset");
 static_assert(offsetof(JITState, cachedTarget)  == 88, "cachedTarget offset");
 static_assert(offsetof(JITState, icDataPtr)     == 96, "icDataPtr offset");
 static_assert(offsetof(JITState, sendArgCount)  == 104, "sendArgCount offset");
+static_assert(offsetof(JITState, j2jSaveCursor) == 144, "j2jSaveCursor offset");
+static_assert(offsetof(JITState, j2jSaveLimit)  == 152, "j2jSaveLimit offset");
+static_assert(offsetof(JITState, j2jDepth)      == 160, "j2jDepth offset");
+static_assert(offsetof(JITState, j2jTotalCalls) == 164, "j2jTotalCalls offset");
 
 // ===== EXIT REASONS =====
 //

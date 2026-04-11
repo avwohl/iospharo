@@ -791,6 +791,18 @@ bool JITCompiler::patchStencilInstance(
             break;
         }
 
+        case HoleKind::ResumeAddr: {
+            // Same target as Continue (next stencil address), but used as a
+            // DATA value (stored via ADRP+ADD or GOT load) rather than a
+            // branch target.  Stencils store this in J2JSave.resumeAddr
+            // so the J2J return path can tail-call to the next stencil.
+            uint32_t nextOffset = stencilOffset + stencil.codeSize;
+            uint64_t target = reinterpret_cast<uint64_t>(codeBase + nextOffset);
+            uint64_t poolEntryAddr = allocOrReuseSlot(reloc, target);
+            if (!patchOne(reloc, poolEntryAddr)) return false;
+            break;
+        }
+
         case HoleKind::RuntimeHelper: {
             // The addend field encodes which helper
             int helperId = reloc.addend;
