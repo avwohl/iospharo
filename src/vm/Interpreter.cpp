@@ -712,6 +712,15 @@ void Interpreter::handleBenchComplete() {
             jitActivations_ > 0 ? 100.0 * jitActivationHits_ / jitActivations_ : 0.0,
             jitICHits_, jitICMisses_, jitICStale_,
             jitJ2JDirectPatches_, jitJ2JStencilCalls_, jitJ2JStencilReturns_);
+        fprintf(stderr, "[BENCH] Chain paths: actChains=%zu actFalls=%zu (%.1f%% continuity)\n",
+            jitJ2JActChains_, jitJ2JActFalls_,
+            (jitJ2JActChains_ + jitJ2JActFalls_) > 0
+                ? 100.0 * jitJ2JActChains_ / (jitJ2JActChains_ + jitJ2JActFalls_) : 0.0);
+        fprintf(stderr, "[BENCH]   stencil-falls: cached=%zu send=%zu j2j=%zu other=%zu\n",
+            jitStencilFallSendCached_, jitStencilFallSend_, jitStencilFallJ2JCall_, jitStencilFallOther_);
+        fprintf(stderr, "[BENCH]   prim: chains=%zu falls=%zu | activate: chains=%zu falls=%zu\n",
+            jitChainPrimChains_, jitChainPrimFalls_,
+            jitChainActivateChains_, jitChainActivateFalls_);
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
@@ -12289,6 +12298,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         }
                         closure_ = memory_.nil();
                         jitJ2JActFalls_++;
+                        switch (state.exitReason) {
+                        case jit::ExitSendCached: jitStencilFallSendCached_++; break;
+                        case jit::ExitSend:       jitStencilFallSend_++; break;
+                        case jit::ExitJ2JCall:    jitStencilFallJ2JCall_++; break;
+                        default:                  jitStencilFallOther_++; break;
+                        }
 
                         // Bail: let interpreter dispatch handle the callee
                         return true;
@@ -12319,10 +12334,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // dispatch loop drives the activated frame to completion.
                         if (frameDepth_ != primCallerDepth) {
                             jitJ2JActFalls_++;
+                            jitChainPrimFalls_++;
                             return true;
                         }
                         // Primitive completed in place — resume JIT at bytecode after send
                         jitJ2JActChains_++;
+                        jitChainPrimChains_++;
                         method = method_;
                         uint32_t bcOffset = computeCurrentBCOffset();
                         if (bcOffset == UINT32_MAX) return true;
@@ -12467,12 +12484,14 @@ chain_activate_fallback:
                 if (frameDepth_ != callerDepth) {
                     // Target pushed a frame — interpreter dispatch loop handles it
                     jitJ2JActFalls_++;
+                    jitChainActivateFalls_++;
                     return true;
                 }
 
                 // Target completed (JIT or trivial method handled it end-to-end).
                 // Resume JIT execution at the bytecode after the send.
                 jitJ2JActChains_++;
+                jitChainActivateChains_++;
                 method = method_;  // Refresh: GC may have moved the method
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
