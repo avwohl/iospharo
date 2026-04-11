@@ -718,9 +718,9 @@ void Interpreter::handleBenchComplete() {
                 ? 100.0 * jitJ2JActChains_ / (jitJ2JActChains_ + jitJ2JActFalls_) : 0.0);
         fprintf(stderr, "[BENCH]   stencil-falls: cached=%zu send=%zu j2j=%zu other=%zu\n",
             jitStencilFallSendCached_, jitStencilFallSend_, jitStencilFallJ2JCall_, jitStencilFallOther_);
-        fprintf(stderr, "[BENCH]   prim: chains=%zu falls=%zu | activate: chains=%zu falls=%zu\n",
+        fprintf(stderr, "[BENCH]   prim: chains=%zu falls=%zu | activate: chains=%zu falls=%zu | yields=%zu\n",
             jitChainPrimChains_, jitChainPrimFalls_,
-            jitChainActivateChains_, jitChainActivateFalls_);
+            jitChainActivateChains_, jitChainActivateFalls_, jitYieldCount_);
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
@@ -1120,19 +1120,6 @@ void Interpreter::interpret() {
         if (!running_) { goto cg_exit; }
     }
     bytecode = *instructionPointer_++;
-    // Debug: trace bytecodes when inside atAllPut: (2nd+ call)
-    if (__builtin_expect(traceAtAllPut_ >= 2 && traceAtAllPut_ <= 3 && frameDepth_ >= 1, 0)) {
-        static int aapBCCount = 0;
-        if (aapBCCount < 40) {
-            aapBCCount++;
-            ptrdiff_t off = (instructionPointer_ - 1) - method_.asObjectPtr()->bytes();
-            fprintf(stderr, "[BC #%d] fd=%zu 0x%02X @off=%td SP=%ld top=0x%llx method=#%s\n",
-                    aapBCCount, frameDepth_, bytecode, off,
-                    (long)(stackPointer_ - stackBase_),
-                    (stackPointer_ > stackBase_) ? (unsigned long long)(stackPointer_[-1].rawBits()) : 0ULL,
-                    memory_.selectorOf(method_).c_str());
-        }
-    }
     if constexpr (ENABLE_DEBUG_LOGGING) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
@@ -2855,14 +2842,6 @@ bool Interpreter::step() {
                            nextProcess.rawBits() != activeProcess.rawBits();
 
         if (foundProcess) {
-            int nextPri = safeProcessPriority(nextProcess);
-            static int yieldLog = 0;
-            if (yieldLog++ < 20) {
-                fprintf(stderr, "[YIELD] step() P%d→P%d (0x%llx→0x%llx)\n",
-                        activePriority, nextPri,
-                        (unsigned long long)activeProcess.rawBits(),
-                        (unsigned long long)nextProcess.rawBits());
-            }
             putToSleep(activeProcess);
             transferTo(nextProcess);
         }
@@ -3752,12 +3731,6 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
-    // Debug: trace during atAllPut: debugging
-    if (benchMode_ && traceAtAllPut_ >= 2) {
-        std::string sel = memory_.selectorOf(method_);
-        fprintf(stderr, "[RV] returnValue from #%s fd=%zu val=0x%llx\n",
-                sel.c_str(), frameDepth_, (unsigned long long)value.rawBits());
-    }
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check for pending NLR through ensure:.
@@ -4173,16 +4146,6 @@ terminate_process:
             }
         }
     } else {
-        // Debug: track returns from atAllPut:-related methods
-        if (benchMode_ && traceAtAllPut_ > 0) {
-            std::string retSel = memory_.selectorOf(method_);
-            if (retSel == "atAllPut:" || retSel == "from:to:put:" || retSel == "size") {
-                std::string resumeSel = (frameDepth_ > 0) ? memory_.selectorOf(savedFrames_[frameDepth_ - 1].savedMethod) : "(base)";
-                fprintf(stderr, "[RET] #%s → resuming #%s fd=%zu SP=%ld FP=%ld\n",
-                        retSel.c_str(), resumeSel.c_str(), frameDepth_,
-                        (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
-            }
-        }
         // Pop frame and push result
         if (!popFrame()) return;  // Process terminated and rescheduled
     }
@@ -4251,13 +4214,6 @@ terminate_process:
 }
 
 void Interpreter::returnFromMethod() {
-    // Debug: trace returns during atAllPut: debugging
-    if (benchMode_ && traceAtAllPut_ >= 2) {
-        std::string sel = memory_.selectorOf(method_);
-        fprintf(stderr, "[RFM] returnFromMethod from #%s fd=%zu SP=%ld FP=%ld\n",
-                sel.c_str(), frameDepth_,
-                (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
-    }
     Oop value = pop();
 
     // Check if we're executing inside a block (CompiledBlock)
@@ -5278,55 +5234,6 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
-    // Debug trace for sieve benchmark nil arg bug
-    if (benchMode_ && selector.isObject() && selector.rawBits() > 0x10000) {
-        ObjectHeader* sh = selector.asObjectPtr();
-        size_t selLen = sh->isBytesObject() ? sh->byteSize() : 0;
-        // Trace new: to verify Array allocation
-        if (selLen == 4 && memcmp(sh->bytes(), "new:", 4) == 0) {
-            fprintf(stderr, "[TRACE] new: rcvr=0x%llx arg=0x%llx (%s)\n",
-                    (unsigned long long)rcvr.rawBits(),
-                    (unsigned long long)stackValue(0).rawBits(),
-                    stackValue(0).isSmallInteger() ? "SmallInt" : "object");
-        }
-        // Trace atAllPut:
-        if (selLen == 9 && memcmp(sh->bytes(), "atAllPut:", 9) == 0) {
-            traceAtAllPut_++;
-            fprintf(stderr, "[TRACE] atAllPut: #%d rcvr=0x%llx (%s) arg=0x%llx SP=%ld FP=%ld fd=%zu\n",
-                    traceAtAllPut_,
-                    (unsigned long long)rcvr.rawBits(),
-                    rcvr.isSmallInteger() ? "SmallInt" : memory_.classNameOf(rcvr).c_str(),
-                    (unsigned long long)stackValue(0).rawBits(),
-                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_),
-                    frameDepth_);
-        }
-        // Trace size sends on Arrays for debugging
-        if (selLen == 4 && memcmp(sh->bytes(), "size", 4) == 0 && rcvr.isObject() && !rcvr.isNil()) {
-            std::string rcls = memory_.classNameOf(rcvr);
-            if (rcls == "Array") {
-                fprintf(stderr, "[TRACE] Array>>size rcvr=0x%llx\n", (unsigned long long)rcvr.rawBits());
-            }
-        }
-        // Trace #> sends
-        if (selLen == 1 && sh->bytes()[0] == '>' && rcvr.rawBits() == memory_.nil().rawBits()) {
-            fprintf(stderr, "[TRACE] nil > ... DETECTED! fd=%zu method=#%s\n",
-                    frameDepth_, memory_.selectorOf(method_).c_str());
-        }
-        if (selLen == 12 && memcmp(sh->bytes(), "from:to:put:", 12) == 0) {
-            fprintf(stderr, "[TRACE] from:to:put: argCount=%d rcvr=0x%llx\n",
-                    argCount, (unsigned long long)rcvr.rawBits());
-            for (int i = 0; i < argCount; i++) {
-                Oop a = stackValue(argCount - 1 - i);
-                fprintf(stderr, "[TRACE]   arg[%d]=0x%llx (%s)\n", i,
-                        (unsigned long long)a.rawBits(),
-                        a.isSmallInteger() ? "SmallInt" : a.isNil() ? "nil" : "object");
-            }
-            fprintf(stderr, "[TRACE]   SP=%p FP=%p base=%p spOff=%ld fpOff=%ld\n",
-                    (void*)stackPointer_, (void*)framePointer_, (void*)stackBase_,
-                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_));
-        }
-    }
-
     // Selector sanity check: must be a bytes object (Symbol/ByteString)
     if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
         ObjectHeader* selHdr = selector.asObjectPtr();
@@ -6045,64 +5952,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     }
     } // end if constexpr (ENABLE_DEBUG_LOGGING)
-
-    // Debug: trace atAllPut: activation
-    if (benchMode_ && traceAtAllPut_ > 0) {
-        std::string sel = memory_.selectorOf(method);
-        if (sel == "atAllPut:") {
-            fprintf(stderr, "[ACT-AAP] #%d activateMethod atAllPut: fd=%zu SP=%ld FP=%ld rcvr=0x%llx\n",
-                    traceAtAllPut_, frameDepth_,
-                    (long)(stackPointer_ - stackBase_), (long)(framePointer_ - stackBase_),
-                    (unsigned long long)receiver_.rawBits());
-            // Dump stack around FP
-            for (int i = -2; i <= 5; i++) {
-                Oop* slot = framePointer_ + i;
-                if (slot >= stackBase_ && slot < stackBase_ + 1024) {
-                    fprintf(stderr, "[ACT-AAP]   FP[%d]=0x%llx%s\n", i,
-                            (unsigned long long)slot->rawBits(),
-                            slot->isSmallInteger() ? " (smi)" : slot->isNil() ? " (nil)" : "");
-                }
-            }
-            // Dump bytecodes of the method on first call
-            if (traceAtAllPut_ == 1) {
-                ObjectHeader* mHdr = method.asObjectPtr();
-                Oop hdr = memory_.fetchPointer(0, method);
-                if (hdr.isSmallInteger()) {
-                    int64_t hBits = hdr.asSmallInteger();
-                    int nLits = hBits & 0x7FFF;
-                    int nTemps = (hBits >> 18) & 0x3F;
-                    int nArgs = (hBits >> 24) & 0xF;
-                    bool hasPrim = (hBits >> 16) & 1;
-                    size_t bcStart = (1 + nLits) * 8;
-                    size_t totalBytes = mHdr->byteSize();
-                    fprintf(stderr, "[AAP-BC] method=0x%llx nLits=%d nTemps=%d nArgs=%d hasPrim=%d\n",
-                            (unsigned long long)method.rawBits(), nLits, nTemps, nArgs, hasPrim);
-                    fprintf(stderr, "[AAP-BC] bytecodes (%zu bytes):", totalBytes - bcStart);
-                    uint8_t* bytes = mHdr->bytes();
-                    for (size_t i = bcStart; i < totalBytes && i < bcStart + 30; i++) {
-                        fprintf(stderr, " %02X", bytes[i]);
-                    }
-                    fprintf(stderr, "\n");
-                    // Also dump literals
-                    fprintf(stderr, "[AAP-BC] literals:");
-                    for (int li = 1; li <= nLits && li <= 10; li++) {
-                        Oop lit = memory_.fetchPointer(li, method);
-                        if (lit.isObject() && lit.rawBits() > 0x10000) {
-                            ObjectHeader* lh = lit.asObjectPtr();
-                            if (lh->isBytesObject() && lh->byteSize() < 40) {
-                                fprintf(stderr, " [%d]='%.*s'", li, (int)lh->byteSize(), (char*)lh->bytes());
-                            } else {
-                                fprintf(stderr, " [%d]=0x%llx", li, (unsigned long long)lit.rawBits());
-                            }
-                        } else {
-                            fprintf(stderr, " [%d]=0x%llx", li, (unsigned long long)lit.rawBits());
-                        }
-                    }
-                    fprintf(stderr, "\n");
-                }
-            }
-        }
-    }
 
     // Set instruction pointer to start of bytecodes
     ObjectHeader* methodObj = method_.asObjectPtr();
@@ -10711,6 +10560,11 @@ void Interpreter::tryJITResumeInCaller() {
         state.argCount = argCount_;
         state.icDataPtr = nullptr;
         state.sendArgCount = 0;
+        // Disable stencil J2J for dispatch-loop resume (no save stack)
+        state.j2jSaveCursor = nullptr;
+        state.j2jSaveLimit = nullptr;
+        state.methodMapPtr = &jitRuntime_.methodMap();
+        state.yieldCountdown = 1000;
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             break;  // No re-entry at this offset
@@ -10822,20 +10676,6 @@ void Interpreter::tryJITResumeInCaller() {
             {
                 int primIdx = primitiveIndexOf(cached);
 
-                // DEBUG: detect P60 on byte objects from resume-cached path
-                if (primIdx == 60 && state.sendArgCount == 1) {
-                    Oop rcRcv = stackValue(1);
-                    if (rcRcv.isObject() && rcRcv.rawBits() > 0x10000 &&
-                        rcRcv.asObjectPtr()->isBytesObject()) {
-                        Oop rcIdx = stackValue(0);
-                        fprintf(stderr, "[RESUME-CACHED-P60-BYTE] idx=0x%llx(isInt=%d) "
-                                "rcv byteSize=%zu callerMethod='%s'\n",
-                                (unsigned long long)rcIdx.rawBits(), rcIdx.isSmallInteger(),
-                                rcRcv.asObjectPtr()->byteSize(),
-                                memory_.selectorOf(state.method).c_str());
-                    }
-                }
-
                 if (primIdx > 0) {
                     size_t primCallerDepth = frameDepth_;
                     argCount_ = state.sendArgCount;
@@ -10858,15 +10698,6 @@ void Interpreter::tryJITResumeInCaller() {
                         continue;
                     }
 
-                    // DEBUG: P60 failure on byte object
-                    if (primIdx == 60 && state.sendArgCount == 1) {
-                        Oop rcRcv = stackValue(1); // after failure, stack unchanged
-                        if (rcRcv.isObject() && rcRcv.rawBits() > 0x10000 &&
-                            rcRcv.asObjectPtr()->isBytesObject()) {
-                            fprintf(stderr, "[RESUME-CACHED-P60-BYTE] FAILED! failCode=%d\n",
-                                    primFailCode_);
-                        }
-                    }
                 }
             }
 
@@ -10928,19 +10759,22 @@ void Interpreter::tryJITResumeInCaller() {
             inJITResume_ = false;
             return;
 
-        case jit::ExitYield:
+        case jit::ExitYield: {
             // Backward-jump yield during resume — charge countdown and continue
+            jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
-            if (state.jitMethod) {
-                checkCountdown_ -= state.jitMethod->numBytecodes;
-                g_stepNum += state.jitMethod->numBytecodes;
-            }
+            // Each yield = ~1000 backward jumps, each executing the full method.
+            int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 0;
+            int charge = 1000 * numBC;
+            checkCountdown_ -= charge;
+            g_stepNum += charge;
             if (checkCountdown_ <= 0) {
                 inJITResume_ = false;
                 return;
             }
             continue;  // Re-enter resume loop (will setup new JITState + tryResume)
+        }
 
         case jit::ExitJ2JCall: {
             // J2J IC hit during resume — ip is already past the send bytecode.
@@ -11861,8 +11695,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.jitMethod = callerJM;
                     state.exitReason = jit::ExitNone;
                     state.j2jDepth = 0;
-                    state.j2jSaveCursor = nullptr;
-                    state.j2jSaveLimit = nullptr;
+                    state.j2jTotalCalls = 0;
+                    // Re-enable J2J for resumed caller (yield check prevents starvation)
+                    state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+                    state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                     state.yieldCountdown = 1000;
 #if defined(__APPLE__) && defined(__arm64__)
                     pthread_jit_write_protect_np(1);
@@ -12039,6 +11875,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
+            // Re-enable J2J for resumed method (safe: yield check prevents starvation)
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
@@ -12090,6 +11929,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
+            // Re-enable J2J for resumed method
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
@@ -12130,17 +11972,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Backward-jump yield: stencil decremented yieldCountdown to 0.
             // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
             // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
+            jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             if (state.jitMethod) {
-                checkCountdown_ -= state.jitMethod->numBytecodes;
-                g_stepNum += state.jitMethod->numBytecodes;
+                // Each yield = ~1000 backward jumps, each executing the full method.
+                int charge = 1000 * state.jitMethod->numBytecodes;
+                checkCountdown_ -= charge;
+                g_stepNum += charge;
             }
             if (checkCountdown_ <= 0) goto jit_loop_exit;
 
-            // Reset yield counter and resume at the branch target
+            // Reset yield counter, J2J save stack, and resume at the branch target
             state.yieldCountdown = 1000;
             state.exitReason = jit::ExitNone;
+            state.j2jDepth = 0;
+            state.j2jTotalCalls = 0;
+            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
             {
                 uint32_t bcOffset = computeCurrentBCOffset();
                 if (bcOffset == UINT32_MAX) return true;
@@ -12412,6 +12261,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
+                        // Re-enable J2J for resumed method after prim
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+                        state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
@@ -12460,6 +12312,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.icDataPtr = nullptr;
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
+                // Re-enable J2J for resumed method after activate
+                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+                state.j2jSaveLimit = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
 
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;

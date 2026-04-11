@@ -830,6 +830,7 @@ private:
     size_t jitStencilFallSend_ = 0;
     size_t jitStencilFallJ2JCall_ = 0;
     size_t jitStencilFallOther_ = 0;
+    size_t jitYieldCount_ = 0;  // ExitYield hits (backward-jump yield check)
 
     // J2J ban set: methods whose J2J calls always bail out (callee modifies
     // state before hitting a send, causing double-execution on re-entry).

@@ -558,16 +558,15 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // Set up JIT state
     state.jitMethod = jm;
     state.exitReason = ExitNone;
-    // Zero J2J state — stencils check j2jDepth on return and compare
-    // j2jSaveCursor >= j2jSaveLimit on send. Both must be sane.
-    // Setting cursor == limit == nullptr ensures: (1) return stencils
-    // skip J2J_INLINE_RETURN (depth 0), (2) send stencils skip
-    // stencil J2J (0 >= 0 is true → bail to EXIT_SEND_CACHED).
+    // Reset per-entry J2J counters. Cursor/limit are NOT cleared here —
+    // the caller controls whether J2J is enabled by setting them to a valid
+    // pool slice (enable) or nullptr (disable, safe default since
+    // nullptr >= nullptr → true → stencils bail to EXIT_SEND_CACHED).
     state.j2jDepth = 0;
     state.j2jTotalCalls = 0;
-    state.j2jSaveCursor = nullptr;
-    state.j2jSaveLimit = nullptr;
-    state.yieldCountdown = 1000;
+    // Note: yieldCountdown is NOT reset here — it must persist across chain
+    // loop iterations so backward jumps eventually reach 0 and yield.
+    // It's initialized by tryJITActivation and reset by ExitYield handlers.
 
     // Validate IC data area is within code zone
     if (jm->numICEntries > 0) {
