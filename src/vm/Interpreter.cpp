@@ -11077,13 +11077,21 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             extra = (1ULL << 61);
     }
 
-    // Set inline primKind bits for methods with inlineable primitives,
-    // regardless of JIT compilation status. This allows the stencil to
-    // handle SmallInteger arithmetic inline without any function call.
-    if (extra == 0) {  // Not a getter/setter/yourself
+    // Quick primitives (256-519): map to inline getter/returnsSelf bits
+    if (extra == 0) {
         int primIdx = primitiveIndexOf(resolvedMethod);
-        uint8_t pk = inlinePrimKind(primIdx);
-        if (pk) extra |= (uint64_t)pk << 48;
+        if (primIdx >= 264 && primIdx <= 519)
+            extra = (1ULL << 63) | static_cast<uint16_t>(primIdx - 264);
+        else if (primIdx == 256)
+            extra = (1ULL << 61);
+
+        // Set inline primKind bits for methods with inlineable primitives,
+        // regardless of JIT compilation status. This allows the stencil to
+        // handle SmallInteger arithmetic inline without any function call.
+        if (extra == 0) {
+            uint8_t pk = inlinePrimKind(primIdx);
+            if (pk) extra |= (uint64_t)pk << 48;
+        }
     }
 
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
