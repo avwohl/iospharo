@@ -11821,6 +11821,26 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         methObj = method.asObjectPtr();
     };
 
+    // Adaptive J2J depth: per-method depth limit that promotes on clean
+    // stencil re-entries and demotes on bail (materialization).  Towers
+    // bails frequently → stays at depth 2.  List runs clean → promotes
+    // up to depth 8.  Avoids the 5.8x Towers regression that a global
+    // depth >= 3 caused while still unlocking deeper J2J for other code.
+    auto adaptJ2JDepth = [&](Oop meth, bool bailed) {
+        jit::JITMethod* jm = jitRuntime_.methodMap().lookup(meth.rawBits());
+        if (!jm) return;
+        if (bailed) {
+            jm->j2jDepthLimit = 2;
+            jm->j2jCleanRuns = 0;
+        } else {
+            if (jm->j2jCleanRuns < 255) jm->j2jCleanRuns++;
+            if (jm->j2jCleanRuns >= 8 && jm->j2jDepthLimit < 8) {
+                jm->j2jDepthLimit++;
+                jm->j2jCleanRuns = 0;
+            }
+        }
+    };
+
     for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
 
         // Validate JIT output state — detect stencil corruption early
@@ -12761,18 +12781,26 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
-                        // Shallow J2J (depth 2): best balance — improves all
-                        // AWFY benchmarks, no regressions. Depth 3+ causes
-                        // Towers 5.8x regression from materialization cascades.
-                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
-                        state.j2jSaveLimit = reinterpret_cast<uint8_t*>(j2jStack + 2);
+                        // Adaptive J2J depth: per-method limit (default 2,
+                        // promotes to 8 on clean runs, demotes on bail).
+                        {
+                            jit::JITMethod* resumeJM = jitRuntime_.methodMap().lookup(method.rawBits());
+                            int depth = (resumeJM && resumeJM->j2jDepthLimit >= 2)
+                                ? resumeJM->j2jDepthLimit : 2;
+                            state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                            state.j2jSaveLimit = reinterpret_cast<uint8_t*>(j2jStack + depth);
+                        }
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
                         chargeJITBytecodes(state);
-                        materializeJ2J();
+                        {
+                            bool bailed = (state.j2jDepth > 0);
+                            materializeJ2J();
+                            adaptJ2JDepth(method, bailed);
+                        }
                         if (checkCountdown_ <= 0) goto jit_loop_exit;
                         continue;
                     }

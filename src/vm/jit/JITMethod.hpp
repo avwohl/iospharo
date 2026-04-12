@@ -125,6 +125,10 @@ struct JITMethod {
     uint32_t  executionCount;     // Incremented on each entry (for hot method detection)
     uint32_t  totalSize;          // Total allocation size including header + code + IC entries
 
+    // --- Adaptive J2J depth ---
+    uint8_t   j2jDepthLimit;     // Per-method stencil J2J depth limit (default 2, max 8)
+    uint8_t   j2jCleanRuns;      // Consecutive no-bail stencil re-entries (promotes at 8)
+
     // --- Navigation ---
     JITMethod* nextInZone;        // Next method in code zone (for iteration/compaction)
     JITMethod* prevInZone;        // Previous method in code zone

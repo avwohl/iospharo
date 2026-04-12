@@ -1762,6 +1762,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
     jitMethod->hasPrimPrologue = hasPrimPrologue;
     jitMethod->isBlock = isFullBlock;
+    jitMethod->j2jDepthLimit = 2;  // Start conservative; adaptive logic promotes on clean runs
 
     // Set up IC data pointers for send sites. The IC data lives at the end
     // of the allocation. Each send site gets 104 bytes initialized to zero
