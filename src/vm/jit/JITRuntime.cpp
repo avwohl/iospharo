@@ -641,18 +641,20 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // Promote hot methods: try Tier 2 (MIR) first, fall back to Tier 1 recompile.
     // Threshold: 500 executions, tier 1 only, must have send sites.
     if (jm->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
+        bool promoted = false;
         // Try Tier 2 compilation (MIR with register allocation)
         if (tier2Compiler_) {
             void* t2code = tier2Compiler_->compile(compiledMethod, jm);
             if (t2code) {
                 tier2Insert(compiledMethod.rawBits(), t2code);
+                promoted = true;
                 fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
                         (void*)compiledMethod.rawBits(),
                         tier2Compiler_->methodsCompiled());
             }
         }
-        // Also do Tier 1 IC recompilation (inline getters/setters)
-        if (compiler_) {
+        // Fall back to Tier 1 IC recompilation if Tier 2 failed
+        if (!promoted && compiler_) {
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
                 jm = newJM;

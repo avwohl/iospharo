@@ -34,6 +34,7 @@
 #include "../Oop.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <vector>
 
 #if PHARO_JIT_ENABLED
 
@@ -108,9 +109,13 @@ private:
     MIR_reg_t vpeek() { return vstack_[vstackDepth_ - 1]; }
 
     // --- MIR state ---
-    MIR_context_t mirCtx_ = nullptr;
+    MIR_context_t mirCtx_ = nullptr;  // Current compilation context (temporary)
     MIR_item_t    mirFunc_ = nullptr;
     MIR_module_t  mirModule_ = nullptr;
+
+    // Keep MIR contexts alive so generated code stays valid.
+    // Each context is ~50KB; for ~100 hot methods that's ~5MB.
+    std::vector<MIR_context_t> liveContexts_;
 
     // Well-known registers (loaded in prologue)
     MIR_reg_t reg_statePtr_;  // JITState* (function argument)

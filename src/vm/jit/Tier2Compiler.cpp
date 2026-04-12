@@ -29,7 +29,27 @@
 #include <cstdio>
 #include <vector>
 
+#include <setjmp.h>
+
 #if PHARO_JIT_ENABLED
+
+// MIR error recovery: longjmp back to compile() on MIR errors
+static thread_local jmp_buf mir_error_jmp;
+static thread_local bool mir_error_active = false;
+
+[[noreturn]] static void mir_error_handler(MIR_error_type_t error_type, const char *format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    fprintf(stderr, "[T2] MIR error (type %d): ", error_type);
+    vfprintf(stderr, format, ap);
+    fprintf(stderr, "\n");
+    va_end(ap);
+    if (mir_error_active) {
+        longjmp(mir_error_jmp, 1);
+    }
+    // If no jmp_buf is active, abort (shouldn't happen)
+    abort();
+}
 
 namespace pharo {
 namespace jit {
@@ -140,15 +160,16 @@ Tier2Compiler::Tier2Compiler(CodeZone& zone, MethodMap& methodMap,
 }
 
 Tier2Compiler::~Tier2Compiler() {
-    if (mirCtx_) {
-        MIR_finish(mirCtx_);
-        mirCtx_ = nullptr;
+    for (auto ctx : liveContexts_) {
+        MIR_gen_finish(ctx);
+        MIR_finish(ctx);
     }
+    liveContexts_.clear();
 }
 
 bool Tier2Compiler::initialize() {
-    mirCtx_ = MIR_init();
-    return mirCtx_ != nullptr;
+    // MIR context is created per-compilation now (see compile())
+    return true;
 }
 
 MIR_reg_t Tier2Compiler::newScratch() {
@@ -407,9 +428,18 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             if (i + 1 >= len) break;
             d.operand = bc[i + 1];
             d.bcLength = 2;
-        } else if (op == SistaV1::CallPrimitive || op == SistaV1::PushFullBlock ||
-                   op == SistaV1::PushClosure) {
-            // 3-byte: bail out
+        } else if (op == SistaV1::CallPrimitive) {
+            // 3-byte primitive call — skip it (already handled by activateMethod)
+            if (i + 2 >= len) break;
+            d.bcLength = 3;
+            out.push_back(d);
+            i += d.bcLength;
+            extA = extB = 0;
+            continue;
+        } else if (op == SistaV1::PushFullBlock) {
+            // Block creation — bail out of T2 (methods with blocks are complex)
+            return false;
+        } else if (op == SistaV1::PushClosure) {
             return false;
         } else if (op >= 0xDA && op <= 0xDF) {
             // Reserved — nop
@@ -432,7 +462,14 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
 // ===== MAIN COMPILE =====
 
 void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
+    (void)oldVersion;  // TODO: use IC data for type specialization
+
+    // Create a fresh MIR context for each compilation.
+    // MIR_finish frees generated code, so we copy it to a persistent
+    // mmap allocation before destroying the context.
+    mirCtx_ = MIR_init();
     if (!mirCtx_) return nullptr;
+    MIR_set_error_func(mirCtx_, reinterpret_cast<MIR_error_func_t>(mir_error_handler));
 
     // --- Extract method bytecodes ---
     ObjectHeader* methodObj = reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
@@ -445,9 +482,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     int argCount    = (int)((header >> 24) & 0x0F);
     int primNum     = (int)((header >> 28) & 0x3FF);
 
-    // Skip methods with primitives (they're handled by the interpreter)
+    // Methods with primitives: Tier 1 handles them fine, skip for Tier 2
     if (primNum != 0) {
-        compilationsFailed_++;
+        MIR_finish(mirCtx_); mirCtx_ = nullptr;
         return nullptr;
     }
 
@@ -455,28 +492,43 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     size_t bcLen = methodObj->byteSize() - 8 - (1 + numLiterals) * 8;
 
     if (bcLen == 0 || bcLen > 4096) {
+        MIR_finish(mirCtx_); mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
     }
 
+    fprintf(stderr, "[T2] Attempting method %p: %d lits, %d temps, %d args, %zu bc\n",
+            (void*)compiledMethod.rawBits(), numLiterals, tempCount, argCount, bcLen);
+
     // --- Decode bytecodes ---
     std::vector<T2BC> decoded;
     if (!decodeBytecodes(bytecodes, bcLen, decoded)) {
+        MIR_finish(mirCtx_); mirCtx_ = nullptr;
+        static int decodeFailCount = 0;
+        if (decodeFailCount++ < 5)
+            fprintf(stderr, "[T2] Decode failed for method %p (bc len %zu)\n",
+                    (void*)compiledMethod.rawBits(), bcLen);
         compilationsFailed_++;
         return nullptr;
     }
 
     if (decoded.empty()) {
+        MIR_finish(mirCtx_); mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
     }
 
     // --- Create MIR module and function ---
     // Each compilation gets a fresh module (MIR_finish resets all)
-    mirModule_ = MIR_new_module(mirCtx_, "t2");
+    // Each compilation gets a unique module/function name (MIR context is reused)
+    char modName[32], funcName[32];
+    snprintf(modName, sizeof(modName), "t2_%zu", methodsCompiled_ + compilationsFailed_);
+    snprintf(funcName, sizeof(funcName), "t2m_%zu", methodsCompiled_ + compilationsFailed_);
+
+    mirModule_ = MIR_new_module(mirCtx_, modName);
 
     // Function takes JITState* (i64), returns void
-    mirFunc_ = MIR_new_func(mirCtx_, "t2method", 0, nullptr, 1, MIR_T_I64, "state");
+    mirFunc_ = MIR_new_func(mirCtx_, funcName, 0, nullptr, 1, MIR_T_I64, "state");
 
     // Get the state pointer register
     reg_statePtr_ = MIR_reg(mirCtx_, "state", mirFunc_->u.func);
@@ -931,7 +983,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // --- Unsupported: bail ---
         else {
-            // Unsupported bytecode — give up on this method
+            static int bailCount = 0;
+            if (bailCount++ < 5)
+                fprintf(stderr, "[T2] Bail on unsupported opcode 0x%02X at bc[%d]\n",
+                        op, bc.bcOffset);
             bail = true;
             break;
         }
@@ -941,6 +996,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Clean up and return failure
         MIR_finish_func(mirCtx_);
         MIR_finish_module(mirCtx_);
+        MIR_finish(mirCtx_);
+        mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
     }
@@ -949,23 +1006,49 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     MIR_finish_func(mirCtx_);
     MIR_finish_module(mirCtx_);
 
+    // --- Debug: dump MIR IR ---
+    static bool dumpMIR = !!getenv("PHARO_DUMP_MIR");
+    if (dumpMIR) {
+        fprintf(stderr, "[T2] === MIR IR dump ===\n");
+        MIR_output(mirCtx_, stderr);
+        fprintf(stderr, "[T2] === end dump ===\n");
+    }
+
     // --- Generate native code ---
-    MIR_load_module(mirCtx_, mirModule_);
-    MIR_gen_init(mirCtx_);
-    MIR_gen_set_optimize_level(mirCtx_, 2);  // Medium optimization
-    MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
-
-    void* code = MIR_gen(mirCtx_, mirFunc_);
-
-    MIR_gen_finish(mirCtx_);
-
-    if (!code) {
+    // Use setjmp to recover from MIR internal errors.
+    mir_error_active = true;
+    if (setjmp(mir_error_jmp) != 0) {
+        mir_error_active = false;
+        MIR_finish(mirCtx_);
+        mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
     }
 
+    MIR_load_module(mirCtx_, mirModule_);
+    MIR_gen_init(mirCtx_);
+    MIR_gen_set_optimize_level(mirCtx_, 2);
+    MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
+
+    void* mirCode = MIR_gen(mirCtx_, mirFunc_);
+    mir_error_active = false;
+
+    MIR_gen_finish(mirCtx_);
+
+    if (!mirCode) {
+        MIR_finish(mirCtx_);  // No generated code to keep alive
+        mirCtx_ = nullptr;
+        compilationsFailed_++;
+        return nullptr;
+    }
+
+    // Keep MIR context alive so generated code stays valid.
+    // Each context is ~50KB; acceptable for the hot method set.
+    liveContexts_.push_back(mirCtx_);
+    mirCtx_ = nullptr;
+
     methodsCompiled_++;
-    return code;
+    return mirCode;
 }
 
 } // namespace jit
