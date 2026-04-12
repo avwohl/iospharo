@@ -1,5 +1,23 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-12
+
+## Fix bytecodeEnd_ in J2J materialization, enable class receiver J2J
+
+Root cause: J2J materialization synced method_, ip_, sp_, fp_, argCount_
+from JITState but forgot bytecodeEnd_. This left fetchByte() returning
+0x5C (fake returnTop) instead of actual bytecodes, causing DNU crashes
+on super sends (0xEB) when class-side methods were reached via J2J.
+
+Fix: set bytecodeEnd_ at all 4 materialization sites. Added j2jMaterialized
+flag so the chain loop doesn't run after materialization (would corrupt
+state). JITCompiler now tracks firstExtBCOffset for correct super send
+bail IP. stencil_send clears icDataPtr to prevent stale pointer reads.
+
+With the crash fixed, class receiver J2J is enabled (removed isClassReceiver
+guard). Benchmarks: Permute 2696->490 (5.5x), Queens 1784->375 (4.8x),
+Towers 3901->554 (7.0x), List 3089->1648 (1.9x). Geomean 25x->16x vs Cog.
+
 2026-04-11
 
 ## Yield check fix + J2J for resumed methods + debug cleanup
