@@ -257,27 +257,24 @@ extern "C" void jit_t2_send(JITState* state) {
     }
 
     // === Fallback: callee exited with non-ExitReturn ===
-    // Push a SavedFrame for the T2 caller. The chain loop will handle the
-    // callee's exit, and eventually the interpreter returns to the T2 caller
-    // via this SavedFrame.
-    //
-    // savedIP points to the send bytecode. The interpreter needs past-send IP.
-    // Advance past the send bytecode (1 byte for short sends, 2 for extended).
-    uint8_t sendOp = *savedIP;
-    uint8_t* pastSendIP = savedIP;
-    if (sendOp >= 0xEA && sendOp <= 0xEB)
-        pastSendIP += 2;  // ExtSend / ExtSuperSend
-    else
-        pastSendIP += 1;  // Short sends 0x80-0xAF, 0x70-0x7F
-
-    interp->pushSavedFrameForT2(savedMethod, savedRecv, savedTempBase,
-                                 savedArgCount, pastSendIP);
-
-    // Sync interpreter state from callee's JITState so the chain loop
-    // can handle the callee's exit reason correctly.
-    // (method_, ip_, sp_ are synced by the chain loop's ExitSend handler.)
-
-    // Don't restore caller state — state has callee context for chain loop.
+    // Restore T2 caller state and exit with ExitSend for the caller's send.
+    // The chain loop will handle the send from scratch (re-resolve method,
+    // activate callee). This discards the callee's partial execution but
+    // avoids the SavedFrame/chain-loop interaction that caused infinite loops
+    // with straight-line T2 methods.
+    state->sp = savedSP;
+    state->receiver = savedRecv;
+    state->tempBase = savedTempBase;
+    state->literals = savedLiterals;
+    state->method = savedMethod;
+    state->argCount = savedArgCount;
+    state->jitMethod = reinterpret_cast<JITMethod*>(savedJitMethod);
+    state->ip = savedIP;
+    // Restore send context so chain loop can handle the caller's send
+    state->cachedTarget = selector;
+    state->sendArgCount = nArgs;
+    state->icDataPtr = nullptr;
+    state->exitReason = ExitSend;
     t2SendDepth--;
     return;
 }

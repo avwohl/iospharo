@@ -568,22 +568,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    // Only T2-compile methods with backward jumps (loops).
-    // Straight-line methods don't benefit from register allocation and
-    // their T2 sends (via jit_t2_send) interact poorly with the chain loop.
-    {
-        bool hasBackwardJump = false;
-        for (const auto& bc : decoded) {
-            if (bc.branchTarget >= 0 && bc.branchTarget < bc.bcOffset) {
-                hasBackwardJump = true;
-                break;
-            }
-        }
-        if (!hasBackwardJump) {
-            MIR_finish(mirCtx_); mirCtx_ = nullptr;
-            return nullptr;
-        }
-    }
+    // T2 compiles all decodable methods (with or without loops).
+    // jit_t2_send's fallback restores caller state + ExitSend, so the
+    // chain loop handles sends cleanly without SavedFrame complications.
 
     // --- Create MIR module and function ---
     // Each compilation gets a fresh module (MIR_finish resets all)
