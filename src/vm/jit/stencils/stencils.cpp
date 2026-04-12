@@ -67,6 +67,7 @@ struct MegaCacheEntry {
     uint64_t selectorBits;
     uint64_t classIndex;     // For objects: class index (22-bit); for immediates: tag|0x80000000
     uint64_t methodBits;     // Oop bits of the resolved CompiledMethod
+    uint64_t jitEntry;       // JIT code entry address (0 = not compiled)
 };
 
 // JITState matches pharo::jit::JITState exactly
@@ -197,6 +198,7 @@ static constexpr int JM_COMPILED_METHOD = 0;   // uint64_t compiledMethodOop
 static constexpr int JM_METHOD_HEADER   = 16;  // uint64_t methodHeader
 static constexpr int JM_TEMP_COUNT      = 35;  // uint8_t  tempCount
 static constexpr int JM_ARG_COUNT       = 34;  // uint8_t  argCount
+static constexpr int JM_HAS_PRIM_PROL   = 41;  // bool hasPrimPrologue
 static constexpr int JM_SIZE            = 80;  // sizeof(JITMethod)
 
 // =====================================================================

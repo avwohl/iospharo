@@ -114,6 +114,7 @@ struct MegaCacheEntry {
     uint64_t selectorBits;
     uint64_t classIndex;     // For objects: class index (22-bit); for immediates: tag|0x80000000
     uint64_t methodBits;     // Oop bits of the resolved CompiledMethod
+    uint64_t jitEntry;       // JIT code entry address (0 = not compiled)
 };
 
 // ===== PAGE SIZE =====

@@ -107,7 +107,8 @@ public:
     void* lookupTier2(uint64_t methodBits) const { return tier2Lookup(methodBits); }
 
     // Add entry to mega cache (called by interpreter after method lookup)
-    void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex, uint64_t methodBits) {
+    void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex,
+                      uint64_t methodBits, uint64_t jitEntry = 0) {
         // Primary probe (matches stencil hash)
         size_t h = static_cast<size_t>(selectorBits ^ classIndex) & (MegaCacheSize - 1);
         // Secondary probe (rotated hash, matches stencil)
@@ -116,15 +117,17 @@ public:
         // Prefer primary; use secondary if primary is occupied by different entry
         if (megaCache_[h].selectorBits == selectorBits && megaCache_[h].classIndex == classIndex) {
             megaCache_[h].methodBits = methodBits;  // Update existing
+            megaCache_[h].jitEntry = jitEntry;
         } else if (megaCache_[h2].selectorBits == selectorBits && megaCache_[h2].classIndex == classIndex) {
             megaCache_[h2].methodBits = methodBits;  // Update existing in secondary
+            megaCache_[h2].jitEntry = jitEntry;
         } else if (megaCache_[h].selectorBits == 0) {
-            megaCache_[h] = {selectorBits, classIndex, methodBits};
+            megaCache_[h] = {selectorBits, classIndex, methodBits, jitEntry};
         } else if (megaCache_[h2].selectorBits == 0) {
-            megaCache_[h2] = {selectorBits, classIndex, methodBits};
+            megaCache_[h2] = {selectorBits, classIndex, methodBits, jitEntry};
         } else {
             // Both occupied — evict primary
-            megaCache_[h] = {selectorBits, classIndex, methodBits};
+            megaCache_[h] = {selectorBits, classIndex, methodBits, jitEntry};
         }
     }
 

@@ -5453,7 +5453,17 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
                 : (tag != 0 ? (tag | 0x80000000ULL) : 0);
             if (megaKey != 0) {
-                jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey, cached->method.rawBits());
+                uint64_t jitAddr = 0;
+                auto* jm = jitRuntime_.methodMap().lookup(cached->method.rawBits());
+                if (jm) {
+                    // Only store jitEntry for methods safe for J2J
+                    // (same check as pharo_jit_convert_send)
+                    bool hasPrim = (jm->methodHeader >> 16) & 1;
+                    if (!hasPrim || jm->hasPrimPrologue)
+                        jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
+                }
+                jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
+                                        cached->method.rawBits(), jitAddr);
             }
         }
 #endif
@@ -5565,7 +5575,15 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
             : (tag != 0 ? (tag | 0x80000000ULL) : 0);
         if (megaKey != 0) {
-            jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey, method.rawBits());
+            uint64_t jitAddr = 0;
+            auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+            if (jm) {
+                bool hasPrim = (jm->methodHeader >> 16) & 1;
+                if (!hasPrim || jm->hasPrimPrologue)
+                    jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
+            }
+            jitRuntime_.megaCacheAdd(selector.rawBits(), megaKey,
+                                    method.rawBits(), jitAddr);
         }
     }
 #endif
@@ -12082,8 +12100,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
                         ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
                         : (tag != 0 ? (tag | 0x80000000ULL) : 0);
-                    if (megaKey != 0)
-                        jitRuntime_.megaCacheAdd(sendSel.rawBits(), megaKey, resolved.rawBits());
+                    if (megaKey != 0) {
+                        uint64_t jitAddr = 0;
+                        auto* jm = jitRuntime_.methodMap().lookup(resolved.rawBits());
+                        if (jm) {
+                            bool hasPrim = (jm->methodHeader >> 16) & 1;
+                            if (!hasPrim || jm->hasPrimPrologue)
+                                jitAddr = reinterpret_cast<uint64_t>(jm->codeStart());
+                        }
+                        jitRuntime_.megaCacheAdd(sendSel.rawBits(), megaKey,
+                                                resolved.rawBits(), jitAddr);
+                    }
                 }
             }
 
