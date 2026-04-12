@@ -12220,9 +12220,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
                         }
 
-                        // Disable stencil J2J for callee (no save stack available)
-                        state.j2jSaveCursor = nullptr;
-                        state.j2jSaveLimit = nullptr;
+                        // Enable stencil J2J for callee — lets it chain
+                        // sends directly instead of falling back to C++.
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
+                        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
                         state.yieldCountdown = 1000;
@@ -12234,7 +12235,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 #endif
                         JIT_CALL(chainJM->codeStart(), &state);
                         chargeJITBytecodes(state);
-                        jitJ2JStencilCalls_++;
+                        jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
 
                         if (__builtin_expect(
                                 state.exitReason == jit::ExitReturn, 1)) {
@@ -12332,16 +12333,55 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.homeFrameDepth = SIZE_MAX;
                         }
 
-                        // Set up interpreter state from callee's exit
-                        method_ = chainTarget;
-                        homeMethod_ = chainTarget;
+                        // Materialize any J2J frames the callee accumulated
+                        if (state.j2jDepth > 0) {
+                            Oop nil = memory_.nil();
+                            for (int i = 0; i < state.j2jDepth; i++) {
+                                if (frameDepth_ >= StackOverflowLimit) break;
+                                J2JSave& save = j2jStack[i];
+                                SavedFrame& frame = savedFrames_[frameDepth_++];
+                                uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+                                bool isSelfRec = (jmBits & 1) != 0;
+                                jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
+                                    jmBits & ~static_cast<uintptr_t>(1));
+                                Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                                ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
+                                int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                                uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+                                frame.savedIP = save.ip;
+                                frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                                frame.savedMethod = saveMethod;
+                                frame.savedHomeMethod = saveMethod;
+                                frame.savedReceiver = save.receiver;
+                                frame.savedClosure = nil;
+                                frame.savedActiveContext = nil;
+                                frame.materializedContext = nil;
+                                frame.savedFP = save.tempBase - 1;
+                                frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                                frame.homeFrameDepth = SIZE_MAX;
+                            }
+                            chainCallDepth += state.j2jDepth;
+                            // Sync from innermost J2J frame
+                            if (state.jitMethod) {
+                                uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+                                jmBits &= ~static_cast<uintptr_t>(1);
+                                state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
+                                state.method = Oop::fromRawBits(
+                                    reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                            }
+                        }
+
+                        // Set up interpreter state from innermost exit frame
+                        Oop exitMethod = (state.j2jDepth > 0) ? state.method : chainTarget;
+                        method_ = exitMethod;
+                        homeMethod_ = exitMethod;
                         receiver_ = state.receiver;
                         stackPointer_ = state.sp;
                         instructionPointer_ = state.ip;
                         framePointer_ = state.tempBase - 1;
-                        argCount_ = nArgs;
+                        argCount_ = (state.j2jDepth > 0) ? state.argCount : nArgs;
                         {
-                            ObjectHeader* tMO = chainTarget.asObjectPtr();
+                            ObjectHeader* tMO = exitMethod.asObjectPtr();
                             bytecodeEnd_ = tMO->bytes() + tMO->byteSize();
                         }
                         closure_ = memory_.nil();
