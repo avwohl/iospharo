@@ -89,6 +89,19 @@ endif()
 set_source_files_properties(${PLUGIN_C_SOURCES} PROPERTIES LANGUAGE C)
 list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 
+# MIR JIT backend (Tier 2) — only needed when JIT is enabled and on non-iOS
+# MIR is compiled as C: just mir.c (includes mir-aarch64.c) and mir-gen.c
+# (includes mir-gen-aarch64.c). Platform selection is automatic via #ifdef.
+set(MIR_SOURCES
+    third_party/mir/mir.c
+    third_party/mir/mir-gen.c
+)
+set_source_files_properties(${MIR_SOURCES} PROPERTIES
+    LANGUAGE C
+    COMPILE_FLAGS "-w -DMIR_PARALLEL_GEN=0"
+)
+list(APPEND VM_SOURCES ${MIR_SOURCES})
+
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 
 # JIT: respect command-line override, default to enabled on non-iOS
@@ -130,6 +143,7 @@ target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/jpeg
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/testlib
     ${CMAKE_SOURCE_DIR}/src/platform
+    ${CMAKE_SOURCE_DIR}/third_party/mir
     ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
     ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
 )
