@@ -2157,6 +2157,34 @@ extern "C" void stencil_flush2(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// State 3 → E: write x21 (3rd), x20 (NOS), x19 (TOS) to stack
+extern "C" void stencil_flush3(JITState* s) {
+    uint64_t tos, nos, third;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    asm volatile("mov %0, x20" : "=r"(nos));
+    asm volatile("mov %0, x21" : "=r"(third));
+    s->sp[0].bits = third;
+    s->sp[1].bits = nos;
+    s->sp[2].bits = tos;
+    s->sp += 3;
+    _HOLE_CONTINUE(s);
+}
+
+// State 4 → E: write x22 (4th), x21 (3rd), x20 (NOS), x19 (TOS) to stack
+extern "C" void stencil_flush4(JITState* s) {
+    uint64_t tos, nos, third, fourth;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    asm volatile("mov %0, x20" : "=r"(nos));
+    asm volatile("mov %0, x21" : "=r"(third));
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    s->sp[0].bits = fourth;
+    s->sp[1].bits = third;
+    s->sp[2].bits = nos;
+    s->sp[3].bits = tos;
+    s->sp += 4;
+    _HOLE_CONTINUE(s);
+}
+
 // ----- PUSH TEMP variants -----
 
 // E → 1: load temp into x19
@@ -2176,14 +2204,37 @@ extern "C" void stencil_pushTemp_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
-// 2 → 2: spill x20 to memory, shift x19 to x20, load new x19
+// 2 → 3: shift x20→x21, x19→x20, load new x19
 extern "C" void stencil_pushTemp_2(JITState* s) {
     int idx = OPERAND;
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->tempBase[idx].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4: shift x21→x22, x20→x21, x19→x20, load new x19
+extern "C" void stencil_pushTemp_3(JITState* s) {
+    int idx = OPERAND;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->tempBase[idx].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22 to memory, shift x21→x22, x20→x21, x19→x20, load new x19
+extern "C" void stencil_pushTemp_4(JITState* s) {
+    int idx = OPERAND;
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = s->tempBase[idx].bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2219,6 +2270,7 @@ extern "C" void stencil_pushRecvVar_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// 2 → 3: shift x20→x21, x19→x20, load new x19
 extern "C" void stencil_pushRecvVar_2(JITState* s) {
     int idx = OPERAND;
     ObjectHeader* obj = asObjectPtr(s->receiver);
@@ -2228,11 +2280,46 @@ extern "C" void stencil_pushRecvVar_2(JITState* s) {
     } else {
         val = (*(Oop*)&_HOLE_NIL_OOP).bits;
     }
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4
+extern "C" void stencil_pushRecvVar_3(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t val;
+    if (static_cast<uint64_t>(idx) < obj->slotCount()) {
+        val = obj->slots()[idx].bits;
+    } else {
+        val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    }
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22
+extern "C" void stencil_pushRecvVar_4(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t val;
+    if (static_cast<uint64_t>(idx) < obj->slotCount()) {
+        val = obj->slots()[idx].bits;
+    } else {
+        val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    }
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     asm volatile("mov x19, %0" : : "r"(val));
     _HOLE_CONTINUE(s);
@@ -2255,13 +2342,37 @@ extern "C" void stencil_pushLitConst_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// 2 → 3
 extern "C" void stencil_pushLitConst_2(JITState* s) {
     int idx = OPERAND;
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->literals[idx].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4
+extern "C" void stencil_pushLitConst_3(JITState* s) {
+    int idx = OPERAND;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->literals[idx].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22
+extern "C" void stencil_pushLitConst_4(JITState* s) {
+    int idx = OPERAND;
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = s->literals[idx].bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2289,15 +2400,43 @@ extern "C" void stencil_pushLitVar_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// 2 → 3
 extern "C" void stencil_pushLitVar_2(JITState* s) {
     int idx = OPERAND;
     Oop assoc = s->literals[idx];
     ObjectHeader* obj = asObjectPtr(assoc);
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = obj->slots()[1].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4
+extern "C" void stencil_pushLitVar_3(JITState* s) {
+    int idx = OPERAND;
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = obj->slots()[1].bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22
+extern "C" void stencil_pushLitVar_4(JITState* s) {
+    int idx = OPERAND;
+    Oop assoc = s->literals[idx];
+    ObjectHeader* obj = asObjectPtr(assoc);
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = obj->slots()[1].bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2319,12 +2458,34 @@ extern "C" void stencil_pushReceiver_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// 2 → 3
 extern "C" void stencil_pushReceiver_2(JITState* s) {
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->receiver.bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4
+extern "C" void stencil_pushReceiver_3(JITState* s) {
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = s->receiver.bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22
+extern "C" void stencil_pushReceiver_4(JITState* s) {
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = s->receiver.bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2344,11 +2505,31 @@ extern "C" void stencil_pushTrue_1(JITState* s) {
     asm volatile("mov x19, %0" : : "r"(val));
     _HOLE_CONTINUE(s);
 }
+// 2 → 3
 extern "C" void stencil_pushTrue_2(JITState* s) {
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_TRUE_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 3 → 4
+extern "C" void stencil_pushTrue_3(JITState* s) {
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_TRUE_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 4 → 4: spill x22
+extern "C" void stencil_pushTrue_4(JITState* s) {
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal; s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = (*(Oop*)&_HOLE_TRUE_OOP).bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2366,11 +2547,31 @@ extern "C" void stencil_pushFalse_1(JITState* s) {
     asm volatile("mov x19, %0" : : "r"(val));
     _HOLE_CONTINUE(s);
 }
+// 2 → 3
 extern "C" void stencil_pushFalse_2(JITState* s) {
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_FALSE_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 3 → 4
+extern "C" void stencil_pushFalse_3(JITState* s) {
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_FALSE_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 4 → 4: spill x22
+extern "C" void stencil_pushFalse_4(JITState* s) {
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal; s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = (*(Oop*)&_HOLE_FALSE_OOP).bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2388,11 +2589,31 @@ extern "C" void stencil_pushNil_1(JITState* s) {
     asm volatile("mov x19, %0" : : "r"(val));
     _HOLE_CONTINUE(s);
 }
+// 2 → 3
 extern "C" void stencil_pushNil_2(JITState* s) {
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 3 → 4
+extern "C" void stencil_pushNil_3(JITState* s) {
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    uint64_t val = (*(Oop*)&_HOLE_NIL_OOP).bits;
+    asm volatile("mov x19, %0" : : "r"(val));
+    _HOLE_CONTINUE(s);
+}
+// 4 → 4: spill x22
+extern "C" void stencil_pushNil_4(JITState* s) {
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal; s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     uint64_t val = (*(Oop*)&_HOLE_NIL_OOP).bits;
     asm volatile("mov x19, %0" : : "r"(val));
@@ -2410,6 +2631,21 @@ extern "C" void stencil_pop_2(JITState* s) {
 // 1 → E: discard x19
 extern "C" void stencil_pop_1(JITState* s) {
     // TOS dropped, state now Empty
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 2: discard x19, shift x20→x19, x21→x20
+extern "C" void stencil_pop_3(JITState* s) {
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 3: discard x19, shift x20→x19, x21→x20, x22→x21
+extern "C" void stencil_pop_4(JITState* s) {
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    asm volatile("mov x21, x22" :::);
     _HOLE_CONTINUE(s);
 }
 
@@ -2434,13 +2670,30 @@ extern "C" void stencil_dup_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
-// 2 → 2: spill x20, x20 = x19 (duplicate TOS)
+// 2 → 3: shift x20→x21, x19→x20 (x19 stays as TOS copy)
 extern "C" void stencil_dup_2(JITState* s) {
-    uint64_t nos;
-    asm volatile("mov %0, x20" : "=r"(nos));
-    Oop spillVal; spillVal.bits = nos;
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 4: shift x21→x22, x20→x21, x19→x20
+extern "C" void stencil_dup_3(JITState* s) {
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
+    asm volatile("mov x20, x19" :::);
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 4: spill x22, shift x21→x22, x20→x21, x19→x20
+extern "C" void stencil_dup_4(JITState* s) {
+    uint64_t fourth;
+    asm volatile("mov %0, x22" : "=r"(fourth));
+    Oop spillVal; spillVal.bits = fourth;
     *(s->sp) = spillVal;
     s->sp++;
+    asm volatile("mov x22, x21" :::);
+    asm volatile("mov x21, x20" :::);
     asm volatile("mov x20, x19" :::);
     _HOLE_CONTINUE(s);
 }
@@ -2486,6 +2739,29 @@ extern "C" void stencil_popStoreTemp_1(JITState* s) {
     _HOLE_CONTINUE(s);
 }
 
+// 3 → 2: store x19 to temp, shift x20→x19, x21→x20
+extern "C" void stencil_popStoreTemp_3(JITState* s) {
+    int idx = OPERAND;
+    uint64_t tos;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    s->tempBase[idx].bits = tos;
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 3: store x19 to temp, shift x20→x19, x21→x20, x22→x21
+extern "C" void stencil_popStoreTemp_4(JITState* s) {
+    int idx = OPERAND;
+    uint64_t tos;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    s->tempBase[idx].bits = tos;
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    asm volatile("mov x21, x22" :::);
+    _HOLE_CONTINUE(s);
+}
+
 // ----- STORE RECV VAR variants -----
 
 // 1: store x19 to receiver field, keep in register
@@ -2518,6 +2794,31 @@ extern "C" void stencil_popStoreRecvVar_1(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     obj->slots()[idx].bits = tos;
+    _HOLE_CONTINUE(s);
+}
+
+// 3 → 2: store x19 to receiver field, shift x20→x19, x21→x20
+extern "C" void stencil_popStoreRecvVar_3(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t tos;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    obj->slots()[idx].bits = tos;
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    _HOLE_CONTINUE(s);
+}
+
+// 4 → 3: store x19 to receiver field, shift x20→x19, x21→x20, x22→x21
+extern "C" void stencil_popStoreRecvVar_4(JITState* s) {
+    int idx = OPERAND;
+    ObjectHeader* obj = asObjectPtr(s->receiver);
+    uint64_t tos;
+    asm volatile("mov %0, x19" : "=r"(tos));
+    obj->slots()[idx].bits = tos;
+    asm volatile("mov x19, x20" :::);
+    asm volatile("mov x20, x21" :::);
+    asm volatile("mov x21, x22" :::);
     _HOLE_CONTINUE(s);
 }
 
@@ -2601,6 +2902,154 @@ extern "C" void stencil_mulSmallInt_2(JITState* s) {
     }
 }
 
+// ----- ARITHMETIC _3 and _4 variants (state 3→2, 4→3) -----
+// Same computation as _2 but compact deeper registers on success,
+// and spill 3 or 4 cached values on overflow.
+
+// Helper: spill 3 cached registers + a/b on overflow (state 3)
+#define ARITH_OVERFLOW_3(s, a_bits, b_bits) do { \
+    uint64_t _third; \
+    asm volatile("mov %0, x21" : "=r"(_third)); \
+    Oop _t; _t.bits = _third; \
+    s->sp[0] = _t; \
+    Oop _an, _bt; _an.bits = a_bits; _bt.bits = b_bits; \
+    s->sp[1] = _an; s->sp[2] = _bt; s->sp += 3; \
+    s->ip = s->ip + OPERAND; \
+    _HOLE_RT_ARITH_OVERFLOW(s); \
+} while(0)
+
+// Helper: spill 4 cached registers + a/b on overflow (state 4)
+#define ARITH_OVERFLOW_4(s, a_bits, b_bits) do { \
+    uint64_t _third, _fourth; \
+    asm volatile("mov %0, x21" : "=r"(_third)); \
+    asm volatile("mov %0, x22" : "=r"(_fourth)); \
+    Oop _t4, _t3; _t4.bits = _fourth; _t3.bits = _third; \
+    s->sp[0] = _t4; s->sp[1] = _t3; \
+    Oop _an, _bt; _an.bits = a_bits; _bt.bits = b_bits; \
+    s->sp[2] = _an; s->sp[3] = _bt; s->sp += 4; \
+    s->ip = s->ip + OPERAND; \
+    _HOLE_RT_ARITH_OVERFLOW(s); \
+} while(0)
+
+extern "C" void stencil_addSmallInt_3(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va + vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_addSmallInt_4(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va + vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            asm volatile("mov x21, x22" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_subSmallInt_3(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va - vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_subSmallInt_4(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        int64_t result = va - vb;
+        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            asm volatile("mov x21, x22" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_mulSmallInt_3(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        __int128 wide = (__int128)va * vb;
+        int64_t result = (int64_t)wide;
+        if (wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_mulSmallInt_4(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        int64_t va = static_cast<int64_t>(a_bits) >> 3;
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3;
+        __int128 wide = (__int128)va * vb;
+        int64_t result = (int64_t)wide;
+        if (wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            asm volatile("mov x19, %0" : : "r"(r));
+            asm volatile("mov x20, x21" :::);
+            asm volatile("mov x21, x22" :::);
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+}
+
 // ----- COMPARISON variants (state 2 → 1) -----
 
 // Macro for comparison _2 variants: read x19/x20, compare, write result to x19
@@ -2667,6 +3116,117 @@ extern "C" void stencil_notEqualSmallInt_2(JITState* s) {
 }
 
 #undef COMPARISON_2_STENCIL
+
+// ----- COMPARISON _3 and _4 variants -----
+
+#define COMPARISON_3_STENCIL(name, op) \
+extern "C" void name(JITState* s) { \
+    uint64_t a_bits, b_bits; \
+    asm volatile("mov %0, x20" : "=r"(a_bits)); \
+    asm volatile("mov %0, x19" : "=r"(b_bits)); \
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) { \
+        int64_t va = static_cast<int64_t>(a_bits) >> 3; \
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3; \
+        uint64_t r = (va op vb) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits; \
+        asm volatile("mov x19, %0" : : "r"(r)); \
+        asm volatile("mov x20, x21" :::); \
+        _HOLE_CONTINUE(s); \
+        return; \
+    } \
+    ARITH_OVERFLOW_3(s, a_bits, b_bits); \
+}
+
+COMPARISON_3_STENCIL(stencil_lessThanSmallInt_3, <)
+COMPARISON_3_STENCIL(stencil_greaterThanSmallInt_3, >)
+COMPARISON_3_STENCIL(stencil_lessEqualSmallInt_3, <=)
+COMPARISON_3_STENCIL(stencil_greaterEqualSmallInt_3, >=)
+
+extern "C" void stencil_equalSmallInt_3(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        uint64_t r = (a_bits == b_bits) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_notEqualSmallInt_3(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        uint64_t r = (a_bits != b_bits) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+}
+
+#undef COMPARISON_3_STENCIL
+
+#define COMPARISON_4_STENCIL(name, op) \
+extern "C" void name(JITState* s) { \
+    uint64_t a_bits, b_bits; \
+    asm volatile("mov %0, x20" : "=r"(a_bits)); \
+    asm volatile("mov %0, x19" : "=r"(b_bits)); \
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) { \
+        int64_t va = static_cast<int64_t>(a_bits) >> 3; \
+        int64_t vb = static_cast<int64_t>(b_bits) >> 3; \
+        uint64_t r = (va op vb) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits; \
+        asm volatile("mov x19, %0" : : "r"(r)); \
+        asm volatile("mov x20, x21" :::); \
+        asm volatile("mov x21, x22" :::); \
+        _HOLE_CONTINUE(s); \
+        return; \
+    } \
+    ARITH_OVERFLOW_4(s, a_bits, b_bits); \
+}
+
+COMPARISON_4_STENCIL(stencil_lessThanSmallInt_4, <)
+COMPARISON_4_STENCIL(stencil_greaterThanSmallInt_4, >)
+COMPARISON_4_STENCIL(stencil_lessEqualSmallInt_4, <=)
+COMPARISON_4_STENCIL(stencil_greaterEqualSmallInt_4, >=)
+
+extern "C" void stencil_equalSmallInt_4(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        uint64_t r = (a_bits == b_bits) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        asm volatile("mov x21, x22" :::);
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+}
+
+extern "C" void stencil_notEqualSmallInt_4(JITState* s) {
+    uint64_t a_bits, b_bits;
+    asm volatile("mov %0, x20" : "=r"(a_bits));
+    asm volatile("mov %0, x19" : "=r"(b_bits));
+    if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
+        uint64_t r = (a_bits != b_bits) ? (*(Oop*)&_HOLE_TRUE_OOP).bits : (*(Oop*)&_HOLE_FALSE_OOP).bits;
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        asm volatile("mov x21, x22" :::);
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+}
+
+#undef COMPARISON_4_STENCIL
+#undef ARITH_OVERFLOW_3
+#undef ARITH_OVERFLOW_4
 
 // ----- CONDITIONAL JUMP variants (state 1 → E) -----
 // These consume TOS (boolean) and branch.

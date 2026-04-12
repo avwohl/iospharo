@@ -165,8 +165,8 @@ typedef void (*StencilFunc)(JITState*);
 
 // ===== JIT CALL MACRO =====
 //
-// SimStack stencils clobber x19/x20 via inline asm (without clobber lists).
-// When calling JIT code from C++, we must tell the compiler that x19/x20
+// SimStack stencils clobber x19-x22 via inline asm (without clobber lists).
+// When calling JIT code from C++, we must tell the compiler that x19-x22
 // may be modified, so it saves/restores them around the call.
 #ifdef __aarch64__
 #define JIT_CALL(entry_ptr, state_ptr) do { \
@@ -178,7 +178,7 @@ typedef void (*StencilFunc)(JITState*);
         : \
         : [s] "r"(_jit_s), [e] "r"(_jit_e) \
         : "x0","x1","x2","x3","x4","x5","x6","x7","x8","x9","x10","x11", \
-          "x12","x13","x14","x15","x16","x17","x19","x20","x30", \
+          "x12","x13","x14","x15","x16","x17","x19","x20","x21","x22","x30", \
           "memory","cc" \
     ); \
 } while(0)
