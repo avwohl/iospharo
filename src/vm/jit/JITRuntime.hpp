@@ -103,6 +103,9 @@ public:
     // Megamorphic method cache — probed by stencils after PIC miss
     MegaCacheEntry* megaCache() { return megaCache_; }
 
+    // Public T2 lookup for jit_t2_send helper
+    void* lookupTier2(uint64_t methodBits) const { return tier2Lookup(methodBits); }
+
     // Add entry to mega cache (called by interpreter after method lookup)
     void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex, uint64_t methodBits) {
         // Primary probe (matches stencil hash)
@@ -188,6 +191,13 @@ extern "C" void jit_rt_arith_overflow(JITState* state);
 // Reads cachedTarget (method Oop), sendArgCount, ip from state.
 extern "C" void jit_rt_push_frame(JITState* state);
 extern "C" void jit_rt_pop_frame(JITState* state);
+
+// Tier 2 inline send helper: called from MIR-generated code at each send site.
+// Performs method lookup + callee JIT execution inline, avoiding exit/resume overhead.
+// On ExitReturn from callee: pops args, pushes retval, sets exitReason = ExitNone.
+// On non-ExitReturn: pushes SavedFrame for T2 caller, propagates callee exit reason.
+// On lookup failure or non-compiled callee: sets exitReason = ExitSend (chain loop handles).
+extern "C" void jit_t2_send(JITState* state);
 
 } // namespace jit
 } // namespace pharo

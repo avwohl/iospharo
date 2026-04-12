@@ -156,6 +156,10 @@ private:
     int bcStartFromObj_ = 0;     // Compile-time: offset from object start to bytecodes
     MIR_label_t resumeDispatchLabel_;  // Label for the resume dispatch block
 
+    // MIR items for inline send helper (created per-compilation)
+    MIR_item_t sendProto_ = nullptr;
+    MIR_item_t sendImport_ = nullptr;
+
     // --- Dependencies ---
     CodeZone&     zone_;
     MethodMap&    methodMap_;

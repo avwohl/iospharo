@@ -84,6 +84,7 @@ extern "C" void jit_t2_send(JITState* state) {
     using namespace pharo::jit;
 
     static int t2SendCount = 0;
+    static int t2SendDepth = 0;
     static bool t2SendDebug = !!getenv("T2_SEND_DBG");
 
     Interpreter* interp = state->interp;
@@ -93,12 +94,14 @@ extern "C" void jit_t2_send(JITState* state) {
     int nArgs = state->sendArgCount;
     Oop rcvr = state->sp[-(nArgs + 1)];
 
-    if (t2SendDebug && t2SendCount < 20) {
-        fprintf(stderr, "[T2SEND#%d] sel=0x%llx nArgs=%d rcvr=0x%llx sp=%p sp[-1]=0x%llx\n",
-                t2SendCount, (unsigned long long)selector.rawBits(), nArgs,
+    if (t2SendDebug && t2SendCount < 30) {
+        fprintf(stderr, "[T2SEND#%d d=%d] sel=0x%llx nArgs=%d rcvr=0x%llx sp=%p ip=%p\n",
+                t2SendCount, t2SendDepth,
+                (unsigned long long)selector.rawBits(), nArgs,
                 (unsigned long long)rcvr.rawBits(), (void*)state->sp,
-                (unsigned long long)state->sp[-1].rawBits());
+                (void*)state->ip);
     }
+    t2SendDepth++;
 
     Oop rcvrClass = mem->classOf(rcvr);
 
@@ -106,6 +109,7 @@ extern "C" void jit_t2_send(JITState* state) {
     Oop resolved = interp->lookupMethodForSend(selector, rcvrClass);
     if (!resolved.isObject() || resolved.rawBits() < 0x10000) {
         state->exitReason = ExitSend;
+        t2SendDepth--;
         return;
     }
 
@@ -114,6 +118,7 @@ extern "C" void jit_t2_send(JITState* state) {
     JITMethod* jm = mm->lookup(resolved.rawBits());
     if (!jm || !jm->isExecutable()) {
         state->exitReason = ExitSend;
+        t2SendDepth--;
         return;
     }
 
@@ -121,12 +126,14 @@ extern "C" void jit_t2_send(JITState* state) {
     bool hasPrim = (jm->methodHeader >> 16) & 1;
     if (hasPrim && !jm->hasPrimPrologue) {
         state->exitReason = ExitSend;
+        t2SendDepth--;
         return;
     }
 
     // Validate receiver is a compiled method
     if (resolved.asObjectPtr()->classIndex() != interp->compiledMethodClassIdx()) {
         state->exitReason = ExitSend;
+        t2SendDepth--;
         return;
     }
 
@@ -202,9 +209,10 @@ extern "C" void jit_t2_send(JITState* state) {
         JIT_CALL(jm->codeStart(), state);
     }
 
-    if (t2SendDebug && t2SendCount < 20) {
-        fprintf(stderr, "[T2SEND#%d] callee exit=%d retVal=0x%llx sp=%p\n",
-                t2SendCount, state->exitReason,
+    if (t2SendDebug && t2SendCount < 30) {
+        fprintf(stderr, "[T2SEND#%d d=%d] callee exit=%d retVal=0x%llx sp=%p\n",
+                t2SendCount, t2SendDepth,
+                state->exitReason,
                 (unsigned long long)state->returnValue.rawBits(), (void*)state->sp);
     }
     t2SendCount++;
@@ -229,7 +237,15 @@ extern "C" void jit_t2_send(JITState* state) {
         state->sp[-(nArgs + 1)] = retVal;
         state->sp -= nArgs;  // sp[-1] = retVal, sp[0] = next free
 
+        if (t2SendDebug && t2SendCount < 50) {
+            fprintf(stderr, "[T2SEND-RET d=%d] restored sp=%p rcv=0x%llx retVal=0x%llx\n",
+                    t2SendDepth, (void*)state->sp,
+                    (unsigned long long)state->receiver.rawBits(),
+                    (unsigned long long)retVal.rawBits());
+        }
+
         state->exitReason = ExitNone;
+        t2SendDepth--;
         return;
     }
 
@@ -255,6 +271,7 @@ extern "C" void jit_t2_send(JITState* state) {
     // (method_, ip_, sp_ are synced by the chain loop's ExitSend handler.)
 
     // Don't restore caller state — state has callee context for chain loop.
+    t2SendDepth--;
     return;
 }
 

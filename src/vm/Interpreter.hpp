@@ -975,6 +975,42 @@ public:
     /// callerMethod is the JIT method whose IC is being filled (for debug only).
     void upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
                         Oop callerMethod = Oop::fromRawBits(0));
+
+    /// Method lookup for T2 inline send helper.
+    /// Probes method cache first, falls back to full hierarchy lookup.
+    inline Oop lookupMethodForSend(Oop selector, Oop rcvrClass) {
+        MethodCacheEntry* ce = probeCache(selector, rcvrClass);
+        if (ce) return ce->method;
+        Oop resolved = lookupMethod(selector, rcvrClass);
+        if (!resolved.isNil()) cacheMethod(selector, rcvrClass, resolved);
+        return resolved;
+    }
+
+    /// Push a SavedFrame for a T2 caller whose inline send callee bailed.
+    /// Called from jit_t2_send when the callee exits with non-ExitReturn.
+    inline void pushSavedFrameForT2(Oop method, Oop recv, Oop* tempBase,
+                                     int argCount, uint8_t* ip) {
+        if (frameDepth_ >= StackOverflowLimit) return;
+        Oop nil = memory_.nil();
+        ObjectHeader* methObj = method.asObjectPtr();
+        SavedFrame& frame = savedFrames_[frameDepth_++];
+        frame.savedIP = ip;
+        frame.savedBytecodeEnd = methObj->bytes() + methObj->byteSize();
+        frame.savedMethod = method;
+        frame.savedHomeMethod = method;
+        frame.savedReceiver = recv;
+        frame.savedClosure = nil;
+        frame.savedActiveContext = nil;
+        frame.materializedContext = nil;
+        frame.savedFP = tempBase - 1;
+        frame.savedArgCount = argCount;
+        frame.homeFrameDepth = SIZE_MAX;
+    }
+
+    uint32_t compiledMethodClassIdx() const { return compiledMethodClassIndex_; }
+
+    jit::JITRuntime& jitRuntime() { return jitRuntime_; }
+
 private:
 #endif
 
