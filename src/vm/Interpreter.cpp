@@ -11015,15 +11015,20 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     if ((extra & (1ULL << 60)) == 0 && j2jEnabled && !isClassReceiver) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
-            // Check if target has a primitive but no prologue
+            // Check if target has a primitive but no prologue.
+            // Quick constant prims (257-263: return true/false/nil/-1/0/1/2)
+            // are safe for J2J — their bytecodes produce the same result.
             bool unsafePrim = false;
             if (!target->hasPrimPrologue) {
                 ObjectHeader* methObj = resolvedMethod.asObjectPtr();
                 Oop headerOop = methObj->slotAt(0);
                 if (headerOop.isSmallInteger()) {
                     int64_t hdr = headerOop.asSmallInteger();
-                    if ((hdr >> 16) & 1)  // hasPrimitive flag
-                        unsafePrim = true;
+                    if ((hdr >> 16) & 1) {  // hasPrimitive flag
+                        int pi = primitiveIndexOf(resolvedMethod);
+                        if (!(pi >= 257 && pi <= 263))
+                            unsafePrim = true;
+                    }
                 }
             }
             if (!unsafePrim && !isJ2JBanned(resolvedMethod.rawBits())) {
@@ -11141,7 +11146,12 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 quickPrimExtra = (1ULL << 61);
             }
             if (quickPrimExtra == 0) {
-                return;  // unsafe primitive we can't inline
+                // Quick constant prims (257-263) are safe for J2J:
+                // bytecodes produce the same result as the primitive.
+                // Fall through to J2J entry setting below.
+                if (!(primIdx >= 257 && primIdx <= 263)) {
+                    return;  // genuinely unsafe primitive
+                }
             }
             // Fall through to IC search with quickPrimExtra
         }
