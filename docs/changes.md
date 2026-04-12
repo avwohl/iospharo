@@ -2,6 +2,27 @@
 
 2026-04-12
 
+## T2 decoder: ExtSuperSend (0xEB) support
+
+Added 0xEB (ExtSuperSend) to the T2 bytecode decoder with same literal
+index / arg count encoding as ExtSend. The emitter stores the selector
+in cachedTarget and exits with EXIT_SEND. The chain loop's ExitSend
+handler detects super sends (0xEB at ip) and does super-class lookup.
+
+## MIR opt level 2 enabled — fix subtraction bug
+
+Replaced MIR_SUBO (broken at opt level 2) with tagged subtraction +
+manual XOR overflow detection. Enables MIR register allocation.
+fib(28): 10.6ms, tinyBenchmarks: 5340ms.
+
+## T2/chain-loop SavedFrame fix — remove backward-jump filter
+
+jit_t2_send's fallback now restores the T2 caller state and exits with
+ExitSend (instead of pushing a SavedFrame). The chain loop handles the
+send from scratch. Eliminates the SavedFrame/chain-loop mismatch that
+caused infinite loops with straight-line T2 methods. Backward-jump-only
+T2 filter removed — T2 now compiles all decodable methods.
+
 ## Fix tinyBenchmarks / sieve hangs (T2 interaction bugs)
 
 Multiple T2 fixes to unblock tinyBenchmarks and sieve:
