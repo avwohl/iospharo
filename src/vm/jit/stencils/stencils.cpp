@@ -1036,6 +1036,7 @@ extern "C" void (*_HOLE_RT_PUSH_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_J2J_CALL)(JITState*);
 extern "C" uint64_t (*_HOLE_RT_ARRAY_PRIM)(JITState*, uint64_t);
+extern "C" uint64_t (*_HOLE_RT_NEW_PRIM)(JITState*, uint64_t);
 
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
@@ -1098,7 +1099,14 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);                   \
         if (primKind != 0) {                                                  \
             /* Array prims (at:/at:put:/size) — out-of-line helper call */    \
-            if (primKind >= 14) {                                             \
+            if (primKind >= 17) {                                             \
+                /* new/new: — out-of-line allocation helper */                \
+                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs; \
+                if (_HOLE_RT_NEW_PRIM(s, info)) {                             \
+                    _HOLE_CONTINUE(s);                                        \
+                    return;                                                   \
+                }                                                             \
+            } else if (primKind >= 14) {                                      \
                 uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs; \
                 if (_HOLE_RT_ARRAY_PRIM(s, info)) {                           \
                     _HOLE_CONTINUE(s);                                        \

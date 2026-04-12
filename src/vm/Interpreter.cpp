@@ -10947,6 +10947,8 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 60: return 14;  // at:
     case 61: return 15;  // at:put:
     case 62: return 16;  // size
+    case 70: return 17;  // new (basicNew)
+    case 71: return 18;  // new: (basicNew:)
     default: return 0;
     }
 }

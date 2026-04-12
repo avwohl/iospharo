@@ -160,6 +160,153 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
     return 0;
 }
 
+// Out-of-line new/new: primitive handler for IC hit path.
+// Called from sendJ2J stencil when primKind == 17 (new) or 18 (new:).
+// info = (primKind << 8) | nArgs
+// Returns 1 on success (new object pushed to sp), 0 on failure.
+extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
+    uint8_t primKind = (uint8_t)(info >> 8);
+    int nArgs = (int)(info & 0xFF);
+
+    // Receiver is the class (at sp[-(nArgs+1)])
+    uint64_t classBits = s->sp[-(nArgs + 1)].rawBits();
+    if ((classBits & 7) != 0 || classBits < 0x10000)
+        return 0;  // Not an object
+
+    // For new: (primKind 18), size arg must be a SmallInteger
+    int64_t indexableSize = 0;
+    if (primKind == 18) {
+        uint64_t sizeBits = s->sp[-nArgs].rawBits();
+        if ((sizeBits & 7) != 1) return 0;
+        indexableSize = (int64_t)sizeBits >> 3;
+        if (indexableSize < 0) return 0;
+    }
+
+    // Read class format (slot 2 of the class object)
+    // Slot layout: [superclass, methodDict, format, ...]
+    // format encodes: bits 0-15 = fixedSize, bits 16-20 = instSpec
+    Oop* classSlots = reinterpret_cast<Oop*>(classBits + 8);  // skip header
+    uint64_t fmtBits = classSlots[2].rawBits();  // format is slot 2
+    if ((fmtBits & 7) != 1) return 0;  // format must be SmallInteger
+    int64_t format = (int64_t)fmtBits >> 3;
+
+    int instSpec = (int)((format >> 16) & 0x1F);
+    size_t fixedSize = format & 0xFFFF;
+
+    if (primKind == 17) {
+        // new: fixed-size class only (instSpec 0 or 1)
+        if (instSpec >= 2) return 0;
+        indexableSize = 0;
+    } else {
+        // new:: variable-size class required (instSpec >= 2)
+        if (instSpec < 2) return 0;
+    }
+
+    // Compute slot count based on instance specification
+    size_t slotCount;
+    bool isBytes = instSpec >= 16;
+    if (isBytes) {
+        // Byte-indexed (ByteString, ByteArray, etc.)
+        slotCount = ((size_t)indexableSize + 7) / 8;
+    } else if (instSpec >= 10 && instSpec <= 11) {
+        // 32-bit words
+        slotCount = ((size_t)indexableSize * 4 + 7) / 8;
+    } else if (instSpec >= 12 && instSpec <= 15) {
+        // 16-bit words
+        slotCount = ((size_t)indexableSize * 2 + 7) / 8;
+    } else if (instSpec == 9) {
+        // 64-bit words
+        slotCount = (size_t)indexableSize;
+    } else {
+        // Pointer-indexed (Array, etc.) or fixed+variable
+        slotCount = fixedSize + (size_t)indexableSize;
+    }
+
+    // Limit: don't inline huge allocations
+    if (slotCount > 1024) return 0;
+
+    // Compute object format for header
+    uint8_t objFormat;
+    if (isBytes) {
+        size_t padding = slotCount * 8 - (size_t)indexableSize;
+        objFormat = (uint8_t)(16 + padding);  // ObjectFormat::Indexable8 + padding
+    } else if (instSpec >= 12 && instSpec <= 15) {
+        size_t padding = slotCount * 8 / 2 - (size_t)indexableSize;
+        objFormat = (uint8_t)(12 + padding);
+    } else if (instSpec >= 10 && instSpec <= 11) {
+        size_t padding = slotCount * 8 / 4 - (size_t)indexableSize;
+        objFormat = (uint8_t)(10 + padding);
+    } else if (instSpec == 9) {
+        objFormat = 9;
+    } else if (slotCount == 0 && fixedSize == 0) {
+        objFormat = 0;  // zero-size
+    } else if (instSpec >= 2) {
+        objFormat = 2;  // variable pointer (Array)
+    } else {
+        objFormat = 1;  // fixed pointer
+    }
+
+    // Need overflow slot for > 254 slots
+    bool hasOverflow = slotCount >= 255;
+    size_t headerSize = 8 + (hasOverflow ? 8 : 0);
+    size_t totalSize = headerSize + slotCount * 8;
+    totalSize = (totalSize + 7) & ~7ULL;
+    if (totalSize < 16) totalSize = 16;
+
+    // Get class index
+    ObjectMemory& mem = s->interp->memory();
+    uint32_t classIndex = mem.indexOfClass(Oop::fromRawBits(classBits));
+    if (classIndex == 0) return 0;
+
+    // Bump allocation from old space
+    uint8_t* freePtr = mem.oldSpaceFree();
+    uint8_t* endPtr = freePtr + totalSize;
+    if (endPtr > mem.oldSpaceEnd()) return 0;
+
+    // Allocate
+    ObjectHeader* obj;
+    if (hasOverflow) {
+        uint64_t* overflow = reinterpret_cast<uint64_t*>(freePtr);
+        *overflow = slotCount | (0xFFULL << 56);
+        obj = reinterpret_cast<ObjectHeader*>(freePtr + 8);
+    } else {
+        obj = reinterpret_cast<ObjectHeader*>(freePtr);
+    }
+
+    // Build header: slotCount | hash | format | classIndex | flags
+    uint8_t headerSlots = hasOverflow ? 255 : (uint8_t)slotCount;
+    uint64_t header = ObjectHeader::makeHeader(headerSlots, 0,
+        static_cast<ObjectFormat>(objFormat), classIndex);
+    *reinterpret_cast<uint64_t*>(obj) = header;
+
+    // Zero-fill all slots (includes nil for pointer objects, 0 for bytes)
+    if (slotCount > 0) {
+        std::memset(reinterpret_cast<uint8_t*>(obj) + 8, 0, slotCount * 8);
+    }
+
+    // For pointer objects, fill with nil instead of zero
+    if (!isBytes && instSpec < 9) {
+        uint64_t nilBits = mem.nil().rawBits();
+        if (nilBits != 0) {  // nil is Oop(0) in our encoding, so skip if 0
+            Oop* slots = reinterpret_cast<Oop*>(reinterpret_cast<uint8_t*>(obj) + 8);
+            for (size_t i = 0; i < slotCount; i++) {
+                slots[i] = Oop::fromRawBits(nilBits);
+            }
+        }
+    }
+
+    // Commit allocation
+    mem.setOldSpaceFreePointer(endPtr);
+
+    // Convert to Oop
+    Oop newObj = mem.oopFromPointer(obj);
+
+    // Push result: replace receiver (and arg for new:) with new object
+    s->sp[-(nArgs + 1)] = newObj;
+    s->sp -= nArgs;
+    return 1;
+}
+
 extern "C" void jit_rt_j2j_call(JITState* state) {
     // Merged J2J call: push frame, call callee, pop frame in one C++ call.
     //
@@ -273,6 +420,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.popFrame = reinterpret_cast<void*>(&jit_rt_pop_frame);
     helpers.j2jCall = reinterpret_cast<void*>(&jit_rt_j2j_call);
     helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
+    helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
     compiler_->setHelpers(helpers);
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be
