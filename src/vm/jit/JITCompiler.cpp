@@ -940,7 +940,6 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
     for (size_t i = 0; i < decoded.size(); i++) {
         int target = decoded[i].branchTarget;
         if (target >= 0) {
-            // Find the decoded instruction at this bytecode offset
             for (size_t j = 0; j < decoded.size(); j++) {
                 if (decoded[j].bcOffset == target) {
                     isBranchTarget[j] = true;
@@ -950,31 +949,40 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         }
     }
 
-    // SimStack state: 0=Empty, 1=One, 2=Two
-    int state = 0;  // Start Empty
+    // Select flush stencil for current state (1-4)
+    auto flushForState = [](int st) -> uint16_t {
+        switch (st) {
+        case 1: return static_cast<uint16_t>(StencilID::stencil_flush1);
+        case 2: return static_cast<uint16_t>(StencilID::stencil_flush2);
+        case 3: return static_cast<uint16_t>(StencilID::stencil_flush3);
+        default: return static_cast<uint16_t>(StencilID::stencil_flush4);
+        }
+    };
+
+    // Insert a flush before decoded[i], advance i past it, set state=0
+    auto insertFlush = [&](size_t& i, int& st) {
+        DecodedBC flush;
+        flush.opcode = 0;
+        flush.stencilIdx = flushForState(st);
+        flush.operand = -1;
+        flush.operand2 = -1;
+        flush.operand2Ptr = 0;
+        flush.branchTarget = -1;
+        flush.bcOffset = decoded[i].bcOffset;
+        flush.bcLength = 0;
+        decoded.insert(decoded.begin() + i, flush);
+        isBranchTarget.insert(isBranchTarget.begin() + i, false);
+        i++;
+        st = 0;
+    };
+
+    // SimStack state: 0=Empty, 1=One(x19), 2=Two(x19,x20), 3=Three(x19-x21), 4=Four(x19-x22)
+    int state = 0;
 
     for (size_t i = 0; i < decoded.size(); i++) {
-        // NOTE: We must NOT capture `auto& bc = decoded[i]` here because
-        // insertions below invalidate references. Capture AFTER insertions.
-
         // Branch targets must enter as Empty
-        if (isBranchTarget[i] && state != 0) {
-            DecodedBC flush;
-            flush.opcode = 0;
-            flush.stencilIdx = (state == 2)
-                ? static_cast<uint16_t>(StencilID::stencil_flush2)
-                : static_cast<uint16_t>(StencilID::stencil_flush1);
-            flush.operand = -1;
-            flush.operand2 = -1;
-            flush.operand2Ptr = 0;
-            flush.branchTarget = -1;
-            flush.bcOffset = decoded[i].bcOffset;
-            flush.bcLength = 0;
-            decoded.insert(decoded.begin() + i, flush);
-            isBranchTarget.insert(isBranchTarget.begin() + i, false);
-            i++;  // Skip past the flush we just inserted, process the original
-            state = 0;
-        }
+        if (isBranchTarget[i] && state != 0)
+            insertFlush(i, state);
 
         // Determine if this instruction is a "barrier" that requires Empty state
         auto sid = static_cast<StencilID>(decoded[i].stencilIdx);
@@ -990,7 +998,6 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         case StencilID::stencil_popStoreRemoteTemp:
         case StencilID::stencil_popStoreLitVar:
         case StencilID::stencil_storeLitVar:
-        // Superinstructions read operands from memory stack (sp[-1], sp[-2])
         case StencilID::stencil_ltJumpFalse:
         case StencilID::stencil_ltJumpTrue:
         case StencilID::stencil_gtJumpFalse:
@@ -1010,7 +1017,6 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             isBarrier = true;
             break;
         default:
-            // Return stencils are barriers too
             if (sid == StencilID::stencil_returnTrue ||
                 sid == StencilID::stencil_returnFalse ||
                 sid == StencilID::stencil_returnNil) {
@@ -1019,24 +1025,8 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             break;
         }
 
-        // If barrier and state != Empty, insert flush before this instruction
-        if (isBarrier && state != 0) {
-            DecodedBC flush;
-            flush.opcode = 0;
-            flush.stencilIdx = (state == 2)
-                ? static_cast<uint16_t>(StencilID::stencil_flush2)
-                : static_cast<uint16_t>(StencilID::stencil_flush1);
-            flush.operand = -1;
-            flush.operand2 = -1;
-            flush.operand2Ptr = 0;
-            flush.branchTarget = -1;
-            flush.bcOffset = decoded[i].bcOffset;
-            flush.bcLength = 0;
-            decoded.insert(decoded.begin() + i, flush);
-            isBranchTarget.insert(isBranchTarget.begin() + i, false);
-            i++;  // Process the original after the flush
-            state = 0;
-        }
+        if (isBarrier && state != 0)
+            insertFlush(i, state);
 
         // Capture reference AFTER all potential insertions above
         auto& bc = decoded[i];
@@ -1044,102 +1034,76 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
 
         // Now select SimStack variant based on current state
         switch (sid) {
-        // --- PUSH instructions: E→1, 1→2, 2→2(spill) ---
-        case StencilID::stencil_pushTemp:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTemp_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTemp_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTemp_2); }
+        // --- PUSH instructions: E→1, 1→2, 2→3, 3→4, 4→4(spill) ---
+#define PUSH_SIMSTACK_CASE(baseName) \
+        case StencilID::baseName: \
+            if      (state == 0) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_E); state = 1; } \
+            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_1); state = 2; } \
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_2); state = 3; } \
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_3); state = 4; } \
+            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_4); } \
             break;
-        case StencilID::stencil_pushRecvVar:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushRecvVar_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushRecvVar_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushRecvVar_2); }
-            break;
-        case StencilID::stencil_pushLitConst:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitConst_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitConst_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitConst_2); }
-            break;
-        case StencilID::stencil_pushLitVar:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitVar_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitVar_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushLitVar_2); }
-            break;
-        case StencilID::stencil_pushReceiver:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushReceiver_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushReceiver_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushReceiver_2); }
-            break;
-        case StencilID::stencil_pushTrue:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTrue_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTrue_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushTrue_2); }
-            break;
-        case StencilID::stencil_pushFalse:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushFalse_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushFalse_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushFalse_2); }
-            break;
-        case StencilID::stencil_pushNil:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushNil_E); state = 1; }
-            else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushNil_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pushNil_2); }
-            break;
+        PUSH_SIMSTACK_CASE(stencil_pushTemp)
+        PUSH_SIMSTACK_CASE(stencil_pushRecvVar)
+        PUSH_SIMSTACK_CASE(stencil_pushLitConst)
+        PUSH_SIMSTACK_CASE(stencil_pushLitVar)
+        PUSH_SIMSTACK_CASE(stencil_pushReceiver)
+        PUSH_SIMSTACK_CASE(stencil_pushTrue)
+        PUSH_SIMSTACK_CASE(stencil_pushFalse)
+        PUSH_SIMSTACK_CASE(stencil_pushNil)
+#undef PUSH_SIMSTACK_CASE
 
-        // --- POP: 2→1, 1→E, E→E(mem) ---
+        // --- POP: 4→3, 3→2, 2→1, 1→E, E→E(mem) ---
         case StencilID::stencil_pop:
-            if (state == 2)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_2); state = 1; }
+            if      (state == 4) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_4); state = 3; }
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_3); state = 2; }
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_2); state = 1; }
             else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_1); state = 0; }
             else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_pop_E); }
             break;
 
-        // --- DUP: E→1(from mem), 1→2, 2→2(spill) ---
+        // --- DUP: E→1, 1→2, 2→3, 3→4, 4→4(spill) ---
         case StencilID::stencil_dup:
-            if (state == 0)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_E); state = 1; }
+            if      (state == 0) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_E); state = 1; }
             else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_1); state = 2; }
-            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_2); }
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_2); state = 3; }
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_3); state = 4; }
+            else                 { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_dup_4); }
             break;
 
-        // --- STORE TEMP (no pop): keep state ---
+        // --- STORE TEMP (no pop): TOS in x19 for all states >= 1 ---
         case StencilID::stencil_storeTemp:
-            if (state == 1)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeTemp_1); }
-            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeTemp_2); }
-            // state 0: use base stencil (reads from memory)
+            if (state >= 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeTemp_1); }
             break;
 
-        // --- POP+STORE TEMP: 2→1, 1→E ---
+        // --- POP+STORE TEMP: 4→3, 3→2, 2→1, 1→E ---
         case StencilID::stencil_popStoreTemp:
-            if (state == 2)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreTemp_2); state = 1; }
+            if      (state == 4) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreTemp_4); state = 3; }
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreTemp_3); state = 2; }
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreTemp_2); state = 1; }
             else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreTemp_1); state = 0; }
-            // state 0: use base stencil
             break;
 
-        // --- STORE RECV VAR (no pop): keep state ---
+        // --- STORE RECV VAR (no pop): TOS in x19 for all states >= 1 ---
         case StencilID::stencil_storeRecvVar:
             if (state >= 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_storeRecvVar_1); }
             break;
 
-        // --- POP+STORE RECV VAR: 2→1, 1→E ---
+        // --- POP+STORE RECV VAR: 4→3, 3→2, 2→1, 1→E ---
         case StencilID::stencil_popStoreRecvVar:
-            if (state == 2)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar_2); state = 1; }
+            if      (state == 4) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar_4); state = 3; }
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar_3); state = 2; }
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar_2); state = 1; }
             else if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_popStoreRecvVar_1); state = 0; }
             break;
 
-        // --- BINARY ARITHMETIC/COMPARISON: state 2 → _2 variant, state 1 → flush then base ---
-        // These consume 2 operands. _2 variants read from simNOS/simTOS.
-        // Base stencils read from sp[-1]/sp[-2], so state must be 0.
+        // --- BINARY ARITHMETIC/COMPARISON: _4(4→3), _3(3→2), _2(2→1), state 1→flush ---
 #define BINARY_SIMSTACK_CASE(baseName) \
         case StencilID::baseName: \
-            if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_2); state = 1; } \
-            else if (state == 1) { \
-                DecodedBC flush; flush.opcode = 0; \
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush1); \
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0; \
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0; \
-                decoded.insert(decoded.begin() + i, flush); \
-                isBranchTarget.insert(isBranchTarget.begin() + i, false); \
-                i++; state = 0; \
-            } \
+            if      (state == 4) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_4); state = 3; } \
+            else if (state == 3) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_3); state = 2; } \
+            else if (state == 2) { bc.stencilIdx = static_cast<uint16_t>(StencilID::baseName##_2); state = 1; } \
+            else if (state == 1) { insertFlush(i, state); } \
             break;
         BINARY_SIMSTACK_CASE(stencil_addSmallInt)
         BINARY_SIMSTACK_CASE(stencil_subSmallInt)
@@ -1152,73 +1116,29 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         BINARY_SIMSTACK_CASE(stencil_notEqualSmallInt)
 #undef BINARY_SIMSTACK_CASE
 
-        // --- CONDITIONAL JUMPS: consume TOS (1→E), 2→flush then base ---
+        // --- CONDITIONAL JUMPS: state 1 → _1 variant, state > 1 → flush then base ---
         case StencilID::stencil_jumpTrue:
             if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpTrue_1); state = 0; }
-            else if (state == 2) {
-                // Flush both cached values, then use base stencil
-                DecodedBC flush; flush.opcode = 0;
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++; state = 0;
-                // base stencil reads from memory — correct now
-            }
+            else if (state > 1) { insertFlush(i, state); }
             break;
         case StencilID::stencil_jumpFalse:
             if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalse_1); state = 0; }
-            else if (state == 2) {
-                DecodedBC flush; flush.opcode = 0;
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++; state = 0;
-            }
+            else if (state > 1) { insertFlush(i, state); }
             break;
-
-        // --- BACKWARD CONDITIONAL JUMPS: same SimStack handling as forward ---
         case StencilID::stencil_jumpTrueBack:
             if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpTrueBack_1); state = 0; }
-            else if (state == 2) {
-                DecodedBC flush; flush.opcode = 0;
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++; state = 0;
-            }
+            else if (state > 1) { insertFlush(i, state); }
             break;
         case StencilID::stencil_jumpFalseBack:
             if (state == 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalseBack_1); state = 0; }
-            else if (state == 2) {
-                DecodedBC flush; flush.opcode = 0;
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = bc.bcOffset; flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++; state = 0;
-            }
+            else if (state > 1) { insertFlush(i, state); }
             break;
 
         // --- RETURNS ---
         case StencilID::stencil_returnTop:
-            if (state == 2) {
-                // Flush both, then use _E variant
-                DecodedBC flush; flush.opcode = 0;
-                flush.stencilIdx = static_cast<uint16_t>(StencilID::stencil_flush2);
-                flush.operand = -1; flush.operand2 = -1; flush.operand2Ptr = 0;
-                flush.branchTarget = -1; flush.bcOffset = decoded[i].bcOffset; flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++; state = 0;
-                decoded[i].stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_E);
-            } else if (state == 1) {
+            // returnTop_1 reads x19=TOS; the frame is discarded so cached
+            // NOS/3rd/4th in x20-x22 are dead — no need to flush them.
+            if (state >= 1) {
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_1);
             } else {
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop_E);
@@ -1226,43 +1146,19 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             state = 0;
             break;
         case StencilID::stencil_returnReceiver:
-            if (state == 1)      { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnReceiver_1); }
-            // state==2: returnReceiver doesn't read stack, cached values are discarded with the frame
+            // returnReceiver doesn't read stack; cached values are dead.
+            if (state >= 1) { bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnReceiver_1); }
             state = 0;
             break;
 
-        // --- UNCONDITIONAL JUMP: must flush cached values before jumping ---
+        // --- UNCONDITIONAL JUMP: flush before jumping ---
         case StencilID::stencil_jump:
         case StencilID::stencil_jumpBack:
-            // Branch targets enter in state 0 (memory-only stack), and jumps
-            // land on the REAL stencil via last-write-wins bcToBranchOffset,
-            // bypassing any flush inserted in front of the target. So if we
-            // have values cached in x19/x20 at the jump site, we must flush
-            // them to memory BEFORE jumping — otherwise those logical stack
-            // slots are lost and the target reads the wrong values from
-            // memory.
-            if (state != 0) {
-                DecodedBC flush;
-                flush.opcode = 0;
-                flush.stencilIdx = (state == 2)
-                    ? static_cast<uint16_t>(StencilID::stencil_flush2)
-                    : static_cast<uint16_t>(StencilID::stencil_flush1);
-                flush.operand = -1;
-                flush.operand2 = -1;
-                flush.operand2Ptr = 0;
-                flush.branchTarget = -1;
-                flush.bcOffset = decoded[i].bcOffset;
-                flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++;  // Skip past the flush we just inserted
-                state = 0;
-            }
+            if (state != 0)
+                insertFlush(i, state);
             break;
 
-        // --- SUPERINSTRUCTIONS (comparison+jump fused): handled as barriers above ---
-        // They read from memory stack (sp[-1], sp[-2]), so flush is inserted
-        // by the barrier check before we reach here.
+        // --- SUPERINSTRUCTIONS: handled as barriers above ---
         case StencilID::stencil_ltJumpFalse:
         case StencilID::stencil_ltJumpTrue:
         case StencilID::stencil_gtJumpFalse:
@@ -1282,51 +1178,18 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
             state = 0;
             break;
 
-        // --- NOP, pushZero, pushOne, pushInteger: not optimized ---
+        // --- pushZero, pushOne, pushInteger: not optimized ---
         case StencilID::stencil_pushZero:
         case StencilID::stencil_pushOne:
         case StencilID::stencil_pushInteger:
-            // These aren't common enough to warrant variants.
-            // Flush if needed, then treat as pushing to memory.
-            if (state != 0) {
-                DecodedBC flush;
-                flush.opcode = 0;
-                flush.stencilIdx = (state == 2)
-                    ? static_cast<uint16_t>(StencilID::stencil_flush2)
-                    : static_cast<uint16_t>(StencilID::stencil_flush1);
-                flush.operand = -1;
-                flush.operand2 = -1;
-                flush.operand2Ptr = 0;
-                flush.branchTarget = -1;
-                flush.bcOffset = bc.bcOffset;
-                flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++;
-                state = 0;
-            }
+            if (state != 0)
+                insertFlush(i, state);
             break;
 
         // --- Everything else: flush to Empty, use base stencil ---
         default:
-            if (state != 0) {
-                // Unknown instruction — conservatively flush
-                DecodedBC flush;
-                flush.opcode = 0;
-                flush.stencilIdx = (state == 2)
-                    ? static_cast<uint16_t>(StencilID::stencil_flush2)
-                    : static_cast<uint16_t>(StencilID::stencil_flush1);
-                flush.operand = -1;
-                flush.operand2 = -1;
-                flush.operand2Ptr = 0;
-                flush.branchTarget = -1;
-                flush.bcOffset = bc.bcOffset;
-                flush.bcLength = 0;
-                decoded.insert(decoded.begin() + i, flush);
-                isBranchTarget.insert(isBranchTarget.begin() + i, false);
-                i++;
-                state = 0;
-            }
+            if (state != 0)
+                insertFlush(i, state);
             break;
         }
     }
