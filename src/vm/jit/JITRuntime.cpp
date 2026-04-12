@@ -90,6 +90,13 @@ extern "C" void jit_t2_send(JITState* state) {
     Interpreter* interp = state->interp;
     ObjectMemory* mem = state->memory;
 
+    // Depth guard: prevent unbounded C-stack growth from recursive T2 sends.
+    // At depth 200, bail to interpreter (chain loop) to unwind safely.
+    if (t2SendDepth >= 200) {
+        state->exitReason = ExitSend;
+        return;
+    }
+
     Oop selector = state->cachedTarget;
     int nArgs = state->sendArgCount;
     Oop rcvr = state->sp[-(nArgs + 1)];
@@ -800,14 +807,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // J2J bypasses tryExecute so the executionCount trigger never fires;
                     // compile eagerly so hot J2J methods benefit from register allocation.
                     static bool noT2 = !!getenv("PHARO_NO_T2");
-                    if (!noT2 && tier2Compiler_ && !tier2Lookup(key)) {
+                    static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
+                    if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
+                        (int)tier2Compiler_->methodsCompiled() < t2Limit) {
                         void* t2code = tier2Compiler_->compile(compiledMethod, jm);
                         // Store result or sentinel: (void*)1 means "tried, failed"
                         // so we don't retry on every activation.
                         tier2Insert(key, t2code ? t2code : (void*)1);
                         if (t2code) {
-                            fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
+                            std::string t2sel = interp_->memory().selectorOf(compiledMethod);
+                            fprintf(stderr, "[JIT] Tier 2 compiled method %p '%s' (%zu total)\n",
                                     (void*)compiledMethod.rawBits(),
+                                    t2sel.c_str(),
                                     tier2Compiler_->methodsCompiled());
                         }
                     }
@@ -902,6 +913,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         // Tier 2 code has resume support: on initial entry, state.ip == bcStart
         // (offset 0 → start from beginning). On resume after send, state.ip
         // == bcStart + N → dispatch to post-send label.
+        // Set jitMethod so chargeJITBytecodes works for T2 entries.
+        state.jitMethod = jm ? jm : methodMap_.lookup(compiledMethod.rawBits());
         makeExecutable(t2code, 1);
         ((void(*)(JITState*))t2code)(&state);
         makeWritable(t2code, 1);
@@ -937,6 +950,9 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         uint8_t* bcBase = methObj->bytes() + (1 + numLits) * 8;
         state.ip = bcBase + bcOffset;
         state.exitReason = ExitNone;
+        // Set jitMethod to T1 JITMethod for countdown charging (numBytecodes).
+        // T2 code doesn't use this field, but chain loop chargeJITBytecodes does.
+        state.jitMethod = methodMap_.lookup(compiledMethod.rawBits());
         makeExecutable(t2code, 1);
         ((void(*)(JITState*))t2code)(&state);
         makeWritable(t2code, 1);

@@ -5512,15 +5512,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 
         int primIdx = cached->primitiveIndex;
-        // Debug: trace atAllPut: cache path
-        if (benchMode_ && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* _sh2 = selector.asObjectPtr();
-            if (_sh2->isBytesObject() && _sh2->byteSize() == 9 && memcmp(_sh2->bytes(), "atAllPut:", 9) == 0) {
-                fprintf(stderr, "[CACHE-HIT] atAllPut: prim=%d getter=%d setter=%d retSelf=%d method=0x%llx\n",
-                        primIdx, cached->accessorIndex, cached->setterIndex,
-                        cached->returnsSelf ? 1 : 0, (unsigned long long)cached->method.rawBits());
-            }
-        }
         if (primIdx > 0) {
             argCount_ = argCount;
             primitiveFailed_ = false;
@@ -10739,6 +10730,7 @@ void Interpreter::tryJITResumeInCaller() {
             // IC hit during resume — activate cached method, then resume caller
             Oop cached = state.cachedTarget;
             if (!cached.isObject() || cached.rawBits() < 0x10000 ||
+                !memory_.isValidPointer(cached) ||
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC — fall through to normal send
                 jitICStale_++;
@@ -10855,8 +10847,8 @@ void Interpreter::tryJITResumeInCaller() {
             jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
-            // Each yield = ~1000 backward jumps, each executing the full method.
-            int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 0;
+            // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
+            int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
             int charge = 1000 * numBC;
             checkCountdown_ -= charge;
             g_stepNum += charge;
@@ -12216,15 +12208,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitYield: {
-            // Backward-jump yield: stencil decremented yieldCountdown to 0.
+            // Backward-jump yield: JIT decremented yieldCountdown to 0.
             // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
             // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
             jitYieldCount_++;
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
-            if (state.jitMethod) {
-                // Each yield = ~1000 backward jumps, each executing the full method.
-                int charge = 1000 * state.jitMethod->numBytecodes;
+            {
+                // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
+                int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
+                int charge = 1000 * numBC;
                 checkCountdown_ -= charge;
                 g_stepNum += charge;
             }

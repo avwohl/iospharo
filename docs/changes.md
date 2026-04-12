@@ -2,6 +2,41 @@
 
 2026-04-12
 
+## Fix tinyBenchmarks / sieve hangs (T2 interaction bugs)
+
+Multiple T2 fixes to unblock tinyBenchmarks and sieve:
+
+1. **MIR undefined label crash**: Unhandled arith ops (else branch) didn't
+   emit the slowPath label, but BNE tag-check instructions referenced it.
+   MIR's generate_func_code crashed on the undefined label.
+
+2. **T2 backward-jump yield**: T2 code had no yield mechanism for backward
+   jumps. Added yieldCountdown decrement + EXIT_YIELD return for unconditional,
+   jumpIfTrue, and jumpIfFalse backward branches.
+
+3. **jitMethod not set in tryExecute T2 path**: chargeJITBytecodes couldn't
+   charge checkCountdown because state.jitMethod was null. Fixed tryExecute
+   and tryResume T2 paths to set jitMethod from methodMap.
+
+4. **Special sends (0x70-0x7F) bail**: These use well-known selectors not in
+   the literals array. T2 emitSendExit stored no selector, causing the chain
+   loop to read cachedTarget=0 and crash. Now bail T2 compilation for these.
+
+5. **Backward-jump-only filter**: T2-compile only methods with backward jumps.
+   Straight-line methods with sends caused infinite chain loop interactions
+   (jit_t2_send fallback → SavedFrame → chain loop → T1 resume → mismatched state).
+
+6. **ExitYield default charge**: When jitMethod is null, charge 20 bytecodes
+   per yield instead of 0 (prevents starvation).
+
+7. **ExitSendCached isValidPointer guard**: Added null-pointer check for
+   cached method in tryJITResumeInCaller.
+
+  Benchmark results:
+    tinyBenchmarks:  5338ms (was hanging)
+    sieve x3:       ~1.1ms (was 4ms)
+    fib(28):        ~10.5ms (was 61ms)
+
 ## T2 Inline Sends (jit_t2_send)
 
 MIR-generated T2 code now calls jit_t2_send() directly at send sites

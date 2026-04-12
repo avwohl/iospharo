@@ -128,10 +128,12 @@ static constexpr int OFF_ICDATA    = 96;
 static constexpr int OFF_SENDNARGS = 104;
 static constexpr int OFF_TRUE      = 128;
 static constexpr int OFF_FALSE     = 136;
+static constexpr int OFF_YIELD_CD  = 176;  // yieldCountdown (int32_t)
 
 // Exit reasons (must match JITState.hpp)
 static constexpr int EXIT_RETURN       = 1;
 static constexpr int EXIT_SEND         = 2;
+static constexpr int EXIT_YIELD        = 11;
 
 // SmallInteger tag
 static constexpr uint64_t SMALLINT_TAG = 1;
@@ -303,6 +305,7 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
     MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
 }
 
+
 // ===== BYTECODE DECODER (simplified for Tier 2) =====
 
 static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& out) {
@@ -358,9 +361,11 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             d.operand = d.bcOffset;
             d.operand2 = 1;  // all arith are 1-arg sends
         } else if (op >= 0x70 && op <= 0x7F) {
-            d.operand = op - 0x70;
-            static const uint8_t specialNArgs[16] = {1,2,0,0,1,0,1,0,1,0,1,1,0,1,0,0};
-            d.operand2 = specialNArgs[d.operand];
+            // Special sends (at:, at:put:, value, etc.) — bail T2.
+            // Selector isn't in the literals array, requiring special resolution
+            // that the chain loop ExitSend handler can't do for T2 exits.
+            fprintf(stderr, "[T2] decodeBytecodes: special send 0x%02X at offset %zu\n", op, i);
+            return false;
         } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
             d.operand = op & 0x0F;
             d.operand2 = 0;
@@ -554,6 +559,23 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
+    }
+
+    // Only T2-compile methods with backward jumps (loops).
+    // Straight-line methods don't benefit from register allocation and
+    // their T2 sends (via jit_t2_send) interact poorly with the chain loop.
+    {
+        bool hasBackwardJump = false;
+        for (const auto& bc : decoded) {
+            if (bc.branchTarget >= 0 && bc.branchTarget < bc.bcOffset) {
+                hasBackwardJump = true;
+                break;
+            }
+        }
+        if (!hasBackwardJump) {
+            MIR_finish(mirCtx_); mirCtx_ = nullptr;
+            return nullptr;
+        }
     }
 
     // --- Create MIR module and function ---
@@ -1005,7 +1027,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     MIR_append_insn(mirCtx_, mirFunc_, doneLbl);
                     vpush(result);
                 } else {
-                    // Unsupported arith op — exit as send
+                    // Unsupported arith op — exit as send.
+                    // Emit slowPath label: tag-check BNEs above reference it.
+                    MIR_append_insn(mirCtx_, mirFunc_, slowPath);
                     vpush(a);
                     vpush(b);
                     emitSendExit(1, bc.bcOffset, false, 0);
@@ -1021,6 +1045,22 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             if (target >= 0 && target < MaxBCLabels && bcLabelUsed_[target]) {
                 flushVStack();
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+                // Yield check for backward jumps
+                if (target <= bc.bcOffset) {
+                    MIR_reg_t ycd = newScratch();
+                    MIR_label_t noYield = MIR_new_label(mirCtx_);
+                    EMIT(MIR_MOV, REG(ycd), MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD));
+                    EMIT(MIR_SUB, REG(ycd), REG(ycd), IMM(1));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD), REG(ycd));
+                    EMIT(MIR_BGT, LABEL_OP(noYield), REG(ycd), IMM(0));
+                    // Yield exit: set ip and exitReason, return
+                    MIR_reg_t yip = newScratch();
+                    EMIT(MIR_ADD, REG(yip), REG(reg_bcBase_), IMM(target));
+                    EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(yip));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_YIELD));
+                    MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+                    MIR_append_insn(mirCtx_, mirFunc_, noYield);
+                }
                 EMIT(MIR_JMP, LABEL_OP(bcLabels_[target]));
                 unreachable = true;
             } else {
@@ -1035,15 +1075,34 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (vstackDepth_ > 0) {
                     val = vpop();
                 } else {
-                    // sp past TOS: TOS is at sp[-8], pop by moving sp back
                     val = newScratch();
                     EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
                     EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                 }
-                // Compare val == trueOop
                 flushVStack();
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
-                EMIT(MIR_BEQ, LABEL_OP(bcLabels_[target]), REG(val), REG(reg_trueOop_));
+                if (target <= bc.bcOffset) {
+                    // Backward conditional: branch to yield check, then to target
+                    MIR_label_t noJump = MIR_new_label(mirCtx_);
+                    EMIT(MIR_BNE, LABEL_OP(noJump), REG(val), REG(reg_trueOop_));
+                    // Yield check
+                    MIR_reg_t ycd = newScratch();
+                    MIR_label_t noYield = MIR_new_label(mirCtx_);
+                    EMIT(MIR_MOV, REG(ycd), MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD));
+                    EMIT(MIR_SUB, REG(ycd), REG(ycd), IMM(1));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD), REG(ycd));
+                    EMIT(MIR_BGT, LABEL_OP(noYield), REG(ycd), IMM(0));
+                    MIR_reg_t yip = newScratch();
+                    EMIT(MIR_ADD, REG(yip), REG(reg_bcBase_), IMM(target));
+                    EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(yip));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_YIELD));
+                    MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+                    MIR_append_insn(mirCtx_, mirFunc_, noYield);
+                    EMIT(MIR_JMP, LABEL_OP(bcLabels_[target]));
+                    MIR_append_insn(mirCtx_, mirFunc_, noJump);
+                } else {
+                    EMIT(MIR_BEQ, LABEL_OP(bcLabels_[target]), REG(val), REG(reg_trueOop_));
+                }
             } else {
                 bail = true; break;
             }
@@ -1056,14 +1115,34 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (vstackDepth_ > 0) {
                     val = vpop();
                 } else {
-                    // sp past TOS: TOS is at sp[-8], pop by moving sp back
                     val = newScratch();
                     EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
                     EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                 }
                 flushVStack();
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
-                EMIT(MIR_BEQ, LABEL_OP(bcLabels_[target]), REG(val), REG(reg_falseOop_));
+                if (target <= bc.bcOffset) {
+                    // Backward conditional: branch to yield check, then to target
+                    MIR_label_t noJump = MIR_new_label(mirCtx_);
+                    EMIT(MIR_BNE, LABEL_OP(noJump), REG(val), REG(reg_falseOop_));
+                    // Yield check
+                    MIR_reg_t ycd = newScratch();
+                    MIR_label_t noYield = MIR_new_label(mirCtx_);
+                    EMIT(MIR_MOV, REG(ycd), MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD));
+                    EMIT(MIR_SUB, REG(ycd), REG(ycd), IMM(1));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_YIELD_CD), REG(ycd));
+                    EMIT(MIR_BGT, LABEL_OP(noYield), REG(ycd), IMM(0));
+                    MIR_reg_t yip = newScratch();
+                    EMIT(MIR_ADD, REG(yip), REG(reg_bcBase_), IMM(target));
+                    EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(yip));
+                    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_YIELD));
+                    MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+                    MIR_append_insn(mirCtx_, mirFunc_, noYield);
+                    EMIT(MIR_JMP, LABEL_OP(bcLabels_[target]));
+                    MIR_append_insn(mirCtx_, mirFunc_, noJump);
+                } else {
+                    EMIT(MIR_BEQ, LABEL_OP(bcLabels_[target]), REG(val), REG(reg_falseOop_));
+                }
             } else {
                 bail = true; break;
             }
