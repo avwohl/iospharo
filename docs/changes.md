@@ -2,6 +2,30 @@
 
 2026-04-12
 
+## Depth-tuned J2J on chain loop resume paths
+
+Enabled J2J save/restore for chain loop resume paths with carefully tuned
+depth limits per path:
+- Block execution (prim 207/209): full-depth J2J — executes block stencils
+  inline in chain loop instead of bailing to interpreter
+- ExitBlockCreate/ExitArrayCreate: full-depth J2J
+- Prim-in-place resume: **depth 2** (shallow) — sweet spot from AWFY testing
+- Precompute-failed/activateMethod: disabled (0 chains in AWFY profiling)
+
+Added materializeJ2J lambda to convert pending J2J save frames into
+SavedFrames. Added JITMethod.isBlock flag.
+
+Depth tuning results (AWFY, best-of-5):
+  Depth 1: Towers 569 (safe) List 1629 (no help)
+  Depth 2: Towers 545 (5% faster!) List 1601 (5% faster)
+  Depth 3: Towers 3301 (5.8x regression!) List 684 (2.5x faster)
+
+Final results vs pre-change baseline:
+  Towers    545ms (was 569, -4.2%)
+  List     1601ms (was 1688, -5.1%)
+  Richards 8520ms (was 9947, -14.3%)
+  Storage  3269ms (was 3340, -2.1%)
+
 ## Fix bytecodeEnd_ in J2J materialization, enable class receiver J2J
 
 Root cause: J2J materialization synced method_, ip_, sp_, fp_, argCount_
