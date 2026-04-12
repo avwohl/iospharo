@@ -964,16 +964,21 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     handled = true;
                 }
                 else if (arithOp == 1) {
-                    // -
-                    MIR_reg_t ua = newScratch();
-                    MIR_reg_t ub = newScratch();
-                    EMIT(MIR_RSH, REG(ua), REG(a), IMM(3));
-                    EMIT(MIR_RSH, REG(ub), REG(b), IMM(3));
+                    // - : tagged subtraction with manual overflow check.
+                    // Avoids MIR_SUBO which gives wrong results at opt level 2.
+                    // a - b on tagged SmallInts: tags cancel (1 - 1 = 0),
+                    // so SUB gives (va - vb) << 3 and we just OR the tag back.
                     MIR_reg_t diff = newScratch();
-                    EMIT(MIR_SUBO, REG(diff), REG(ua), REG(ub));
-                    EMIT(MIR_BO, LABEL_OP(slowPath));
-                    EMIT(MIR_LSH, REG(result), REG(diff), IMM(3));
-                    EMIT(MIR_OR, REG(result), REG(result), IMM(SMALLINT_TAG));
+                    EMIT(MIR_SUB, REG(diff), REG(a), REG(b));
+                    // Overflow iff (a ^ b) & (a ^ diff) has sign bit set
+                    MIR_reg_t t1 = newScratch();
+                    MIR_reg_t t2 = newScratch();
+                    MIR_reg_t t3 = newScratch();
+                    EMIT(MIR_XOR, REG(t1), REG(a), REG(b));
+                    EMIT(MIR_XOR, REG(t2), REG(a), REG(diff));
+                    EMIT(MIR_AND, REG(t3), REG(t1), REG(t2));
+                    EMIT(MIR_BLT, LABEL_OP(slowPath), REG(t3), IMM(0));
+                    EMIT(MIR_OR, REG(result), REG(diff), IMM(SMALLINT_TAG));
                     handled = true;
                 }
                 else if (arithOp == 8) {
@@ -1336,7 +1341,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     MIR_load_external(mirCtx_, "jit_t2_send", reinterpret_cast<void*>(jit_t2_send));
 
     MIR_gen_init(mirCtx_);
-    MIR_gen_set_optimize_level(mirCtx_, 0);  // debug: opt 2 breaks subtraction
+    MIR_gen_set_optimize_level(mirCtx_, 2);  // opt 2: register allocation enabled
     MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
 
     void* mirCode = MIR_gen(mirCtx_, mirFunc_);
