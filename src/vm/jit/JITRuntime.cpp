@@ -629,6 +629,17 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     codeZone_.touch(jm);
     jm->executionCount++;
 
+    // Recompile hot methods using IC profiling data.
+    // Threshold: 500 executions, tier 1 only, must have send sites.
+    if (jm->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
+        if (compiler_) {
+            JITMethod* newJM = compiler_->recompile(compiledMethod);
+            if (newJM) {
+                jm = newJM;
+            }
+        }
+    }
+
     // Set up JIT state
     state.jitMethod = jm;
     state.exitReason = ExitNone;

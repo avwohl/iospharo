@@ -991,6 +991,9 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         case StencilID::stencil_send:
         case StencilID::stencil_sendPoly:
         case StencilID::stencil_sendJ2J:
+        case StencilID::stencil_sendInlineGetter:
+        case StencilID::stencil_sendInlineSetter:
+        case StencilID::stencil_sendInlineReturnsSelf:
         case StencilID::stencil_pushBlock:
         case StencilID::stencil_pushArray:
         case StencilID::stencil_pushRemoteTemp:
@@ -1197,11 +1200,94 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
 
 #endif // __aarch64__
 
+// ===== IC-GUIDED SPECIALIZATION =====
+
+void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
+    // Compute IC data location in the old method.
+    // Layout: [JITMethod header][code][bcToCode table][IC data]
+    static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
+    static constexpr uint32_t IC_BYTES_PER_SITE_LOCAL = IC_ENTRIES_PER_SITE * 24 + 8;
+
+    uint32_t bcToCodeTableSize = (oldVersion->numBytecodes + 1) * sizeof(uint32_t);
+    uint32_t icDataOff = (oldVersion->bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+
+    uint16_t sendIdx = 0;
+    uint16_t specialized = 0;
+
+    for (auto& bc : decoded) {
+        if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_sendJ2J)
+            continue;
+
+        if (sendIdx >= oldVersion->numICEntries)
+            break;  // more sends than IC slots (shouldn't happen)
+
+        uint8_t* icBase = oldVersion->codeStart() + icDataOff + sendIdx * IC_BYTES_PER_SITE_LOCAL;
+        uint64_t* ic = reinterpret_cast<uint64_t*>(icBase);
+
+        // Check monomorphic: slot 0 populated, slot 1 empty
+        uint64_t classKey0 = ic[0];
+        uint64_t extra0 = ic[2];
+        uint64_t classKey1 = ic[3];
+
+        if (classKey0 != 0 && classKey1 == 0) {
+            // Monomorphic site — check for trivial method patterns
+            if (extra0 & (1ULL << 63)) {
+                // Getter: inline slot read
+                uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineGetter);
+                bc.operand2Ptr = (classKey0 << 16) | slotIdx;
+                specialized++;
+            } else if (extra0 & (1ULL << 62)) {
+                // Setter: inline slot write
+                uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineSetter);
+                bc.operand2Ptr = (classKey0 << 16) | slotIdx;
+                specialized++;
+            } else if (extra0 & (1ULL << 61)) {
+                // ReturnsSelf: just pop args
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
+                bc.operand2Ptr = (classKey0 << 16);
+                specialized++;
+            }
+        }
+
+        sendIdx++;
+    }
+
+    if (specialized > 0) {
+        fprintf(stderr, "[JIT] IC specialization: %u/%u send sites inlined\n",
+                specialized, sendIdx);
+    }
+}
+
+// ===== RECOMPILATION =====
+
+JITMethod* JITCompiler::recompile(Oop compiledMethod) {
+    JITMethod* old = methodMap_.lookup(compiledMethod.rawBits());
+    if (!old || old->numICEntries == 0)
+        return nullptr;
+
+    // Temporarily remove from map so compile() doesn't short-circuit
+    methodMap_.remove(compiledMethod.rawBits());
+
+    JITMethod* newMethod = compile(compiledMethod, old);
+
+    if (newMethod) {
+        newMethod->tier = 2;  // Mark as recompiled
+        recompilations_++;
+    } else {
+        // Recompilation failed — restore old version
+        methodMap_.insert(compiledMethod.rawBits(), old);
+    }
+
+    return newMethod;
+}
+
 // ===== MAIN COMPILATION =====
 
-JITMethod* JITCompiler::compile(Oop compiledMethod) {
-    // Check if already compiled
-    if (methodMap_.lookup(compiledMethod.rawBits())) {
+JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
+    // Check if already compiled (skip check during recompilation)
+    if (!oldVersion && methodMap_.lookup(compiledMethod.rawBits())) {
         return methodMap_.lookup(compiledMethod.rawBits());
     }
 
@@ -1420,6 +1506,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalseBack);
             bc.operand = bc.branchTarget;
         }
+    }
+
+    // IC-guided specialization: if recompiling with IC data, replace
+    // monomorphic sendJ2J sites with inline getter/setter/returnsSelf stencils.
+    if (oldVersion) {
+        applyICSpecialization(decoded, oldVersion);
     }
 
     // SimStack: register-based TOS/NOS caching in x19/x20.
@@ -1836,6 +1928,16 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
         case StencilID::stencil_send:
         case StencilID::stencil_sendJ2J:
             jitMethod->hasSends = true;  // Track for stats, but doesn't block execution
+            break;
+
+        // Inline monomorphic sends — getter reads heap, setter writes heap
+        case StencilID::stencil_sendInlineGetter:
+        case StencilID::stencil_sendInlineReturnsSelf:
+            jitMethod->hasSends = true;  // can deopt on class mismatch
+            break;
+        case StencilID::stencil_sendInlineSetter:
+            jitMethod->hasSends = true;
+            jitMethod->hasHeapWrites = true;
             break;
 
         default:

@@ -67,7 +67,15 @@ public:
 
     // Compile a CompiledMethod. Returns the JITMethod, or nullptr on failure.
     // The method is registered in the MethodMap on success.
-    JITMethod* compile(Oop compiledMethod);
+    // If oldVersion is provided, IC data from that compilation guides
+    // specialization (inline getters/setters at monomorphic send sites).
+    JITMethod* compile(Oop compiledMethod, JITMethod* oldVersion = nullptr);
+
+    // Recompile a method using its accumulated IC data.
+    // Replaces the old version in the MethodMap. Returns new JITMethod or nullptr.
+    JITMethod* recompile(Oop compiledMethod);
+
+    size_t recompilations() const { return recompilations_; }
 
     // Runtime helper function addresses (set once at init)
     struct RuntimeHelpers {
@@ -105,6 +113,10 @@ private:
     // where profitable. Inserts flush stencils before sends/returns/branch-targets.
     void applySimStack(std::vector<DecodedBC>& decoded);
 
+    // IC-guided specialization: replace sendJ2J with inline stencils at
+    // monomorphic send sites using IC data from a previous compilation.
+    void applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion);
+
     // Patch all relocations for one stencil instance
     bool patchStencilInstance(uint8_t* codeBase, uint32_t stencilOffset,
                               const StencilDef& stencil,
@@ -123,6 +135,7 @@ private:
 
     size_t methodsCompiled_ = 0;
     size_t compilationsFailed_ = 0;
+    size_t recompilations_ = 0;
     uint32_t bailoutCounts_[256] = {};  // Indexed by bytecode that caused bail-out
 };
 

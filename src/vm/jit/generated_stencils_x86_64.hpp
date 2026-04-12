@@ -853,6 +853,63 @@ static const Relocation stencil_sendJ2J_relocs[] = {
     { 20, RelocType::X86_64_PC32, HoleKind::Operand, 0 },
 };
 
+// ----- stencil_sendInlineGetter (128 bytes, 4 relocs) -----
+static const uint8_t stencil_sendInlineGetter_code[] = {
+    0x55, 0x48, 0x89, 0xE5, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00, 0x89, 0xD0, 0xC1, 0xE8, 0x10, 0x0F,
+    0xB6, 0xC0, 0x48, 0x8B, 0x0F, 0x89, 0xC6, 0xF7, 0xD6, 0x48, 0x63, 0xF6, 0x4C, 0x8B, 0x04, 0xF1,
+    0x41, 0xF6, 0xC0, 0x07, 0x75, 0x3B, 0x4C, 0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x49, 0xC1, 0xE9,
+    0x10, 0x4D, 0x8B, 0x10, 0x41, 0x81, 0xE2, 0xFF, 0xFF, 0x3F, 0x00, 0x4D, 0x39, 0xD1, 0x75, 0x21,
+    0x0F, 0xB7, 0x15, 0x00, 0x00, 0x00, 0x00, 0x89, 0xD2, 0x49, 0x8B, 0x54, 0xD0, 0x08, 0x48, 0x89,
+    0x14, 0xF1, 0xC1, 0xE0, 0x03, 0x48, 0x29, 0xC1, 0x48, 0x89, 0x0F, 0x5D, 0xE9, 0x00, 0x00, 0x00,
+    0x00, 0x0F, 0xB7, 0xCA, 0x48, 0xC7, 0x47, 0x60, 0x00, 0x00, 0x00, 0x00, 0x89, 0x47, 0x68, 0x89,
+    0xC8, 0x48, 0x01, 0x47, 0x30, 0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0x5D, 0xC3, 0x66, 0x90,
+};
+
+static const Relocation stencil_sendInlineGetter_relocs[] = {
+    { 93, RelocType::X86_64_PC32, HoleKind::Continue, 0 },
+    { 67, RelocType::X86_64_PC32, HoleKind::Operand2, 0 },
+    { 41, RelocType::X86_64_PC32, HoleKind::Operand2, 0 },
+    { 6, RelocType::X86_64_PC32, HoleKind::Operand, 0 },
+};
+
+// ----- stencil_sendInlineSetter (144 bytes, 4 relocs) -----
+static const uint8_t stencil_sendInlineSetter_code[] = {
+    0x55, 0x48, 0x89, 0xE5, 0x8B, 0x15, 0x00, 0x00, 0x00, 0x00, 0x89, 0xD0, 0xC1, 0xE8, 0x10, 0x0F,
+    0xB6, 0xC0, 0x48, 0x8B, 0x0F, 0x89, 0xC6, 0xF7, 0xD6, 0x48, 0x63, 0xF6, 0x4C, 0x8B, 0x04, 0xF1,
+    0x41, 0xF6, 0xC0, 0x07, 0x75, 0x48, 0x4C, 0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x49, 0xC1, 0xE9,
+    0x10, 0x4D, 0x8B, 0x10, 0x41, 0x81, 0xE2, 0xFF, 0xFF, 0x3F, 0x00, 0x4D, 0x39, 0xD1, 0x75, 0x2E,
+    0x0F, 0xB7, 0x15, 0x00, 0x00, 0x00, 0x00, 0x41, 0x89, 0xC1, 0x41, 0xF7, 0xD9, 0x4D, 0x63, 0xC9,
+    0x4E, 0x8B, 0x0C, 0xC9, 0x89, 0xD2, 0x4D, 0x89, 0x4C, 0xD0, 0x08, 0x4C, 0x89, 0x04, 0xF1, 0xC1,
+    0xE0, 0x03, 0x48, 0x29, 0xC1, 0x48, 0x89, 0x0F, 0x5D, 0xE9, 0x00, 0x00, 0x00, 0x00, 0x0F, 0xB7,
+    0xCA, 0x48, 0xC7, 0x47, 0x60, 0x00, 0x00, 0x00, 0x00, 0x89, 0x47, 0x68, 0x89, 0xC8, 0x48, 0x01,
+    0x47, 0x30, 0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0x5D, 0xC3, 0x0F, 0x1F, 0x44, 0x00, 0x00,
+};
+
+static const Relocation stencil_sendInlineSetter_relocs[] = {
+    { 106, RelocType::X86_64_PC32, HoleKind::Continue, 0 },
+    { 67, RelocType::X86_64_PC32, HoleKind::Operand2, 0 },
+    { 41, RelocType::X86_64_PC32, HoleKind::Operand2, 0 },
+    { 6, RelocType::X86_64_PC32, HoleKind::Operand, 0 },
+};
+
+// ----- stencil_sendInlineReturnsSelf (128 bytes, 3 relocs) -----
+static const uint8_t stencil_sendInlineReturnsSelf_code[] = {
+    0x55, 0x48, 0x89, 0xE5, 0x8B, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x89, 0xC8, 0xC1, 0xE8, 0x10, 0x0F,
+    0xB6, 0xC0, 0x48, 0x8B, 0x35, 0x00, 0x00, 0x00, 0x00, 0x48, 0xC1, 0xEE, 0x10, 0x48, 0x8B, 0x17,
+    0x41, 0x89, 0xC0, 0x41, 0xF7, 0xD0, 0x4D, 0x63, 0xC0, 0x4E, 0x8B, 0x0C, 0xC2, 0x4D, 0x89, 0xC8,
+    0x49, 0x83, 0xE0, 0x07, 0x74, 0x1D, 0x41, 0xB9, 0x00, 0x00, 0x00, 0x80, 0x4D, 0x09, 0xC8, 0x49,
+    0x39, 0xF0, 0x75, 0x1E, 0xC1, 0xE0, 0x03, 0x48, 0x29, 0xC2, 0x48, 0x89, 0x17, 0x5D, 0xE9, 0x00,
+    0x00, 0x00, 0x00, 0x4D, 0x8B, 0x01, 0x41, 0x81, 0xE0, 0xFF, 0xFF, 0x3F, 0x00, 0x49, 0x39, 0xF0,
+    0x74, 0xE2, 0x0F, 0xB7, 0xC9, 0x48, 0xC7, 0x47, 0x60, 0x00, 0x00, 0x00, 0x00, 0x89, 0x47, 0x68,
+    0x89, 0xC8, 0x48, 0x01, 0x47, 0x30, 0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0x5D, 0xC3, 0x90,
+};
+
+static const Relocation stencil_sendInlineReturnsSelf_relocs[] = {
+    { 79, RelocType::X86_64_PC32, HoleKind::Continue, 0 },
+    { 21, RelocType::X86_64_PC32, HoleKind::Operand2, 0 },
+    { 6, RelocType::X86_64_PC32, HoleKind::Operand, 0 },
+};
+
 // ----- stencil_pushRemoteTemp (48 bytes, 2 relocs) -----
 static const uint8_t stencil_pushRemoteTemp_code[] = {
     0x55, 0x48, 0x89, 0xE5, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x00, 0x0F, 0xB6, 0xC8, 0x48, 0x8B, 0x17,
@@ -1514,7 +1571,7 @@ static const Relocation stencil_primSize_relocs[] = {
 
 // ===== STENCIL TABLE =====
 
-static constexpr int NumStencils = 91;
+static constexpr int NumStencils = 94;
 
 enum class StencilID : uint16_t {
     stencil_pushRecvVar = 0,
@@ -1564,50 +1621,53 @@ enum class StencilID : uint16_t {
     stencil_send = 44,
     stencil_sendPoly = 45,
     stencil_sendJ2J = 46,
-    stencil_pushRemoteTemp = 47,
-    stencil_storeRemoteTemp = 48,
-    stencil_popStoreRemoteTemp = 49,
-    stencil_pushBlock = 50,
-    stencil_pushArray = 51,
-    stencil_identicalTo = 52,
-    stencil_notIdenticalTo = 53,
-    stencil_ltJumpFalse = 54,
-    stencil_ltJumpTrue = 55,
-    stencil_gtJumpFalse = 56,
-    stencil_gtJumpTrue = 57,
-    stencil_leJumpFalse = 58,
-    stencil_leJumpTrue = 59,
-    stencil_geJumpFalse = 60,
-    stencil_geJumpTrue = 61,
-    stencil_eqJumpFalse = 62,
-    stencil_eqJumpTrue = 63,
-    stencil_neqJumpFalse = 64,
-    stencil_neqJumpTrue = 65,
-    stencil_identJumpFalse = 66,
-    stencil_identJumpTrue = 67,
-    stencil_notIdentJumpFalse = 68,
-    stencil_notIdentJumpTrue = 69,
-    stencil_nop = 70,
-    stencil_primAdd = 71,
-    stencil_primSub = 72,
-    stencil_primLessThan = 73,
-    stencil_primGreaterThan = 74,
-    stencil_primLessEqual = 75,
-    stencil_primGreaterEqual = 76,
-    stencil_primEqual = 77,
-    stencil_primNotEqual = 78,
-    stencil_primMul = 79,
-    stencil_primQuo = 80,
-    stencil_primMod = 81,
-    stencil_primDiv = 82,
-    stencil_primBitAnd = 83,
-    stencil_primBitOr = 84,
-    stencil_primBitShift = 85,
-    stencil_primIdentical = 86,
-    stencil_primClass = 87,
-    stencil_primAt = 88,
-    stencil_primAtPut = 89,
-    stencil_primSize = 90,
+    stencil_sendInlineGetter = 47,
+    stencil_sendInlineSetter = 48,
+    stencil_sendInlineReturnsSelf = 49,
+    stencil_pushRemoteTemp = 50,
+    stencil_storeRemoteTemp = 51,
+    stencil_popStoreRemoteTemp = 52,
+    stencil_pushBlock = 53,
+    stencil_pushArray = 54,
+    stencil_identicalTo = 55,
+    stencil_notIdenticalTo = 56,
+    stencil_ltJumpFalse = 57,
+    stencil_ltJumpTrue = 58,
+    stencil_gtJumpFalse = 59,
+    stencil_gtJumpTrue = 60,
+    stencil_leJumpFalse = 61,
+    stencil_leJumpTrue = 62,
+    stencil_geJumpFalse = 63,
+    stencil_geJumpTrue = 64,
+    stencil_eqJumpFalse = 65,
+    stencil_eqJumpTrue = 66,
+    stencil_neqJumpFalse = 67,
+    stencil_neqJumpTrue = 68,
+    stencil_identJumpFalse = 69,
+    stencil_identJumpTrue = 70,
+    stencil_notIdentJumpFalse = 71,
+    stencil_notIdentJumpTrue = 72,
+    stencil_nop = 73,
+    stencil_primAdd = 74,
+    stencil_primSub = 75,
+    stencil_primLessThan = 76,
+    stencil_primGreaterThan = 77,
+    stencil_primLessEqual = 78,
+    stencil_primGreaterEqual = 79,
+    stencil_primEqual = 80,
+    stencil_primNotEqual = 81,
+    stencil_primMul = 82,
+    stencil_primQuo = 83,
+    stencil_primMod = 84,
+    stencil_primDiv = 85,
+    stencil_primBitAnd = 86,
+    stencil_primBitOr = 87,
+    stencil_primBitShift = 88,
+    stencil_primIdentical = 89,
+    stencil_primClass = 90,
+    stencil_primAt = 91,
+    stencil_primAtPut = 92,
+    stencil_primSize = 93,
 };
 
 static const StencilDef stencilTable[] = {
@@ -1658,6 +1718,9 @@ static const StencilDef stencilTable[] = {
     { "stencil_send", stencil_send_code, 32, stencil_send_relocs, 1, 1 },
     { "stencil_sendPoly", stencil_sendPoly_code, 640, stencil_sendPoly_relocs, 4, 1 },
     { "stencil_sendJ2J", stencil_sendJ2J_code, 1536, stencil_sendJ2J_relocs, 12, 1 },
+    { "stencil_sendInlineGetter", stencil_sendInlineGetter_code, 128, stencil_sendInlineGetter_relocs, 4, 1 },
+    { "stencil_sendInlineSetter", stencil_sendInlineSetter_code, 144, stencil_sendInlineSetter_relocs, 4, 1 },
+    { "stencil_sendInlineReturnsSelf", stencil_sendInlineReturnsSelf_code, 128, stencil_sendInlineReturnsSelf_relocs, 3, 1 },
     { "stencil_pushRemoteTemp", stencil_pushRemoteTemp_code, 48, stencil_pushRemoteTemp_relocs, 2, 1 },
     { "stencil_storeRemoteTemp", stencil_storeRemoteTemp_code, 48, stencil_storeRemoteTemp_relocs, 2, 1 },
     { "stencil_popStoreRemoteTemp", stencil_popStoreRemoteTemp_code, 64, stencil_popStoreRemoteTemp_relocs, 2, 1 },

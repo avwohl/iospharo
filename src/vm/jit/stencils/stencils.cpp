@@ -1310,6 +1310,107 @@ exit_send_cached:
     _HOLE_RT_SEND(s);
 }
 
+// ----- MONOMORPHIC INLINE SEND STENCILS -----
+//
+// Used by recompilation to replace sendJ2J when IC shows monomorphic sites.
+// These are much smaller than sendJ2J (no 4-way IC probe, no inline prims)
+// and for getters/setters eliminate the J2J call entirely.
+//
+// OPERAND  = (bcOffset & 0xFFFF) | (nArgs << 16) | (bcLen << 24)
+// OPERAND2 = (expectedClassKey << 16) | slotIdx
+//
+// On class mismatch, exit with ExitSend for full interpreter lookup.
+
+// Inline getter: class check + slot read. ~100 bytes vs ~1372 for sendJ2J.
+extern "C" void stencil_sendInlineGetter(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
+    uint64_t expectedClass = packed2 >> 16;
+    int slotIdx = (int)(packed2 & 0xFFFF);
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t tag = receiver.bits & 0x7;
+    if (tag == 0) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        if (obj->classIndex() == expectedClass) {
+            Oop val = obj->slotAt(slotIdx);
+            s->sp[-(nArgs + 1)] = val;
+            s->sp -= nArgs;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    // Class mismatch — full interpreter send
+    s->icDataPtr = nullptr;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+// Inline setter: class check + slot write + return receiver.
+extern "C" void stencil_sendInlineSetter(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
+    uint64_t expectedClass = packed2 >> 16;
+    int slotIdx = (int)(packed2 & 0xFFFF);
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t tag = receiver.bits & 0x7;
+    if (tag == 0) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        if (obj->classIndex() == expectedClass) {
+            Oop arg = s->sp[-nArgs];
+            obj->slotAtPut(slotIdx, arg);
+            s->sp[-(nArgs + 1)] = receiver;
+            s->sp -= nArgs;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
+    s->icDataPtr = nullptr;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
+// Inline returnsSelf: class check + pop args.
+// OPERAND2 = expectedClassKey << 16 (no slotIdx needed)
+extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
+    uint64_t expectedClass = packed2 >> 16;
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t tag = receiver.bits & 0x7;
+    uint64_t classKey;
+    if (tag == 0) {
+        classKey = reinterpret_cast<ObjectHeader*>(receiver.bits)->classIndex();
+    } else {
+        classKey = tag | 0x80000000ULL;
+    }
+    if (classKey == expectedClass) {
+        s->sp -= nArgs;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->icDataPtr = nullptr;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // ----- REMOTE TEMP STENCILS -----
 //
 // Remote temps are accessed through a temp vector (an Array stored in a local).
