@@ -1059,231 +1059,226 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         lookupKey = tag | 0x80000000ULL;
     }
 
-    // Macro for IC hit handling with J2J support.
-    // For primKind >= 14 (array ops at:/at:put:/size), calls the shared
-    // runtime helper via GOT. On success, continues; on failure, the
-    // SmallInt tag check naturally fails (receiver is an object, tag=0)
-    // and execution falls through to J2J/SEND_CACHED.
+    // --- IC lookup: find matching entry ---
+    // Instead of duplicating the full IC-hit logic 4 times, find the matching
+    // entry first, then run one shared copy of the hit handler.
+    uint64_t extra = 0;
+    uint64_t methodBits = 0;
+    if      (lookupKey == icData[0] && icData[0] != 0) { extra = icData[2]; methodBits = icData[1]; }
+    else if (lookupKey == icData[3] && icData[3] != 0) { extra = icData[5]; methodBits = icData[4]; }
+    else if (lookupKey == icData[6] && icData[6] != 0) { extra = icData[8]; methodBits = icData[7]; }
+    else if (lookupKey == icData[9] && icData[9] != 0) { extra = icData[11]; methodBits = icData[10]; }
+    else goto ic_miss;
 
-#define J2J_IC_HIT(entry_idx) do {                                            \
-    uint64_t extra = icData[(entry_idx) * 3 + 2];                             \
-    if (extra != 0 && tag == 0) {                                             \
-        uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);                        \
-        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits);\
-        if (extra & (1ULL << 63)) {                                           \
-            /* Inline getter */                                                \
-            Oop val = recvObj->slotAt(slotIdx);                               \
-            s->sp[-(nArgs + 1)] = val;                                        \
-            s->sp -= nArgs;                                                   \
-            _HOLE_CONTINUE(s);                                                \
-            return;                                                           \
-        }                                                                     \
-        if (extra & (1ULL << 62)) {                                           \
-            /* Inline setter */                                                \
-            Oop arg = s->sp[-(nArgs)];                                        \
-            recvObj->slotAtPut(slotIdx, arg);                                 \
-            s->sp[-(nArgs + 1)] = receiver;                                   \
-            s->sp -= nArgs;                                                   \
-            _HOLE_CONTINUE(s);                                                \
-            return;                                                           \
-        }                                                                     \
-        if (extra & (1ULL << 61)) {                                           \
-            /* returnsSelf */                                                  \
-            s->sp -= nArgs;                                                   \
-            _HOLE_CONTINUE(s);                                                \
-            return;                                                           \
-        }                                                                     \
-    }                                                                         \
-    /* Lightweight inline primitive (bits 52:48 = primKind, no frame needed)*/ \
-    if ((extra >> 48) & 0x1F) {                                               \
-        uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);                   \
-        if (primKind != 0) {                                                  \
-            /* Array prims (at:/at:put:/size) — out-of-line helper call */    \
-            if (primKind >= 17) {                                             \
-                /* new/new: — out-of-line allocation helper */                \
-                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs; \
-                if (_HOLE_RT_NEW_PRIM(s, info)) {                             \
-                    _HOLE_CONTINUE(s);                                        \
-                    return;                                                   \
-                }                                                             \
-            } else if (primKind >= 14) {                                      \
-                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs; \
-                if (_HOLE_RT_ARRAY_PRIM(s, info)) {                           \
-                    _HOLE_CONTINUE(s);                                        \
-                    return;                                                   \
-                }                                                             \
-                /* Failure: fall through to J2J/SEND_CACHED below */          \
-            }                                                                 \
-            Oop rcv = s->sp[-2];                                              \
-            Oop arg = s->sp[-1];                                              \
-            /* Both must be SmallInteger: (bits & 7) == 1 */                  \
-            if ((rcv.bits & 7) == 1 && (arg.bits & 7) == 1) {                \
-                int64_t a = (int64_t)rcv.bits >> 3;                           \
-                int64_t b = (int64_t)arg.bits >> 3;                           \
-                bool ok = false;                                              \
-                Oop result;                                                   \
-                if (primKind <= 2) { /* add(1), sub(2) */                     \
-                    int64_t r = (primKind == 1) ? a + b : a - b;             \
-                    /* Overflow: result must fit in 61-bit signed value */    \
-                    if (r >= -(1LL << 60) && r < (1LL << 60)) {              \
-                        result.bits = (uint64_t)(r << 3) | 1;                \
-                        ok = true;                                            \
-                    }                                                         \
-                } else if (primKind <= 8) { /* comparisons 3-8 */            \
-                    /* For SmallIntegers with same tag, raw signed           */ \
-                    /* comparison works: both have tag 1 in low 3 bits       */ \
-                    bool cmp;                                                 \
-                    int64_t sa = (int64_t)rcv.bits;                           \
-                    int64_t sb = (int64_t)arg.bits;                           \
-                    switch (primKind) {                                       \
-                    case 3: cmp = sa < sb; break;                            \
-                    case 4: cmp = sa > sb; break;                            \
-                    case 5: cmp = sa <= sb; break;                           \
-                    case 6: cmp = sa >= sb; break;                           \
-                    case 7: cmp = sa == sb; break;                           \
-                    case 8: cmp = sa != sb; break;                           \
-                    default: cmp = false;                                     \
-                    }                                                         \
-                    result = cmp ? s->trueOop : s->falseOop;                 \
-                    ok = true;                                                \
-                } else if (primKind == 9) { /* mul */                        \
-                    __int128 r128 = (__int128)a * (__int128)b;               \
-                    if (r128 >= -(1LL << 60) && r128 < (1LL << 60)) {       \
-                        result.bits = (uint64_t)((int64_t)r128 << 3) | 1;   \
-                        ok = true;                                            \
-                    }                                                         \
-                } else if (primKind == 10) { /* identical */                 \
-                    result = (rcv.bits == arg.bits) ?                         \
-                        s->trueOop : s->falseOop;                            \
-                    ok = true;                                                \
-                } else if (primKind == 11) { /* bitAnd */                    \
-                    /* SmallInt & SmallInt: just AND the raw bits.           */ \
-                    /* Tag bits (low 3 = 001) are preserved by AND.         */ \
-                    result.bits = rcv.bits & arg.bits;                        \
-                    ok = true;                                                \
-                } else if (primKind == 12) { /* bitOr */                     \
-                    /* SmallInt | SmallInt: OR raw bits preserves tag.       */ \
-                    result.bits = rcv.bits | arg.bits;                        \
-                    ok = true;                                                \
-                } else if (primKind == 13) { /* bitShift */                  \
-                    /* arg (b) is the shift amount. Positive=left, neg=right*/ \
-                    if (b >= 0 && b < 61) {                                  \
-                        int64_t r = a << b;                                  \
-                        if ((r >> b) == a) { /* no overflow */               \
-                            result.bits = (uint64_t)(r << 3) | 1;           \
-                            ok = true;                                       \
-                        }                                                    \
-                    } else if (b < 0 && b > -64) {                          \
-                        int64_t r = a >> (-b);                               \
-                        result.bits = (uint64_t)(r << 3) | 1;               \
-                        ok = true;                                           \
-                    }                                                        \
-                }                                                             \
-                if (ok) {                                                     \
-                    s->sp[-2] = result;                                       \
-                    s->sp--;                                                  \
-                    _HOLE_CONTINUE(s);                                        \
-                    return;                                                   \
-                }                                                             \
-            }                                                                 \
-        }                                                                     \
-    }                                                                         \
-    /* Check for J2J direct call (bit 60, no bits 63:61) */                   \
-    if (extra & J2J_ENTRY_BIT) {                                              \
-        uint64_t entryAddr = extra & J2J_ADDR_MASK;                           \
-        if (entryAddr != 0) {                                                 \
-            /* Stencil-to-stencil J2J: push frame and tail-call callee */     \
-            if ((uintptr_t)s->j2jSaveCursor >=                               \
-                (uintptr_t)s->j2jSaveLimit) {                                \
-                /* Save stack full — bail to interpreter */                   \
-                s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];          \
-                s->sendArgCount = nArgs;                                      \
-                s->ip = s->ip + bcOffset;                                     \
-                s->exitReason = EXIT_SEND_CACHED;                             \
-                return;                                                       \
-            }                                                                 \
-            J2JSave* _save = (J2JSave*)s->j2jSaveCursor;                     \
-            _save->sp = s->sp;                                                \
-            _save->receiver = s->receiver;                                    \
-            _save->tempBase = s->tempBase;                                    \
-            _save->ip = s->ip + bcOffset + bcLen;                            \
-            _save->sendArgCount = nArgs;                                      \
-            _save->resumeAddr = RESUME_ADDR;                                 \
-            /* Detect self-recursive: calleeJM = entryAddr - JM_SIZE */      \
-            uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;             \
-            void* _callerJM = s->jitMethod;                                  \
-            if (_callerJM == (void*)_calleeJM) {                             \
-                _save->jitMethod =                                           \
-                    (void*)((uintptr_t)_callerJM | 1ULL);                    \
-            } else {                                                         \
-                _save->jitMethod = _callerJM;                                \
-                _save->literals = s->literals;                               \
-                _save->argCount = s->argCount;                               \
-                /* callerBCStart from JITMethod fields */                    \
-                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM             \
-                                            + JM_METHOD_HEADER);             \
-                int _nl = (int)(_mh & 0x7FFF);                               \
-                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM            \
-                                             + JM_COMPILED_METHOD);          \
-                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;            \
-            }                                                                 \
-            s->j2jSaveCursor += sizeof(J2JSave);                             \
-            s->j2jDepth++;                                                    \
-            s->j2jTotalCalls++;                                              \
-            /* Setup callee */                                               \
-            Oop _calleeRecv = s->sp[-(nArgs + 1)];                          \
-            Oop* _fp = s->sp - (nArgs + 1);                                 \
-            s->receiver = _calleeRecv;                                       \
-            s->tempBase = _fp + 1;                                           \
-            if (_callerJM != (void*)_calleeJM) {                             \
-                uint64_t _methBits = icData[(entry_idx) * 3 + 1];           \
-                ObjectHeader* _mo = (ObjectHeader*)_methBits;                \
-                s->literals = _mo->slots() + 1;                              \
-                s->argCount = nArgs;                                         \
-                s->jitMethod = (void*)_calleeJM;                             \
-                uint64_t _ch = _mo->slotAt(0).bits;                         \
-                int _cnl = (_ch & 1) ? (int)((_ch >> 3) & 0x7FFF) : 0;     \
-                s->ip = (uint8_t*)_mo + 8 + (1 + _cnl) * 8;                \
-            } else {                                                         \
-                /* Self-recursive: ip = callerBCStart */                     \
-                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM             \
-                                            + JM_METHOD_HEADER);             \
-                int _nl = (int)(_mh & 0x7FFF);                               \
-                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM            \
-                                             + JM_COMPILED_METHOD);          \
-                s->ip = (uint8_t*)_cmo + (_nl + 2) * 8;                     \
-            }                                                                 \
-            /* Allocate temps if needed */                                   \
-            uint8_t _tc = *((uint8_t*)_calleeJM + JM_TEMP_COUNT);          \
-            if (nArgs < (int)_tc) {                                         \
-                Oop _nil = *(Oop*)&_HOLE_NIL_OOP;                           \
-                for (int _t = nArgs; _t < (int)_tc; _t++) {                 \
-                    *(s->sp) = _nil;                                         \
-                    s->sp++;                                                  \
-                }                                                             \
-            }                                                                 \
-            /* Tail-call to callee JIT entry */                              \
-            ((void(*)(JITState*))entryAddr)(s);                              \
-            return;                                                           \
-        }                                                                     \
-    }                                                                         \
-    /* Fallback: exit to C++ with cached target */                            \
-    s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];                       \
-    s->icDataPtr = icData;                                                    \
-    s->sendArgCount = nArgs;                                                  \
-    s->ip = s->ip + bcOffset;                                                 \
-    s->exitReason = EXIT_SEND_CACHED;                                         \
-    _HOLE_RT_SEND(s);                                                         \
-    return;                                                                   \
-} while(0)
+    // --- Shared IC-hit handler ---
+    // Trivial methods: getter/setter/returnsSelf (bits 63:61)
+    if (extra != 0 && tag == 0) {
+        uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);
+        ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        if (extra & (1ULL << 63)) {
+            // Inline getter
+            Oop val = recvObj->slotAt(slotIdx);
+            s->sp[-(nArgs + 1)] = val;
+            s->sp -= nArgs;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+        if (extra & (1ULL << 62)) {
+            // Inline setter
+            Oop arg = s->sp[-(nArgs)];
+            recvObj->slotAtPut(slotIdx, arg);
+            s->sp[-(nArgs + 1)] = receiver;
+            s->sp -= nArgs;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+        if (extra & (1ULL << 61)) {
+            // returnsSelf
+            s->sp -= nArgs;
+            _HOLE_CONTINUE(s);
+            return;
+        }
+    }
 
-    // Check 4 IC entries (unrolled for predictable code size)
-    if (lookupKey == icData[0] && icData[0] != 0) { J2J_IC_HIT(0); }
-    if (lookupKey == icData[3] && icData[3] != 0) { J2J_IC_HIT(1); }
-    if (lookupKey == icData[6] && icData[6] != 0) { J2J_IC_HIT(2); }
-    if (lookupKey == icData[9] && icData[9] != 0) { J2J_IC_HIT(3); }
+    // Lightweight inline primitives (bits 52:48 = primKind)
+    if ((extra >> 48) & 0x1F) {
+        uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);
+        if (primKind != 0) {
+            // new/new: allocation helper (primKind 17-18)
+            if (primKind >= 17) {
+                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs;
+                if (_HOLE_RT_NEW_PRIM(s, info)) {
+                    _HOLE_CONTINUE(s);
+                    return;
+                }
+            }
+            // Array prims at:/at:put:/size (primKind 14-16)
+            else if (primKind >= 14) {
+                uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs;
+                if (_HOLE_RT_ARRAY_PRIM(s, info)) {
+                    _HOLE_CONTINUE(s);
+                    return;
+                }
+                // Failure: fall through to J2J/SEND_CACHED
+            }
+            // SmallInteger arithmetic (primKind 1-13)
+            {
+                Oop rcv = s->sp[-2];
+                Oop arg = s->sp[-1];
+                if ((rcv.bits & 7) == 1 && (arg.bits & 7) == 1) {
+                    int64_t a = (int64_t)rcv.bits >> 3;
+                    int64_t b = (int64_t)arg.bits >> 3;
+                    bool ok = false;
+                    Oop result;
+                    if (primKind <= 2) {
+                        int64_t r = (primKind == 1) ? a + b : a - b;
+                        if (r >= -(1LL << 60) && r < (1LL << 60)) {
+                            result.bits = (uint64_t)(r << 3) | 1;
+                            ok = true;
+                        }
+                    } else if (primKind <= 8) {
+                        bool cmp;
+                        int64_t sa = (int64_t)rcv.bits;
+                        int64_t sb = (int64_t)arg.bits;
+                        switch (primKind) {
+                        case 3: cmp = sa < sb; break;
+                        case 4: cmp = sa > sb; break;
+                        case 5: cmp = sa <= sb; break;
+                        case 6: cmp = sa >= sb; break;
+                        case 7: cmp = sa == sb; break;
+                        case 8: cmp = sa != sb; break;
+                        default: cmp = false;
+                        }
+                        result = cmp ? s->trueOop : s->falseOop;
+                        ok = true;
+                    } else if (primKind == 9) {
+                        __int128 r128 = (__int128)a * (__int128)b;
+                        if (r128 >= -(1LL << 60) && r128 < (1LL << 60)) {
+                            result.bits = (uint64_t)((int64_t)r128 << 3) | 1;
+                            ok = true;
+                        }
+                    } else if (primKind == 10) {
+                        result = (rcv.bits == arg.bits) ?
+                            s->trueOop : s->falseOop;
+                        ok = true;
+                    } else if (primKind == 11) {
+                        result.bits = rcv.bits & arg.bits;
+                        ok = true;
+                    } else if (primKind == 12) {
+                        result.bits = rcv.bits | arg.bits;
+                        ok = true;
+                    } else if (primKind == 13) {
+                        if (b >= 0 && b < 61) {
+                            int64_t r = a << b;
+                            if ((r >> b) == a) {
+                                result.bits = (uint64_t)(r << 3) | 1;
+                                ok = true;
+                            }
+                        } else if (b < 0 && b > -64) {
+                            int64_t r = a >> (-b);
+                            result.bits = (uint64_t)(r << 3) | 1;
+                            ok = true;
+                        }
+                    }
+                    if (ok) {
+                        s->sp[-2] = result;
+                        s->sp--;
+                        _HOLE_CONTINUE(s);
+                        return;
+                    }
+                }
+            }
+        }
+    }
 
-#undef J2J_IC_HIT
+    // J2J direct call (bit 60)
+    if (extra & J2J_ENTRY_BIT) {
+        uint64_t entryAddr = extra & J2J_ADDR_MASK;
+        if (entryAddr != 0) {
+            // Check save stack space
+            if ((uintptr_t)s->j2jSaveCursor >=
+                (uintptr_t)s->j2jSaveLimit) {
+                // Save stack full — bail to interpreter
+                s->cachedTarget.bits = methodBits;
+                s->sendArgCount = nArgs;
+                s->ip = s->ip + bcOffset;
+                s->exitReason = EXIT_SEND_CACHED;
+                return;
+            }
+            J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
+            _save->sp = s->sp;
+            _save->receiver = s->receiver;
+            _save->tempBase = s->tempBase;
+            _save->ip = s->ip + bcOffset + bcLen;
+            _save->sendArgCount = nArgs;
+            _save->resumeAddr = RESUME_ADDR;
+            // Detect self-recursive
+            uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;
+            void* _callerJM = s->jitMethod;
+            if (_callerJM == (void*)_calleeJM) {
+                _save->jitMethod =
+                    (void*)((uintptr_t)_callerJM | 1ULL);
+            } else {
+                _save->jitMethod = _callerJM;
+                _save->literals = s->literals;
+                _save->argCount = s->argCount;
+                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM
+                                            + JM_METHOD_HEADER);
+                int _nl = (int)(_mh & 0x7FFF);
+                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM
+                                             + JM_COMPILED_METHOD);
+                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;
+            }
+            s->j2jSaveCursor += sizeof(J2JSave);
+            s->j2jDepth++;
+            s->j2jTotalCalls++;
+            // Setup callee
+            Oop _calleeRecv = s->sp[-(nArgs + 1)];
+            Oop* _fp = s->sp - (nArgs + 1);
+            s->receiver = _calleeRecv;
+            s->tempBase = _fp + 1;
+            if (_callerJM != (void*)_calleeJM) {
+                ObjectHeader* _mo = (ObjectHeader*)methodBits;
+                s->literals = _mo->slots() + 1;
+                s->argCount = nArgs;
+                s->jitMethod = (void*)_calleeJM;
+                uint64_t _ch = _mo->slotAt(0).bits;
+                int _cnl = (_ch & 1) ? (int)((_ch >> 3) & 0x7FFF) : 0;
+                s->ip = (uint8_t*)_mo + 8 + (1 + _cnl) * 8;
+            } else {
+                // Self-recursive: ip = callerBCStart
+                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM
+                                            + JM_METHOD_HEADER);
+                int _nl = (int)(_mh & 0x7FFF);
+                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM
+                                             + JM_COMPILED_METHOD);
+                s->ip = (uint8_t*)_cmo + (_nl + 2) * 8;
+            }
+            // Allocate temps if needed
+            uint8_t _tc = *((uint8_t*)_calleeJM + JM_TEMP_COUNT);
+            if (nArgs < (int)_tc) {
+                Oop _nil = *(Oop*)&_HOLE_NIL_OOP;
+                for (int _t = nArgs; _t < (int)_tc; _t++) {
+                    *(s->sp) = _nil;
+                    s->sp++;
+                }
+            }
+            // Tail-call to callee JIT entry
+            ((void(*)(JITState*))entryAddr)(s);
+            return;
+        }
+    }
+
+    // IC hit but no inline path succeeded — exit with cached target
+    s->cachedTarget.bits = methodBits;
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND_CACHED;
+    _HOLE_RT_SEND(s);
+    return;
+
+ic_miss:
 
     // IC MISS — probe megamorphic method cache before falling back
     {
