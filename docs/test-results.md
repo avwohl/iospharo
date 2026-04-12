@@ -1,6 +1,34 @@
 # Test Results
 
-Last updated: 2026-04-10
+Last updated: 2026-04-12
+
+## AWFY after Track A (2026-04-12)
+
+Track A: 4-register SimStack + IC-guided getter/setter inlining.
+Fresh AWFY image, PHARO_BENCH=awfy, 1 warmup + 5 timed runs, median.
+
+    Benchmark    JIT (ms)  NO_JIT (ms)  JIT/NOJIT
+    Richards      7696       7730        1.00x
+    DeltaBlue     2232       2210        1.01x
+    Mandelbrot    2302       2311        1.00x
+    NBody         5256       5228        1.01x
+    Bounce        2166       2151        1.01x
+    Permute        409        408        1.00x
+    Queens         304        309        0.98x
+    Sieve         1002       1016        0.99x
+    Storage       1702       1710        0.99x
+    Towers         464        462        1.00x
+    List          1468       1477        0.99x
+    Geomean                              1.00x
+
+Key findings:
+- Track A delivered ~0% net speedup on AWFY
+- 4 registers: no effect (sends dominate, arithmetic is already fast)
+- IC inlining: 24% of sends specialized in Richards, but sendJ2J
+  already inlined getters at IC level — savings are only IC probe cycles
+- JIT stats: 99.9% IC hit, 401M IC hits, 1B stencil calls
+- Bottleneck: J2J save/restore (~42 memory ops per call+return)
+- Track B (native frames + register allocation) needed
 
 ## AWFY Benchmark Suite (2026-04-10)
 

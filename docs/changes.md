@@ -2,6 +2,47 @@
 
 2026-04-12
 
+## Track A: Tier 1 improvements (A1 + A3)
+
+### A1: Extended SimStack (4 registers: x19-x22)
+
+Extended SimStack from 2 cached registers (x19/x20) to 4 (x19-x22).
+Convention: x19 = TOS always when state >= 1 (cascading MOVs on push/pop).
+
+New stencils: 42 new _3/_4 variants for push/pop/dup/store/arith/compare.
+Total SimStack stencils: 99 (verified by extract_stencils.py).
+
+Fixed .cold fragment splitting: restructured arithmetic stencils to use
+`bool ok` pattern instead of `__builtin_expect` + early return, which
+prevents Clang from splitting overflow paths into .cold.N symbols.
+
+AWFY result: no measurable speedup — sends dominate runtime, arithmetic
+is already fast. Infrastructure ready for when straight-line code matters.
+
+### A3: IC-guided recompilation (inline getters/setters)
+
+After 500 executions, hot methods are recompiled using IC profiling data.
+Monomorphic send sites with getter/setter/returnsSelf targets replaced
+with specialized stencils (120 bytes vs 1372 for sendJ2J):
+
+  stencil_sendInlineGetter      120 bytes  class check + slot read
+  stencil_sendInlineSetter      128 bytes  class check + slot write
+  stencil_sendInlineReturnsSelf 120 bytes  class check + pop args
+
+On class guard failure, falls back to ExitSend for full interpreter lookup.
+
+AWFY result: ~24% of send sites specialized in Richards (27/114 sends).
+No measurable speedup — sendJ2J already inlined getter/setter at IC level.
+Savings are just the IC probe, not the accessor operation itself.
+
+### Track A conclusion
+
+Track A (A1 + A3) delivered ~0% speedup on AWFY. Root cause: the J2J
+save/restore overhead (~42 memory ops per call+return) negates any
+per-bytecode or per-IC-probe savings. The interpreter is competitive
+because it uses native C++ stack frames implicitly. To close the gap,
+Track B (native frames + register allocation) is needed.
+
 ## Depth-tuned J2J on chain loop resume paths
 
 Enabled J2J save/restore for chain loop resume paths with carefully tuned
