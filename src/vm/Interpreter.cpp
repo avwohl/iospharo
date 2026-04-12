@@ -11003,16 +11003,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
-    // Also skip J2J for class/metaclass receivers (format 1) — these trigger
-    // errorNotIndexable bugs during path resolution. Instance J2J stays enabled.
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
-    bool isClassReceiver = false;
-    if (receiver.isObject() && receiver.rawBits() > 0x10000) {
-        ObjectHeader* rcvObj = receiver.asObjectPtr();
-        if (static_cast<uint8_t>(rcvObj->format()) == 1)
-            isClassReceiver = true;
-    }
-    if ((extra & (1ULL << 60)) == 0 && j2jEnabled && !isClassReceiver) {
+    if ((extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             // Check if target has a primitive but no prologue.
@@ -11161,12 +11153,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     Oop receiver = stackPointer_[-(sendArgCount + 1)];
     uint64_t lookupKey;
     uint64_t tag = receiver.rawBits() & 0x7;
-    bool isClassReceiver = false;
     if (tag == 0 && receiver.rawBits() >= 0x10000) {
-        ObjectHeader* rcvObj = receiver.asObjectPtr();
-        if (static_cast<uint8_t>(rcvObj->format()) == 1)
-            isClassReceiver = true;
-        lookupKey = rcvObj->classIndex();
+        lookupKey = receiver.asObjectPtr()->classIndex();
     } else if (tag != 0) {
         lookupKey = tag | 0x80000000ULL;
     } else {
@@ -11182,7 +11170,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 uint64_t newExtra;
                 if (quickPrimExtra != 0) {
                     newExtra = quickPrimExtra;
-                } else if (!isClassReceiver) {
+                } else {
                     uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                     newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                     if (target->hasPrimPrologue) {
@@ -11190,8 +11178,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                         uint8_t pk = inlinePrimKind(primIdx);
                         if (pk) newExtra |= (uint64_t)pk << 48;
                     }
-                } else {
-                    return;  // class receiver — block J2J direct call
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
@@ -11215,7 +11201,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 newExtra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
             else if (tmi.returnsSelf)
                 newExtra = (1ULL << 61);
-            if (newExtra == 0 && !isClassReceiver) {
+            if (newExtra == 0) {
                 // Not trivial — set J2J direct-call entry plus inline primKind bits
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
@@ -11227,7 +11213,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             }
         }
 
-        if (newExtra == 0) return;  // class receiver, non-trivial method
+        if (newExtra == 0) return;  // non-trivial method without JIT target
 
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
@@ -11363,6 +11349,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     //
     // Safe because GC/process-switch cannot trigger during JIT execution
     // (stencils don't allocate, no timer checks).
+    bool j2jMaterialized = false;  // Set when J2J bail materializes frames
     {
         // j2jStack is carved from j2jPool_ above (before tryExecute);
         // J2JSlotPerEntry limits depth per entry.
@@ -11632,6 +11619,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // If we bailed out with pending J2J frames, materialize them
         // so the interpreter can see them.
         if (j2jDepth > 0) {
+            j2jMaterialized = true;
             // Materialize SavedFrames from save stack (oldest first).
             // For self-recursive saves (low bit of save.jitMethod set), the
             // effective method is the SAME as the caller. Mask the bit off
@@ -11673,6 +11661,43 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             framePointer_ = state.tempBase - 1;
             argCount_ = state.argCount;
+            // Set bytecodeEnd_ from the innermost frame's method.
+            // Without this, fetchByte() sees stale bytecodeEnd_ from the
+            // method that was active BEFORE the J2J chain, hits the
+            // ip >= bytecodeEnd_ guard, and returns 0x5C (fake returnTop).
+            {
+                ObjectHeader* mObj = state.method.asObjectPtr();
+                bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+            }
+        }
+    }
+
+    // When J2J materialization set up interpreter state for the innermost
+    // J2J frame, the chain loop must not run: any bail path (return false)
+    // would cause activateMethod to fall through with method_/ip_ pointing
+    // to the J2J callee instead of the original method — corrupting state.
+    // Instead, let the interpreter dispatch loop pick up from the
+    // materialized state (method_, ip_, framePointer_ are all valid).
+    if (j2jMaterialized) {
+        // state.ip / state.sp were already synced to interpreter by materialization.
+        // Handle the exit reason that caused the J2J trampoline to bail.
+        switch (state.exitReason) {
+        case jit::ExitReturn:
+            // Innermost J2J frame returned — pop one materialized frame
+            if (!popFrame()) {
+                if (benchMode_) { handleBenchComplete(); return true; }
+                terminateCurrentProcess();
+                tryReschedule();
+                return true;
+            }
+            push(state.returnValue);
+            return true;
+        default:
+            // ExitSend, ExitSendCached, ExitBlockCreate, etc. —
+            // interpreter state points to the bytecode that caused the exit.
+            // Return true so activateMethod doesn't fall through; the
+            // interpreter dispatch loop re-executes this bytecode normally.
+            return true;
         }
     }
 
@@ -11811,6 +11836,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     instructionPointer_ = state.ip;
                     framePointer_ = state.tempBase - 1;
                     argCount_ = state.argCount;
+                    {
+                        ObjectHeader* mObj = state.method.asObjectPtr();
+                        bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                    }
                 }
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
                 continue;
@@ -12162,6 +12191,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 instructionPointer_ = state.ip;
                 framePointer_ = state.tempBase - 1;
                 argCount_ = state.argCount;
+                {
+                    ObjectHeader* mObj = state.method.asObjectPtr();
+                    bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                }
             }
 
             chargeJITBytecodes(state);
@@ -12375,6 +12408,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     instructionPointer_ = state.ip;
                                     framePointer_ = state.tempBase - 1;
                                     argCount_ = state.argCount;
+                                    {
+                                        ObjectHeader* mObj = state.method.asObjectPtr();
+                                        bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                                    }
                                 }
                                 if (checkCountdown_ <= 0) goto jit_loop_exit;
                                 continue;

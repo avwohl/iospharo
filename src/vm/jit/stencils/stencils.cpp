@@ -883,6 +883,7 @@ extern "C" void stencil_bitShiftSmallInt(JITState* s) {
 // OPERAND = bytecode offset of this send (for deopt IP)
 extern "C" void stencil_send(JITState* s) {
     s->ip = s->ip + OPERAND;  // Set deopt IP to this send's bytecode
+    s->icDataPtr = nullptr;   // No IC data — prevents stale pointer reads on J2J bailout
     s->exitReason = EXIT_SEND;
     _HOLE_RT_SEND(s);
 }

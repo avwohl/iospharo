@@ -721,15 +721,16 @@ static const Relocation stencil_bitShiftSmallInt_relocs[] = {
     { 40, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
-// ----- stencil_send (32 bytes, 2 relocs) -----
+// ----- stencil_send (36 bytes, 2 relocs) -----
 static const uint8_t stencil_send_code[] = {
-    0x08, 0x18, 0x40, 0xF9, 0x09, 0x00, 0x00, 0x90, 0x29, 0x01, 0x40, 0xF9, 0x08, 0xC1, 0x29, 0x8B,
-    0x08, 0x18, 0x00, 0xF9, 0x48, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9, 0xC0, 0x03, 0x5F, 0xD6,
+    0x08, 0x00, 0x00, 0x90, 0x08, 0x01, 0x40, 0xF9, 0x09, 0x18, 0x40, 0xF9, 0x28, 0xC1, 0x28, 0x8B,
+    0x08, 0x18, 0x00, 0xF9, 0x1F, 0x30, 0x00, 0xF9, 0x48, 0x00, 0x80, 0x52, 0x08, 0x4C, 0x00, 0xB9,
+    0xC0, 0x03, 0x5F, 0xD6,
 };
 
 static const Relocation stencil_send_relocs[] = {
-    { 8, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
-    { 4, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
+    { 4, RelocType::ARM64_GOT_LOAD_PAGEOFF12, HoleKind::Operand, 0 },
+    { 0, RelocType::ARM64_GOT_LOAD_PAGE21, HoleKind::Operand, 0 },
 };
 
 // ----- stencil_sendPoly (572 bytes, 8 relocs) -----
@@ -2715,7 +2716,7 @@ static const StencilDef stencilTable[] = {
     { "stencil_bitAndSmallInt", stencil_bitAndSmallInt_code, 88, stencil_bitAndSmallInt_relocs, 5, 1 },
     { "stencil_bitOrSmallInt", stencil_bitOrSmallInt_code, 88, stencil_bitOrSmallInt_relocs, 5, 1 },
     { "stencil_bitShiftSmallInt", stencil_bitShiftSmallInt_code, 168, stencil_bitShiftSmallInt_relocs, 5, 1 },
-    { "stencil_send", stencil_send_code, 32, stencil_send_relocs, 2, 1 },
+    { "stencil_send", stencil_send_code, 36, stencil_send_relocs, 2, 1 },
     { "stencil_sendPoly", stencil_sendPoly_code, 572, stencil_sendPoly_relocs, 8, 1 },
     { "stencil_sendJ2J", stencil_sendJ2J_code, 3464, stencil_sendJ2J_relocs, 31, 1 },
     { "stencil_pushRemoteTemp", stencil_pushRemoteTemp_code, 48, stencil_pushRemoteTemp_relocs, 3, 1 },
