@@ -433,6 +433,13 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             d.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
             d.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
             d.bcLength = 2;
+        } else if (op == SistaV1::ExtSuperSend) {
+            // 0xEB: same encoding as ExtSend — super lookup handled by emitter
+            if (i + 1 >= len) break;
+            uint8_t desc = bc[i + 1];
+            d.operand = ((extA << 5) | (desc >> 3)) & 0xFFFF;
+            d.operand2 = ((extB << 3) | (desc & 0x07)) & 0xFF;
+            d.bcLength = 2;
         } else if (op == SistaV1::ExtJump) {
             if (i + 1 >= len) break;
             int offset = bc[i + 1] + (extB << 8);
@@ -1224,12 +1231,25 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             }
             // Code after inline send is reachable (don't set unreachable)
         }
-        // Special sends and super sends: use chain loop
-        else if ((op >= 0x70 && op <= 0x7F) ||
-                 op == SistaV1::ExtSuperSend) {
+        // Super sends: store selector, exit to chain loop for super lookup
+        else if (op == SistaV1::ExtSuperSend) {
             int nArgs = bc.operand2;
+            int litIndex = bc.operand;
             if (nArgs < 0) nArgs = 0;
-            emitSendExit(nArgs, bc.bcOffset, false, 0);
+
+            flushVStack();
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
+            MIR_reg_t ipReg = newScratch();
+            EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+            // Store selector in cachedTarget for chain loop ExitSend handler
+            MIR_reg_t selReg = newScratch();
+            EMIT(MIR_MOV, REG(selReg), MEM(MIR_T_I64, reg_literals_, litIndex * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
+            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
             unreachable = true;
         }
 

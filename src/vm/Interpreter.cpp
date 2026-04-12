@@ -12008,17 +12008,33 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
             int nArgs = state.sendArgCount;
             Oop rcvr = stackValue(nArgs);
-            Oop rcvrClass = memory_.classOf(rcvr);
+
+            // Check if this is a super send (0xEB at ip)
+            bool isSuperSend = (state.ip && *state.ip == 0xEB);
 
             // Method lookup — global method cache first, then full lookup
             Oop resolved;
-            MethodCacheEntry* ce = probeCache(sendSel, rcvrClass);
-            if (ce) {
-                resolved = ce->method;
-            } else {
-                resolved = lookupMethod(sendSel, rcvrClass);
+            if (isSuperSend) {
+                // Super send: lookup from superclass of method's defining class
+                Oop methodClass = methodClassOf(state.method);
+                Oop superclass;
+                if (methodClass.isNil() || !methodClass.isObject()) {
+                    superclass = superclassOf(memory_.classOf(rcvr));
+                } else {
+                    superclass = superclassOf(methodClass);
+                }
+                resolved = lookupMethod(sendSel, superclass);
                 if (resolved.isNil()) return false;  // DNU — interpreter handles
-                cacheMethod(sendSel, rcvrClass, resolved);
+            } else {
+                Oop rcvrClass = memory_.classOf(rcvr);
+                MethodCacheEntry* ce = probeCache(sendSel, rcvrClass);
+                if (ce) {
+                    resolved = ce->method;
+                } else {
+                    resolved = lookupMethod(sendSel, rcvrClass);
+                    if (resolved.isNil()) return false;  // DNU — interpreter handles
+                    cacheMethod(sendSel, rcvrClass, resolved);
+                }
             }
 
             if (!resolved.isObject() || resolved.rawBits() < 0x10000 ||
@@ -12026,19 +12042,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 return false;  // Non-standard method — interpreter handles
             }
 
-            // Patch IC immediately so next hit is ExitSendCached
-            pendingICPatch_ = state.icDataPtr;
-            pendingICSendArgCount_ = nArgs;
-            patchJITICAfterSend(resolved, rcvr, sendSel);
+            if (!isSuperSend) {
+                // Patch IC immediately so next hit is ExitSendCached
+                // (super sends don't use ICs — lookup always starts from superclass)
+                pendingICPatch_ = state.icDataPtr;
+                pendingICSendArgCount_ = nArgs;
+                patchJITICAfterSend(resolved, rcvr, sendSel);
 
-            // Populate mega cache for JIT stencil probes
-            {
-                uint64_t tag = rcvr.rawBits() & 0x7;
-                uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
-                    ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
-                    : (tag != 0 ? (tag | 0x80000000ULL) : 0);
-                if (megaKey != 0)
-                    jitRuntime_.megaCacheAdd(sendSel.rawBits(), megaKey, resolved.rawBits());
+                // Populate mega cache for JIT stencil probes
+                {
+                    uint64_t tag = rcvr.rawBits() & 0x7;
+                    uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
+                        ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
+                        : (tag != 0 ? (tag | 0x80000000ULL) : 0);
+                    if (megaKey != 0)
+                        jitRuntime_.megaCacheAdd(sendSel.rawBits(), megaKey, resolved.rawBits());
+                }
             }
 
             chainTarget = resolved;
