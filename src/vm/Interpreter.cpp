@@ -11032,8 +11032,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         int primIdx = primitiveIndexOf(resolvedMethod);
         if (primIdx >= 264 && primIdx <= 519)
             extra = (1ULL << 63) | static_cast<uint16_t>(primIdx - 264);
-        else if (primIdx >= 256 && primIdx <= 263)
-            extra = (1ULL << 61) | static_cast<uint16_t>(primIdx - 256);
+        else if (primIdx == 256)
+            extra = (1ULL << 61);
 
         // Set inline primKind bits for methods with inlineable primitives,
         // regardless of JIT compilation status. This allows the stencil to
@@ -11048,10 +11048,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
     static bool j2jEnabled = !getenv("PHARO_NO_J2J");
-    // Don't set J2J for return-constant methods (bit 61): their inline path
-    // is already as fast as J2J, and the J2J address bits 47:0 would corrupt
-    // the constIdx stored in bits 3:0.
-    if ((extra & ((1ULL << 60) | (1ULL << 61))) == 0 && j2jEnabled) {
+    if ((extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             // Check if target has a primitive but no prologue.
@@ -11180,12 +11177,17 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             if (primIdx >= 264 && primIdx <= 519) {
                 // Quick instVar getter → inline getter (bit 63)
                 quickPrimExtra = (1ULL << 63) | static_cast<uint16_t>(primIdx - 264);
-            } else if (primIdx >= 256 && primIdx <= 263) {
-                // Quick return-constant (self/true/false/nil/-1/0/1/2)
-                quickPrimExtra = (1ULL << 61) | static_cast<uint16_t>(primIdx - 256);
+            } else if (primIdx == 256) {
+                // Quick returnSelf → inline returnsSelf (bit 61)
+                quickPrimExtra = (1ULL << 61);
             }
             if (quickPrimExtra == 0) {
-                return;  // genuinely unsafe primitive
+                // Quick constant prims (257-263) are safe for J2J:
+                // bytecodes produce the same result as the primitive.
+                // Fall through to J2J entry setting below.
+                if (!(primIdx >= 257 && primIdx <= 263)) {
+                    return;  // genuinely unsafe primitive
+                }
             }
             // Fall through to IC search with quickPrimExtra
         }
