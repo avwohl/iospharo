@@ -1030,7 +1030,20 @@ extern "C" void stencil_sendPoly(JITState* s) {
 
 // J2J entry bit in IC extra word
 static constexpr uint64_t J2J_ENTRY_BIT = (1ULL << 60);
+static constexpr uint64_t BLOCK_VALUE_BIT = (1ULL << 59);
 static constexpr uint64_t J2J_ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
+
+// MethodMap inline lookup support — matches jit::MethodMap layout exactly.
+// Used by block value stencil to find JIT code for a closure's compiledBlock.
+struct MethodMapEntry {
+    uint64_t key;     // CompiledMethod Oop bits
+    void*    value;   // JITMethod* (or nullptr)
+};
+struct MethodMapShadow {
+    MethodMapEntry* entries;  // offset 0
+    uint64_t        capacity; // offset 8
+};
+static constexpr uint64_t MM_HASH_MULT = 11400714819323198485ULL;
 
 extern "C" void (*_HOLE_RT_PUSH_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
@@ -1189,6 +1202,107 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                 }
             }
         }
+    }
+
+    // Block value (bit 59): inline FullBlockClosure>>value / value:
+    // The receiver is a FullBlockClosure. Extract its compiledBlock,
+    // look up JIT code via method map, and do a J2J call to the block.
+    if (extra & BLOCK_VALUE_BIT) {
+        ObjectHeader* closureObj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        // FullBlockClosure layout: [outerCtx, compiledBlock, numArgs, receiver, ...copied]
+        Oop compiledBlock = closureObj->slotAt(1);
+        // Validate: compiledBlock must be an object pointer
+        if ((compiledBlock.bits & 0x7) == 0 && compiledBlock.bits >= 0x10000) {
+            // Verify arg count: closure.numArgs (slot 2, SmallInteger) must match nArgs
+            Oop numArgsOop = closureObj->slotAt(2);
+            if ((numArgsOop.bits & 0x7) == 1 &&
+                (int)((int64_t)numArgsOop.bits >> 3) == nArgs) {
+                // Method map lookup for block's compiled code
+                MethodMapShadow* mm = (MethodMapShadow*)s->methodMapPtr;
+                if (mm && mm->entries && mm->capacity > 0) {
+                    uint64_t mask = mm->capacity - 1;
+                    uint64_t idx = ((compiledBlock.bits >> 3) * MM_HASH_MULT) & mask;
+                    void* blockJM = nullptr;
+                    for (int probe = 0; probe < 6; probe++) {
+                        MethodMapEntry& e = mm->entries[idx];
+                        if (e.key == 0) break;
+                        if (e.key == compiledBlock.bits && e.value) {
+                            // Check JITMethod.state (offset 32) == Compiled (1)
+                            uint8_t jmState = *((uint8_t*)e.value + 32);
+                            if (jmState == 1) { blockJM = e.value; break; }
+                        }
+                        idx = (idx + 1) & mask;
+                    }
+                    if (blockJM) {
+                        // Check J2J save stack space
+                        if ((uintptr_t)s->j2jSaveCursor <
+                            (uintptr_t)s->j2jSaveLimit) {
+                            // Save caller state
+                            J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
+                            _save->sp = s->sp;
+                            _save->receiver = s->receiver;
+                            _save->tempBase = s->tempBase;
+                            _save->ip = s->ip + bcOffset + bcLen;
+                            _save->sendArgCount = nArgs;
+                            _save->resumeAddr = RESUME_ADDR;
+                            _save->jitMethod = s->jitMethod;
+                            _save->literals = s->literals;
+                            _save->argCount = s->argCount;
+                            {
+                                uint64_t _mh = *(uint64_t*)((uint8_t*)s->jitMethod
+                                                            + JM_METHOD_HEADER);
+                                int _nl = (int)(_mh & 0x7FFF);
+                                uint64_t _cmo = *(uint64_t*)((uint8_t*)s->jitMethod
+                                                             + JM_COMPILED_METHOD);
+                                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;
+                            }
+                            s->j2jSaveCursor += sizeof(J2JSave);
+                            s->j2jDepth++;
+                            s->j2jTotalCalls++;
+
+                            // Setup block callee state
+                            Oop blockRecv = closureObj->slotAt(3);
+                            Oop* _fp = s->sp - (nArgs + 1);
+                            s->receiver = blockRecv;
+                            s->tempBase = _fp + 1;
+
+                            // Set up block method info from JITMethod header
+                            ObjectHeader* blockMethObj = (ObjectHeader*)compiledBlock.bits;
+                            s->literals = blockMethObj->slots() + 1;
+                            s->jitMethod = blockJM;
+                            uint8_t blockArgCount = *((uint8_t*)blockJM + JM_ARG_COUNT);
+                            s->argCount = blockArgCount;
+                            {
+                                uint64_t _mh = *(uint64_t*)((uint8_t*)blockJM
+                                                            + JM_METHOD_HEADER);
+                                int _nl = (int)(_mh & 0x7FFF);
+                                s->ip = (uint8_t*)blockMethObj + 8 + (1 + _nl) * 8;
+                            }
+
+                            // Copy captured values from closure to temp area
+                            uint64_t numSlots = closureObj->slotCount();
+                            int numCopied = (numSlots > 4) ? (int)(numSlots - 4) : 0;
+                            Oop _nil = *(Oop*)&_HOLE_NIL_OOP;
+                            uint8_t totalTemps = *((uint8_t*)blockJM + JM_TEMP_COUNT);
+                            for (int _t = nArgs; _t < (int)totalTemps; _t++) {
+                                if (_t - nArgs < numCopied)
+                                    *(s->sp) = closureObj->slotAt(4 + _t - nArgs);
+                                else
+                                    *(s->sp) = _nil;
+                                s->sp++;
+                            }
+
+                            // Tail-call to block JIT entry
+                            uint8_t* _entry = (uint8_t*)blockJM + JM_SIZE;
+                            ((void(*)(JITState*))_entry)(s);
+                            return;
+                        }
+                    }
+                }
+            }
+        }
+        // Block eval fallback: exit to chain loop
+        goto exit_send_cached;
     }
 
     // J2J direct call (bit 60)

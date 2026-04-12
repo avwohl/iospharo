@@ -11037,6 +11037,13 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             uint8_t pk = inlinePrimKind(primIdx);
             if (pk) extra |= (uint64_t)pk << 48;
         }
+
+        // Block value primitives (207, 209): mark for stencil block evaluation.
+        // The stencil does a method map lookup to find the block's JIT code
+        // and does a J2J call directly, avoiding executePrimitive/activateBlock.
+        if (primIdx == 207 || primIdx == 209) {
+            extra |= (1ULL << 59);  // BLOCK_VALUE_BIT
+        }
     }
 
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
