@@ -617,6 +617,31 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     return true;
 }
 
+bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state) {
+    // Fast resume: caller guarantees jm is the same JITMethod we just exited
+    // from, so we skip method map lookup, IC validation, receiver bounds check,
+    // and LRU touch. Only does bcToCode lookup + W^X + entry.
+    if (!jm->isExecutable()) return false;
+
+    uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
+    if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
+
+    // Set up JIT state
+    state.jitMethod = jm;
+    state.exitReason = ExitNone;
+
+    // Toggle W^X to executable
+    makeExecutable(jm->codeStart(), jm->codeSize);
+
+    StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
+    entry(&state);
+
+    // Back to writable
+    makeWritable(jm->codeStart(), jm->codeSize);
+
+    return true;
+}
+
 void JITRuntime::flushCaches() {
     if (!initialized_) return;
 

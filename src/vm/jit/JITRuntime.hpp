@@ -51,6 +51,11 @@ public:
     // after a send returns). Returns true if JIT code ran.
     bool tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state);
 
+    // Fast resume: skip method map lookup, IC validation, receiver bounds check,
+    // and LRU touch. For prim-in-place where we know the JITMethod is the same
+    // one we just exited from. Caller must ensure jm is still valid/executable.
+    bool tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state);
+
     // Called by the interpreter on each method activation. Increments the
     // execution counter and triggers compilation at the threshold.
     void noteMethodEntry(Oop compiledMethod);

@@ -828,6 +828,7 @@ private:
     size_t jitChainPrimChains_ = 0;      // Primitives that chained (no frame push)
     size_t jitChainPrimFalls_ = 0;       // Primitives that pushed frame → bail
     size_t jitPrimFallHisto_[600] = {};  // Per-primitive fall histogram (temp profiling)
+    size_t jitPrimChainHisto_[600] = {};  // Per-primitive chain histogram (temp profiling)
     size_t jitMaterializeCount_ = 0;    // materializeJ2J with j2jDepth > 0 (temp diag)
     size_t jitMaterializeTotalDepth_ = 0; // cumulative j2jDepth materialized
     size_t jitChainActivateFalls_ = 0;   // activateMethod pushed frame → bail

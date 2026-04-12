@@ -743,6 +743,26 @@ void Interpreter::handleBenchComplete() {
             fprintf(stderr, "\n");
         }
 #endif
+        // Top prim-chain primitives (in-place successes)
+        {
+            struct PC { int idx; size_t count; };
+            PC top[20] = {};
+            for (int i = 0; i < 600; i++) {
+                if (jitPrimChainHisto_[i] > 0) {
+                    for (int t = 0; t < 20; t++) {
+                        if (jitPrimChainHisto_[i] > top[t].count) {
+                            for (int s = 19; s > t; s--) top[s] = top[s-1];
+                            top[t] = {i, jitPrimChainHisto_[i]};
+                            break;
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[BENCH]   top prim-chains:");
+            for (int t = 0; t < 20 && top[t].count > 0; t++)
+                fprintf(stderr, " p%d=%zu", top[t].idx, top[t].count);
+            fprintf(stderr, "\n");
+        }
         fprintf(stderr, "[BENCH]   materialize: count=%zu totalDepth=%zu\n",
                 jitMaterializeCount_, jitMaterializeTotalDepth_);
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
@@ -12702,6 +12722,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Primitive completed in place — resume JIT at bytecode after send
                         jitJ2JActChains_++;
                         jitChainPrimChains_++;
+                        if (primIdx < 600) jitPrimChainHisto_[primIdx]++;
                         method = method_;
                         uint32_t bcOffset = computeCurrentBCOffset();
                         if (bcOffset == UINT32_MAX) return true;
