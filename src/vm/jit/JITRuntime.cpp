@@ -380,6 +380,7 @@ JITRuntime::JITRuntime()
 }
 
 JITRuntime::~JITRuntime() {
+    delete tier2Compiler_;
     delete compiler_;
 }
 
@@ -422,6 +423,14 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
     helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
     compiler_->setHelpers(helpers);
+
+    // Create Tier 2 compiler (MIR-based)
+    tier2Compiler_ = new Tier2Compiler(codeZone_, methodMap_, memory, interp);
+    if (!tier2Compiler_->initialize()) {
+        fprintf(stderr, "[JIT] Warning: Tier 2 compiler failed to initialize\n");
+        delete tier2Compiler_;
+        tier2Compiler_ = nullptr;
+    }
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be
     // "executable" rather than "writable". Ensure we start in writable mode
@@ -629,9 +638,20 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     codeZone_.touch(jm);
     jm->executionCount++;
 
-    // Recompile hot methods using IC profiling data.
+    // Promote hot methods: try Tier 2 (MIR) first, fall back to Tier 1 recompile.
     // Threshold: 500 executions, tier 1 only, must have send sites.
     if (jm->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
+        // Try Tier 2 compilation (MIR with register allocation)
+        if (tier2Compiler_) {
+            void* t2code = tier2Compiler_->compile(compiledMethod, jm);
+            if (t2code) {
+                tier2Insert(compiledMethod.rawBits(), t2code);
+                fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
+                        (void*)compiledMethod.rawBits(),
+                        tier2Compiler_->methodsCompiled());
+            }
+        }
+        // Also do Tier 1 IC recompilation (inline getters/setters)
         if (compiler_) {
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
@@ -669,6 +689,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         if (jm->maxRecvFieldIndex >= recvObj->slotCount()) {
             return false;
         }
+    }
+
+    // Check for Tier 2 compiled code (MIR-generated, register-allocated)
+    void* t2code = tier2Lookup(compiledMethod.rawBits());
+    if (t2code) {
+        // Tier 2 code lives in MIR-managed memory (already executable).
+        // Call it directly — same signature as Tier 1: void(*)(JITState*)
+        ((void(*)(JITState*))t2code)(&state);
+        return true;
     }
 
     // Toggle W^X to executable for JIT execution.

@@ -190,28 +190,32 @@ Effort: ~3 days.
 ---
 
 
-## Track B: Tier 2 SLJIT Backend
+## Track B: Tier 2 MIR Backend
 
-### Why SLJIT
+### Why MIR
 
-    SLJIT       MIR           Cranelift      LLVM ORC
-    C, BSD      C, MIT        Rust only      C++, huge
-    ARM64+x86   ARM64+x86    ARM64+x86      everything
-    +MIPS+PPC   no Windows    no stable C    ms/method
-    ~15K LOC    ~30K LOC      ~200K LOC      ~millions
-    fast codegen better code  good code      best code
-    no regalloc  has regalloc has regalloc   has regalloc
+    MIR           SLJIT       Cranelift      LLVM ORC
+    C, MIT        C, BSD      Rust only      C++, huge
+    ARM64+x86     ARM64+x86   ARM64+x86      everything
+    no Windows    +MIPS+PPC   no stable C    ms/method
+    ~30K LOC      ~15K LOC    ~200K LOC      ~millions
+    ~70% GCC -O2  basic       good code      best code
+    has regalloc  no regalloc has regalloc   has regalloc
 
-SLJIT is the lightest. It doesn't have a register allocator — we write
-one. That's fine; linear scan is ~500 lines for our use case (no SSA,
-no phi nodes, single method scope).
+MIR generates ~70% of GCC -O2 quality code with a built-in register
+allocator. This eliminates B3 (writing our own linear scan) and produces
+better code than hand-feeding SLJIT. The goal is Cog parity, so code
+quality matters more than MIPS/PPC portability.
 
-Alternative: MIR has a built-in register allocator and generates better
-code (~70% of GCC -O2). If code quality matters more than portability,
-MIR is the better choice. No Windows JIT support though.
+MIR provides:
+- Built-in linear scan register allocator
+- Lazy basic block compilation (fast compile times)
+- C-callable function generation
+- ~30K LOC, easy to embed as a submodule
+- MIT license
 
-Decision: start with SLJIT for portability. If code quality disappoints,
-switch to MIR. The IR design (step B2) is backend-agnostic.
+Decision: use MIR. Portability to Windows JIT is not a priority (iOS/macOS
+is the target). The IR design (B2) maps directly to MIR's IR.
 
 
 ### B1. Hot Method Detection
@@ -271,53 +275,32 @@ to 1-3 IR ops. The IR is the substrate for all optimizations.
 Effort: ~3 days (data structures + bytecode translator).
 
 
-### B3. Register Allocation (Linear Scan)
+### B3. Register Allocation (handled by MIR)
 
-ARM64 has 30 general-purpose registers. Reserve:
+MIR has a built-in linear scan register allocator. We declare virtual
+registers in MIR IR and MIR assigns physical registers automatically.
 
-    x0         JITState* (argument, caller-saved)
-    x1-x15     scratch (16 allocatable caller-saved)
-    x16-x17    intra-procedure call scratch (reserved by ABI)
+ARM64 register budget (for reference):
+
+    x0         JITState* / argument passing
+    x1-x15     caller-saved (MIR uses for expression temps)
+    x16-x17    intra-procedure scratch (reserved by ABI)
     x18        platform register (reserved on Apple)
-    x19-x28    callee-saved (10 allocatable callee-saved)
+    x19-x28    callee-saved (MIR uses for method-local values)
     x29        frame pointer
     x30        link register
-    sp         stack pointer
 
-For compiled methods that use native call frames (B4), we have:
+Special considerations we communicate to MIR:
 
-    x19-x28    10 callee-saved registers for method-local values
-    x1-x15     15 caller-saved registers for expression temporaries
-    x0         reserved for JITState*/argument passing
+    - Mark x0 as reserved (JITState pointer, passed to runtime helpers)
+    - Oop values at GC safepoints: MIR's spill/reload around calls
+      handles this naturally — callee-saved regs survive calls,
+      caller-saved values are spilled before calls.
+    - Float registers (d0-d31): MIR allocates FP regs for unboxed
+      floats (B6) automatically from its FP register pool.
 
-That's 25 allocatable registers. More than enough for typical Smalltalk
-methods (most have < 10 temps + a few stack values).
-
-Linear scan algorithm:
-
-    1. Number all IR ops sequentially (live ranges)
-    2. For each virtual register, compute [first-use, last-use] interval
-    3. Sort intervals by start position
-    4. Walk intervals in order:
-       a. Free any physical register whose interval has ended
-       b. If a free register exists, assign it
-       c. Otherwise, spill the interval ending latest to stack
-    5. Rewrite IR to use physical registers
-    6. Insert spill/reload at spill points
-
-This is the classic Poletto & Sarkar linear scan. ~500 lines of C++.
-No SSA, no graph coloring, no interference graphs. Fast and good enough
-for our use case.
-
-Special considerations:
-
-    - Oop values must be GC-visible: callee-saved registers survive GC
-      calls, but caller-saved registers need spilling before any call
-      that might trigger GC (allocation, send, primitive).
-    - Float registers: d0-d31 on ARM64. If we unbox floats (B6), we
-      need to allocate FP registers too. Same algorithm, separate pool.
-
-Effort: ~1 week.
+Effort: ~1 day (MIR configuration, register constraints). The allocator
+itself is zero lines of our code.
 
 
 ### B4. Native Call Frames
@@ -463,11 +446,11 @@ Phase 1: Tier 1 improvements (Track A)            ~2 weeks
     A3. Monomorphic send fast-path                 3 days
     A2. Compile-time getter/setter inlining        1 week
 
-Phase 2: Tier 2 foundation (Track B)              ~3 weeks
-    B1. Hot method detection                       1 day
-    B2. IR design + bytecode translator            3 days
-    B3. Linear scan register allocator             1 week
-    B4. Native call frames                         2 weeks (overlaps B3)
+Phase 2: Tier 2 foundation (Track B + MIR)         ~2 weeks
+    B1. Hot method detection                       1 day (done — exec counter exists)
+    B2. MIR integration + bytecode→MIR translator  1 week
+    B3. Register allocation                        0 (MIR built-in)
+    B4. Native call frames                         1 week
 
 Phase 3: Tier 2 optimizations                     ~3 weeks
     B5. Method inlining                            1 week
@@ -505,9 +488,10 @@ which is a separate effort.
 ## Key Risks
 
     Risk                              Mitigation
-    SLJIT codegen quality too low     Switch to MIR (has regalloc)
-    Register allocator bugs           Extensive testing, compare
-                                        Tier 1 vs Tier 2 results
+    MIR ARM64 codegen bugs            MIR has good ARM64 support but
+                                        less battle-tested than x86
+    MIR compile-time overhead         Lazy BB compilation, only hot
+                                        methods promoted to Tier 2
     GC + native frames = complex      Conservative scanning first,
                                         precise stack maps later
     Deoptimization corner cases       Keep Tier 1 as fallback for
@@ -520,14 +504,11 @@ which is a separate effort.
 
 ## Files to Create
 
-    src/vm/jit/Tier2Compiler.hpp      IR definition, compiler class
-    src/vm/jit/Tier2Compiler.cpp      Bytecode→IR, optimization passes
-    src/vm/jit/RegAlloc.hpp           Linear scan allocator
-    src/vm/jit/RegAlloc.cpp
-    src/vm/jit/ARM64Emitter.hpp       SLJIT wrapper / direct ARM64 emit
-    src/vm/jit/ARM64Emitter.cpp
+    src/vm/jit/Tier2Compiler.hpp      MIR-based compiler, bytecode→MIR IR
+    src/vm/jit/Tier2Compiler.cpp      Bytecode translator + optimization passes
     src/vm/jit/StackMap.hpp           GC stack maps for native frames
     src/vm/jit/StackMap.cpp
+    third_party/mir/                  MIR submodule (mir.h, mir-gen.h, etc.)
 
     Existing files modified:
     src/vm/jit/JITRuntime.cpp         Hot method trigger, Tier 2 entry

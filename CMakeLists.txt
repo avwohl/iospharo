@@ -50,6 +50,7 @@ set(VM_SOURCES
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp
+    src/vm/jit/Tier2Compiler.cpp
     src/vm/jit/TrampolineAsm.S
 )
 

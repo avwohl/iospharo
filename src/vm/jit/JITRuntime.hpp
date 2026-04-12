@@ -18,6 +18,7 @@
 #include "JITMethod.hpp"
 #include "CodeZone.hpp"
 #include "JITCompiler.hpp"
+#include "Tier2Compiler.hpp"
 #include "../Oop.hpp"
 
 #if PHARO_JIT_ENABLED
@@ -72,6 +73,7 @@ public:
     CodeZone&     codeZone()   { return codeZone_; }
     MethodMap&    methodMap()  { return methodMap_; }
     JITCompiler*  compiler()   { return compiler_; }
+    Tier2Compiler* tier2Compiler() { return tier2Compiler_; }
 
     // Special Oop storage (stencils load from these addresses)
     uint64_t nilOopBits;
@@ -120,8 +122,42 @@ private:
     CodeZone    codeZone_;
     MethodMap   methodMap_;
     JITCompiler* compiler_ = nullptr;
+    Tier2Compiler* tier2Compiler_ = nullptr;
     Interpreter* interp_ = nullptr;
     bool        initialized_ = false;
+
+    // Tier 2 compiled method map: compiledMethodOop bits → MIR function pointer
+    // Separate from MethodMap to avoid changing JITMethod layout.
+    static constexpr size_t Tier2MapSize = 4096;
+    struct Tier2Entry {
+        uint64_t key;   // CompiledMethod Oop bits (0 = empty)
+        void*    func;  // MIR-generated function pointer
+    };
+    Tier2Entry tier2Map_[Tier2MapSize] = {};
+
+    void* tier2Lookup(uint64_t methodBits) const {
+        size_t mask = Tier2MapSize - 1;
+        size_t idx = (size_t)((methodBits >> 3) * 11400714819323198485ULL) & mask;
+        for (size_t p = 0; p < 16; p++) {
+            if (tier2Map_[idx].key == methodBits) return tier2Map_[idx].func;
+            if (tier2Map_[idx].key == 0) return nullptr;
+            idx = (idx + 1) & mask;
+        }
+        return nullptr;
+    }
+
+    void tier2Insert(uint64_t methodBits, void* func) {
+        size_t mask = Tier2MapSize - 1;
+        size_t idx = (size_t)((methodBits >> 3) * 11400714819323198485ULL) & mask;
+        for (size_t p = 0; p < 16; p++) {
+            if (tier2Map_[idx].key == 0 || tier2Map_[idx].key == methodBits) {
+                tier2Map_[idx].key = methodBits;
+                tier2Map_[idx].func = func;
+                return;
+            }
+            idx = (idx + 1) & mask;
+        }
+    }
 
     // Execution count tracking for compilation triggering
     CountEntry countMap_[CountMapSize];
