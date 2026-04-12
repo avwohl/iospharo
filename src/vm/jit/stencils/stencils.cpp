@@ -2935,119 +2935,149 @@ extern "C" void stencil_addSmallInt_3(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         int64_t result = va + vb;
-        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            _HOLE_CONTINUE(s);
-            return;
+        if (result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    }
 }
 
 extern "C" void stencil_addSmallInt_4(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         int64_t result = va + vb;
-        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            asm volatile("mov x21, x22" :::);
-            _HOLE_CONTINUE(s);
-            return;
+        if (result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        asm volatile("mov x21, x22" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    }
 }
 
 extern "C" void stencil_subSmallInt_3(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         int64_t result = va - vb;
-        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            _HOLE_CONTINUE(s);
-            return;
+        if (result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    }
 }
 
 extern "C" void stencil_subSmallInt_4(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         int64_t result = va - vb;
-        if (__builtin_expect(result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL, 1)) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            asm volatile("mov x21, x22" :::);
-            _HOLE_CONTINUE(s);
-            return;
+        if (result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        asm volatile("mov x21, x22" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    }
 }
 
 extern "C" void stencil_mulSmallInt_3(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         __int128 wide = (__int128)va * vb;
         int64_t result = (int64_t)wide;
         if (wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            _HOLE_CONTINUE(s);
-            return;
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_3(s, a_bits, b_bits);
+    }
 }
 
 extern "C" void stencil_mulSmallInt_4(JITState* s) {
     uint64_t a_bits, b_bits;
     asm volatile("mov %0, x20" : "=r"(a_bits));
     asm volatile("mov %0, x19" : "=r"(b_bits));
+    bool ok = false;
+    uint64_t r = 0;
     if ((a_bits & TagMask3) == SmallIntegerTag && (b_bits & TagMask3) == SmallIntegerTag) {
         int64_t va = static_cast<int64_t>(a_bits) >> 3;
         int64_t vb = static_cast<int64_t>(b_bits) >> 3;
         __int128 wide = (__int128)va * vb;
         int64_t result = (int64_t)wide;
         if (wide == result && result >= -0x1FFFFFFFFFFFFFFFLL && result <= 0x1FFFFFFFFFFFFFFFLL) {
-            uint64_t r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
-            asm volatile("mov x19, %0" : : "r"(r));
-            asm volatile("mov x20, x21" :::);
-            asm volatile("mov x21, x22" :::);
-            _HOLE_CONTINUE(s);
-            return;
+            r = (static_cast<uint64_t>(result << 3) | SmallIntegerTag);
+            ok = true;
         }
     }
-    ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    if (ok) {
+        asm volatile("mov x19, %0" : : "r"(r));
+        asm volatile("mov x20, x21" :::);
+        asm volatile("mov x21, x22" :::);
+        _HOLE_CONTINUE(s);
+    } else {
+        ARITH_OVERFLOW_4(s, a_bits, b_bits);
+    }
 }
 
 // ----- COMPARISON variants (state 2 → 1) -----

@@ -44,6 +44,7 @@ CFLAGS_COMMON = [
     "-fno-exceptions", "-fno-rtti",
     "-fno-asynchronous-unwind-tables",
     "-fno-stack-protector",
+    "-fno-split-machine-functions",
     "-mllvm", "-hot-cold-split=false",
     "-mllvm", "-enable-machine-outliner=never",
 ]
@@ -353,49 +354,69 @@ def compile_stencils(arch: str) -> Path:
     return obj
 
 
-# SimStack stencils that use x19/x20 via inline asm (ARM64 only).
-# These rely on the compiler NOT using x19/x20 for its own purposes.
+# SimStack stencils that use x19-x22 via inline asm (ARM64 only).
+# These rely on the compiler NOT using x19-x22 for its own purposes.
 # After compilation, we verify this by checking for STP/LDP save/restore.
 SIMSTACK_STENCILS = {
-    "stencil_flush1", "stencil_flush2",
+    "stencil_flush1", "stencil_flush2", "stencil_flush3", "stencil_flush4",
     "stencil_pushTemp_E", "stencil_pushTemp_1", "stencil_pushTemp_2",
+    "stencil_pushTemp_3", "stencil_pushTemp_4",
     "stencil_pushRecvVar_E", "stencil_pushRecvVar_1", "stencil_pushRecvVar_2",
+    "stencil_pushRecvVar_3", "stencil_pushRecvVar_4",
     "stencil_pushLitConst_E", "stencil_pushLitConst_1", "stencil_pushLitConst_2",
+    "stencil_pushLitConst_3", "stencil_pushLitConst_4",
     "stencil_pushLitVar_E", "stencil_pushLitVar_1", "stencil_pushLitVar_2",
+    "stencil_pushLitVar_3", "stencil_pushLitVar_4",
     "stencil_pushReceiver_E", "stencil_pushReceiver_1", "stencil_pushReceiver_2",
+    "stencil_pushReceiver_3", "stencil_pushReceiver_4",
     "stencil_pushTrue_E", "stencil_pushTrue_1", "stencil_pushTrue_2",
+    "stencil_pushTrue_3", "stencil_pushTrue_4",
     "stencil_pushFalse_E", "stencil_pushFalse_1", "stencil_pushFalse_2",
+    "stencil_pushFalse_3", "stencil_pushFalse_4",
     "stencil_pushNil_E", "stencil_pushNil_1", "stencil_pushNil_2",
+    "stencil_pushNil_3", "stencil_pushNil_4",
     "stencil_pop_2", "stencil_pop_1", "stencil_pop_E",
+    "stencil_pop_3", "stencil_pop_4",
     "stencil_dup_E", "stencil_dup_1", "stencil_dup_2",
+    "stencil_dup_3", "stencil_dup_4",
     "stencil_storeTemp_1", "stencil_storeTemp_2",
     "stencil_popStoreTemp_2", "stencil_popStoreTemp_1",
+    "stencil_popStoreTemp_3", "stencil_popStoreTemp_4",
     "stencil_storeRecvVar_1",
     "stencil_popStoreRecvVar_2", "stencil_popStoreRecvVar_1",
+    "stencil_popStoreRecvVar_3", "stencil_popStoreRecvVar_4",
     "stencil_addSmallInt_2", "stencil_subSmallInt_2", "stencil_mulSmallInt_2",
+    "stencil_addSmallInt_3", "stencil_subSmallInt_3", "stencil_mulSmallInt_3",
+    "stencil_addSmallInt_4", "stencil_subSmallInt_4", "stencil_mulSmallInt_4",
     "stencil_lessThanSmallInt_2", "stencil_greaterThanSmallInt_2",
     "stencil_lessEqualSmallInt_2", "stencil_greaterEqualSmallInt_2",
     "stencil_equalSmallInt_2", "stencil_notEqualSmallInt_2",
+    "stencil_lessThanSmallInt_3", "stencil_greaterThanSmallInt_3",
+    "stencil_lessEqualSmallInt_3", "stencil_greaterEqualSmallInt_3",
+    "stencil_equalSmallInt_3", "stencil_notEqualSmallInt_3",
+    "stencil_lessThanSmallInt_4", "stencil_greaterThanSmallInt_4",
+    "stencil_lessEqualSmallInt_4", "stencil_greaterEqualSmallInt_4",
+    "stencil_equalSmallInt_4", "stencil_notEqualSmallInt_4",
     "stencil_jumpTrue_1", "stencil_jumpFalse_1",
+    "stencil_jumpTrueBack_1", "stencil_jumpFalseBack_1",
     "stencil_returnTop_1", "stencil_returnTop_E", "stencil_returnReceiver_1",
 }
 
 
 def verify_simstack_register_safety(stencils: List[StencilInfo], arch: str):
-    """Verify that SimStack stencils don't have compiler-generated x19/x20 save/restore.
+    """Verify that SimStack stencils don't have compiler-generated x19-x22 save/restore.
 
     The register-based SimStack approach relies on the compiler NOT touching
-    x19/x20 in these small tail-call functions. If the compiler generates
-    STP/LDP for x19/x20, our inline asm writes would be undone by the restore.
+    x19-x22 in these small tail-call functions. If the compiler generates
+    STP/LDP for x19-x22, our inline asm writes would be undone by the restore.
     """
     if arch != "arm64":
         return  # Only relevant for ARM64
 
-    # ARM64 STP/LDP encoding for x19/x20:
-    # STP x20, x19, [sp, #imm]! : 0xA9xx4FF4 (pre-indexed) or 0xA90x4FF4
-    # LDP x20, x19, [sp], #imm  : 0xA8xx4FF4 (post-indexed)
-    # We check for any STP/LDP involving x19 (register 19 = 0x13) or x20 (0x14)
+    # ARM64 STP/LDP encoding for x19-x22:
+    # We check for any STP/LDP involving x19-x22 (registers 19-22)
     # in the Rt/Rt2 fields.
+    simstack_regs = {19, 20, 21, 22}
     issues = []
     for s in stencils:
         if s.name not in SIMSTACK_STENCILS:
@@ -404,16 +425,15 @@ def verify_simstack_register_safety(stencils: List[StencilInfo], arch: str):
         for i in range(0, len(code) - 3, 4):
             insn = struct.unpack_from("<I", code, i)[0]
             # STP/LDP GP 64-bit: bits 31:25 = 1010100 = 0x54
-            # This distinguishes from MOV/ORR (0x55) which shares bits 31:26
             is_stp_ldp = ((insn >> 25) & 0x7F) == 0x54
             if is_stp_ldp:
                 rt = insn & 0x1F
                 rt2 = (insn >> 10) & 0x1F
-                if rt in (19, 20) or rt2 in (19, 20):
+                if rt in simstack_regs or rt2 in simstack_regs:
                     issues.append(f"  {s.name} @ offset {i}: STP/LDP with x{rt}/x{rt2}")
 
     if issues:
-        print("ERROR: SimStack stencils have compiler-generated x19/x20 save/restore!", file=sys.stderr)
+        print("ERROR: SimStack stencils have compiler-generated x19-x22 save/restore!", file=sys.stderr)
         print("The compiler used callee-saved registers, which defeats register caching.", file=sys.stderr)
         for issue in issues:
             print(issue, file=sys.stderr)
@@ -445,10 +465,14 @@ def extract_stencils(obj_path: Path, arch: str = None) -> List[StencilInfo]:
     relocs = parser.get_relocations()
 
     # Find stencil functions (symbols starting with _stencil_)
+    # Skip .cold.N fragments — these are compiler-split cold paths that must
+    # remain part of their parent stencil (they're reached via branches that
+    # are already in the parent's code range).
     stencil_syms = []
     for sym in parser.symbols:
         if sym["name"].startswith("_stencil_") and (sym["type"] & 0x0E) == N_SECT:
-            stencil_syms.append(sym)
+            if ".cold." not in sym["name"]:
+                stencil_syms.append(sym)
 
     # Sort by address
     stencil_syms.sort(key=lambda s: s["value"])
