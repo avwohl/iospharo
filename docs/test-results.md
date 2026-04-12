@@ -2,6 +2,29 @@
 
 Last updated: 2026-04-12
 
+## Tier 2 MIR Compiler Status (2026-04-12)
+
+MIR-based Tier 2 JIT: bytecodes → MIR IR → ARM64 native code with register
+allocation. Compilation flow: hot method → Tier 1 (copy-and-patch) → Tier 2 (MIR).
+
+Current status: **leaf-only** — T2 compiles methods with no sends.
+Send-heavy methods stay on T1 because T1's J2J stencil-to-stencil calls
+are 9x faster than T2's exit-to-C++-and-resume cycle.
+
+Key findings:
+- Resume dispatch works: T2 functions can be re-entered after sends via
+  prologue dispatch table (BNE check → compare offset → jump to label)
+- fib(28) with T2 on all methods: 92ms (vs 10ms T1-only) — 9x slowdown
+  from C++ exit/re-entry overhead on every send
+- With leaf-only filter: 10ms (no regression vs T1-only)
+- No methods in standard Pharo benchmarks currently T2-compile
+  (all hot methods have sends; leaf methods have unsupported opcodes)
+
+Next steps for T2 speedup:
+1. Implement T2 J2J: MIR code calls T1 stencils directly (avoids C++ exit)
+2. Float arithmetic inlining: specialize hot Float +/* to avoid sends
+3. Type specialization: use IC profiling data from T1 for type guards
+
 ## AWFY after Track A (2026-04-12)
 
 Track A: 4-register SimStack + IC-guided getter/setter inlining.
