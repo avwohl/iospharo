@@ -1200,10 +1200,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                 (uintptr_t)s->j2jSaveLimit) {
                 // Save stack full — bail to interpreter
                 s->cachedTarget.bits = methodBits;
-                s->sendArgCount = nArgs;
-                s->ip = s->ip + bcOffset;
-                s->exitReason = EXIT_SEND_CACHED;
-                return;
+                goto exit_send_cached;
             }
             J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
             _save->sp = s->sp;
@@ -1271,12 +1268,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
 
     // IC hit but no inline path succeeded — exit with cached target
     s->cachedTarget.bits = methodBits;
-    s->icDataPtr = icData;
-    s->sendArgCount = nArgs;
-    s->ip = s->ip + bcOffset;
-    s->exitReason = EXIT_SEND_CACHED;
-    _HOLE_RT_SEND(s);
-    return;
+    goto exit_send_cached;
 
 ic_miss:
 
@@ -1290,24 +1282,14 @@ ic_miss:
             MegaCacheEntry* entry = &cache[hash];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
                 s->cachedTarget.bits = entry->methodBits;
-                s->icDataPtr = icData;
-                s->sendArgCount = nArgs;
-                s->ip = s->ip + bcOffset;
-                s->exitReason = EXIT_SEND_CACHED;
-                _HOLE_RT_SEND(s);
-                return;
+                goto exit_send_cached;
             }
             // Secondary probe (rotated hash)
             size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
             entry = &cache[hash2];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
                 s->cachedTarget.bits = entry->methodBits;
-                s->icDataPtr = icData;
-                s->sendArgCount = nArgs;
-                s->ip = s->ip + bcOffset;
-                s->exitReason = EXIT_SEND_CACHED;
-                _HOLE_RT_SEND(s);
-                return;
+                goto exit_send_cached;
             }
         }
     }
@@ -1317,6 +1299,14 @@ ic_miss:
     s->sendArgCount = nArgs;
     s->ip = s->ip + bcOffset;
     s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+    return;
+
+exit_send_cached:
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND_CACHED;
     _HOLE_RT_SEND(s);
 }
 
