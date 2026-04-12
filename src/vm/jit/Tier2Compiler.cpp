@@ -21,12 +21,22 @@
  */
 
 #include "Tier2Compiler.hpp"
+#include "JITRuntime.hpp"
 #include "CodeZone.hpp"
 #include "JITMethod.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
 #include <cstdio>
+
+// Debug helper callable from MIR-generated code
+extern "C" void t2_debug_point(int64_t tag, int64_t rcv, int64_t sp, int64_t exitReason) {
+    static int dbgCount = 0;
+    if (dbgCount++ < 20) {
+        fprintf(stderr, "[T2-DBG] tag=%lld rcv=0x%llx sp=%p exit=%lld\n",
+                (long long)tag, (unsigned long long)rcv, (void*)sp, (long long)exitReason);
+    }
+}
 #include <vector>
 
 #include <setjmp.h>
@@ -250,11 +260,9 @@ void Tier2Compiler::emitReturn() {
     if (vstackDepth_ > 0) {
         retVal = vpop();
     } else {
-        // TOS is in memory at sp[-1] (sp points past TOS in our convention)
-        // Actually in stencils sp[0] = TOS (sp points at TOS)
-        // Load from sp[0]
+        // TOS is at sp[-8]: after flushVStack or label merge, sp points PAST TOS.
         retVal = newScratch();
-        EMIT(MIR_MOV, REG(retVal), MEM(MIR_T_I64, reg_sp_, 0));
+        EMIT(MIR_MOV, REG(retVal), MEM(MIR_T_I64, reg_sp_, -8));
     }
     // state->returnValue = retVal
     EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_RETVAL), REG(retVal));
@@ -546,26 +554,6 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    // Count general sends: 0x80-0xAF, 0x70-0x7F, 0xEA, 0xEB.
-    // Tier 2 exits to C++ on every send, so send-heavy methods are slower
-    // than Tier 1 which uses J2J stencil-to-stencil calls.  Skip T2 for
-    // methods with general sends.
-    {
-        int sendCount = 0;
-        for (auto& d : decoded) {
-            uint8_t op = d.opcode;
-            if ((op >= SistaV1::Send0Base && op <= 0xAF) ||
-                (op >= 0x70 && op <= 0x7F) ||
-                op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
-                sendCount++;
-            }
-        }
-        if (sendCount > 0) {
-            MIR_finish(mirCtx_); mirCtx_ = nullptr;
-            return nullptr;
-        }
-    }
-
     // --- Create MIR module and function ---
     // Each compilation gets a fresh module (MIR_finish resets all)
     // Each compilation gets a unique module/function name (MIR context is reused)
@@ -574,6 +562,16 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     snprintf(funcName, sizeof(funcName), "t2m_%zu", methodsCompiled_ + compilationsFailed_);
 
     mirModule_ = MIR_new_module(mirCtx_, modName);
+
+    // Create import and prototype for the inline send helper.
+    // jit_t2_send(JITState*) → void
+    sendImport_ = MIR_new_import(mirCtx_, "jit_t2_send");
+    sendProto_  = MIR_new_proto(mirCtx_, "t2send_p", 0, nullptr, 1, MIR_T_I64, "s");
+
+    // Debug helper import (temporary)
+    MIR_item_t dbgImport = MIR_new_import(mirCtx_, "t2_debug_point");
+    MIR_item_t dbgProto  = MIR_new_proto(mirCtx_, "dbg_p", 0, nullptr,
+        4, MIR_T_I64, "tag", MIR_T_I64, "r", MIR_T_I64, "s2", MIR_T_I64, "e");
 
     // Function takes JITState* (i64), returns void
     mirFunc_ = MIR_new_func(mirCtx_, funcName, 0, nullptr, 1, MIR_T_I64, "state");
@@ -610,6 +608,17 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     emitPrologue(tempCount, argCount);
 
     // --- Emit bytecodes ---
+    // Debug: dump decoded bytecodes (first 3 methods)
+    static int bcDumpCount = 0;
+    if (bcDumpCount++ < 3) {
+        fprintf(stderr, "[T2-BC] Decoded %zu bytecodes:\n", decoded.size());
+        for (size_t i = 0; i < decoded.size(); i++) {
+            auto& d = decoded[i];
+            fprintf(stderr, "  [%2zu] bc[%2d] op=0x%02X len=%d operand=%d operand2=%d branch=%d %s\n",
+                    i, d.bcOffset, d.opcode, d.bcLength, d.operand, d.operand2, d.branchTarget,
+                    (d.bcOffset >= 0 && d.bcOffset < MaxBCLabels && bcLabelUsed_[d.bcOffset]) ? "*LABEL*" : "");
+        }
+    }
     bool bail = false;
     bool unreachable = false;  // Set after ret; cleared by branch target label
     for (size_t idx = 0; idx < decoded.size(); idx++) {
@@ -619,6 +628,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // and flush vstack (merge point — can't have values in regs
         // that might not exist on the other path)
         if (bc.bcOffset >= 0 && bc.bcOffset < MaxBCLabels && bcLabelUsed_[bc.bcOffset]) {
+            static int labelDbg = 0;
+            if (labelDbg++ < 30)
+                fprintf(stderr, "[T2-EMIT] Label at bc[%d] op=0x%02X unreach=%d vsd=%d\n",
+                        bc.bcOffset, bc.opcode, unreachable, vstackDepth_);
             if (!unreachable) {
                 flushVStack();
                 // Store sp back to state before label (other paths need consistent state)
@@ -959,12 +972,22 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (handled) {
                     EMIT(MIR_JMP, LABEL_OP(doneLbl));
 
+                    // Save compile-time vstack state (fast path: depth = N-2)
+                    int savedDepth = vstackDepth_;
+                    MIR_reg_t savedVstack[MaxVStack];
+                    memcpy(savedVstack, vstack_, sizeof(MIR_reg_t) * savedDepth);
+
                     // Slow path: flush to memory, exit with send
+                    // (unreachable from fast path, but emits MIR for overflow)
                     MIR_append_insn(mirCtx_, mirFunc_, slowPath);
-                    // Push a and b back onto vstack, then emit send exit
                     vpush(a);
                     vpush(b);
                     emitSendExit(1, bc.bcOffset, false, 0);
+
+                    // Restore compile-time vstack to fast-path state
+                    // (slow path's vpush/flush corrupted depth & array)
+                    vstackDepth_ = savedDepth;
+                    memcpy(vstack_, savedVstack, sizeof(MIR_reg_t) * savedDepth);
 
                     MIR_append_insn(mirCtx_, mirFunc_, doneLbl);
                     vpush(result);
@@ -1003,9 +1026,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (vstackDepth_ > 0) {
                     val = vpop();
                 } else {
+                    // sp past TOS: TOS is at sp[-8], pop by moving sp back
                     val = newScratch();
-                    EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                     EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                    EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                 }
                 // Compare val == trueOop
                 flushVStack();
@@ -1023,9 +1047,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (vstackDepth_ > 0) {
                     val = vpop();
                 } else {
+                    // sp past TOS: TOS is at sp[-8], pop by moving sp back
                     val = newScratch();
-                    EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                     EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                    EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
                 }
                 flushVStack();
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
@@ -1041,36 +1066,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                  op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
             int nArgs = bc.operand2;
             if (nArgs < 0) nArgs = 0;
-            int selIdx = bc.operand;  // literal frame index of selector
 
-            // Sends: flush everything and exit to interpreter.
-            // Store selector Oop in state.cachedTarget so the chain loop can
-            // do method lookup without IC data.
-            MIR_reg_t selReg = newScratch();
-            MIR_reg_t selAddr = newScratch();
-            EMIT(MIR_ADD, REG(selAddr), REG(reg_literals_), IMM(selIdx * 8));
-            EMIT(MIR_MOV, REG(selReg), MEM(MIR_T_I64, selAddr, 0));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
+            // TEMP: use simple send exit (chain loop handles send + resume)
             emitSendExit(nArgs, bc.bcOffset, false, 0);
-
-            // Register a resume point so the function can be re-entered
-            // after the interpreter handles the send.
-            int postSendBC = bc.bcOffset + bc.bcLength;
-            if (resumeCount_ < MaxResume) {
-                MIR_label_t resumeLabel = MIR_new_label(mirCtx_);
-                resumePoints_[resumeCount_++] = {postSendBC, resumeLabel};
-                // Emit the resume label (code after the send exit is dead
-                // in normal flow, but reachable via the resume dispatch).
-                MIR_append_insn(mirCtx_, mirFunc_, resumeLabel);
-                // Reload sp from state (interpreter may have changed it)
-                EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
-                // Reset temp loaded flags (sends may modify temps)
-                for (int t = 0; t < tempCount_; t++) tempLoaded_[t] = false;
-                vstackDepth_ = 0;
-                // Continue emitting subsequent bytecodes
-            } else {
-                unreachable = true;
-            }
+            unreachable = true;
         }
 
         // --- Unsupported: bail ---
@@ -1142,8 +1141,21 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     }
 
     MIR_load_module(mirCtx_, mirModule_);
+
+    // Dump MIR IR for debugging (first 3 compilations only)
+    static int dumpCount = 0;
+    if (dumpCount++ < 3) {
+        fprintf(stderr, "\n=== MIR IR for method #%d ===\n", dumpCount);
+        MIR_output_item(mirCtx_, stderr, mirFunc_);
+        fprintf(stderr, "=== END MIR IR ===\n\n");
+    }
+
+    // Register external symbols before linking
+    MIR_load_external(mirCtx_, "jit_t2_send", reinterpret_cast<void*>(jit_t2_send));
+    MIR_load_external(mirCtx_, "t2_debug_point", reinterpret_cast<void*>(t2_debug_point));
+
     MIR_gen_init(mirCtx_);
-    MIR_gen_set_optimize_level(mirCtx_, 2);
+    MIR_gen_set_optimize_level(mirCtx_, 0);  // XXX debug: disable optimization
     MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
 
     void* mirCode = MIR_gen(mirCtx_, mirFunc_);
