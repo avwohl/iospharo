@@ -1071,7 +1071,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     else goto ic_miss;
 
     // --- Shared IC-hit handler ---
-    // Trivial methods: getter/setter/returnsSelf (bits 63:61)
+    // Getter/setter need pointer receiver (tag == 0) for slot access
     if (extra != 0 && tag == 0) {
         uint16_t slotIdx = (uint16_t)(extra & 0xFFFF);
         ObjectHeader* recvObj = reinterpret_cast<ObjectHeader*>(receiver.bits);
@@ -1092,12 +1092,31 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             _HOLE_CONTINUE(s);
             return;
         }
-        if (extra & (1ULL << 61)) {
-            // returnsSelf
+    }
+    // Quick return methods (bit 61): work for any receiver type
+    if (extra & (1ULL << 61)) {
+        // p256=self, p257=true, p258=false, p259=nil,
+        // p260=-1, p261=0, p262=1, p263=2
+        uint8_t constIdx = (uint8_t)(extra & 0xF);
+        if (constIdx == 0) {
             s->sp -= nArgs;
-            _HOLE_CONTINUE(s);
-            return;
+        } else {
+            Oop result;
+            switch (constIdx) {
+            case 1: result = s->trueOop; break;
+            case 2: result = s->falseOop; break;
+            case 3: result.bits = *(uint64_t*)&_HOLE_NIL_OOP; break;
+            case 4: result.bits = ((uint64_t)-1 << 3) | 1; break;
+            case 5: result.bits = 1; break;
+            case 6: result.bits = (1ULL << 3) | 1; break;
+            case 7: result.bits = (2ULL << 3) | 1; break;
+            default: result = receiver; break;
+            }
+            s->sp[-(nArgs + 1)] = result;
+            s->sp -= nArgs;
         }
+        _HOLE_CONTINUE(s);
+        return;
     }
 
     // Lightweight inline primitives (bits 52:48 = primKind)
