@@ -2,6 +2,30 @@
 
 2026-04-12
 
+## T2 Inline Sends (jit_t2_send)
+
+MIR-generated T2 code now calls jit_t2_send() directly at send sites
+instead of exiting to the interpreter chain loop. The helper performs
+method lookup, saves/restores caller state in JITState, and executes
+the callee's T2 or T1 code inline.
+
+Key fix: trueOop/falseOop loaded from JITRuntime global addresses
+(stable across JITState instances) instead of JITState fields (which
+get zeroed when the chain loop creates a new JITState on a different
+C stack frame).
+
+  fib(28) results:
+    T2 before inline sends:  92ms (chain loop exit/resume)
+    T2 with inline sends:    12ms (7.7x speedup)
+    T1 copy-and-patch:       10.5ms
+    Interpreter:              80ms
+    Cog (reference):          2ms
+
+T2 is slightly slower than T1 on fib because MIR opt level is 0 (all
+virtual registers spilled to stack). MIR opt level 2 causes a separate
+subtraction bug (MIR_SUBO gives wrong result). With opt 2 working,
+T2 should beat T1 thanks to register allocation.
+
 ## Track A: Tier 1 improvements (A1 + A3)
 
 ### A1: Extended SimStack (4 registers: x19-x22)
