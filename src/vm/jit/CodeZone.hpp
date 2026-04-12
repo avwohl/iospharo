@@ -162,6 +162,11 @@ public:
 
         if (!method) return nullptr;
 
+        // Ensure the code zone is writable before memset. Some call paths
+        // (e.g., recompile triggered during J2J trampoline exit handling)
+        // may arrive with W^X still in executable mode.
+        makeWritable(method, totalSize);
+
         // Initialize the allocation
         bytesUsed_ += totalSize;
         methodCount_++;

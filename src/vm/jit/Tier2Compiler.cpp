@@ -316,7 +316,25 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             d.operand = op & 0x1F;  // pushLitConst
         } else if (op <= 0x4B) {
             d.operand = op - SistaV1::PushTempBase;  // pushTemp
+        } else if (op >= SistaV1::PushReceiver && op <= SistaV1::PushNil) {
+            // 0x4C-0x4F: pushReceiver, pushTrue, pushFalse, pushNil
+        } else if (op == SistaV1::PushZero || op == SistaV1::PushOne) {
+            // 0x50-0x51
+        } else if (op == 0x52) {
+            // pushThisContext — not supported in Tier 2
+            fprintf(stderr, "[T2] decodeBytecodes: pushThisContext at offset %zu\n", i);
+            return false;
+        } else if (op == SistaV1::Dup) {
+            // 0x53
         } else if (op >= 0x54 && op <= 0x57) {
+            // Unused — nop
+            out.push_back(d);
+            i += d.bcLength;
+            extA = extB = 0;
+            continue;
+        } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+            // 0x58-0x5C: returns
+        } else if (op >= 0x5D && op <= 0x5F) {
             // Unused — nop
             out.push_back(d);
             i += d.bcLength;
@@ -437,9 +455,10 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             extA = extB = 0;
             continue;
         } else if (op == SistaV1::PushFullBlock) {
-            // Block creation — bail out of T2 (methods with blocks are complex)
+            fprintf(stderr, "[T2] decodeBytecodes: PushFullBlock at offset %zu\n", i);
             return false;
         } else if (op == SistaV1::PushClosure) {
+            fprintf(stderr, "[T2] decodeBytecodes: PushClosure at offset %zu\n", i);
             return false;
         } else if (op >= 0xDA && op <= 0xDF) {
             // Reserved — nop
@@ -449,6 +468,7 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             continue;
         } else {
             // Unsupported bytecode — bail
+            fprintf(stderr, "[T2] decodeBytecodes: unsupported opcode 0x%02X at offset %zu\n", op, i);
             return false;
         }
 
@@ -488,8 +508,16 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    const uint8_t* bytecodes = reinterpret_cast<const uint8_t*>(methodObj) + 8 + (1 + numLiterals) * 8;
-    size_t bcLen = methodObj->byteSize() - 8 - (1 + numLiterals) * 8;
+    uint8_t* bytes = methodObj->bytes();
+    size_t bcStart = (1 + numLiterals) * 8;
+    size_t totalBytes = methodObj->slotCount() * 8;
+    uint8_t fmt = static_cast<uint8_t>(methodObj->format());
+    int unusedBytes = (fmt >= 24) ? (fmt - 24) : 0;
+    size_t bcLen = totalBytes - bcStart - unusedBytes;
+    const uint8_t* bytecodes = bytes + bcStart;
+
+    fprintf(stderr, "[T2] fmt=%d slots=%zu totalBytes=%zu bcStart=%zu unused=%d bcLen=%zu\n",
+            fmt, methodObj->slotCount(), totalBytes, bcStart, unusedBytes, bcLen);
 
     if (bcLen == 0 || bcLen > 4096) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
@@ -505,9 +533,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     if (!decodeBytecodes(bytecodes, bcLen, decoded)) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
         static int decodeFailCount = 0;
-        if (decodeFailCount++ < 5)
-            fprintf(stderr, "[T2] Decode failed for method %p (bc len %zu)\n",
+        if (decodeFailCount++ < 10) {
+            fprintf(stderr, "[T2] Decode failed for method %p (bc len %zu) bytes:",
                     (void*)compiledMethod.rawBits(), bcLen);
+            for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
+                fprintf(stderr, " %02X", bytecodes[bi]);
+            fprintf(stderr, "\n");
+        }
         compilationsFailed_++;
         return nullptr;
     }
@@ -562,6 +594,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // --- Emit bytecodes ---
     bool bail = false;
+    bool unreachable = false;  // Set after ret; cleared by branch target label
     for (size_t idx = 0; idx < decoded.size(); idx++) {
         auto& bc = decoded[idx];
 
@@ -569,13 +602,19 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // and flush vstack (merge point — can't have values in regs
         // that might not exist on the other path)
         if (bc.bcOffset >= 0 && bc.bcOffset < MaxBCLabels && bcLabelUsed_[bc.bcOffset]) {
-            flushVStack();
-            // Store sp back to state before label (other paths need consistent state)
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            if (!unreachable) {
+                flushVStack();
+                // Store sp back to state before label (other paths need consistent state)
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            }
             MIR_append_insn(mirCtx_, mirFunc_, bcLabels_[bc.bcOffset]);
             // Reload sp from state (it might have been modified by other path)
             EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
+            unreachable = false;  // Code after a branch target is reachable
         }
+
+        // Skip dead code after ret/send-exit (until a branch target makes it reachable)
+        if (unreachable) continue;
 
         uint8_t op = bc.opcode;
 
@@ -784,18 +823,21 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_RETVAL), REG(reg_receiver_));
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_RETURN));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+            unreachable = true;
         }
         else if (op == SistaV1::ReturnTrue) {
             flushVStack();
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_RETVAL), REG(reg_trueOop_));
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_RETURN));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+            unreachable = true;
         }
         else if (op == SistaV1::ReturnFalse) {
             flushVStack();
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_RETVAL), REG(reg_falseOop_));
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_RETURN));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+            unreachable = true;
         }
         else if (op == SistaV1::ReturnNil) {
             flushVStack();
@@ -805,9 +847,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_RETVAL), REG(nilVal));
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_RETURN));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+            unreachable = true;
         }
         else if (op == SistaV1::ReturnTop) {
             emitReturn();
+            unreachable = true;
         }
 
         // --- Arithmetic sends (0x60-0x6F) ---
@@ -912,10 +956,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     vpush(a);
                     vpush(b);
                     emitSendExit(1, bc.bcOffset, false, 0);
+                    unreachable = true;
                 }
             } else {
                 // Not enough on vstack — flush and exit
                 emitSendExit(1, bc.bcOffset, false, 0);
+                unreachable = true;
             }
         }
 
@@ -927,6 +973,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 flushVStack();
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
                 EMIT(MIR_JMP, LABEL_OP(bcLabels_[target]));
+                unreachable = true;
             } else {
                 bail = true; break;
             }
@@ -979,6 +1026,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             if (nArgs < 0) nArgs = 0;
             // Sends: flush everything and exit to interpreter
             emitSendExit(nArgs, bc.bcOffset, false, 0);
+            unreachable = true;
         }
 
         // --- Unsupported: bail ---
@@ -1000,6 +1048,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
+    }
+
+    // If the function didn't end with an explicit return, emit a safety
+    // return (sets exitReason = EXIT_RETURN, returnValue = TOS).
+    if (!unreachable) {
+        emitReturn();
     }
 
     // --- Finish MIR function ---

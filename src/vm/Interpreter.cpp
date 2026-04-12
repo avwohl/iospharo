@@ -10958,6 +10958,9 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
+    // IC data lives in the MAP_JIT code zone; ensure writable.
+    jit::makeWritable(icData, 1);
+
     // DEBUG: Selector-based J2J fill skip (PHARO_J2J_SKIP_SELECTORS).
     // Same skip used by upgradeICToJ2J — uses the IC's send-site selector
     // (passed in directly here), which is reliable.
@@ -11994,11 +11997,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
-            // Get selector from IC data (stored at offset 12 by compiler)
+            // Get selector from IC data (stored at offset 12 by compiler).
+            // Tier 2 (MIR) exits don't have IC data — bail to interpreter to
+            // handle the send bytecode normally.
             if (!state.icDataPtr) {
-                static int noIC = 0;
-                if (++noIC <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] no icDataPtr! returning false\n");
-                return false;
+                // State is already synced (ip/sp set above).
+                // Return true so activateMethod doesn't fall through — the
+                // interpreter dispatch loop will re-execute this send bytecode.
+                return true;
             }
             Oop sendSel = Oop::fromRawBits(state.icDataPtr[12]);
             if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {

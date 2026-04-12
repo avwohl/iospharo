@@ -579,29 +579,24 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     }
                 }
                 if (jm) {
-                    std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
-                    // Get class name from penultimate literal (methodClass association)
-                    std::string cls = "?";
-                    if (interp_) {
-                        size_t nLits = interp_->memory().numLiteralsOf(compiledMethod);
-                        if (nLits >= 2) {
-                            // penultimate literal (index nLits, 1-based in literal frame)
-                            Oop assoc = interp_->memory().fetchPointer(nLits, compiledMethod);
-                            if (assoc.isObject() && !assoc.isNil()) {
-                                // Association value is slot 1 (0-based)
-                                Oop classOop = interp_->memory().fetchPointer(1, assoc);
-                                if (classOop.isObject() && !classOop.isNil()) {
-                                    cls = interp_->memory().nameOfClass(classOop);
-                                }
-                            }
+                    fprintf(stderr, "[JIT] Compiled method %p (entry %u, %u bytes%s)\n",
+                            (void*)compiledMethod.rawBits(),
+                            countMap_[i].count, jm->codeSize,
+                            jm->hasPrimPrologue ? ", prim" : "");
+
+                    // Also attempt Tier 2 (MIR) compilation immediately.
+                    // J2J bypasses tryExecute so the executionCount trigger never fires;
+                    // compile eagerly so hot J2J methods benefit from register allocation.
+                    static bool noT2 = !!getenv("PHARO_NO_T2");
+                    if (!noT2 && tier2Compiler_ && !tier2Lookup(key)) {
+                        void* t2code = tier2Compiler_->compile(compiledMethod, jm);
+                        if (t2code) {
+                            tier2Insert(key, t2code);
+                            fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
+                                    (void*)compiledMethod.rawBits(),
+                                    tier2Compiler_->methodsCompiled());
                         }
                     }
-                    uint64_t zoneOff = reinterpret_cast<uint64_t>(jm->codeStart())
-                                     - reinterpret_cast<uint64_t>(codeZone_.zoneStart());
-                    fprintf(stderr, "[JIT] Compiled #%s [%s] (entry %u, %u bytes%s) @0x%llx\n",
-                            sel.c_str(), cls.c_str(), countMap_[i].count, jm->codeSize,
-                            jm->hasPrimPrologue ? ", prim" : "",
-                            (unsigned long long)zoneOff);
                 }
             }
             return;
@@ -625,6 +620,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) {
+    // Ensure code zone is writable before touching JITMethod fields.
+    // Previous JIT execution (J2J trampoline, stencils) may have left the
+    // per-thread W^X state in executable mode.
+    makeWritable(jm->codeStart(), jm->codeSize);
+
     // Verify method map integrity (cheap, catches GC/rehash bugs)
     if (jm->compiledMethodOop != compiledMethod.rawBits()) {
         fprintf(stderr, "[JIT] BUG: methodMap returned wrong JITMethod! "
@@ -694,11 +694,14 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     }
 
     // Check for Tier 2 compiled code (MIR-generated, register-allocated)
-    void* t2code = tier2Lookup(compiledMethod.rawBits());
-    if (t2code) {
-        // Tier 2 code lives in MIR-managed memory (already executable).
-        // Call it directly — same signature as Tier 1: void(*)(JITState*)
+    static bool noT2Exec = !!getenv("PHARO_NO_T2");
+    void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
+    if (t2code && jm->numICEntries == 0) {
+        // Only execute Tier 2 for leaf methods (no sends). Tier 2 code has
+        // a single entry point and can't be resumed mid-function after a send.
+        makeExecutable(t2code, 1);
         ((void(*)(JITState*))t2code)(&state);
+        makeWritable(t2code, 1);
         return true;
     }
 
@@ -721,6 +724,9 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
+
+    // Ensure code zone is writable before touching JITMethod fields.
+    makeWritable(jm->codeStart(), jm->codeSize);
 
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
