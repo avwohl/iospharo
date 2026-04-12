@@ -1803,6 +1803,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod) {
     jitMethod->argCount = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
     jitMethod->hasPrimPrologue = hasPrimPrologue;
+    jitMethod->isBlock = isFullBlock;
 
     // Set up IC data pointers for send sites. The IC data lives at the end
     // of the allocation. Each send site gets 104 bytes initialized to zero

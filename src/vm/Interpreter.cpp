@@ -722,7 +722,29 @@ void Interpreter::handleBenchComplete() {
             jitChainPrimChains_, jitChainPrimFalls_,
             jitChainActivateChains_, jitChainActivateFalls_, jitYieldCount_);
         fprintf(stderr, "[BENCH]   OSR: entries=%zu\n", jitOSREntries_);
+        // Top prim-fall primitives
+        {
+            struct PF { int idx; size_t count; };
+            PF top[10] = {};
+            for (int i = 0; i < 600; i++) {
+                if (jitPrimFallHisto_[i] > 0) {
+                    for (int t = 0; t < 10; t++) {
+                        if (jitPrimFallHisto_[i] > top[t].count) {
+                            for (int s = 9; s > t; s--) top[s] = top[s-1];
+                            top[t] = {i, jitPrimFallHisto_[i]};
+                            break;
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[BENCH]   top prim-falls:");
+            for (int t = 0; t < 10 && top[t].count > 0; t++)
+                fprintf(stderr, " p%d=%zu", top[t].idx, top[t].count);
+            fprintf(stderr, "\n");
+        }
 #endif
+        fprintf(stderr, "[BENCH]   materialize: count=%zu totalDepth=%zu\n",
+                jitMaterializeCount_, jitMaterializeTotalDepth_);
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
         return;
@@ -11713,6 +11735,73 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     int maxChain = noChain ? 1 : 10000;
     int chainCallDepth = 0;  // Inline activation depth (frames pushed by chain loop itself)
 
+    // Helper: set J2J state for a chain loop resume.
+    auto enableJ2J = [&]() {
+        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
+        state.j2jDepth = 0;
+        state.j2jTotalCalls = 0;
+        state.yieldCountdown = 1000;
+    };
+
+    // Helper: materialize pending J2J frames from stencil execution.
+    // After a JIT_CALL/tryResume/tryExecute with J2J enabled, stencils
+    // may have accumulated J2J save frames (j2jDepth > 0).  Materialize
+    // them as SavedFrames so the interpreter can see them.
+    auto materializeJ2J = [&]() {
+        if (state.j2jDepth == 0) return;
+        jitMaterializeCount_++;
+        jitMaterializeTotalDepth_ += state.j2jDepth;
+        jitJ2JStencilCalls_ += state.j2jTotalCalls;
+        checkCountdown_ -= state.j2jTotalCalls * 10;
+        Oop nil = memory_.nil();
+        for (int i = 0; i < state.j2jDepth; i++) {
+            if (frameDepth_ >= StackOverflowLimit) break;
+            J2JSave& save = j2jStack[i];
+            SavedFrame& frame = savedFrames_[frameDepth_++];
+            uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+            bool isSelfRec = (jmBits & 1) != 0;
+            jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
+                jmBits & ~static_cast<uintptr_t>(1));
+            Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+            ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
+            int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+            uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+            frame.savedIP = save.ip;
+            frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+            frame.savedMethod = saveMethod;
+            frame.savedHomeMethod = saveMethod;
+            frame.savedReceiver = save.receiver;
+            frame.savedClosure = nil;
+            frame.savedActiveContext = nil;
+            frame.materializedContext = nil;
+            frame.savedFP = save.tempBase - 1;
+            frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+            frame.homeFrameDepth = SIZE_MAX;
+        }
+        chainCallDepth += state.j2jDepth;
+        if (state.jitMethod) {
+            uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+            jmBits &= ~static_cast<uintptr_t>(1);
+            state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
+            state.method = Oop::fromRawBits(
+                reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+        }
+        method_ = state.method;
+        method = state.method;
+        homeMethod_ = state.method;
+        receiver_ = state.receiver;
+        stackPointer_ = state.sp;
+        instructionPointer_ = state.ip;
+        framePointer_ = state.tempBase - 1;
+        argCount_ = state.argCount;
+        {
+            ObjectHeader* mObj = state.method.asObjectPtr();
+            bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+        }
+        methObj = method.asObjectPtr();
+    };
+
     for (int chainLimit = 0; chainLimit < maxChain; chainLimit++) {
 
         // Validate JIT output state — detect stencil corruption early
@@ -12007,14 +12096,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
-            // Disable J2J in chain loop — see ExitReturn handler comment
-            state.j2jSaveCursor = nullptr;
-            state.j2jSaveLimit = nullptr;
+            enableJ2J();
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
             }
             chargeJITBytecodes(state);
+            materializeJ2J();
             if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
         }
@@ -12061,14 +12149,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             state.icDataPtr = nullptr;
             state.sendArgCount = 0;
             state.exitReason = jit::ExitNone;
-            // Disable J2J in chain loop — see ExitReturn handler comment
-            state.j2jSaveCursor = nullptr;
-            state.j2jSaveLimit = nullptr;
+            enableJ2J();
 
             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                 return true;  // Can't resume; interpreter handles rest
             }
             chargeJITBytecodes(state);
+            materializeJ2J();
             if (checkCountdown_ <= 0) goto jit_loop_exit;
             continue;  // Loop to handle the new exit reason
         }
@@ -12435,10 +12522,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             state.icDataPtr = nullptr;
                             state.sendArgCount = 0;
                             state.exitReason = jit::ExitNone;
+                            // J2J disabled: precompute-failed is rare (0 chains in AWFY)
+                            state.j2jSaveCursor = nullptr;
+                            state.j2jSaveLimit = nullptr;
+                            state.j2jDepth = 0;
+                            state.j2jTotalCalls = 0;
+                            state.yieldCountdown = 1000;
                             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                                 return true;
                             }
                             chargeJITBytecodes(state);
+                            materializeJ2J();
                             if (checkCountdown_ <= 0) goto jit_loop_exit;
                             continue;
                         }
@@ -12555,8 +12649,54 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // before the caller resumes — bail to interpreter so the
                         // dispatch loop drives the activated frame to completion.
                         if (frameDepth_ != primCallerDepth) {
+                            // Block evaluation (prim 207/209): try executing
+                            // the block's stencils inline in the chain loop.
+                            // activateBlock has pushed a frame and set up
+                            // method_, ip_, sp_, receiver_ for the block.
+                            // ExitReturn from a block is always a local return
+                            // (NLR compiles to stencil_send, not a return).
+                            if (primIdx == 207 || primIdx == 209) {
+                                // Block evaluation: instead of bailing, switch
+                                // the chain loop to execute the block's code.
+                                // activateBlock has set up method_, ip_, sp_
+                                // for the CompiledBlock. Set up chain state
+                                // and continue the loop — the normal ExitReturn
+                                // handler will popFrame when the block completes.
+                                jitRuntime_.noteMethodEntry(method_);
+                                method = method_;
+                                methObj = method.asObjectPtr();
+                                uint32_t blockBC = computeCurrentBCOffset();
+                                {
+                                    state.sp = stackPointer_;
+                                    state.receiver = receiver_;
+                                    state.literals = methObj->slots() + 1;
+                                    state.tempBase = framePointer_ + 1;
+                                    {
+                                        Oop hdr = methObj->slots()[0];
+                                        int nl = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                                        state.ip = methObj->bytes() + (1 + nl) * 8;
+                                    }
+                                    state.method = method;
+                                    state.argCount = argCount_;
+                                    state.icDataPtr = nullptr;
+                                    state.sendArgCount = 0;
+                                    enableJ2J();
+                                    // Use tryExecute (starts from beginning) not
+                                    // tryResume (rejects bc offset 0).
+                                    if (jitRuntime_.tryExecute(method, state)) {
+                                        chargeJITBytecodes(state);
+                                        materializeJ2J();
+                                        jitJ2JActChains_++;
+                                        jitChainPrimChains_++;
+                                        if (checkCountdown_ <= 0) goto jit_loop_exit;
+                                        continue;  // Continue chain loop with block
+                                    }
+                                }
+                            }
                             jitJ2JActFalls_++;
                             jitChainPrimFalls_++;
+                            // Profile which primitives push frames
+                            if (primIdx < 600) jitPrimFallHisto_[primIdx]++;
                             return true;
                         }
                         // Primitive completed in place — resume JIT at bytecode after send
@@ -12580,13 +12720,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.icDataPtr = nullptr;
                         state.sendArgCount = 0;
                         state.exitReason = jit::ExitNone;
-                        // Disable J2J in chain loop
-                        state.j2jSaveCursor = nullptr;
-                        state.j2jSaveLimit = nullptr;
+                        // Shallow J2J (depth 2): best balance — improves all
+                        // AWFY benchmarks, no regressions. Depth 3+ causes
+                        // Towers 5.8x regression from materialization cascades.
+                        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
+                        state.j2jSaveLimit = reinterpret_cast<uint8_t*>(j2jStack + 2);
+                        state.j2jDepth = 0;
+                        state.j2jTotalCalls = 0;
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
                         chargeJITBytecodes(state);
+                        materializeJ2J();
                         if (checkCountdown_ <= 0) goto jit_loop_exit;
                         continue;
                     }
@@ -12631,14 +12776,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.icDataPtr = nullptr;
                 state.sendArgCount = 0;
                 state.exitReason = jit::ExitNone;
-                // Disable J2J in chain loop
+                // J2J disabled: activateMethod fallback is rare (0 chains in AWFY)
                 state.j2jSaveCursor = nullptr;
                 state.j2jSaveLimit = nullptr;
+                state.j2jDepth = 0;
+                state.j2jTotalCalls = 0;
+                state.yieldCountdown = 1000;
 
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;
                 }
                 chargeJITBytecodes(state);
+                materializeJ2J();
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
                 continue;
             }
