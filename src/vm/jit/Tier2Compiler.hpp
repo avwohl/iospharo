@@ -126,6 +126,7 @@ private:
     MIR_reg_t reg_trueOop_;   // true Oop (constant for image lifetime)
     MIR_reg_t reg_falseOop_;  // false Oop
     MIR_reg_t reg_nilOop_;    // nil Oop
+    MIR_reg_t reg_bcBase_;    // bytecode start address (for ip computation)
 
     // Temp variable registers (loaded lazily from tempBase)
     static constexpr int MaxTemps = 64;
@@ -141,6 +142,19 @@ private:
     static constexpr int MaxBCLabels = 1024;
     MIR_label_t bcLabels_[MaxBCLabels];
     bool        bcLabelUsed_[MaxBCLabels];
+
+    // Resume points: after each send exit, the function can be re-entered
+    // at a resume label. The dispatch table in the prologue jumps to the
+    // right label based on (state.ip - bcStart).
+    static constexpr int MaxResume = 64;
+    struct ResumePoint {
+        int postSendBC;          // Bytecode offset AFTER the send
+        MIR_label_t label;       // MIR label to jump to
+    };
+    ResumePoint resumePoints_[MaxResume];
+    int resumeCount_ = 0;
+    int bcStartFromObj_ = 0;     // Compile-time: offset from object start to bytecodes
+    MIR_label_t resumeDispatchLabel_;  // Label for the resume dispatch block
 
     // --- Dependencies ---
     CodeZone&     zone_;

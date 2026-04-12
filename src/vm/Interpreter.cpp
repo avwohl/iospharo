@@ -11344,6 +11344,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     }
     state.method = method;
     state.argCount = argCount;
+    state.jitMethod = nullptr;  // Tier 2 path doesn't set this; must be null for chain loop
+    state.exitReason = jit::ExitNone;
     state.icDataPtr = nullptr;
     state.sendArgCount = 0;
     state.trueOop = memory_.trueObject();
@@ -11997,16 +11999,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
-            // Get selector from IC data (stored at offset 12 by compiler).
-            // Tier 2 (MIR) exits don't have IC data — bail to interpreter to
-            // handle the send bytecode normally.
-            if (!state.icDataPtr) {
-                // State is already synced (ip/sp set above).
-                // Return true so activateMethod doesn't fall through — the
-                // interpreter dispatch loop will re-execute this send bytecode.
-                return true;
+            // Get selector: from IC data (Tier 1) or cachedTarget (Tier 2).
+            Oop sendSel;
+            if (state.icDataPtr) {
+                sendSel = Oop::fromRawBits(state.icDataPtr[12]);
+            } else {
+                // Tier 2 (MIR) exits store selector in cachedTarget.
+                sendSel = state.cachedTarget;
             }
-            Oop sendSel = Oop::fromRawBits(state.icDataPtr[12]);
             if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {
                 static int badSel = 0;
                 if (++badSel <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] bad selector bits=0x%llx! returning false\n",

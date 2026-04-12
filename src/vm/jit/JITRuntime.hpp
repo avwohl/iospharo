@@ -92,6 +92,14 @@ public:
     };
     CountEntry& countMapEntry(size_t i) { return countMap_[i]; }
 
+    // Tier 2 map entry access (for GC root scanning)
+    struct Tier2Entry {
+        uint64_t key;   // CompiledMethod Oop bits (0 = empty)
+        void*    func;  // MIR-generated function pointer
+    };
+    static constexpr size_t Tier2MapSize = 4096;
+    Tier2Entry& tier2Entry(size_t i) { return tier2Map_[i]; }
+
     // Megamorphic method cache — probed by stencils after PIC miss
     MegaCacheEntry* megaCache() { return megaCache_; }
 
@@ -128,11 +136,6 @@ private:
 
     // Tier 2 compiled method map: compiledMethodOop bits → MIR function pointer
     // Separate from MethodMap to avoid changing JITMethod layout.
-    static constexpr size_t Tier2MapSize = 4096;
-    struct Tier2Entry {
-        uint64_t key;   // CompiledMethod Oop bits (0 = empty)
-        void*    func;  // MIR-generated function pointer
-    };
     Tier2Entry tier2Map_[Tier2MapSize] = {};
 
     void* tier2Lookup(uint64_t methodBits) const {

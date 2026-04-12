@@ -590,8 +590,10 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     static bool noT2 = !!getenv("PHARO_NO_T2");
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key)) {
                         void* t2code = tier2Compiler_->compile(compiledMethod, jm);
+                        // Store result or sentinel: (void*)1 means "tried, failed"
+                        // so we don't retry on every activation.
+                        tier2Insert(key, t2code ? t2code : (void*)1);
                         if (t2code) {
-                            tier2Insert(key, t2code);
                             fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
                                     (void*)compiledMethod.rawBits(),
                                     tier2Compiler_->methodsCompiled());
@@ -638,23 +640,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     codeZone_.touch(jm);
     jm->executionCount++;
 
-    // Promote hot methods: try Tier 2 (MIR) first, fall back to Tier 1 recompile.
+    // Promote hot methods: recompile Tier 1 with IC profiling data.
     // Threshold: 500 executions, tier 1 only, must have send sites.
+    // (Tier 2 is now leaf-only, so skip it for methods with sends.)
     if (jm->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
-        bool promoted = false;
-        // Try Tier 2 compilation (MIR with register allocation)
-        if (tier2Compiler_) {
-            void* t2code = tier2Compiler_->compile(compiledMethod, jm);
-            if (t2code) {
-                tier2Insert(compiledMethod.rawBits(), t2code);
-                promoted = true;
-                fprintf(stderr, "[JIT] Tier 2 compiled method %p (%zu total)\n",
-                        (void*)compiledMethod.rawBits(),
-                        tier2Compiler_->methodsCompiled());
-            }
-        }
-        // Fall back to Tier 1 IC recompilation if Tier 2 failed
-        if (!promoted && compiler_) {
+        if (compiler_) {
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
                 jm = newJM;
@@ -696,9 +686,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // Check for Tier 2 compiled code (MIR-generated, register-allocated)
     static bool noT2Exec = !!getenv("PHARO_NO_T2");
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
-    if (t2code && jm->numICEntries == 0) {
-        // Only execute Tier 2 for leaf methods (no sends). Tier 2 code has
-        // a single entry point and can't be resumed mid-function after a send.
+    if (t2code && t2code != (void*)1) {
+        // Tier 2 code has resume support: on initial entry, state.ip == bcStart
+        // (offset 0 → start from beginning). On resume after send, state.ip
+        // == bcStart + N → dispatch to post-send label.
         makeExecutable(t2code, 1);
         ((void(*)(JITState*))t2code)(&state);
         makeWritable(t2code, 1);
@@ -721,6 +712,24 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     if (!initialized_) return false;
     static bool noResume = !!getenv("PHARO_NO_RESUME");
     if (noResume) return false;
+
+    // Check for Tier 2 resume: set state.ip to bcBase + bcOffset and
+    // call the Tier 2 function. Its prologue dispatches to the right label.
+    static bool noT2Resume = !!getenv("PHARO_NO_T2");
+    void* t2code = noT2Resume ? nullptr : tier2Lookup(compiledMethod.rawBits());
+    if (t2code && t2code != (void*)1) {
+        // Compute bcBase from method object
+        ObjectHeader* methObj = reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
+        Oop hdr = methObj->slotAt(0);
+        int numLits = (hdr.rawBits() & 1) ? (int)((hdr.rawBits() >> 3) & 0x7FFF) : 0;
+        uint8_t* bcBase = methObj->bytes() + (1 + numLits) * 8;
+        state.ip = bcBase + bcOffset;
+        state.exitReason = ExitNone;
+        makeExecutable(t2code, 1);
+        ((void(*)(JITState*))t2code)(&state);
+        makeWritable(t2code, 1);
+        return true;
+    }
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
@@ -911,6 +920,19 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
             }
         }
         delete[] temp;
+    }
+
+    // Tier 2 map: keys were updated in-place by forEachRoot, but hash positions
+    // are stale. Rehash to fix.
+    {
+        Tier2Entry temp[Tier2MapSize];
+        std::memcpy(temp, tier2Map_, sizeof(tier2Map_));
+        std::memset(tier2Map_, 0, sizeof(tier2Map_));
+        size_t mask = Tier2MapSize - 1;
+        for (size_t i = 0; i < Tier2MapSize; i++) {
+            if (temp[i].key == 0) continue;
+            tier2Insert(temp[i].key, temp[i].func);
+        }
     }
 }
 

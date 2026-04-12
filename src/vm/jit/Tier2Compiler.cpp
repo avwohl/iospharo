@@ -189,18 +189,17 @@ MIR_reg_t Tier2Compiler::newScratch() {
 
 void Tier2Compiler::emitPrologue(int tempCount, int argCount) {
     // Load JITState fields into registers
-    // sp = state->sp
     EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
-    // receiver = state->receiver
     EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
-    // tempBase = state->tempBase
     EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
-    // literals = state->literals
     EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
-    // trueOop = state->trueOop
     EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_TRUE));
-    // falseOop = state->falseOop
     EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_FALSE));
+
+    // Compute bcBase = state.method (raw object ptr) + bcStartFromObj_
+    // This gives the bytecodes start address, used for ip computation in send exits.
+    EMIT(MIR_MOV, REG(reg_bcBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_METHOD));
+    EMIT(MIR_ADD, REG(reg_bcBase_), REG(reg_bcBase_), IMM(bcStartFromObj_));
 
     // Create temp registers (loaded lazily)
     tempCount_ = tempCount;
@@ -210,6 +209,15 @@ void Tier2Compiler::emitPrologue(int tempCount, int argCount) {
         tempRegs_[i] = MIR_new_func_reg(mirCtx_, mirFunc_->u.func, MIR_T_I64, name);
         tempLoaded_[i] = false;
     }
+
+    // Resume dispatch: if state.ip != bcBase, jump to the resume table.
+    // The resume table is emitted at the end of the function by emitResumeDispatch().
+    // On initial entry, state.ip == bcBase (offset 0) → fall through to first bytecode.
+    resumeDispatchLabel_ = MIR_new_label(mirCtx_);
+    MIR_reg_t ipReg = newScratch();
+    EMIT(MIR_MOV, REG(ipReg), MEM(MIR_T_I64, reg_statePtr_, OFF_IP));
+    EMIT(MIR_BNE, LABEL_OP(resumeDispatchLabel_), REG(ipReg), REG(reg_bcBase_));
+    // Fall through: initial entry at bytecode 0
 }
 
 void Tier2Compiler::flushVStack() {
@@ -266,18 +274,14 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
     // state->sendArgCount = nArgs
     EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
 
-    // state->ip = bytecode address for this send
-    // We store the bytecode offset; the interpreter converts to actual IP
-    // Actually: state->ip is the raw bytecode pointer. We need to compute it.
-    // For now, store bcOffset in ip field — the caller (JITRuntime) will
-    // need to reconstruct. Actually let's load state->ip first, then add offset.
-    // Hmm, ip points into the bytecodes of the CompiledMethod.
-    // We'll store the bytecodes base + bcOffset.
-    // Load ip base from the method:
+    // state->ip = bcBase + bcOffset (absolute bytecode address)
     MIR_reg_t ipReg = newScratch();
-    EMIT(MIR_MOV, REG(ipReg), MEM(MIR_T_I64, reg_statePtr_, OFF_IP));
-    EMIT(MIR_ADD, REG(ipReg), REG(ipReg), IMM(bcOffset));
+    EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bcOffset));
     EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+
+    // Clear icDataPtr — Tier 2 has no inline caches; stale Tier 1 IC pointers
+    // would make the chain loop read the wrong selector on ExitSend.
+    EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
 
     if (cached) {
         EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(cachedMethod));
@@ -516,8 +520,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     size_t bcLen = totalBytes - bcStart - unusedBytes;
     const uint8_t* bytecodes = bytes + bcStart;
 
-    fprintf(stderr, "[T2] fmt=%d slots=%zu totalBytes=%zu bcStart=%zu unused=%d bcLen=%zu\n",
-            fmt, methodObj->slotCount(), totalBytes, bcStart, unusedBytes, bcLen);
+    // bytes() returns (uint8_t*)this + 8 (past header word).
+    // bcStart is offset from bytes() to bytecodes start.
+    // bcStartFromObj_ = 8 + bcStart = offset from object pointer to bytecodes.
+    bcStartFromObj_ = 8 + (int)bcStart;
+    resumeCount_ = 0;
 
     if (bcLen == 0 || bcLen > 4096) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
@@ -525,21 +532,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    fprintf(stderr, "[T2] Attempting method %p: %d lits, %d temps, %d args, %zu bc\n",
-            (void*)compiledMethod.rawBits(), numLiterals, tempCount, argCount, bcLen);
-
     // --- Decode bytecodes ---
     std::vector<T2BC> decoded;
     if (!decodeBytecodes(bytecodes, bcLen, decoded)) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
-        static int decodeFailCount = 0;
-        if (decodeFailCount++ < 10) {
-            fprintf(stderr, "[T2] Decode failed for method %p (bc len %zu) bytes:",
-                    (void*)compiledMethod.rawBits(), bcLen);
-            for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
-                fprintf(stderr, " %02X", bytecodes[bi]);
-            fprintf(stderr, "\n");
-        }
         compilationsFailed_++;
         return nullptr;
     }
@@ -548,6 +544,26 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         MIR_finish(mirCtx_); mirCtx_ = nullptr;
         compilationsFailed_++;
         return nullptr;
+    }
+
+    // Count general sends: 0x80-0xAF, 0x70-0x7F, 0xEA, 0xEB.
+    // Tier 2 exits to C++ on every send, so send-heavy methods are slower
+    // than Tier 1 which uses J2J stencil-to-stencil calls.  Skip T2 for
+    // methods with general sends.
+    {
+        int sendCount = 0;
+        for (auto& d : decoded) {
+            uint8_t op = d.opcode;
+            if ((op >= SistaV1::Send0Base && op <= 0xAF) ||
+                (op >= 0x70 && op <= 0x7F) ||
+                op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
+                sendCount++;
+            }
+        }
+        if (sendCount > 0) {
+            MIR_finish(mirCtx_); mirCtx_ = nullptr;
+            return nullptr;
+        }
     }
 
     // --- Create MIR module and function ---
@@ -573,6 +589,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     reg_trueOop_  = MIR_new_func_reg(mirCtx_, mirFunc_->u.func, MIR_T_I64, "tru");
     reg_falseOop_ = MIR_new_func_reg(mirCtx_, mirFunc_->u.func, MIR_T_I64, "fls");
     reg_nilOop_   = MIR_new_func_reg(mirCtx_, mirFunc_->u.func, MIR_T_I64, "nil_");
+    reg_bcBase_   = MIR_new_func_reg(mirCtx_, mirFunc_->u.func, MIR_T_I64, "bcb");
 
     scratchCounter_ = 0;
     vstackDepth_ = 0;
@@ -1024,9 +1041,36 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                  op == SistaV1::ExtSend || op == SistaV1::ExtSuperSend) {
             int nArgs = bc.operand2;
             if (nArgs < 0) nArgs = 0;
-            // Sends: flush everything and exit to interpreter
+            int selIdx = bc.operand;  // literal frame index of selector
+
+            // Sends: flush everything and exit to interpreter.
+            // Store selector Oop in state.cachedTarget so the chain loop can
+            // do method lookup without IC data.
+            MIR_reg_t selReg = newScratch();
+            MIR_reg_t selAddr = newScratch();
+            EMIT(MIR_ADD, REG(selAddr), REG(reg_literals_), IMM(selIdx * 8));
+            EMIT(MIR_MOV, REG(selReg), MEM(MIR_T_I64, selAddr, 0));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
             emitSendExit(nArgs, bc.bcOffset, false, 0);
-            unreachable = true;
+
+            // Register a resume point so the function can be re-entered
+            // after the interpreter handles the send.
+            int postSendBC = bc.bcOffset + bc.bcLength;
+            if (resumeCount_ < MaxResume) {
+                MIR_label_t resumeLabel = MIR_new_label(mirCtx_);
+                resumePoints_[resumeCount_++] = {postSendBC, resumeLabel};
+                // Emit the resume label (code after the send exit is dead
+                // in normal flow, but reachable via the resume dispatch).
+                MIR_append_insn(mirCtx_, mirFunc_, resumeLabel);
+                // Reload sp from state (interpreter may have changed it)
+                EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
+                // Reset temp loaded flags (sends may modify temps)
+                for (int t = 0; t < tempCount_; t++) tempLoaded_[t] = false;
+                vstackDepth_ = 0;
+                // Continue emitting subsequent bytecodes
+            } else {
+                unreachable = true;
+            }
         }
 
         // --- Unsupported: bail ---
@@ -1055,6 +1099,24 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     if (!unreachable) {
         emitReturn();
     }
+
+    // --- Emit resume dispatch table ---
+    // Reached when state.ip != bcBase (resume after send).
+    // Compare (state.ip - bcBase) against each resume point's offset.
+    MIR_append_insn(mirCtx_, mirFunc_, resumeDispatchLabel_);
+    if (resumeCount_ > 0) {
+        MIR_reg_t ipReg2 = newScratch();
+        MIR_reg_t offsetReg = newScratch();
+        EMIT(MIR_MOV, REG(ipReg2), MEM(MIR_T_I64, reg_statePtr_, OFF_IP));
+        EMIT(MIR_SUB, REG(offsetReg), REG(ipReg2), REG(reg_bcBase_));
+        for (int r = 0; r < resumeCount_; r++) {
+            EMIT(MIR_BEQ, LABEL_OP(resumePoints_[r].label),
+                 REG(offsetReg), IMM(resumePoints_[r].postSendBC));
+        }
+    }
+    // Unknown resume offset — bail with ExitSend (interpreter will handle)
+    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
+    MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
 
     // --- Finish MIR function ---
     MIR_finish_func(mirCtx_);

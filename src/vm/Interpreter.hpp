@@ -2460,6 +2460,15 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                 visitor(keyOop);
             }
         }
+
+        // Tier 2 map: keys are CompiledMethod Oop bits (needs GC update).
+        for (size_t i = 0; i < jit::JITRuntime::Tier2MapSize; i++) {
+            auto& entry = jitRuntime_.tier2Entry(i);
+            if (entry.key != 0) {
+                Oop& keyOop = *reinterpret_cast<Oop*>(&entry.key);
+                visitor(keyOop);
+            }
+        }
     }
 #endif
 
