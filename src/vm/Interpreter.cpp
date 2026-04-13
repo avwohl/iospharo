@@ -8101,6 +8101,30 @@ Oop Interpreter::materializeFrameStack() {
         }
     }
 
+    // FIX: If activeContext_ IS frame 0's materialized context (from a prior
+    // materialization), using it as sender would create a self-referential
+    // chain (Context sender == self). Use the saved active context instead —
+    // it records what was active when frame 0 was pushed (the true sender).
+    if (sender.isObject() && !sender.isNil() && frameDepth_ > 0) {
+        Oop frame0Ctx = savedFrames_[0].materializedContext;
+        if (frame0Ctx.isObject() && frame0Ctx.rawBits() == sender.rawBits()) {
+            // Use savedActiveContext as the sender — it's the context that was
+            // active before frame 0 was pushed, i.e. the real parent context.
+            Oop savedCtx = savedFrames_[0].savedActiveContext;
+            if (savedCtx.isObject() && savedCtx.rawBits() != sender.rawBits()) {
+                sender = savedCtx;
+            } else {
+                // Fall back to the context's heap sender (might be nil)
+                Oop heapSender = memory_.fetchPointer(0, sender);
+                if (heapSender.rawBits() != sender.rawBits()) {
+                    sender = heapSender;
+                } else {
+                    sender = memory_.nil();  // break the cycle
+                }
+            }
+        }
+    }
+
     if (frameDepth_ > 0 && savedFrames_[0].savedActiveContext.rawBits() == activeContext_.rawBits() &&
         activeContext_.isObject() && activeContext_.rawBits() > 0x10000) {
         // frame[0] IS activeContext_'s inline continuation. Update the heap context
@@ -8216,8 +8240,14 @@ Oop Interpreter::materializeFrameStack() {
         // the same context object as thisContext returns for the same activation.
         Oop context = frame.materializedContext;
         if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
-            // Reuse existing context — just update sender and state
-            memory_.storePointer(0, context, sender);  // update sender
+            // FIX: If reusing a context that IS the sender (e.g. frame 0 was
+            // activeContext_ on a prior materialization), do NOT update its sender
+            // — that would create a self-referential chain. The context's existing
+            // sender (set at creation or by a prior correct materialization) is
+            // already correct.
+            if (context.rawBits() != sender.rawBits()) {
+                memory_.storePointer(0, context, sender);  // update sender
+            }
         } else {
             // Calculate context size (6 fixed + temps + some stack)
             size_t contextSize = 6 + numTemps + 32;
@@ -8340,7 +8370,9 @@ Oop Interpreter::materializeFrameStack() {
             bool reusingContext = false;
             if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
                 // Reuse existing context — just update sender and state
-                memory_.storePointer(0, context, sender);  // update sender
+                if (context.rawBits() != sender.rawBits()) {
+                    memory_.storePointer(0, context, sender);  // update sender
+                }
                 reusingContext = true;
             } else {
                 size_t contextSize = 6 + numTemps + 32;
@@ -8365,7 +8397,11 @@ Oop Interpreter::materializeFrameStack() {
             if (!context.isNil()) {
                 int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
-                memory_.storePointer(0, context, sender);                       // sender
+                // Only set sender for new contexts; reused contexts had sender
+                // handled above (with self-reference guard)
+                if (!reusingContext) {
+                    memory_.storePointer(0, context, sender);                   // sender
+                }
                 memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
                 // stackp is set below after we know how many items we saved
                 memory_.storePointer(3, context, method_);                      // method
