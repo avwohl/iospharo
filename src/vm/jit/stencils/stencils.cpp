@@ -1393,18 +1393,22 @@ ic_miss:
         uint64_t selectorBits = icData[12];
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
+            MegaCacheEntry* megaHit = nullptr;
             // Primary probe
             size_t hash = (size_t)(selectorBits ^ lookupKey) & 65535;
             MegaCacheEntry* entry = &cache[hash];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
-                s->cachedTarget.bits = entry->methodBits;
-                goto exit_send_cached;
+                megaHit = entry;
+            } else {
+                // Secondary probe (rotated hash)
+                size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
+                entry = &cache[hash2];
+                if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+                    megaHit = entry;
+                }
             }
-            // Secondary probe (rotated hash)
-            size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
-            entry = &cache[hash2];
-            if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
-                s->cachedTarget.bits = entry->methodBits;
+            if (megaHit) {
+                s->cachedTarget.bits = megaHit->methodBits;
                 goto exit_send_cached;
             }
         }

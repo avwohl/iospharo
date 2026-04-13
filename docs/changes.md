@@ -2,6 +2,28 @@
 
 2026-04-12
 
+## Adaptive J2J depth (per-method limits)
+
+Per-method j2jDepthLimit field in JITMethod (default 2, max 8). Promotes
+on 8 consecutive clean stencil re-entries, resets to 2 on materialization
+bail. TCP slow-start approach that lets stable methods go deeper while
+keeping unstable methods conservative. No benchmark regression.
+
+## Block value/value: stencils (prim 207/209)
+
+Inline FullBlockClosure>>value and value: in stencil_sendJ2J. IC extra
+bit 59 marks block value sites. Stencil extracts compiledBlock from
+closure slot 1, validates arg count against slot 2, does inline MethodMap
+lookup (6 probes), and J2J-calls the block's JIT code with proper temp
+and captured-value setup. Falls back to chain loop on any failure.
+
+## MegaCacheEntry jitEntry field (polymorphic dispatch groundwork)
+
+Added pre-validated JIT entry address to mega cache entries. Populated at
+megaCacheAdd with prim-safety validation (same check as
+pharo_jit_convert_send). Enables future optimizations to skip method map
+lookup on mega cache hits. MegaCacheEntry now 32 bytes (was 24).
+
 ## T2 decoder: ExtSuperSend (0xEB) support
 
 Added 0xEB (ExtSuperSend) to the T2 bytecode decoder with same literal
