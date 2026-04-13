@@ -53,24 +53,50 @@ Our test harness reports different paths than standard Pharo VM.
 - TestExecutionEnvironmentTest>>testHandleForkedProcessesByAllServices
 
 **5. Bytecode / compiler — 1 failure, 1 error**
-- OCSpecialSelectorTest>>testUnoptimisedValueSpecialSendsMessageCapturesSend — Got OCOpalExamples instead of #valueToTest
-- OCClassBuilderTest>>testCreateNormalClassWithTraitComposition — Undeclared variable error
+- OCSpecialSelectorTest>>testUnoptimisedValueSpecialSendsMessageCapturesSend
+  — Got OCOpalExamples (the class) instead of #valueToTest.  Test sets
+  `optimisationsActive := false` to force compiler to emit a regular
+  `#value` send (so OCCalledMethodProxy can intercept).  Appears to be
+  OpalCompiler-level: either the optimisation gate isn't honored in
+  Pharo 13, or the compiled `[iVar] value` reads the wrong slot.  Pure
+  image/compiler logic, not the VM primitive path.
+- OCClassBuilderTest>>testCreateNormalClassWithTraitComposition —
+  OCCodeError (Undeclared variable) when compiling a trait composition
+  expression `T1 + T2 + (T3 - {#a. #b}) + ...`.  Pharo 13 OpalCompiler
+  treats the dynamic-array literal elements as variable references in
+  the class-definition parser context.  Image-side parser bug.
 
 **6. Primitive / scanning — 1 error, 1 failure**
-- ProtoObjectTest>>testFastPointersTo — ShouldNotImplement error (missing primitive 250)
-- ClassQueryTest>>testAllCallsOn — Got 2 instead of 1 (method scanning)
+- ProtoObjectTest>>testFastPointersTo — ShouldNotImplement in
+  `pointersToExcept:among:` > `Array remove:ifAbsent:`.  Not a missing
+  primitive: primitive 250 is `clearVMProfile`, not `pointersTo:`.  The
+  method is pure Smalltalk; the failure comes from the `pointers` Array
+  (from `allObjects select:`) containing the running method's context,
+  which matches `objectsToAlwaysExclude` and triggers `remove:`.  On
+  stock Pharo 13 Cog this test passes — likely because Cog does not
+  expose the executing method's context to `pointsTo:`/`allObjects`
+  while our VM's frame materialization does.  Context visibility issue,
+  single-test impact.
+- ClassQueryTest>>testAllCallsOn — Fixed as side-effect of the
+  ensure: NLR fix (2026-04-13).
 
-### Analysis
+### Analysis (updated 2026-04-13)
 
-The 6 weak-reference failures and 3 path failures account for 9 of 16 issues.
-These are known limitations (GC weak ref support not implemented; test harness
-paths differ from standard Pharo VM). The remaining 7 failures are genuine VM
-issues worth investigating:
-- testSimpleEnsureTestWithUparrow: NLR through ensure: — may be context/return bug
-- Process management tests: process termination semantics
-- Compiler tests: dynamic class creation / special selector handling
-- ProtoObjectTest: primitive 250 (pointersTo:) not implemented
-- ClassQueryTest: method scanning / senders count
+Of the 16 original failures:
+
+- **Fixed (2):** testSimpleEnsureTestWithUparrow and testAllCallsOn —
+  both resolved by the ensure: NLR fix committed 2026-04-13.
+- **Environmental / deferred (9):** 6 weak-reference (GC ephemeron),
+  3 VM path tests.
+- **Image / compiler-level (3, not VM):** OCSpecialSelectorTest,
+  OCClassBuilderTest, ProtoObjectTest/testFastPointersTo — each
+  investigated and traced to either Pharo 13 OpalCompiler behavior,
+  parser context handling, or VM context materialization visibility
+  differences from Cog.  These are unlikely to be fixed by
+  primitive/interpreter changes alone.
+- **Process management (2):** ProcessMonitorTestServiceTest,
+  TestExecutionEnvironmentTest — termination semantics under watchdog
+  supervision.  Require careful investigation of process queue state.
 
 ## Tier 2 MIR Compiler Status (2026-04-12)
 
