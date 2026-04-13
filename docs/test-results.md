@@ -1,6 +1,76 @@
 # Test Results
 
-Last updated: 2026-04-12
+Last updated: 2026-04-13
+
+## Fix: NLR through ensure: (2026-04-13)
+
+Fixed `ExceptionTest>>testSimpleEnsureTestWithUparrow`. Root cause was
+that the `nlrHomeMethod_`/`nlrValue_` safety net globals were being
+consumed on ordinary method returns during cleanup block execution
+(fd>0 path), which hijacked returns from helper methods called from the
+cleanup block and unwound prematurely to the NLR home.
+
+The `savedFrames_[].homeFrameDepth` mechanism already correctly triggers
+NLR continuation when `ensure:` itself returns via the inline NLR path.
+Removed the redundant-and-buggy fd>0 hijack blocks in:
+- `returnValue()` after popFrame (previously ~line 4258)
+- `returnFromMethod()` fallback path (previously ~line 4795)
+
+The fd=0 consumer in `returnValue()` (~line 3950) remains — that is the
+real process-switch safety net, which walks the context chain to find
+the home method after ensure: cleanup.
+
+Verified: all 47 ExceptionTest tests now pass (was 46/47).
+
+## SUnit Test Suite Results (2026-04-12)
+
+Run #1: 535 test classes, 12576 tests total
+Passed: 12531 (99.6%)  Failed: 14  Errors: 2  Skipped: 29
+
+### Failures by Category
+
+**1. Weak reference / finalization (GC issue) — 6 failures**
+Tests expect weak references to be collected after GC, but our VM's GC
+does not yet support ephemeron/weak reference scanning.
+- WeakKeyDictionaryTest>>testClearing — Got 3 instead of 1
+- WeakIdentityKeyDictionaryTest>>testClearing — Got 8 instead of 1
+- WeakIdentityKeyDictionaryTest>>testFinalizeValuesWhenLastChainContinuesAtFront — Got 3 instead of 2
+- WeakAnnouncerTest>>testWeakDoubleAnnouncer — Assertion failed
+- WeakAnnouncerTest>>testWeakObject — Got 2 instead of 1
+- ObjectFinalizerTest>>testFinalizationOfMultipleResources — Assertion failed
+
+**2. VM path / environment (expected) — 3 failures**
+Our test harness reports different paths than standard Pharo VM.
+- SystemResolverTest>>testUserLocalDirectory — /private/tmp/pharo-local vs build
+- SystemResolverTest>>testVmBinary — Assertion failed
+- SystemResolverTest>>testVmDirectory — Assertion failed
+
+**3. Exception handling — 1 failure**
+- ExceptionTest>>testSimpleEnsureTestWithUparrow — NLR through ensure: assertion fails
+
+**4. Process management — 2 failures**
+- ProcessMonitorTestServiceTest>>testFailTestWhenBackgroundProcessWasFailedDuringFinalTryToFinishItAtTestCompletionTime
+- TestExecutionEnvironmentTest>>testHandleForkedProcessesByAllServices
+
+**5. Bytecode / compiler — 1 failure, 1 error**
+- OCSpecialSelectorTest>>testUnoptimisedValueSpecialSendsMessageCapturesSend — Got OCOpalExamples instead of #valueToTest
+- OCClassBuilderTest>>testCreateNormalClassWithTraitComposition — Undeclared variable error
+
+**6. Primitive / scanning — 1 error, 1 failure**
+- ProtoObjectTest>>testFastPointersTo — ShouldNotImplement error (missing primitive 250)
+- ClassQueryTest>>testAllCallsOn — Got 2 instead of 1 (method scanning)
+
+### Analysis
+
+The 6 weak-reference failures and 3 path failures account for 9 of 16 issues.
+These are known limitations (GC weak ref support not implemented; test harness
+paths differ from standard Pharo VM). The remaining 7 failures are genuine VM
+issues worth investigating:
+- testSimpleEnsureTestWithUparrow: NLR through ensure: — may be context/return bug
+- Process management tests: process termination semantics
+- Compiler tests: dynamic class creation / special selector handling
+- ProtoObjectTest: primitive 250 (pointersTo:) not implemented
+- ClassQueryTest: method scanning / senders count
 
 ## Tier 2 MIR Compiler Status (2026-04-12)
 

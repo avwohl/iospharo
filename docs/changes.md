@@ -1,5 +1,26 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-13
+
+## Fix: NLR through ensure: cleanup block
+
+Fixed `ExceptionTest>>testSimpleEnsureTestWithUparrow` (was the last
+known-failing ExceptionTest; suite now 47/47). Regular method returns
+from helpers called by an ensure: cleanup block were being hijacked by
+a stale-globals "safety net" path in `returnValue()` and
+`returnFromMethod()` at fd>0, prematurely unwinding to the NLR home
+method and skipping the rest of the cleanup.
+
+The `savedFrames_[X].homeFrameDepth` mechanism (set by the NLR-ENSURE
+pause-and-resume handler) already triggers the inline NLR path when
+`ensure:` itself returns, so the globals-based fd>0 fallback was both
+redundant and wrong. The fd=0 consumer in `returnValue()` remains as
+the real process-switch safety net (it walks the context chain).
+
+Also added a fast-path fd=0 process-top termination (when the active
+context has a nil sender) to avoid the expensive cannotReturn:
+exception-handler roundtrip when a process simply runs to completion.
+
 2026-04-12
 
 ## Adaptive J2J depth (per-method limits)

@@ -4104,29 +4104,40 @@ terminate_process:
             return;
         }
 
-                // Per reference VM spec: send cannotReturn: instead of silently terminating.
+        // When a method returns but has no sender (nil or no valid context),
+        // this is the top of the process's execution chain. The correct action
+        // is to terminate the process, per Smalltalk spec.
+        //
+        // First check: if we're at fd=0 and the context's sender is nil,
+        // this is a normal process-top return. Terminate immediately without
+        // entering the expensive cannotReturn: exception handling path.
+        // The cannotReturn: error handling involves copyTo: which recurses
+        // O(n) on the context chain length, causing O(n²) behavior that
+        // can monopolize the CPU for millions of steps.
+        if (frameDepth_ == 0 && activeContext_.isObject() && !activeContext_.isNil()) {
+            Oop sender = memory_.fetchPointer(0, activeContext_);
+            if (sender.isNil() || sender.rawBits() == 0 || sender.rawBits() == memory_.nil().rawBits()) {
+                // Top of process chain — terminate directly
+                terminateCurrentProcess();
+                if (tryReschedule()) return;
+                if (bootstrapStartup()) return;
+                stopVM("No runnable processes after top-of-chain return");
+                return;
+            }
+        }
+
+        // Per reference VM spec: send cannotReturn: instead of silently terminating.
         // This gives Smalltalk's exception handling a chance to handle the situation.
-        // Guard: limit cannotReturn: events per process. The error handler from
-        // cannotReturn: may itself try to return through nil sender, creating new
-        // contexts each time (so context-identity checks don't work). It may also
-        // trigger process switches (which would reset a per-switch counter). Track
-        // by process identity instead: count cannotReturn: events for the same process
-        // across any number of context switches.
         if (activeContext_.isObject() && !activeContext_.isNil()) {
             Oop currentProcess = getActiveProcess();
             if (currentProcess.rawBits() != lastCannotReturnProcess_.rawBits()) {
-                // Different process — reset counter
                 cannotReturnCount_ = 0;
                 lastCannotReturnProcess_ = currentProcess;
             }
             cannotReturnCount_++;
             if (cannotReturnCount_ <= 2) {
                 lastCannotReturnCtx_ = activeContext_;
-                // Set a step deadline for error handling. The cannotReturn: handler
-                // in Smalltalk sends error: which triggers exception handling. In our
-                // interpreted VM this can take 35M+ steps at P80, monopolizing CPU
-                // and preventing lower-priority test/watchdog processes from running.
-                // Give error handling 2M steps (~2 seconds), then forcibly terminate.
+                // Set a step deadline for error handling.
                 if (cannotReturnCount_ == 1) {
                     cannotReturnDeadline_ = g_stepNum + 2000000;
                 }
@@ -4205,54 +4216,14 @@ terminate_process:
     if (running_) {
         push(value);
 
-        // Continue NLR through ensure: — nlrHomeMethod_ was set by
-        // returnFromBlock when it encountered an ensure: (prim 198)
-        // frame during NLR unwinding. The ensure: cleanup has now
-        // completed; continue the NLR to the home method.
-        if (nlrHomeMethod_.isObject() && !nlrHomeMethod_.isNil()) {
-            pop();  // Discard ensure: return value
-            Oop nlrVal = nlrValue_;
-            Oop nlrHome = nlrHomeMethod_;
-            nlrHomeMethod_ = Oop::nil();
-            nlrValue_ = Oop::nil();
-
-            // Find home method in saved frames
-            size_t homeFrame = SIZE_MAX;
-            for (size_t i = 0; i < frameDepth_; i++) {
-                if (savedFrames_[i].savedMethod.rawBits() == nlrHome.rawBits()) {
-                    homeFrame = i;
-                    break;
-                }
-            }
-
-            if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
-                // Unwind to home frame, checking for more ensure: frames
-                while (frameDepth_ > homeFrame) {
-                    if (frameDepth_ > 1) {
-                        Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
-                        if (rm.isObject() && !rm.isNil() &&
-                            primitiveIndexOf(rm) == 198) {
-                            // Another ensure: — pause NLR again
-                            nlrHomeMethod_ = nlrHome;
-                            nlrValue_ = nlrVal;
-                            if (!popFrame()) return;
-                            push(nlrVal);
-                            return;
-                        }
-                    }
-                    if (!popFrame()) return;
-                }
-                // At homeFrame: return FROM the home method
-                returnValue(nlrVal);
-                return;
-            }
-
-            // Home frame not in savedFrames_ (e.g., context materialization
-            // during ensure: execution). Re-set for the fd==0 context-based
-            // handler to pick up.
-            nlrHomeMethod_ = nlrHome;
-            nlrValue_ = nlrVal;
-        }
+        // NOTE: nlrHomeMethod_/nlrValue_ globals are only consumed in the fd=0
+        // safety net (for process-switch during ensure: cleanup). For fd>0,
+        // NLR continuation after ensure: cleanup is handled by the
+        // savedFrames_[].homeFrameDepth mechanism (set by NLR-ENSURE handler in
+        // returnFromMethod), which triggers the inline NLR path when ensure:
+        // itself returns. A previous implementation hijacked fd>0 returns
+        // here based on the globals — that incorrectly fired on ordinary
+        // returns during cleanup block execution, skipping remaining cleanup.
 
 #if PHARO_JIT_ENABLED
         // Try to re-enter JIT execution in the caller method.
@@ -4267,16 +4238,60 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
-    // Check if we're executing inside a block (CompiledBlock)
+    // Check if we're executing inside a block (CompiledBlock).
     // If so, a "return from method" (^) should actually return from the HOME method,
     // not just from this block.
 
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
 
-        // If homeFrame is SIZE_MAX but we're in a CompiledBlock, we need to do
-        // context-based NLR. This happens after exception handling when contexts
-        // were materialized - the home method is in the context chain, not savedFrames_.
+        // Inline NLR: homeFrame is a valid saved frame index.
+        // homeFrameDepth is set by activateBlock (for block NLR) or by the
+        // ensure: NLR handler (for NLR continuation after ensure: cleanup).
+        // In both cases, unwind frames to homeFrame and return from it.
+        if (homeFrame != SIZE_MAX && homeFrame < frameDepth_) {
+            // For blocks, this is the standard NLR (^ inside a block returns
+            // from the enclosing method). For ensure: methods, this is the
+            // NLR continuation after cleanup — ensure: set homeFrameDepth
+            // so the NLR resumes when ensure: does ^ returnValue.
+            //
+            // Use nlrValue_ if set (ensure: NLR continuation), otherwise use
+            // the value being returned.
+            Oop nlrVal = value;
+            if (nlrValue_.isObject() && !nlrValue_.isNil()) {
+                nlrVal = nlrValue_;
+            }
+            while (frameDepth_ > homeFrame) {
+                if (frameDepth_ > 1) {
+                    Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
+                    if (rm.isObject() && !rm.isNil() &&
+                        primitiveIndexOf(rm) == 198) {
+                        // ensure: frame — pause NLR, run cleanup block.
+                        // Save NLR state: both in the frame (robust against
+                        // process switches) and as globals (fallback for fd=0).
+                        nlrHomeMethod_ = savedFrames_[homeFrame].savedMethod;
+                        nlrValue_ = nlrVal;
+                        if (!popFrame()) return;
+                        push(nlrVal);
+                        // Store homeFrame in the ensure: frame's saved state so
+                        // returnFromMethod can continue the NLR when ensure:
+                        // returns (even if nlrHomeMethod_ gets clobbered by
+                        // process switches during cleanup).
+                        if (frameDepth_ > 0) {
+                            savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                        }
+                        return;
+                    }
+                }
+                if (!popFrame()) return;
+            }
+            // At home frame — return from it. Clear NLR state.
+            nlrHomeMethod_ = Oop::nil();
+            nlrValue_ = Oop::nil();
+            returnValue(nlrVal);
+            return;
+        }
+
         if (homeFrame == SIZE_MAX) {
             // Check SIZE_MAX path — only trace when we're in a CompiledBlock (actual NLR)
             // (Normal methods with SIZE_MAX are just regular returns)
@@ -4578,6 +4593,16 @@ void Interpreter::returnFromMethod() {
         sendSelector(selectors_.cannotReturn, 1);
         return;
     }
+
+    // NOTE: do NOT consume nlrHomeMethod_/nlrValue_ here for fd>0. The
+    // savedFrames_[].homeFrameDepth mechanism (set by NLR-ENSURE handler
+    // when pausing an NLR at an ensure: frame) already triggers the inline
+    // NLR path when ensure: itself returns. A previous implementation
+    // hijacked any fd>0 return here based on the globals — that incorrectly
+    // fired on ordinary returns during cleanup block execution (e.g. helper
+    // methods called from the cleanup block), skipping remaining cleanup.
+    // The fd=0 path in returnValue still consumes the globals as a
+    // process-switch safety net.
 
     returnValue(value);
 }
@@ -8222,7 +8247,6 @@ Oop Interpreter::materializeFrameStack() {
 
     for (size_t i = startFrame; i < frameDepth_; i++) {
         auto& frame = savedFrames_[i];  // non-const: may update materializedContext
-
 
         // Get method info
         if (!frame.savedMethod.isObject()) {
