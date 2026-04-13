@@ -2,6 +2,62 @@
 
 Last updated: 2026-04-13
 
+## Delay Scheduler Death + Harness Fix (2026-04-13)
+
+Full SUnit run hung at 852 / 1671 classes after 2+ hours. Root cause:
+the `DelaySemaphoreScheduler` process (`runBackendLoopAtTimingPriority`)
+terminated on an unhandled exception during class #850
+(IVsAndClassVarNamesConflictTest). After termination, every subsequent
+`Delay>>wait` blocks on a semaphore that will never be signaled — with
+no error raised, so `on: Error do:` fallbacks do nothing.
+
+Evidence:
+- `DELAY-DEAD-AFTER: IVsAndClassVarNamesConflictTest`
+- `DELAY-DIAG: proc=Process pri=80 ... isTerminated=true`
+- VM `[DELAY-DEATH]` re-signal fired 1246 times over ~103 minutes with no recovery
+- `ImageCleanerTest>>testTestPackages` runs in 3.5 ms standalone — not the hanging test
+
+Harness fix (in `scripts/pharo-headless-test/run_sunit_tests.st`):
+
+1. Pre-class and post-class probes now call
+   `Delay scheduler restartTimerEventLoop` when the scheduler is
+   detected dead. Logs `DELAY-RESTARTED:` so we can see recoveries
+   in the results file.
+2. `runSingleTest:` watchdog no longer calls `Delay>>wait` inside its
+   poll loop — it uses `ProcessorScheduler relinquishProcessorForMicroseconds:`
+   directly, which is a VM primitive that wakes independent of the
+   Delay scheduler. This means even if a test's own code kills the
+   scheduler, the watchdog still fires.
+3. `runSingleTest:` main-process completion wait no longer uses
+   `Semaphore>>waitTimeoutSeconds:` (also Delay-dependent). It polls
+   `testDone` with `DateAndTime now` + relinquish.
+
+Validated via direct scheduler kill + restart probe:
+- `(Delay forMilliseconds: 200) wait` before kill: 213 ms
+- After terminate + `restartTimerEventLoop`: 1234 ms (first wait; resumes pending delays)
+- Subsequent wait: 205 ms — full recovery
+
+Open question for a future run: *which* Smalltalk-level bug kills the
+scheduler. The scheduler's loop contains `scheduleAtTimingPriority`,
+`unscheduleAtTimingPriority`, and `timingPrioritySignalExpired` calls —
+an unhandled error in any of them terminates the whole loop. Needs
+instrumentation on the loop body to capture the offending exception.
+
+## Partial Run Snapshot (2026-04-13 14:04 EDT — 852 classes)
+
+Before the hang, the run completed:
+- Pass:    16566
+- Fail:       81
+- Error:     406
+- Skip:       49
+
+Top failure clusters:
+- 29x `Context>>tempNamed:` returns nil AST node (task #39)
+- 25x FFI `sourceCodeAt:` returns nil (SourceFiles not initialized headless)
+- 38x `CollectionIsEmpty: a Set` (single root cause)
+- 23x SubscriptOutOfBounds: 1 in #() — empty array indexing
+- 1x `ByteSymbol>>#an AdditionalMethodState` — likely literal-slot corruption (task #36)
+
 ## Fix: NLR through ensure: (2026-04-13)
 
 Fixed `ExceptionTest>>testSimpleEnsureTestWithUparrow`. Root cause was
