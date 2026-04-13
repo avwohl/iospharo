@@ -13,8 +13,8 @@ for 1999 classes, 27968 tests). Down from ~445x at build ecd0d70.
 
 No performance-affecting changes in builds 116-118 (UI bug fixes and diagnostics).
 
-See `docs/optimizations.md` for the optimization history and
-`docs/pseudo-jit.md` for the remaining plan to close the gap further.
+See `docs/benchmark-results.md` and `docs/changes.md` for the
+optimization history.
 
 ## Why: Interpreter vs JIT
 

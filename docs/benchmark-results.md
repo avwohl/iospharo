@@ -83,8 +83,8 @@
     Computed goto:       17.71  18.18  18.10   avg = 18.00s
     Improvement:         ~2.5% CPU
 
-    As predicted by research (docs/pseudo-jit.md), computed goto on Apple M1
-    yields only 2-5% due to excellent branch prediction hardware. The benefit
+    Computed goto on Apple M1 yields only 2-5% due to excellent branch
+    prediction hardware. The benefit
     comes from per-handler branch predictor entries and eliminating the
     running_/bytecodeEnd_ per-bytecode checks.
 
@@ -259,7 +259,7 @@ Previous measurement (build ecd0d70, 2026-02-23) showed ~445x slower.
 Current build 111 shows 77x — a ~5.8x improvement, though methodology
 differences (per-class vs per-test timing) make direct comparison rough.
 
-Next optimization targets (see docs/optimizations.md):
+Next optimization targets:
 - Slim down step() hot path (eliminate per-bytecode overhead)
 - Reduce syscalls in periodic checks
 - Multi-probe method cache
