@@ -224,20 +224,25 @@ pharo /tmp/Pharo.image test "Kernel-Tests"
 ```
 
 ### Custom VM Testing
-Our VM doesn't support command-line args to the image yet. Inject a test runner:
+
+Use our VM's `eval` mode (it writes a `startup.st` next to the image that
+Pharo's `StartupPreferencesLoader` auto-loads). This avoids stock Pharo's
+`eval --save` CLI, which has been observed to silently no-op in this env,
+and it also sidesteps SessionManager handler chains that drop registered
+user-category classes when an earlier handler errors out.
 
 ```bash
-# 1. Fresh image
-cd /tmp && curl -sL https://get.pharo.org/64/130 | bash
+# 1. Fresh image + VM in its own dir so Pharo writes pharo-local there
+cd /tmp && mkdir -p harness && cd harness \
+  && curl -sL https://get.pharo.org/64/130+vm | bash
 
-# 2. Inject test runner (uses chunk format for fileIn)
-pharo /tmp/Pharo.image eval --save \
-  "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
+# 2. Run tests — fileIn defines SUnitRunner at runtime, then Smalltalk
+#    globals at: avoids OCUndeclaredVariable at compile time
+./build/test_load_image /tmp/harness/Pharo.image eval \
+  "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn. \
+   (Smalltalk globals at: #SUnitRunner) runAllTests"
 
-# 3. Run with custom VM
-./build/test_load_image /tmp/Pharo.image
-
-# 4. Results
+# 3. Results
 cat /tmp/sunit_test_results.txt
 ```
 
