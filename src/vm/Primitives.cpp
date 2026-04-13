@@ -8687,6 +8687,13 @@ PrimitiveResult Interpreter::primitiveNextObject(int argCount) {
 // ===== VM ATTRIBUTE PRIMITIVE =====
 
 // Primitive 149: Get VM attribute by index
+//
+// Pharo 13 binds <primitive: 149> to VirtualMachine>>doGetSystemAttribute: and
+// expects the raw bytes (ByteArray). The Smalltalk wrapper getSystemAttribute:
+// does `(doGetSystemAttribute: id) ifNotNil: [:v | v asByteArray utf8Decoded]`.
+// Returning a ByteString here makes asByteArray re-encode via ZnUTF8Encoder —
+// under JIT that round trip melts into an endless recompile loop during image
+// resume (ExternalData install -> platformName -> getSystemAttribute:).
 PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
     Oop indexOop = stackTop();
 
@@ -8696,87 +8703,64 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
 
     int64_t index = indexOop.asSmallInteger();
 
-    // Diagnostic: log attribute queries during startup
-    static int attrQueryCount = 0;
-    if (attrQueryCount < 100) {
-        attrQueryCount++;
-        fprintf(stderr, "[P149] getSystemAttribute: %lld\n", (long long)index);
-    }
+    auto makeBytes = [&](const std::string& s) -> Oop {
+        Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
+        if (byteArrayClass.isNil()) return memory_.nil();
+        uint32_t classIdx = memory_.indexOfClass(byteArrayClass);
+        Oop obj = memory_.allocateBytes(classIdx, s.size());
+        if (obj.isNil()) return obj;
+        std::memcpy(obj.asObjectPtr()->bytes(), s.data(), s.size());
+        return obj;
+    };
 
-    // Negative indices: VM parameters; positive: VM path (0), image path (1), image args (2+)
-
-    // Negative indices: VM parameters (flags like --headless)
-    // In the standard Cog VM, VM flags before the image path are at negative indices.
-    // Index -1 = vmParameters_[0], -2 = vmParameters_[1], etc.
+    // Negative indices: VM parameters (flags like --headless) at -1, -2, ...
     if (index < 0) {
-        int paramIdx = static_cast<int>(-index) - 1;  // -1 → 0, -2 → 1, etc.
+        int paramIdx = static_cast<int>(-index) - 1;
         const auto& params = vmParameters_;
-        if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
-            pop();
-            push(memory_.createString(params[paramIdx]));
-            return PrimitiveResult::Success;
-        }
-        // No parameter at this index — return nil (consistent with standard VM)
         pop();
-        push(memory_.nil());
+        if (paramIdx >= 0 && paramIdx < static_cast<int>(params.size())) {
+            push(makeBytes(params[paramIdx]));
+        } else {
+            push(memory_.nil());
+        }
         return PrimitiveResult::Success;
     }
 
-    // Index 0: VM path
-    // Index 1: Image path
-    // Index 2+: Command-line arguments passed after the image path
-    //   If no arguments were provided, default to "--interactive" so the GUI starts.
-    // Index 1000+: VM info attributes
+    // 0: VM path, 1: image path, 2+: image arguments, 1000+: VM info
     if (index == 0) {
-        Oop str = memory_.createString(vmPath_.empty() ? "PharoSmalltalk" : vmPath_);
         pop();
-        push(str);
+        push(makeBytes(vmPath_.empty() ? "PharoSmalltalk" : vmPath_));
         return PrimitiveResult::Success;
     }
     if (index == 1) {
-        Oop str = memory_.createString(imageName_.empty() ? "Pharo.image" : imageName_);
         pop();
-        push(str);
+        push(makeBytes(imageName_.empty() ? "Pharo.image" : imageName_));
         return PrimitiveResult::Success;
     }
     if (index >= 2 && index < 1000) {
         int argIdx = static_cast<int>(index) - 2;
         const auto& args = imageArguments_;
-        if (args.empty()) {
-            // No image arguments — return nil.
-            // PlatformBridge.cpp explicitly sets {"--interactive"} for GUI mode.
-            // test_load_image runs headless with no image args.
-            pop();
-            push(memory_.nil());
-            return PrimitiveResult::Success;
-        }
-        if (argIdx < static_cast<int>(args.size())) {
-            pop();
-            push(memory_.createString(args[argIdx]));
-            return PrimitiveResult::Success;
-        }
-        // Past end of args
         pop();
-        push(memory_.nil());
+        if (!args.empty() && argIdx < static_cast<int>(args.size())) {
+            push(makeBytes(args[argIdx]));
+        } else {
+            push(memory_.nil());
+        }
         return PrimitiveResult::Success;
     }
 
-    // VM info attributes (index 1000+)
     switch (index) {
-        case 1001:  // Operating system name
-            // Always report "Mac OS" — standard Pharo has no iOSPlatform class.
-            // "iOS" causes MacOSXPlatform.isActivePlatform to fail, breaking
-            // platform detection and MenubarMorph creation during startup.
+        case 1001:  // Operating system name — MacOSXPlatform.isActivePlatform matches "Mac OS"
             pop();
-            push(memory_.createString("Mac OS"));
+            push(makeBytes("Mac OS"));
             return PrimitiveResult::Success;
         case 1002:
             pop();
-            push(memory_.createString("PharoSmalltalk 1.0"));
+            push(makeBytes("PharoSmalltalk 1.0"));
             return PrimitiveResult::Success;
         case 1003:
             pop();
-            push(memory_.createString("StackInterpreter"));
+            push(makeBytes("StackInterpreter"));
             return PrimitiveResult::Success;
         case 1004:
             pop();
@@ -8784,22 +8768,19 @@ PrimitiveResult Interpreter::primitiveGetAttribute(int argCount) {
             return PrimitiveResult::Success;
         case 1005:
             pop();
-            push(memory_.createString("Quartz"));
+            push(makeBytes("Quartz"));
             return PrimitiveResult::Success;
         case 1006:
         case 1007:
         case 1008:
             pop();
-            push(memory_.createString("PharoSmalltalk 2025-01-28"));
+            push(makeBytes("PharoSmalltalk 2025-01-28"));
             return PrimitiveResult::Success;
-        case 1009: {
+        case 1009:
             pop();
-            Oop str = memory_.createString("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000");
-            push(str);
+            push(makeBytes("v1.0.0 - Commit: iospharo - Date: 2026-04-06 12:00:00 +0000"));
             return PrimitiveResult::Success;
-        }
         case 1201:
-            // Return nil so VirtualMachine>>maxFilenameLength returns nil
             pop();
             push(memory_.nil());
             return PrimitiveResult::Success;
