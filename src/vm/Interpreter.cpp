@@ -2362,7 +2362,6 @@ void Interpreter::startHeartbeat() {
                 forceYield_.store(true, std::memory_order_release);
             }
 
-            // Watchdog: check for stuck VM every 5 seconds
             if (tickCount % 5000 == 0) {
                 long long steps = g_watchdogSteps.load(std::memory_order_relaxed);
                 bool stuck = (steps == lastHeartbeatSteps_);
@@ -6397,33 +6396,6 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
-    // Frame-depth milestones: log the selector at key depths to trace recursion patterns
-    if (__builtin_expect(frameDepth_ >= 50, 0)) {
-        static size_t lastMilestone = 0;
-        static int milestoneCount = 0;
-        // Log at 50, 100, 200, 500, 1000, 2000, 3000, 4000
-        size_t fd = frameDepth_;
-        size_t milestone = (fd < 100) ? 50 : (fd < 200) ? 100 : (fd < 500) ? 200 :
-                           (fd < 1000) ? 500 : (fd < 2000) ? 1000 : (fd < 3000) ? 2000 :
-                           (fd < 4000) ? 3000 : 4000;
-        if (fd == milestone && milestone != lastMilestone && milestoneCount < 50) {
-            milestoneCount++;
-            lastMilestone = milestone;
-            std::string sel = memory_.selectorOf(method);
-            fprintf(stderr, "[DEPTH] fd=%zu pushing #%s (argCount=%d)\n",
-                    fd, sel.c_str(), argCount);
-            // At fd=50, print ALL frames; at higher milestones, print last 10
-            size_t start = (fd == 50) ? 0 : (fd > 10 ? fd - 10 : 0);
-            for (size_t f = start; f < fd; f++) {
-                Oop savedM = savedFrames_[f].savedMethod;
-                std::string savedSel = memory_.selectorOf(savedM);
-                fprintf(stderr, "  [%zu] #%s (oop=0x%llx)\n", f, savedSel.c_str(),
-                        (unsigned long long)savedM.rawBits());
-            }
-            fflush(stderr);
-        }
-    }
-
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
     // catches both infinite recursion (soft) and hard overflow.
     if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
@@ -7714,14 +7686,52 @@ void Interpreter::terminateCurrentProcess() {
             // Walk the context chain to find the original error
             if (activeContext_.isObject() && !activeContext_.isNil()) {
                 Oop ctx = activeContext_;
+                // Cycle detection: use Floyd's tortoise and hare
+                Oop slow = ctx, fast = ctx;
+                bool hasCycle = false;
                 for (int i = 0; i < 30 && ctx.isObject() && !ctx.isNil(); i++) {
                     Oop method = memory_.fetchPointer(3, ctx);
                     std::string sel = method.isObject() ? memory_.selectorOf(method) : "?";
                     Oop receiver = memory_.fetchPointer(5, ctx);
                     std::string rcvrClass = memory_.classNameOf(receiver);
-                    fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s\n",
-                            pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str());
+                    fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s (ctx=0x%llx sender=0x%llx)\n",
+                            pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str(),
+                            (unsigned long long)ctx.rawBits(),
+                            (unsigned long long)memory_.fetchPointer(0, ctx).rawBits());
                     ctx = memory_.fetchPointer(0, ctx);
+                }
+                // Floyd's cycle detection on sender chain
+                for (int i = 0; i < 200; i++) {
+                    if (!slow.isObject() || slow.isNil()) break;
+                    slow = memory_.fetchPointer(0, slow);  // 1 step
+                    if (!fast.isObject() || fast.isNil()) break;
+                    fast = memory_.fetchPointer(0, fast);  // 2 steps
+                    if (!fast.isObject() || fast.isNil()) break;
+                    fast = memory_.fetchPointer(0, fast);
+                    if (slow.rawBits() == fast.rawBits()) {
+                        hasCycle = true;
+                        fprintf(stderr, "[TERM-P%lld] SENDER CHAIN CYCLE DETECTED at ctx=0x%llx!\n",
+                                pri.asSmallInteger(), (unsigned long long)slow.rawBits());
+                        // Walk to find cycle length
+                        Oop c = slow;
+                        int len = 0;
+                        do {
+                            c = memory_.fetchPointer(0, c);
+                            len++;
+                            if (len > 200) break;
+                        } while (c.rawBits() != slow.rawBits());
+                        fprintf(stderr, "[TERM-P%lld] Cycle length: %d\n", pri.asSmallInteger(), len);
+                        break;
+                    }
+                }
+                if (!hasCycle) {
+                    // Count chain length
+                    Oop c = activeContext_;
+                    int len = 0;
+                    for (; len < 500 && c.isObject() && !c.isNil(); len++)
+                        c = memory_.fetchPointer(0, c);
+                    fprintf(stderr, "[TERM-P%lld] Sender chain length: %d (terminated=%s)\n",
+                            pri.asSmallInteger(), len, c.isNil() ? "nil" : "non-nil/limit");
                 }
             }
         }
@@ -7729,9 +7739,15 @@ void Interpreter::terminateCurrentProcess() {
                 (unsigned long long)proc.rawBits(),
                 pri.isSmallInteger() ? pri.asSmallInteger() : -1,
                 frameDepth_, memory_.selectorOf(method_).c_str());
-        // Print call stack
-        for (size_t i = frameDepth_; i > 0 && i > (frameDepth_ > 15 ? frameDepth_ - 15 : 0); i--) {
-            fprintf(stderr, "[TERM]   fd=%zu #%s\n", i, memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
+        // Print call stack with receiver classes
+        for (size_t i = frameDepth_; i > 0 && i > (frameDepth_ > 30 ? frameDepth_ - 30 : 0); i--) {
+            Oop savedRcv = savedFrames_[i].savedReceiver;
+            std::string cls = "?";
+            if (savedRcv.isSmallInteger()) cls = "SmallInteger";
+            else if (savedRcv.isNil()) cls = "nil";
+            else if (savedRcv.isObject() && memory_.isValidPointer(savedRcv))
+                cls = memory_.classNameOf(savedRcv);
+            fprintf(stderr, "[TERM]   fd=%zu %s>>%s\n", i, cls.c_str(), memory_.selectorOf(savedFrames_[i].savedMethod).c_str());
         }
         fprintf(stderr, "[TERM]   fd=0 #%s (current)\n", memory_.selectorOf(method_).c_str());
         // Print C++ callsite
