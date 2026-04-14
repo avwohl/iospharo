@@ -782,6 +782,27 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         }
                     }
                 }
+                // Oop exclusion: JIT_EXCLUDE_OOP=0xhex1,0xhex2,...
+                {
+                    static const char* excludeOopEnv = getenv("JIT_EXCLUDE_OOP");
+                    if (excludeOopEnv) {
+                        uint64_t mOop = compiledMethod.rawBits();
+                        std::string excl(excludeOopEnv);
+                        size_t pos = 0;
+                        while (pos < excl.size()) {
+                            size_t comma = excl.find(',', pos);
+                            if (comma == std::string::npos) comma = excl.size();
+                            std::string tok = excl.substr(pos, comma - pos);
+                            uint64_t v = strtoull(tok.c_str(), nullptr, 0);
+                            if (v == mOop) {
+                                fprintf(stderr, "[JIT] EXCLUDED oop=0x%llx\n",
+                                        (unsigned long long)mOop);
+                                return;
+                            }
+                            pos = comma + 1;
+                        }
+                    }
+                }
                 // Hit threshold — compile!
                 size_t gcBefore = interp_ ? interp_->memory().statistics().gcCount : 0;
                 JITMethod* jm = compiler_->compile(compiledMethod);
@@ -800,6 +821,24 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                             (void*)compiledMethod.rawBits(), t1sel.c_str(),
                             countMap_[i].count, jm->codeSize,
                             jm->hasPrimPrologue ? ", prim" : "");
+                    // Diagnostic: if selector unresolved, dump last-literal class
+                    // (usually class binding Association or outer CompiledMethod)
+                    if (t1sel == "?" && interp_) {
+                        auto& mem = interp_->memory();
+                        size_t nLits = mem.numLiteralsOf(compiledMethod);
+                        std::string lastCls = "?";
+                        std::string penCls = "?";
+                        if (nLits >= 1) {
+                            Oop last = mem.fetchPointer(nLits, compiledMethod);
+                            lastCls = mem.classNameOf(last);
+                        }
+                        if (nLits >= 2) {
+                            Oop pen = mem.fetchPointer(nLits - 1, compiledMethod);
+                            penCls = mem.classNameOf(pen);
+                        }
+                        fprintf(stderr, "[JIT]   nLits=%zu pen.cls=%s last.cls=%s\n",
+                                nLits, penCls.c_str(), lastCls.c_str());
+                    }
 
                     // Also attempt Tier 2 (MIR) compilation immediately.
                     // J2J bypasses tryExecute so the executionCount trigger never fires;
