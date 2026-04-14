@@ -2453,6 +2453,13 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     // This keeps IC entries valid across GC, avoiding a full IC flush.
 #if PHARO_JIT_ENABLED
     if (jitRuntime_.isInitialized()) {
+        // Ensure the whole code zone is writable before updating Oop fields.
+        // updatePointersAfterCompact rewrites method header and IC Oops in
+        // place; if the zone is left executable after a JIT call path that
+        // didn't flip it back, the store here crashes with SIGSEGV inside
+        // fullGC. See docs/deferred-issues.md #4.
+        jit::makeWritable(jitRuntime_.codeZone().rawStart(),
+                          jitRuntime_.codeZone().totalBytes());
         jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();
         while (m) {
             if (m->compiledMethodOop != 0) {

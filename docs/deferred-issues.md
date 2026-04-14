@@ -113,7 +113,7 @@ to either scale the tests' sleep budget or boost the FinalizationProcess
 priority briefly during GC. Scope: a day of diagnostics work in
 `src/vm/ObjectMemory.cpp` and the P50 scheduler path.
 
-## 4. JIT eval-mode boot hang
+## 4. JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
 
 **Symptom:** with `PHARO_NO_JIT=0` in eval mode, any expression
 (including `Smalltalk snapshot: false andQuit: true`) hangs. Image
@@ -160,10 +160,26 @@ path. Full-image boot (non-eval) runs longer, but session-handler
 forks at P79 haven't produced output either. Without JIT reliably
 usable, we can't measure improvements.
 
-**Next step:** add a compile-blacklist mechanism
-(`PHARO_JIT_SKIP_SELECTORS=...`) so we can bisect which compilation
-is the problem. Scope: small addition to `src/vm/jit/JITCompiler.cpp`
-plus logging in `Interpreter::initializeJIT`.
+**Crash fix (2026-04-14):** Interpreter::forEachRoot now calls
+`jit::makeWritable(codeZone.rawStart(), totalBytes())` at the top
+of its JIT-method loop. The W^X toggle around JIT execution could
+leave the zone executable if a path skipped the matching
+makeWritable (e.g., non-local return out of JIT_CALL), and the
+next fullGC's in-place Oop rewrite then SIGSEGVed. Verified:
+`PHARO_NO_JIT=0 JIT_MAX_COMPILE=1` now evaluates `42 printString`
+cleanly. Full-JIT boot reaches a 273-method steady state without
+crashing.
+
+**Hang remaining:** with JIT enabled, the boot completes 273
+compiled methods and stabilizes but the startup.st eval
+expression still doesn't run — session-handler fork at P79 isn't
+getting scheduled. Separate issue from the crash; tracking
+continues.
+
+**Next step:** instrument the P79 session-handler fork to see
+why the StartupPreferencesLoader never dispatches the eval.
+Scope: stderr logging in test_load_image.cpp around startup.st
+injection, plus tracing `SessionManager>>startup:` dispatch.
 
 ## Why these are deferred, not fixed
 
