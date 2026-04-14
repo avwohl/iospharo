@@ -2,14 +2,21 @@
 
 Last updated: 2026-04-14
 
-## tempNamed: cluster — root cause confirmed (2026-04-14)
+## tempNamed: cluster — NOT a VM bug (2026-04-14)
 
-Reproduced the 29-error cluster locally via a 4-case probe (`/tmp/tempnamed_probe.st`):
+The 29-error `Context>>tempNamed:` cluster is **Pharo 13 image behavior**,
+reproducible identically on stock Cog and our VM running the same image.
 
-    Case 1 (thisContext tempNamed: 'foo'):
-        DNU #isLocalVariable not understood by rcvr=nil
+Probe (single-line eval on both VMs):
 
-The chain (Context in Pharo 13 *Debugging-Core* category):
+    | r | r := [thisContext tempNamed: 'foo']
+              on: Error do: [:e | 'ERROR: ', e class name, ' ', e messageText].
+    r
+
+    Stock Cog:  'ERROR: MessageNotUnderstood receiver of "isLocalVariable" is nil'
+    Our VM:     'ERROR: MessageNotUnderstood receiver of "isLocalVariable" is nil'
+
+Chain (Pharo 13 `Context` *Debugging-Core* category):
 
     tempNamed: aName
       | var |
@@ -24,16 +31,10 @@ The chain (Context in Pharo 13 *Debugging-Core* category):
     CompiledMethod sourceNodeForPC: aPC
                              -> needs #bcToASTCache property OR sourceNode parse
 
-For dynamically-compiled methods (doIt, `class compile:`, `classInstaller make:`),
-if `bcToASTCache` is not populated AND `method sourceNode` can't parse (no source
-file association headless), the whole chain nils out and `nil isLocalVariable`
-DNUs. Any test that triggers `tempNamed:` in such a context hits the cluster.
-
-Open questions (pending full-run data):
-- Does our VM correctly populate `bcToASTCache` property on newly-compiled methods?
-- Does stock Cog somehow avoid this by always having source available?
-- Is the fix VM-side (frame PC/method properties) or image-side
-  (defensive `lookupVar:` result handling in Context>>tempNamed:)?
+For contexts whose method has no resolvable AST (doIt, some dynamically
+compiled/instrumented methods), the chain nils out. Both VMs fail the
+same way because the failure happens entirely inside image code — no
+VM primitive is involved in the nil path. Task #39 closed.
 
 ## SUnitClassNames resolves via globals (2026-04-14, submodule 2bcc165)
 
