@@ -27434,6 +27434,21 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[FFI-CALL] funcPtr=%p cif->nargs=%u rtype=%u\n",
+                funcPtr, (unsigned)cif->nargs,
+                cif->rtype ? (unsigned)cif->rtype->type : 0xFFFFu);
+        for (unsigned i = 0; i < cif->nargs; i++) {
+            uint64_t slot0 = 0;
+            memcpy(&slot0, argPtrs[i], sizeof(uint64_t));
+            unsigned t = cif->arg_types && cif->arg_types[i] ? cif->arg_types[i]->type : 0xFFFFu;
+            fprintf(stderr, "[FFI-CALL]   arg[%u] type=%u slot=0x%llx (=%llu)\n",
+                    i, t, (unsigned long long)slot0, (unsigned long long)slot0);
+        }
+        fflush(stderr);
+    }
+
     // Perform the FFI call on the current (VM) thread.
     // The standard Pharo VM runs the interpreter on the main thread, but
     // we run it on a background thread. We do NOT dispatch to the main
@@ -27752,12 +27767,23 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         // does NOT return here.
         g_interpreter->enterInterpreterFromCallback(vmcc);
 
+        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+            (void)dbg;
+            fprintf(stderr, "[CALLBACK-HANDLER-FELL-OUT] vmcc=%p (enterInterpreterFromCallback returned normally)\n",
+                    (void*)vmcc);
+            fflush(stderr);
+        }
         // Should never reach here
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         free(vmcc);
         return;
     }
 
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[CALLBACK-HANDLER-LONGJMP-RESUME] vmcc=%p\n", (void*)vmcc);
+        fflush(stderr);
+    }
     // Returned from primitiveCallbackReturn via siglongjmp(vmcc->trampoline, 1).
     // The return value was already written to ret by Smalltalk via
     // TFCallbackInvocation >> writeReturnValue: which writes to returnHolder
@@ -27793,6 +27819,11 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
 PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[CALLBACK-READNEXT] callbackDepth=%d\n", callbackDepth_);
+        fflush(stderr);
+    }
     if (callbackDepth_ > 0) {
         VMCallbackContext* vmcc = callbackContextStack_[callbackDepth_ - 1];
         Oop result = tffi_newExternalAddress(vmcc);

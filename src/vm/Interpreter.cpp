@@ -2479,7 +2479,9 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
 
     // 4. Push vmcc onto callback context stack
     if (callbackDepth_ < MaxCallbackDepth) {
-        callbackContextStack_[callbackDepth_++] = vmcc;
+        callbackContextStack_[callbackDepth_] = vmcc;
+        callbackHandlerStack_[callbackDepth_] = memory_.nil();
+        callbackDepth_++;
     }
 
     // 5. Signal callback semaphore to wake handler process
@@ -2491,21 +2493,102 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         fflush(stderr);
     }
     if (g_callbackSemaphoreIndex > 0) {
-        signalSemaphoreDirectly(g_callbackSemaphoreIndex);
-    }
+        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+            (void)dbg;
+            Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
+            if (semTable.isObject() && !semTable.isNil()) {
+                size_t idx = static_cast<size_t>(g_callbackSemaphoreIndex - 1);
+                if (idx < memory_.slotCountOf(semTable)) {
+                    Oop semaphore = memory_.fetchPointer(idx, semTable);
+                    Oop firstLink = memory_.nil();
+                    if (semaphore.isObject() && !semaphore.isNil()) {
+                        firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+                    }
+                    fprintf(stderr, "[CALLBACK-SEM] sem=0x%llx firstLink=0x%llx (waiter %s)\n",
+                            (unsigned long long)semaphore.rawBits(),
+                            (unsigned long long)firstLink.rawBits(),
+                            (firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits())
+                              ? "NONE" : "present");
+                    fflush(stderr);
+                }
+            }
+        }
+        // CUSTOM callback-signal path: we cannot use the generic
+        // signalSemaphoreDirectly because synchronousSignal calls putToSleep
+        // on the active process, which would add the test process to the
+        // ready queue. The test process is ALREADY suspended via
+        // SuspendedProcessInCallout (step 3); double-booking causes
+        // wakeHighestPriority to later pull the test process out of the
+        // ready queue and run it concurrently with the (still-active)
+        // restored caller, leading to intermittent hangs and failures.
+        //
+        // Instead:
+        //   - If a waiter is on the semaphore, remove it and transferTo it
+        //     WITHOUT calling putToSleep on the current active process.
+        //   - If no waiter, increment excessSignals, then pick the next
+        //     ready process via wakeHighestPriority.
+        bool transferred = false;
+        Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
+        if (semTable.isObject() && !semTable.isNil()) {
+            size_t idx = static_cast<size_t>(g_callbackSemaphoreIndex - 1);
+            if (idx < memory_.slotCountOf(semTable)) {
+                Oop semaphore = memory_.fetchPointer(idx, semTable);
+                if (semaphore.isObject() && !semaphore.isNil()) {
+                    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
+                    bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
+                    if (hasWaiter) {
+                        int waiterPri = safeProcessPriority(firstLink);
+                        if (waiterPri >= 0) {
+                            Oop waiter = removeFirstLinkOfList(semaphore);
+                            // NOTE: intentionally skip putToSleep(activeProcess) —
+                            // activeProcess is suspended via SuspendedProcessInCallout.
+                            // Skip transferTo — step 1+2 already materialized and
+                            // stored the active process's context. Calling
+                            // materializeFrameStack again would duplicate work or
+                            // double-save contexts. Inline setActive + executeFromContext.
+                            setActiveProcess(waiter);
+                            if (callbackDepth_ > 0) {
+                                callbackHandlerStack_[callbackDepth_ - 1] = waiter;
+                            }
+                            Oop waiterCtx = memory_.fetchPointer(ProcessSuspendedContextIndex, waiter);
+                            memory_.storePointer(ProcessSuspendedContextIndex, waiter, memory_.nil());
+                            stackPointer_ = stackBase_;
+                            frameDepth_ = 0;
+                            executeFromContext(waiterCtx);
+                            transferred = true;
+                        }
+                    } else {
+                        // No waiter: bump excessSignals.
+                        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, semaphore);
+                        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+                        memory_.storePointer(SemaphoreExcessSignalsIndex, semaphore,
+                                            Oop::fromSmallInteger(excess + 1));
+                    }
+                }
+            }
+        }
 
-    // 6. Find and transfer to highest-priority ready process
-    //    (The callback handler process should now be ready from the semaphore signal)
-    Oop readyProcess = wakeHighestPriority();
-    if (readyProcess.isObject() && !readyProcess.isNil()) {
-        setActiveProcess(readyProcess);
-        Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
-        memory_.storePointer(ProcessSuspendedContextIndex, readyProcess, memory_.nil());
+        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+            (void)dbg;
+            fprintf(stderr, "[CALLBACK-CUSTOM-SIGNAL] transferred=%d\n", (int)transferred);
+            fflush(stderr);
+        }
 
-        // Reset interpreter state for new process
-        stackPointer_ = stackBase_;
-        frameDepth_ = 0;
-        executeFromContext(ctx);
+        // If we didn't transfer via the semaphore (no waiter), switch off
+        // the now-suspended test process to something ready. Without this,
+        // step() would re-execute the test process that's already in
+        // SuspendedProcessInCallout.
+        if (!transferred) {
+            Oop readyProcess = wakeHighestPriority();
+            if (readyProcess.isObject() && !readyProcess.isNil()) {
+                setActiveProcess(readyProcess);
+                Oop ctx = memory_.fetchPointer(ProcessSuspendedContextIndex, readyProcess);
+                memory_.storePointer(ProcessSuspendedContextIndex, readyProcess, memory_.nil());
+                stackPointer_ = stackBase_;
+                frameDepth_ = 0;
+                executeFromContext(ctx);
+            }
+        }
     }
 
     // 7. Run a NESTED interpret loop on the C stack.
@@ -2516,10 +2599,19 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     //    siglongjmp back to the C trampoline.
     long nestedStepCount = 0;
     static constexpr long kCallbackTimeout = 10000000; // 10M steps ~1s
+    bool cbDbg = getenv("PHARO_CALLBACK_DEBUG") != nullptr;
+    long lastDbgStep = 0;
     while (running_) {
         for (int batch = 0; batch < 1000 && running_; batch++) {
             step();
             nestedStepCount++;
+        }
+        if (cbDbg && nestedStepCount - lastDbgStep >= 1000000) {
+            fprintf(stderr, "[CALLBACK-PROGRESS] nestedStepCount=%ld pending=%d running_=%d vmcc=%p\n",
+                    nestedStepCount, (int)(pendingCallbackReturn_ != nullptr),
+                    (int)running_, (void*)vmcc);
+            fflush(stderr);
+            lastDbgStep = nestedStepCount;
         }
 
         // Timeout: if the callback handler never calls primitiveCallbackReturn
@@ -2584,9 +2676,15 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 nestedStepCount++;
             }
 
-            // Save the current process's execution state and RE-QUEUE it.
-            // Without re-queuing, this process becomes permanently lost from
-            // the scheduler, causing deadlocks on subsequent callbacks.
+            // Save the current process's execution state and re-queue it,
+            // but ONLY if the active process is still the callback handler.
+            // If the handler already called `sem wait` during cooldown, it
+            // transferred away and the active process is now something else
+            // (e.g., the next-highest-priority process legitimately running).
+            // We must NOT putToSleep that process — it's not lost, it's
+            // running. Doing so corrupts its state and causes intermittent
+            // hangs (observed: UI process ending up in an infinite FFI loop
+            // calling SDL_GetVersion when its context was double-queued).
             {
                 Oop savedGcTemp = gcTempOop_;
                 gcTempOop_ = getActiveProcess();
@@ -2597,8 +2695,29 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     memory_.storePointer(ProcessSuspendedContextIndex,
                                          currentProcess, currentCtx);
                 }
-                // Put the process back on its priority's ready queue
-                putToSleep(currentProcess);
+                // primitiveCallbackReturn already decremented callbackDepth_,
+                // so the just-popped handler is at slot callbackDepth_
+                // (not callbackDepth_ - 1).
+                Oop savedHandler = (callbackDepth_ < MaxCallbackDepth)
+                    ? callbackHandlerStack_[callbackDepth_]
+                    : memory_.nil();
+                if (callbackDepth_ < MaxCallbackDepth) {
+                    callbackHandlerStack_[callbackDepth_] = memory_.nil();
+                }
+                bool stillHandler = savedHandler.isObject() &&
+                                    !savedHandler.isNil() &&
+                                    savedHandler.rawBits() == currentProcess.rawBits();
+                if (stillHandler) {
+                    putToSleep(currentProcess);
+                }
+                if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+                    (void)dbg;
+                    fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d\n",
+                            (unsigned long long)currentProcess.rawBits(),
+                            (unsigned long long)savedHandler.rawBits(),
+                            (int)stillHandler);
+                    fflush(stderr);
+                }
             }
 
             // Pop suspended process from SuspendedProcessInCallout (LIFO)

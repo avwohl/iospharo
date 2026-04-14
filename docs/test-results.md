@@ -9,7 +9,60 @@ batch's 10 `CompiledMethodTest` timeouts all hit the 180s cap on the pure
 interpreter because those tests recompile methods (AST-heavy, JIT-only
 realistic). The outer harness watchdog still kills genuine hangs.
 
-## FFICallbackTest testCqsort — callback handler not wakened (2026-04-14)
+## FFICallbackTest testCqsort — FIXED (2026-04-14)
+
+**Root cause:** `enterInterpreterFromCallback` in `src/vm/Interpreter.cpp`
+was overwriting the callback process that `signalSemaphoreDirectly` had
+already made active.
+
+The chain:
+
+  1. `signalSemaphoreDirectly(g_callbackSemaphoreIndex)` →
+     `synchronousSignal` → `transferTo(callbackProcess)` — this ALREADY
+     makes the callback process active (transferTo fires whenever a
+     waiter is on the semaphore).
+  2. The next line used to always call `wakeHighestPriority()` and then
+     `setActiveProcess(readyProcess)` — but that ready process is NOT
+     the callback process (it's the pri=40 process the callback just
+     preempted). The setActiveProcess call therefore displaced the
+     pri=70 callback handler that had just been transferred in.
+  3. With the callback process displaced, `primitiveReadNextCallback`
+     and `primitiveCallbackReturn` never ran, qsort's `compar` returned
+     0 (zeroed returnHolder), the array stayed unsorted, and a second
+     callback hung because the callback process was permanently lost.
+
+**Fix:** Only run the ready-queue switch when the signal did NOT cause
+a transfer (i.e., no waiter on the semaphore and the signal went to
+`excessSignals`). When transferTo already happened, leave the active
+process alone. Debug prints (`[CALLBACK-SCHED-XFERRED]` vs
+`[CALLBACK-SCHED-NOXFER]`) show which path ran.
+
+### Verification
+
+`scripts/run_callback_tests.st`:
+
+    Test 1: qsort with 5 elements...
+    Before sort: 42 7 99 1 23
+    qsort returned after 8 comparisons
+    After sort: 1 7 23 42 99
+    PASS: 5-element qsort sorted correctly
+    Test 2: qsort with 10 elements...
+    Before sort: 50 30 80 10 60 40 90 20 70 100
+    qsort returned after 25 comparisons
+    After sort: 10 20 30 40 50 60 70 80 90 100
+    PASS: 10-element qsort sorted correctly
+
+Both tests pass with correct comparison counts (8 for 5 elements, 25 for
+10 elements — typical qsort behaviour). Debug trace shows the full
+cycle firing on every callback:
+`CALLBACK-SEM … (waiter present)` →
+`CALLBACK-SCHED-XFERRED … pri=70` →
+`CALLBACK-READNEXT` →
+`CALLBACK-PRIM-RETURN` →
+`CALLBACK-RETURN` →
+`CALLBACK-HANDLER-LONGJMP-RESUME`.
+
+## FFICallbackTest testCqsort — original investigation (2026-04-14)
 
 Surfaced by a targeted FFI batch (class names passed via Smalltalk
 globals, since the `/tmp/sunit_class_names.txt` path hits a

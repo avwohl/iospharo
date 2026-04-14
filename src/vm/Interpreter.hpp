@@ -2352,6 +2352,13 @@ private:
     /// Stack of active callback contexts (for nested callbacks)
     static constexpr int MaxCallbackDepth = 16;
     VMCallbackContext* callbackContextStack_[MaxCallbackDepth] = {};
+    // Parallel stack: the handler process we transferred to in step 5 of
+    // enterInterpreterFromCallback. Used at callback-return time to decide
+    // whether to re-queue the current active process: if it's still this
+    // handler (handler didn't wait on the sem during cooldown), putToSleep
+    // it; if it's something else (handler already transferred away via
+    // sem-wait), don't touch the new active.
+    Oop callbackHandlerStack_[MaxCallbackDepth] = {};
     int callbackDepth_ = 0;
 
     /// Deferred callback return: set by primitiveCallbackReturn, consumed by
