@@ -2,6 +2,46 @@
 
 Last updated: 2026-04-14
 
+## 12-class Compiler+Reflection batch — 0 FAIL / 0 ERROR (2026-04-14)
+
+Ran OCASTChecker/OCASTSemanticAnalyzer/ClassDescription/ClassVariable/
+GlobalVariable/Slot/TraitComposition. 7 classes completed before
+TraitCompositionTest hit successive 80s watchdog timeouts and exhausted
+the shell deadline. **Zero FAIL, zero ERROR across 98 completed tests**.
+
+    Class                    Pass  Fail  Error  Skip  Timeout
+    OCASTCheckerTest           25     0      0     0        0
+    OCASTSemanticAnalyzerTest   1     0      0     0        0
+    ClassDescriptionTest       26     0      0     0        1
+    ClassVariableTest          14     0      0     0        3
+    GlobalVariableTest          6     0      0     0        0
+    SlotTest                   12     0      0     0        2
+    TraitCompositionTest      (partial — hit shell timeout)    4+
+
+Timeouts (all reflection walks over globals/methodDict):
+
+    ClassDescriptionTest>>testAllLocalCallsOn
+    ClassVariableTest>>testIsReferenced
+    ClassVariableTest>>testPossiblyUsingClasses
+    ClassVariableTest>>testUsingMethods
+    SlotTest>>testSlotUsers
+    SlotTest>>testisUsed
+    TraitCompositionTest>>testAliasCompositions
+    TraitCompositionTest>>testClassMethodsTakePrecedenceOverTraits...
+    TraitCompositionTest>>testCompositionFromArray
+    TraitCompositionTest>>testEmptyTrait
+
+Same pattern as 24-class Collection+Numeric batch: allInstances /
+global-walking tests exceed 80s watchdog under batch load. Not logic
+bugs — the traces show tests making progress (STONWriter/ByteString do:
+trace visible at 160s+) but too slowly to fit the cap. Actual slowdown
+source is what needs fixing, not the tests.
+
+Five submitted classes were abstract / nonexistent in Pharo 13 image:
+OCAbstractCompilerTest, StreamTest, AnnouncementTest, SubscriptionTest,
+ObservableTest (logged to /tmp/sunit_unknown_classes.txt by the name
+resolver).
+
 ## 24-class Collection+Numeric batch — 0 FAIL / 0 ERROR (2026-04-14)
 
 Ran Set/Dict/IdDict/OrderedCollection/Array/ByteSymbol/WideString/
