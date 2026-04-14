@@ -2,6 +2,33 @@
 
 Last updated: 2026-04-14
 
+## JIT baseline rebaseline — interpreter bench numbers (2026-04-14)
+
+First run of quick_bench.st with JIT disabled (eval mode default) vs
+Cog (bypassing eval-mode auto-disable with `PHARO_NO_JIT=0` on a built
+image — not via eval, which has its own hang on fileIn, logged below):
+
+    Benchmark         Ours (ms)    Cog (ms)    Ratio
+    fib(28)                  48           2      24x
+    sieve x100              121           8      15x
+    sort 100K               258          15      17x
+    dict 50K                266           7      38x
+    sum 1M                   43           3      14x
+
+tinyBench: ours 17M bc/s / 200M snd/s; Cog 78M bc/s / 3.7B snd/s.
+Interpreter gap ~15-38x depending on workload. dict 50K worst
+(literal-send heavy; hash collisions exercise polymorphic dispatch).
+
+JIT was observed enabling via non-eval boot with benchmark injected
+via Cog (301 compiled methods, 83% IC hit), but runBenchmarks fork
+never produced output in 90s+ — separate issue from eval hang.
+
+**Eval-mode JIT hang:** with `PHARO_NO_JIT=0`, fileIn under OpalCompiler
+stalls at idleProcess (sampled: primitiveRelinquishProcessor) after
+compiling ~50 methods. `/tmp/quick_bench.txt` never written, stdout
+never gets the result. Eval mode without JIT works fine. Need to
+diagnose the JIT-compiled fileIn/exitSuccess path.
+
 ## 20-class hash-collections batch — 2195 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 
 Dictionary/Set/Bag/Symbol batch — the hash-indexed workhorses
