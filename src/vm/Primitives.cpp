@@ -26056,6 +26056,29 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // Attribute 1: symlink target path (nil for non-symlinks).
+    // Must use lstat to detect the link itself, then readlink to get target.
+    if (attrNum == 1) {
+        struct stat lst;
+        if (lstat(path.c_str(), &lst) == 0 && S_ISLNK(lst.st_mode)) {
+            char buf[4096];
+            ssize_t n = readlink(path.c_str(), buf, sizeof(buf));
+            if (n < 0) {
+                popN(3);
+                push(memory_.nil());
+                return PrimitiveResult::Success;
+            }
+            Oop target = createStringObject(memory_, std::string(buf, (size_t)n));
+            if (target.isNil()) return PrimitiveResult::Failure;
+            popN(3);
+            push(target);
+            return PrimitiveResult::Success;
+        }
+        popN(3);
+        push(memory_.nil());
+        return PrimitiveResult::Success;
+    }
+
     // Attributes 1-12 use stat()
     struct stat st;
     if (stat(path.c_str(), &st) != 0) {
@@ -26200,7 +26223,17 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (!dir) return PrimitiveResult::Failure;
 
     errno = 0;
-    struct dirent* entry = readdir(dir);
+    struct dirent* entry = nullptr;
+    while ((entry = readdir(dir)) != nullptr) {
+        // Skip "." and ".." — upstream FileAttributesPlugin filters them
+        // and Pharo's directory iteration assumes they are not present.
+        if (entry->d_name[0] == '.' &&
+            (entry->d_name[1] == '\0' ||
+             (entry->d_name[1] == '.' && entry->d_name[2] == '\0'))) {
+            continue;
+        }
+        break;
+    }
     if (!entry) {
         // End of directory (or error)
         popN(2);  // pop arg + receiver
@@ -26431,9 +26464,24 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         push(statArray);  // GC protect on operand stack
 
         // Fill each slot. int64ToOop may allocate, so re-read statArray after each call.
-        // Slot 0: fileName (nil for non-symlinks)
-        statArray = stackTop();
-        memory_.storePointer(0, statArray, Oop::nil());
+        // Slot 0: fileName — for symlinks under lstat, this is the readlink target;
+        // nil for non-symlinks (upstream FileAttributesPluginUnix behaviour).
+        if (useLstat && S_ISLNK(st.st_mode)) {
+            char buf[4096];
+            ssize_t n = readlink(path.c_str(), buf, sizeof(buf));
+            if (n < 0) {
+                statArray = stackTop();
+                memory_.storePointer(0, statArray, Oop::nil());
+            } else {
+                Oop target = createStringObject(memory_, std::string(buf, (size_t)n));
+                if (target.isNil()) { pop(); return PrimitiveResult::Failure; }
+                statArray = stackTop();
+                memory_.storePointer(0, statArray, target);
+            }
+        } else {
+            statArray = stackTop();
+            memory_.storePointer(0, statArray, Oop::nil());
+        }
 
         // Slot 1: mode
         { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_mode));

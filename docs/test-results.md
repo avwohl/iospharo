@@ -17,11 +17,10 @@ ExceptionTest: 47/47 including testSimpleEnsureTestWithUparrow.
 FileReferenceTest progressed past testExists (the test that originally
 triggered the DNU). Findings:
 
-- FAIL `testRootReference` — "Got 704 instead of 0". Root directory
-  tree walk returns an unexpected entry count. Not a VM bug — looks
-  like a sandbox/harness filesystem content difference vs the test's
-  assumption (the test likely assumes `/` has no entries visible to
-  it, but `/private/tmp` or similar was iterated).
+- FIXED `testRootReference` — "Got 704 instead of 0" was our
+  primFileAttribute returning raw stat.st_size (APFS metadata block
+  size for "/"). Upstream FileAttributesPlugin reports 0 for
+  directories; matched in commit bd51b66.
 - TIMEOUT `testRename`, `testSymbolicLink` — filesystem syscalls
   hanging under test harness. Per-test watchdog fired at 80s.
 - Harness got stuck after testSymbolicLink force-kill (test_load_image

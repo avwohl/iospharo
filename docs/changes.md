@@ -2,6 +2,32 @@
 
 2026-04-14
 
+## Fix: Readdir leaks "." / "..", symlink target always nil
+
+Two file-system primitives fixed together; both unblocked
+`FileReferenceTest` tests that had been hanging.
+
+1. `primitiveReaddir` returned every directory entry including "."
+   and ".." — Pharo's directory iteration assumes those are already
+   filtered, so an "empty" directory appeared to have 2 children,
+   which made `FileReference>>deleteAll` spin and `rmdir` fail with
+   `DirectoryIsNotEmpty`. Matches `primitiveDirectoryLookup` which
+   already skipped both. Fixes `testRename` (the stuck cleanup was
+   `tmp deleteAll`).
+
+2. `primitiveFileAttributes` left slot 0 (`fileName`) always nil.
+   Upstream `FileAttributesPluginUnix` returns `readlink(path)` when
+   lstat is requested and the target is a symlink. Without it,
+   `DiskSymlinkDirectoryEntry>>targetPath` fell back to the link's
+   own path, so `targetFileReference` reported the link itself and
+   `assert: symbolicLink targetFileReference equals: aDir` failed —
+   then the assertion-failure-message path appeared to hang. Fixes
+   `testSymbolicLink`.
+
+   Also added the symmetric readlink path to the single-attribute
+   primitive (`primitiveFileAttribute` attr 1) for any caller that
+   asks for just the name attribute.
+
 ## Fix: Directory size primitive returns raw st_size
 
 `File fileAttribute: aPath number: 8` (file size) was returning the raw
