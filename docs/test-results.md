@@ -2,6 +2,25 @@
 
 Last updated: 2026-04-14
 
+## 20-class STON/parser batch — 129 PASS, 0 FAIL / 0 ERROR (2026-04-14)
+
+STON/Regex/OpalParser/Microdown batch after discovering the real
+class names in the image (16 prior parser names from a stock-Pharo
+list didn't exist in Pharo 13). Only 3 classes fully ran before the
+shell deadline — STON tests hit many 80s watchdog timeouts on
+serialization tests walking file system / URL / MimeType
+registries (same pattern as reflection-walk timeouts).
+
+    Class             Pass  Timeout
+    STONTest             6        3
+    STONReaderTest      48        6
+    STONWriterTest      45        0
+    STONWriteReadTest  (partial — shell deadline)  6+
+
+129 PASS / 0 FAIL / 0 ERROR / 15 TIMEOUT. Timeouts all involve
+STON serialization of registry-like globals (MimeType, URL, DiskFile,
+FileReference, User) where the walk costs dominate.
+
 ## 20-class process/time batch — 6 FAIL, but all pass standalone (2026-04-14)
 
 Process/scheduler/time batch. 14 classes completed, ArrayTest partial.
