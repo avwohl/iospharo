@@ -35,6 +35,45 @@ the next test (`testUnCategorizedMethods`) ran to completion. The
 hardening works end-to-end. Batch summary (`=== BATCH COMPLETE ===`,
 totals) wrote cleanly before VM exit.
 
+### Reflection batch (13 classes, 36 min wallclock)
+
+Targeted sweep for `Context>>tempNamed:`-related regressions. Ran
+Context, Reflectivity, MetaLink, OCCompiler, OCParseTreeRewriter,
+BlockClosure, CompiledMethod, CompiledBlock, Exception, Halt, Pragma,
+RecursionStopper. 263 PASS / 1 FAIL / 2 SKIP / 10 TIMEOUT (out of 276).
+
+    Class                      P    F    S    T
+    ContextTest               34    -    -    -
+    ReflectivityTest           5    -    -    -
+    MetaLinkTest              11    -    -    -
+    OCParseTreeRewriterTest   12    -    -    -
+    OCCompilerTest            17    -    -    -
+    BlockClosureTest          46    1    2    1
+    PragmaTest                 9    -    -    1
+    CompiledMethodTest        58    -    -    8
+    CompiledBlockTest          2    -    -    -
+    ExceptionTest             47    -    -    -
+    RecursionStopperTest       4    -    -    -
+    HaltTest                  18    -    -    -
+
+**Zero `Context>>tempNamed:` errors**. The 29-error cluster from the
+852-class partial run is NOT in reflection/compiler tests — it must be
+in GUI, debugger, or snapshot classes elsewhere. Reopen task #39 with
+that narrower scope.
+
+**Scheduler stayed alive** for the full 36 minutes. No
+`DELAY-DEAD` events; `/tmp/sched_killer.txt` never written.
+
+Only real bug surfaced: `BlockClosureTest>>testBenchFor` asserts that
+`[100 factorial] benchFor: 500ms` completes >10 iterations with period
+< 50ms. That's a speed test assuming Cog JIT — impossible on a pure
+interpreter 100× slower. Added to the skip list.
+
+CompiledMethodTest timeouts (8) are slow-interpreter issues: the tests
+recompile methods, which is an AST-heavy operation that the scaled
+120s cap still exceeds. Raising `SUnitMaxPerTestSeconds` to 300 on a
+future run should clear most.
+
 ## Delay Scheduler Death + Harness Fix (2026-04-13)
 
 Full SUnit run hung at 852 / 1671 classes after 2+ hours. Root cause:
