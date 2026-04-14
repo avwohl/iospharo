@@ -2646,10 +2646,25 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                     }
                 }
             }
-            fprintf(stderr, "[CALLBACK-PROGRESS] steps=%ld pending=%d active=0x%llx pri=%d %s>>%s\n",
+            fprintf(stderr, "[CALLBACK-PROGRESS] steps=%ld pending=%d active=0x%llx pri=%d %s>>%s fd=%d\n",
                     nestedStepCount, (int)(pendingCallbackReturn_ != nullptr),
                     (unsigned long long)activeProc.rawBits(), activePri,
-                    rcvrClass.c_str(), selector.c_str());
+                    rcvrClass.c_str(), selector.c_str(), frameDepth_);
+            try {
+                for (size_t fi = 1; fi <= 15 && fi <= frameDepth_; fi++) {
+                    SavedFrame& sf = savedFrames_[frameDepth_ - fi];
+                    std::string cname = "(?)";
+                    if (sf.savedReceiver.isObject() && !sf.savedReceiver.isNil()
+                        && memory_.isValidPointer(sf.savedReceiver))
+                        cname = memory_.classNameOf(sf.savedReceiver);
+                    else if (sf.savedReceiver.isSmallInteger()) cname = "SmallInteger";
+                    else if (sf.savedReceiver.isNil()) cname = "nil";
+                    std::string ssel = "?";
+                    if (sf.savedMethod.isObject() && memory_.isValidPointer(sf.savedMethod))
+                        ssel = memory_.selectorOf(sf.savedMethod);
+                    fprintf(stderr, "[CB-STACK]   [-%zu] %s>>%s\n", fi, cname.c_str(), ssel.c_str());
+                }
+            } catch (...) { fprintf(stderr, "[CB-STACK]   (failed)\n"); }
             fflush(stderr);
             lastDbgStep = nestedStepCount;
         }

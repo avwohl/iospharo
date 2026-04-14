@@ -54,16 +54,43 @@ callbacks complete in ~3000 nested-steps each; the third runs 1M+
 steps in a different process at a lower priority than the TFRunner
 handler (P70).
 
-Hypotheses to test next:
-- The 19-double array + FFIExternalArray (managed Pharo object, can
-  GC-move) may have its backing pointer invalidated between the 2nd
-  and 3rd callback. The `to:do:` iterator could then spin over a
-  corrupted byte length.
-- The P60 process is the TFCallback coercion/wrapper code running
-  at a different priority than the direct callback runner used by
-  `scripts/run_callback_tests.st`.
-- Add a dump of the call stack at `[CALLBACK-PROGRESS]` to see
-  which `to:do:` invocation (arg marshalling? block eval?) it is.
+Stack trace at the hang (added in this commit):
+
+    [CALLBACK-PROGRESS] pri=60 ExternalAddress>>to:do: fd=4
+    [CB-STACK] [-1] PointerUtils class>>oopForObject:
+    [CB-STACK] [-2] ByteArray>>?
+    [CB-STACK] [-3] SDL2 class>>?
+    [CB-STACK] [-4] OSSDL2Driver>>eventLoop
+
+**The "hang" is actually the SDL2/OSSDL2Driver UI event loop running
+inside our nested callback interpreter.** Sequence:
+
+1. 3rd callback invocation: CUSTOM-SIGNAL picks up the TFRunner
+   handler (P70) from the sema wait list, transfers to it.
+2. Handler runs the callback block (a few bytecodes).
+3. At some point during handler execution, control transfers to the
+   UI process (OSSDL2Driver>>eventLoop, P60) — perhaps via a mutex
+   contention inside `stackProtect critical:`, or a preempt.
+4. UI eventLoop calls SDL2 polling, which calls
+   `PointerUtils class>>oopForObject:`, which uses
+   `ExternalAddress>>to:do:` to iterate. That iteration runs for
+   1M+ steps without yielding.
+5. `pendingCallbackReturn_` is never set because the handler hasn't
+   finished; qsort on the C stack waits forever for our return.
+
+The callback mechanism itself is fine (2 callbacks completed at 3000
+steps each). The issue is the UI event loop starving the handler
+process from running primitiveCallbackReturn.
+
+Why only the 3rd callback? Possibly a UI event queued during the 1st
+or 2nd callback becomes visible to the poll loop on the 3rd, and the
+polling code's `to:do:` iterator runs over a now-long buffer.
+
+Next steps:
+- Pause OSSDL2Driver>>eventLoop during callback (mark a flag during
+  `enterInterpreterFromCallback` that the UI eventLoop respects).
+- Or: lower UI eventLoop priority below TFRunner's P70, so the
+  handler's `sem wait` + signal doesn't drop priority below UI.
 
 Env-gated trace left in `Interpreter::enterInterpreterFromCallback`
 progress loop shows active process priority + receiver class +
