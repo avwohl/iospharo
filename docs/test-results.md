@@ -2,31 +2,28 @@
 
 Last updated: 2026-04-14
 
-## NLR fix stability check — PASS (2026-04-14)
+## FileReferenceTest + ExceptionTest clean — 159/159 (2026-04-14)
 
-Re-ran ExceptionTest + FileReferenceTest (2-class batch) after the
-NLR-through-ensure fix (commit 032d252). No ByteString#link DNU in
-results file, no outer-error file produced. Fix is stable.
+    Class                Pass  Fail  Error  Skip
+    ExceptionTest          47     0      0     0
+    FileReferenceTest     112     0      0     0
+    Total                 159     0      0     0
 
-    Class                Pass  Fail  Timeout
-    ExceptionTest          47     -        -
-    FileReferenceTest     (~50)    1        2
+Three VM primitive fixes unblocked three previously-broken tests:
 
-ExceptionTest: 47/47 including testSimpleEnsureTestWithUparrow.
-
-FileReferenceTest progressed past testExists (the test that originally
-triggered the DNU). Findings:
-
-- FIXED `testRootReference` — "Got 704 instead of 0" was our
-  primFileAttribute returning raw stat.st_size (APFS metadata block
-  size for "/"). Upstream FileAttributesPlugin reports 0 for
-  directories; matched in commit bd51b66.
-- TIMEOUT `testRename`, `testSymbolicLink` — filesystem syscalls
-  hanging under test harness. Per-test watchdog fired at 80s.
-- Harness got stuck after testSymbolicLink force-kill (test_load_image
-  still up ~12 min later without progressing). This is a harness
-  issue (force-kill not unblocking the runner after a filesystem
-  hang), not a VM correctness issue.
+- `testRootReference` — `primFileAttribute` attr 8 returned raw
+  `st_size` for directories (704 on macOS APFS). Upstream plugin
+  zeroes it for `S_ISDIR`. Fixed in commit bd51b66.
+- `testRename` — `primitiveReaddir` leaked `.` and `..` entries, so
+  cleanup `deleteAll` spun (directory never emptied) and `rmdir`
+  reported `DirectoryIsNotEmpty`. Upstream filters them at the
+  primitive layer. Fixed in commit 920d902.
+- `testSymbolicLink` — `primitiveFileAttributes` stat array slot 0
+  (fileName) was always nil. Upstream stores `readlink(path)` when
+  lstat + symlink, and `DiskSymlinkDirectoryEntry>>targetPath`
+  reads that to resolve the target. Without it, the link reported
+  itself as its target and the `assert: equals: aDir` message
+  appeared to hang. Fixed in commit 920d902.
 
 ## FFICallbackTest testCqsort — 3rd callback hangs in ExternalAddress>>to:do: (2026-04-14)
 
