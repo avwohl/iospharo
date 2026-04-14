@@ -1,6 +1,18 @@
 # Test Results
 
-Last updated: 2026-04-13
+Last updated: 2026-04-14
+
+## SUnitClassNames resolves via globals (2026-04-14, submodule 2bcc165)
+
+Previously `SUnitClassNames` intersected the requested names with
+the harness's hardcoded `testClasses` collection (the Tier 1–N lists
+built at the top of `runAllTests`). Names not pre-registered were
+silently dropped — a 26-class Epicea/Debugger batch shrank to 6 with
+no visible indication. The fix resolves each name via `Smalltalk
+globals at:` directly, so any `TestCase` subclass present in the
+image is eligible. Unresolvable names are written to
+`/tmp/sunit_unknown_classes.txt` so callers can catch typos and
+removed/renamed classes.
 
 ## Harness No-Hang-Forever Guarantees (2026-04-13, commits 222d457, 5008779)
 
