@@ -2,6 +2,41 @@
 
 Last updated: 2026-04-14
 
+## NLR-through-ensure: nlrValue_ hijack — FIXED (2026-04-14)
+
+**Root cause:** `Interpreter::returnFromMethod` inline-NLR path replaced
+`value` on the stack with `nlrValue_` whenever it was non-nil. Since
+`nlrValue_` is only cleared when an NLR finishes at its home frame,
+any legitimate block return that hits the same inline path during an
+outer ensure:'s cleanup block got its value replaced with the stale
+paused-NLR value.
+
+Minimal repro (`/tmp/nlr_slot_bug4.st`):
+
+    [^ nlrValue] ensure: [
+      y := ws instVarNamed: 'position'. "returned #[171…171] instead of 3"
+    ].
+
+The `instVarNamed:` call sends `ifFound:ifNone:` with two blocks; the
+ifFound block does `^slot value`. That block-level NLR took the inline
+path while `nlrValue_` still held the outer ByteArray, so the caller
+saw the ByteArray.
+
+**Fix:** Remove the substitution. The `homeFrameDepth` mechanism set
+by the NLR-pause handlers already drives the correct unwind, and
+`value` on the stack is already the right return value — it's the
+block's `^ expr` for block-NLR, or ensure:'s `returnValue` local for
+ensure-continuation. The fd=0 consumer in `returnValue()` still reads
+`nlrValue_` as the process-switch safety net.
+
+### Verification
+
+- ExceptionTest 47/47 pass (including `testSimpleEnsureTestWithUparrow`).
+- FileReference>>exists no longer trips `ByteString#link` DNU — the
+  DNU was the instVarNamed:-returning-wrong-value symptom.
+- All three probes in `/tmp/nlr_slot_bug4.st` now return correct values:
+  x=3 (instVarAt:), y=3 (instVarNamed:), z=42 (block value).
+
 ## Harness: SUnitMaxPerTestSeconds 180→300s (2026-04-14, submodule 233daf7)
 
 Raised the absolute per-test kill cap from 180s to 300s. The reflection

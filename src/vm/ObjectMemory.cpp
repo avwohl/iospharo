@@ -2495,6 +2495,11 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
             fired = ephemeronList_.size();
             fireAllEphemerons();
         }
+        if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+            fprintf(stderr, "[GC-EPH] encountered=%zu inactive=%zu active=%zu fired=%zu weakList=%zu\n",
+                    ephemeronEncounterCount_, ephemeronInactiveCount_,
+                    ephemeronActiveCount_, fired, weakList_.size());
+        }
 
         // 5. Process weak objects (nil dead references, queue mourners)
         processWeaklings();
