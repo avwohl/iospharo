@@ -28,3 +28,11 @@ See `docs/upstream-proposals.md` for proposed upstream fixes.
 
 28,071 tests across 2,046 classes. Zero VM-specific failures.
 See `docs/test-results.md` for full breakdown.
+
+## Deferred (characterized but not yet fixed)
+
+See `docs/deferred-issues.md` for full detail on:
+
+  1. Harness SemaphoreTest / valueWithin timing interaction (10 tests)
+  2. Reflection-walk perf under batch load (pointersTo/allInstances)
+  3. Weak-reference / finalization timing tests (6 tests)
