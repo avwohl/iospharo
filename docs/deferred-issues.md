@@ -113,6 +113,24 @@ to either scale the tests' sleep budget or boost the FinalizationProcess
 priority briefly during GC. Scope: a day of diagnostics work in
 `src/vm/ObjectMemory.cpp` and the P50 scheduler path.
 
+**Instrumentation landed (2026-04-14, commit TBD):**
+Interpreter now tracks `finalizationSignalCount_` and
+`finalizationPendingTotal_`. With `PHARO_GC_EPH_DEBUG=1`, every firing
+logs `[SIG-FIN] #N pending=P total=T hasWaiter=B excess=E`.
+
+Initial observation: on first GC after boot, `pending=63 hasWaiter=0
+excess=0` — the semaphore is signaled but nobody is waiting yet. The
+signal increments excessSignals, so when the finalization process
+eventually calls `wait`, it proceeds immediately without suspending.
+This is correct behavior; the concern is whether the finalization
+process gets scheduled before the test's sleep elapses.
+
+Next diagnostic: instrument the test-path too — when a test calls
+something like `100 milliSeconds wait. self assert: finalizerFired`,
+log the time-since-signal in `signalFinalizationIfNeeded` vs the time
+the finalization process actually pops a mourner (prim 172). A latency
+>50ms suggests scheduler gap, not signal-path loss.
+
 ## 4. JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
 
 **Symptom:** with `PHARO_NO_JIT=0` in eval mode, any expression

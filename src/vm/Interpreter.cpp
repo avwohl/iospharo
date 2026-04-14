@@ -2313,12 +2313,18 @@ void Interpreter::signalFinalizationIfNeeded() {
     Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
     if (!sema.isObject() || sema == memory_.nil()) return;
 
+    // Track counts for deferred-issue #3 diagnostics (weak-ref/finalization
+    // timing tests race FinalizationProcess wakeup). Accessible via stats.
+    finalizationSignalCount_++;
+    finalizationPendingTotal_ += pending;
+
     if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
         Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
         Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
         bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
-        fprintf(stderr, "[SIG-FIN] pending=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
-                pending, (unsigned long long)sema.rawBits(), (int)hasWaiter,
+        fprintf(stderr, "[SIG-FIN] #%zu pending=%zu total=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
+                finalizationSignalCount_, pending, finalizationPendingTotal_,
+                (unsigned long long)sema.rawBits(), (int)hasWaiter,
                 (long long)(excessOop.isSmallInteger() ? excessOop.asSmallInteger() : -1));
     }
 

@@ -529,6 +529,8 @@ private:
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
+    size_t finalizationSignalCount_ = 0;     // Diagnostic: total signalFinalizationIfNeeded firings
+    size_t finalizationPendingTotal_ = 0;    // Diagnostic: sum of pending mourners across firings
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths and arguments
