@@ -234,6 +234,9 @@ Our test harness reports different paths than standard Pharo VM.
   OpalCompiler-level: either the optimisation gate isn't honored in
   Pharo 13, or the compiled `[iVar] value` reads the wrong slot.  Pure
   image/compiler logic, not the VM primitive path.
+  **Confirmed 2026-04-14**: programmatic `testCase run` reports the test
+  as failed with 1 error on both stock Cog and our VM. Not a VM
+  regression.
 - OCClassBuilderTest>>testCreateNormalClassWithTraitComposition —
   OCCodeError (Undeclared variable) when compiling a trait composition
   expression `T1 + T2 + (T3 - {#a. #b}) + ...`.  Pharo 13 OpalCompiler
