@@ -2483,6 +2483,13 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     }
 
     // 5. Signal callback semaphore to wake handler process
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fflush(stdout);
+        fprintf(stderr, "[CALLBACK-ENTER] semIdx=%d vmcc=%p\n",
+                g_callbackSemaphoreIndex, (void*)vmcc);
+        fflush(stderr);
+    }
     if (g_callbackSemaphoreIndex > 0) {
         signalSemaphoreDirectly(g_callbackSemaphoreIndex);
     }
@@ -2519,6 +2526,12 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // (e.g., because an error killed the handler process), abandon the
         // callback to prevent infinite spinning.
         if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
+            if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+                (void)dbg;
+                fprintf(stderr, "[CALLBACK-TIMEOUT] nestedStepCount=%ld vmcc=%p\n",
+                        nestedStepCount, (void*)vmcc);
+                fflush(stderr);
+            }
             // Pop suspended process from SuspendedProcessInCallout (LIFO)
             Oop suspendedProcess = memory_.specialObject(
                 SpecialObjectIndex::SuspendedProcessInCallout);
@@ -2551,6 +2564,12 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
 
         // Check for deferred callback return AFTER the batch completes.
         if (pendingCallbackReturn_) {
+            if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+                (void)dbg;
+                fprintf(stderr, "[CALLBACK-RETURN] nestedStepCount=%ld vmcc=%p\n",
+                        nestedStepCount, (void*)pendingCallbackReturn_);
+                fflush(stderr);
+            }
             VMCallbackContext* retVmcc = pendingCallbackReturn_;
             pendingCallbackReturn_ = nullptr;
 
@@ -2619,6 +2638,13 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         if (!inExtension_) {
             checkTimerSemaphore();
         }
+    }
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fflush(stdout);
+        fprintf(stderr, "[CALLBACK-EXIT-LOOP] running_=%d nestedStepCount=%ld vmcc=%p\n",
+                (int)running_, nestedStepCount, (void*)vmcc);
+        fflush(stderr);
     }
 }
 

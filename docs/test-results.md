@@ -52,19 +52,52 @@ never wakes, the 10M-step timeout always fires, and qsort sees every
 comparison return 0 (equal) — so it completes with minimal callbacks
 and the array stays unsorted.
 
-### Next step (parked)
+### Debug tracing (PHARO_CALLBACK_DEBUG=1)
 
-Add a one-shot `fprintf(stderr, ...)` inside
-`Interpreter::primitiveInitilizeCallbacks` (Primitives.cpp:27765) to
-confirm whether the image calls it during TFRunner initialization.
-If it is never called, the bug is in the image-side TFRunner setup
-(probably the test harness's `TFRunner new` path vs. the production
-`TFRunner default` path). If it is called with index>0 but the
-handler process still never wakes, the semaphore-signal path from
-`enterInterpreterFromCallback` to the Pharo semaphore wait is
-broken.
+Added gated `fprintf(stderr, ...)` at six callback checkpoints:
+`[CALLBACK-INIT]`, `[CALLBACK-HANDLER]`, `[CALLBACK-ENTER]`,
+`[CALLBACK-TIMEOUT]`, `[CALLBACK-RETURN]`, `[CALLBACK-EXIT-LOOP]`,
+`[CALLBACK-PRIM-RETURN]`. Enable via environment variable —
+no overhead when unset.
 
-Task #4 parked — deep investigation needed, not a quick fix.
+Running `scripts/run_callback_tests.st` with the flag set:
+
+    [CALLBACK-INIT] g_callbackSemaphoreIndex=1
+    [CALLBACK-HANDLER] enter ret=0x16bdb5e50 args=0x16bdb5cc0
+    [CALLBACK-ENTER] semIdx=1 vmcc=0xab9698000
+    [CALLBACK-HANDLER] enter ret=0x16bdb54f0 args=0x16bdb5360
+    [CALLBACK-ENTER] semIdx=1 vmcc=0xab9698200
+
+Observed: two HANDLER/ENTER events total, then silence. Neither
+`[CALLBACK-TIMEOUT]`, `[CALLBACK-RETURN]`, `[CALLBACK-EXIT-LOOP]`,
+nor `[CALLBACK-PRIM-RETURN]` ever fires. Yet Test 1's qsort
+returns ("qsort returned after 0 comparisons" written to the
+results file) and Test 2 starts and hangs inside its own qsort.
+
+### What this rules out
+
+1. `primitiveInitilizeCallbacks` IS called with a valid index (1).
+2. libffi's closure IS invoked by qsort (HANDLER fires).
+3. `enterInterpreterFromCallback` IS entered (ENTER fires).
+4. The documented exit paths (TIMEOUT, RETURN, EXIT-LOOP) do NOT
+   fire — so control returns to C by some other mechanism.
+
+### Open questions
+
+- How does Test 1's qsort return at all if none of the known exit
+  paths fire? Hypothesis: Test 1's qsort may be doing 0 callback
+  calls (both ENTER events belong to Test 2 — each uses its own
+  `TFCallback`, hence different vmcc addresses). A size-mismatch
+  in the FFI argument marshalling (SmallInteger 5 → uint64 nmemb)
+  could leave nmemb=0, in which case qsort returns without
+  invoking compar.
+- If the above is right, the bug is in TFFI uint64 argument
+  coercion for iOS-tagged SmallIntegers, not in the callback
+  mechanism. Verify by calling qsort with a hand-built ExternalAddress
+  as nmemb (bypassing SmallInteger→uint64 coercion) and checking
+  whether callbacks fire.
+
+Task #4 parked — needs the argument-coercion check above.
 
 ## tempNamed: cluster — NOT a VM bug (2026-04-14)
 

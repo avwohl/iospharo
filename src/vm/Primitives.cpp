@@ -27718,6 +27718,11 @@ static pharo::Interpreter* g_interpreter = nullptr;
 // callback, then returns to C with the computed result.
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[CALLBACK-HANDLER] enter ret=%p args=%p\n", ret, (void*)args);
+        fflush(stderr);
+    }
 
     if (!g_interpreter) {
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
@@ -27770,6 +27775,13 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
 
     g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
     g_interpreter = this;  // Set global for callbackClosureHandler
+
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[CALLBACK-INIT] g_callbackSemaphoreIndex=%d\n",
+                g_callbackSemaphoreIndex);
+        fflush(stderr);
+    }
 
     popN(argCount);  // Pop args, leave receiver
     return PrimitiveResult::Success;
@@ -27931,6 +27943,11 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // we can unwind. Instead, we set a deferred return flag. The nested interpret
     // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
     // code finishes its cleanup, then does the process restore and siglongjmp.
+    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
+        (void)dbg;
+        fprintf(stderr, "[CALLBACK-PRIM-RETURN] callbackDepth=%d\n", callbackDepth_);
+        fflush(stderr);
+    }
     if (callbackDepth_ <= 0) {
         return PrimitiveResult::Failure;
     }
