@@ -7922,11 +7922,13 @@ void Interpreter::terminateCurrentProcess() {
                     std::string sel = method.isObject() ? memory_.selectorOf(method) : "?";
                     Oop receiver = memory_.fetchPointer(5, ctx);
                     std::string rcvrClass = memory_.classNameOf(receiver);
-                    fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s (ctx=0x%llx sender=0x%llx)\n",
+                    Oop sdr = memory_.fetchPointer(0, ctx);
+                    const char* sdrTag = sdr.isNil() ? " (nil)" : "";
+                    fprintf(stderr, "[TERM-P%lld]   ctx[%d]: %s>>%s (ctx=0x%llx sender=0x%llx%s)\n",
                             pri.asSmallInteger(), i, rcvrClass.c_str(), sel.c_str(),
                             (unsigned long long)ctx.rawBits(),
-                            (unsigned long long)memory_.fetchPointer(0, ctx).rawBits());
-                    ctx = memory_.fetchPointer(0, ctx);
+                            (unsigned long long)sdr.rawBits(), sdrTag);
+                    ctx = sdr;
                 }
                 // Floyd's cycle detection on sender chain
                 for (int i = 0; i < 200; i++) {
