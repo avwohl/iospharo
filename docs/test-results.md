@@ -2,6 +2,39 @@
 
 Last updated: 2026-04-13
 
+## Harness No-Hang-Forever Guarantees (2026-04-13, commits 222d457, 5008779)
+
+Three timer protections added so the runner cannot wedge indefinitely:
+
+1. **Batch wallclock deadline** — `SUnitMaxBatchSeconds` global (default
+   7200s). Checked between classes AND inside the per-test selector loop.
+   Writes `*** BATCH DEADLINE REACHED` and skips the rest.
+2. **Force-kill in `runSingleTest:`** — `Process>>suspend` is a primitive
+   and cannot block; `terminate` can hang inside stuck unwind ensure:
+   blocks. Suspend first, fire-and-forget terminate in a fresh fork.
+   Applied to both the P60 Delay-free watchdog and the runner's 2×
+   deadline path.
+3. **Absolute per-test cap** — `SUnitMaxPerTestSeconds` global (default
+   180s). Independent of `timeoutScale`, so cranking scale cannot produce
+   a test that runs longer than this. Soft watchdog and hard wait both
+   clamp to `maxPerTest`.
+
+### Smoke validation (5 classes, 70s wallclock)
+
+    Class                   Pass  Timeout
+    BooleanTest                3       0
+    TrueTest                  15       0
+    FalseTest                 15       0
+    UndefinedObjectTest       17       0
+    CharacterTest             18       1  (testStoreStringAll hit 60s cap)
+
+    Total: 65 PASS, 1 TIMEOUT — batch completed, VM exit 0
+
+`testStoreStringAll` hit the `MAX-PER-TEST=60` cap, was force-killed, and
+the next test (`testUnCategorizedMethods`) ran to completion. The
+hardening works end-to-end. Batch summary (`=== BATCH COMPLETE ===`,
+totals) wrote cleanly before VM exit.
+
 ## Delay Scheduler Death + Harness Fix (2026-04-13)
 
 Full SUnit run hung at 852 / 1671 classes after 2+ hours. Root cause:
