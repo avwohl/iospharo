@@ -128,9 +128,26 @@ enters idle loop and never runs the eval expression. Process sits at
 - Specific expression: `42 printString` and `Smalltalk snapshot:
   false andQuit: true` both hang identically. Not expression-specific.
 
-**Not yet ruled out:** which specific compiled method breaks the
-startup chain. Need to selectively disable compilation per method
-class to bisect.
+**Bisected with `JIT_MAX_COMPILE=N`:**
+- N=0 (no compiles): exits cleanly (code 0).
+- N=1 (compile one method): crashes with SIGSEGV (code 139).
+- N=5: errors out (code 1).
+- N≥10: hangs indefinitely.
+
+So the first compiled method already triggers a crash. The crash
+stack: `primitiveFlushCacheBySelector` → `flushJITCaches` → SIGSEGV.
+The sigsegv handler reports "PC not in any active JIT method
+(evicted?)". Instruction bytes at crash PC decode as NEON `stp q0,
+q0, [x11, #...]` — JIT-generated code that's either freed or
+corrupt.
+
+**Hypothesis:** `primitive 120` (flushCacheBySelector) fires during
+method installation. The first JIT compilation happens, then image
+installs a CompiledMethod which triggers prim 120 → `flushJITCaches()
+→ codeZone_.firstMethod()` walks the just-compiled method whose
+invariants may not yet be fully established (IC count vs code size).
+Alternatively, the compiling code itself was clobbered between
+compile finish and first invocation.
 
 **Why this matters:** blocks using JIT for benchmarking via the eval
 path. Full-image boot (non-eval) runs longer, but session-handler
