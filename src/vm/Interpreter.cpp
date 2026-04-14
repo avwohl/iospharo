@@ -2617,9 +2617,39 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             nestedStepCount++;
         }
         if (cbDbg && nestedStepCount - lastDbgStep >= 1000000) {
-            fprintf(stderr, "[CALLBACK-PROGRESS] nestedStepCount=%ld pending=%d running_=%d vmcc=%p\n",
+            Oop activeProc = getActiveProcess();
+            Oop prioOop = activeProc.isObject() && !activeProc.isNil()
+                ? memory_.fetchPointer(ProcessPriorityIndex, activeProc) : memory_.nil();
+            int activePri = prioOop.isSmallInteger() ? (int)prioOop.asSmallInteger() : -1;
+            std::string rcvrClass = "?";
+            if (receiver_.isObject() && !receiver_.isNil())
+                rcvrClass = memory_.classNameOf(receiver_);
+            else if (receiver_.isSmallInteger()) rcvrClass = "SmallInteger";
+            std::string selector = "?";
+            if (method_.isObject() && !method_.isNil()) {
+                int numLits = (int)memory_.numLiteralsOf(method_);
+                if (numLits >= 2) {
+                    Oop penLit = memory_.fetchPointer(numLits - 2, method_);
+                    if (penLit.isObject() && !penLit.isNil()) {
+                        int fmt = (int)penLit.asObjectPtr()->format();
+                        Oop symOop = (fmt >= 16) ? penLit
+                                                 : memory_.fetchPointer(1, penLit);
+                        if (symOop.isObject() && !symOop.isNil()
+                            && (int)symOop.asObjectPtr()->format() >= 16) {
+                            size_t sz = memory_.byteSizeOf(symOop);
+                            if (sz < 200) {
+                                selector.clear();
+                                for (size_t i = 0; i < sz && i < 60; i++)
+                                    selector += (char)memory_.fetchByte(i, symOop);
+                            }
+                        }
+                    }
+                }
+            }
+            fprintf(stderr, "[CALLBACK-PROGRESS] steps=%ld pending=%d active=0x%llx pri=%d %s>>%s\n",
                     nestedStepCount, (int)(pendingCallbackReturn_ != nullptr),
-                    (int)running_, (void*)vmcc);
+                    (unsigned long long)activeProc.rawBits(), activePri,
+                    rcvrClass.c_str(), selector.c_str());
             fflush(stderr);
             lastDbgStep = nestedStepCount;
         }

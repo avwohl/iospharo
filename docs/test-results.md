@@ -2,6 +2,46 @@
 
 Last updated: 2026-04-14
 
+## FFICallbackTest testCqsort — 3rd callback hangs in ExternalAddress>>to:do: (2026-04-14)
+
+`scripts/run_callback_tests.st` (isolated, uses `TFCallback forCallback:...`)
+PASSES: qsort with 5 and 10 elements sort correctly.
+
+Real `FFICallbackTest>>testCqsort` (uses `FFICallback signature:block:` —
+UnifiedFFI path, not Threaded FFI directly) hangs.
+
+Repro probe: `/tmp/probe_qsort.st` — minimal copy of testCqsort body,
+no SUnit harness, no fork. Run with `PHARO_CALLBACK_DEBUG=1`.
+
+Trace pattern:
+
+    [CALLBACK-ENTER]       (1st)  → [CALLBACK-RETURN] at step 3000
+    [CALLBACK-ENTER]       (2nd)  → [CALLBACK-RETURN] at step 6000
+    [CALLBACK-ENTER]       (3rd)
+    [CALLBACK-PROGRESS] steps=1000000 pending=0 pri=60 ExternalAddress>>to:do:
+
+The 3rd callback invocation enters the handler, but the nested
+interpreter loop then spins at P60 inside `ExternalAddress>>to:do:`
+without ever producing a `[CALLBACK-PRIM-RETURN]`. First two
+callbacks complete in ~3000 nested-steps each; the third runs 1M+
+steps in a different process at a lower priority than the TFRunner
+handler (P70).
+
+Hypotheses to test next:
+- The 19-double array + FFIExternalArray (managed Pharo object, can
+  GC-move) may have its backing pointer invalidated between the 2nd
+  and 3rd callback. The `to:do:` iterator could then spin over a
+  corrupted byte length.
+- The P60 process is the TFCallback coercion/wrapper code running
+  at a different priority than the direct callback runner used by
+  `scripts/run_callback_tests.st`.
+- Add a dump of the call stack at `[CALLBACK-PROGRESS]` to see
+  which `to:do:` invocation (arg marshalling? block eval?) it is.
+
+Env-gated trace left in `Interpreter::enterInterpreterFromCallback`
+progress loop shows active process priority + receiver class +
+selector; activates only with `PHARO_CALLBACK_DEBUG=1`.
+
 ## Weak-ref / finalization scheduling — partial findings (2026-04-14)
 
 Ephemerons DO fire during GC. `[GC-EPH]` shows `fired=N` after
