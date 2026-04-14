@@ -4398,14 +4398,13 @@ void Interpreter::returnFromMethod() {
             // For blocks, this is the standard NLR (^ inside a block returns
             // from the enclosing method). For ensure: methods, this is the
             // NLR continuation after cleanup — ensure: set homeFrameDepth
-            // so the NLR resumes when ensure: does ^ returnValue.
-            //
-            // Use nlrValue_ if set (ensure: NLR continuation), otherwise use
-            // the value being returned.
+            // so the NLR resumes when ensure: does ^ returnValue. In both
+            // cases, `value` on the stack is already the correct return
+            // value (the block's ^ expr, or ensure:'s returnValue local).
+            // Do NOT substitute nlrValue_: it may be stale from an outer
+            // paused NLR while this inner block return happens during
+            // ensure: cleanup.
             Oop nlrVal = value;
-            if (nlrValue_.isObject() && !nlrValue_.isNil()) {
-                nlrVal = nlrValue_;
-            }
             while (frameDepth_ > homeFrame) {
                 if (frameDepth_ > 1) {
                     Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
@@ -4516,7 +4515,9 @@ void Interpreter::returnFromMethod() {
                                     nlrValue_ = value;
                                     if (!popFrame()) return;
                                     push(value);
-                                    if (frameDepth_ > 0) savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                    if (frameDepth_ > 0) {
+                                        savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+                                    }
                                     return;
                                 }
                             }
