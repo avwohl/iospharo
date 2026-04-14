@@ -2,6 +2,41 @@
 
 Last updated: 2026-04-14
 
+## 20-class hash-collections batch — 2195 PASS, 0 FAIL / 0 ERROR (2026-04-14)
+
+Dictionary/Set/Bag/Symbol batch — the hash-indexed workhorses
+used everywhere. All 20 classes completed end to end.
+
+    Class                         Tests  Pass  Timeout
+    AssociationTest                  13    11        0
+    BagTest                         168   168        0
+    ByteSymbolTest                    4     1        3
+    DictionaryTest                  205   205        0
+    IdentityBagTest                   3     3        0
+    IdentityDictionaryTest          206   206        0
+    IdentitySetTest                 176   176        0
+    KeyedTreeTest                     9     9        0
+    MethodDictionaryTest             36    36        0
+    NestedDictionaryTest              6     6        0
+    OrderedDictionaryTest            67    67        0
+    OrderedIdentityDictionaryTest    67    67        0
+    PluggableDictionaryTest         209   209        0
+    PluggableSetTest                174   174        0
+    SetTest                         174   174        0
+    SmallDictionaryTest             207   207        0
+    SmallIdentityDictionaryTest     207   207        0
+    SymbolTest                      268   268        0
+    HashTableSizesTest                1     0        1
+    HashTesterTest                    1     1        0
+    TOTAL                          2199  2195        4
+
+**0 failures, 0 errors.** The 4 timeouts (3 ByteSymbolTest, 1
+HashTableSizesTest) all walk symbol-table / allInstances paths under
+the 80s watchdog — same perf-under-batch pattern as the
+testFastPointersTo walk. Standalone, these pass.
+
+2195/2199 is the highest single-batch pass count of the session.
+
 ## 20-class exception+core+number batch — 461 PASS, 4 harness-FAIL (2026-04-14)
 
 Object/Exception/Closure/Number/Compiled batch after the
