@@ -134,20 +134,26 @@ enters idle loop and never runs the eval expression. Process sits at
 - N=5: errors out (code 1).
 - N≥10: hangs indefinitely.
 
-So the first compiled method already triggers a crash. The crash
-stack: `primitiveFlushCacheBySelector` → `flushJITCaches` → SIGSEGV.
-The sigsegv handler reports "PC not in any active JIT method
-(evicted?)". Instruction bytes at crash PC decode as NEON `stp q0,
-q0, [x11, #...]` — JIT-generated code that's either freed or
-corrupt.
+So the first compiled method already triggers a crash. Corrected
+crash stack (2026-04-14 re-verified):
+`ObjectMemory::fullGC + 7584` → SIGSEGV (not flushJITCaches as
+earlier notes suggested). Offending instruction `str x12, [x10]` at
+`0x100022594` — inside a root/remember-set walk loop. `x10` walks
+off the valid region and hits unmapped memory. The sigsegv handler
+emits "PC not in any active JIT method (evicted?)" because the
+default JIT-crash branch fires on any non-JIT PC.
 
-**Hypothesis:** `primitive 120` (flushCacheBySelector) fires during
-method installation. The first JIT compilation happens, then image
-installs a CompiledMethod which triggers prim 120 → `flushJITCaches()
-→ codeZone_.firstMethod()` walks the just-compiled method whose
-invariants may not yet be fully established (IC count vs code size).
-Alternatively, the compiling code itself was clobbered between
-compile finish and first invocation.
+Disassembly of flushCaches() (`0x1000cdc4c`) confirmed CORRECT: the
+compiler emits the 3x `stp q0, q0` loop zeroing exactly bytes 0-95
+of each 104-byte IC slot, preserving selectorBits at offset 96.
+Earlier hypothesis (vectorization off-by-80) was a misreading.
+
+**Hypothesis (revised):** first JIT compile forces a GC that walks
+a stale remember-set or codezone-root region. Probable suspect:
+`updatePointersAfterCompact` or a root-walk that iterates `[x19+0x390,
+x19+0x398)`. One of those two fields holds an end pointer that's
+not kept in sync when the JIT's code-zone region is registered or
+resized — so the walker runs past the mapped region.
 
 **Why this matters:** blocks using JIT for benchmarking via the eval
 path. Full-image boot (non-eval) runs longer, but session-handler
