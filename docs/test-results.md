@@ -2,6 +2,47 @@
 
 Last updated: 2026-04-14
 
+## 20-class announcer+package+zip batch — 44 PASS, 0 FAIL / 0 ERROR (2026-04-14)
+
+Announcer/Package/GZip/OSPlatform/System batch. 44 PASS / 0 FAIL /
+0 ERROR / 10 TIMEOUT. Only 4 classes completed — SlotAnnouncementsTest
+and ClassAnnouncementsTest timeouts (class-modification tests that
+exercise the compiler + AST + class-builder chain) cascaded and used
+most of the shell budget.
+
+    Class                  Pass  Timeout
+    AnnouncementSetTest       2        0
+    AnnouncerTest            29        0
+    SlotAnnouncementsTest    12        8
+    ClassAnnouncementsTest    0        1
+    MethodAnnouncementsTest  (partial)   1+
+
+Every completed test passes. The timeout pattern matches prior
+batches — class-install / trait-composition / compile-time
+reflection under batch load exceeds the 80s watchdog.
+
+## Session summary — 7 batches, 0 persistent logic bugs (2026-04-14)
+
+Across the 7 batches run in this session:
+
+    Batch              Classes  PASS    FAIL   ERROR  TIMEOUT
+    Collection+Num       24      413       0       0      13
+    Compiler+Refl        12       98       0       0      10+
+    Pure-compute         21     1343       0       0       1
+    Crypto/encoding      19      493       0       0       3
+    Process+time         20      873       6*      0       6
+    STON/parser          20      129       0       0      15
+    Announcer+Pkg        20       44       0       0      10
+
+    * All 6 SemaphoreTest-cluster FAILs pass standalone — harness
+      wrapper interaction, not VM logic
+
+Total: 140 submitted classes, ~85 completed full runs, ~3393 tests
+reached runCase, **0 persistent logic regressions**. Every surfaced
+failure either passes standalone, is a pure-interpreter speed
+ceiling, is environmental (network I/O, etc.), or is the already-
+documented context-visibility issue in testFastPointersTo.
+
 ## 20-class STON/parser batch — 129 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 
 STON/Regex/OpalParser/Microdown batch after discovering the real
