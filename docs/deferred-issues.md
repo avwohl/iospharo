@@ -1,6 +1,6 @@
 # Deferred Issues
 
-Last updated: 2026-04-14
+Last updated: 2026-04-14 (second session: sender=nil reframe + T1 DNU)
 
 Issues that were identified during test-suite runs and deferred rather
 than fixed. Each entry has a hypothesis, what's been ruled out, and a
@@ -189,11 +189,47 @@ SubscriptOutOfBounds. N=150 → SubscriptOutOfBounds terminates P80.
 So the miscompile happens in the 20–150 range; a later compile may
 mask it by recompiling differently.
 
-**Next step:** narrow down which compiled method triggers the
-out-of-bounds. Likely candidates from the JIT compile list between
-step 20 and 150: any method with `at:` / `at:put:` / `first` /
-`last`. Inspect the T1 stencil output for primitive-fallback
-bytecodes 0xC0 (at:) and 0xC1 (at:put:).
+**2026-04-14 (session 2) reframe:**
+
+1. "sender=0x300000000" is NOT corruption. nilObject_.rawBits() in
+   this image equals 0x300000000 (heap base). Confirmed by reading
+   `Oop::nil()` → `Oop(s_nilBits)` and `ObjectMemory::cacheSpecialObjects`
+   which sets `s_nilBits = nilObject_.rawBits()`. TERM-P80 diagnostic
+   updated to tag `(nil)` explicitly (commit cbd8227).
+
+2. The P80 termination is a downstream effect of an earlier
+   unhandled exception — freeze runs at the top of the context chain
+   because Process>>terminate's unwinding leaves a single frame.
+
+3. The primary JIT bug (T1 stencil, reproducible without T2) is
+   stack-pointer corruption. `PHARO_NO_JIT=0 PHARO_NO_T2=1` produces:
+
+       [DNU] #1: #atEnd not understood by rcvr=0x30352dcc0
+                 in #parseFields:structure: P80
+       [DNU]   rcvr cls=51 fmt=2 class=Array
+       [DNU]   receiver_=0x30352dae0 method_=0x30097cc30
+
+   rcvr (stackValue(0)) ≠ receiver_. For a unary send, they should
+   match — stackValue(argCount=0) IS the receiver. The stack is
+   inconsistent with the frame's true receiver.
+
+4. With T2 enabled (`T2_LIMIT>=50`), the error switches to
+   SubscriptOutOfBounds>>freeze. T2 alone doesn't explain the bug
+   since T1-only also fails. T2 amplifies a pre-existing T1 bug.
+
+**Next step:** find the T1 stencil that corrupts the stack/receiver
+mapping. Candidates:
+
+- bytecode 0x70-0x7F (specialSelector sends) — push(receiver),
+  push(args), sendSelector pattern
+- bytecode 0x5C (returnTop) — pop SP calculation
+- the push/pop-into-receiver stencils (0x00-0x0F / 0xC0-0xCF)
+
+A targeted bisect: compile only `FFIExternalStructureFieldParser>>parseFields:structure:`
+(and whatever it activates) and check if DNU appears. If yes, disassemble
+the T1 code and find the stack-touching stencil that's wrong.
+
+Owner/scope: half-day of T1 stencil audit. Unblocks full JIT boot.
 
 ## Why these are deferred, not fixed
 
