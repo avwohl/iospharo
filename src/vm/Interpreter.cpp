@@ -10841,7 +10841,10 @@ void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
 
-    static bool jitDisabled = (getenv("PHARO_NO_JIT") != nullptr);
+    static bool jitDisabled = []() {
+        const char* v = getenv("PHARO_NO_JIT");
+        return v != nullptr && v[0] != '0';
+    }();
     if (jitDisabled) {
         fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
         return;
