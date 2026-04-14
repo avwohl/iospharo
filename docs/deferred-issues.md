@@ -147,6 +147,31 @@ Tools added this session that ARE working and useful for future bisects:
 - When selectorOf returns `?` at compile time, log numLits + classNames
   of the penultimate and last literals to help identify block methods.
 
+**New diagnostic (2026-04-14 session 3):** full-JIT hang shows a
+**massive J2J call/return imbalance** in the JIT stats:
+
+    J2J-s: 20524 returns / 65M calls    (3000:1 skew)
+
+J2J direct-patch count freezes at 233. Stencil-call counter grows
+linearly while stencil-return counter stays at 20,524 from early boot
+forward. Also the countMap evicts: "map: 367 tracked, 234 hot" drops
+to "map: 178 tracked, 46 hot" by late boot, suggesting GC is wiping
+JIT countMap entries without re-registration.
+
+Interpretation: hot methods enter J2J via stencil dispatch but don't
+return — they either re-enter J2J at an inner send (looping without
+unwind) or the return stencil branches to a wrong address. Because
+return count stays frozen, the failure is NOT per-call — it's a
+specific method path that loops inside the J2J chain after being
+compiled hot. The 277 compiled methods include scheduler code
+(tickAfterMilliseconds:, waitForUserSignalled:orExpired:,
+timingPrioritySignalExpired), consistent with the hang sitting in
+the P10 scheduler loop.
+
+Next step: dump J2J call/return oops to find the leaking send.
+Add per-method J2J call/return counters; any method with
+unbounded call-minus-return is the culprit.
+
 Previous analysis (still valid) below.
 
 ---
