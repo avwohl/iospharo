@@ -249,6 +249,24 @@ the T1 code and find the stack-touching stencil that's wrong.
 
 Owner/scope: half-day of T1 stencil audit. Unblocks full JIT boot.
 
+**2026-04-14 T1-only bisect (session 2):**
+
+    JIT_MAX_COMPILE=N    Result (PHARO_NO_T2=1)
+    ≤119                 clean boot to '42' eval output
+    120                  DNU #asSymbol on Array (rcvr=0x300016768)
+    >120                 same or cascaded DNUs
+
+The 120th method compiled is `0x3003ea8d0 '?' (5248 bytes)` — `?`
+meaning selectorOf didn't find a valid symbol literal (block method or
+nameless). To identify it: add a diagnostic that prints the class name
+and the penultimate/last literal bytes when the selector resolves to
+`?`, or compile only through N=119 and then single-step method 120.
+
+The DNU is `Array does not understand #asSymbol` — so stack top is an
+Array where a ByteString/Symbol is expected. Consistent with the
+stack-pointer mismatch hypothesis: JIT-compiled method #120 leaves the
+stack in a state such that a later send pops the wrong object.
+
 ## Why these are deferred, not fixed
 
 All three would take substantial focused work (half-day to multi-day)
