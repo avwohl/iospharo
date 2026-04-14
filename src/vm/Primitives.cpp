@@ -7961,17 +7961,9 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     // expects to still exist (e.g. ByteSymbolTest creates a symbol, discards
     // the reference, then expects allInstances to find it).
 
-    // Collect instances using allObjectsDo
+    // Collect instances using the class-indexed fast path (no std::function overhead)
     std::vector<Oop> instances;
-    memory_.allObjectsDo([&](Oop obj) {
-        if (obj.isObject()) {
-            ObjectHeader* header = obj.asObjectPtr();
-            if (header->isForwarded()) return;  // Skip forwarded (become'd) objects
-            if (header->classIndex() == targetClassIndex) {
-                instances.push_back(obj);
-            }
-        }
-    });
+    memory_.collectInstancesOfClass(targetClassIndex, instances);
 
     // Allocate an array to hold the instances
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
@@ -7982,15 +7974,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
         // OOM — do GC, re-scan, and retry
         memory_.fullGC();
         instances.clear();
-        memory_.allObjectsDo([&](Oop obj) {
-            if (obj.isObject()) {
-                ObjectHeader* header = obj.asObjectPtr();
-                if (header->isForwarded()) return;  // Skip forwarded objects
-                if (header->classIndex() == targetClassIndex) {
-                    instances.push_back(obj);
-                }
-            }
-        });
+        memory_.collectInstancesOfClass(targetClassIndex, instances);
         result = memory_.allocateSlots(arrayClassIndex, instances.size(), ObjectFormat::Indexable);
         if (result.isNil()) {
             return PrimitiveResult::Failure;
@@ -13480,24 +13464,22 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
     // Collect all objects that point to target
     std::vector<Oop> roots;
 
-    memory_.allObjectsDo([&](Oop obj) {
+    memory_.allObjectsDoInline([&](Oop obj) {
         if (obj.isImmediate()) return;
         if (!obj.isObject()) return;
 
-        // Skip hidden objects (classIdx=0) and objects with invalid class
         ObjectHeader* hdr = obj.asObjectPtr();
         uint32_t cls = hdr->classIndex();
         if (cls == 0) return;
         Oop classOop = memory_.classAtIndex(cls);
         if (!classOop.isObject() || classOop.isNil()) return;
 
-        // Check each slot
         size_t slotCount = memory_.slotCountOf(obj);
         for (size_t i = 0; i < slotCount; i++) {
             Oop slot = memory_.fetchPointer(i, obj);
             if (slot == targetObject) {
                 roots.push_back(obj);
-                break;  // Only add each object once
+                break;
             }
         }
     });

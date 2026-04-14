@@ -1550,6 +1550,65 @@ void ObjectMemory::allObjectsDo(std::function<void(Oop)> callback) {
     scanRegion(edenStart_, edenFree_);
 }
 
+void ObjectMemory::collectInstancesOfClass(uint32_t classIndex,
+                                            std::vector<Oop>& out) {
+    auto scanRegion = [&](uint8_t* start, uint8_t* end) {
+        uint8_t* scan = start;
+        while (scan < end) {
+            uint64_t* wordPtr = reinterpret_cast<uint64_t*>(scan);
+            uint64_t word = *wordPtr;
+
+            if (word == 0) {
+                scan += 8;
+                while (scan < end) {
+                    wordPtr = reinterpret_cast<uint64_t*>(scan);
+                    if (*wordPtr != 0) break;
+                    scan += 8;
+                }
+                if (scan >= end) break;
+                word = *wordPtr;
+            }
+
+            uint64_t* headerPtr = wordPtr;
+            uint8_t topByte = static_cast<uint8_t>((word >> 56) & 0xFF);
+            if (topByte == 255 && scan + 8 < end) {
+                uint64_t nextWord = *(wordPtr + 1);
+                uint8_t nextNumSlots = static_cast<uint8_t>((nextWord >> 56) & 0xFF);
+                if (nextNumSlots == 255) {
+                    uint64_t overflowCount = (word << 8) >> 8;
+                    size_t remaining = end - scan;
+                    size_t neededSize = 8 + 8 + overflowCount * 8;
+                    if (overflowCount >= 255 && neededSize <= remaining) {
+                        headerPtr = wordPtr + 1;
+                    } else {
+                        scan += 16;
+                        continue;
+                    }
+                }
+            }
+
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(headerPtr);
+            size_t size = obj->totalSize();
+            size_t remaining = end - scan;
+            if (size == 0 || size > remaining) {
+                scan += 8;
+                continue;
+            }
+
+            // Inlined class-index check — no std::function dispatch
+            if (!obj->isForwarded() && obj->classIndex() == classIndex) {
+                out.push_back(oopFromPointer(obj));
+            }
+
+            scan += size;
+        }
+    };
+
+    scanRegion(permSpaceStart_, permSpaceEnd_);
+    scanRegion(oldSpaceStart_, oldSpaceFree_);
+    scanRegion(edenStart_, edenFree_);
+}
+
 // ===== OBJECT ITERATION (for primitives 138/139) =====
 
 // Helper: find the first accessible object starting at 'scan' within [scan, end).
