@@ -258,6 +258,12 @@ Our test harness reports different paths than standard Pharo VM.
   expose the executing method's context to `pointsTo:`/`allObjects`
   while our VM's frame materialization does.  Context visibility issue,
   single-test impact.
+  **Confirmed 2026-04-14**: VM-specific — `tc run` fails on our VM
+  (passes on stock Cog) but `tc runCase` directly PASSES on our VM.
+  The failure only triggers under TestExecutionEnvironment's forking,
+  which materializes the executing context (holding `myObject` as a
+  temp). Fixing this requires excluding the active process stack from
+  `allObjects` — a deep traversal change, not a quick primitive fix.
 - ClassQueryTest>>testAllCallsOn — Fixed as side-effect of the
   ensure: NLR fix (2026-04-13).
 
