@@ -2,6 +2,26 @@
 
 Last updated: 2026-04-14
 
+## Fix: testFastPointersTo (allObjects returned caller's live context) (2026-04-14)
+
+`ProtoObjectTest>>testFastPointersTo` was raising `ShouldNotImplement`
+(caught as error by the harness) because `pointersTo:` walks
+`allObjects` looking for the receiver in object slots, and the
+currently-executing method context held the receiver in a test-local
+temp. Cog's native stack hides live contexts from `allObjects`;
+our flat-stack VM materializes lazily, so a caller can already have
+a heap Context visible.
+
+Fix in `primitiveAllObjects`: exclude the `activeContext_` sender
+chain and every `savedFrames_[i].materializedContext` from the
+result array.
+
+Verified: testFastPointersTo now passes standalone. Quick regression
+probe of ByteSymbolTest / SetTest / SmallIntegerTest (which use
+`allInstances` / `allObjects` paths) still passes.
+
+Commit: 1730e5a.
+
 ## 20-class announcer+package+zip batch — 44 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 
 Announcer/Package/GZip/OSPlatform/System batch. 44 PASS / 0 FAIL /
