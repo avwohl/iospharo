@@ -24,15 +24,15 @@ via Cog (301 compiled methods, 83% IC hit), but runBenchmarks fork
 never produced output in 90s+ — separate issue from eval hang.
 
 **Eval-mode JIT hang:** with `PHARO_NO_JIT=0`, any eval expression
-(even `Smalltalk snapshot: false andQuit: true`) hangs at boot: image
-compiles ~190 methods, then enters idle loop and never evaluates
-startup.st. `PHARO_JIT_THRESHOLD=999999` (JIT init but no compilation)
-works fine, `PHARO_JIT_THRESHOLD=100` hangs like default. So the bug
-is triggered by something getting JIT-compiled during the boot path
-that breaks StartupPreferencesLoader's chain. Eval-without-JIT works.
-Full-image boot (non-eval) does complete startup, but the session
-handler fork at P79 didn't produce benchmark output in 90s+ of idle
-spin — may be a related / different issue. Needs sustained debug.
+hangs at boot. Two SIGSEGV crashes were fixed 2026-04-14 (commits
+3ea4f7f forEachRoot W^X; 5da4193 flushCaches W^X — both were page-
+granular mprotect leaving IC regions non-writable after a JIT method
+invocation). With both fixed, `PHARO_JIT_THRESHOLD=999999` evaluates
+`42 printString` cleanly. Full JIT still hangs on a
+`SubscriptOutOfBounds>>freeze` terminating the P80 startup process
+with a corrupted sender chain (sender=0x300000000, chain length 1) —
+miscompiled `at:`/`at:put:` somewhere in the 20-150 compiled-method
+range. Tracked in docs/deferred-issues.md #4.
 
 This explains why the team auto-disabled JIT in eval/test mode
 (`test_load_image.cpp:603`): the bug predates this session.
