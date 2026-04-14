@@ -2,6 +2,21 @@
 
 2026-04-14
 
+## Fix: allObjects returned caller's live context (testFastPointersTo)
+
+`ProtoObjectTest>>testFastPointersTo` was raising `ShouldNotImplement`
+because `pointersTo:` walks `allObjects` looking for the receiver in
+object slots, and our `primitiveAllObjects` was returning the currently-
+executing method context — which holds every test-local temp in its
+stack slots and therefore matched the receiver.
+
+Cog's native stack keeps live contexts invisible to `allObjects` until
+they are explicitly materialized. Our flat-stack VM materializes lazily,
+so a caller on the interpreter's call chain can already have a heap
+Context. `primitiveAllObjects` now excludes those — it collects the
+`activeContext_` sender chain plus every `savedFrames_[i].materialized-
+Context` and skips them during the `allObjectsDo` walk.
+
 ## Fix: Readdir leaks "." / "..", symlink target always nil
 
 Two file-system primitives fixed together; both unblocked

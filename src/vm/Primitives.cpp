@@ -53,6 +53,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <unordered_set>
 #include <vector>
 
 // Pharo packs 16-bit pixels MSB-first in 32-bit words (Bitmap):
@@ -8015,6 +8016,31 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     // Array that removeAllSuchThat: can't modify (Array doesn't support remove:).
     memory_.fullGC();
 
+    // Exclude the currently-active process's live-stack contexts from the
+    // result. Cog's native stack keeps these contexts invisible until
+    // explicitly materialized; our flat stack materializes on demand, so
+    // a caller on the interpreter's call chain can have a heap Context even
+    // when the reference VM would not. Tests like ProtoObjectTest>>testFast-
+    // PointersTo expect allObjects NOT to return the executing method's
+    // context (it holds their test-local temps).
+    std::unordered_set<uint64_t> excludedContexts;
+    {
+        Oop ctx = activeContext_;
+        int guard = 0;
+        while (ctx.isObject() && !ctx.isNil() && guard++ < 1024) {
+            excludedContexts.insert(ctx.rawBits());
+            Oop sender = memory_.fetchPointer(0, ctx);
+            if (sender.rawBits() == ctx.rawBits()) break;  // self-cycle guard
+            ctx = sender;
+        }
+        for (size_t i = 0; i < frameDepth_; i++) {
+            Oop mc = savedFrames_[i].materializedContext;
+            if (mc.isObject() && !mc.isNil()) {
+                excludedContexts.insert(mc.rawBits());
+            }
+        }
+    }
+
     // Collect all visible objects using allObjectsDo
     // Skip classIdx=0 objects — these are hidden VM objects (free chunks,
     // class table pages) that should never be visible to Smalltalk code.
@@ -8025,6 +8051,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
             if (hdr->isForwarded()) return;  // Skip forwarded (become'd) objects
             uint32_t cls = hdr->classIndex();
             if (cls != 0) {
+                if (excludedContexts.count(obj.rawBits())) return;
                 // Also verify the class table has a valid entry
                 Oop classOop = memory_.classAtIndex(cls);
                 if (classOop.isObject() && !classOop.isNil()) {
