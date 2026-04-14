@@ -1,5 +1,17 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-14
+
+## Fix: Directory size primitive returns raw st_size
+
+`File fileAttribute: aPath number: 8` (file size) was returning the raw
+`stat.st_size` for directories — on macOS APFS that's the metadata block
+size (e.g. 704 for `/`), not 0. The upstream FileAttributesPlugin reports
+0 for directories, and `FileReferenceTest>>testRootReference` asserts
+`rootReference size equals: 0`. Fixed by zeroing size when `S_ISDIR(mode)`
+in three primitive paths: `primFileAttribute:number:` (attr 8),
+`primitiveFileStat` (slot 7), and `primitiveDirectoryEntryLookup` (slot 5).
+
 2026-04-13
 
 ## Fix: NLR through ensure: cleanup block

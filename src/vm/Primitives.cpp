@@ -11466,7 +11466,7 @@ PrimitiveResult Interpreter::primitiveDirectoryLookup(int argCount) {
 
     if (stat(fullPath.c_str(), &statBuf) == 0) {
         isDir = S_ISDIR(statBuf.st_mode);
-        fileSize = statBuf.st_size;
+        fileSize = isDir ? 0 : statBuf.st_size;
         modTime = statBuf.st_mtime;
 #ifdef __APPLE__
         createTime = statBuf.st_birthtime;
@@ -26088,7 +26088,7 @@ PrimitiveResult Interpreter::primitiveFileAttribute(int argCount) {
         case 5: result = int64ToOop(memory_, static_cast<int64_t>(st.st_nlink)); break;
         case 6: result = int64ToOop(memory_, static_cast<int64_t>(st.st_uid)); break;
         case 7: result = int64ToOop(memory_, static_cast<int64_t>(st.st_gid)); break;
-        case 8: result = int64ToOop(memory_, static_cast<int64_t>(st.st_size)); break;
+        case 8: result = int64ToOop(memory_, S_ISDIR(st.st_mode) ? (int64_t)0 : static_cast<int64_t>(st.st_size)); break;
         case 9: result = int64ToOop(memory_, toSqueakLocal(st.st_atime)); break;
         case 10: result = int64ToOop(memory_, toSqueakLocal(st.st_mtime)); break;
         case 11: result = int64ToOop(memory_, toSqueakLocal(st.st_ctime)); break;
@@ -26453,8 +26453,8 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
         // Slot 6: gid
         { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_gid));
           statArray = stackTop(); memory_.storePointer(6, statArray, v); }
-        // Slot 7: size
-        { Oop v = int64ToOop(memory_, static_cast<int64_t>(st.st_size));
+        // Slot 7: size (0 for directories, matching upstream FileAttributesPlugin)
+        { Oop v = int64ToOop(memory_, S_ISDIR(st.st_mode) ? (int64_t)0 : static_cast<int64_t>(st.st_size));
           statArray = stackTop(); memory_.storePointer(7, statArray, v); }
         // Slot 8: atime (Squeak local time)
         { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_atime));
