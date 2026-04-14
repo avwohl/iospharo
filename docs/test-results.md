@@ -2,6 +2,28 @@
 
 Last updated: 2026-04-14
 
+## Harness: SUnitMaxPerTestSeconds 180→300s (2026-04-14, submodule 233daf7)
+
+Raised the absolute per-test kill cap from 180s to 300s. The reflection
+batch's 10 `CompiledMethodTest` timeouts all hit the 180s cap on the pure
+interpreter because those tests recompile methods (AST-heavy, JIT-only
+realistic). The outer harness watchdog still kills genuine hangs.
+
+## FFICallbackTest testCqsort — under investigation (2026-04-14)
+
+Surfaced by a targeted FFI batch (class names passed via Smalltalk
+globals, since the `/tmp/sunit_class_names.txt` path hits a
+`ByteString>>#link` DNU inside `FileReference>>exists` in our VM under
+harness conditions — it works in isolation, so there is a transient
+image-state issue to investigate separately).
+
+    FFICompilerPluginTest    5  pass
+    FFICallbackTest          0/2  TIMEOUT testCqsort, testCqsortWithByteArray
+    FFIExternalStructureTest     TIMEOUT testExternalStructWithArray
+
+Both timeouts are callback tests (C→Smalltalk). Not yet confirmed VM vs
+slow-callback. Needs a stock Cog comparison on the same image to confirm.
+
 ## tempNamed: cluster — NOT a VM bug (2026-04-14)
 
 The 29-error `Context>>tempNamed:` cluster is **Pharo 13 image behavior**,
