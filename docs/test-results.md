@@ -23,19 +23,18 @@ JIT was observed enabling via non-eval boot with benchmark injected
 via Cog (301 compiled methods, 83% IC hit), but runBenchmarks fork
 never produced output in 90s+ — separate issue from eval hang.
 
-**Eval-mode JIT hang:** with `PHARO_NO_JIT=0`, any eval expression
-hangs at boot. Two SIGSEGV crashes were fixed 2026-04-14 (commits
-3ea4f7f forEachRoot W^X; 5da4193 flushCaches W^X — both were page-
-granular mprotect leaving IC regions non-writable after a JIT method
-invocation). With both fixed, `PHARO_JIT_THRESHOLD=999999` evaluates
-`42 printString` cleanly. Full JIT still hangs on a
-`SubscriptOutOfBounds>>freeze` terminating the P80 startup process
-with a corrupted sender chain (sender=0x300000000, chain length 1) —
-miscompiled `at:`/`at:put:` somewhere in the 20-150 compiled-method
-range. Tracked in docs/deferred-issues.md #4.
+**Eval-mode JIT — RESOLVED 2026-04-14:** on a **fresh** Pharo 13 image,
+full-JIT boot (no env caps) evaluates `42 printString` and
+`Smalltalk snapshot: false andQuit: true` cleanly after 175,746 method
+compiles. Root causes were the two makeWritable fixes (commits 3ea4f7f
+and 5da4193) that closed the page-granular W^X race where mprotect's
+page granularity could leave IC regions non-writable after a JIT method
+invocation. The earlier "hang with SubscriptOutOfBounds" reproducer
+was from a mutated harness image retaining corrupt state from broken
+runs — does not reproduce on a fresh download.
 
-This explains why the team auto-disabled JIT in eval/test mode
-(`test_load_image.cpp:603`): the bug predates this session.
+test_load_image.cpp:603 still auto-disables JIT in eval/test mode as
+a conservative default; can be overridden with `PHARO_NO_JIT=0`.
 
 ## 20-class hash-collections batch — 2195 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 
