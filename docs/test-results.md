@@ -2,6 +2,39 @@
 
 Last updated: 2026-04-14
 
+## Weak-ref / finalization scheduling — partial findings (2026-04-14)
+
+Ephemerons DO fire during GC. `[GC-EPH]` shows `fired=N` after
+`fullGC` / `processEphemerons`, and `[SIG-FIN] pending=N` prints on
+each signal. Problem is scheduler timing of the P50 finalization
+process relative to the signal.
+
+Scenario A (main eval P80, `[garbageCollect. Processor yield] repeat`
+loop): `WeakKeyDictionary` size drops 10 → 0. Finalization runs.
+
+Scenario B (test block `forkAt: 40`, same GC loop inside fork): size
+stays at 10. First `[SIG-FIN]` reports `hasWaiter=0` — the P50
+`FinalizationProcess` is not yet blocked on
+`TheFinalizationSemaphore` when the first GC fires, so the signal
+goes to `excessSignals`. By the time the second signal lands with
+`hasWaiter=1`, the test block has already asserted the stale size.
+
+Probe confirms the P50 process is reachable (`firstLink: a Process
+in FinalizationProcess class>>finalizationProcess`), but the
+fork-at-P40 path doesn't give it a turn before the assertion.
+
+**Where to look next:** either (a) drain `excessSignals` into any
+process that newly blocks on the sema at `primitiveWait` time
+(matches Cog behaviour for non-transferring signals), or (b) trace
+why `Processor yield` at P40 doesn't schedule the higher-priority
+P50 finalization process in the fork scenario. Deferred — not a
+quick fix, and the 6 weak-ref tests are already classified as
+environmental in this doc.
+
+Env-gated traces left in: `PHARO_GC_EPH_DEBUG=1` enables `[GC-EPH]`
+in `ObjectMemory::fullGC` and `[SIG-FIN]` in
+`Interpreter::signalFinalizationIfNeeded`. Both no-op when unset.
+
 ## NLR-through-ensure: nlrValue_ hijack — FIXED (2026-04-14)
 
 **Root cause:** `Interpreter::returnFromMethod` inline-NLR path replaced

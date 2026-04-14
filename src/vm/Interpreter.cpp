@@ -2305,12 +2305,22 @@ void Interpreter::signalFinalizationIfNeeded() {
     // No priority guard — the Cog VM signals regardless of caller priority.
     // The woken finalization process (P50) will preempt only if the active
     // process has lower priority; otherwise it waits in the ready queue.
-    if (memory_.pendingFinalizationSignals() <= 0) return;
+    size_t pending = memory_.pendingFinalizationSignals();
+    if (pending <= 0) return;
 
     memory_.clearPendingFinalizationSignals();
 
     Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
     if (!sema.isObject() || sema == memory_.nil()) return;
+
+    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+        Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
+        bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
+        fprintf(stderr, "[SIG-FIN] pending=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
+                pending, (unsigned long long)sema.rawBits(), (int)hasWaiter,
+                (long long)(excessOop.isSmallInteger() ? excessOop.asSmallInteger() : -1));
+    }
 
     synchronousSignal(sema);
 }
