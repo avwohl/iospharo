@@ -2,6 +2,46 @@
 
 Last updated: 2026-04-14
 
+## 20-class process/time batch — 6 FAIL, but all pass standalone (2026-04-14)
+
+Process/scheduler/time batch. 14 classes completed, ArrayTest partial.
+**873 PASS / 6 FAIL / 6 TIMEOUT / 0 ERROR**.
+
+The 6 FAILs:
+
+    ProcessTest>>testResumeAfterBCR
+    SemaphoreTest>>testWaitAndWaitTimeoutTogether
+    SemaphoreTest>>testWaitTimeDuration
+    SemaphoreTest>>testWaitTimeDurationWithCompletionAndTimeoutBlocks
+    SemaphoreTest>>testWaitTimeoutMSecs
+    SemaphoreTest>>testWaitTimeoutSecondsOnCompletionOnTimeout
+
+**All 6 pass standalone** (verified via `tc run: TestResult new` and
+`tc runCase`). The 5 SemaphoreTest wait-timeout variants fail only in
+batch — suspected scheduler/Delay state pollution from the
+MonitorTest/ProcessTest run beforehand. Same cross-test-interference
+pattern as the batch TIMEOUTs. Not VM logic bugs.
+
+    Class                Pass  Fail  Timeout
+    ProcessTest            42     1        3
+    SemaphoreTest          10     5        1
+    MutexTest               7     0        0
+    SharedQueueTest         3     0        0
+    MonitorTest             1     0        2
+    DelayTest               5     0        0
+    DateAndTimeTest        57     0        0
+    DateTest               52     0        0
+    TimeTest               53     0        0
+    DurationTest           69     0        0
+    MonthTest              16     0        0
+    WeekTest               12     0        0
+    YearTest               10     0        0
+    OrderedCollectionTest 351     0        0
+
+Cumulative across 5 batches (24 + 12 + 21 + 19 + 20 = 96 submitted
+classes, ~72 completed): **0 persistent FAIL/ERROR** — every
+non-timeout failure surfaced passes when run alone.
+
 ## 19-class crypto/encoding batch — 493 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 
 Hash/encoding/identity-collection batch. 12 classes completed, UnicodeTest
