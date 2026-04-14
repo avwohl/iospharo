@@ -82,15 +82,44 @@ The callback mechanism itself is fine (2 callbacks completed at 3000
 steps each). The issue is the UI event loop starving the handler
 process from running primitiveCallbackReturn.
 
-Why only the 3rd callback? Possibly a UI event queued during the 1st
-or 2nd callback becomes visible to the poll loop on the 3rd, and the
-polling code's `to:do:` iterator runs over a now-long buffer.
+Why only the 3rd callback? Dense trace (1k-step intervals) reveals the
+flow:
+
+Callbacks 1 and 2 both go through `TFCallbackForkRunStrategy` —
+the TFRunner handler `forkAt:` spawns a P69 child to run the user
+callback block, then the handler immediately `sem wait`s for the
+next invocation. The P69 child runs `TFCallbackInvocation>>execute`,
+calls primitiveCallbackReturn, and terminates via
+`Process>>doTerminationFromYourself`.
+
+On callback 3, `CUSTOM-SIGNAL transferred=1` still wakes the handler
+(waiter present on sema), but the next thousand steps show the UI
+process (`OSSDL2Driver>>eventLoop`, P60) running — no P69 child ever
+appears. So the handler's `forkAt:` is either not creating a child
+on the 3rd call, or the child is being displaced by a UI eventLoop
+that's actively running.
+
+Also observed: the CALLBACK-RETURN-REQUEUE on call #2 reports
+active=<the-P69-child>, `stillHandler=0`. At that point the forked
+child has already terminated but is still the "current active"
+when we longjmp back to C. C's qsort calls compar() again — and
+`enterInterpreterFromCallback` then pushes that TERMINATED child
+process onto `SuspendedProcessInCallout` as step 3. Calling
+`setActiveProcess` on a terminated process to restore it later
+would execute nil-context, which may be where the scheduler
+diverges.
+
+Fix direction: in `enterInterpreterFromCallback`, when saving the
+current active process, if that process is already terminated,
+walk to the next viable process on `SuspendedProcessInCallout`
+OR pick the caller's-caller instead of blindly saving a dead
+process's state.
 
 Next steps:
-- Pause OSSDL2Driver>>eventLoop during callback (mark a flag during
-  `enterInterpreterFromCallback` that the UI eventLoop respects).
-- Or: lower UI eventLoop priority below TFRunner's P70, so the
-  handler's `sem wait` + signal doesn't drop priority below UI.
+- Pause OSSDL2Driver>>eventLoop during callback (set a Smalltalk
+  global that OSSDL2Driver checks every iteration).
+- Detect and skip a terminated/active process at the top of
+  `enterInterpreterFromCallback` (step 3).
 
 Env-gated trace left in `Interpreter::enterInterpreterFromCallback`
 progress loop shows active process priority + receiver class +

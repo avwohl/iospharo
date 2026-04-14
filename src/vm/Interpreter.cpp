@@ -2616,7 +2616,9 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             step();
             nestedStepCount++;
         }
-        if (cbDbg && nestedStepCount - lastDbgStep >= 1000000) {
+        // Dense trace for first 10k steps, sparse after.
+        long dbgInterval = nestedStepCount < 10000 ? 1000 : 1000000;
+        if (cbDbg && nestedStepCount - lastDbgStep >= dbgInterval) {
             Oop activeProc = getActiveProcess();
             Oop prioOop = activeProc.isObject() && !activeProc.isNil()
                 ? memory_.fetchPointer(ProcessPriorityIndex, activeProc) : memory_.nil();
