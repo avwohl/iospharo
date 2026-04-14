@@ -145,8 +145,9 @@ bridge between the Pharo image's OSSDL2Driver and the Metal rendering pipeline.
 
 ## Git Workflow
 - **Update `docs/changes.md`** before committing user-visible changes (bug fixes, features, behavior changes). Add entries under the current build number at the top of the file.
-- **Commit frequently**: Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations. Do this silently without stopping to ask or show the user.
+- **Commit, push, and go on — without asking.** Commit at least every 15 minutes to avoid losing work from mishandled stash/checkout operations. Push afterwards (both parent repo and any submodule with new commits). Then pick the next item from `docs/test-results.md` / the in-progress task list and keep working. Do NOT stop to summarize, recap, or ask for direction after a commit. Only pause for genuinely destructive operations (force-push to main, `rm -rf`, etc.) or truly ambiguous requirements.
 - Always run `git status` before and after commits to verify state
+- If a long-running batch is kicked off in the background, DO NOT idle waiting for the notification. Start the next task immediately — analysis, writing, another unrelated investigation. When the notification arrives, fold the results in.
 
 ## Project Context
 This is an iOS Pharo VM that moves oop encoding from high address bits to low bits for iOS/ASLR compatibility.
