@@ -2,6 +2,39 @@
 
 Last updated: 2026-04-14
 
+## tempNamed: cluster — root cause confirmed (2026-04-14)
+
+Reproduced the 29-error cluster locally via a 4-case probe (`/tmp/tempnamed_probe.st`):
+
+    Case 1 (thisContext tempNamed: 'foo'):
+        DNU #isLocalVariable not understood by rcvr=nil
+
+The chain (Context in Pharo 13 *Debugging-Core* category):
+
+    tempNamed: aName
+      | var |
+      var := self lookupVar: aName.           "returns nil if no AST"
+      var isLocalVariable ifFalse: [ ... ].   "nil DNU #isLocalVariable"
+      ^ var readInContext: self
+
+    lookupVar: aSymbol       -> self astScope lookupVar: aSymbol
+    astScope                 -> node := sourceNodeExecuted.
+                                node isBlock ifTrue:[...] ifFalse:[node methodOrBlockNode scope]
+    sourceNodeExecuted       -> method sourceNodeForPC: self executedPC
+    CompiledMethod sourceNodeForPC: aPC
+                             -> needs #bcToASTCache property OR sourceNode parse
+
+For dynamically-compiled methods (doIt, `class compile:`, `classInstaller make:`),
+if `bcToASTCache` is not populated AND `method sourceNode` can't parse (no source
+file association headless), the whole chain nils out and `nil isLocalVariable`
+DNUs. Any test that triggers `tempNamed:` in such a context hits the cluster.
+
+Open questions (pending full-run data):
+- Does our VM correctly populate `bcToASTCache` property on newly-compiled methods?
+- Does stock Cog somehow avoid this by always having source available?
+- Is the fix VM-side (frame PC/method properties) or image-side
+  (defensive `lookupVar:` result handling in Context>>tempNamed:)?
+
 ## SUnitClassNames resolves via globals (2026-04-14, submodule 2bcc165)
 
 Previously `SUnitClassNames` intersected the requested names with
