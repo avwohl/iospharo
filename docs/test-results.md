@@ -23,11 +23,19 @@ JIT was observed enabling via non-eval boot with benchmark injected
 via Cog (301 compiled methods, 83% IC hit), but runBenchmarks fork
 never produced output in 90s+ — separate issue from eval hang.
 
-**Eval-mode JIT hang:** with `PHARO_NO_JIT=0`, fileIn under OpalCompiler
-stalls at idleProcess (sampled: primitiveRelinquishProcessor) after
-compiling ~50 methods. `/tmp/quick_bench.txt` never written, stdout
-never gets the result. Eval mode without JIT works fine. Need to
-diagnose the JIT-compiled fileIn/exitSuccess path.
+**Eval-mode JIT hang:** with `PHARO_NO_JIT=0`, any eval expression
+(even `Smalltalk snapshot: false andQuit: true`) hangs at boot: image
+compiles ~190 methods, then enters idle loop and never evaluates
+startup.st. `PHARO_JIT_THRESHOLD=999999` (JIT init but no compilation)
+works fine, `PHARO_JIT_THRESHOLD=100` hangs like default. So the bug
+is triggered by something getting JIT-compiled during the boot path
+that breaks StartupPreferencesLoader's chain. Eval-without-JIT works.
+Full-image boot (non-eval) does complete startup, but the session
+handler fork at P79 didn't produce benchmark output in 90s+ of idle
+spin — may be a related / different issue. Needs sustained debug.
+
+This explains why the team auto-disabled JIT in eval/test mode
+(`test_load_image.cpp:603`): the bug predates this session.
 
 ## 20-class hash-collections batch — 2195 PASS, 0 FAIL / 0 ERROR (2026-04-14)
 

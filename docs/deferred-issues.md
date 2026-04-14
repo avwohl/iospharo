@@ -113,6 +113,35 @@ to either scale the tests' sleep budget or boost the FinalizationProcess
 priority briefly during GC. Scope: a day of diagnostics work in
 `src/vm/ObjectMemory.cpp` and the P50 scheduler path.
 
+## 4. JIT eval-mode boot hang
+
+**Symptom:** with `PHARO_NO_JIT=0` in eval mode, any expression
+(including `Smalltalk snapshot: false andQuit: true`) hangs. Image
+compiles ~190 methods during StartupPreferencesLoader's chain, then
+enters idle loop and never runs the eval expression. Process sits at
+99% CPU in idleProcess, stacksampled to `primitiveRelinquishProcessor
+→ usleep`.
+
+**Ruled out:**
+- JIT initialization: `PHARO_JIT_THRESHOLD=999999` (init but no compile)
+  exits cleanly. Threshold 100 or default (2) hangs.
+- Specific expression: `42 printString` and `Smalltalk snapshot:
+  false andQuit: true` both hang identically. Not expression-specific.
+
+**Not yet ruled out:** which specific compiled method breaks the
+startup chain. Need to selectively disable compilation per method
+class to bisect.
+
+**Why this matters:** blocks using JIT for benchmarking via the eval
+path. Full-image boot (non-eval) runs longer, but session-handler
+forks at P79 haven't produced output either. Without JIT reliably
+usable, we can't measure improvements.
+
+**Next step:** add a compile-blacklist mechanism
+(`PHARO_JIT_SKIP_SELECTORS=...`) so we can bisect which compilation
+is the problem. Scope: small addition to `src/vm/jit/JITCompiler.cpp`
+plus logging in `Interpreter::initializeJIT`.
+
 ## Why these are deferred, not fixed
 
 All three would take substantial focused work (half-day to multi-day)
