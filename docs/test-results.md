@@ -226,6 +226,12 @@ Our test harness reports different paths than standard Pharo VM.
 - ProcessMonitorTestServiceTest>>testFailTestWhenBackgroundProcessWasFailedDuringFinalTryToFinishItAtTestCompletionTime
 - TestExecutionEnvironmentTest>>testHandleForkedProcessesByAllServices
 
+  **Update 2026-04-14**: Both tests now PASS in isolation on our VM
+  (`tc run` succeeds — no failures, no errors). Likely fixed as a
+  side-effect of the ensure: NLR work on 2026-04-13. If they still
+  appear as failures in batch runs, it is cross-test interference, not
+  a VM regression.
+
 **5. Bytecode / compiler — 1 failure, 1 error**
 - OCSpecialSelectorTest>>testUnoptimisedValueSpecialSendsMessageCapturesSend
   — Got OCOpalExamples (the class) instead of #valueToTest.  Test sets
