@@ -1,6 +1,6 @@
 # Deferred Issues
 
-Last updated: 2026-04-14 (third session: issue #4 JIT boot VERIFIED CLEAN on fresh image)
+Last updated: 2026-04-14 (third session: issue #4 "resolved" claim retracted — testing error)
 
 Issues that were identified during test-suite runs and deferred rather
 than fixed. Each entry has a hypothesis, what's been ruled out, and a
@@ -131,39 +131,27 @@ log the time-since-signal in `signalFinalizationIfNeeded` vs the time
 the finalization process actually pops a mourner (prim 172). A latency
 >50ms suggests scheduler gap, not signal-path loss.
 
-## 4. JIT eval-mode boot — RESOLVED 2026-04-14 (session 3)
+## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
-**Status:** on a **fresh** Pharo 13 image, full-JIT boot with no env caps
-now evaluates `42 printString` and `Smalltalk snapshot: false andQuit: true`
-cleanly. Compiles 175,746 methods, reaches eval path, prints result.
+**Status (2026-04-14, session 3 correction):** the earlier "resolved"
+claim was wrong. The fresh-image test ran without `PHARO_NO_JIT=0`, so
+`test_load_image.cpp:603` auto-disabled JIT in eval mode. The '42'
+output came from the interpreter, not the JIT. Re-running with
+`PHARO_NO_JIT=0` explicit — `42 printString` hangs at boot after ~5M
+bytecode steps, same symptom as before: P10 ProcessorScheduler idle
+loop with timer wakeups firing but no progress through the eval path.
 
-The session-2 "DNU #asSymbol on Array at N=120" reproducer was from an
-**already-mutated** harness image that retained corrupt state from earlier
-broken runs. With a freshly-downloaded image, the bug does not reproduce.
-
-Root causes were the two makeWritable fixes landed earlier 2026-04-14:
-- forEachRoot now calls `jit::makeWritable` for the JIT code zone before
-  in-place Oop rewrite (commit 3ea4f7f).
-- JITRuntime::flushCaches now calls makeWritable at entry (commit 5da4193).
-
-The hang disappeared once the page-granular W^X race was closed.
-
-Remaining rendering-path DNUs (`SpStyleEnvironmentColorProxy does not
-understand #isTransparent`) appear in the background Morphic draw loop
-but do not block eval completion. These are an image-level issue, not
-a JIT miscompile — tracked separately if they surface as a test failure.
-
-Infra added this session:
+Tools added this session that ARE working and useful for future bisects:
 - `JIT_EXCLUDE_OOP=0xhex,...` — skip JIT-compile by specific method oop
   (complements existing `JIT_EXCLUDE=sel,...` by selector).
 - When selectorOf returns `?` at compile time, log numLits + classNames
   of the penultimate and last literals to help identify block methods.
 
-Previous analysis (retained for reference) is below.
+Previous analysis (still valid) below.
 
 ---
 
-### OLD CONTENT — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
+### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
 
 **Symptom:** with `PHARO_NO_JIT=0` in eval mode, any expression
 (including `Smalltalk snapshot: false andQuit: true`) hangs. Image
