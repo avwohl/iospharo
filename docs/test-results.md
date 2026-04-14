@@ -17,10 +17,15 @@ The 6 FAILs:
     SemaphoreTest>>testWaitTimeoutSecondsOnCompletionOnTimeout
 
 **All 6 pass standalone** (verified via `tc run: TestResult new` and
-`tc runCase`). The 5 SemaphoreTest wait-timeout variants fail only in
-batch — suspected scheduler/Delay state pollution from the
-MonitorTest/ProcessTest run beforehand. Same cross-test-interference
-pattern as the batch TIMEOUTs. Not VM logic bugs.
+`tc runCase`, including P40-fork reproduction). Bisection result: the 5
+SemaphoreTest failures reproduce even when SemaphoreTest runs FIRST in
+the batch (no preceding class) — so this is not cross-test pollution,
+it's the harness's `runSingleTest:` wrapper interacting with
+timing-sensitive semaphore-with-delay tests. Not a VM logic bug — the
+tests pass under every invocation path we've measured except the
+harness's combination of P40 test fork + P60 relinquish watchdog + 4
+nested exception handlers. Ongoing investigation: which specific element
+of that combination disturbs `Semaphore>>wait:` excess-signals timing.
 
     Class                Pass  Fail  Timeout
     ProcessTest            42     1        3
