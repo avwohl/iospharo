@@ -1083,6 +1083,14 @@ void JITRuntime::flushCaches() {
     // selectorBits is written once at compile time and never re-patched,
     // so zeroing it would permanently disable megamorphic cache probes.
     // Layout per IC site: 4 entries × [key, method, extra] + selectorBits = 13 uint64_t = 104 bytes
+    //
+    // Ensure the entire code zone is writable. mprotect operates on pages,
+    // so a prior makeExecutable() on one method can leave adjacent methods'
+    // IC regions non-writable. Without this, flushCaches SIGSEGVs on the
+    // first IC write when called after a JIT invocation. See deferred-issues #4.
+    if (codeZone_.firstMethod()) {
+        makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
+    }
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
         if (m->numICEntries > 0) {
