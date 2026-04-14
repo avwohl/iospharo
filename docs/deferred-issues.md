@@ -160,26 +160,40 @@ path. Full-image boot (non-eval) runs longer, but session-handler
 forks at P79 haven't produced output either. Without JIT reliably
 usable, we can't measure improvements.
 
-**Crash fix (2026-04-14):** Interpreter::forEachRoot now calls
-`jit::makeWritable(codeZone.rawStart(), totalBytes())` at the top
-of its JIT-method loop. The W^X toggle around JIT execution could
-leave the zone executable if a path skipped the matching
-makeWritable (e.g., non-local return out of JIT_CALL), and the
-next fullGC's in-place Oop rewrite then SIGSEGVed. Verified:
-`PHARO_NO_JIT=0 JIT_MAX_COMPILE=1` now evaluates `42 printString`
-cleanly. Full-JIT boot reaches a 273-method steady state without
-crashing.
+**Crash fixes (2026-04-14):**
+1. Interpreter::forEachRoot now calls `jit::makeWritable(codeZone
+   .rawStart(), totalBytes())` at the top of its JIT-method loop
+   (commit 3ea4f7f). The W^X toggle around JIT execution could leave
+   the zone executable if a path skipped the matching makeWritable
+   (e.g., non-local return out of JIT_CALL), and the next fullGC's
+   in-place Oop rewrite then SIGSEGVed.
+2. JITRuntime::flushCaches now also calls makeWritable on the full
+   code zone at entry (commit 5da4193). Same root cause: mprotect
+   operates on pages, so makeExecutable(methodA) can flip methodB's
+   IC region non-writable, and a subsequent flushCaches store
+   SIGSEGVs. Unblocks primitiveFlushCacheBySelector after JIT
+   invocations.
 
-**Hang remaining:** with JIT enabled, the boot completes 273
-compiled methods and stabilizes but the startup.st eval
-expression still doesn't run — session-handler fork at P79 isn't
-getting scheduled. Separate issue from the crash; tracking
-continues.
+Verified: `PHARO_NO_JIT=0 PHARO_JIT_THRESHOLD=999999` now evaluates
+`42 printString` cleanly. Full-JIT boot completes 273-method
+compilation without crashing.
 
-**Next step:** instrument the P79 session-handler fork to see
-why the StartupPreferencesLoader never dispatches the eval.
-Scope: stderr logging in test_load_image.cpp around startup.st
-injection, plus tracing `SessionManager>>startup:` dispatch.
+**Hang remaining:** with full JIT (threshold=2), boot hits a P80
+startup process terminating on `SubscriptOutOfBounds>>freeze` with a
+corrupted sender chain (sender=0x300000000, chain length 1). This
+implies a JIT-miscompiled at:/at:put: bytecode that indexes out of
+bounds, and the exception handler unwind sees a bogus sender Oop.
+
+**Bisect notes:** JIT_MAX_COMPILE=1 → works. N=20 → hangs but no
+SubscriptOutOfBounds. N=150 → SubscriptOutOfBounds terminates P80.
+So the miscompile happens in the 20–150 range; a later compile may
+mask it by recompiling differently.
+
+**Next step:** narrow down which compiled method triggers the
+out-of-bounds. Likely candidates from the JIT compile list between
+step 20 and 150: any method with `at:` / `at:put:` / `first` /
+`last`. Inspect the T1 stencil output for primitive-fallback
+bytecodes 0xC0 (at:) and 0xC1 (at:put:).
 
 ## Why these are deferred, not fixed
 
