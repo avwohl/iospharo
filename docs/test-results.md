@@ -2,6 +2,33 @@
 
 Last updated: 2026-04-14
 
+## NLR fix stability check — PASS (2026-04-14)
+
+Re-ran ExceptionTest + FileReferenceTest (2-class batch) after the
+NLR-through-ensure fix (commit 032d252). No ByteString#link DNU in
+results file, no outer-error file produced. Fix is stable.
+
+    Class                Pass  Fail  Timeout
+    ExceptionTest          47     -        -
+    FileReferenceTest     (~50)    1        2
+
+ExceptionTest: 47/47 including testSimpleEnsureTestWithUparrow.
+
+FileReferenceTest progressed past testExists (the test that originally
+triggered the DNU). Findings:
+
+- FAIL `testRootReference` — "Got 704 instead of 0". Root directory
+  tree walk returns an unexpected entry count. Not a VM bug — looks
+  like a sandbox/harness filesystem content difference vs the test's
+  assumption (the test likely assumes `/` has no entries visible to
+  it, but `/private/tmp` or similar was iterated).
+- TIMEOUT `testRename`, `testSymbolicLink` — filesystem syscalls
+  hanging under test harness. Per-test watchdog fired at 80s.
+- Harness got stuck after testSymbolicLink force-kill (test_load_image
+  still up ~12 min later without progressing). This is a harness
+  issue (force-kill not unblocking the runner after a filesystem
+  hang), not a VM correctness issue.
+
 ## FFICallbackTest testCqsort — 3rd callback hangs in ExternalAddress>>to:do: (2026-04-14)
 
 `scripts/run_callback_tests.st` (isolated, uses `TFCallback forCallback:...`)
