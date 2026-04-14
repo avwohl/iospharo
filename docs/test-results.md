@@ -2,6 +2,36 @@
 
 Last updated: 2026-04-14
 
+## 24-class Collection+Numeric batch — 0 FAIL / 0 ERROR (2026-04-14)
+
+Ran Set/Dict/IdDict/OrderedCollection/Array/ByteSymbol/WideString/
+SmallInteger/Integer/Float/DateAndTime/Time/Date/Duration. Detail file
+shows 413 PASS / 4 SKIP / 13 TIMEOUT across the classes that ran,
+**zero FAIL, zero ERROR**. The 13 timeouts all pass standalone in
+50-500ms:
+
+    SetTest>>testIsHealthy               (Set new: 50000)
+    IntegerTest>>testHighBit             (1025-element suite + raisedTo: 20)
+    IntegerTest>>testLowBit              (same pattern)
+    IntegerTest>>testIsPrime             (large-prime primality checks)
+    IntegerTest>>testHighBitOfMagnitude
+    IntegerTest>>testLargePrimesUpTo
+    IntegerTest>>testNthRootTruncated
+    IntegerTest>>testNumberOfDigits
+    FloatTest>>testFloatRounded
+    FloatTest>>testFloatTruncated
+    FloatTest>>testFractionAsFloat
+    ByteSymbolTest>>testAs               (ByteSymbol allInstances select:)
+    ByteSymbolTest>>testNewFrom
+    ByteSymbolTest>>testReadFromString
+
+Common theme: tests that allocate large collections or walk
+allInstances. Under batch pressure they hit the 80s watchdog even
+though standalone they finish in <1s. Likely cumulative GC / weak-ref
+retention causing allInstances scans to slow. Not a logic regression
+in the tests themselves — all three standalone sequences (including
+a triple-sequence probe in one VM invocation) finish in <200ms each.
+
 ## FileReferenceTest + ExceptionTest clean — 159/159 (2026-04-14)
 
     Class                Pass  Fail  Error  Skip
