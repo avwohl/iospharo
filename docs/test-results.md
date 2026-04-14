@@ -9,7 +9,7 @@ batch's 10 `CompiledMethodTest` timeouts all hit the 180s cap on the pure
 interpreter because those tests recompile methods (AST-heavy, JIT-only
 realistic). The outer harness watchdog still kills genuine hangs.
 
-## FFICallbackTest testCqsort — under investigation (2026-04-14)
+## FFICallbackTest testCqsort — callback handler not wakened (2026-04-14)
 
 Surfaced by a targeted FFI batch (class names passed via Smalltalk
 globals, since the `/tmp/sunit_class_names.txt` path hits a
@@ -21,8 +21,50 @@ image-state issue to investigate separately).
     FFICallbackTest          0/2  TIMEOUT testCqsort, testCqsortWithByteArray
     FFIExternalStructureTest     TIMEOUT testExternalStructWithArray
 
-Both timeouts are callback tests (C→Smalltalk). Not yet confirmed VM vs
-slow-callback. Needs a stock Cog comparison on the same image to confirm.
+### Probe with `scripts/run_callback_tests.st`
+
+    Test 1: qsort with 5 elements...
+    Before sort: 42 7 99 1 23
+    qsort returned after 0 comparisons
+    After sort: 42 7 99 1 23
+    FAIL: 5-element sort incorrect
+
+`callCount` stays 0 — the Smalltalk callback block never executed.
+`primitiveRegisterCallback` does return a plausible thunk address
+(0x105240040, executable memory), so libffi closure allocation works.
+The thunk is invoked by C (qsort still returns), but the Smalltalk
+block body never runs.
+
+### Theory
+
+The callback path:
+
+  1. C calls the thunk → `callbackClosureHandler` (Primitives.cpp:27719)
+  2. Handler sets up `VMCallbackContext`, calls `enterInterpreterFromCallback`
+  3. `enterInterpreterFromCallback` (Interpreter.cpp:2459) signals
+     `g_callbackSemaphoreIndex` and runs a nested interpret loop
+  4. After 10M nested steps (`kCallbackTimeout` at Interpreter.cpp:2511),
+     if no `primitiveCallbackReturn` arrived, vmcc returns 0 to C
+
+If `g_callbackSemaphoreIndex` is 0 (never set by `primitiveInitilizeCallbacks`),
+`signalSemaphoreDirectly` is a no-op. The TFRunner handler process
+never wakes, the 10M-step timeout always fires, and qsort sees every
+comparison return 0 (equal) — so it completes with minimal callbacks
+and the array stays unsorted.
+
+### Next step (parked)
+
+Add a one-shot `fprintf(stderr, ...)` inside
+`Interpreter::primitiveInitilizeCallbacks` (Primitives.cpp:27765) to
+confirm whether the image calls it during TFRunner initialization.
+If it is never called, the bug is in the image-side TFRunner setup
+(probably the test harness's `TFRunner new` path vs. the production
+`TFRunner default` path). If it is called with index>0 but the
+handler process still never wakes, the semaphore-signal path from
+`enterInterpreterFromCallback` to the Pharo semaphore wait is
+broken.
+
+Task #4 parked — deep investigation needed, not a quick fix.
 
 ## tempNamed: cluster — NOT a VM bug (2026-04-14)
 
