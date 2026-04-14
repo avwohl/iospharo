@@ -115,3 +115,4 @@ serialized-stack
 
 # Test leftovers
 test.txt
+.claude/
