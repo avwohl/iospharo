@@ -239,6 +239,10 @@ Our test harness reports different paths than standard Pharo VM.
   expression `T1 + T2 + (T3 - {#a. #b}) + ...`.  Pharo 13 OpalCompiler
   treats the dynamic-array literal elements as variable references in
   the class-definition parser context.  Image-side parser bug.
+  **Confirmed 2026-04-14**: reproduces identically on stock Cog with a
+  minimal `CDFluidClassDefinitionParser parse:` + `ShiftClassBuilder`
+  probe — both VMs produce the same `OCCodeError Undeclared variable`.
+  Not a VM regression.
 
 **6. Primitive / scanning — 1 error, 1 failure**
 - ProtoObjectTest>>testFastPointersTo — ShouldNotImplement in
