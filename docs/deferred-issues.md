@@ -43,6 +43,25 @@ either by detecting them (class name match) and using `tc run: result`
 directly, or by dropping the P60 relinquish watchdog once we trust the
 P40 deadline. Owner: harness submodule.
 
+**Update (2026-04-14, session 7):** harness fast-path landed
+(submodule commit 1522332) for SemaphoreTest/BlockClosureValueWithin*.
+Re-running the four classes drops from 10 failures → 4:
+
+    SemaphoreTest                        18 P  1 F  (testWaitTimeoutSecondsOnCompletionOnTimeout)
+    BlockClosureValueWithinTest           5 P  1 F  (testValueWithinTimingNestedInnerMilliseconds)
+    BlockClosureValueWithinDurationTest   5 P  1 F  (testValueWithinTimingNestedInner)
+    ProcessTest                           —    1 TIMEOUT (testChangingOtherPriorityAffectsScheduling)
+
+Remaining residuals all involve **nested** Delay/Semaphore
+timeouts or cross-priority scheduling — not something a further
+harness simplification will address. Deeper question: does our
+`Delay>>wait` honor nested valueWithin deadlines the same way Cog
+does? Candidate: in the nested case, inner deadline's Delay may
+not be unscheduled from the DelayScheduler when outer raises
+TimedOut, leaving a stale signal that upsets the next test.
+Next diagnostic step: trace Delay scheduling during nested
+valueWithin with `PHARO_DELAY_DEBUG=1` (not yet implemented).
+
 ## 2. Reflection-walk perf under batch load
 
 **Tests affected:** any test that walks `allObjects` or `allInstances`:
