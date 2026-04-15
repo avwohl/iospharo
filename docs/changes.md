@@ -22,6 +22,13 @@ bcOffset with a non-zero SimStack entry state. Stored per-JITMethod
 (keyed by `JITMethod*`, GC-stable) rather than per-oop so GC
 compaction doesn't invalidate the map.
 
+Follow-up: the two inline resume paths in `Interpreter.cpp` (the
+inline-tryResume after stencil exit and the precomputed resume-entry
+taken on ~93% of J2J returns) also honor the SimStack entry-state
+guard. Result: `3+4`, `Smalltalk version`, and heavy collection
+workloads (`(1 to: 100000) inject: 0 into:`) all work cleanly at
+unlimited JIT with or without Tier-2.
+
 2026-04-14
 
 ## Fix: Periodic-check alignment lock on extension bytes

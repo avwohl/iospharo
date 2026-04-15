@@ -605,7 +605,34 @@ stale Oops from setUp's `keys do:[:n| dict at: n put: n,n]` loop.
 Closes the VM-side investigation of deferred #3. Further work is
 either a test-runner rewrite or a stack-slot scrub primitive.
 
-## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
+## 4. JIT eval-mode boot hang (RESOLVED 2026-04-15)
+
+**RESOLVED (2026-04-15, session 15, commit 6c7658e).** Root cause:
+`tryResume` entered `_N` register-reading stencil variants (e.g.
+`stencil_jumpFalse_1` that loads TOS from x19) after a send returned
+to an offset where the stencil chain would normally have populated
+those registers. Because tryResume is a cold entry from C, x19-x22
+held whatever the C caller left — a garbage value that failed the
+boolean check and took the non-boolean spill-and-deopt path, leaking
+a stack slot per resume and never advancing `state.ip`. Compounded
+by `bcEntryStates_` (the side-table diagnosing resume safety) being
+keyed by compiledMethod oop and going stale on GC compaction, so
+the resume-safety check returned state=0 (clear to resume) even on
+a `_1` stencil.
+
+Two-part fix:
+1. `bcEntryStates_` rekeyed by `JITMethod*` (GC-stable).
+2. `tryResume` / `tryResumeFast` reject entry when `entryState != 0`;
+   interpreter keeps running (loses minor JIT coverage at resume
+   points, gained full correctness).
+
+Verified: MAX=8 through unlimited JIT with `PHARO_NO_T2=1`, plus
+full T2, all evaluate `3+4`, `Smalltalk version`, and
+`(1 to: 100000) inject: 0 into: [:a :b | a + b]` cleanly.
+
+Original investigation history preserved below for future reference.
+
+---
 
 **Status (2026-04-14, session 3 correction):** the earlier "resolved"
 claim was wrong. The fresh-image test ran without `PHARO_NO_JIT=0`, so

@@ -12498,6 +12498,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     jit::JITMethod* callerJM = jitRuntime_.methodMap().lookup(
                         method.rawBits());
                     if (!callerJM || !callerJM->isExecutable()) return true;
+                    // Safety: refuse register-reading (_N) entry offsets —
+                    // see JITRuntime::tryResume / deferred-issues.md #4.
+                    if (jitRuntime_.getBcEntryState(callerJM, bcOffset) != 0) return true;
                     uint32_t codeOff = callerJM->codeOffsetForBC(bcOffset);
                     if (codeOff == 0 || codeOff >= callerJM->codeSize) return true;
                     state.jitMethod = callerJM;
@@ -13047,9 +13050,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             savedBcStart = sMO->bytes() + (1 + sNL) * 8;
                             uint32_t pastSendOff = static_cast<uint32_t>(
                                 instructionPointer_ - savedBcStart);
-                            uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
-                            if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
-                                savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                            // Safety: never precompute a resume into a
+                            // register-reading (_N) stencil offset —
+                            // see JITRuntime::tryResume / deferred-issues.md #4.
+                            if (jitRuntime_.getBcEntryState(savedJitMethod, pastSendOff) == 0) {
+                                uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
+                                if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
+                                    savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                            }
                         }
 
                         // --- Set up callee in JITState ---
