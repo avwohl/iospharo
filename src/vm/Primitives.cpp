@@ -14772,6 +14772,34 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
         return PrimitiveResult::Failure;
     }
 
+    // PHARO_DELAY_DEBUG: log every arm/disarm with current UTC and remaining
+    // delta for diagnosing nested valueWithin / Semaphore>>wait: timeout races.
+    static const char* delayDbg = getenv("PHARO_DELAY_DEBUG");
+    if (delayDbg && *delayDbg) {
+        static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
+        auto now = std::chrono::system_clock::now();
+        int64_t curUsec = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count() + kSmalltalkEpochOffset;
+        int64_t prevRemaining = (timerWasArmed_ && nextWakeupUsec_ != INT64_MAX)
+            ? (nextWakeupUsec_ - curUsec) : 0;
+        Oop active = getActiveProcess();
+        int pri = safeProcessPriority(active);
+        if (usecs == 0 || sema.isNil()) {
+            fprintf(stderr, "[DELAY-DISARM] cur=%lld semaNil=%d pri=%d wasArmed=%d prevDeadline=%lld remainUs=%lld\n",
+                    (long long)curUsec, (int)sema.isNil(), pri,
+                    (int)timerWasArmed_, (long long)nextWakeupUsec_,
+                    (long long)prevRemaining);
+        } else {
+            int64_t newDelta = usecs - curUsec;
+            fprintf(stderr, "[DELAY-ARM] cur=%lld pri=%d sema=0x%llx newDeadline=%lld deltaUs=%lld (wasArmed=%d prevDeadline=%lld prevRemain=%lld)\n",
+                    (long long)curUsec, pri,
+                    (unsigned long long)sema.rawBits(),
+                    (long long)usecs, (long long)newDelta,
+                    (int)timerWasArmed_, (long long)nextWakeupUsec_,
+                    (long long)prevRemaining);
+        }
+    }
+
     // Store the timer info
     if (usecs == 0 || sema.isNil()) {
         // Disable timer

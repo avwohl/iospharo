@@ -2164,12 +2164,19 @@ void Interpreter::checkTimerSemaphore() {
 
         if (currentUsec >= nextWakeupUsec_) {
             Oop semaphore = timerSemaphore_;
+            int64_t firedDeadline = nextWakeupUsec_;
             lastKnownTimerSemaphore_ = semaphore;  // save for recovery
             timerSemaphore_ = Oop::nil();
             nextWakeupUsec_ = INT64_MAX;
             lastTimerSignalTime_ = std::chrono::steady_clock::now();
             timerWasArmed_ = false;
             schedulerDeathLogged_ = false;
+            if (const char* dbg = getenv("PHARO_DELAY_DEBUG"); dbg && *dbg) {
+                fprintf(stderr, "[DELAY-FIRE] cur=%lld deadline=%lld lateUs=%lld sema=0x%llx\n",
+                        (long long)currentUsec, (long long)firedDeadline,
+                        (long long)(currentUsec - firedDeadline),
+                        (unsigned long long)semaphore.rawBits());
+            }
             synchronousSignal(semaphore);
             return;
         }
