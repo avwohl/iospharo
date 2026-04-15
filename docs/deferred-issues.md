@@ -667,6 +667,47 @@ investigation into which stencil/frame-materialization path
 duplicates the stack slot and/or builds a self-referencing
 context sender.
 
+**Symptom update (2026-04-15, session 16):** on current `jit`
+branch, `PHARO_NO_JIT=0 PHARO_NO_T2=1 JIT_MAX_COMPILE=10` no
+longer hits the `copyTo:` recursion at fd=4090. Instead the VM
+runs for ~10s hitting "only integers should be used as indices"
+during Spec/debugger startup (before `startup.st` fires), then
+goes idle in `ProcessorScheduler class>>idleProcess` —
+`[IMAGE] 3` never prints, eval never completes. Either the
+session-15 resume guard is catching some `_N` entries that were
+previously leaking (reducing the stack corruption), or the log
+diagnostics I added changed timing enough to rewrite the failure
+mode. Either way, the underlying JIT bug is still there — just
+manifests differently.
+
+**Bisect with `PHARO_JIT_SKIP_SELECTORS` (session 16):** skipping
+only `do:` lets the boot succeed up to MAX=11 (after #10 `at:put:`
+and #11 `key`), but MAX=12 — which compiles `nextPut:` at oop
+0x3003000a8 — fails the same way. So the failure isn't do:-
+specific; other iteration/stream methods trip the same
+(unidentified) JIT pathology once the JIT compiler builds up more
+state. Session 15's `_N`-stencil resume guard is necessary but
+not sufficient.
+
+**Diagnostics attempted (not conclusive):**
+- Added per-call `materializeFrameStack` reuse vs new-alloc
+  counters (`[MAT-SUMMARY]`). Stable pattern of ~125-137 reused
+  + 4-8 new allocations per call; ratio is healthy, not evidence
+  of a broken cache.
+- Added global Context allocation counter (`[CTX-ALLOC]`). MAX=10
+  allocates 500K+ contexts before hanging; MAX=9 allocates 400K+
+  and still finishes cleanly — so raw allocation pressure is not
+  the discriminator.
+- Self-sender hypothesis (primitiveSetSender / primitiveTerminateTo
+  / all 6 materialization write paths) disproven: no
+  `storePointer(0, ctx, ctx)` fires before the hang. All those
+  diagnostics are reverted.
+
+Concrete next step to try: dump the `nextPut:` bytecode (oop
+0x3003000a8) alongside `do:` (0x30032ee48) and see if they share
+a _N stencil pattern the session-15 guard missed (e.g. a specific
+resume path like `state.ip`-advance after `returnReceiver_N`).
+
 ---
 
 **Status (2026-04-14, session 3 correction):** the earlier "resolved"
