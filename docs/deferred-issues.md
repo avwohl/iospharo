@@ -605,32 +605,53 @@ stale Oops from setUp's `keys do:[:n| dict at: n put: n,n]` loop.
 Closes the VM-side investigation of deferred #3. Further work is
 either a test-runner rewrite or a stack-slot scrub primitive.
 
-## 4. JIT eval-mode boot hang (RESOLVED 2026-04-15)
+## 4. JIT eval-mode boot hang (PARTIAL FIX 2026-04-15, still broken at MAX≥10)
 
-**RESOLVED (2026-04-15, session 15, commit 6c7658e).** Root cause:
-`tryResume` entered `_N` register-reading stencil variants (e.g.
-`stencil_jumpFalse_1` that loads TOS from x19) after a send returned
-to an offset where the stencil chain would normally have populated
-those registers. Because tryResume is a cold entry from C, x19-x22
-held whatever the C caller left — a garbage value that failed the
-boolean check and took the non-boolean spill-and-deopt path, leaking
-a stack slot per resume and never advancing `state.ip`. Compounded
-by `bcEntryStates_` (the side-table diagnosing resume safety) being
-keyed by compiledMethod oop and going stale on GC compaction, so
-the resume-safety check returned state=0 (clear to resume) even on
-a `_1` stencil.
+**PARTIAL (2026-04-15, session 15, commits 6c7658e + ff7159d +
+49caee0).** The session-14d `max:` stack leak is fixed. `PHARO_NO_T2=1
+JIT_MAX_COMPILE=8` (method #8 = `max:`) and `=9` (adds `at:` prim)
+now boot cleanly with JIT enabled.
 
-Two-part fix:
+**Still broken: `JIT_MAX_COMPILE=10` compiles `do:` (oop
+0x30032ee48) and the boot hangs with `Context>>copyTo:` recursion
+at fd=4090+** — the same `do:` hang originally found in session 3.
+My earlier "RESOLVED" claim was verified only in eval mode's
+auto-disabled JIT path (`test_load_image.cpp:603` setenv
+`PHARO_NO_JIT=1` unless overridden). With `PHARO_NO_JIT=0` the
+broader hang is not closed.
+
+Root cause identified for session-14d leak: `tryResume` entered
+`_N` register-reading stencil variants (e.g.
+`stencil_jumpFalse_1` that loads TOS from x19) after a send
+returned to an offset where the stencil chain would normally have
+populated those registers. Cold entry from C left x19-x22 as
+garbage; `_1` jump stencils took the non-boolean spill-and-deopt
+path, leaking a stack slot per resume and never advancing
+`state.ip`. Compounded by `bcEntryStates_` keyed by compiledMethod
+oop going stale on GC compaction.
+
+Two-part fix applied:
 1. `bcEntryStates_` rekeyed by `JITMethod*` (GC-stable).
-2. `tryResume` / `tryResumeFast` reject entry when `entryState != 0`;
-   interpreter keeps running (loses minor JIT coverage at resume
-   points, gained full correctness).
+2. All four resume paths (`tryResume`, `tryResumeFast`,
+   inline-tryResume in J2J return, precomputed-resume fast path)
+   refuse entry at bcOffsets with non-zero SimStack entry state.
 
-Verified: MAX=8 through unlimited JIT with `PHARO_NO_T2=1`, plus
-full T2, all evaluate `3+4`, `Smalltalk version`, and
-`(1 to: 100000) inject: 0 into: [:a :b | a + b]` cleanly.
+**Next step:** investigate `do:` JIT compilation at MAX=10.
+Candidate: `do:`'s `[i <= size] whileTrue: [aBlock value: (self
+at: i). i := i + 1]` body contains `lessEqualSmallInt_2` and
+`jumpFalse_1` at bc[8]/bc[9] and a jumpBack at bc[23]. The
+whileTrue loop body has J2J send patterns (sendJ2J at bc[14]/[15]
+for `at:` + `value:`) whose returns resume at offsets that my new
+guard correctly rejects — but something downstream (context
+sender chain?) still gets corrupted.
 
-Original investigation history preserved below for future reference.
+Hypothesis: when my guard rejects resume, the interpreter
+continues at the same bytecode offset. If JIT-set stack state
+(e.g. `_N` registers, saved J2J frames) isn't fully flushed to
+the interpreter-visible stack before returning from the chain
+loop, the interpreter sees an out-of-sync stack and miscomputes
+a subsequent context sender or activation arg count, leading
+to a sender-cycle and copyTo: recursion at unwind time.
 
 ---
 
