@@ -147,6 +147,34 @@ Tools added this session that ARE working and useful for future bisects:
 - When selectorOf returns `?` at compile time, log numLits + classNames
   of the penultimate and last literals to help identify block methods.
 
+**Session-3 bisect LOCALIZED: it's the `do:` method at
+oop 0x30032ee48.** With `PHARO_NO_T2=1 PHARO_NO_JIT=0` on a fresh
+image, JIT_MAX_COMPILE=7 works, N=8 (compiles `max:`) still works
+when we exclude max:, N=9 which compiles `do:` (0x30032ee48) hangs.
+Excluding that single oop via `JIT_EXCLUDE_OOP=0x30032ee48` delays
+but does not eliminate the hang — **some later compile of a sibling
+do: implementation triggers the same issue**.
+
+The `do:` bytecodes (26 bc, 3 lits — ByteSymbol lit[1]=#size? lit[2]=#at?
+lit[3]=GlobalVariable class binding) are the standard
+`| size i | size := self size. i := 1. [i <= size] whileTrue: [aBlock
+value: (self at: i). i := i + 1]` form. The J2J chain at bc[14]/[15]
+does `self at: i` -> `aBlock value:` back-to-back with stencil_sendJ2J
+(op 0x70 -> operand 16842766 for #at:, op 0x7A -> 16842767 for #value:).
+
+Suspect stencil(s): either
+  - stencil_sendJ2J when the target is a FullBlockClosure>>value:
+    (op 0x7A, value: special selector — bc 0x78-0x7B range)
+  - stencil_jumpBack (op 0xB0) in the whileTrue loop
+  - the interaction between them when J2J-chained after a block call
+
+**Dump tooling (new, committed):**
+- `PHARO_JIT_DUMP_SEL=sel1,sel2,...` — at compile time for any matching
+  selector, print methodOop, numLits, literal Oop+class, and the full
+  stencil decode table.
+- `PHARO_JIT_TOP=1` — append top-10 hottest-JIT-method list to each
+  periodic [JIT] Stats line (by JITMethod.executionCount).
+
 **New diagnostic (2026-04-14 session 3):** full-JIT hang shows a
 **massive J2J call/return imbalance** in the JIT stats:
 

@@ -2011,7 +2011,31 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         std::string sel = interp_.memory().selectorOf(compiledMethod);
         bool isKeysDo = (sel == "keysDo:");
         bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:" || sel == "hasChanged" || sel == "hasPrimitive" || sel == "primitive");
-        if (methodsCompiled_ <= 5 || isKeysDo || isDebugTarget) {
+        // Env-based selector dump: PHARO_JIT_DUMP_SEL=do:,max:,...
+        static const char* dumpSelEnv = getenv("PHARO_JIT_DUMP_SEL");
+        bool isEnvDump = false;
+        if (dumpSelEnv) {
+            std::string excl(dumpSelEnv);
+            size_t pos = 0;
+            while (pos < excl.size()) {
+                size_t comma = excl.find(',', pos);
+                if (comma == std::string::npos) comma = excl.size();
+                if (sel == excl.substr(pos, comma - pos)) { isEnvDump = true; break; }
+                pos = comma + 1;
+            }
+        }
+        if (methodsCompiled_ <= 5 || isKeysDo || isDebugTarget || isEnvDump) {
+            if (isEnvDump) {
+                fprintf(stderr, "[JIT-DUMP] methodOop=0x%llx numLits=%d bcLen=%zu\n",
+                        (unsigned long long)compiledMethod.rawBits(),
+                        numLiterals, bcLen);
+                for (int li = 1; li <= numLiterals; li++) {
+                    Oop lit = methObj->slotAt(li);
+                    fprintf(stderr, "[JIT-DUMP]   lit[%d]=0x%llx cls=%s\n", li,
+                            (unsigned long long)lit.rawBits(),
+                            interp_.memory().classNameOf(lit).c_str());
+                }
+            }
             fprintf(stderr, "[JIT] Method #%zu compiled (%u bytes, %zu bytecodes) #%s:\n",
                     methodsCompiled_, totalSize, decoded.size(), sel.c_str());
             if (isDebugTarget) {
