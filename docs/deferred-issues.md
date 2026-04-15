@@ -229,6 +229,17 @@ Only residual: `ProcessTest>>testResumeAfterBCR`, which is a
 separate BlockCannotReturn-resume semantics issue, not a timing
 issue. Not addressed by this fix.
 
+**Update (2026-04-15, session 14): testResumeAfterBCR is no
+longer failing.** Verified with `PHARO_NO_JIT=1`:
+  - Standalone (`tc run: result`): 10/10 pass
+  - Full ProcessTest class direct-run: 46/46 pass
+
+The earlier "residual" note was made before the periodic-check
+alignment-lock fix (commit cc10bce) and is now stale. The BCR
+semantics work; the test just relied on timer/preemption that
+had been blocked by the alignment lock. Deferred #1 fully
+closed.
+
 The earlier GC-duration observations (140-300ms fullGC runs) are
 real, but they no longer produce test failures because the timer
 semaphore fires reliably on every 1024-bytecode periodic check
