@@ -6778,8 +6778,16 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
             size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
             for (size_t f = start; f < frameDepth_; f++) {
                 Oop savedM = savedFrames_[f].savedMethod;
+                Oop savedR = savedFrames_[f].savedReceiver;
                 std::string savedSel = memory_.selectorOf(savedM);
-                fprintf(stderr, "  [%zu] #%s (oop=0x%llx)\n", f, savedSel.c_str(),
+                Oop rcvrSender = memory_.nil();
+                if (savedR.isObject() && savedR.rawBits() > 0x10000) {
+                    rcvrSender = memory_.fetchPointer(0, savedR);
+                }
+                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx rcvr.sender=0x%llx method=0x%llx\n",
+                        f, savedSel.c_str(),
+                        (unsigned long long)savedR.rawBits(),
+                        (unsigned long long)rcvrSender.rawBits(),
                         (unsigned long long)savedM.rawBits());
             }
             fflush(stderr);
