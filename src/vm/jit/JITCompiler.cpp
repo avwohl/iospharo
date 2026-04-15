@@ -1563,15 +1563,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (simStackEntryState.size() != decoded.size())
             simStackEntryState.assign(decoded.size(), 0);
 
-        // Spill-warning: flag any method that emits a stencil_*_4 variant,
-        // which indicates register-stack spill (push/dup beyond 4 regs).
-        // Enabled by PHARO_JIT_SPILL_WARN=1. The hypothesis under investigation
-        // is that push_4 spills the SP forward but the corresponding pop_4
-        // does not rewind, leaking stack slots.
+        // Spill-warning: flag any method that emits a stencil_*_4 variant
+        // (push/dup beyond 4 regs → memory spill) or any flush[1-4] stencil
+        // (state→memory transitions at barriers).
+        //
+        // Enabled by PHARO_JIT_SPILL_WARN=1. push_4/dup_4 spills the SP
+        // forward; flush1..flush4 always write 1-4 values to memory at the
+        // current sp. Either path can leak/corrupt stack slots if the
+        // compile-time SimStack state disagrees with runtime register
+        // contents.
         {
             static const char* spillEnv = getenv("PHARO_JIT_SPILL_WARN");
             if (spillEnv && *spillEnv == '1') {
-                int spillCount = 0;
+                int spillCount = 0;   // push_4/dup_4 → memory
+                int flushCount = 0;   // flush[1-4] → memory
                 for (auto& d : decoded) {
                     auto sid = static_cast<StencilID>(d.stencilIdx);
                     switch (sid) {
@@ -1586,29 +1591,43 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     case StencilID::stencil_dup_4:
                         spillCount++;
                         break;
+                    case StencilID::stencil_flush1:
+                    case StencilID::stencil_flush2:
+                    case StencilID::stencil_flush3:
+                    case StencilID::stencil_flush4:
+                        flushCount++;
+                        break;
                     default:
                         break;
                     }
                 }
-                if (spillCount > 0) {
+                if (spillCount > 0 || flushCount > 0) {
                     std::string sel = interp_.memory().selectorOf(compiledMethod);
-                    fprintf(stderr, "[JIT-SPILL] #%zu #%s: %d spill stencils\n",
-                            methodsCompiled_, sel.c_str(), spillCount);
+                    fprintf(stderr, "[JIT-SPILL] #%zu #%s: %d spill + %d flush\n",
+                            methodsCompiled_, sel.c_str(), spillCount, flushCount);
                 }
             }
         }
 
         // Post-SimStack dump (JIT_DUMP_BC_POST=selectorName)
+        // Includes entry SimStack state + stencil name so we can eyeball the
+        // state transitions for a suspect method (e.g., method #8 max:).
         {
             static const char* dumpSel = getenv("JIT_DUMP_BC_POST");
             if (dumpSel && *dumpSel) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 if (sel == dumpSel) {
-                    fprintf(stderr, "[JIT-BC-POST] #%s post-SimStack stencils:\n", sel.c_str());
+                    fprintf(stderr, "[JIT-BC-POST] #%s post-SimStack stencils (size=%zu):\n",
+                            sel.c_str(), decoded.size());
                     for (size_t d = 0; d < decoded.size(); d++) {
-                        fprintf(stderr, "[JIT-BC-POST]   [%zu] stencil=%u operand=%d bc=%d br=%d\n",
-                                d, decoded[d].stencilIdx, decoded[d].operand,
-                                decoded[d].bcOffset, decoded[d].branchTarget);
+                        int entrySt = (d < simStackEntryState.size()) ? simStackEntryState[d] : -1;
+                        const char* name = (decoded[d].stencilIdx < NumStencils)
+                                           ? stencilTable[decoded[d].stencilIdx].name
+                                           : "???";
+                        fprintf(stderr,
+                                "[JIT-BC-POST]   [%zu] st=%d %s(id=%u) op=%d bc=%d br=%d\n",
+                                d, entrySt, name, decoded[d].stencilIdx,
+                                decoded[d].operand, decoded[d].bcOffset, decoded[d].branchTarget);
                     }
                 }
             }
