@@ -11403,6 +11403,31 @@ PrimitiveResult Interpreter::primitiveFileWrite(int argCount) {
             if (c == '\n' || c == '\r') {
                 if (!g_imageOutputBuffer.empty()) {
                     fprintf(stderr, "[IMAGE] %s\n", g_imageOutputBuffer.c_str());
+                    // Dump call stack on the specific error we're chasing.
+                    static int onlyIntsDumped = 0;
+                    if (onlyIntsDumped < 2 &&
+                        g_imageOutputBuffer.find("only integers") != std::string::npos) {
+                        onlyIntsDumped++;
+                        fprintf(stderr, "[ERR-STACK] #%d FULL call stack (depth=%zu) when printing '%s':\n",
+                                onlyIntsDumped, frameDepth_, g_imageOutputBuffer.c_str());
+                        size_t n = frameDepth_;
+                        // Dump first 30 (caller context) and last 30 (call site)
+                        size_t lastStart = n > 30 ? n - 30 : 0;
+                        for (size_t j = 0; j < n; j++) {
+                            if (j == 30 && n > 60) {
+                                fprintf(stderr, "[ERR-STACK]   ... %zu frames elided ...\n",
+                                        lastStart - 30);
+                                j = lastStart - 1;
+                                continue;
+                            }
+                            Oop m = savedFrames_[j].savedMethod;
+                            Oop r = savedFrames_[j].savedReceiver;
+                            std::string sel = memory_.selectorOf(m);
+                            std::string cls = memory_.classNameOf(r);
+                            fprintf(stderr, "[ERR-STACK]   [%zu] %s>>%s\n",
+                                    j, cls.c_str(), sel.c_str());
+                        }
+                    }
                     g_imageOutputBuffer.clear();
                 }
             } else if (c >= 32 && c < 127) {  // printable ASCII only

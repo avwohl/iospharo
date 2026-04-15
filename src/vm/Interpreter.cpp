@@ -7314,25 +7314,29 @@ void Interpreter::setReceiverInstVar(size_t index, Oop value) {
             traceActive = true;
             fprintf(stderr, "[RS-TRACE] Activated at step %llu\n", g_stepNum);
         }
-        if (traceActive && rsTraceCount < 200 && index <= 2 && value.isSmallInteger()) {
+        if (traceActive && rsTraceCount < 300 && index <= 3 && value.isSmallInteger()) {
             std::string rcls = memory_.classNameOf(receiver_);
-            if (rcls.find("ReadStream") != std::string::npos) {
+            if (rcls.find("ReadStream") != std::string::npos || rcls.find("Scanner") != std::string::npos
+                || rcls.find("Parser") != std::string::npos) {
                 rsTraceCount++;
-                // Also get the collection string if it's small
+                Oop coll = memory_.fetchPointerUnchecked(0, receiver_);
                 std::string collStr = "";
-                if (index == 1) {  // position write
-                    Oop coll = memory_.fetchPointerUnchecked(0, receiver_);
-                    if (coll.isObject() && coll.rawBits() > 0x10000) {
-                        ObjectHeader* ch = coll.asObjectPtr();
-                        if (ch->isBytesObject() && ch->byteSize() <= 30) {
-                            collStr = std::string((char*)ch->bytes(), ch->byteSize());
-                        }
+                int64_t collSize = -1;
+                if (coll.isObject() && coll.rawBits() > 0x10000) {
+                    ObjectHeader* ch = coll.asObjectPtr();
+                    if (ch->isBytesObject() && ch->byteSize() <= 40) {
+                        collStr = std::string((char*)ch->bytes(), ch->byteSize());
                     }
+                    collSize = (int64_t)ch->byteSize();
                 }
-                fprintf(stderr, "[RS-STORE] slot[%zu] := %lld (method=%s coll='%s')\n",
-                        index, value.asSmallInteger(),
-                        memory_.selectorOf(method_).c_str(),
-                        collStr.c_str());
+                Oop s1 = memory_.fetchPointerUnchecked(1, receiver_);
+                Oop s2 = memory_.fetchPointerUnchecked(2, receiver_);
+                fprintf(stderr, "[RS-STORE] cls=%s slot[%zu]:=%lld (s1=%lld s2=%lld collSize=%lld coll='%s' method=%s)\n",
+                        rcls.c_str(), index, value.asSmallInteger(),
+                        s1.isSmallInteger() ? s1.asSmallInteger() : -999,
+                        s2.isSmallInteger() ? s2.asSmallInteger() : -999,
+                        (long long)collSize, collStr.c_str(),
+                        memory_.selectorOf(method_).c_str());
             }
         }
     }
