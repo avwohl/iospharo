@@ -93,6 +93,35 @@ test's inner Delay can still fire on schedule.
 Standalone (no fork, no `relinquishProcessor` polling) the test
 always passes with time 100-124ms — no late fires above 5us.
 
+**Update (2026-04-15, session 12b): GC is the real culprit.**
+Added `[GC-LONG]` log in `ObjectMemory::fullGC` (gated by
+PHARO_DELAY_DEBUG, logs any GC ≥10ms). Re-ran the reproducer.
+
+    Smalltalk garbageCollect  →  fullGC took 141-302ms
+    Immediately after GC      →  [DELAY-FIRE] lateUs=136-159k
+
+Every 130+ms late fire in the trace sits directly against a GC
+boundary. During `fullGC` the main interpreter loop is blocked,
+so `checkTimerSemaphore` never runs until the GC returns.
+Timer-fire latency = GC duration.
+
+Measured eval-process priority: `Processor activeProcess name =
+'Morphic UI Process', priority = 40`. DelayScheduler runs at
+P80. So the earlier "same-priority contention" theory was also
+wrong — eval is at P40, DelayScheduler is higher priority and
+preempts immediately when the timer sema signals. The 20-30ms
+extra slack in forked vs standalone test timing is the cumulative
+fork-setup + context-switch cost at P40→P40 same-priority
+round-robin via heartbeat (2ms per yield), but that's normal
+cooperative-scheduler behavior, not a bug.
+
+The real problem is GC duration. A 88MB heap with 750K marked
+objects takes ~170ms per compact. Stock Cog on the same heap
+would be under 50ms. The `copyAndUnmark` + `planCompactSavingForwarders`
+passes are linear in heap size and run every time. With more than
+one GC during a 100ms window (e.g. while filling a test's inner
+valueWithin), the test can easily overshoot its 150ms assertion.
+
 **Refined hypothesis (corrected):** first read of the VM code blamed a
 50ms block in `checkTimerSemaphore`, but that was wrong. The facts:
 
@@ -152,6 +181,25 @@ preemptive scheduler. On our cooperative P80-vs-P80 setup it
 fails ~20% of the time even though the test is semantically
 correct. Option (1) is the cheapest fix and addresses the root
 cause. Owner: VM primitives.
+
+**Real next step (2026-04-15):** the contention story above is
+a red herring. The dominant cost is fullGC duration (140-300ms).
+Real fix paths:
+
+  - Don't do a fullGC during active test runs. Investigate why
+    the image is triggering GC so frequently: allocation pressure
+    from the harness wrapper (exception tables, TestResult,
+    Delay scheduling objects) adds up across 1000+ tests. A
+    generational/incremental GC would keep per-cycle cost bounded.
+  - `planCompactSavingForwarders` + `copyAndUnmark` walk the
+    entire used heap (~86MB observed). Profile which phase
+    dominates and see if we can lazily re-mark instead of full
+    sweep.
+  - If we can't shorten fullGC, at least call `checkTimerSemaphore`
+    during long GC phases (safe — timer semaphore is a single
+    Oop, no scheduler state mutation).
+
+Owner: VM ObjectMemory + GC.
 
 ## 2. Reflection-walk perf under batch load
 

@@ -1468,6 +1468,17 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     gcCount_++;
     totalGCTime_ += result.milliseconds;
+
+    // PHARO_DELAY_DEBUG: log any GC over 10ms. Long GCs stall the main
+    // interpreter loop, which is what blocks checkTimerSemaphore and
+    // causes delay-fire latency spikes seen in timing tests.
+    if (const char* dbg = getenv("PHARO_DELAY_DEBUG"); dbg && *dbg) {
+        if (result.milliseconds >= 10) {
+            fprintf(stderr, "[GC-LONG] took=%lldms marked=%zu bytesReclaimed=%zu usedBefore=%zu usedAfter=%zu\n",
+                    (long long)result.milliseconds, markedCount,
+                    result.bytesReclaimed, usedBefore, usedAfter);
+        }
+    }
     return result;
 }
 
