@@ -1112,6 +1112,44 @@ that would confirm the corruption is in the subclass-walk path
 rather than ensure:. If neither helps, disassemble the 120-method
 batch's stack-touching stencils and look for an off-by-one.
 
+**Tried and didn't localize (session 14c cont'd):**
+
+  1. `PHARO_JIT_SKIP_SELECTORS=allSubclassesDo:,subclassesDo:,do:`
+     shifts the DNU to `#asSymbol` on `Symbol class` inside
+     `#bindingOf:` P80 — still dies. Array>>do: still appears in
+     the stack because Array's own do: is different from the
+     skipped-by-selector matches.
+
+  2. `PHARO_JIT_SKIP_SELECTORS=ensure:` (#120 becomes
+     valueNoContextSwitch, skipped the deferred-issue-flagged
+     method): boot progresses further (148 methods compile vs
+     120), but hits stack overflow on `#isFinite` (same symptom
+     as session-11 baseline). Different failure mode, not a fix.
+
+  3. DNU's receiver analysis: rcvr=0x300016768 (reported as
+     "Symbol class" metaclass), argCount=0, current method
+     0x3003e5a88 selector=bindingOf:. receiver_=0x300967f88 (not
+     the DNU receiver). FP dump shows 0x300016768 at FP[-1],
+     FP[1], FP[3] — three copies of the same Oop in adjacent
+     stack slots, with nil (0x300000000) at FP[2]. Suggests a
+     pushTemp/push bytecode is copying a stack slot into multiple
+     positions.
+
+Bigger picture: 119 methods compile cleanly, #120 (or whichever
+method reaches the 120th-compile slot) breaks something so that
+the FFI subclass-walk's stack is corrupted. But method #120
+itself doesn't run — the DNU hits a method like `bindingOf:`
+that was probably already compiled in the first 119. So the
+compile of #120 corrupted something *shared* (IC/MegaCache?
+codezone page permissions?) that later causes #119-or-earlier
+code to misbehave.
+
+Alternative theory: the 120-method threshold coincidentally
+triggers a GC that invalidates something. Each [JIT] Stats
+cycle reports `map: N tracked, M hot` where M is the compile
+budget consumed. Worth checking whether `recoverAfterGC` (called
+after compact) leaves some IC or codezone field stale.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
