@@ -616,6 +616,42 @@ Alternate angle: add per-method JIT-call + JIT-return counters
 at method entry/exit, rerun with only max: compiled, look for
 a call/return imbalance specific to max:.
 
+**Session 10 (2026-04-14):** Added `PHARO_JIT_TRACE_OOP=0xhex`
+tracing on tryJITActivation entry/exit. Ran with only max:
+(0x3002cac38) JIT-compiled. Key finding:
+
+    max: entries = 20, returns = 20, delta = 0
+
+All twenty calls enter tryJITActivation and return cleanly with
+zero imbalance. **max:'s own call/return path is NOT the bug.**
+
+But the VM still hangs, with bytecode step counter rising from
+0 to 7M+ sends over 90s. The transition point is visible in JIT
+stats — `map: tracked` growing (discovering methods) until about
+sends=7.1M, then FREEZES at 3599 tracked / 2992 hot. At the same
+moment, IC misses start accumulating: 0 → 1790 → 11152 → 20514
+→ 29876 → 39239 → 48601 → 57963 per stats window. Hits stay at
+0, patched stays at 0.
+
+Interpretation: once startup gets past the "discover code" phase,
+it enters a tight retry loop where the same JIT-code sites
+IC-miss repeatedly but are never patched. With only max:
+compiled, these misses must be coming from max:'s own send
+bytecodes being re-executed via the chain-loop resume path
+(`JIT_CALL(callerJM->codeStart() + codeOff)` in Interpreter.cpp
+~12233) — NOT through tryJITActivation. The chain-loop re-entry
+reuses max:'s JIT code without going through the entry counter.
+
+Next tick: trace `ExitSend`/`ExitSendCached` in the chain loop
+for max:. Add a counter for `JIT_CALL(state.resumeAddr, &state)`
+invocations specifically when `state.method == traceOop`. If
+max: is being repeatedly resumed into the same IC site and
+something prevents patching, that's the leak.
+
+Also worth: log the selector + receiver class on every IC miss
+from max: — might reveal a mega-polymorphic call site where
+4-way IC can't keep up and patch keeps getting evicted.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)

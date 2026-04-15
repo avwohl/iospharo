@@ -11611,6 +11611,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (noJit) return false;
     jitActivations_++;
 
+    // PHARO_JIT_TRACE_OOP=0xhex — log entry/exit/exitReason for a specific
+    // method oop, and track call/return counts to surface imbalance.
+    static uint64_t traceOop = 0;
+    static bool traceInit = false;
+    if (!traceInit) {
+        traceInit = true;
+        if (const char* env = getenv("PHARO_JIT_TRACE_OOP"); env && *env) {
+            traceOop = strtoull(env, nullptr, 0);
+            fprintf(stderr, "[JIT-TRACE] watching oop 0x%llx\n",
+                    (unsigned long long)traceOop);
+        }
+    }
+    const bool traceThis = (traceOop != 0 && method.rawBits() == traceOop);
+    static size_t traceCalls = 0, traceRets = 0, traceNoCompile = 0;
+    if (traceThis) {
+        traceCalls++;
+        if (traceCalls <= 20 || (traceCalls & 0xFFF) == 0) {
+            fprintf(stderr, "[JIT-TRACE] CALL #%zu (ret=%zu nc=%zu) argCount=%d\n",
+                    traceCalls, traceRets, traceNoCompile, argCount);
+        }
+    }
+    struct TraceRetGuard {
+        bool active; size_t& rets; size_t& calls;
+        ~TraceRetGuard() {
+            if (!active) return;
+            rets++;
+            if (rets <= 20 || (rets & 0xFFF) == 0) {
+                fprintf(stderr, "[JIT-TRACE] RETURN #%zu (call=%zu delta=%lld)\n",
+                        rets, calls, (long long)(calls - rets));
+            }
+        }
+    } traceRetGuard{traceThis, traceRets, traceCalls};
+
     // Suppress tryJITResumeInCaller while the chain loop is active.
     // Both mechanisms resume JIT after sends return; having both active
     // simultaneously creates infinite mutual recursion.
@@ -11630,7 +11663,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // FAST PATH: check if method is compiled BEFORE expensive JITState setup.
     // This avoids ~20 pointer writes per send for non-compiled methods.
     jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-    if (!jm || !jm->isExecutable()) return false;
+    if (!jm || !jm->isExecutable()) {
+        if (traceThis) {
+            traceNoCompile++;
+            if (traceNoCompile <= 10) {
+                fprintf(stderr, "[JIT-TRACE] NO-COMPILE path for traced oop (call #%zu)\n",
+                        traceCalls);
+            }
+        }
+        return false;
+    }
 
     // Method is compiled — set up JITState
     jit::JITState state;
