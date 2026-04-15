@@ -472,7 +472,40 @@ Minimal-repro test kept: `/tmp/harness-fresh/Pharo.image eval
 "42 printString"` with `PHARO_NO_JIT=0 PHARO_NO_T2=1` hangs in
 DelaySemaphoreScheduler within ~15 s.
 
-Previous analysis (still valid) below.
+**Session 7 (2026-04-14):** Added `PHARO_TIMER_DEBUG=1` tracing for
+primitive 242 (primitiveSignalAtUTCMicroseconds) disable path —
+triggered when scheduler arms with usecs=0 or sema=nil. Under the
+JIT hang, re-instrumented the primitive with per-call logging too
+(both are in Primitives.cpp near line 14710).
+
+Findings:
+- The "timerSem=nil" observed in the session-4 diag snapshot is
+  **transient**, not permanent. The scheduler IS continuously rearming
+  the timer from P80 (100+ TIMER-CALL events in 15s, alternating
+  between two delays). `DIAG-TIMER` snapshots at other points show
+  `usecArmed=1 timerSem=set nextUsec=<valid future>`.
+- **The hang isn't a frozen scheduler — it's a starvation.** The P40
+  Morphic render loop (WorldState doDrawCycleWith: → ...)
+  is executing continuously while startup.st never gets a chance to
+  run. Bytecode step counter keeps climbing (~300K steps/sec) for
+  50+s with no `'42'` output or exit.
+- In non-JIT, the same image gets past startup.st cleanly — the P40
+  Morphic loop either doesn't start or yields promptly. Under JIT,
+  some compiled method in the Morphic path isn't yielding.
+
+New hypothesis: JIT's tight-loop compile of `MorphicRenderLoop>>
+doOneCycleWhile:` or `WorldState>>doDrawCycleWith:` elides the
+per-iteration backjump-yield (interpreter's step() yield check),
+starving the startup process. Under the interpreter, the step()
+loop triggers `forceYield` every 2ms via the heartbeat thread.
+Under JIT, whileTrue is compiled as a tight backjump with no
+yield poll.
+
+Concrete next step: verify by logging `forceYield` requests
+during the hang — if they're issued by the heartbeat but the P40
+process never acknowledges them, the JIT backjump stencil is
+missing a preemption check. Fix location:
+`src/vm/jit/stencils_branch.cpp` stencil_jumpBack.
 
 ---
 

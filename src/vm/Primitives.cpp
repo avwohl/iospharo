@@ -14712,6 +14712,18 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     // Store the timer info
     if (usecs == 0 || sema.isNil()) {
         // Disable timer
+        if (const char* dbg = getenv("PHARO_TIMER_DEBUG"); dbg && *dbg) {
+            static int disableLog = 0;
+            if (disableLog < 50) {
+                disableLog++;
+                Oop active = getActiveProcess();
+                int pri = safeProcessPriority(active);
+                fprintf(stderr, "[TIMER-DISABLE] #%d usecs=%lld semaNil=%d active-pri=%d (was armed=%d nextUsec=%lld)\n",
+                        disableLog, (long long)usecs, (int)sema.isNil(), pri,
+                        (int)timerWasArmed_,
+                        (long long)nextWakeupUsec_);
+            }
+        }
         timerSemaphore_ = Oop::nil();
         nextWakeupUsec_ = INT64_MAX;
     } else {
