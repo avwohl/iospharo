@@ -10,6 +10,7 @@
 #include "../Interpreter.hpp"
 #include <cstring>
 #include <cstdio>
+#include <algorithm>
 
 namespace pharo { extern uint64_t g_stepNum; }
 using pharo::g_stepNum;
@@ -740,6 +741,46 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 j2jSReturns, j2jSCalls,
                 tracked, hot);
 
+        // Dump top methods by executionCount (opt-in: PHARO_JIT_TOP=1)
+        static int dumpTop = -1;
+        if (dumpTop == -1) {
+            const char* env = getenv("PHARO_JIT_TOP");
+            dumpTop = env ? atoi(env) : 0;
+        }
+        if (dumpTop > 0 && interp_) {
+            struct TopEntry { uint32_t count; JITMethod* m; };
+            const size_t K = 10;
+            TopEntry top[K] = {};
+            size_t filled = 0;
+            JITMethod* m = codeZone_.firstMethod();
+            while (m) {
+                if (m->state == MethodState::Compiled) {
+                    uint32_t c = m->executionCount;
+                    if (filled < K) {
+                        top[filled++] = {c, m};
+                    } else {
+                        size_t minIdx = 0;
+                        for (size_t k = 1; k < K; k++) {
+                            if (top[k].count < top[minIdx].count) minIdx = k;
+                        }
+                        if (c > top[minIdx].count) top[minIdx] = {c, m};
+                    }
+                }
+                m = m->nextInZone;
+            }
+            std::sort(top, top + filled, [](const TopEntry& a, const TopEntry& b) {
+                return a.count > b.count;
+            });
+            fprintf(stderr, "[JIT] Top-%zu by executionCount:\n", filled);
+            for (size_t k = 0; k < filled; k++) {
+                std::string sel = interp_->memory().selectorOf(
+                    Oop::fromRawBits(top[k].m->compiledMethodOop));
+                fprintf(stderr, "[JIT]   %8u #%s (oop=0x%llx %ub tier=%u)\n",
+                        top[k].count, sel.c_str(),
+                        (unsigned long long)top[k].m->compiledMethodOop,
+                        top[k].m->codeSize, top[k].m->tier);
+            }
+        }
     }
 
     uint64_t key = compiledMethod.rawBits();
