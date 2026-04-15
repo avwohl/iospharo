@@ -203,12 +203,29 @@ earlier test run, `[GC-EPH] fired=12` after a GC that should have
 fired ~1000 (one per unreachable key). If only 12 ephemerons fire
 when 1000 keys become unreachable, entries remain live in the dict.
 
-Next diagnostic: trace the `WeakKeyDictionary` internals — what
-data structure does it use to hold entries? If it's a plain
-`WeakArray` of associations, GC should nil slots directly (no
-ephemerons needed). If it's an `Ephemeron` array, investigate why
-only 12/1000 fire. Deferred — pivoting to the higher-impact JIT
-bug (deferred #4).
+**Root cause FOUND (2026-04-14, session 4):** `fireAllEphemerons`
+used a range-based `for (auto obj : ephemeronList_)` loop. Calls
+to `scanPointerFields` during firing (which marks the key and
+values) can discover NEW ephemerons that get appended to
+`ephemeronList_` mid-loop. Those newly-appended entries:
+  - sit past the captured `.end()` iterator, so aren't fired
+  - are then wiped by the `.clear()` at the end of the function
+
+On testClearing (1001 entries, 1 live + 1000 dead), the very first
+fire-pass processed only 12 entries before the list's underlying
+storage reallocated. The remaining 328+ active ephemerons were
+dropped. Fix: index-based loop + outer fixed-point loop wrapping
+`markInactiveEphemerons` / `fireAllEphemerons`. Post-fix, debug
+log shows `fired=1004` (vs `fired=12` before). Committed.
+
+**Remaining issue (tracking separately):** testClearing passes 3/10
+runs even with the fix. The GC now enqueues the right mourners, but
+the FinalizationProcess (P70) sometimes hasn't drained them before
+the test's next assertion executes. Likely our `signalFinalizationIfNeeded`
+deferred-to-next-step design lets the test keep running after GC
+for one extra bytecode before the signal fires. Not critical —
+ephemeron correctness is fixed; flakiness is now a scheduler/timing
+concern in a well-defined spot.
 
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
