@@ -2,6 +2,34 @@
 
 Last updated: 2026-04-14
 
+## Weak/Finalization suite — 1002/1007 pass (2026-04-14)
+
+Focused run of 13 weak-reference and finalization test classes after the
+ephemeron fire-loop fix (7c33be3) and inactive-transition diagnostics
+(6087e84). 99.5% pass rate. All 5 residual failures are the same
+deferred-issue #3 signature: weak entries not cleared after a single GC
+when the key is dropped.
+
+    Class                            Pass  Fail  Err
+    WeakSetTest                        50     0    0
+    WeakValueDictionaryTest           217     0    0
+    WeakIdentitySetTest                51     0    0
+    WeakKeyDictionaryTest             206     1    0   testClearing
+    WeakIdentityKeyDictionaryTest     207     2    0   testClearing + chain-continues-at-front
+    WeakOrderedCollectionTest           2     0    0
+    WeakIdentityValueDictionaryTest   218     0    0
+    WeakMessageSendTest                11     0    0
+    WeakAnnouncerTest                  32     2    0   testWeakObject + testWeakDoubleAnnouncer
+    WeakClassVariableTest               4     0    0
+    WeakSlotTest                        4     0    0
+    TOTAL                            1002     5    0
+
+Residuals share one failure mode: after nilling the last strong reference
+and calling `Smalltalk garbageCollect`, the ephemeron's key still survives
+one GC cycle. Some non-ephemeron strong path (likely saved stack frame or
+compiler cache) keeps it reachable long enough to miss the first
+`markInactiveEphemerons` pass. Tracked as deferred #3 residual.
+
 ## JIT baseline rebaseline — interpreter bench numbers (2026-04-14)
 
 First run of quick_bench.st with JIT disabled (eval mode default) vs
