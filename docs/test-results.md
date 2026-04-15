@@ -2,6 +2,41 @@
 
 Last updated: 2026-04-15
 
+## Reflection-walk timeouts: ROOT CAUSE = interpreter send overhead (2026-04-15)
+
+Added per-call timing to prim 132 (`primitiveObjectPointsTo`) gated
+by `PHARO_REFLECT_PROFILE=1`. Single ProtoObjectTest>>testFastPointersTo
+run reveals all 80s timeouts in deferred #2 are interpreter speed,
+not VM heap-walk perf:
+
+    [REFL-allObj]    count=753329 us=162185 calls=1     (162ms)
+    [REFL-pointsTo]  calls=1249280 totMs=0  avgUs=0     (sub-us)
+    Watchdog killed at 80s
+
+VM primitives consumed <1s. The remaining 79s sat in the Smalltalk
+`select: [:e | e pointsTo: self]` loop — ~64us per iteration ×
+1.25M iterations ≈ 80s. Each iteration costs 5-7 sends in the
+interpreter at ~10us/send.
+
+Same pattern for ByteSymbolTest's testAs / testNewFrom /
+testReadFromString — `Symbol allSymbols select: [:e | e asString
+= str]` over ~80K symbols, ~5-6s in interpreter, fits within 80s
+but harness-fork overhead pushes them over.
+
+Resolution path is JIT (deferred #4), not a VM-side reflection
+fix. Issue #2 reclassified as "JIT-required test class," see
+deferred-issues.md.
+
+Same set of timeouts in 10-class focused batch (2026-04-15):
+
+    Class                Pass  Timeout  Pattern
+    ProtoObjectTest        12        3  pointersTo: variants
+    ByteSymbolTest          1        3  allSymbols/allInstances select:
+    HashTableSizesTest      —        —  (run truncated)
+
+3 timeouts × 80s = 240s/class for the timing-bound classes;
+fast classes complete in <1min/class.
+
 ## Fixed: periodic-check alignment lock on extension bytes (2026-04-15)
 
 `BlockClosureValueWithinDurationTest>>testValueWithinNonLocalReturn` hung

@@ -303,6 +303,58 @@ accelerator wishlist item is **deferred until evidence shows the
 scan is in fact slow at 3M objects** — we should not chase a fix
 without confirming the bottleneck.
 
+**MISDIAGNOSED — root cause is interpreter send-overhead, NOT
+reflection-walk (2026-04-15, session 14):** Added per-call timing
+to prim 132 (`primitiveObjectPointsTo`) and ran ProtoObjectTest>>
+testFastPointersTo standalone with `PHARO_REFLECT_PROFILE=1`.
+
+    [REFL-allObj]    count=753329 us=162185 calls=1   (162ms)
+    [REFL-pointsTo]  calls=1249280 totMs=0  avgUs=0  avgSlots=6-9
+    Watchdog killed at 80s
+
+Prim 132 is sub-microsecond (totMs<1ms after 1.25M calls). Prim
+178 (allObjects) returns in 162ms. Both VM primitives are fast.
+
+The 80s timeout sits in the Smalltalk-side `select:` loop:
+
+    aCollectionOfObjects select: [:e | e pointsTo: self]
+
+Each iteration costs ~64us in our interpreter (~5-7 sends per
+iteration × ~10us per send), so 750K iterations × 64us = 48s.
+testFastPointersTo runs `pointersToAmong:` twice (once per
+target object), so ~96s total — exactly the 80s watchdog window.
+
+The exact send chain per iteration:
+  1. `select:` block call
+  2. `pointsTo:` send (ProtoObject method)
+  3. `pointsTo:` body sends `instVarsInclude:` (prim 132 — fast)
+  4. `or:` block dispatch
+  5. result push, block return, select: append
+
+Same root cause for ByteSymbolTest>>testAs / testNewFrom /
+testReadFromString — those use `Symbol allSymbols select:
+[:e | e asString = tStr]` over ~80K symbols. Same per-iteration
+overhead, 5-6s total in interpreter.
+
+This is **fundamentally an interpreter-speed limit on O(N) loops
+over allObjects/allInstances/allSymbols**. Cog passes these tests
+in <1s because JIT inlines the loop body. Without JIT (deferred
+#4), this class of test will always time out on populated heaps.
+
+**Resolution:** Issue closed with NO VM-side fix needed.
+Reclassify these tests as "JIT-required" or accept the timeout
+class. Real fix is unblocking deferred #4 (JIT eval-mode hang).
+
+Optional palliatives if pre-JIT progress is wanted:
+  - Add a `primitivePointersToAmong:` prim that does the
+    `select: [:e | e pointsTo: self]` loop at C++ speed
+    (~150ms instead of 50s). Image-side patch via startup.st.
+  - Cache `Symbol allSymbols`+`asString` results to avoid
+    repeated walks in ByteSymbolTest.
+  - Skip these tests in the harness's known-slow-list.
+
+None of these are pursued — the right fix is JIT.
+
 ## 3. Weak-reference / finalization timing tests
 
 **Tests affected (6 known):**

@@ -8116,6 +8116,11 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
 // Primitive 132: Does object point to another object?
 // Per official VM: only checks pointer fields, handles compiled methods specially
 PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
+    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
+    auto reflStart = (reflProfile && *reflProfile)
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+
     Oop target = stackValue(0);
     Oop rcvr = stackValue(1);
 
@@ -8176,17 +8181,36 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
     }
 
     // Check each pointer slot
+    bool found = false;
     for (size_t i = 0; i < slotsToCheck; i++) {
         Oop slot = memory_.fetchPointer(i, rcvr);
         if (slot.rawBits() == target.rawBits()) {
-            popN(2);
-            push(memory_.trueObject());
-            return PrimitiveResult::Success;
+            found = true;
+            break;
+        }
+    }
+
+    if (reflProfile && *reflProfile) {
+        static uint64_t calls = 0;
+        static uint64_t totalUs = 0;
+        static uint64_t totalSlots = 0;
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - reflStart).count();
+        calls++;
+        totalUs += us;
+        totalSlots += slotsToCheck;
+        if (calls == 1 || (calls % 4096) == 0) {
+            fprintf(stderr, "[REFL-pointsTo] calls=%llu totMs=%llu avgUs=%llu avgSlots=%llu found=%d\n",
+                    (unsigned long long)calls,
+                    (unsigned long long)(totalUs / 1000),
+                    (unsigned long long)(totalUs / calls),
+                    (unsigned long long)(totalSlots / calls),
+                    found ? 1 : 0);
         }
     }
 
     popN(2);
-    push(memory_.falseObject());
+    push(found ? memory_.trueObject() : memory_.falseObject());
     return PrimitiveResult::Success;
 }
 
