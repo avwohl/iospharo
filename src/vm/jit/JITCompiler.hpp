@@ -111,7 +111,12 @@ private:
 
     // SimStack register caching: replace base stencils with SimStack variants
     // where profitable. Inserts flush stencils before sends/returns/branch-targets.
-    void applySimStack(std::vector<DecodedBC>& decoded);
+    // Populates entryState[i] = SimStack state (0..4) at entry to decoded[i].
+    // Callers use entryState to reject tryResume at bytecodes whose stencil
+    // expects live x19..x22 — those registers are garbage after an interpreter
+    // round-trip.
+    void applySimStack(std::vector<DecodedBC>& decoded,
+                       std::vector<int>& entryState);
 
     // IC-guided specialization: replace sendJ2J with inline stencils at
     // monomorphic send sites using IC data from a previous compilation.

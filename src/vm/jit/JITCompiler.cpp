@@ -932,8 +932,11 @@ static uint16_t primitivePrologueStencil(int primIndex) {
 
 #ifdef __aarch64__
 
-void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
+void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
+                                std::vector<int>& entryState) {
+    entryState.clear();
     if (decoded.empty()) return;
+    entryState.assign(decoded.size(), 0);
 
     // Identify which bytecode offsets are branch targets (need Empty state)
     std::vector<bool> isBranchTarget(decoded.size(), false);
@@ -959,7 +962,8 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         }
     };
 
-    // Insert a flush before decoded[i], advance i past it, set state=0
+    // Insert a flush before decoded[i], advance i past it, set state=0.
+    // The flush's entry state = pre-flush state (it reads x19..xN from regs).
     auto insertFlush = [&](size_t& i, int& st) {
         DecodedBC flush;
         flush.opcode = 0;
@@ -972,6 +976,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
         flush.bcLength = 0;
         decoded.insert(decoded.begin() + i, flush);
         isBranchTarget.insert(isBranchTarget.begin() + i, false);
+        entryState.insert(entryState.begin() + i, st);
         i++;
         st = 0;
     };
@@ -1030,6 +1035,13 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded) {
 
         if (isBarrier && state != 0)
             insertFlush(i, state);
+
+        // Record entry state for decoded[i] AFTER all flush insertions — this is
+        // the SimStack state the stencil at decoded[i] expects at entry.
+        // state != 0 here means the stencil will read x19..xN from registers;
+        // tryResume from the interpreter leaves those registers undefined, so
+        // these bytecode offsets must NOT be valid resume targets.
+        entryState[i] = state;
 
         // Capture reference AFTER all potential insertions above
         auto& bc = decoded[i];
@@ -1514,6 +1526,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         applyICSpecialization(decoded, oldVersion);
     }
 
+    // Parallel to `decoded` after SimStack: entryState[i] is the SimStack
+    // state at entry to decoded[i]. state != 0 means the stencil reads
+    // cached operands from x19..x22 and is NOT safe as a tryResume target
+    // (registers are undefined after an interpreter round-trip).
+    std::vector<int> simStackEntryState;
+
     // SimStack: register-based TOS/NOS caching in x19/x20.
     // Stencils use inline asm to read/write x19/x20 without clobber lists.
     // The compiler doesn't touch callee-saved regs in these tail-call
@@ -1541,7 +1559,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 }
             }
         }
-        if (!skipSimStackHere) applySimStack(decoded);
+        if (!skipSimStackHere) applySimStack(decoded, simStackEntryState);
+        if (simStackEntryState.size() != decoded.size())
+            simStackEntryState.assign(decoded.size(), 0);
 
         // Post-SimStack dump (JIT_DUMP_BC_POST=selectorName)
         {
@@ -1560,6 +1580,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
     }
 #endif
+    // Ensure entryState has a valid size even when SimStack was skipped or
+    // compiled on a non-ARM64 host (no register-caching variants exist).
+    if (simStackEntryState.size() != decoded.size())
+        simStackEntryState.assign(decoded.size(), 0);
 
     // First pass: compute total code size and build bytecode->code offset map
     // We also need a literal pool for GOT-style patching
@@ -1584,12 +1608,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     std::vector<uint32_t> bcToCodeOffset(bcLen + 1, 0);
     std::vector<uint32_t> bcToBranchOffset(bcLen + 1, 0);
 
-    for (auto& bc : decoded) {
+    for (size_t di = 0; di < decoded.size(); di++) {
+        auto& bc = decoded[di];
         // Fused bytecodes (nop placeholders from peephole fusion) must NOT have
         // valid re-entry points. Their bcToCode entries stay 0, so tryResume
         // rejects them and the interpreter handles the bytecode. Without this,
         // resuming at a fused jumpFalse enters the fused stencil's CONTINUE
         // path unconditionally, ignoring the actual comparison result.
+        (void)simStackEntryState;  // plumbed through for future use
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_nop) {
             // Last-write-wins: the real stencil at bcOffset X overwrites any
             // SimStack flush inserted before it, so jumps and tryResume both
