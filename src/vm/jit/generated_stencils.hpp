@@ -14,8 +14,4 @@
   #include "generated_stencils_arm64.hpp"
 #endif
 
-#if defined(__x86_64__)
-  #include "generated_stencils_x86_64.hpp"
-#endif
-
 #endif // PHARO_GENERATED_STENCILS_HPP

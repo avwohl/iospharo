@@ -919,6 +919,14 @@ extern "C" void stencil_sendPoly(JITState* s) {
     uint64_t lookupKey;
     uint64_t tag = receiver.bits & 0x7;
     if (tag == 0) {
+        if (__builtin_expect(receiver.bits == 0, 0)) {
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND;
+            _HOLE_RT_SEND(s);
+            return;
+        }
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         lookupKey = obj->classIndex();
     } else {
@@ -1068,6 +1076,14 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     uint64_t lookupKey;
     uint64_t tag = receiver.bits & 0x7;
     if (tag == 0) {
+        if (__builtin_expect(receiver.bits == 0, 0)) {
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND;
+            _HOLE_RT_SEND(s);
+            return;
+        }
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         lookupKey = obj->classIndex();
     } else {
@@ -1455,7 +1471,7 @@ extern "C" void stencil_sendInlineGetter(JITState* s) {
 
     Oop receiver = s->sp[-(nArgs + 1)];
     uint64_t tag = receiver.bits & 0x7;
-    if (tag == 0) {
+    if (tag == 0 && __builtin_expect(receiver.bits != 0, 1)) {
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         if (obj->classIndex() == expectedClass) {
             Oop val = obj->slotAt(slotIdx);
@@ -1487,7 +1503,7 @@ extern "C" void stencil_sendInlineSetter(JITState* s) {
 
     Oop receiver = s->sp[-(nArgs + 1)];
     uint64_t tag = receiver.bits & 0x7;
-    if (tag == 0) {
+    if (tag == 0 && __builtin_expect(receiver.bits != 0, 1)) {
         ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
         if (obj->classIndex() == expectedClass) {
             Oop arg = s->sp[-nArgs];
@@ -1520,10 +1536,12 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
     Oop receiver = s->sp[-(nArgs + 1)];
     uint64_t tag = receiver.bits & 0x7;
     uint64_t classKey;
-    if (tag == 0) {
+    if (tag == 0 && __builtin_expect(receiver.bits != 0, 1)) {
         classKey = reinterpret_cast<ObjectHeader*>(receiver.bits)->classIndex();
-    } else {
+    } else if (tag != 0) {
         classKey = tag | 0x80000000ULL;
+    } else {
+        classKey = 0;
     }
     if (classKey == expectedClass) {
         s->sp -= nArgs;
