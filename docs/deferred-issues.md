@@ -90,11 +90,43 @@ heap word (~2-3M ops by mid-batch). Standard Spur uses a class-table
 fast path for `allInstances` that skips chunks with no instances of the
 target class. We don't have that fast path.
 
-**Next step:** profile a batch-mid `pointersTo:` call to confirm the
-scan is the hot loop. If so, add a class-table-indexed accelerator for
-`allInstances:` (primitive 177) and change `pointersTo:` (prim 132) to
-short-circuit on small receivers using a per-class-index filter.
-Medium-scope change to `src/vm/ObjectMemory.cpp`.
+**Update (2026-04-14, session 12):** added `PHARO_REFLECT_PROFILE` env
+gate to primitives 177 / 178 / 216 (commit b58aca0). Synthetic stress
+on a fresh image — 200K extra retained `ByteString`s plus eval-mode
+boot overhead — produces these per-call timings:
+
+    Class           found    us/call
+    ByteString      130269   ~4540
+    Object          236811   ~4500
+    ProcessorScheduler    111  ~4250
+    SmallDictionary  41355   ~4700
+    Symbol          236807   ~4620
+    Array            89087   ~4500
+
+So `collectInstancesOfClass` walks the full ~250K-object heap in
+~4.5ms regardless of result-set size (added in commit 86ec995
+"accelerate primitives 177 (allInstances:) and 216 (findRoots)").
+Walking 1671 test classes won't grow the heap by 4 orders of
+magnitude, so the heap walk almost certainly is **not** the 80s
+watchdog culprit.
+
+**Revised hypothesis:** the slow path in batch-mid `pointersTo:` is
+either (a) Smalltalk-side post-processing (`select:` over a giant
+result followed by `removeAllSuchThat:` — quadratic), (b) repeated
+`fullGC()` in `primitiveAllObjects` / `primitiveFindRoots` once the
+heap is large (we never measured a fullGC at 3M objects), or
+(c) a different prim entirely (e.g., per-instance `pointersTo:` is
+`primitiveFindRoots` which does both `fullGC()` + per-object slot
+walk — the slot walk is `O(heap × avg-slots)` not `O(heap)`).
+
+**Next step:** rerun the actual batch with `PHARO_REFLECT_PROFILE=1`
+under the harness loop (multiple batches, populated heap), capture
+which prim the long-running calls hit, and look at fullGC time
+separately. The `[REFL-findRoots]` log line will surface `us` per
+call so we can quickly tell prim-216 from prim-177. The class-table
+accelerator wishlist item is **deferred until evidence shows the
+scan is in fact slow at 3M objects** — we should not chase a fix
+without confirming the bottleneck.
 
 ## 3. Weak-reference / finalization timing tests
 
