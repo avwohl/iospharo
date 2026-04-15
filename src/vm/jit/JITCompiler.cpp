@@ -1563,6 +1563,41 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (simStackEntryState.size() != decoded.size())
             simStackEntryState.assign(decoded.size(), 0);
 
+        // Spill-warning: flag any method that emits a stencil_*_4 variant,
+        // which indicates register-stack spill (push/dup beyond 4 regs).
+        // Enabled by PHARO_JIT_SPILL_WARN=1. The hypothesis under investigation
+        // is that push_4 spills the SP forward but the corresponding pop_4
+        // does not rewind, leaking stack slots.
+        {
+            static const char* spillEnv = getenv("PHARO_JIT_SPILL_WARN");
+            if (spillEnv && *spillEnv == '1') {
+                int spillCount = 0;
+                for (auto& d : decoded) {
+                    auto sid = static_cast<StencilID>(d.stencilIdx);
+                    switch (sid) {
+                    case StencilID::stencil_pushTemp_4:
+                    case StencilID::stencil_pushRecvVar_4:
+                    case StencilID::stencil_pushLitConst_4:
+                    case StencilID::stencil_pushLitVar_4:
+                    case StencilID::stencil_pushReceiver_4:
+                    case StencilID::stencil_pushTrue_4:
+                    case StencilID::stencil_pushFalse_4:
+                    case StencilID::stencil_pushNil_4:
+                    case StencilID::stencil_dup_4:
+                        spillCount++;
+                        break;
+                    default:
+                        break;
+                    }
+                }
+                if (spillCount > 0) {
+                    std::string sel = interp_.memory().selectorOf(compiledMethod);
+                    fprintf(stderr, "[JIT-SPILL] #%zu #%s: %d spill stencils\n",
+                            methodsCompiled_, sel.c_str(), spillCount);
+                }
+            }
+        }
+
         // Post-SimStack dump (JIT_DUMP_BC_POST=selectorName)
         {
             static const char* dumpSel = getenv("JIT_DUMP_BC_POST");
