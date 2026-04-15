@@ -6773,6 +6773,39 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
         if (overflowLog++ < 3) {
             fprintf(stderr, "[OVERFLOW] fd=%zu pushing #%s (argCount=%d)\n",
                     frameDepth_, memory_.selectorOf(method).c_str(), argCount);
+            // Dump first 40 frames (to see what started the chain)
+            fprintf(stderr, "[OVERFLOW] Call stack (first 40):\n");
+            size_t earlyEnd = frameDepth_ < 40 ? frameDepth_ : 40;
+            for (size_t f = 0; f < earlyEnd; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                Oop savedR = savedFrames_[f].savedReceiver;
+                std::string savedSel = memory_.selectorOf(savedM);
+                fprintf(stderr, "  [%zu] #%s rcvr=0x%llx method=0x%llx\n",
+                        f, savedSel.c_str(),
+                        (unsigned long long)savedR.rawBits(),
+                        (unsigned long long)savedM.rawBits());
+            }
+            // Dump first transition: where does copyTo:/recursion start?
+            // Walk forward from frame 40 and show any selector change.
+            fprintf(stderr, "[OVERFLOW] Selector transitions (40..fd):\n");
+            std::string prevSel;
+            size_t runStart = 40;
+            for (size_t f = 40; f < frameDepth_; f++) {
+                Oop savedM = savedFrames_[f].savedMethod;
+                std::string sel = memory_.selectorOf(savedM);
+                if (f == 40) { prevSel = sel; runStart = f; continue; }
+                if (sel != prevSel) {
+                    fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
+                            runStart, f - 1, prevSel.c_str(), f - runStart);
+                    prevSel = sel;
+                    runStart = f;
+                }
+            }
+            if (frameDepth_ > 40) {
+                fprintf(stderr, "  [%zu..%zu] #%s (run len=%zu)\n",
+                        runStart, frameDepth_ - 1, prevSel.c_str(),
+                        frameDepth_ - runStart);
+            }
             // Dump last 50 frames with raw bits for debugging
             fprintf(stderr, "[OVERFLOW] Call stack (last 50):\n");
             size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
