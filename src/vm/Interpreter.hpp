@@ -304,9 +304,36 @@ public:
                     frameDepth_, memory_.selectorOf(method_).c_str(),
                     (unsigned long long)receiver_.rawBits(),
                     (long long)(stackPointer_ - stack_.data()));
-            for (size_t i = frameDepth_; i > 0 && i > frameDepth_ - 20; i--) {
-                fprintf(stderr, "  frame[%zu] method=#%s\n", i,
-                        memory_.selectorOf(savedFrames_[i-1].savedMethod).c_str());
+            // Compute current bytecode offset for context.
+            {
+                ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                const uint8_t* bcBase = nullptr;
+                if (mObj) {
+                    Oop hdr = mObj->slots()[0];
+                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    bcBase = mObj->bytes() + (1 + numLits) * 8;
+                }
+                long long bcOff = (bcBase && instructionPointer_)
+                    ? (long long)(instructionPointer_ - bcBase) : -1;
+                fprintf(stderr, "  current ip=%p bcOff=%lld bc=%02x\n",
+                        (void*)instructionPointer_, bcOff,
+                        (instructionPointer_ ? *instructionPointer_ : 0));
+            }
+            // Dump up to the most recent 40 frames. Guard against size_t underflow
+            // when frameDepth_ < 40 (previous bug: "i > frameDepth_ - 20" underflows
+            // and skips the loop for small fd).
+            // Include each frame's saved FP so we can see which frame is leaking
+            // slots (compare consecutive saved FPs to estimate per-frame slot use).
+            size_t lo = (frameDepth_ > 40) ? (frameDepth_ - 40) : 0;
+            Oop* priorFP = framePointer_;  // current frame's base
+            for (size_t i = frameDepth_; i > lo; i--) {
+                Oop* thisFP = savedFrames_[i-1].savedFP;
+                long long frameSize = priorFP ? (long long)(priorFP - thisFP) : -1;
+                fprintf(stderr, "  frame[%zu] method=#%s rcvr=0x%llx fp=%p size=%lld\n", i,
+                        memory_.selectorOf(savedFrames_[i-1].savedMethod).c_str(),
+                        (unsigned long long)savedFrames_[i-1].savedReceiver.rawBits(),
+                        (void*)thisFP, frameSize);
+                priorFP = thisFP;
             }
             stopVM("Stack overflow in push()");
             return;
