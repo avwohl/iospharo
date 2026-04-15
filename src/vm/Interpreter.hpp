@@ -299,6 +299,47 @@ public:
 
     /// Push a value onto the stack
     inline void push(Oop value) {
+        // Diagnostic (PHARO_DEBUG_FRAME_LEAK=1): fire when sp grows abnormally
+        // far above the current FP within a single activation. Dumps one line
+        // per threshold crossing (512, 1024, 2048, 4096, ...) so we can see
+        // the rate of accumulation and correlate with ip/bcOff.
+        static const char* frameLeakEnv = getenv("PHARO_DEBUG_FRAME_LEAK");
+        static bool frameLeakOn = (frameLeakEnv && *frameLeakEnv == '1');
+        if (__builtin_expect(frameLeakOn, 0) && framePointer_) {
+            static Oop* lastFP = nullptr;
+            static long long lastThreshold = 0;
+            long long spAboveFP = (long long)(stackPointer_ - framePointer_);
+            if (framePointer_ != lastFP) { lastFP = framePointer_; lastThreshold = 512; }
+            if (spAboveFP >= lastThreshold) {
+                ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                const uint8_t* bcBase = nullptr;
+                if (mObj) {
+                    Oop hdr = mObj->slots()[0];
+                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    bcBase = mObj->bytes() + (1 + numLits) * 8;
+                }
+                long long bcOff = (bcBase && instructionPointer_)
+                    ? (long long)(instructionPointer_ - bcBase) : -1;
+                // Also dump 8 bytes around the IP to see the bytecode window.
+                uint8_t bcWin[16] = {0};
+                if (instructionPointer_ && bcBase) {
+                    long long spanStart = bcOff > 4 ? bcOff - 4 : 0;
+                    const uint8_t* p = bcBase + spanStart;
+                    for (int k = 0; k < 16; k++) bcWin[k] = p[k];
+                }
+                fprintf(stderr, "[FRAME-LEAK] sp-fp=%lld sp=%p fp=%p method=#%s rcvr=0x%llx ip=%p bcOff=%lld bc=%02x fd=%zu win=%02x%02x%02x%02x|%02x%02x%02x%02x|%02x%02x%02x%02x\n",
+                        spAboveFP, (void*)stackPointer_, (void*)framePointer_,
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)receiver_.rawBits(),
+                        (void*)instructionPointer_, bcOff,
+                        (instructionPointer_ ? *instructionPointer_ : 0),
+                        frameDepth_,
+                        bcWin[0], bcWin[1], bcWin[2], bcWin[3],
+                        bcWin[4], bcWin[5], bcWin[6], bcWin[7],
+                        bcWin[8], bcWin[9], bcWin[10], bcWin[11]);
+                lastThreshold *= 2;
+            }
+        }
         if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
             fprintf(stderr, "[VM] Stack overflow! fd=%zu method=#%s rcvr=0x%llx sp_offset=%lld\n",
                     frameDepth_, memory_.selectorOf(method_).c_str(),

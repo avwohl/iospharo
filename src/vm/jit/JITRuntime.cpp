@@ -54,7 +54,7 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
     if (trace && *trace == '1') {
         static size_t totalFirings = 0;
         totalFirings++;
-        if (totalFirings <= 20 || (totalFirings % 1000) == 0) {
+        if (totalFirings <= 20 || (totalFirings % 100) == 0) {
             uint64_t methodOop = state->jitMethod ? state->jitMethod->compiledMethodOop : 0;
             std::string sel = state->interp ?
                 state->interp->memory().selectorOf(Oop::fromRawBits(methodOop)) : "?";
