@@ -858,7 +858,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 }
                 if (jm) {
                     std::string t1sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
-                    fprintf(stderr, "[JIT] Compiled method %p '%s' (entry %u, %u bytes%s)\n",
+                    fprintf(stderr, "[JIT] Compiled method #%zu %p '%s' (entry %u, %u bytes%s)\n",
+                            compiler_->methodsCompiled(),
                             (void*)compiledMethod.rawBits(), t1sel.c_str(),
                             countMap_[i].count, jm->codeSize,
                             jm->hasPrimPrologue ? ", prim" : "");
