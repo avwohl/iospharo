@@ -298,7 +298,23 @@ testWeakDoubleAnnouncer) all share this pattern. VM-side ephemeron
 (a) trimming the test-runner wrapper so fewer frames retain, or
 (b) forcing a GC from INSIDE the test fork after the ivar nil.
 
-Closes the VM-side investigation of deferred #3.
+**Attempted (a), did not fix:** extended the harness fast-path
+(single TestFailure handler, no P60 watchdog) to cover the three
+weak-retention test classes. Failures unchanged (5/5 still fail
+with "Got N instead of 1" where N is 3-10). Retention source is
+deeper than the handler stack — likely stale slots in the fork's
+block frame or the runCase path itself.
+
+Diagnostic from 10 consecutive direct-eval GCs of the same body
+(inside a block, no locals): `encountered=1774 inactive=1410
+active=364 fired=4`. Only 364 of ~1000 expected test ephemerons
+classify as "active" (dead key) at encounter — 636 are seen as
+keyed-alive even though their keys *should* be unreferenced.
+Possible cause: operand stack slots below `stackPointer_` holding
+stale Oops from setUp's `keys do:[:n| dict at: n put: n,n]` loop.
+
+Closes the VM-side investigation of deferred #3. Further work is
+either a test-runner rewrite or a stack-slot scrub primitive.
 
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
