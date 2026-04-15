@@ -1,6 +1,6 @@
 # Deferred Issues
 
-Last updated: 2026-04-14 (third session: issue #4 "resolved" claim retracted — testing error)
+Last updated: 2026-04-14 (session 3b: AMS selector fix + new JIT bisect data)
 
 Issues that were identified during test-suite runs and deferred rather
 than fixed. Each entry has a hypothesis, what's been ruled out, and a
@@ -154,6 +154,39 @@ when we exclude max:, N=9 which compiles `do:` (0x30032ee48) hangs.
 Excluding that single oop via `JIT_EXCLUDE_OOP=0x30032ee48` delays
 but does not eliminate the hang — **some later compile of a sibling
 do: implementation triggers the same issue**.
+
+**Session-3b bisect REFINED (2026-04-14, with AMS selectorOf fix):**
+The previous session's `JIT_MAX_COMPILE` threshold at the boundary is
+actually N=119 works, N=120 hangs. With AMS selectorOf now working,
+**the 120th method is `ensure:` (BlockClosure>>ensure:, oop 0x3003ea8d0,
+5248 bytes, 4 lits, AMS-based)**. But:
+  - `JIT_EXCLUDE=ensure:` alone does NOT eliminate the hang.
+  - `JIT_EXCLUDE_OOP=0x3003ea8d0` alone does NOT eliminate the hang.
+  - With ensure:-excluded, bisect shows a NEW boundary: N=167 works,
+    N=168 hangs (no DNU — just scheduler spinning P80↔P40↔P10).
+
+Conclusion: the hang isn't triggered by a single method's miscompilation.
+It's cumulative — once ~120-170 methods are T1-compiled, some pattern
+of interaction (stencil bug × IC state × J2J save stack × something)
+corrupts state enough that the startup-process exception unwind eventually
+sends a message to nil (DNU #resolve: on nil) or the scheduler gets
+stuck in a transfer cycle without arming the timer.
+
+Current symptom flavors:
+  - DNU #atEnd on Array (stack corruption in parseFields:structure:)
+  - DNU #resolve: on nil (Context>>resume: to dead context)
+  - Silent hang: P80↔P40↔P10 scheduler cycle, no timer armed
+
+**Next step (more actionable):** add per-stencil execution counters so
+we can see which stencil is hit at hang-time. The previous session's
+hypothesis about J2J call/return imbalance was wrong — the J2J_INLINE_RETURN
+tail-calls caller's resume and only hits the interpreter's return counter
+when the full J2J chain unwinds. The 65M/20K imbalance is expected.
+
+**Session-3b improvement landed:** `ObjectMemory::selectorOf` now handles
+AdditionalMethodState — when the penultimate literal is an AMS (not a
+Symbol), falls back to AMS slot 1 (the real selector). Unblocks method
+identification in `[JIT] Compiled method ...` and `[DNU-STACK]` output.
 
 The `do:` bytecodes (26 bc, 3 lits — ByteSymbol lit[1]=#size? lit[2]=#at?
 lit[3]=GlobalVariable class binding) are the standard

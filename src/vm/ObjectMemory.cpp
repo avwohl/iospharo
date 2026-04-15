@@ -991,10 +991,20 @@ size_t ObjectMemory::numLiteralsOf(Oop method) const {
 std::string ObjectMemory::selectorOf(Oop method) const {
     size_t numLits = numLiteralsOf(method);
     if (numLits < 2) return "?";
-    // Selector is the penultimate literal (slot numLiterals - 1, 0-based from slot 1)
     Oop sel = fetchPointer(numLits - 1, method);
     std::string name = oopToString(sel);
-    return name.empty() ? "?" : name;
+    if (!name.empty()) return name;
+    // Penultimate is not a Symbol — likely an AdditionalMethodState whose
+    // slot 1 holds the real selector.
+    if (sel.isObject() && sel.rawBits() >= 0x10000) {
+        ObjectHeader* amsHdr = sel.asObjectPtr();
+        if (amsHdr->slotCount() >= 2) {
+            Oop amsSel = amsHdr->slotAt(1);
+            std::string amsName = oopToString(amsSel);
+            if (!amsName.empty()) return amsName;
+        }
+    }
+    return "?";
 }
 
 bool ObjectMemory::patchClassMethodToReturnSelf(Oop classObj, const char* selectorName) {
