@@ -2,6 +2,32 @@
 
 2026-04-15
 
+## Fix: Inline stencil bail selector recovery + nil guard + stencil regen
+
+Three fixes for JIT stability:
+
+1. **Inline stencil bail selector recovery**: Tier 2 inline getter/setter/
+   returnsSelf stencils set icDataPtr=nullptr on class mismatch bail, so
+   the ExitSend handler couldn't find the selector and lost JIT chain
+   continuity. Fix packs the literal index into OPERAND2 bits 48-63 at
+   specialization time. On bail, the stencil reads literals[litIndex] into
+   cachedTarget. The ExitSend handler already falls back to cachedTarget
+   when icDataPtr is null.
+
+2. **Nil guard in send stencils**: sendPoly, sendJ2J, and inline stencils
+   all check tag==0 and dereference the pointer to read classIndex. If the
+   receiver has bits=0x0 (e.g. uninitialized slot), this SIGSEGVs. Fixed
+   by adding an early exit to interpreter when receiver.bits==0. Eliminated
+   a ~60% repro rate crash in findContextSuchThat: during startup.
+
+3. **Stencil binary regeneration**: Previous commits modified stencil C++
+   source but never regenerated the binary data in
+   generated_stencils_arm64.hpp. The JIT was running stale stencil code.
+   Regeneration made all stencil fixes (including the inline bail fix)
+   actually active.
+
+Result: 10/10 crash-free runs with unlimited JIT, 91% IC hit rate.
+
 ## Fix: JIT IC corruption after GC compaction
 
 Two bugs caused JIT `do:` (and other block-evaluating methods) to hang
