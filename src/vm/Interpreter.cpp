@@ -1584,6 +1584,13 @@ void Interpreter::interpret() {
                 memory_.fullGC(/* skipEphemerons */ true);
                 flushMethodCache();
             }
+            // Force re-check immediately after the consumer runs. Without this,
+            // tight loops like `[] repeat` (bytecodes `E1 FF ED FC`) whose length
+            // evenly divides 1024 lock alignment to E1 forever, starving timer
+            // checks. Setting checkCountdown_=1 means the next DISPATCH_NEXT
+            // after the consumer decrements to 0 and re-enters periodic_checks
+            // with inExtension_=false.
+            checkCountdown_ = 1;
             // Resume without process switching — don't clear inExtension_
             // (the consumer's DISPATCH_NEXT will clear it)
             bytecode = *instructionPointer_++;

@@ -2,6 +2,30 @@
 
 2026-04-14
 
+## Fix: Periodic-check alignment lock on extension bytes
+
+`BlockClosureValueWithinDurationTest>>testValueWithinNonLocalReturn` hung the
+VM forever, and `[[] repeat] valueWithin: N onTimeout: ...` never returned.
+Root cause was in the main interpreter loop: `[] repeat` compiles to 2
+bytecodes (`E1 FF ED FC` = ExtendB + Jump) per iteration, and
+`checkCountdown_` starts/resets to 1024. Because `1024 % 2 == 0`, every
+countdown expiry landed at the same point in the pattern — right after the
+0xE1 ExtendB byte with `inExtension_ == true`. The existing guard that
+defers process-switching checks while `inExtension_` is true then reset
+countdown to 1024 again, re-locking the alignment indefinitely. The timer
+semaphore, forceYield, preemption checks, and pending signals never ran
+while any low-priority process was in a tight extended-jump loop.
+
+Fix: when we skip checks due to `inExtension_`, set `checkCountdown_ = 1`
+before dispatching the consumer. After the consumer's `DISPATCH_NEXT`
+decrement, countdown hits 0 immediately and we re-enter `periodic_checks`
+with `inExtension_` cleared, running the full check battery.
+
+Unblocks timer-sensitive tests generally: `valueWithin:` with any
+caller-written spinner block, watchdog fires while target runs
+`[... repeat]`, and the harness fast-path's forked test process at P40
+(which blocks on `fastSem waitTimeoutMSecs:`).
+
 ## Fix: allObjects returned caller's live context (testFastPointersTo)
 
 `ProtoObjectTest>>testFastPointersTo` was raising `ShouldNotImplement`
