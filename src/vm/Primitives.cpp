@@ -1787,6 +1787,40 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     // Official VM behavior: fail if index is not SmallInteger (PrimErrBadArgument)
     // or if receiver is not an object (PrimErrInappropriate)
     if (!index.isSmallInteger() || !rcvr.isObject()) {
+        static int badIdxLog = 0;
+        if (!index.isSmallInteger() && ++badIdxLog <= 20) {
+            std::string icls = "?";
+            int64_t isize = -1;
+            if (index.isObject() && index.rawBits() > 0x10000) {
+                icls = memory_.classNameOf(index);
+                ObjectHeader* ih = index.asObjectPtr();
+                isize = (int64_t)ih->byteSize();
+            } else if (index.isSmallFloat()) {
+                icls = "SmallFloat64";
+            } else if (index.isCharacter()) {
+                icls = "Character";
+            } else if (index.isNil()) {
+                icls = "nil";
+            } else if (index.rawBits() == memory_.trueObject().rawBits()) {
+                icls = "true";
+            } else if (index.rawBits() == memory_.falseObject().rawBits()) {
+                icls = "false";
+            }
+            std::string rcls = rcvr.isObject() ? memory_.classNameOf(rcvr) : "?";
+            std::string msel = memory_.selectorOf(method_);
+            fprintf(stderr, "[PRIM-AT-BADIDX] #%d index.class=%s idxBits=0x%llx (size=%lld) rcvr.class=%s method=%s frameDepth=%zu\n",
+                    badIdxLog, icls.c_str(), (unsigned long long)index.rawBits(),
+                    (long long)isize, rcls.c_str(), msel.c_str(), frameDepth_);
+            // Dump last 10 frames to see caller context
+            size_t start = frameDepth_ > 10 ? frameDepth_ - 10 : 0;
+            for (size_t j = start; j < frameDepth_; j++) {
+                Oop m = savedFrames_[j].savedMethod;
+                Oop r = savedFrames_[j].savedReceiver;
+                std::string s = memory_.selectorOf(m);
+                std::string c = memory_.classNameOf(r);
+                fprintf(stderr, "[PRIM-AT-BADIDX]   [%zu] %s>>%s\n", j, c.c_str(), s.c_str());
+            }
+        }
         return PrimitiveResult::Failure;
     }
 
