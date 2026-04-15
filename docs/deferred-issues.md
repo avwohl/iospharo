@@ -652,6 +652,58 @@ Also worth: log the selector + receiver class on every IC miss
 from max: — might reveal a mega-polymorphic call site where
 4-way IC can't keep up and patch keeps getting evicted.
 
+**Session 11 (2026-04-14):** chased the register-state-variant
+tryResume hypothesis to conclusion. Hypothesis was: SimStack
+variants like `pushTemp_1`, `greaterThanSmallInt_2`, `jumpFalse_1`
+read operands from callee-saved x19..x22. `tryResume` re-enters
+JIT code via `JIT_CALL` (JITState.hpp:172) which clobbers
+x19..x22 — so after an interpreter round-trip those registers
+are undefined. bcToCodeOffset currently points to the _N
+stencil's entry (last-write-wins in JITCompiler.cpp:1584), so
+tryResume can land on a register-reading stencil with garbage
+in the registers.
+
+Plumbed per-bytecode SimStack entry state through `applySimStack`
+(commit 42e4499) and gated bcToCodeOffset on `entryState == 0`
+so tryResume rejects non-state-0 landing pads. Result:
+
+    JIT_MAX_COMPILE=10  baseline: clean (stack overflow on
+                                  #isFinite in ~1.8s)
+    JIT_MAX_COMPILE=10  with gate: hangs at 10s timeout
+                                  (Context>>copyTo: loop)
+    JIT_MAX_COMPILE=50  baseline: stack overflow #isFinite
+    JIT_MAX_COMPILE=50  with gate: "Improper store into
+                                  indexable object" on
+                                  CompiledMethod
+
+So the gate is a strict regression, not a fix. The hypothesis
+may still be correct in principle — resuming a _N stencil with
+garbage registers IS unsound — but something about the image's
+control flow depends on the current "unsound" behavior, or my
+entryState computation has a subtle bug that the gate activates.
+
+Left the entry-state plumbing landed (it's free when gated off
+with `(void)simStackEntryState`). To pick this up again:
+
+1. Verify entryState is correct for a known method. Dump
+   `JIT_DUMP_BC_POST=max:` and cross-check the state column
+   against the base stencil list at bytecode offsets 1, 2, 3
+   (pushTemp_1 state=1, greaterThanSmallInt_2 state=2,
+    jumpFalse_1 state=1).
+2. Add a counter: how many times does tryResume land on an
+   unsafe bcOffset in a clean baseline run? If the count is 0,
+   the hypothesis is wrong and my gate is pointlessly blocking
+   something else. If the count is non-zero but mostly fine,
+   then the hang is triggered specifically when x19..x22 hold
+   values that clash with the method's semantics.
+3. Consider the alternative: modify tryResume (JITRuntime.cpp
+   :1014) to always pre-clear x19..x22 to nil/0 before entry,
+   instead of rejecting the resume. That way _N stencils at
+   least see a defined sentinel, and a path that reads nil
+   where a Boolean is expected will branch to the "else"
+   arm — predictable, probably still wrong, but not garbage-
+   dependent.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
