@@ -626,6 +626,7 @@ public:
     };
 
     Statistics statistics() const;
+    size_t gcCount() const { return gcCount_; }
 
     // ===== LOW-LEVEL ACCESS (for image loader) =====
 

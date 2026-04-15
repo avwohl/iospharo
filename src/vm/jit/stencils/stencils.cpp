@@ -1304,6 +1304,7 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             }
         }
         // Block eval fallback: exit to chain loop
+        s->cachedTarget.bits = methodBits;
         goto exit_send_cached;
     }
 

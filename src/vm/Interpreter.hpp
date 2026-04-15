@@ -2539,7 +2539,6 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                                  - m->numICEntries * 104;
                 for (uint32_t i = 0; i < m->numICEntries; i++) {
                     uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
-                    // Visit method Oops in slots 1, 4, 7, 10 (4 entries × stride 3)
                     for (int e = 0; e < 4; e++) {
                         uint64_t& methodBits = slots[e * 3 + 1];
                         if (methodBits != 0) {
@@ -2547,7 +2546,6 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                             visitor(mOop);
                         }
                     }
-                    // Visit selector Oop in slot 12
                     uint64_t& selBits = slots[12];
                     if (selBits != 0) {
                         Oop& sOop = *reinterpret_cast<Oop*>(&selBits);

@@ -1219,11 +1219,25 @@ void JITRuntime::flushCaches() {
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
 
-    // IC entries (method Oops, selector Oops) were updated in-place by
-    // forEachRoot during compaction. No need to flush them.
-    // Only clear the mega cache: it's a hash table keyed by selectorBits,
-    // and those bits changed, making hash positions stale. Cheaper to flush
-    // than rehash.
+    // Flush all IC entries: GC compaction moves method and selector oops.
+    // forEachRoot visits IC slots, but there are edge cases (recompiled
+    // methods, timing between patch and GC) where oops go stale.
+    // Flushing is cheap — ICs re-fill on the next few misses.
+    {
+        JITMethod* m = codeZone_.firstMethod();
+        if (m) {
+            makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
+        }
+        while (m) {
+            if (m->numICEntries > 0) {
+                uint8_t* icStart = m->codeStart() + m->codeSize
+                                 - m->numICEntries * 104;
+                std::memset(icStart, 0, m->numICEntries * 104);
+            }
+            m = m->nextInZone;
+        }
+    }
+    // Clear mega cache: keyed by selectorBits which changed.
     std::memset(megaCache_, 0, sizeof(megaCache_));
 
     // Update nil/true/false bits (GC may have moved them)
