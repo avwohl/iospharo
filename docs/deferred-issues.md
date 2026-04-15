@@ -544,11 +544,45 @@ startup.st — hangs. Set JIT_MAX_COMPILE=7 → runs.
 
 Next diagnostic: inspect the JIT output for `max:` (0x3002cac38,
 576 bytes). Short method — likely `a >= b ifTrue: [a] ifFalse: [b]`.
-Candidate bugs: (a) boolean dispatch in jumpTrue/False stencil
-overwrites ip when branch-target offset computation is wrong;
-(b) cold `a >=` deopts and corrupts continuation IP. Disassemble
-with `PHARO_JIT_DUMP_SEL=max:` and check that jumpTrue/False
-handlers write s->ip only on branch-taken path.
+
+**PHARO_JIT_DUMP_SEL=max: dump:** the 576-byte method has 26 bytecodes.
+Pattern:
+
+    storeTemp temp0 := arg
+    pushTemp self; pushLitConst1; identicalTo
+    jumpFalse [skip]
+        pushReceiver; sendJ2J #? → returnTop
+    pushNil; pop; pushReceiver; sendJ2J #? (operand 16777231)
+    jumpFalse [skip]
+        pushReceiver; pushZero; sendJ2J #? (operand 16842771); returnTop
+    pushNil; pop; pushReceiver; sendJ2J #? (operand 16777240)
+    pop; returnReceiver
+
+Not a numeric max: — looks like a type-guarded dispatch, possibly
+`ByteArray>>max:` or `SortedCollection>>max:`. Two `identicalTo`
+comparisons, two J2J sends in conditional paths, and a
+returnReceiver fall-through.
+
+Next tick: try JIT_EXCLUDE_OOP=0x3002cac38 to exclude THIS specific
+max: and see whether the bisect boundary shifts (isolating the bug
+to the specific method) vs. stays put (ruling max: out as the actual
+cause). Also worth disassembling the 576-byte ARM64 code with
+PHARO_JIT_DISASM_OOP to check returnTop and sendJ2J return paths.
+
+**Session 8 follow-up:** `JIT_EXCLUDE_OOP=0x3002cac38 JIT_MAX_COMPILE=9`
+compiles 9 methods (basicNew, new:, /, size, on:, on:, reset, at:,
+do:) with max: skipped — **still hangs.** So max: is not the culprit.
+The hang threshold is the *number* of compiled methods (~8), not the
+identity of any specific one. Candidate root causes:
+  - IC-entry region stomping as code zone fills past a page boundary
+  - Heartbeat/scheduler interaction that kicks in after N JIT entries
+  - Cumulative callsite counter overflow
+
+Actionable next step: instrument the JIT code-zone pointer + ICs on
+every entry. Dump zone layout at the N=7 / N=8 boundary to see what
+the 8th compile changes. Another angle: try compiling a completely
+different first-8 set by using JIT_ONLY=someOtherMethod and see if
+the hang still appears at the 8th method.
 
 ---
 
