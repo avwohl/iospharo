@@ -157,6 +157,59 @@ Next diagnostic: find the failing SUnit finalization tests and
 examine whether they include any delay between triggering GC and
 asserting, or whether they expect synchronous finalization.
 
+**Update (2026-04-14, session 4 cont'd):** Inspected the six failing
+test sources. Key finding: none of them wait. They expect `Smalltalk
+garbageCollect` followed immediately by an assertion to see the
+post-finalization state. `WeakKeyDictionaryTest>>testClearing`:
+
+    keys := nil.                                         "drop 1000 strong refs"
+    dict at: self put: nil.
+    Smalltalk garbageCollect.
+    self assert: dict size equals: self size + 1.        "still 1001 — OK"
+    self assert: dict keys size equals: 1.               "<-- fails, got 3"
+    self assert: dict size equals: 1.
+
+We report "Got 3 instead of 1" — meaning after GC, 2 of the 1000
+keys survived. The test logic: `setUp` pins 1000 keys via a strong
+`keys` ivar; test nils that ivar, GC runs, all 1000 keys should
+become collectible. Two are retained somewhere.
+
+Stock Pharo doesn't wait either — it relies on the GC itself (not
+the finalization process) to reclaim weak keys. Our issue is that
+some of those keys survive GC. Candidate retainers:
+
+  - interpreter stack slots of the test framework still pointing at
+    elements enumerated by the previous `keys do:` in setUp
+  - JITMethod literal copies keeping references to the `'key',N`
+    strings used in the previous iteration
+  - temp-frame cleanup gap — frames that returned but whose stack
+    slots were not zeroed before the next GC
+
+Next diagnostic: run `(1000 to: 1 by: -1) collect: ['key', n asString]`
+to build the set, then force GC and count via `Smalltalk allInstances`
+how many `'key*'` strings remain. That isolates the retention count
+without involving WeakKeyDictionary at all.
+
+**Update (2026-04-14, session 4 cont'd):** Strong-ref test passed —
+`ByteString allInstances` went from 1023 → 23 for `'key*'` strings
+after nilling the collection and 3x GC (23 is the built-in baseline:
+`'keyboard'`, etc.). The plain GC path is **working correctly** for
+unreachable strings. So the failure is specifically in
+WeakKeyDictionary's tracking, not in GC itself.
+
+Likely culprit: `WeakKeyDictionary` uses `Ephemeron`s (one per
+entry, where the key is the Ephemeron's key slot). During the
+earlier test run, `[GC-EPH] fired=12` after a GC that should have
+fired ~1000 (one per unreachable key). If only 12 ephemerons fire
+when 1000 keys become unreachable, entries remain live in the dict.
+
+Next diagnostic: trace the `WeakKeyDictionary` internals — what
+data structure does it use to hold entries? If it's a plain
+`WeakArray` of associations, GC should nil slots directly (no
+ephemerons needed). If it's an `Ephemeron` array, investigate why
+only 12/1000 fire. Deferred — pivoting to the higher-impact JIT
+bug (deferred #4).
+
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
 **Status (2026-04-14, session 3 correction):** the earlier "resolved"
