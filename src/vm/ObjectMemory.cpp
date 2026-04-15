@@ -2345,6 +2345,7 @@ void ObjectMemory::processWeaklings() {
 bool ObjectMemory::markInactiveEphemerons() {
     bool foundInactive = false;
     size_t writeIdx = 0;
+    size_t transitioned = 0;
 
     for (size_t i = 0; i < ephemeronList_.size(); ++i) {
         ObjectHeader* obj = ephemeronList_[i];
@@ -2364,6 +2365,7 @@ bool ObjectMemory::markInactiveEphemerons() {
             scanPointerFields(obj);
             processMarkStack();
             foundInactive = true;
+            transitioned++;
             // Don't keep in list (removed by not copying to writeIdx)
         } else {
             // Still active — keep in list
@@ -2371,6 +2373,10 @@ bool ObjectMemory::markInactiveEphemerons() {
         }
     }
     ephemeronList_.resize(writeIdx);
+    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg && transitioned > 0) {
+        fprintf(stderr, "  [MIE] transitioned=%zu remaining=%zu\n",
+                transitioned, writeIdx);
+    }
     return foundInactive;
 }
 
@@ -2521,11 +2527,16 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // slot values by ORing the MarkedBit (0x40000000) into them.
     validObjectStarts_.clear();
     validObjectStarts_.reserve(800000);
+    size_t preEphCount = 0;
     {
         ObjectScanner buildScan(oldSpaceStart_, oldSpaceFree_);
         while (ObjectHeader* obj = buildScan.next()) {
             validObjectStarts_.insert(reinterpret_cast<uintptr_t>(obj));
+            if (obj->format() == ObjectFormat::WeakWithFixed) preEphCount++;
         }
+    }
+    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+        fprintf(stderr, "[GC-PRE] heap-scan format-5 count=%zu\n", preEphCount);
     }
 
     size_t markedCount = 0;
