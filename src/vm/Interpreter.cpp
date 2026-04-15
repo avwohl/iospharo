@@ -5810,6 +5810,51 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
     if (__builtin_expect(cached != nullptr, 1)) {
+        // SEND-TRACE: flag suspicious #at: dispatches on FullBlockClosure.
+        // If probeCache returns a method whose methodClass isn't in rcvrClass's
+        // chain, the cache is corrupted; log origin. (CACHE-BADMETHOD guards
+        // the write, so 0 fires there. This probe catches reads independently.)
+        if (selector.isObject() && selector.rawBits() >= 0x10000 &&
+            rcvr.isObject() && rcvr.rawBits() >= 0x10000) {
+            ObjectHeader* selH = selector.asObjectPtr();
+            if (selH->isBytesObject() && selH->byteSize() == 3 &&
+                memcmp(selH->bytes(), "at:", 3) == 0) {
+                uint32_t rci = rcvr.asObjectPtr()->classIndex();
+                if (rci == fullBlockClosureClassIndex_ ||
+                    rci == compiledBlockClassIndex_) {
+                    Oop mc = methodClassOf(cached->method);
+                    bool found = false;
+                    Oop walk = rcvrClass;
+                    int guard = 0;
+                    while (walk.isObject() && walk.rawBits() >= 0x10000 &&
+                           guard++ < 32) {
+                        if (walk == mc) { found = true; break; }
+                        walk = superclassOf(walk);
+                    }
+                    if (!found) {
+                        static int badRead = 0;
+                        if (++badRead <= 10) {
+                            std::string mcName = mc.isObject() &&
+                                mc.rawBits() >= 0x10000
+                                ? memory_.nameOfClass(mc) : "nil";
+                            std::string rcName = memory_.nameOfClass(rcvrClass);
+                            size_t h1 = static_cast<size_t>(
+                                selector.rawBits() ^ rcvrClass.rawBits()) &
+                                (MethodCacheSize - 1);
+                            fprintf(stderr,
+                                "[CACHE-BADREAD] #%d #at: rcvCls=%s method=0x%llx "
+                                "methodCls=%s hash=%zu cachedSel=0x%llx "
+                                "cachedCls=0x%llx\n",
+                                badRead, rcName.c_str(),
+                                (unsigned long long)cached->method.rawBits(),
+                                mcName.c_str(), h1,
+                                (unsigned long long)cached->selector.rawBits(),
+                                (unsigned long long)cached->classOop.rawBits());
+                        }
+                    }
+                }
+            }
+        }
 
 #if PHARO_JIT_ENABLED
         // Count ALL sends for JIT compilation, not just activateMethod calls
@@ -5931,6 +5976,46 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                          !method.asObjectPtr()->isCompiledMethod(), 0)) {
         invokeObjectAsMethod(method, selector, argCount);
         return;
+    }
+
+    // LOOKUP-BAD probe: mirror the CACHE-BADREAD probe for the full-lookup
+    // path. If lookupMethod returns a method whose methodClass isn't in
+    // rcvrClass's ancestor chain, that's a broken lookup.
+    if (selector.isObject() && selector.rawBits() >= 0x10000 &&
+        rcvr.isObject() && rcvr.rawBits() >= 0x10000) {
+        ObjectHeader* selH = selector.asObjectPtr();
+        if (selH->isBytesObject() && selH->byteSize() == 3 &&
+            memcmp(selH->bytes(), "at:", 3) == 0) {
+            uint32_t rci = rcvr.asObjectPtr()->classIndex();
+            if (rci == fullBlockClosureClassIndex_ ||
+                rci == compiledBlockClassIndex_) {
+                Oop mc = methodClassOf(method);
+                bool found = false;
+                Oop walk = rcvrClass;
+                int guard = 0;
+                while (walk.isObject() && walk.rawBits() >= 0x10000 &&
+                       guard++ < 32) {
+                    if (walk == mc) { found = true; break; }
+                    walk = superclassOf(walk);
+                }
+                if (!found) {
+                    static int badLookup = 0;
+                    if (++badLookup <= 10) {
+                        std::string mcName = mc.isObject() &&
+                            mc.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(mc) : "nil";
+                        std::string rcName = memory_.nameOfClass(rcvrClass);
+                        fprintf(stderr,
+                            "[LOOKUP-BAD] #%d #at: rcvCls=%s method=0x%llx "
+                            "methodCls=%s (lookupMethod returned method "
+                            "whose class is not in chain)\n",
+                            badLookup, rcName.c_str(),
+                            (unsigned long long)method.rawBits(),
+                            mcName.c_str());
+                    }
+                }
+            }
+        }
     }
 
 #if PHARO_JIT_ENABLED
@@ -6203,6 +6288,69 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
                             trivial.returnsSelf ? 1 : 0, primIndex,
                             (unsigned long long)clsBits,
                             (unsigned long long)method.rawBits());
+                }
+            }
+        }
+    }
+
+    // CACHE-BADMETHOD probe: detect impossible (#at:, FullBlockClosure_class)
+    // → method_whose_class_is_not_in_FullBlockClosure_hierarchy. If ever
+    // written, IC fills from this produce the `ByteSymbol>>at:` activation
+    // on a FullBlockClosure receiver seen in BAD-AT-ACT.
+    if (selector.isObject() && selBits >= 0x10000 && classOop.isObject() &&
+        clsBits >= 0x10000) {
+        ObjectHeader* selH = selector.asObjectPtr();
+        if (selH->isBytesObject() && selH->byteSize() == 3 &&
+            memcmp(selH->bytes(), "at:", 3) == 0) {
+            uint32_t clsIdx = classOop.asObjectPtr()->classIndex();
+            if (clsIdx == fullBlockClosureClassIndex_ ||
+                clsIdx == compiledBlockClassIndex_) {
+                // Walk classOop's superclass chain and compare methodClassOf(method).
+                Oop mc = methodClassOf(method);
+                bool found = false;
+                Oop walk = classOop;
+                int guard = 0;
+                while (walk.isObject() && walk.rawBits() >= 0x10000 && guard++ < 32) {
+                    if (walk == mc) { found = true; break; }
+                    walk = superclassOf(walk);
+                }
+                if (!found) {
+                    static int badCache = 0;
+                    if (++badCache <= 10) {
+                        std::string mcName = mc.isObject() && mc.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(mc) : "nil";
+                        std::string clsName = memory_.nameOfClass(classOop);
+                        std::string callerSel = memory_.selectorOf(method_);
+                        Oop callerMC = methodClassOf(method_);
+                        std::string callerMCName = callerMC.isObject() &&
+                            callerMC.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(callerMC) : "?";
+                        std::string callerRcvCls = receiver_.isObject() &&
+                            receiver_.rawBits() >= 0x10000
+                            ? memory_.classNameOf(receiver_) : "?";
+                        fprintf(stderr,
+                            "[CACHE-BADMETHOD] #%d #at: cls=%s(idx=%u) method=0x%llx "
+                            "methodClass=%s(NOT in chain) caller=%s(rcv) %s>>#%s "
+                            "frameDepth=%zu\n",
+                            badCache, clsName.c_str(), clsIdx,
+                            (unsigned long long)method.rawBits(), mcName.c_str(),
+                            callerRcvCls.c_str(), callerMCName.c_str(),
+                            callerSel.c_str(), frameDepth_);
+                        size_t start = frameDepth_ > 8 ? frameDepth_ - 8 : 0;
+                        for (size_t j = start; j < frameDepth_; j++) {
+                            Oop m = savedFrames_[j].savedMethod;
+                            Oop r = savedFrames_[j].savedReceiver;
+                            std::string s = memory_.selectorOf(m);
+                            std::string c = memory_.classNameOf(r);
+                            Oop fmc = methodClassOf(m);
+                            std::string fmcn = fmc.isObject() &&
+                                fmc.rawBits() >= 0x10000
+                                ? memory_.nameOfClass(fmc) : "?";
+                            fprintf(stderr,
+                                "[CACHE-BADMETHOD]   [%zu] rcv=%s %s>>%s\n",
+                                j, c.c_str(), fmcn.c_str(), s.c_str());
+                        }
+                    }
                 }
             }
         }
@@ -11824,6 +11972,53 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         }
     }
 
+    // IC-BADWRITE probe: catch writing (FullBlockClosure_classIdx → method
+    // whose class isn't in FullBlockClosure's ancestor chain) for #at:.
+    if (selector.isObject() && selector.rawBits() >= 0x10000) {
+        ObjectHeader* selH = selector.asObjectPtr();
+        if (selH->isBytesObject() && selH->byteSize() == 3 &&
+            memcmp(selH->bytes(), "at:", 3) == 0 &&
+            receiver.isObject() && receiver.rawBits() >= 0x10000) {
+            uint32_t rci = receiver.asObjectPtr()->classIndex();
+            if (rci == fullBlockClosureClassIndex_ ||
+                rci == compiledBlockClassIndex_) {
+                Oop mc = methodClassOf(resolvedMethod);
+                Oop rcvrClass = memory_.classOf(receiver);
+                bool found = false;
+                Oop walk = rcvrClass;
+                int guard = 0;
+                while (walk.isObject() && walk.rawBits() >= 0x10000 &&
+                       guard++ < 32) {
+                    if (walk == mc) { found = true; break; }
+                    walk = superclassOf(walk);
+                }
+                if (!found) {
+                    static int badWrite = 0;
+                    if (++badWrite <= 10) {
+                        std::string mcName = mc.isObject() &&
+                            mc.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(mc) : "nil";
+                        std::string rcName = memory_.nameOfClass(rcvrClass);
+                        std::string callerSel = memory_.selectorOf(method_);
+                        Oop callerMC = methodClassOf(method_);
+                        std::string callerMCName = callerMC.isObject() &&
+                            callerMC.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(callerMC) : "?";
+                        fprintf(stderr,
+                            "[IC-BADWRITE] #%d #at: rcvCls=%s method=0x%llx "
+                            "methodCls=%s (not in chain) icSel=0x%llx "
+                            "caller=%s>>#%s\n",
+                            badWrite, rcName.c_str(),
+                            (unsigned long long)resolvedMethod.rawBits(),
+                            mcName.c_str(),
+                            (unsigned long long)icSelectorBits,
+                            callerMCName.c_str(), callerSel.c_str());
+                    }
+                }
+            }
+        }
+    }
+
     // Find the first empty slot and fill it
     for (int e = 0; e < 4; e++) {
         if (icData[e * 3] == 0) {
@@ -12058,6 +12253,57 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                                 (unsigned long long)newExtra);
                         }
                         return;  // Don't poison the IC
+                    }
+                }
+            }
+        }
+
+        // IC-BADWRITE probe: catch (FullBlockClosure → non-ancestor) for #at:.
+        {
+            uint64_t icSelBits2 = icData[12];
+            if (icSelBits2 != 0 && icSelBits2 >= 0x10000) {
+                Oop s = Oop::fromRawBits(icSelBits2);
+                if (s.isObject()) {
+                    ObjectHeader* sh = s.asObjectPtr();
+                    if (sh->isBytesObject() && sh->byteSize() == 3 &&
+                        memcmp(sh->bytes(), "at:", 3) == 0 &&
+                        receiver.isObject() && receiver.rawBits() >= 0x10000) {
+                        uint32_t rci = receiver.asObjectPtr()->classIndex();
+                        if (rci == fullBlockClosureClassIndex_ ||
+                            rci == compiledBlockClassIndex_) {
+                            Oop mc = methodClassOf(cachedMethod);
+                            Oop rcvrClass = memory_.classOf(receiver);
+                            bool found = false;
+                            Oop walk = rcvrClass;
+                            int guard = 0;
+                            while (walk.isObject() && walk.rawBits() >= 0x10000 &&
+                                   guard++ < 32) {
+                                if (walk == mc) { found = true; break; }
+                                walk = superclassOf(walk);
+                            }
+                            if (!found) {
+                                static int badWriteU = 0;
+                                if (++badWriteU <= 10) {
+                                    std::string mcName = mc.isObject() &&
+                                        mc.rawBits() >= 0x10000
+                                        ? memory_.nameOfClass(mc) : "nil";
+                                    std::string rcName = memory_.nameOfClass(rcvrClass);
+                                    std::string callerSel = memory_.selectorOf(callerMethod);
+                                    Oop callerMC = methodClassOf(callerMethod);
+                                    std::string callerMCName = callerMC.isObject() &&
+                                        callerMC.rawBits() >= 0x10000
+                                        ? memory_.nameOfClass(callerMC) : "?";
+                                    fprintf(stderr,
+                                        "[IC-BADWRITE-U] #%d #at: rcvCls=%s "
+                                        "cm=0x%llx methodCls=%s (not in chain) "
+                                        "caller=%s>>#%s\n",
+                                        badWriteU, rcName.c_str(),
+                                        (unsigned long long)cachedMethod.rawBits(),
+                                        mcName.c_str(),
+                                        callerMCName.c_str(), callerSel.c_str());
+                                }
+                            }
+                        }
                     }
                 }
             }
