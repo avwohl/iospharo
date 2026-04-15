@@ -2,6 +2,41 @@
 
 Last updated: 2026-04-15
 
+## Timing-sensitive clusters — 74/74 direct-run (2026-04-15, session 14c)
+
+After the periodic-check alignment fix (commit cc10bce) and the
+harness `fastSem waitTimeoutMSecs:` fix, the four historically-residual
+timing classes all pass clean when run outside the SUnit harness
+wrapper (direct `tc run: result` for each):
+
+    Class                                Pass  Fail  Err
+    SemaphoreTest                         18     0    0
+    ProcessTest                           46     0    0
+    BlockClosureValueWithinTest            5     0    0
+    BlockClosureValueWithinDurationTest    5     0    0
+    TOTAL                                 74     0    0
+
+Closes deferred #1's final residual (`ProcessTest>>testResumeAfterBCR`).
+The ten original residuals were all harness-wrapper artifacts, now
+masked by either the harness fast-path or by the alignment fix.
+
+## JIT eval-mode boot "hang" reframed (2026-04-15, session 14c)
+
+Added `[STARTUP-ST-FIRED]` marker as the very first statement in the
+eval-mode startup.st and a `[DIAG-QUEUE]` periodic dump that walks
+every scheduler priority's ready list. Under `PHARO_NO_JIT=0
+JIT_MAX_COMPILE=120`, startup.st never loads and DIAG-QUEUE shows
+the P80 startup process has vanished — only `P10 ProcessorScheduler
+>>idleProcess` remains in the queues while P40 `MorphicRenderLoop`
+runs forever. Earlier in the run, an Array>>asSymbol DNU during
+`FFIMethodRegistry class>>resetAll` kills the startup process; the
+DNU is caught by `WorkingSession>>on:do:` but the session handler
+chain never completes.
+
+Practical consequence: the "JIT hang" is actually a JIT miscompile
+that triggers a DNU at boot. See deferred-issues.md #4 for the
+stack-offset hypothesis (repeated Oops at FP[-1]/[1]/[3]).
+
 ## Reflection-walk timeouts: ROOT CAUSE = interpreter send overhead (2026-04-15)
 
 Added per-call timing to prim 132 (`primitiveObjectPointsTo`) gated
