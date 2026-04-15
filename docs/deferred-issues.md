@@ -1018,6 +1018,37 @@ hangs. The triggering method is the lead. Likely candidates
 based on the 657-method log: `idleProcess`, `doOneCycleWhile:`,
 `yield`, or a Semaphore primitive site.
 
+**Session 14b (2026-04-15): bisect done.** Test setup:
+`PHARO_NO_JIT=0 JIT_MAX_COMPILE=N PHARO_NO_T2=1 timeout 12
+test_load_image image eval "1 + 2"`. Boundary is sharp:
+
+    JIT_MAX_COMPILE=119  →  exit Test Complete
+    JIT_MAX_COMPILE=120  →  hang in MorphicRenderLoop
+    (each interval bisected: 10 50 100 → ok; 125-200 → hang;
+     105-119 → ok; 120 → hang)
+
+Method #120 in compile order is `ensure:`. But blacklisting
+it via `PHARO_JIT_SKIP_SELECTORS=ensure:` does NOT remove the
+hang — the budget shifts to another method that also triggers
+it. So `ensure:` is not uniquely guilty; rather, *some method
+in the next-compiled set* shares the bug, and ensure: just
+happens to be first.
+
+Working hypothesis: the hang is in a class of methods related
+to non-local return / process unwind / block evaluation that
+JIT mis-handles. `ensure:`'s NLR-via-`valueNoContextSwitch` and
+the surrounding methods (`signal`, `startUp:`, `whileFalse:`)
+all touch this path.
+
+**Next concrete step:** add a one-shot trace at JIT compile
+time printing each method's "[JIT-COMPILE-ORDER] N: sel hash"
+so we can correlate compile-order across runs (currently the
+log only shows individual methods, no index). Then bisect with
+`PHARO_JIT_SKIP_SELECTORS` accumulating the suspects: skip
+ensure:, find next trigger; skip both, find next; until either
+the hang resolves or we have a list of all guilty selectors.
+The shape of that list will reveal the common code path.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
