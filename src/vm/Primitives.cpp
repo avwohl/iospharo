@@ -642,6 +642,14 @@ PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
         return PrimitiveResult::Success;
     }
     Oop mourner = memory_.popMourner();
+    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+        if (finalizationSignalCount_ > 0) {
+            auto latency = std::chrono::steady_clock::now() - lastFinalizationSignalTime_;
+            auto latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(latency).count();
+            fprintf(stderr, "[POP-FIN] signal->pop latency=%lldms (signal #%zu)\n",
+                    (long long)latencyMs, finalizationSignalCount_);
+        }
+    }
     primitiveSuccess(mourner);
     return PrimitiveResult::Success;
 }

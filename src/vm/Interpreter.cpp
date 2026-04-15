@@ -2317,6 +2317,7 @@ void Interpreter::signalFinalizationIfNeeded() {
     // timing tests race FinalizationProcess wakeup). Accessible via stats.
     finalizationSignalCount_++;
     finalizationPendingTotal_ += pending;
+    lastFinalizationSignalTime_ = std::chrono::steady_clock::now();
 
     if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
         Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);

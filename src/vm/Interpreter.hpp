@@ -531,6 +531,7 @@ private:
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
     size_t finalizationSignalCount_ = 0;     // Diagnostic: total signalFinalizationIfNeeded firings
     size_t finalizationPendingTotal_ = 0;    // Diagnostic: sum of pending mourners across firings
+    std::chrono::steady_clock::time_point lastFinalizationSignalTime_;  // Deferred #3: timestamp of last finalization signal, for pop-latency
     int lastPrimitiveIndex_ = 0;  // For stepDetailed() tracking
 
     // System paths and arguments

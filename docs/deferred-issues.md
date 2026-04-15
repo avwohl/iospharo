@@ -131,6 +131,32 @@ log the time-since-signal in `signalFinalizationIfNeeded` vs the time
 the finalization process actually pops a mourner (prim 172). A latency
 >50ms suggests scheduler gap, not signal-path loss.
 
+**Update (2026-04-14, session 4):** instrumented. Added
+`lastFinalizationSignalTime_` timestamp in `Interpreter::signalFinalizationIfNeeded`
+and a `[POP-FIN] signal->pop latency=%dms` log in `primitiveFetchNextMourner`
+(primitive 174). Ran `100 milliSeconds wait. 42 printString` under
+`PHARO_NO_JIT=1 PHARO_GC_EPH_DEBUG=1`:
+
+    [SIG-FIN] #1 pending=63 total=63 sema=... hasWaiter=0 excess=0
+    [POP-FIN] signal->pop latency=1ms (signal #1)   x 63
+
+All 63 pops happened at 1ms from signal — well under the 50ms
+scheduler-gap threshold. **Primary hypothesis ruled out**: the
+finalization process is scheduled promptly; latency is not the
+failure mode. The test failures in deferred #3 must originate
+elsewhere — candidates:
+
+  - tests that rely on `Smalltalk garbageCollect` synchronously
+    flushing finalizers (they return before the fin process runs
+    even 1ms later)
+  - tests with no explicit wait at all (zero-delay assertion)
+  - weak references or ephemeron-style reachability mismatches
+    that prevent mourner enqueue in the first place
+
+Next diagnostic: find the failing SUnit finalization tests and
+examine whether they include any delay between triggering GC and
+asserting, or whether they expect synchronous finalization.
+
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
 **Status (2026-04-14, session 3 correction):** the earlier "resolved"
