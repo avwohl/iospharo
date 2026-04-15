@@ -1060,6 +1060,58 @@ ensure:, find next trigger; skip both, find next; until either
 the hang resolves or we have a list of all guilty selectors.
 The shape of that list will reveal the common code path.
 
+**Session 14c (2026-04-15): it's not a hang — P80 startup
+process is dying on DNU.** Added `[STARTUP-ST-FIRED]` marker
+as the very first statement in the eval-mode startup.st.
+Result:
+
+    PHARO_NO_JIT=1                  → marker prints, result prints, exit 0
+    PHARO_NO_JIT=0 MAX=120          → marker NEVER prints, P40 Morphic loops forever
+
+So startup.st never loads. Added `[DIAG-QUEUE]` to the 10s
+force-yield dump that walks all priorities' ready lists. At
+hang time:
+
+    active: P40 WorldState>>doInterCycleWait  (MorphicRenderLoop)
+    queue:  P10 ProcessorScheduler>>idleProcess  (only runnable)
+
+P80 startup process is GONE. Earlier in the run:
+
+    [DNU] #1: #asSymbol not understood by rcvr=Array
+    stack: Array>>do: → WorkingSession>>on:do: →
+           WorkingSession>>startup: → ClassSessionHandler>>startup: →
+           FFIMethodRegistry class>>startUp: → ...resetAll →
+           FFIStructure class>>allSubclassesDo: → (deep recursion)
+
+Same DNU signature as session-2 "rcvr≠receiver_" stack
+mismatch. The FFI session handler iterates subclasses, and a
+JIT-miscompiled method inside that iteration puts an Array
+on the stack where a Symbol is expected (presumably in
+`aClass name asSymbol` or similar).
+
+**Why this looks like a "hang":** the DNU is caught by
+`WorkingSession>>on:do:` (frame 1 in the stack). Control
+unwinds past the on:do: but the rest of the session-startup
+handler chain never completes — including StartupPreferencesLoader
+which reads startup.st. Morphic (P40) had already activated
+before the FFI handler ran, so it keeps rendering forever
+while no other process can make progress.
+
+**Real root cause:** JIT stack corruption in one of the methods
+compiled between #100-120, activated by the FFI resetAll path.
+Candidates: `ensure:` (#120), `do:` variants on Array, or a
+specialSelector bytecode in the subclass iteration. Not a
+scheduling/timing issue.
+
+**Next concrete step:** run with `PHARO_JIT_DNU_OOP=1` (or
+similar env) to dump the faulting JIT method's bytecodes at the
+DNU site, and the stack top+1/top+2 values to see where the
+Array came from. Also worth: try blacklisting `allSubclassesDo:`
+via PHARO_JIT_SKIP_SELECTORS and see whether the hang clears —
+that would confirm the corruption is in the subclass-walk path
+rather than ensure:. If neither helps, disassemble the 120-method
+batch's stack-touching stencils and look for an off-by-one.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)

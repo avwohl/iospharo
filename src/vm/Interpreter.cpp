@@ -1985,6 +1985,59 @@ void Interpreter::handleForceYield() {
                             (long long)deltaUsec, deltaUsec / 1000000.0);
                 }
             }
+            // Scheduler queue diagnostic: dump all ready processes across priorities.
+            // Helps diagnose starvation/deadlock where active looks fine but a higher-
+            // priority process is blocked on a semaphore that will never signal.
+            try {
+                Oop schedAssoc = memory_.specialObject(SpecialObjectIndex::SchedulerAssociation);
+                Oop scheduler = memory_.fetchPointer(1, schedAssoc);
+                Oop schedLists = memory_.fetchPointer(SchedulerProcessListsIndex, scheduler);
+                int maxPri = (int)schedLists.asObjectPtr()->slotCount();
+                Oop nilO = memory_.nil();
+                for (int pri = maxPri; pri >= 1; pri--) {
+                    Oop procList = memory_.fetchPointer(pri - 1, schedLists);
+                    if (!procList.isObject() || procList.rawBits() == nilO.rawBits()) continue;
+                    Oop first = memory_.fetchPointer(LinkedListFirstLinkIndex, procList);
+                    if (!first.isObject() || first.rawBits() == nilO.rawBits()) continue;
+                    Oop p = first;
+                    int idx = 0;
+                    while (p.isObject() && p.rawBits() != nilO.rawBits() && idx < 8) {
+                        // Get top frame's method if suspended context is a Context
+                        std::string topSel = "?";
+                        std::string topRcvrCls = "?";
+                        Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, p);
+                        if (susp.isObject() && susp.rawBits() != nilO.rawBits()) {
+                            // Context has instVars: sender(0) pc(1) stackp(2) method(3) ...
+                            Oop mth = memory_.fetchPointer(3, susp);
+                            if (mth.isObject() && mth.rawBits() != nilO.rawBits() &&
+                                memory_.isValidPointer(mth)) {
+                                topSel = memory_.selectorOf(mth);
+                            }
+                            Oop rcvr = memory_.fetchPointer(5, susp);
+                            if (rcvr.isObject() && rcvr.rawBits() != nilO.rawBits() &&
+                                memory_.isValidPointer(rcvr))
+                                topRcvrCls = memory_.classNameOf(rcvr);
+                            else if (rcvr.isSmallInteger()) topRcvrCls = "SmallInteger";
+                        } else {
+                            topSel = "(nil ctx)";
+                        }
+                        fprintf(stderr, "[DIAG-QUEUE] P%d proc=0x%llx susp=%s>>%s\n",
+                                pri, (unsigned long long)p.rawBits(),
+                                topRcvrCls.c_str(), topSel.c_str());
+                        // Follow next link
+                        Oop nxt = memory_.fetchPointer(ProcessNextLinkIndex, p);
+                        if (nxt.isObject() && nxt.rawBits() != nilO.rawBits() &&
+                            nxt.rawBits() != p.rawBits()) {
+                            p = nxt;
+                        } else {
+                            break;
+                        }
+                        idx++;
+                    }
+                }
+            } catch (...) {
+                fprintf(stderr, "[DIAG-QUEUE] (enumeration failed)\n");
+            }
         }
     }
 

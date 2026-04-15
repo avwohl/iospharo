@@ -646,6 +646,7 @@ int main(int argc, char* argv[]) {
         {
             std::ofstream f(startupStPath);
             f << "| result |\n"
+              << "Stdio stderr nextPutAll: '[STARTUP-ST-FIRED]'; lf; flush.\n"
               << "[\n"
               << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
               << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
