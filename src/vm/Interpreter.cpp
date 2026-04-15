@@ -6282,35 +6282,50 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             if (rcvCls == fullBlockClosureClassIndex_ ||
                 rcvCls == compiledBlockClassIndex_) {
                 int primIdx = primitiveIndexOf(method);
-                if (primIdx == 60) {  // at:
+                // Match any at: method on FullBlockClosure receiver, not just prim=60.
+                std::string selEarly = memory_.selectorOf(method);
+                if (selEarly == "at:") {
                     static int badAct = 0;
                     if (++badAct <= 10) {
-                        std::string sel = memory_.selectorOf(method);
+                        std::string sel = selEarly;
+                        Oop methClass = methodClassOf(method);
+                        std::string methClsName = methClass.isObject() &&
+                            methClass.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(methClass) : "?";
                         Oop arg = stackPointer_[-1];
                         std::string argCls = arg.isObject() && arg.rawBits() >= 0x10000
                             ? memory_.classNameOf(arg)
                             : (arg.isCharacter() ? "Character"
                                : arg.isSmallInteger() ? "SmallInt" : "other");
                         std::string callerSel = memory_.selectorOf(method_);
+                        Oop callerMethClass = methodClassOf(method_);
+                        std::string callerMethClsName = callerMethClass.isObject() &&
+                            callerMethClass.rawBits() >= 0x10000
+                            ? memory_.nameOfClass(callerMethClass) : "?";
                         std::string callerRcvCls = receiver_.isObject() &&
                             receiver_.rawBits() >= 0x10000
                             ? memory_.classNameOf(receiver_) : "?";
-                        // Print last 6 saved frames for context
                         fprintf(stderr,
-                            "[BAD-AT-ACT] #%d method=0x%llx(#%s prim=60) rcvClsIdx=%u "
-                            "rcv=0x%llx arg=0x%llx(%s) caller=%s>>#%s frameDepth=%zu\n",
+                            "[BAD-AT-ACT] #%d method=0x%llx(#%s prim=60, %s>>#%s) "
+                            "rcvClsIdx=%u rcv=0x%llx arg=0x%llx(%s) "
+                            "caller=%s(rcv) %s>>#%s frameDepth=%zu\n",
                             badAct, (unsigned long long)method.rawBits(), sel.c_str(),
+                            methClsName.c_str(), sel.c_str(),
                             rcvCls, (unsigned long long)rcv.rawBits(),
                             (unsigned long long)arg.rawBits(), argCls.c_str(),
-                            callerRcvCls.c_str(), callerSel.c_str(), frameDepth_);
-                        size_t start = frameDepth_ > 6 ? frameDepth_ - 6 : 0;
+                            callerRcvCls.c_str(),
+                            callerMethClsName.c_str(), callerSel.c_str(), frameDepth_);
+                        size_t start = frameDepth_ > 8 ? frameDepth_ - 8 : 0;
                         for (size_t j = start; j < frameDepth_; j++) {
                             Oop m = savedFrames_[j].savedMethod;
                             Oop r = savedFrames_[j].savedReceiver;
                             std::string s = memory_.selectorOf(m);
                             std::string c = memory_.classNameOf(r);
-                            fprintf(stderr, "[BAD-AT-ACT]   [%zu] %s>>%s\n", j,
-                                    c.c_str(), s.c_str());
+                            Oop mc = methodClassOf(m);
+                            std::string mcn = mc.isObject() && mc.rawBits() >= 0x10000
+                                ? memory_.nameOfClass(mc) : "?";
+                            fprintf(stderr, "[BAD-AT-ACT]   [%zu] rcv=%s %s>>%s\n",
+                                    j, c.c_str(), mcn.c_str(), s.c_str());
                         }
                     }
                 }
@@ -11763,6 +11778,48 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 // Preserve primKind bits (52:48) already set above
                 extra |= (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
                 jitJ2JDirectPatches_++;
+            }
+        }
+    }
+
+    // Selector cross-check: `selector` is the send's selector (already compared
+    // to icData[12] above). But we ALSO need the resolvedMethod's own selector
+    // to match — if a caller hands us a method whose selector differs, we'd
+    // poison the IC. Unwrap AdditionalMethodState when penultimate lit is
+    // a non-bytes object with slotCount>=2.
+    {
+        size_t nLits = memory_.numLiteralsOf(resolvedMethod);
+        if (nLits >= 2) {
+            Oop rmSel = memory_.fetchPointer(nLits - 1, resolvedMethod);
+            uint64_t rmSelBits = rmSel.rawBits();
+            if (rmSel.isObject() && rmSelBits >= 0x10000) {
+                ObjectHeader* h = rmSel.asObjectPtr();
+                if (!h->isBytesObject() && h->slotCount() >= 2) {
+                    rmSelBits = h->slotAt(1).rawBits();
+                }
+            }
+            if (rmSelBits != 0 && rmSelBits != selector.rawBits()) {
+                auto symStr = [this](uint64_t bits) -> std::string {
+                    Oop o = Oop::fromRawBits(bits);
+                    if (!o.isObject() || bits < 0x10000) return "?";
+                    ObjectHeader* h = o.asObjectPtr();
+                    if (!h->isBytesObject() || h->byteSize() > 80) return "?";
+                    return std::string((char*)h->bytes(), h->byteSize());
+                };
+                static int mpLog = 0;
+                if (++mpLog <= 20) {
+                    fprintf(stderr,
+                        "[IC-PATCH-BADSEL] #%d sendSel=#%s(0x%llx) "
+                        "resolvedMethodSel=#%s(0x%llx) method=0x%llx "
+                        "key=0x%llx SKIPPING WRITE\n",
+                        mpLog, symStr(selector.rawBits()).c_str(),
+                        (unsigned long long)selector.rawBits(),
+                        symStr(rmSelBits).c_str(),
+                        (unsigned long long)rmSelBits,
+                        (unsigned long long)resolvedMethod.rawBits(),
+                        (unsigned long long)lookupKey);
+                }
+                return;
             }
         }
     }
