@@ -2,6 +2,49 @@
 
 Last updated: 2026-04-15
 
+## JIT max: stack leak — NEW finding (2026-04-15, session 14d)
+
+With `PHARO_NO_JIT=0 PHARO_NO_T2=1 JIT_MAX_COMPILE≥10`, boot crashes with
+`Stack overflow in push() fd=12 method=#isFinite sp_offset=131072`.
+The rich frame dump (new this session) shows:
+
+    frame[12] method=#adaptToInteger:andCompare: rcvr=0x857c…05 size=3
+    frame[11] method=#>                          rcvr=0x1      size=2
+    frame[10] method=#>                          rcvr=0x1      size=2
+    frame[ 9] method=#max:                       rcvr=0x1      size=131042
+    frame[ 8] method=#setLeft:right:top:bottom:  rcvr=Rect     size=6
+    frame[ 7] … left:right:top:bottom:
+    frame[ 6] … clearArea
+    ⋮
+    frame[ 1] method=#open
+
+Every frame except max: is ≤6 slots. max:'s frame has 131042 unused
+stack slots when isFinite's push overflows. This is a SINGLE max:
+activation accumulating 131k slots. `JIT_EXCLUDE=max:` eliminates the
+overflow (with MAX=50), so it's specifically JIT-compiled max:.
+
+Ruled out mechanisms:
+- **Not the arith-overflow fallback**: `JIT_ARITH_OFLOW_TRACE=1` shows
+  only ~20 firings total (not 65k × 2 slots = 131k).
+- **Not a loop in max:'s bytecodes**: JIT_DUMP_HEX shows 10 linear
+  stencils (pushRcvr, pushTemp, >_2, jumpFalse_1, pushRcvr, flush1,
+  jump→+48 = bc7, pushTemp, flush1, returnTop_E). The unconditional
+  jump at bc=5 goes forward to bc=7 (returnTop), not back.
+
+Unclear: what mechanism pushes 131k slots onto a single max:
+activation without re-running its bytecodes? Candidate theories:
+  - jumpFalse_1 non-boolean fallback spilling repeatedly (1 slot each
+    but only fires if > returns non-boolean — shouldn't happen)
+  - J2J return path leaving extra slots
+  - tryResume re-entry at same bc offset adding to stack each time
+
+New tooling committed this session:
+- `Interpreter.hpp push()` stack-overflow dump: per-frame size, rcvr,
+  saved FP, current ip/bcOff/opcode.
+- `JITRuntime.cpp jit_rt_arith_overflow` trace: per-firing sp/ip/sel
+  for first 20 + every 1000th.
+- `JITCompiler.cpp JIT_DUMP_HEX=sel` already existed — committed prev.
+
 ## Timing-sensitive clusters — 74/74 direct-run (2026-04-15, session 14c)
 
 After the periodic-check alignment fix (commit cc10bce) and the
