@@ -1,6 +1,35 @@
 # Test Results
 
-Last updated: 2026-04-14
+Last updated: 2026-04-15
+
+## Fixed: periodic-check alignment lock on extension bytes (2026-04-15)
+
+`BlockClosureValueWithinDurationTest>>testValueWithinNonLocalReturn` hung
+the VM forever. Root cause traced to `checkCountdown_=1024` alignment vs
+the 2-bytecode `E1 FF ED FC` loop body of `[] repeat`: since 1024 is
+even, the countdown always expired at the E1 position with
+`inExtension_==true`, and the existing guard that defers checks in that
+case reset countdown to 1024 — re-locking alignment forever. Timer
+semaphore, forceYield, preemption and pending-signal checks all
+starved while any low-priority process ran an extended-jump loop.
+
+Fix (commit cc10bce): set `checkCountdown_ = 1` before dispatching the
+extension consumer in the inExt branch. After the consumer's
+DISPATCH_NEXT decrement, countdown hits 0 immediately and we re-enter
+periodic_checks with inExtension_ cleared.
+
+Results:
+- BlockClosureValueWithinDurationTest: 5/5 pass (was: hang on test #1)
+- SmallIntegerTest 29/29, FloatTest 74/74, FractionTest 32/32,
+  StringTest 438/438, OrderedCollectionTest 351/351: no regressions
+- /tmp/run_fastsem_wait.st repro: 10/10 runs pass=true (100-120ms,
+  well under the 150ms threshold)
+
+The harness fast-path (`run_sunit_tests.st` submodule) was also changed
+to use `fastSem waitTimeoutMSecs:` instead of a polling loop at the
+caller's priority — same-priority polling starved the forked test.
+Together these two fixes unblock the entire timing-sensitive test class
+set (Semaphore*, BlockClosureValueWithin*, Process*).
 
 ## Weak/Finalization suite — 1002/1007 pass (2026-04-14)
 
