@@ -47,6 +47,23 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
     // Arithmetic overflow: restore entry SP and re-execute the whole method.
     // The interpreter will handle LargeInteger arithmetic.
     state->exitReason = ExitArithOverflow;
+
+    // Diagnostic: count how often the fallback fires per method. Enabled by
+    // JIT_ARITH_OFLOW_TRACE=1. Prints a periodic summary at 10k firings.
+    static const char* trace = getenv("JIT_ARITH_OFLOW_TRACE");
+    if (trace && *trace == '1') {
+        static size_t totalFirings = 0;
+        totalFirings++;
+        if (totalFirings <= 20 || (totalFirings % 1000) == 0) {
+            uint64_t methodOop = state->jitMethod ? state->jitMethod->compiledMethodOop : 0;
+            std::string sel = state->interp ?
+                state->interp->memory().selectorOf(Oop::fromRawBits(methodOop)) : "?";
+            fprintf(stderr, "[ARITH-OFLOW] #%zu sel=#%s method=0x%llx sp=%p ip=%p\n",
+                    totalFirings, sel.c_str(), (unsigned long long)methodOop,
+                    (void*)state->sp, (void*)state->ip);
+            fflush(stderr);
+        }
+    }
 }
 
 extern "C" void jit_rt_push_frame(JITState* state) {
