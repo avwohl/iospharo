@@ -2,6 +2,27 @@
 
 2026-04-15
 
+## Fix: JIT IC corruption after GC compaction
+
+Two bugs caused JIT `do:` (and other block-evaluating methods) to hang
+when GC compaction moved method/selector objects:
+
+1. **stencil_sendJ2J block eval fallback**: when the inline block-value
+   J2J call failed (block not JIT-compiled, arg mismatch, etc.), the
+   stencil jumped to `exit_send_cached` without setting `s->cachedTarget`.
+   The stale value from a previous send caused the interpreter to activate
+   a wrong method (e.g. `ByteSymbol>>#at:` instead of `FullBlockClosure>>value:`).
+
+2. **IC selector oops going stale after GC**: `forEachRoot` visits IC
+   entries during compaction, but the selector oop at IC slot 12 could go
+   stale. The stencil then probed the mega cache with the wrong selector,
+   retrieving an unrelated method. Fix: `recoverAfterGC` now flushes all
+   IC entries (zeroes the full 104-byte block per site). ICs cheaply
+   re-fill on the next few misses — no observable performance impact.
+
+Verified: `eval "'hello world'"` completes at `JIT_MAX_COMPILE=10`
+(previously hung). Zero `EXIT-CACHED-BAD` events after fix.
+
 ## Fix: JIT resume into register-reading stencil variants
 
 When `tryResume`/`tryResumeFast` entered the JIT at a bytecode offset
