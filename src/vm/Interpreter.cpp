@@ -6273,6 +6273,51 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // Debug: catch at: activation with wrong receiver class (FullBlockClosure).
+    // Compares selector of the method being activated against expected semantics.
+    if (argCount == 1 && method.isObject() && stackPointer_ && method.rawBits() >= 0x10000) {
+        Oop rcv = stackPointer_[-2];
+        if (rcv.isObject() && rcv.rawBits() >= 0x10000) {
+            uint32_t rcvCls = rcv.asObjectPtr()->classIndex();
+            if (rcvCls == fullBlockClosureClassIndex_ ||
+                rcvCls == compiledBlockClassIndex_) {
+                int primIdx = primitiveIndexOf(method);
+                if (primIdx == 60) {  // at:
+                    static int badAct = 0;
+                    if (++badAct <= 10) {
+                        std::string sel = memory_.selectorOf(method);
+                        Oop arg = stackPointer_[-1];
+                        std::string argCls = arg.isObject() && arg.rawBits() >= 0x10000
+                            ? memory_.classNameOf(arg)
+                            : (arg.isCharacter() ? "Character"
+                               : arg.isSmallInteger() ? "SmallInt" : "other");
+                        std::string callerSel = memory_.selectorOf(method_);
+                        std::string callerRcvCls = receiver_.isObject() &&
+                            receiver_.rawBits() >= 0x10000
+                            ? memory_.classNameOf(receiver_) : "?";
+                        // Print last 6 saved frames for context
+                        fprintf(stderr,
+                            "[BAD-AT-ACT] #%d method=0x%llx(#%s prim=60) rcvClsIdx=%u "
+                            "rcv=0x%llx arg=0x%llx(%s) caller=%s>>#%s frameDepth=%zu\n",
+                            badAct, (unsigned long long)method.rawBits(), sel.c_str(),
+                            rcvCls, (unsigned long long)rcv.rawBits(),
+                            (unsigned long long)arg.rawBits(), argCls.c_str(),
+                            callerRcvCls.c_str(), callerSel.c_str(), frameDepth_);
+                        size_t start = frameDepth_ > 6 ? frameDepth_ - 6 : 0;
+                        for (size_t j = start; j < frameDepth_; j++) {
+                            Oop m = savedFrames_[j].savedMethod;
+                            Oop r = savedFrames_[j].savedReceiver;
+                            std::string s = memory_.selectorOf(m);
+                            std::string c = memory_.classNameOf(r);
+                            fprintf(stderr, "[BAD-AT-ACT]   [%zu] %s>>%s\n", j,
+                                    c.c_str(), s.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
         handleStackOverflow(argCount);
         return;
@@ -11920,21 +11965,38 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 size_t nLits = memory_.numLiteralsOf(cachedMethod);
                 if (nLits >= 2) {
                     Oop cmSel = memory_.fetchPointer(nLits - 1, cachedMethod);
-                    if (cmSel.rawBits() != 0 && cmSel.rawBits() != icSelBits) {
+                    uint64_t cmSelBits = cmSel.rawBits();
+                    // If the penultimate literal isn't a Symbol, it's an
+                    // AdditionalMethodState — slot 1 holds the real selector.
+                    if (cmSel.isObject() && cmSelBits >= 0x10000) {
+                        ObjectHeader* h = cmSel.asObjectPtr();
+                        if (!h->isBytesObject() && h->slotCount() >= 2) {
+                            cmSelBits = h->slotAt(1).rawBits();
+                        }
+                    }
+                    if (cmSelBits != 0 && cmSelBits != icSelBits) {
+                        auto symStr = [this](uint64_t bits) -> std::string {
+                            Oop o = Oop::fromRawBits(bits);
+                            if (!o.isObject() || bits < 0x10000) return "?";
+                            ObjectHeader* h = o.asObjectPtr();
+                            if (!h->isBytesObject() || h->byteSize() > 80) return "?";
+                            return std::string((char*)h->bytes(), h->byteSize());
+                        };
                         static int mismatchLog = 0;
-                        if (++mismatchLog <= 20) {
-                            std::string icS = memory_.selectorOf(
-                                Oop::fromRawBits(icSelBits));
-                            std::string cmS = memory_.selectorOf(cachedMethod);
+                        if (++mismatchLog <= 30) {
+                            std::string icS = symStr(icSelBits);
+                            std::string cmS = symStr(cmSelBits);
+                            std::string cmMeth = memory_.selectorOf(cachedMethod);
                             fprintf(stderr,
                                 "[IC-UPGRADE-MISMATCH] #%d icSel=#%s(bits=0x%llx) "
-                                "cachedMethodSel=#%s(bits=0x%llx) cm=0x%llx "
+                                "cmSel=#%s(bits=0x%llx) cm=0x%llx(sel=#%s) "
                                 "key=0x%llx extra=0x%llx SKIPPING WRITE\n",
                                 mismatchLog, icS.c_str(),
                                 (unsigned long long)icSelBits,
                                 cmS.c_str(),
-                                (unsigned long long)cmSel.rawBits(),
+                                (unsigned long long)cmSelBits,
                                 (unsigned long long)cachedMethod.rawBits(),
+                                cmMeth.c_str(),
                                 (unsigned long long)lookupKey,
                                 (unsigned long long)newExtra);
                         }
