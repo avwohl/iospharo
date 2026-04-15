@@ -571,18 +571,50 @@ PHARO_JIT_DISASM_OOP to check returnTop and sendJ2J return paths.
 
 **Session 8 follow-up:** `JIT_EXCLUDE_OOP=0x3002cac38 JIT_MAX_COMPILE=9`
 compiles 9 methods (basicNew, new:, /, size, on:, on:, reset, at:,
-do:) with max: skipped — **still hangs.** So max: is not the culprit.
-The hang threshold is the *number* of compiled methods (~8), not the
-identity of any specific one. Candidate root causes:
-  - IC-entry region stomping as code zone fills past a page boundary
-  - Heartbeat/scheduler interaction that kicks in after N JIT entries
-  - Cumulative callsite counter overflow
+do:) with max: skipped — **still hangs.** Initial conclusion was
+"count-based" — revisit.
 
-Actionable next step: instrument the JIT code-zone pointer + ICs on
-every entry. Dump zone layout at the N=7 / N=8 boundary to see what
-the 8th compile changes. Another angle: try compiling a completely
-different first-8 set by using JIT_ONLY=someOtherMethod and see if
-the hang still appears at the 8th method.
+**Session 9 (2026-04-15):** Isolated single-method hangs. With
+JIT_EXCLUDE excluding *all but one*, JIT_MAX_COMPILE=1:
+
+    compile only 'basicNew'  → works
+    compile only 'new:'      → works
+    compile only '/'         → works
+    compile only 'size'      → works
+    compile only 'on:'       → works
+    compile only 'reset'     → works
+    compile only 'at:'       → works
+    compile only 'at:put:'   → works
+    compile only 'key'       → works
+    compile only 'max:'      → HANGS
+    compile only 'do:'       → HANGS
+    compile only 'nextPut:'  → HANGS
+
+Three individual methods each hang the startup when they are the
+*only* JIT-compiled method. So it's not count-based — it's specific
+methods. The hanging three all have non-trivial control flow
+(conditionals, sends, returns in multiple paths). The working ones
+are mostly primitives or simple two-bytecode accessors.
+
+Disassembly of `max:` (0x3002cac38, 26 bytecodes) shows 4 sendJ2J
++ 2 forward jumpFalse + 1 returnReceiver fall-through + 2 returnTop
+conditional exits. No backward branches.
+
+`do:` is the classic whileTrue loop body, which has backward
+branches — different stencil profile from max:. But both hang.
+
+Strong hypothesis: **the bug is in J2J return / returnTop path
+handling for methods that have multiple return points combined with
+J2J sends.** When max: is a J2J target from the startup code path
+(which sends `>=`, `ifTrue:` etc. in its body), the J2J return
+chain leaves the scheduler in a state where startup process
+cannot progress.
+
+Next tick: dump ARM64 code for max: with PHARO_JIT_DISASM_OOP=
+0x3002cac38 and inspect the returnTop + returnReceiver stencils.
+Alternate angle: add per-method JIT-call + JIT-return counters
+at method entry/exit, rerun with only max: compiled, look for
+a call/return imbalance specific to max:.
 
 ---
 
