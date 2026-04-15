@@ -2111,14 +2111,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Register in method map
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);
 
-    // Diagnostic: ship per-bcOffset entry-state vector to runtime so tryResume
-    // can count unsafe (state != 0) landings. Free in production; only enabled
-    // when PHARO_RESUME_STATE_DEBUG=1. See deferred-issues.md #4.
+    // Ship per-bcOffset entry-state vector to runtime so tryResume can reject
+    // register-reading (_N) entry offsets. Keyed by JITMethod* (GC-stable).
+    // Always populated — this is a correctness prerequisite, not a diagnostic.
+    // See deferred-issues.md #4.
     {
         static const bool resumeStateDebug = !!getenv("PHARO_RESUME_STATE_DEBUG");
         if (resumeStateDebug) {
-            // One-shot compile-time stat: how many bcOffsets in this method
-            // are non-zero? If always 0, my entryState plumbing is broken.
             static uint64_t methodsWithUnsafe = 0;
             static uint64_t totalUnsafeBc = 0;
             static uint64_t totalMethods = 0;
@@ -2129,7 +2128,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 methodsWithUnsafe++;
                 totalUnsafeBc += methodUnsafe;
             }
-            if (totalMethods <= 5 || (totalMethods % 100) == 0) {
+            if (totalMethods <= 20 || (totalMethods % 100) == 0) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 fprintf(stderr, "[JIT-COMPILE-STATE] method #%llu sel=%s unsafeBc=%u "
                         "(cumulative methodsWithUnsafe=%llu totalUnsafeBc=%llu)\n",
@@ -2137,9 +2136,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                         (unsigned long long)methodsWithUnsafe,
                         (unsigned long long)totalUnsafeBc);
             }
-            interp_.jitRuntime().setBcEntryStates(
-                compiledMethod.rawBits(), std::move(bcToEntryState));
         }
+        interp_.jitRuntime().setBcEntryStates(jitMethod, std::move(bcToEntryState));
     }
 
     methodsCompiled_++;

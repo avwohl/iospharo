@@ -109,20 +109,21 @@ public:
     // Public T2 lookup for jit_t2_send helper
     void* lookupTier2(uint64_t methodBits) const { return tier2Lookup(methodBits); }
 
-    // Diagnostic side-table: per-bcOffset SimStack entry state, used to detect
-    // when tryResume lands on a register-reading (_N) stencil. Populated by
-    // JITCompiler when PHARO_RESUME_STATE_DEBUG is set; otherwise unused.
-    void setBcEntryStates(uint64_t methodOop, std::vector<uint8_t>&& states) {
-        bcEntryStates_[methodOop] = std::move(states);
+    // Per-bcOffset SimStack entry state, used by tryResume to detect when
+    // an entry offset lands on a register-reading (_N) stencil. Keyed by
+    // JITMethod* (GC-stable), so GC compaction doesn't invalidate entries.
+    // Always populated at compile time.
+    void setBcEntryStates(JITMethod* jm, std::vector<uint8_t>&& states) {
+        bcEntryStates_[jm] = std::move(states);
     }
-    uint8_t getBcEntryState(uint64_t methodOop, uint32_t bcOffset) const {
-        auto it = bcEntryStates_.find(methodOop);
+    uint8_t getBcEntryState(JITMethod* jm, uint32_t bcOffset) const {
+        auto it = bcEntryStates_.find(jm);
         if (it == bcEntryStates_.end()) return 0;
         if (bcOffset >= it->second.size()) return 0;
         return it->second[bcOffset];
     }
-    void clearBcEntryStates(uint64_t methodOop) {
-        bcEntryStates_.erase(methodOop);
+    void clearBcEntryStates(JITMethod* jm) {
+        bcEntryStates_.erase(jm);
     }
 
     // Add entry to mega cache (called by interpreter after method lookup)
@@ -190,9 +191,10 @@ private:
     // Execution count tracking for compilation triggering
     CountEntry countMap_[CountMapSize];
 
-    // Diagnostic per-method bcOffset → SimStack entry state map.
-    // Empty in production (only populated when PHARO_RESUME_STATE_DEBUG=1).
-    std::unordered_map<uint64_t, std::vector<uint8_t>> bcEntryStates_;
+    // Per-JITMethod bcOffset → SimStack entry state. Keyed by JITMethod*
+    // (GC-stable). Used by tryResume to reject resume at register-reading
+    // (_N) stencil offsets to avoid entering with garbage in x19-x22.
+    std::unordered_map<JITMethod*, std::vector<uint8_t>> bcEntryStates_;
 };
 
 // ===== RUNTIME HELPER FUNCTIONS =====

@@ -1192,6 +1192,92 @@ Also worth adding a post-return invariant check that
 stackPointer_ == (entrySP + 1 - nArgs - 1) after every
 method return — any drift would be caught immediately.
 
+**Session 15 (2026-04-15): ROOT CAUSE IDENTIFIED.**
+
+Instrumented `tryResume` with `[TRY-RESUME-MAX]` entry/exit logs
+and confirmed the leak mechanism end-to-end. Key findings:
+
+1. **GC moves the compiled method.** At compile time method #8
+   max: is at oop 0x3002cac38. After `recoverAfterGC`, its
+   JITMethod::compiledMethodOop has been rewritten to
+   0x3002cac28 (compaction shifted by 0x10). The methodMap is
+   rekeyed correctly but `bcEntryStates_` is *not* — it still
+   uses the old 0x3002cac38 key. So the diagnostic
+   `getBcEntryState(0x3002cac28, 3)` returns 0 even though the
+   actual compiled stencil is `stencil_jumpFalse_1` (state=1).
+
+2. **max: bytecode (dumped via PHARO_JIT_DUMP_SEL=max:):**
+
+        bc[0] op=0x4C stencil_pushReceiver_E
+        bc[1] op=0x40 stencil_pushTemp_1     (x19 = aNumber)
+        bc[2] op=0x63 stencil_greaterThanSmallInt_2  (x19 = bool)
+        bc[3] op=0xC1 stencil_jumpFalse_1    ← reads TOS from x19
+        bc[4] op=0x4C stencil_pushReceiver_E
+        bc[5] op=0x00 stencil_flush1
+        bc[5] op=0xB0 stencil_jump
+        bc[6] op=0x40 stencil_pushTemp_E
+        bc[7] op=0x5C stencil_returnTop_E
+
+3. **Resume path:** interpreter runs bc=0..2 (receiver+temp
+   pushed to memory, arith> triggers a full send because the
+   interpreter fallback uses the send path, not the stencil's
+   inline arith). Send returns with TOS on the memory stack
+   (not in x19!). Then `tryJITResumeInCaller` is called at
+   bc=3.
+
+4. **Garbage x19:** `tryResume` enters the JIT at the bc=3
+   code offset, which is `stencil_jumpFalse_1`. That stencil
+   does `asm mov %0, x19` — but x19 is a C callee-saved
+   register holding whatever value it had before the JIT
+   entry. It is never loaded from memory. It is GARBAGE.
+
+5. **Leak trigger:** the garbage value is neither TRUE nor
+   FALSE, so it falls through to the non-boolean
+   spill-and-deopt path:
+
+        Oop val; val.bits = tos_bits;
+        *(s->sp) = val;
+        s->sp++;                    // ← +1 slot leak
+        s->exitReason = EXIT_SEND;
+        _HOLE_RT_SEND(s);           // ← does NOT set s->ip
+
+   `state.ip` was initialized by the interpreter to `bcBase`
+   (not `bcBase+bcOffset`), so on exit `bcOut == 0`.
+
+6. **Measured delta matches exactly.** Per resume call:
+   - sp delta: +8 bytes (+1 slot)
+   - bcOut: 0 (state.ip unchanged)
+   - exitReason: 2 (EXIT_SEND)
+
+7. **Amplification to +2:** after exit, interpreter sets
+   IP = state.ip = bcBase (bc=0). So method runs again from
+   scratch, pushing receiver + temp, sends `>`, returns true,
+   tries to resume at bc=3. One slot leaked per JIT resume,
+   plus one slot leaked per interpreter restart (the
+   non-boolean value spilled by the stencil is never popped)
+   → +2 per full cycle.
+
+**Fix strategy:** `tryResume` must not enter at a `_N`
+variant stencil with garbage registers. Two options:
+
+(a) **Bail out:** if `entryState != 0`, return false and let
+    the interpreter keep running. Simple, safe, loses a bit
+    of JIT coverage at resume points.
+
+(b) **Register preamble:** insert a tiny entry stub per
+    non-zero bc offset that loads x19/x20/x21/x22 from
+    memory before jumping into the stencil. Keeps JIT
+    coverage but adds code size.
+
+Also needed regardless of (a) vs (b): fix
+`bcEntryStates_` to survive GC compaction — rekey it inside
+`recoverAfterGC` alongside `methodMap_`. Otherwise any
+post-GC diagnostic is lying about entry state.
+
+Applies equally to `tryJITResumeInCaller`, `tryJITActivation`,
+`tryResumeFast`, and any other resume entry point. Need to
+audit all of them.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)

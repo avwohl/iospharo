@@ -1,5 +1,27 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-15
+
+## Fix: JIT resume into register-reading stencil variants
+
+When `tryResume`/`tryResumeFast` entered the JIT at a bytecode offset
+whose stencil reads operands from callee-saved registers (x19-x22 —
+the `_1`/`_2`/`_3`/`_4` variants), the registers contained garbage from
+the C caller. For jump stencils (`stencil_jumpFalse_1` etc.), the
+garbage value was typically neither TRUE nor FALSE, so the stencil
+took its non-boolean spill-and-deopt branch, which pushed the garbage
+to the stack and exited with `EXIT_SEND` *without* updating `state.ip`.
+The interpreter then set IP = state.ip (= bcBase, since
+`tryJITResumeInCaller` initializes `state.ip = bcBase`, not
+`bcBase+bcOffset`), restarting the method from bc=0 and leaking one
+slot per resume. Over many cycles this consumed ~131042 stack slots
+during image startup and hung the boot.
+
+Fix: `tryResume` and `tryResumeFast` now refuse to enter at any
+bcOffset with a non-zero SimStack entry state. Stored per-JITMethod
+(keyed by `JITMethod*`, GC-stable) rather than per-oop so GC
+compaction doesn't invalidate the map.
+
 2026-04-14
 
 ## Fix: Periodic-check alignment lock on extension bytes

@@ -4512,6 +4512,25 @@ terminate_process:
     if (running_) {
         push(value);
 
+        if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
+            long long spAboveFP = (long long)(stackPointer_ - framePointer_);
+            if (spAboveFP >= 500 && spAboveFP <= 520) {
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                const uint8_t* _bcBase = nullptr;
+                if (_mObj) {
+                    Oop _hdr = _mObj->slots()[0];
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0;
+                    _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
+                }
+                long long _bcOff = (_bcBase && instructionPointer_) ?
+                    (long long)(instructionPointer_ - _bcBase) : -1;
+                fprintf(stderr, "[RET-PUSH] fd=%zu sp-fp=%lld val=0x%llx method=#%s bcOff=%lld bc=%02x\n",
+                        frameDepth_, spAboveFP, (unsigned long long)value.rawBits(),
+                        memory_.selectorOf(method_).c_str(), _bcOff,
+                        (instructionPointer_ ? *instructionPointer_ : 0));
+            }
+        }
+
         // NOTE: nlrHomeMethod_/nlrValue_ globals are only consumed in the fd=0
         // safety net (for process-switch during ensure: cleanup). For fd>0,
         // NLR continuation after ensure: cleanup is handled by the
@@ -4525,7 +4544,36 @@ terminate_process:
         // Try to re-enter JIT execution in the caller method.
         // IP is at the bytecode after the send that just returned.
         if (jitRuntime_.isInitialized()) {
+            long long _spBefore = 0, _bcBefore = -1;
+            if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
+                _spBefore = (long long)(stackPointer_ - framePointer_);
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                if (_mObj) {
+                    Oop _hdr = _mObj->slots()[0];
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0;
+                    const uint8_t* _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
+                    if (instructionPointer_)
+                        _bcBefore = (long long)(instructionPointer_ - _bcBase);
+                }
+            }
             tryJITResumeInCaller();
+            if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
+                long long _spAfter = (long long)(stackPointer_ - framePointer_);
+                long long _bcAfter = -1;
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                if (_mObj) {
+                    Oop _hdr = _mObj->slots()[0];
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0;
+                    const uint8_t* _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
+                    if (instructionPointer_)
+                        _bcAfter = (long long)(instructionPointer_ - _bcBase);
+                }
+                if (_spBefore >= 500 && _spBefore <= 520) {
+                    fprintf(stderr, "[JITRESUME] fd=%zu method=#%s sp_before=%lld bc_before=%lld sp_after=%lld bc_after=%lld\n",
+                            frameDepth_, memory_.selectorOf(method_).c_str(),
+                            _spBefore, _bcBefore, _spAfter, _bcAfter);
+                }
+            }
         }
 #endif
     }
@@ -11009,6 +11057,24 @@ void Interpreter::tryJITResumeInCaller() {
         // checks run (GC, timer, process scheduling, test triggers, etc.)
         if (checkCountdown_ <= 0) break;
 
+        if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
+            long long _sp = (long long)(stackPointer_ - framePointer_);
+            if (_sp >= 500 && _sp <= 520) {
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                long long _bc = -1;
+                if (_mObj) {
+                    Oop _hdr = _mObj->slots()[0];
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0;
+                    const uint8_t* _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
+                    if (instructionPointer_)
+                        _bc = (long long)(instructionPointer_ - _bcBase);
+                }
+                fprintf(stderr, "[RESUME-ITER] iter=%d fd=%zu method=#%s(0x%llx) sp=%lld bc=%lld\n",
+                        resumeIter, frameDepth_, memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)method_.rawBits(), _sp, _bc);
+            }
+        }
+
         // Validate method_ before using it
         if (!method_.isObject() || method_.rawBits() < 0x10000) break;
 
@@ -11046,6 +11112,24 @@ void Interpreter::tryJITResumeInCaller() {
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             break;  // No re-entry at this offset
+        }
+
+        if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
+            long long _sp = (long long)(state.sp - framePointer_);
+            if (_sp >= 498 && _sp <= 522) {
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                long long _bc = -1;
+                if (_mObj) {
+                    Oop _hdr = _mObj->slots()[0];
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0;
+                    const uint8_t* _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
+                    if (state.ip)
+                        _bc = (long long)(state.ip - _bcBase);
+                }
+                fprintf(stderr, "[RESUME-EXIT] iter=%d fd=%zu method=#%s exit=%d state.sp=%lld state.bc=%lld\n",
+                        resumeIter, frameDepth_, memory_.selectorOf(method_).c_str(),
+                        (int)state.exitReason, _sp, _bc);
+            }
         }
 
         // Charge the periodic check countdown for JIT-executed bytecodes.

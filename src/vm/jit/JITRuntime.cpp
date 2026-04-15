@@ -1058,6 +1058,15 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
 
+    // Safety: refuse to resume at a bytecode offset whose stencil reads
+    // operands from registers (x19-x22, "_N" variants). The stencil chain
+    // before this offset would have populated those registers, but we're
+    // entering cold — registers contain whatever the C caller left there.
+    // Non-boolean spill-and-deopt paths in the _1 jump stencils would
+    // push garbage and EXIT_SEND without updating s->ip, creating a stack
+    // leak. Deferred-issues.md #4 (Session 15).
+    if (getBcEntryState(jm, bcOffset) != 0) return false;
+
     // Ensure code zone is writable before touching JITMethod fields.
     makeWritable(jm->codeStart(), jm->codeSize);
 
@@ -1138,33 +1147,6 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         return false;
     }
 
-    // Diagnostic counter: track tryResume invocations that land on a stencil
-    // with non-zero SimStack entry state (i.e., a _N variant that reads from
-    // x19..x22). Per Session 11 hypothesis: such resumes may execute with
-    // garbage in those registers. Gated on PHARO_RESUME_STATE_DEBUG so this
-    // is free in production. See deferred-issues.md #4.
-    static const bool resumeStateDebug = !!getenv("PHARO_RESUME_STATE_DEBUG");
-    if (resumeStateDebug) {
-        static uint64_t totalResumes = 0;
-        static uint64_t unsafeResumes = 0;
-        static uint64_t stateCounts[8] = {0};
-        uint8_t st = getBcEntryState(compiledMethod.rawBits(), bcOffset);
-        totalResumes++;
-        if (st != 0) {
-            unsafeResumes++;
-            if (st < 8) stateCounts[st]++;
-        }
-        if (totalResumes == 1 || (totalResumes % 4096) == 0) {
-            fprintf(stderr, "[JIT-RESUME-STATE] total=%llu unsafe=%llu (states: 1=%llu 2=%llu 3=%llu 4=%llu)\n",
-                    (unsigned long long)totalResumes,
-                    (unsigned long long)unsafeResumes,
-                    (unsigned long long)stateCounts[1],
-                    (unsigned long long)stateCounts[2],
-                    (unsigned long long)stateCounts[3],
-                    (unsigned long long)stateCounts[4]);
-        }
-    }
-
     entry(&state);
 
     // Back to writable (for IC patching etc.)
@@ -1183,26 +1165,14 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     if (codeOffset == 0 || codeOffset >= jm->codeSize) return false;
 
     // Set up JIT state
+    // Safety: refuse register-reading (_N) entry offsets — see tryResume.
+    if (getBcEntryState(jm, bcOffset) != 0) return false;
+
     state.jitMethod = jm;
     state.exitReason = ExitNone;
 
     // Toggle W^X to executable
     makeExecutable(jm->codeStart(), jm->codeSize);
-
-    // Diagnostic counter: same as tryResume but for the fast path.
-    static const bool resumeStateDebug = !!getenv("PHARO_RESUME_STATE_DEBUG");
-    if (resumeStateDebug) {
-        static uint64_t totalFast = 0;
-        static uint64_t unsafeFast = 0;
-        uint8_t st = getBcEntryState(jm->compiledMethodOop, bcOffset);
-        totalFast++;
-        if (st != 0) unsafeFast++;
-        if (totalFast == 1 || (totalFast % 4096) == 0) {
-            fprintf(stderr, "[JIT-RESUMEFAST-STATE] total=%llu unsafe=%llu\n",
-                    (unsigned long long)totalFast,
-                    (unsigned long long)unsafeFast);
-        }
-    }
 
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
     entry(&state);
