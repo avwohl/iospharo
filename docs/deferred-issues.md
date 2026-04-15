@@ -188,6 +188,11 @@ AdditionalMethodState — when the penultimate literal is an AMS (not a
 Symbol), falls back to AMS slot 1 (the real selector). Unblocks method
 identification in `[JIT] Compiled method ...` and `[DNU-STACK]` output.
 
+**J2J ruled out as culprit (2026-04-14):** `PHARO_NO_J2J=1 PHARO_NO_T2=1`
+reproduces the hang MUCH faster (~300K steps in 20s vs 18M with J2J,
+DNU #>= appears). Disabling J2J makes things worse, so the bug is in
+the base T1 stencil dispatch, not the J2J chain specifically.
+
 The `do:` bytecodes (26 bc, 3 lits — ByteSymbol lit[1]=#size? lit[2]=#at?
 lit[3]=GlobalVariable class binding) are the standard
 `| size i | size := self size. i := 1. [i <= size] whileTrue: [aBlock
