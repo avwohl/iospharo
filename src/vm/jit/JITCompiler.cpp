@@ -2072,6 +2072,36 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         tableBase[b] = bcToCodeOffset[b];
     }
 
+    // Post-emit machine-code dump (JIT_DUMP_HEX=selectorName).
+    // Dumps each stencil's emitted bytes + reloc sites so we can diff against
+    // the stencil template in generated_stencils_arm64.hpp. Used for verifying
+    // that no stencil-copy/patch bug corrupted the code for a suspect method.
+    {
+        static const char* dumpHexSel = getenv("JIT_DUMP_HEX");
+        if (dumpHexSel && *dumpHexSel) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel == dumpHexSel) {
+                fprintf(stderr, "[JIT-DUMP-HEX] #%s codeBase=%p codeSize=%u:\n",
+                        sel.c_str(), (void*)codeBase, codeSize);
+                uint32_t off = 0;
+                for (size_t i = 0; i < decoded.size(); i++) {
+                    const DecodedBC& bc = decoded[i];
+                    const StencilDef& st = stencilTable[bc.stencilIdx];
+                    fprintf(stderr, "[JIT-DUMP-HEX]   [%zu] +%u %s (size=%u bc=%d):\n",
+                            i, off, st.name, st.codeSize, bc.bcOffset);
+                    fprintf(stderr, "[JIT-DUMP-HEX]    ");
+                    for (uint32_t b = 0; b < st.codeSize; b++) {
+                        fprintf(stderr, " %02X", codeBase[off + b]);
+                        if ((b & 15) == 15 && b + 1 < st.codeSize)
+                            fprintf(stderr, "\n[JIT-DUMP-HEX]    ");
+                    }
+                    fprintf(stderr, "\n");
+                    off += st.codeSize;
+                }
+            }
+        }
+    }
+
     // Flush icache for the newly written code
     flushICache(codeBase, totalSize);
 
