@@ -6456,13 +6456,21 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         fprintf(stderr,
                             "[BAD-AT-ACT] #%d method=0x%llx(#%s prim=60, %s>>#%s) "
                             "rcvClsIdx=%u rcv=0x%llx arg=0x%llx(%s) "
-                            "caller=%s(rcv) %s>>#%s frameDepth=%zu\n",
+                            "caller=%s(rcv) %s>>#%s frameDepth=%zu "
+                            "sp=%p sp[-3]=0x%llx sp[-2]=0x%llx sp[-1]=0x%llx "
+                            "sp[0]=0x%llx argCount=%d pendingIC=%p\n",
                             badAct, (unsigned long long)method.rawBits(), sel.c_str(),
                             methClsName.c_str(), sel.c_str(),
                             rcvCls, (unsigned long long)rcv.rawBits(),
                             (unsigned long long)arg.rawBits(), argCls.c_str(),
                             callerRcvCls.c_str(),
-                            callerMethClsName.c_str(), callerSel.c_str(), frameDepth_);
+                            callerMethClsName.c_str(), callerSel.c_str(), frameDepth_,
+                            (void*)stackPointer_,
+                            (unsigned long long)stackPointer_[-3].rawBits(),
+                            (unsigned long long)stackPointer_[-2].rawBits(),
+                            (unsigned long long)stackPointer_[-1].rawBits(),
+                            (unsigned long long)stackPointer_[0].rawBits(),
+                            argCount, (void*)pendingICPatch_);
                         size_t start = frameDepth_ > 8 ? frameDepth_ - 8 : 0;
                         for (size_t j = start; j < frameDepth_; j++) {
                             Oop m = savedFrames_[j].savedMethod;
