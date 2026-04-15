@@ -11029,6 +11029,23 @@ void Interpreter::tryJITResumeInCaller() {
                 if (hasEmpty) {
                     pendingICPatch_ = state.icDataPtr;
                     pendingICSendArgCount_ = state.sendArgCount;
+                    static size_t setCount1 = 0; setCount1++;
+                    if (getenv("PHARO_IC_PATCH_DEBUG") && (setCount1 & 0xFFF) == 1) {
+                        fprintf(stderr, "[IC-PEND-SET1] tryResume ExitSend count=%zu ic=%p\n",
+                                setCount1, (void*)state.icDataPtr);
+                    }
+                } else {
+                    static size_t fullCount1 = 0; fullCount1++;
+                    if (getenv("PHARO_IC_PATCH_DEBUG") && (fullCount1 & 0xFFF) == 1) {
+                        fprintf(stderr, "[IC-PEND-FULL1] tryResume IC full count=%zu ic=%p\n",
+                                fullCount1, (void*)state.icDataPtr);
+                    }
+                }
+            } else {
+                static size_t noICDataCount = 0; noICDataCount++;
+                if (getenv("PHARO_IC_PATCH_DEBUG") && (noICDataCount & 0xFFF) == 1) {
+                    fprintf(stderr, "[IC-PEND-NONE] tryResume ExitSend no icDataPtr count=%zu\n",
+                            noICDataCount);
                 }
             }
             inJITResume_ = false;
@@ -11255,7 +11272,16 @@ static uint8_t inlinePrimKind(int primIndex) {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
-    if (!pendingICPatch_) return;
+    static bool patchDbg = getenv("PHARO_IC_PATCH_DEBUG") != nullptr;
+    static size_t dbgCalled = 0, dbgNoPending = 0, dbgSelMismatch = 0,
+                  dbgDup = 0, dbgPatched = 0, dbgFullNoSlot = 0;
+    dbgCalled++;
+    if (!pendingICPatch_) { dbgNoPending++;
+        if (patchDbg && (dbgNoPending & 0xFFFF) == 1) {
+            fprintf(stderr, "[IC-PATCH-DBG] call=%zu noPending=%zu selMis=%zu dup=%zu patched=%zu full=%zu\n",
+                    dbgCalled, dbgNoPending, dbgSelMismatch, dbgDup, dbgPatched, dbgFullNoSlot);
+        }
+        return; }
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
@@ -11294,6 +11320,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // execution or process switch) — patching would corrupt the IC.
     uint64_t icSelectorBits = icData[12];
     if (icSelectorBits != 0 && icSelectorBits != selector.rawBits()) {
+        dbgSelMismatch++;
+        if (patchDbg && dbgSelMismatch <= 5) {
+            std::string got = memory_.selectorOf(selector);
+            fprintf(stderr, "[IC-PATCH-DBG] selector MISMATCH: ic=0x%llx send=#%s\n",
+                    (unsigned long long)icSelectorBits, got.c_str());
+        }
         return;  // IC belongs to a different send site — skip
     }
 
@@ -11311,7 +11343,14 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 
     // Check if this key is already cached (avoid duplicates)
     for (int e = 0; e < 4; e++) {
-        if (icData[e * 3] == lookupKey) return;
+        if (icData[e * 3] == lookupKey) { dbgDup++;
+            if (patchDbg && dbgDup <= 5) {
+                std::string sel = memory_.selectorOf(selector);
+                fprintf(stderr, "[IC-PATCH-DBG] DUP #%s key=0x%llx slot=%d (IC already has)\n",
+                        sel.c_str(), (unsigned long long)lookupKey, e);
+            }
+            return;
+        }
     }
 
     // Detect inline getter/setter/yourself for J2J dispatch.
@@ -11394,6 +11433,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             icData[e * 3 + 1] = resolvedMethod.rawBits();
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
+            dbgPatched++;
             // Debug: log J2J patches for high-frequency methods
             static int logCount = 0;
             if ((extra & (1ULL << 60)) && logCount < 30) {
@@ -11404,6 +11444,12 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             }
             return;
         }
+    }
+    dbgFullNoSlot++;
+    if (patchDbg && dbgFullNoSlot <= 5) {
+        std::string sel = memory_.selectorOf(selector);
+        fprintf(stderr, "[IC-PATCH-DBG] FULL (all 4 slots used) #%s key=0x%llx\n",
+                sel.c_str(), (unsigned long long)lookupKey);
     }
     // All 4 slots full — megamorphic, don't patch
 }
