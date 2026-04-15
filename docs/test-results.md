@@ -2,6 +2,52 @@
 
 Last updated: 2026-04-15
 
+## JIT eval-mode hang — session 16 bisect narrows to a *pattern*, not a single method (2026-04-15)
+
+With session-15's `_N` resume guard in place, `PHARO_NO_JIT=0
+PHARO_NO_T2=1 JIT_MAX_COMPILE=10` still hangs. Symptom has shifted
+slightly — no longer the `copyTo:` fd=4090 recursion, but an early-
+startup "only integers should be used as indices" error followed by
+the VM going idle in `ProcessorScheduler class>>idleProcess`.
+`[IMAGE] 3` never prints.
+
+`PHARO_JIT_SKIP_SELECTORS` bisect on current `jit` branch:
+
+    MAX=9   no skip                          OK (#9 = `at:`)
+    MAX=10  no skip                          FAIL (#10 = `do:` 0x30032ee48)
+    MAX=10  skip `do:`                       OK  (#10 = `at:put:`)
+    MAX=11  skip `do:`                       OK
+    MAX=12  skip `do:`                       FAIL (#12 = `nextPut:` 0x3003000a8)
+    MAX=20  skip `do:,nextPut:`              OK
+    MAX=110 skip `do:,nextPut:`              OK
+    MAX=113 skip `do:,nextPut:`              FAIL (#113 = `ensure:` 0x3003ea8d0)
+
+So three distinct methods — `do:`, `nextPut:`, `ensure:` — all trigger
+the same failure mode. Common traits: all three involve J2J sends
+around a block body. `ensure:` additionally is an unwind marker
+(primitive 198). Session-15's register-reading `_N` resume guard is
+necessary but doesn't cover whatever stencil/ABI mismatch these
+methods share.
+
+Workaround for now: `PHARO_JIT_SKIP_SELECTORS=do:,nextPut:,ensure:`
+lets the VM compile >110 methods cleanly. Not a fix, but handy for
+running tests that depend on JIT without tripping this.
+
+Ruled out this session (all diagnostics reverted):
+- Broken `materializedContext` cache (reuse/new ratios are healthy)
+- Raw Context allocation pressure (MAX=9 also allocates 400K+ and
+  finishes cleanly)
+- Self-sender cycle (no `storePointer(0, ctx, ctx)` fires before hang)
+- `PHARO_JIT_NO_BLOCKS=1` doesn't help (block JIT isn't the trigger)
+- `PHARO_JIT_NO_SIMSTACK=1` doesn't help (not SimStack-specific)
+
+Concrete next step: diff the JIT stencil sequence emitted for `do:`,
+`nextPut:`, and `ensure:` to find the shared pattern the session-15
+guard misses — possibly the sendJ2J→`_N`-stencil return path, or
+something specific to unwind-marked methods.
+
+---
+
 ## JIT eval-mode hang — PARTIAL FIX (2026-04-15, session 15, commits 6c7658e + ff7159d + 49caee0)
 
 Root cause for session-14d `max:` leak (fixed): `tryResume` entered register-
