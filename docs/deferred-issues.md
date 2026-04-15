@@ -218,14 +218,58 @@ dropped. Fix: index-based loop + outer fixed-point loop wrapping
 `markInactiveEphemerons` / `fireAllEphemerons`. Post-fix, debug
 log shows `fired=1004` (vs `fired=12` before). Committed.
 
-**Remaining issue (tracking separately):** testClearing passes 3/10
-runs even with the fix. The GC now enqueues the right mourners, but
-the FinalizationProcess (P70) sometimes hasn't drained them before
-the test's next assertion executes. Likely our `signalFinalizationIfNeeded`
-deferred-to-next-step design lets the test keep running after GC
-for one extra bytecode before the signal fires. Not critical —
-ephemeron correctness is fixed; flakiness is now a scheduler/timing
-concern in a well-defined spot.
+**Remaining issue (tracking separately):** testClearing passes 3-7/10
+runs even with the fix. Deeper investigation (session 5, 2026-04-14):
+
+    Test setup: `keys := (1 to:1000) collect:[:n| 'key', n asString].
+                 dict := WeakKeyDictionary new.
+                 keys do:[:n| dict at: n put: n,n].
+                 keys := nil.
+                 dict at: #sentinel put: nil.`
+    After one fullGC: dict keys size = 8-12 (should be 1)
+    After two fullGCs: dict keys size = 1 ✓
+
+    Debug output from one GC:
+      [GC-EPH] encountered=765 inactive=425 active=340 fired=12
+
+    So of 1001 ephemerons in the dict:
+      - Only 765 were encountered during marking (236 missed!)
+      - Of the 765, 425 had keys already marked alive (inactive)
+      - 340 were classified "active" (dead keys)
+      - After fixed-point iteration, only 12 TRULY had dead keys.
+
+Two puzzles:
+  1. **Undercount on encounter (1001 → 765):** why are 236 ephemerons
+     not encountered? The `dict` is a root (local temp), its `array`
+     is a Pharo Array that should be scanned by scanPointerFields,
+     and each live slot should be an ephemeron → markAndTrace.
+     Possible: scanning order leaves some associations as entries in
+     tombstoned slots that markAndTrace skips (though isMarked short-
+     circuits on the entry itself, not the slot). Need to log each
+     ephemeron markAndTrace vs. scan and diff against a pre-GC
+     allInstances count.
+
+  2. **328 of 340 "active" transitioned to "inactive" during
+     fixed-point:** a key that was unmarked at encounter becomes
+     marked during the fixed-point iteration. What strong path adds
+     those marks? `markInactiveEphemerons` calling `scanPointerFields`
+     on a newly-alive ephemeron marks its value and container. The
+     container (dict) is already reached; so marking its array hits
+     every association, which classifies each one *again* as an
+     ephemeron — but markAndTrace short-circuits on already-marked
+     objects. So this shouldn't add NEW key markings.
+
+  Attempted experiment: calling `signalFinalizationIfNeeded()`
+  synchronously inside `primitiveFullGC` (instead of setting the
+  `finalizationCheckAfterGC_` flag) regresses test from 4/10 → 0/10.
+  The test's second assertion expects `dict size = self size + 1`
+  (unfinalized!) right after GC — synchronous signalling transfers
+  to P70 which drains mourners immediately, breaking the assertion.
+  Reverted. Keep the deferred-to-next-step design; it matches the
+  test's semantics.
+
+Ephemeron correctness is broadly fixed (fire-all bug, outer loop);
+residual flakiness is a separate "miss-rate on encounter" puzzle.
 
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
