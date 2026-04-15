@@ -507,6 +507,49 @@ process never acknowledges them, the JIT backjump stencil is
 missing a preemption check. Fix location:
 `src/vm/jit/stencils_branch.cpp` stencil_jumpBack.
 
+**Session 8 (2026-04-15):** Confirmed stencil_jumpBack DOES decrement
+yieldCountdown and exit via ExitYield — the yield path exists.
+checkCountdown_ is charged 1000×numBC per ExitYield, returns to
+step() which checks forceYield. The preemption mechanism is in place.
+
+**The hang is actually "startup.st never runs," not "Morphic starves it."**
+Test: replaced startup.st with minimal 2-line `Stdio stdout nextPutAll:
+'STARTUP-RAN'; lf; flush. Smalltalk exitSuccess.` — still hangs under
+JIT, runs instantly under interpreter. OpalCompiler is not involved.
+
+**Tight bisect (2026-04-15):** with `JIT_MAX_COMPILE=N PHARO_NO_T2=1`:
+
+    N=7 works (STARTUP-RAN)
+    N=8 hangs
+
+The 8th compiled method is `max:` (oop 0x3002cac38, 576 bytes).
+First 8 methods, in order:
+  1. basicNew       0x3003e20f8
+  2. new:           0x300327f78
+  3. /              0x3002ee6d0
+  4. size           0x300328230 (prim)
+  5. on:            0x3002fd350
+  6. on:            0x3002ffc20
+  7. reset          0x3002ffb18
+  8. max:           0x3002cac38   ← N=8 breakpoint
+
+Excluding max: via `JIT_EXCLUDE=max:` moves boundary to N=9 (at:).
+Excluding just at: (keeping max:) still breaks at N=8 — max: is the
+critical method. But no single exclusion holds open; cumulative
+effect still bites.
+
+Minimal-repro now: `cd /tmp/harness && PHARO_NO_JIT=0 PHARO_NO_T2=1
+JIT_MAX_COMPILE=8 ./test_load_image Pharo.image` with 2-line
+startup.st — hangs. Set JIT_MAX_COMPILE=7 → runs.
+
+Next diagnostic: inspect the JIT output for `max:` (0x3002cac38,
+576 bytes). Short method — likely `a >= b ifTrue: [a] ifFalse: [b]`.
+Candidate bugs: (a) boolean dispatch in jumpTrue/False stencil
+overwrites ip when branch-target offset computation is wrong;
+(b) cold `a >=` deopts and corrupts continuation IP. Disassemble
+with `PHARO_JIT_DUMP_SEL=max:` and check that jumpTrue/False
+handlers write s->ip only on branch-taken path.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
