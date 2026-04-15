@@ -2,6 +2,43 @@
 
 Last updated: 2026-04-15
 
+## JIT eval-mode hang — session 17: found nil-DNU shortcut typo (2026-04-15)
+
+Session 14's 4094-deep `Context>>copyTo:` recursion IS still reproducing
+at MAX=10 (session 16 was wrong that symptom shifted — extended
+pushFrame overflow dump surfaces the sender chain). Root cause of the
+recursion turned out to be a typo in an existing short-circuit:
+
+    Interpreter.cpp:7360
+    -    if (selLen == 25 && memcmp(bytes, "findNextHandlerContext", 22) == 0) {
+    +    if (selLen == 22 && memcmp(bytes, "findNextHandlerContext", 22) == 0) {
+
+"findNextHandlerContext" is 22 chars, not 25. The shortcut (returning
+nil when sent to nil) never fired. Without it, `nil findNextHandlerContext`
+DNUs → creates MessageNotUnderstood → calls `signal` → signal does
+`thisContext nextHandlerContext handleSignal: self` → Context>>nextHandlerContext
+is `self sender findNextHandlerContext` → same nil lookup fails →
+cascade adds ~5 frames per iteration. After ~800 iterations the chain
+hits StackOverflowLimit=4096 when `Context>>copyTo:` tries to snapshot
+it for the debugger.
+
+Fix committed as 8b949f5. `[DNU-FIX] nil findNextHandlerContext → nil`
+now fires. Cascade broken.
+
+**But MAX=10 still hangs.** Secondary symptom: after DNU cascade is
+broken, the image enters Rubric text composition
+(`RubCompositionScanner>>basicScanCharactersFrom:to:in:rightX:stopConditions:kern:`)
+and never reaches `StartupPreferencesLoader`. MAX=9 reaches startup.st
+in ~98M bytecodes; MAX=10 does 150M+ bytecodes of Morphic UI work
+instead (prim 63 call count ~70k vs >120k). `[STARTUP-ST-FIRED]`
+never appears.
+
+**Hypothesis:** JIT'd `do:` returns wrong value or diverges iteration
+semantics, causing `SpKMCategoryBuilder>>visit:` (which uses
+`OrderedCollection>>collect:` → `do:`) to build menus that wouldn't
+otherwise be built, which cascades into full debugger UI construction.
+Next step: diff JIT code for `do:` vs interpreter semantics.
+
 ## JIT eval-mode hang — session 16 bisect narrows to a *pattern*, not a single method (2026-04-15)
 
 With session-15's `_N` resume guard in place, `PHARO_NO_JIT=0
