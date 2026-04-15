@@ -11912,6 +11912,38 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
         if (newExtra == 0) return;  // non-trivial method without JIT target
 
+        // Probe: verify cachedMethod's selector matches the IC's recorded selector.
+        // If they differ, this is cross-site IC poisoning — DON'T write.
+        {
+            uint64_t icSelBits = icData[12];
+            if (icSelBits != 0 && icSelBits > 0x10000) {
+                size_t nLits = memory_.numLiteralsOf(cachedMethod);
+                if (nLits >= 2) {
+                    Oop cmSel = memory_.fetchPointer(nLits - 1, cachedMethod);
+                    if (cmSel.rawBits() != 0 && cmSel.rawBits() != icSelBits) {
+                        static int mismatchLog = 0;
+                        if (++mismatchLog <= 20) {
+                            std::string icS = memory_.selectorOf(
+                                Oop::fromRawBits(icSelBits));
+                            std::string cmS = memory_.selectorOf(cachedMethod);
+                            fprintf(stderr,
+                                "[IC-UPGRADE-MISMATCH] #%d icSel=#%s(bits=0x%llx) "
+                                "cachedMethodSel=#%s(bits=0x%llx) cm=0x%llx "
+                                "key=0x%llx extra=0x%llx SKIPPING WRITE\n",
+                                mismatchLog, icS.c_str(),
+                                (unsigned long long)icSelBits,
+                                cmS.c_str(),
+                                (unsigned long long)cmSel.rawBits(),
+                                (unsigned long long)cachedMethod.rawBits(),
+                                (unsigned long long)lookupKey,
+                                (unsigned long long)newExtra);
+                        }
+                        return;  // Don't poison the IC
+                    }
+                }
+            }
+        }
+
         icData[firstEmpty * 3] = lookupKey;
         icData[firstEmpty * 3 + 1] = cachedMethod.rawBits();
         icData[firstEmpty * 3 + 2] = newExtra;
