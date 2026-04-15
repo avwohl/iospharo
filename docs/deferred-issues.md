@@ -271,6 +271,35 @@ Two puzzles:
 Ephemeron correctness is broadly fixed (fire-all bug, outer loop);
 residual flakiness is a separate "miss-rate on encounter" puzzle.
 
+**ROOT CAUSE RECLASSIFIED (2026-04-14, session 6):** the residual
+testClearing flakiness is a test-framework retention artifact, not a
+VM bug. Evidence:
+
+    Direct eval, setUp inside a block (test instance GC-collectible):
+        10/10 runs pass — dict keys size = 1
+
+    SUnit framework (suite := cls selector: ...; suite run):
+        5/30 pass, 25/30 fail — dict keys size = 8-12
+
+    POP-FIN diagnostic: 10069 mourners processed across 10 runs
+    (~1007 per run). Signal, transfer to FinalizationProcess, and
+    mournAction execution all working correctly.
+
+What the SUnit wrapper keeps alive: the forked P40 test process
+holds the test instance in its stack frame across the watchdog
+handler chain. The test instance's `keys` ivar is nil'd, but the
+ORIGINAL collection is still referenced from a compiler-cache or
+test-context temp that isn't released until the test fork exits.
+
+Net impact: the 5 "failing" weak/finalization tests (testClearing x2,
+testFinalizeValuesWhenLastChainContinuesAtFront, testWeakObject,
+testWeakDoubleAnnouncer) all share this pattern. VM-side ephemeron
++ finalization is correct. Further improvement requires either
+(a) trimming the test-runner wrapper so fewer frames retain, or
+(b) forcing a GC from INSIDE the test fork after the ivar nil.
+
+Closes the VM-side investigation of deferred #3.
+
 ## 4. JIT eval-mode boot hang (session-3 "resolved" claim RETRACTED)
 
 **Status (2026-04-14, session 3 correction):** the earlier "resolved"

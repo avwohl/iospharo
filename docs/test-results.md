@@ -26,9 +26,11 @@ when the key is dropped.
 
 Residuals share one failure mode: after nilling the last strong reference
 and calling `Smalltalk garbageCollect`, the ephemeron's key still survives
-one GC cycle. Some non-ephemeron strong path (likely saved stack frame or
-compiler cache) keeps it reachable long enough to miss the first
-`markInactiveEphemerons` pass. Tracked as deferred #3 residual.
+one GC cycle. Confirmed as a test-framework retention artifact, not a VM
+bug — direct-eval runs of the same body pass 10/10 while SUnit-framework
+runs fail 25/30. The SUnit wrapper (P40 fork + watchdogs + handlers) keeps
+test-instance refs alive across `Smalltalk garbageCollect`. See deferred
+#3 for the full diagnostic chain.
 
 ## JIT baseline rebaseline — interpreter bench numbers (2026-04-14)
 
