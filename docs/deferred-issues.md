@@ -641,17 +641,31 @@ Candidate: `do:`'s `[i <= size] whileTrue: [aBlock value: (self
 at: i). i := i + 1]` body contains `lessEqualSmallInt_2` and
 `jumpFalse_1` at bc[8]/bc[9] and a jumpBack at bc[23]. The
 whileTrue loop body has J2J send patterns (sendJ2J at bc[14]/[15]
-for `at:` + `value:`) whose returns resume at offsets that my new
-guard correctly rejects — but something downstream (context
-sender chain?) still gets corrupted.
+for `at:` + `value:`).
 
-Hypothesis: when my guard rejects resume, the interpreter
-continues at the same bytecode offset. If JIT-set stack state
-(e.g. `_N` registers, saved J2J frames) isn't fully flushed to
-the interpreter-visible stack before returning from the chain
-loop, the interpreter sees an out-of-sync stack and miscomputes
-a subsequent context sender or activation arg count, leading
-to a sender-cycle and copyTo: recursion at unwind time.
+**Probe (2026-04-15, session 15 follow-up):** added a trace
+`PHARO_DEBUG_RESUME_REJECT=1` to the inline-tryResume path that
+prints when `getBcEntryState != 0` rejects. Ran the MAX=10 do:
+reproducer. **The guard never fires before copyTo: recursion
+starts.** So this hang is not a resume-into-`_N` issue; it's
+something else in the do: JIT-compiled path that corrupts the
+context sender chain.
+
+The sequence: MAX=10 compiles do:, then DNU #hasShortcutKey
+fires at SpMorphicTreeTableAdapter (Spec/Morphic startup path),
+StDebugger opens on that DNU, and during its context-stack copy
+one Context has `sender == self` (copyTo: called on oop
+0x3003ef7b0 thousands of times with the same receiver). Stack
+corruption signature: FP[-2] == FP[1] == FP[2] (three copies of
+the same Oop in adjacent slots) suggests a JIT-compiled method
+duplicating a stack slot on some path.
+
+This is the **same pre-session-14 do: hang** (originally session 3,
+line 624-627 above). Session 15's max: fix buys us MAX=7→9
+without triggering it. Real fix requires a separate
+investigation into which stencil/frame-materialization path
+duplicates the stack slot and/or builds a self-referencing
+context sender.
 
 ---
 
