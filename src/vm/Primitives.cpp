@@ -8033,23 +8033,21 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
         }
     }
 
-    // Collect all visible objects using allObjectsDo
+    // Collect all visible objects using the inlined template variant to avoid
+    // std::function dispatch cost per object (~3M in a mid-batch heap).
     // Skip classIdx=0 objects — these are hidden VM objects (free chunks,
     // class table pages) that should never be visible to Smalltalk code.
     std::vector<Oop> objects;
-    memory_.allObjectsDo([&](Oop obj) {
-        if (obj.isObject()) {
-            ObjectHeader* hdr = obj.asObjectPtr();
-            if (hdr->isForwarded()) return;  // Skip forwarded (become'd) objects
-            uint32_t cls = hdr->classIndex();
-            if (cls != 0) {
-                if (excludedContexts.count(obj.rawBits())) return;
-                // Also verify the class table has a valid entry
-                Oop classOop = memory_.classAtIndex(cls);
-                if (classOop.isObject() && !classOop.isNil()) {
-                    objects.push_back(obj);
-                }
-            }
+    objects.reserve(1 << 20);
+    memory_.allObjectsDoInline([&](Oop obj) {
+        ObjectHeader* hdr = obj.asObjectPtr();
+        if (hdr->isForwarded()) return;
+        uint32_t cls = hdr->classIndex();
+        if (cls == 0) return;
+        if (excludedContexts.count(obj.rawBits())) return;
+        Oop classOop = memory_.classAtIndex(cls);
+        if (classOop.isObject() && !classOop.isNil()) {
+            objects.push_back(obj);
         }
     });
 
