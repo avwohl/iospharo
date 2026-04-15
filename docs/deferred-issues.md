@@ -963,6 +963,61 @@ with `(void)simStackEntryState`). To pick this up again:
    arm — predictable, probably still wrong, but not garbage-
    dependent.
 
+**Session 14 (2026-04-15): hypothesis DISPROVEN by direct
+measurement.** Implemented step #2 above: added per-bcOffset
+SimStack entry-state side table in JITRuntime
+(`bcEntryStates_` map, populated from JITCompiler when
+`PHARO_RESUME_STATE_DEBUG=1`). Counter in `tryResume` increments
+per-call when the landing bcOffset's entry state is non-zero.
+
+Verified the plumbing first (compile-time stat):
+
+    [JIT-COMPILE-STATE] method #1 sel=basicNew unsafeBc=5 …
+    [JIT-COMPILE-STATE] method #2 sel=new:     unsafeBc=1 …
+    [JIT-COMPILE-STATE] method #3 sel=/        unsafeBc=5 …
+
+So entryState computation does report non-zero state for real
+methods. Then ran 30s of eval-mode load:
+
+    JIT_MAX_COMPILE=10  PHARO_NO_T2=1  → 86,016 resumes,  0 unsafe
+    JIT_MAX_COMPILE=200 PHARO_NO_T2=1  → 159,744 resumes, 0 unsafe
+    (across both tryResume and tryResumeFast)
+
+100% of resumes land on state-0 stencils. The bcToCodeOffset
+last-write-wins logic correctly ensures resume targets are
+state-0 entries (sends are barriers → flush emitted → state=0
+at the post-send bytecode).
+
+**Conclusion: tryResume is NOT landing on register-reading
+stencils.** The eval-mode boot hang is caused by something
+else. Session 11's gate likely caused a regression for an
+unrelated reason (perhaps rejecting state-0 resumes that
+collided with branch targets, or a confused check predicate).
+
+Remaining diagnostic infrastructure left in place behind
+`PHARO_RESUME_STATE_DEBUG` env var (free in production):
+- `JITRuntime::bcEntryStates_` side-table (only populated
+  when env set)
+- `bcToEntryState` parallel vector in JITCompiler compile path
+- Counters in `tryResume` and `tryResumeFast`
+
+Other observations from session 14:
+- `PHARO_NO_JIT=1` eval mode completes cleanly (97M bytecodes
+  for `1+2`, then exits)
+- `PHARO_NO_JIT=0 PHARO_NO_T2=1` eval mode hangs (T2 not the
+  cause; T1 alone is enough to trigger the hang once enough
+  methods compile — bisect needed to find which one)
+- Eval-mode hang ends up in MorphicRenderLoop>>doOneCycleWhile:
+  rather than running the eval expression. Image's
+  StartupPreferencesLoader may be activating the GUI loop
+  even in headless eval mode
+
+**Next step:** bisect via JIT_MAX_COMPILE: find the largest
+N where `eval "1+2"` completes vs. the smallest where it
+hangs. The triggering method is the lead. Likely candidates
+based on the 657-method log: `idleProcess`, `doOneCycleWhile:`,
+`yield`, or a Semaphore primitive site.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)

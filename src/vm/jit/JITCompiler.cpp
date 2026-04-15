@@ -1607,6 +1607,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // tables use last-write-wins and, in fact, are identical.
     std::vector<uint32_t> bcToCodeOffset(bcLen + 1, 0);
     std::vector<uint32_t> bcToBranchOffset(bcLen + 1, 0);
+    // Parallel to bcToCodeOffset: SimStack entry state of the stencil at each
+    // bcOffset (last-write-wins, matching bcToCodeOffset). Diagnostic only;
+    // shipped to JITRuntime when PHARO_RESUME_STATE_DEBUG=1.
+    std::vector<uint8_t> bcToEntryState(bcLen + 1, 0);
 
     for (size_t di = 0; di < decoded.size(); di++) {
         auto& bc = decoded[di];
@@ -1622,9 +1626,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // land on the real stencil (Empty SimStack state at entry).
             bcToCodeOffset[bc.bcOffset] = codeSize;
             bcToBranchOffset[bc.bcOffset] = codeSize;
+            uint8_t st = (di < simStackEntryState.size())
+                ? static_cast<uint8_t>(simStackEntryState[di]) : 0;
+            bcToEntryState[bc.bcOffset] = st;
             for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
                 bcToCodeOffset[bc.bcOffset + b] = codeSize;
                 bcToBranchOffset[bc.bcOffset + b] = codeSize;
+                bcToEntryState[bc.bcOffset + b] = st;
             }
         }
         // Even nop stencils contribute to code size (they emit a branch instruction)
@@ -2018,6 +2026,37 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Register in method map
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);
+
+    // Diagnostic: ship per-bcOffset entry-state vector to runtime so tryResume
+    // can count unsafe (state != 0) landings. Free in production; only enabled
+    // when PHARO_RESUME_STATE_DEBUG=1. See deferred-issues.md #4.
+    {
+        static const bool resumeStateDebug = !!getenv("PHARO_RESUME_STATE_DEBUG");
+        if (resumeStateDebug) {
+            // One-shot compile-time stat: how many bcOffsets in this method
+            // are non-zero? If always 0, my entryState plumbing is broken.
+            static uint64_t methodsWithUnsafe = 0;
+            static uint64_t totalUnsafeBc = 0;
+            static uint64_t totalMethods = 0;
+            uint32_t methodUnsafe = 0;
+            for (uint8_t s : bcToEntryState) if (s != 0) methodUnsafe++;
+            totalMethods++;
+            if (methodUnsafe > 0) {
+                methodsWithUnsafe++;
+                totalUnsafeBc += methodUnsafe;
+            }
+            if (totalMethods <= 5 || (totalMethods % 100) == 0) {
+                std::string sel = interp_.memory().selectorOf(compiledMethod);
+                fprintf(stderr, "[JIT-COMPILE-STATE] method #%llu sel=%s unsafeBc=%u "
+                        "(cumulative methodsWithUnsafe=%llu totalUnsafeBc=%llu)\n",
+                        (unsigned long long)totalMethods, sel.c_str(), methodUnsafe,
+                        (unsigned long long)methodsWithUnsafe,
+                        (unsigned long long)totalUnsafeBc);
+            }
+            interp_.jitRuntime().setBcEntryStates(
+                compiledMethod.rawBits(), std::move(bcToEntryState));
+        }
+    }
 
     methodsCompiled_++;
 

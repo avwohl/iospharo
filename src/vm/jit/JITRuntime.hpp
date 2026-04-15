@@ -20,6 +20,9 @@
 #include "JITCompiler.hpp"
 #include "Tier2Compiler.hpp"
 #include "../Oop.hpp"
+#include <unordered_map>
+#include <vector>
+#include <cstdint>
 
 #if PHARO_JIT_ENABLED
 
@@ -106,6 +109,22 @@ public:
     // Public T2 lookup for jit_t2_send helper
     void* lookupTier2(uint64_t methodBits) const { return tier2Lookup(methodBits); }
 
+    // Diagnostic side-table: per-bcOffset SimStack entry state, used to detect
+    // when tryResume lands on a register-reading (_N) stencil. Populated by
+    // JITCompiler when PHARO_RESUME_STATE_DEBUG is set; otherwise unused.
+    void setBcEntryStates(uint64_t methodOop, std::vector<uint8_t>&& states) {
+        bcEntryStates_[methodOop] = std::move(states);
+    }
+    uint8_t getBcEntryState(uint64_t methodOop, uint32_t bcOffset) const {
+        auto it = bcEntryStates_.find(methodOop);
+        if (it == bcEntryStates_.end()) return 0;
+        if (bcOffset >= it->second.size()) return 0;
+        return it->second[bcOffset];
+    }
+    void clearBcEntryStates(uint64_t methodOop) {
+        bcEntryStates_.erase(methodOop);
+    }
+
     // Add entry to mega cache (called by interpreter after method lookup)
     void megaCacheAdd(uint64_t selectorBits, uint64_t classIndex,
                       uint64_t methodBits, uint64_t jitEntry = 0) {
@@ -170,6 +189,10 @@ private:
 
     // Execution count tracking for compilation triggering
     CountEntry countMap_[CountMapSize];
+
+    // Diagnostic per-method bcOffset → SimStack entry state map.
+    // Empty in production (only populated when PHARO_RESUME_STATE_DEBUG=1).
+    std::unordered_map<uint64_t, std::vector<uint8_t>> bcEntryStates_;
 };
 
 // ===== RUNTIME HELPER FUNCTIONS =====
