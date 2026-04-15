@@ -1150,6 +1150,48 @@ cycle reports `map: N tracked, M hot` where M is the compile
 budget consumed. Worth checking whether `recoverAfterGC` (called
 after compact) leaves some IC or codezone field stale.
 
+**Session 14c follow-up (2026-04-15, spill-leak hypothesis
+refuted):** re-bisected the MAX boundary and confirmed
+MAX=7 works / MAX=8 fails with a different symptom:
+
+    MAX=7  → startup.st fires, `[MARKER-7]` prints
+    MAX=8  → Stack overflow in #isFinite at fd=12
+             (sp_offset=131072, SmallFloat rcvr)
+    MAX≥120 → DNU #asSymbol on Symbol class (as above)
+
+Method #8 is `max:` (oop 0x3002cac38, 576 bytes — same oop
+as session 3 found). So the first-compile culprit is
+`max:`, and the 120-boundary `ensure:` is a *second* cliff
+after the first one cascades into later-compile chaos.
+
+Added `PHARO_JIT_SPILL_WARN=1` (JITCompiler.cpp,
+commit b264f77): counts push_4/dup_4 stencil emissions per
+method (the register-stack spill variants). Through MAX=130
+only 3 methods ever emit spill stencils:
+
+    #18  mergeSortFrom:to:src:dst:by:  4 spills
+    #21  replaceFrom:to:with:startingAt: (Array)   1 spill
+    #102 replaceFrom:to:with:startingAt: (ByteArray?) 1 spill
+
+Neither #8 max: nor #120 ensure: has spill stencils. The
+"push_4 advances SP but pop_4 doesn't rewind" hypothesis
+was testable but DOESN'T explain the first boundary — max:
+triggers the crash without ever using a spill stencil.
+
+Also tried: `PHARO_JIT_SKIP_SELECTORS=max:` with MAX=150 —
+does not clear the hang; now DNU fires on #asSymbol in the
+FFI startup path (same signature as the MAX=120 case). So
+max:'s compile isn't *directly* corrupting state; either
+(a) there's a second, independent bug triggered later, or
+(b) max: AND something else both contribute.
+
+**Still to try:** dump method #8's ARM64 machine code via
+`otool -d` of the codezone region, diff against a hand-
+assembled expected stencil chain for its 6-bytecode body.
+Also worth adding a post-return invariant check that
+stackPointer_ == (entrySP + 1 - nArgs - 1) after every
+method return — any drift would be caught immediately.
+
 ---
 
 ### Earlier analysis — JIT eval-mode boot hang (crash fixed 2026-04-14; hang remains)
