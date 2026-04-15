@@ -317,6 +317,36 @@ Next step: dump J2J call/return oops to find the leaking send.
 Add per-method J2J call/return counters; any method with
 unbounded call-minus-return is the culprit.
 
+**Session 4 observations (2026-04-14):** confirmed the hang terminal
+state: `P80 DelaySemaphoreScheduler>>whileTrue:` with
+`usecArmed=0 timerSem=nil nextUsec=0x7fffffffffffffff` — i.e., the
+delay scheduler has scheduled nothing for the indefinite future, and
+is waiting on an un-set timer semaphore. Something torched the delay
+registration path before startup.st got to run.
+
+Just before the hang appears, logs show:
+
+    [TERM] terminateCurrentProcess: proc=0x302c89138 pri=40 fd=0 method=#ensure:
+    [TERM]   C++ caller: Interpreter::returnValue+4784
+    [JIT] Compiled method 0x3002da798 'idleProcess' ...
+    [JIT] Tier 2 compiled method 0x3002da798 'idleProcess'
+
+So the startup process returns past its top-level frame (normal), is
+terminated in its ensure: unwind, and then `idleProcess` gets T2
+compiled. After that the delay scheduler never rearmed. This is
+consistent with either (a) the T2 compile of `idleProcess` cutting
+off the wakeup path, or (b) the ensure: unwind corrupting some
+scheduler linked-list while running under JIT.
+
+Startup.st is present on disk but does NOT appear to execute in the
+JIT path — no `'42'` printed, no `Smalltalk exitSuccess` trace.
+Stock-interp path (`PHARO_NO_JIT=1`) prints `'42'` and exits in
+under 15 s on the same image.
+
+Minimal-repro test kept: `/tmp/harness-fresh/Pharo.image eval
+"42 printString"` with `PHARO_NO_JIT=0 PHARO_NO_T2=1` hangs in
+DelaySemaphoreScheduler within ~15 s.
+
 Previous analysis (still valid) below.
 
 ---
