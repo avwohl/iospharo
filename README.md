@@ -191,11 +191,12 @@ VM parameters are set in `PharoBridge.swift` when calling `vm_init()`:
 
 ## Related
 
-- **[pharo-headless-test](https://github.com/avwohl/pharo-headless-test)** —
-  Run the full Pharo SUnit test suite headless with a fake GUI (click menus,
-  press buttons, take screenshots — no display needed). Extracted from this
-  project but works with any Spur VM. Included here as a submodule at
-  `scripts/pharo-headless-test/`.
+Other repos in this collection:
+
+- **[pharo-headless-test](https://github.com/avwohl/pharo-headless-test)** — Headless Pharo test runner with a fake GUI; clicks menus, takes screenshots, runs SUnit without a display. Extracted from this project; included here as a submodule at `scripts/pharo-headless-test/`.
+- **[soogle](https://github.com/avwohl/soogle)** — Smalltalk code search engine that indexes packages across Pharo, Squeak, GemStone and more.
+- **[validate_smalltalk_image](https://github.com/avwohl/validate_smalltalk_image)** — Standalone validator and export tool for Spur-format Smalltalk image files (heap integrity, SHA-256 manifests, reference graphs).
+- **[claude-skills](https://github.com/avwohl/claude-skills)** — Open source skills for Claude Code: reusable knowledge and algorithms packaged as `.claude/skills/` markdown files.
 
 ## License
 
