@@ -6297,12 +6297,15 @@ void Interpreter::cacheMethod(Oop selector, Oop classOop, Oop method) {
     // → method_whose_class_is_not_in_FullBlockClosure_hierarchy. If ever
     // written, IC fills from this produce the `ByteSymbol>>at:` activation
     // on a FullBlockClosure receiver seen in BAD-AT-ACT.
+    // NOTE: classOop is a CLASS object here, so classOop.classIndex() returns
+    // the METACLASS's index. Use indexOfClass(classOop) which reads the class's
+    // own identityHash = its class-table index.
     if (selector.isObject() && selBits >= 0x10000 && classOop.isObject() &&
         clsBits >= 0x10000) {
         ObjectHeader* selH = selector.asObjectPtr();
         if (selH->isBytesObject() && selH->byteSize() == 3 &&
             memcmp(selH->bytes(), "at:", 3) == 0) {
-            uint32_t clsIdx = classOop.asObjectPtr()->classIndex();
+            uint32_t clsIdx = memory_.indexOfClass(classOop);
             if (clsIdx == fullBlockClosureClassIndex_ ||
                 clsIdx == compiledBlockClassIndex_) {
                 // Walk classOop's superclass chain and compare methodClassOf(method).
@@ -6421,6 +6424,17 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // One-time log of cached class indexes so we can correlate rcvClsIdx=N.
+    {
+        static bool printed = false;
+        if (!printed && fullBlockClosureClassIndex_ != 0) {
+            printed = true;
+            fprintf(stderr,
+                "[CLSIDX] FullBlockClosure=%u CompiledBlock=%u CompiledMethod=%u\n",
+                fullBlockClosureClassIndex_, compiledBlockClassIndex_,
+                compiledMethodClassIndex_);
+        }
+    }
     // Debug: catch at: activation with wrong receiver class (FullBlockClosure).
     // Compares selector of the method being activated against expected semantics.
     if (argCount == 1 && method.isObject() && stackPointer_ && method.rawBits() >= 0x10000) {
@@ -13168,6 +13182,50 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (!resolved.isObject() || resolved.rawBits() < 0x10000 ||
                 resolved.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 return false;  // Non-standard method — interpreter handles
+            }
+
+            // EXIT-SEND-BAD probe: log when (rcvr=FullBlockClosure, sendSel=#at:)
+            // or when resolved method's selector ≠ sendSel (should never happen).
+            {
+                if (rcvr.isObject() && rcvr.rawBits() >= 0x10000) {
+                    uint32_t rci = rcvr.asObjectPtr()->classIndex();
+                    if (rci == fullBlockClosureClassIndex_ ||
+                        rci == compiledBlockClassIndex_) {
+                        std::string sendSelStr;
+                        if (sendSel.isObject() && sendSel.rawBits() >= 0x10000) {
+                            ObjectHeader* sh = sendSel.asObjectPtr();
+                            if (sh->isBytesObject() && sh->byteSize() < 80)
+                                sendSelStr = std::string((char*)sh->bytes(), sh->byteSize());
+                        }
+                        std::string resSel = memory_.selectorOf(resolved);
+                        std::string resMC;
+                        {
+                            Oop mc = methodClassOf(resolved);
+                            resMC = mc.isObject() && mc.rawBits() >= 0x10000
+                                ? memory_.nameOfClass(mc) : "?";
+                        }
+                        static int badExit = 0;
+                        if ((sendSelStr == "at:" || resSel == "at:") && ++badExit <= 10) {
+                            std::string callerSel = memory_.selectorOf(method_);
+                            Oop callerMC = methodClassOf(method_);
+                            std::string callerMCName = callerMC.isObject() &&
+                                callerMC.rawBits() >= 0x10000
+                                ? memory_.nameOfClass(callerMC) : "?";
+                            std::string callerRcvCls = receiver_.isObject() &&
+                                receiver_.rawBits() >= 0x10000
+                                ? memory_.classNameOf(receiver_) : "?";
+                            fprintf(stderr,
+                                "[EXIT-SEND-BAD] #%d sendSel=#%s resolved=%s>>#%s "
+                                "rcvClsIdx=%u caller=%s(rcv) %s>>#%s nArgs=%d "
+                                "icDataPtr=%p fd=%zu\n",
+                                badExit, sendSelStr.c_str(), resMC.c_str(),
+                                resSel.c_str(), rci,
+                                callerRcvCls.c_str(), callerMCName.c_str(),
+                                callerSel.c_str(), nArgs,
+                                (void*)state.icDataPtr, frameDepth_);
+                        }
+                    }
+                }
             }
 
             if (!isSuperSend) {
