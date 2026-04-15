@@ -132,6 +132,10 @@ Interpreter::Interpreter(ObjectMemory& memory)
     }
 
     initializePrimitives();
+
+    if (const char* env = getenv("PHARO_DEBUG_DISP_LEAK"); env && *env == '1') {
+        dispatchTraceLeakOn_ = true;
+    }
 }
 
 bool Interpreter::initialize() {
@@ -1151,6 +1155,22 @@ void Interpreter::interpret() {
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
             recentBytecodeIdx_++; \
             lastBytecode_ = bytecode; \
+        } \
+        if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) { \
+            long long spAboveFP = (long long)(stackPointer_ - framePointer_); \
+            if (spAboveFP >= 500 && spAboveFP <= 520) { \
+                ObjectHeader* _mObj = method_.isObject() ? method_.asObjectPtr() : nullptr; \
+                const uint8_t* _bcBase = nullptr; \
+                if (_mObj) { \
+                    Oop _hdr = _mObj->slots()[0]; \
+                    int _nLit = _hdr.isSmallInteger() ? (_hdr.asSmallInteger() & 0x7FFF) : 0; \
+                    _bcBase = _mObj->bytes() + (1 + _nLit) * 8; \
+                } \
+                long long _bcOff = (_bcBase) ? (long long)(instructionPointer_ - 1 - _bcBase) : -1; \
+                fprintf(stderr, "[DISP] fd=%zu sp-fp=%lld bcOff=%lld bc=%02x method=#%s\n", \
+                        frameDepth_, spAboveFP, _bcOff, bytecode, \
+                        memory_.selectorOf(method_).c_str()); \
+            } \
         } \
         inExtension_ = false; \
         goto *dispatchTable[bytecode]; \
@@ -11230,6 +11250,27 @@ void Interpreter::tryJITResumeInCaller() {
         }
 
         case jit::ExitArithOverflow:
+            {
+                static const char* dbg = getenv("PHARO_DEBUG_ARITH_EXIT");
+                static bool dbgOn = (dbg && *dbg == '1');
+                if (__builtin_expect(dbgOn, 0) && framePointer_) {
+                    long long spFromFP = (long long)(state.sp - framePointer_);
+                    if (spFromFP >= 400 && spFromFP <= 700) {
+                        ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                        const uint8_t* bcBase = nullptr;
+                        if (mObj) {
+                            Oop hdr = mObj->slots()[0];
+                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            bcBase = mObj->bytes() + (1 + numLits) * 8;
+                        }
+                        long long bcOff = (bcBase && state.ip) ? (long long)(state.ip - bcBase) : -1;
+                        fprintf(stderr, "[ARITH-EXIT-R] fd=%zu sp-fp=%lld state.ip bcOff=%lld bc=%02x method=#%s\n",
+                                frameDepth_, spFromFP, bcOff,
+                                (state.ip ? *state.ip : 0),
+                                memory_.selectorOf(method_).c_str());
+                    }
+                }
+            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             inJITResume_ = false;
@@ -12700,6 +12741,27 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitArithOverflow: {
+            {
+                static const char* dbg = getenv("PHARO_DEBUG_ARITH_EXIT");
+                static bool dbgOn = (dbg && *dbg == '1');
+                if (__builtin_expect(dbgOn, 0) && framePointer_) {
+                    long long spFromFP = (long long)(state.sp - framePointer_);
+                    if (spFromFP >= 400 && spFromFP <= 700) {
+                        ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                        const uint8_t* bcBase = nullptr;
+                        if (mObj) {
+                            Oop hdr = mObj->slots()[0];
+                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            bcBase = mObj->bytes() + (1 + numLits) * 8;
+                        }
+                        long long bcOff = (bcBase && state.ip) ? (long long)(state.ip - bcBase) : -1;
+                        fprintf(stderr, "[ARITH-EXIT] fd=%zu sp-fp=%lld state.ip bcOff=%lld bc=%02x method=#%s\n",
+                                frameDepth_, spFromFP, bcOff,
+                                (state.ip ? *state.ip : 0),
+                                memory_.selectorOf(method_).c_str());
+                    }
+                }
+            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             return false;

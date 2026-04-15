@@ -300,17 +300,14 @@ public:
     /// Push a value onto the stack
     inline void push(Oop value) {
         // Diagnostic (PHARO_DEBUG_FRAME_LEAK=1): fire when sp grows abnormally
-        // far above the current FP within a single activation. Dumps one line
-        // per threshold crossing (512, 1024, 2048, 4096, ...) so we can see
-        // the rate of accumulation and correlate with ip/bcOff.
+        // far above the current FP. Once sp-fp crosses 500, log EVERY push
+        // with the value and return address so we can identify the caller.
         static const char* frameLeakEnv = getenv("PHARO_DEBUG_FRAME_LEAK");
         static bool frameLeakOn = (frameLeakEnv && *frameLeakEnv == '1');
         if (__builtin_expect(frameLeakOn, 0) && framePointer_) {
-            static Oop* lastFP = nullptr;
-            static long long lastThreshold = 0;
             long long spAboveFP = (long long)(stackPointer_ - framePointer_);
-            if (framePointer_ != lastFP) { lastFP = framePointer_; lastThreshold = 512; }
-            if (spAboveFP >= lastThreshold) {
+            if (spAboveFP >= 500 && spAboveFP <= 600) {
+                void* ra = __builtin_return_address(0);
                 ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
                 const uint8_t* bcBase = nullptr;
                 if (mObj) {
@@ -320,24 +317,13 @@ public:
                 }
                 long long bcOff = (bcBase && instructionPointer_)
                     ? (long long)(instructionPointer_ - bcBase) : -1;
-                // Also dump 8 bytes around the IP to see the bytecode window.
-                uint8_t bcWin[16] = {0};
-                if (instructionPointer_ && bcBase) {
-                    long long spanStart = bcOff > 4 ? bcOff - 4 : 0;
-                    const uint8_t* p = bcBase + spanStart;
-                    for (int k = 0; k < 16; k++) bcWin[k] = p[k];
-                }
-                fprintf(stderr, "[FRAME-LEAK] sp-fp=%lld sp=%p fp=%p method=#%s rcvr=0x%llx ip=%p bcOff=%lld bc=%02x fd=%zu win=%02x%02x%02x%02x|%02x%02x%02x%02x|%02x%02x%02x%02x\n",
-                        spAboveFP, (void*)stackPointer_, (void*)framePointer_,
+                fprintf(stderr, "[FRAME-LEAK] sp-fp=%lld val=0x%llx ra=%p method=#%s rcvr=0x%llx bcOff=%lld bc=%02x fd=%zu\n",
+                        spAboveFP, (unsigned long long)value.rawBits(), ra,
                         memory_.selectorOf(method_).c_str(),
                         (unsigned long long)receiver_.rawBits(),
-                        (void*)instructionPointer_, bcOff,
+                        bcOff,
                         (instructionPointer_ ? *instructionPointer_ : 0),
-                        frameDepth_,
-                        bcWin[0], bcWin[1], bcWin[2], bcWin[3],
-                        bcWin[4], bcWin[5], bcWin[6], bcWin[7],
-                        bcWin[8], bcWin[9], bcWin[10], bcWin[11]);
-                lastThreshold *= 2;
+                        frameDepth_);
             }
         }
         if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
@@ -596,6 +582,7 @@ private:
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
+    bool dispatchTraceLeakOn_ = false;  // Diagnostic: PHARO_DEBUG_DISP_LEAK=1 enables bytecode dispatch tracing during stack leaks
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
     size_t finalizationSignalCount_ = 0;     // Diagnostic: total signalFinalizationIfNeeded firings
     size_t finalizationPendingTotal_ = 0;    // Diagnostic: sum of pending mourners across firings
