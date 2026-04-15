@@ -201,6 +201,42 @@ Real fix paths:
 
 Owner: VM ObjectMemory + GC.
 
+**RESOLVED (2026-04-15, session 13): the actual root cause was a
+periodic-check alignment lock in the interpreter main loop.**
+
+Both the 20-30ms same-priority jitter AND the sporadic 150ms+
+overshoot turned out to be symptoms of one bug: in `interpret()`
+(Interpreter.cpp:1581), when `checkCountdown_` hit 0 with
+`inExtension_==true`, the guard that defers process-switching
+checks reset countdown to 1024 and kept going. Because `[] repeat`
+compiles to the 2-bytecode pattern `E1 FF ED FC` and `1024 % 2 == 0`,
+the countdown expiry always re-locked on the same E1 boundary —
+so for any low-priority tight extended-jump loop, timer/preemption
+checks NEVER ran, period.
+
+Fix (commit cc10bce): set `checkCountdown_ = 1` inside the inExt
+branch before dispatching the consumer, so the next DISPATCH_NEXT
+re-enters periodic_checks immediately with inExtension_ cleared.
+
+Verification run after the fix:
+
+    SemaphoreTest                       18 P  0 F
+    BlockClosureValueWithinTest          5 P  0 F
+    BlockClosureValueWithinDurationTest  5 P  0 F
+    ProcessTest                         45 P  1 F
+
+Only residual: `ProcessTest>>testResumeAfterBCR`, which is a
+separate BlockCannotReturn-resume semantics issue, not a timing
+issue. Not addressed by this fix.
+
+The earlier GC-duration observations (140-300ms fullGC runs) are
+real, but they no longer produce test failures because the timer
+semaphore fires reliably on every 1024-bytecode periodic check
+now. The "late fire" in the old traces was caused by the alignment
+lock, not GC — checkTimerSemaphore was being skipped entirely.
+Further GC work remains valuable for throughput but is no longer
+blocking tests.
+
 ## 2. Reflection-walk perf under batch load
 
 **Tests affected:** any test that walks `allObjects` or `allInstances`:
