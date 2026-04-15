@@ -62,6 +62,97 @@ TimedOut, leaving a stale signal that upsets the next test.
 Next diagnostic step: trace Delay scheduling during nested
 valueWithin with `PHARO_DELAY_DEBUG=1` (not yet implemented).
 
+**Update (2026-04-14, session 12):** PHARO_DELAY_DEBUG instrumentation
+landed (commit 67f839b). Reproduced `BlockClosureValueWithinDurationTest>>
+testValueWithinTimingNestedInner` failure ~20% of the time when wrapped
+in the harness fast-path (forkAt:40 + `relinquishProcessorForMicroseconds:
+50000` polling at the eval thread).
+
+The test:
+
+    | time |
+    time := [
+      [ [ (Delay forSeconds: 5) wait ]
+          valueWithin: 100 milliSeconds onTimeout: [] ]
+      valueWithin: 500 milliSeconds onTimeout: []
+    ] timeToRun.
+    self assert: time < 150 milliSeconds
+
+In every run (pass and fail), `[DELAY-FIRE]` shows the timer semaphore
+fires **130-195 ms LATE** at least once during the window. When the
+late fire happens to coincide with the inner 100ms Delay's deadline,
+total time exceeds 150ms and the assertion fails. When the late fire
+hits a non-test deadline (heartbeat / scheduler housekeeping), the
+test's inner Delay can still fire on schedule.
+
+    run1 result=nil    [DELAY-FIRE] lateUs=158244
+    run4 result=nil    [DELAY-FIRE] lateUs=146393
+    run5 result=#fail  [DELAY-FIRE] lateUs=148074
+    run8 result=#fail  [DELAY-FIRE] lateUs=150424
+
+Standalone (no fork, no `relinquishProcessor` polling) the test
+always passes with time 100-124ms — no late fires above 5us.
+
+**Refined hypothesis (corrected):** first read of the VM code blamed a
+50ms block in `checkTimerSemaphore`, but that was wrong. The facts:
+
+  - `primitiveRelinquishProcessor` (Primitives.cpp:12280) caps its
+    sleep at 10ms (`MAX_SLEEP_US = 10000`) and calls
+    `checkTimerSemaphore()` immediately after the sleep
+    (line 12335). A Smalltalk-side `relinquishProcessorForMicroseconds:
+    50000` therefore wakes up and checks the timer every 10ms, not
+    every 50ms.
+  - `checkTimerSemaphore` itself runs on every bytecode in the main
+    interpreter loop (Interpreter.cpp:1612). It is **not** called
+    from the heartbeat thread (see the explicit comment at
+    Interpreter.cpp:2359 — the heartbeat must not touch the heap).
+  - The same-priority process queue is **not** preempted by
+    `primitiveRelinquishProcessor`: line 12361 explicitly skips
+    `if (pri == activePriority) continue;`. Same-priority round-robin
+    is handled by `handleForceYield` via the heartbeat's 2ms tick.
+  - `checkForPreemption` (Interpreter.cpp:8926) only handles
+    strictly-higher priority.
+
+The actual problem: eval (P80 polling loop) and `DelayScheduler`
+(P80) are both at the same priority. When the inner 100ms deadline
+elapses, `checkTimerSemaphore` fires the timer semaphore and marks
+the DelayScheduler runnable at P80 — but eval also runs at P80 and
+`relinquishProcessor` refuses to switch. DelayScheduler only gets
+CPU at the next heartbeat force-yield. Between timer-fire and
+DelayScheduler actually running the inner callback, we accumulate
+one or two heartbeat windows (~2-10ms each) plus per-switch
+overhead. That explains 30-50ms of slack over the expected 100ms.
+
+Additionally, there is a chain: timer fire → DelayScheduler wakes
+and signals the inner 100ms semaphore → valueWithin's timeout
+handler signals the test's P40 semaphore → P40 activation takes
+the `transferTo` when its priority beats active. Each link adds
+a scheduler-gap of a few ms.
+
+**Next step:** three possible fixes, in order of increasing
+invasiveness:
+
+  1. Make `primitiveRelinquishProcessor` also round-robin to
+     same-priority ready processes when the active process is
+     explicitly yielding. The existing skip was added to prevent
+     P79 spin-wait watchdogs from starving lower priority, but
+     when eval is *voluntarily* yielding to sleep, letting a
+     same-priority runnable go first is strictly better.
+  2. Bump DelayScheduler's priority by +1 so it always preempts
+     same-priority polling loops. Upstream Cog keeps it at its
+     own priority for a reason — mostly to avoid starving user
+     P80 code — but our harness is the edge case.
+  3. Shorten the polling-loop cadence in the harness (e.g. 5ms
+     instead of 50ms) so each cycle wakes eval, checks timer,
+     and re-yields. This trades more CPU for less jitter.
+
+The timing test's `time < 150 milliSeconds` tolerance is already
+tight (50ms over 100ms) and matches stock Pharo's Cog with its
+preemptive scheduler. On our cooperative P80-vs-P80 setup it
+fails ~20% of the time even though the test is semantically
+correct. Option (1) is the cheapest fix and addresses the root
+cause. Owner: VM primitives.
+
 ## 2. Reflection-walk perf under batch load
 
 **Tests affected:** any test that walks `allObjects` or `allInstances`:
