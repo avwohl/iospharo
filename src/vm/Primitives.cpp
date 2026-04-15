@@ -7969,9 +7969,32 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     // expects to still exist (e.g. ByteSymbolTest creates a symbol, discards
     // the reference, then expects allInstances to find it).
 
+    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
+    auto reflStart = (reflProfile && *reflProfile)
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+
     // Collect instances using the class-indexed fast path (no std::function overhead)
     std::vector<Oop> instances;
     memory_.collectInstancesOfClass(targetClassIndex, instances);
+
+    if (reflProfile && *reflProfile) {
+        static uint64_t calls = 0;
+        static uint64_t totalUs = 0;
+        static uint64_t totalFound = 0;
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - reflStart).count();
+        calls++;
+        totalUs += us;
+        totalFound += instances.size();
+        if (us > 1000 || (calls % 256) == 0) {
+            fprintf(stderr, "[REFL-allInst] cls=%u found=%zu us=%lld calls=%llu totMs=%llu avgFound=%llu\n",
+                    targetClassIndex, instances.size(), (long long)us,
+                    (unsigned long long)calls,
+                    (unsigned long long)(totalUs / 1000),
+                    (unsigned long long)(totalFound / calls));
+        }
+    }
 
     // Allocate an array to hold the instances
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
@@ -8001,6 +8024,11 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
+    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
+    auto reflStart = (reflProfile && *reflProfile)
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+
     // Unlike primitiveAllInstances, allObjects DOES need fullGC() to match
     // reference VM behavior. Image code (e.g. pointersToExcept:among:) calls
     // select: on the result, then removeAllSuchThat: on the Array. Without GC,
@@ -8063,6 +8091,19 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
     // Fill the array
     for (size_t i = 0; i < objects.size(); i++) {
         memory_.storePointer(i, result, objects[i]);
+    }
+
+    if (reflProfile && *reflProfile) {
+        static uint64_t calls = 0;
+        static uint64_t totalUs = 0;
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - reflStart).count();
+        calls++;
+        totalUs += us;
+        fprintf(stderr, "[REFL-allObj] count=%zu us=%lld calls=%llu totMs=%llu\n",
+                objects.size(), (long long)us,
+                (unsigned long long)calls,
+                (unsigned long long)(totalUs / 1000));
     }
 
     pop();  // Pop receiver
@@ -13462,6 +13503,11 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     Oop targetObject = stackTop();
 
+    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
+    auto reflStart = (reflProfile && *reflProfile)
+        ? std::chrono::steady_clock::now()
+        : std::chrono::steady_clock::time_point{};
+
     // fullGC before scanning: findRoots results feed into pointersToExcept:among:
     // which calls removeAllSuchThat: on the Array. Without GC, dead stack entries
     // create false pointer matches that cause shouldNotImplement errors.
@@ -13503,6 +13549,23 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
     // Fill result array
     for (size_t i = 0; i < roots.size(); i++) {
         memory_.storePointer(i, result, roots[i]);
+    }
+
+    if (reflProfile && *reflProfile) {
+        static uint64_t calls = 0;
+        static uint64_t totalUs = 0;
+        auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - reflStart).count();
+        calls++;
+        totalUs += us;
+        if (us > 1000 || (calls % 64) == 0) {
+            uint32_t tcls = targetObject.isObject() && !targetObject.isNil()
+                ? targetObject.asObjectPtr()->classIndex() : 0;
+            fprintf(stderr, "[REFL-findRoots] tgtCls=%u roots=%zu us=%lld calls=%llu totMs=%llu\n",
+                    tcls, roots.size(), (long long)us,
+                    (unsigned long long)calls,
+                    (unsigned long long)(totalUs / 1000));
+        }
     }
 
     pop();
