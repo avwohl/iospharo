@@ -6806,6 +6806,61 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
                         runStart, frameDepth_ - 1, prevSel.c_str(),
                         frameDepth_ - runStart);
             }
+            // If we're in a Context>>copyTo:-style chain walk, the receiver at
+            // frame[2] is the root of the "errored" chain we're walking. Walk
+            // its sender chain directly and print each Context's method
+            // selector to see what the ORIGINAL call stack looked like.
+            if (frameDepth_ >= 3) {
+                Oop c2rcvr = savedFrames_[2].savedReceiver;
+                std::string f2sel = memory_.selectorOf(savedFrames_[2].savedMethod);
+                if (f2sel == "copyTo:" && c2rcvr.isObject() && c2rcvr.rawBits() > 0x10000) {
+                    fprintf(stderr, "[OVERFLOW] Walking errored-context sender chain from frame[2].rcvr=0x%llx:\n",
+                            (unsigned long long)c2rcvr.rawBits());
+                    Oop cur = c2rcvr;
+                    int depth = 0;
+                    int maxWalk = 8192;
+                    std::string prevCtxSel;
+                    int runStartIdx = 0;
+                    while (cur.isObject() && cur.rawBits() > 0x10000 && depth < maxWalk) {
+                        Oop ctxMethod = memory_.fetchPointerUnchecked(3, cur);
+                        std::string ctxSel = (ctxMethod.isObject() && ctxMethod.rawBits() > 0x10000)
+                            ? memory_.selectorOf(ctxMethod) : "(nil-method)";
+                        if (depth < 40) {
+                            Oop ctxRcvr = memory_.fetchPointerUnchecked(5, cur);
+                            std::string rcls = memory_.classNameOf(ctxRcvr);
+                            fprintf(stderr, "  ctx[%d]=0x%llx method=0x%llx #%s rcvrClass=%s\n",
+                                    depth, (unsigned long long)cur.rawBits(),
+                                    (unsigned long long)ctxMethod.rawBits(),
+                                    ctxSel.c_str(), rcls.c_str());
+                        } else {
+                            if (depth == 40) { prevCtxSel = ctxSel; runStartIdx = 40; }
+                            else if (ctxSel != prevCtxSel) {
+                                fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
+                                        runStartIdx, depth - 1, prevCtxSel.c_str(),
+                                        depth - runStartIdx);
+                                prevCtxSel = ctxSel;
+                                runStartIdx = depth;
+                            }
+                        }
+                        Oop nextSender = memory_.fetchPointerUnchecked(0, cur);
+                        if (!nextSender.isObject() || nextSender.rawBits() <= 0x10000) {
+                            fprintf(stderr, "  ctx chain ends at depth %d (sender=0x%llx)\n",
+                                    depth + 1, (unsigned long long)nextSender.rawBits());
+                            break;
+                        }
+                        cur = nextSender;
+                        depth++;
+                    }
+                    if (depth > 40 && !prevCtxSel.empty()) {
+                        fprintf(stderr, "  ctx[%d..%d] #%s (run len=%d)\n",
+                                runStartIdx, depth - 1, prevCtxSel.c_str(),
+                                depth - runStartIdx);
+                    }
+                    if (depth >= maxWalk) {
+                        fprintf(stderr, "  ctx walk truncated at maxWalk=%d\n", maxWalk);
+                    }
+                }
+            }
             // Dump last 50 frames with raw bits for debugging
             fprintf(stderr, "[OVERFLOW] Call stack (last 50):\n");
             size_t start = frameDepth_ > 50 ? frameDepth_ - 50 : 0;
@@ -7302,7 +7357,11 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 if (selHdr->isBytesObject()) {
                     size_t selLen = selHdr->byteSize();
                     const char* bytes = (const char*)selHdr->bytes();
-                    if (selLen == 25 && memcmp(bytes, "findNextHandlerContext", 22) == 0) {
+                    // Note: "findNextHandlerContext" is 22 chars (not 25 — prior typo).
+                    if (selLen == 22 && memcmp(bytes, "findNextHandlerContext", 22) == 0) {
+                        static int log = 0;
+                        if (++log <= 3)
+                            fprintf(stderr, "[DNU-FIX] nil findNextHandlerContext → nil\n");
                         popN(argCount + 1);
                         push(memory_.nil());
                         return;
@@ -7360,10 +7419,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
         }
     }
 
-    // Log first 20 DNU messages to debug startup issues
+    // Log first 60 DNU messages to debug startup issues
     {
         static int dnuLogCount = 0;
-        if (dnuLogCount++ < 20) {
+        if (dnuLogCount++ < 60) {
             std::string selName = "(unknown)";
             try {
                 if (selector.isObject() && selector.rawBits() > 0x10000) {
