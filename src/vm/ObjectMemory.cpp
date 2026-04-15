@@ -2375,26 +2375,26 @@ bool ObjectMemory::markInactiveEphemerons() {
 }
 
 void ObjectMemory::fireAllEphemerons() {
-    for (ObjectHeader* obj : ephemeronList_) {
-        // Fire: change format from 5 (WeakWithFixed/Ephemeron) to 1 (FixedSize)
-        // so it's no longer treated as an ephemeron in subsequent GCs.
+    // Fire a snapshot of currently-active ephemerons. Marking their contents
+    // (scanPointerFields) may discover new ephemerons and append them to
+    // ephemeronList_; those must be left for a follow-up markInactive/fire
+    // fixed-point pass — if we missed them here, the finalization signal
+    // count undercounts by ~1 per WeakKeyDictionary entry chain.
+    size_t count = ephemeronList_.size();
+    for (size_t i = 0; i < count; ++i) {
+        ObjectHeader* obj = ephemeronList_[i];
         obj->setFormat(ObjectFormat::FixedSize);
 
-        // Queue as mourner
         Oop objOop = Oop::fromObject(obj);
         mournQueue_.push_back(objOop);
         pendingFinalizationSignals_++;
 
-        // Mark ALL fields including the key. The Spur VM marks everything
-        // when firing — the key stays alive so the finalization process can
-        // read it. Weak references to the key are NOT nilled in this GC cycle.
-        // Instead, the finalization process (signaled via TheFinalizationSemaphore)
-        // runs cleanup actions (e.g., removing subscriptions from registries).
-        // The key becomes truly unreachable on the next GC cycle.
         scanPointerFields(obj);
         processMarkStack();
     }
-    ephemeronList_.clear();
+    // Remove only the entries we fired. Preserve any newly-appended ephemerons
+    // discovered during the marking above.
+    ephemeronList_.erase(ephemeronList_.begin(), ephemeronList_.begin() + count);
 }
 
 void ObjectMemory::markClassTablePages() {
@@ -2559,10 +2559,15 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
     // generational GC scavenge wouldn't fire old-space ephemerons.
     if (!skipEphemerons) {
         size_t fired = 0;
-        if (!ephemeronList_.empty()) {
+        // Fixed-point outer loop: each fireAllEphemerons pass may mark fields
+        // that reach new ephemerons (appended to ephemeronList_). Those must
+        // be retested against markInactive, and any with dead keys fired too.
+        while (!ephemeronList_.empty()) {
             while (markInactiveEphemerons()) {}
-            fired = ephemeronList_.size();
+            if (ephemeronList_.empty()) break;
+            size_t thisRound = ephemeronList_.size();
             fireAllEphemerons();
+            fired += thisRound;
         }
         if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
             fprintf(stderr, "[GC-EPH] encountered=%zu inactive=%zu active=%zu fired=%zu weakList=%zu\n",
