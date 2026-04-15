@@ -2,7 +2,26 @@
 
 Last updated: 2026-04-15
 
-## JIT max: stack leak — NEW finding (2026-04-15, session 14d)
+## JIT eval-mode hang — RESOLVED (2026-04-15, session 15, commits 6c7658e + ff7159d)
+
+Root cause: `tryResume` entered register-reading stencils (`stencil_jumpFalse_1`
+and other `_N` variants that load operands from x19-x22) with garbage register
+contents, triggering the non-boolean spill-and-deopt path that leaked stack
+slots without advancing `state.ip`. Fix: reject resume at any bcOffset with
+non-zero SimStack entry state; applied to `tryResume`, `tryResumeFast`, the
+inline-tryResume after stencil exit, and the precomputed-resume fast path.
+
+Also fixed: `bcEntryStates_` was keyed by compiledMethod oop and went stale
+on GC compaction. Rekeyed by `JITMethod*` (GC-stable, code zone doesn't move).
+
+Verified working at unlimited JIT (both T1-only and full T2):
+- `3+4` → 7
+- `Smalltalk version` → `'Pharo13.1.0SNAPSHOT'`
+- `(1 to: 100000) inject: 0 into: [:a :b | a + b]` → 5000050000
+
+---
+
+## Earlier analysis — JIT max: stack leak (2026-04-15, session 14d, now superseded)
 
 With `PHARO_NO_JIT=0 PHARO_NO_T2=1 JIT_MAX_COMPILE≥10`, boot crashes with
 `Stack overflow in push() fd=12 method=#isFinite sp_offset=131072`.
