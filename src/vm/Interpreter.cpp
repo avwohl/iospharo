@@ -13155,13 +13155,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (state.icDataPtr) {
                 sendSel = Oop::fromRawBits(state.icDataPtr[12]);
             } else {
-                // Tier 2 (MIR) exits store selector in cachedTarget.
+                // Inline stencil bail or Tier 2 (MIR) exits — selector in cachedTarget.
                 sendSel = state.cachedTarget;
             }
             if (!sendSel.isObject() || sendSel.rawBits() < 0x10000) {
-                static int badSel = 0;
-                if (++badSel <= 5) fprintf(stderr, "[CHAIN-EXIT-SEND] bad selector bits=0x%llx! returning false\n",
-                    (unsigned long long)sendSel.rawBits());
                 return false;
             }
 

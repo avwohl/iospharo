@@ -1243,22 +1243,24 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
 
         if (classKey0 != 0 && classKey1 == 0) {
             // Monomorphic site — check for trivial method patterns
+            // Pack literal index (for selector recovery on bail) into bits 48-63
+            uint64_t litBits = (uint64_t)(bc.branchTarget & 0xFFFF) << 48;
             if (extra0 & (1ULL << 63)) {
                 // Getter: inline slot read
                 uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineGetter);
-                bc.operand2Ptr = (classKey0 << 16) | slotIdx;
+                bc.operand2Ptr = litBits | (classKey0 << 16) | slotIdx;
                 specialized++;
             } else if (extra0 & (1ULL << 62)) {
                 // Setter: inline slot write
                 uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineSetter);
-                bc.operand2Ptr = (classKey0 << 16) | slotIdx;
+                bc.operand2Ptr = litBits | (classKey0 << 16) | slotIdx;
                 specialized++;
             } else if (extra0 & (1ULL << 61)) {
                 // ReturnsSelf: just pop args
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
-                bc.operand2Ptr = (classKey0 << 16);
+                bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++;
             }
         }

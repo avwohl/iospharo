@@ -1438,9 +1438,10 @@ exit_send_cached:
 // and for getters/setters eliminate the J2J call entirely.
 //
 // OPERAND  = (bcOffset & 0xFFFF) | (nArgs << 16) | (bcLen << 24)
-// OPERAND2 = (expectedClassKey << 16) | slotIdx
+// OPERAND2 = (litIndex << 48) | (expectedClassKey << 16) | slotIdx
 //
-// On class mismatch, exit with ExitSend for full interpreter lookup.
+// On class mismatch, recover selector via literals[litIndex] into cachedTarget,
+// then exit with ExitSend for full lookup.
 
 // Inline getter: class check + slot read. ~100 bytes vs ~1372 for sendJ2J.
 extern "C" void stencil_sendInlineGetter(JITState* s) {
@@ -1449,7 +1450,7 @@ extern "C" void stencil_sendInlineGetter(JITState* s) {
     int nArgs = (packed >> 16) & 0xFF;
 
     uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
-    uint64_t expectedClass = packed2 >> 16;
+    uint64_t expectedClass = (packed2 >> 16) & 0xFFFFFFFF;
     int slotIdx = (int)(packed2 & 0xFFFF);
 
     Oop receiver = s->sp[-(nArgs + 1)];
@@ -1464,7 +1465,9 @@ extern "C" void stencil_sendInlineGetter(JITState* s) {
             return;
         }
     }
-    // Class mismatch — full interpreter send
+    // Class mismatch — recover selector from literals for ExitSend handler
+    int litIndex = (int)(packed2 >> 48);
+    s->cachedTarget = s->literals[litIndex];
     s->icDataPtr = nullptr;
     s->sendArgCount = nArgs;
     s->ip = s->ip + bcOffset;
@@ -1479,7 +1482,7 @@ extern "C" void stencil_sendInlineSetter(JITState* s) {
     int nArgs = (packed >> 16) & 0xFF;
 
     uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
-    uint64_t expectedClass = packed2 >> 16;
+    uint64_t expectedClass = (packed2 >> 16) & 0xFFFFFFFF;
     int slotIdx = (int)(packed2 & 0xFFFF);
 
     Oop receiver = s->sp[-(nArgs + 1)];
@@ -1495,6 +1498,8 @@ extern "C" void stencil_sendInlineSetter(JITState* s) {
             return;
         }
     }
+    int litIndex = (int)(packed2 >> 48);
+    s->cachedTarget = s->literals[litIndex];
     s->icDataPtr = nullptr;
     s->sendArgCount = nArgs;
     s->ip = s->ip + bcOffset;
@@ -1503,14 +1508,14 @@ extern "C" void stencil_sendInlineSetter(JITState* s) {
 }
 
 // Inline returnsSelf: class check + pop args.
-// OPERAND2 = expectedClassKey << 16 (no slotIdx needed)
+// OPERAND2 = (litIndex << 48) | (expectedClassKey << 16)
 extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
     int nArgs = (packed >> 16) & 0xFF;
 
     uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
-    uint64_t expectedClass = packed2 >> 16;
+    uint64_t expectedClass = (packed2 >> 16) & 0xFFFFFFFF;
 
     Oop receiver = s->sp[-(nArgs + 1)];
     uint64_t tag = receiver.bits & 0x7;
@@ -1525,6 +1530,8 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    int litIndex = (int)(packed2 >> 48);
+    s->cachedTarget = s->literals[litIndex];
     s->icDataPtr = nullptr;
     s->sendArgCount = nArgs;
     s->ip = s->ip + bcOffset;
