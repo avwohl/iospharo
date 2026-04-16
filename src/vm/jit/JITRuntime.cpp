@@ -1168,26 +1168,14 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     static bool noResume = !!getenv("PHARO_NO_RESUME");
     if (noResume) return false;
 
-    // Check for Tier 2 resume: set state.ip to bcBase + bcOffset and
-    // call the Tier 2 function. Its prologue dispatches to the right label.
-    static bool noT2Resume = !!getenv("PHARO_NO_T2");
-    void* t2code = noT2Resume ? nullptr : tier2Lookup(compiledMethod.rawBits());
-    if (t2code && t2code != (void*)1) {
-        // Compute bcBase from method object
-        ObjectHeader* methObj = reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
-        Oop hdr = methObj->slotAt(0);
-        int numLits = (hdr.rawBits() & 1) ? (int)((hdr.rawBits() >> 3) & 0x7FFF) : 0;
-        uint8_t* bcBase = methObj->bytes() + (1 + numLits) * 8;
-        state.ip = bcBase + bcOffset;
-        state.exitReason = ExitNone;
-        // Set jitMethod to T1 JITMethod for countdown charging (numBytecodes).
-        // T2 code doesn't use this field, but chain loop chargeJITBytecodes does.
-        state.jitMethod = methodMap_.lookup(compiledMethod.rawBits());
-        makeExecutable(t2code, 1);
-        ((void(*)(JITState*))t2code)(&state);
-        makeWritable(t2code, 1);
-        return true;
-    }
+    // T2 resume DISABLED: MIR's register allocator spills values to the C
+    // stack during normal execution. When resume dispatch jumps to a label
+    // inside the function, those spill slots contain stale data from previous
+    // calls (e.g., megaCache pointers from jit_t2_send), causing stack
+    // corruption (session 20: &megaCache_[65535] at FP+6).
+    // T2 code still runs via tryExecute (entry at offset 0) where the
+    // function prologue properly initializes all spill slots.
+    // Fall through to T1 stencil resume below.
 
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
     if (!jm || !jm->isExecutable()) return false;
