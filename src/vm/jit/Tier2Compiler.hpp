@@ -89,6 +89,11 @@ private:
     // Emit send exit (flush stack to memory, set exitReason)
     void emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t cachedMethod);
 
+    // Emit inline CALL to jit_t2_send + exit check + state reload + resume.
+    // Assumes caller already flushed vstack and stored sp/nArgs/ip/selector/icDataPtr.
+    // Returns the continue label (execution resumes there on success).
+    MIR_label_t emitSendCall(int bcOffset, int bcLength);
+
     // SmallInteger arithmetic fast-path
     void emitSmallIntArith(int primKind, int bcOffset);
 

@@ -317,6 +317,52 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
     MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
 }
 
+MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength) {
+    // CALL jit_t2_send(statePtr)
+    MIR_append_insn(mirCtx_, mirFunc_,
+        MIR_new_call_insn(mirCtx_, 3,
+            MIR_new_ref_op(mirCtx_, sendProto_),
+            MIR_new_ref_op(mirCtx_, sendImport_),
+            REG(reg_statePtr_)));
+
+    // Check exitReason — branch past bail if ExitNone
+    MIR_reg_t exitReg = newScratch();
+    EMIT(MIR_MOV, REG(exitReg), MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT));
+    MIR_label_t continueLabel = MIR_new_label(mirCtx_);
+    EMIT(MIR_BEQ, LABEL_OP(continueLabel), REG(exitReg), IMM(0));
+
+    // Bail: jit_t2_send set exitReason (ExitSend or propagated)
+    MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+
+    // Continue: reload state from JITState
+    MIR_append_insn(mirCtx_, mirFunc_, continueLabel);
+    EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
+    EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
+    EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
+    EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
+    {
+        JITRuntime& rt = interp_.jitRuntime();
+        MIR_reg_t addr = newScratch();
+        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
+        EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
+        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
+        EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
+    }
+
+    // Invalidate temp register cache (callee may have modified stack/heap)
+    for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
+
+    // Register resume point for chain loop re-entry (bail case)
+    int postSendBC = bcOffset + bcLength;
+    if (resumeCount_ < MaxResume) {
+        resumePoints_[resumeCount_].postSendBC = postSendBC;
+        resumePoints_[resumeCount_].label = continueLabel;
+        resumeCount_++;
+    }
+
+    return continueLabel;
+}
+
 
 // ===== BYTECODE DECODER (simplified for Tier 2) =====
 
@@ -1158,13 +1204,39 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     MIR_append_insn(mirCtx_, mirFunc_, doneLbl);
                     vpush(result);
                 } else {
-                    // Unsupported arith op — exit as send.
-                    // Emit slowPath label: tag-check BNEs above reference it.
+                    // Unsupported arith op — inline send via jit_t2_send.
+                    // Resolve selector at compile time from SpecialSelectorsArray.
+                    Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                    uint64_t selBits = 0;
+                    if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+                        ObjectHeader* ssArray = specialSelectors.asObjectPtr();
+                        size_t selectorSlot = arithOp * 2;
+                        if (selectorSlot < ssArray->slotCount()) {
+                            selBits = ssArray->slotAt(selectorSlot).rawBits();
+                        }
+                    }
+
                     MIR_append_insn(mirCtx_, mirFunc_, slowPath);
                     vpush(a);
                     vpush(b);
-                    emitSendExit(1, bc.bcOffset, false, 0);
-                    unreachable = true;
+
+                    if (selBits == 0) {
+                        // Can't resolve selector — bail to chain loop
+                        emitSendExit(1, bc.bcOffset, false, 0);
+                        unreachable = true;
+                    } else {
+                        flushVStack();
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+                        EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(1));
+                        MIR_reg_t ipReg2 = newScratch();
+                        EMIT(MIR_ADD, REG(ipReg2), REG(reg_bcBase_), IMM(bc.bcOffset));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg2));
+                        MIR_reg_t selReg2 = newScratch();
+                        EMIT(MIR_MOV, REG(selReg2), IMM(selBits));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg2));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                        emitSendCall(bc.bcOffset, bc.bcLength);
+                    }
                 }
             }
         }
@@ -1287,73 +1359,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             if (nArgs < 0) nArgs = 0;
             int litIndex = bc.operand;
 
-            // 1. Flush vstack to memory
             flushVStack();
-
-            // 2. Store sp to state
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
-
-            // 3. Store sendArgCount
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
-
-            // 4. Store ip = bcBase + bcOffset (send bytecode address)
             MIR_reg_t ipReg = newScratch();
             EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
-
-            // 5. Load selector from literals and store to cachedTarget
             MIR_reg_t selReg = newScratch();
             EMIT(MIR_MOV, REG(selReg), MEM(MIR_T_I64, reg_literals_, litIndex * 8));
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
-
-            // 6. Clear icDataPtr (no T2 inline caches)
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
 
-            // 7. CALL jit_t2_send(statePtr)
-            MIR_append_insn(mirCtx_, mirFunc_,
-                MIR_new_call_insn(mirCtx_, 3,
-                    MIR_new_ref_op(mirCtx_, sendProto_),
-                    MIR_new_ref_op(mirCtx_, sendImport_),
-                    REG(reg_statePtr_)));
-
-            // 8. Check exitReason — branch to continue if ExitNone
-            MIR_reg_t exitReg = newScratch();
-            EMIT(MIR_MOV, REG(exitReg), MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT));
-            MIR_label_t continueLabel = MIR_new_label(mirCtx_);
-            EMIT(MIR_BEQ, LABEL_OP(continueLabel), REG(exitReg), IMM(0));
-
-            // 9. Bail: jit_t2_send set exitReason (ExitSend or propagated)
-            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
-
-            // 10. Continue: inline send succeeded
-            MIR_append_insn(mirCtx_, mirFunc_, continueLabel);
-
-            // 11. Reload state from JITState (jit_t2_send modified and restored)
-            EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
-            EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
-            EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
-            EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
-            // Reload trueOop/falseOop from JITRuntime global storage
-            {
-                JITRuntime& rt = interp_.jitRuntime();
-                MIR_reg_t addr = newScratch();
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
-                EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
-                EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
-            }
-
-            // 12. Invalidate temp register cache (callee may have changed stack)
-            for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
-
-            // 13. Register resume point for chain loop re-entry (bail case)
-            int postSendBC = bc.bcOffset + bc.bcLength;
-            if (resumeCount_ < MaxResume) {
-                resumePoints_[resumeCount_].postSendBC = postSendBC;
-                resumePoints_[resumeCount_].label = continueLabel;
-                resumeCount_++;
-            }
-            // Code after inline send is reachable (don't set unreachable)
+            emitSendCall(bc.bcOffset, bc.bcLength);
         }
         // Super sends: store selector, exit to chain loop for super lookup
         else if (op == SistaV1::ExtSuperSend) {
@@ -1441,7 +1458,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 MIR_append_insn(mirCtx_, mirFunc_, done);
                 vpush(result);
             }
-            // --- Fallback: exit to chain loop for other special sends ---
+            // --- Inline send for other special sends (via jit_t2_send) ---
             else {
                 int selectorIndex = 16 + specIdx;
                 Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
@@ -1469,9 +1486,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 EMIT(MIR_MOV, REG(selReg), IMM(selBits));
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
-                EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
-                MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
-                unreachable = true;
+
+                emitSendCall(bc.bcOffset, bc.bcLength);
             }
         }
 
