@@ -81,6 +81,10 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     interp->popFrameForJIT(state);
 }
 
+// T2 monomorphic IC counters
+int g_t2ICHits = 0;
+int g_t2ICMisses = 0;
+
 // Tier 2 inline send helper.
 // Called from MIR-generated code at each send site.
 //
@@ -128,15 +132,47 @@ extern "C" void jit_t2_send(JITState* state) {
     }
     t2SendDepth++;
 
-    Oop rcvrClass = mem->classOf(rcvr);
-
-    // Method lookup (cache probe → full hierarchy search)
-    Oop resolved = interp->lookupMethodForSend(selector, rcvrClass);
-    if (!resolved.isObject() || resolved.rawBits() < 0x10000) {
-        state->exitReason = ExitSend;
-        t2SendDepth--;
-        return;
+    // --- T2 monomorphic IC: skip method lookup if receiver class matches ---
+    Oop resolved;
+    uint64_t* ic = reinterpret_cast<uint64_t*>(state->icDataPtr);
+    if (ic && ic[0] != 0) {
+        uint64_t bits = rcvr.rawBits();
+        if ((bits & 7) == 0 && bits != 0) {  // object receiver only
+            uint32_t classIdx = static_cast<uint32_t>(
+                *reinterpret_cast<uint64_t*>(bits) & 0x3FFFFFULL);
+            if (classIdx == static_cast<uint32_t>(ic[0])) {
+                resolved = Oop::fromRawBits(ic[1]);
+                g_t2ICHits++;
+                goto ic_hit;
+            }
+        }
     }
+
+    {
+        Oop rcvrClass = mem->classOf(rcvr);
+
+        // Method lookup (cache probe → full hierarchy search)
+        resolved = interp->lookupMethodForSend(selector, rcvrClass);
+        if (!resolved.isObject() || resolved.rawBits() < 0x10000) {
+            state->exitReason = ExitSend;
+            t2SendDepth--;
+            return;
+        }
+
+        g_t2ICMisses++;
+
+        // Update IC for object receivers
+        if (ic) {
+            uint64_t bits = rcvr.rawBits();
+            if ((bits & 7) == 0 && bits != 0) {
+                ic[0] = static_cast<uint32_t>(
+                    *reinterpret_cast<uint64_t*>(bits) & 0x3FFFFFULL);
+                ic[1] = resolved.rawBits();
+            }
+        }
+    }
+
+ic_hit:
 
     // Check if callee is JIT-compiled
     MethodMap* mm = reinterpret_cast<MethodMap*>(state->methodMapPtr);
@@ -1298,6 +1334,21 @@ void JITRuntime::flushCaches() {
     }
 }
 
+JITRuntime::T2ICSlot* JITRuntime::allocT2ICSlots(int count) {
+    if (t2ICNextSlot_ + count > MaxT2ICSlots) return nullptr;
+    T2ICSlot* result = &t2ICPool_[t2ICNextSlot_];
+    t2ICNextSlot_ += count;
+    std::memset(result, 0, count * sizeof(T2ICSlot));
+    return result;
+}
+
+void JITRuntime::flushT2ICs() {
+    // Zero all allocated IC slots (classIndex=0 forces miss on next access)
+    if (t2ICNextSlot_ > 0) {
+        std::memset(t2ICPool_, 0, t2ICNextSlot_ * sizeof(T2ICSlot));
+    }
+}
+
 void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     if (!initialized_) return;
 
@@ -1321,6 +1372,9 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     }
     // Clear mega cache: keyed by selectorBits which changed.
     std::memset(megaCache_, 0, sizeof(megaCache_));
+
+    // Flush T2 monomorphic IC slots (resolvedBits are stale after compaction)
+    flushT2ICs();
 
     // Update nil/true/false bits (GC may have moved them)
     updateSpecialOops(memory);

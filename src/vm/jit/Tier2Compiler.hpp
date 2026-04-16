@@ -169,6 +169,12 @@ private:
     MIR_item_t sendProto_ = nullptr;
     MIR_item_t sendImport_ = nullptr;
 
+    // T2 monomorphic IC: per-send-site cache slots (allocated from JITRuntime pool)
+    static constexpr int MaxICSlots = 64;
+    uint64_t* icSlots_ = nullptr;  // Points into JITRuntime::t2ICPool_ (2 uint64_t per slot)
+    int icSlotCount_ = 0;          // Number of allocated slots
+    int nextICSlot_ = 0;           // Next slot to assign
+
     // --- Dependencies ---
     CodeZone&     zone_;
     MethodMap&    methodMap_;

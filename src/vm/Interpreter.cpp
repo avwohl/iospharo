@@ -1029,6 +1029,12 @@ void Interpreter::dumpJITStats() {
             jitChainActivateChains_, jitChainActivateFalls_,
             jitChainPrimChains_, jitChainPrimFalls_);
     fprintf(stderr, "  yields=%zu OSR=%zu\n", jitYieldCount_, jitOSREntries_);
+    {
+        int t2ICTotal = jit::g_t2ICHits + jit::g_t2ICMisses;
+        fprintf(stderr, "  T2-IC: %d hits / %d total (%.1f%%)\n",
+                jit::g_t2ICHits, t2ICTotal,
+                t2ICTotal > 0 ? 100.0 * jit::g_t2ICHits / t2ICTotal : 0.0);
+    }
     jit::Tier2Compiler::dumpBailStats();
     fprintf(stderr, "=================\n");
 #endif

@@ -296,8 +296,7 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
     EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bcOffset));
     EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
 
-    // Clear icDataPtr — Tier 2 has no inline caches; stale Tier 1 IC pointers
-    // would make the chain loop read the wrong selector on ExitSend.
+    // Clear icDataPtr for chain-loop exits (only inline sends use T2 IC).
     EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
 
     if (cached) {
@@ -741,6 +740,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     scratchCounter_ = 0;
     vstackDepth_ = 0;
+
+    // --- Allocate T2 IC slots for monomorphic send caching ---
+    nextICSlot_ = 0;
+    icSlotCount_ = MaxICSlots;
+    icSlots_ = reinterpret_cast<uint64_t*>(
+        interp_.jitRuntime().allocT2ICSlots(MaxICSlots));
+    // icSlots_ may be nullptr if pool is exhausted — sends just won't get IC
 
     // --- Pre-create labels for branch targets ---
     // Build a map from bcOffset to label
@@ -1204,7 +1210,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                         MIR_reg_t selReg3 = newScratch();
                         EMIT(MIR_MOV, REG(selReg3), IMM(selBits2));
                         EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg3));
-                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                        {
+                            int64_t icAddr = 0;
+                            if (icSlots_ && nextICSlot_ < icSlotCount_)
+                                icAddr = reinterpret_cast<int64_t>(&icSlots_[nextICSlot_++ * 2]);
+                            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(icAddr));
+                        }
                         // No resume: stale vstack regs make resume-into-merge unsafe
                         emitSendCall(bc.bcOffset, bc.bcLength, /*registerResume=*/false);
                         // Read retval from sp, adjust sp to match fast path
@@ -1252,7 +1263,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                         MIR_reg_t selReg2 = newScratch();
                         EMIT(MIR_MOV, REG(selReg2), IMM(selBits));
                         EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg2));
-                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                        {
+                            int64_t icAddr = 0;
+                            if (icSlots_ && nextICSlot_ < icSlotCount_)
+                                icAddr = reinterpret_cast<int64_t>(&icSlots_[nextICSlot_++ * 2]);
+                            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(icAddr));
+                        }
                         emitSendCall(bc.bcOffset, bc.bcLength);
                     }
                 }
@@ -1386,7 +1402,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             MIR_reg_t selReg = newScratch();
             EMIT(MIR_MOV, REG(selReg), MEM(MIR_T_I64, reg_literals_, litIndex * 8));
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+            {
+                int64_t icAddr = 0;
+                if (icSlots_ && nextICSlot_ < icSlotCount_)
+                    icAddr = reinterpret_cast<int64_t>(&icSlots_[nextICSlot_++ * 2]);
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(icAddr));
+            }
 
             emitSendCall(bc.bcOffset, bc.bcLength);
         }
@@ -1503,7 +1524,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 MIR_reg_t selReg = newScratch();
                 EMIT(MIR_MOV, REG(selReg), IMM(selBits));
                 EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
-                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                {
+                    int64_t icAddr = 0;
+                    if (icSlots_ && nextICSlot_ < icSlotCount_)
+                        icAddr = reinterpret_cast<int64_t>(&icSlots_[nextICSlot_++ * 2]);
+                    EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(icAddr));
+                }
 
                 emitSendCall(bc.bcOffset, bc.bcLength);
             }

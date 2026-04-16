@@ -109,6 +109,18 @@ public:
     // Public T2 lookup for jit_t2_send helper
     void* lookupTier2(uint64_t methodBits) const { return tier2Lookup(methodBits); }
 
+    // --- T2 monomorphic send cache ---
+    // Each send site in T2 code gets a 16-byte IC slot: (classIndex, resolvedMethodBits).
+    // On IC hit, jit_t2_send skips the full method lookup (class hierarchy walk).
+    // Flushed on GC (resolvedMethodBits becomes stale after compaction).
+    struct T2ICSlot {
+        uint64_t classIndex;     // Receiver classIndex (0 = empty/miss)
+        uint64_t resolvedBits;   // Resolved CompiledMethod Oop bits
+    };
+    static constexpr int MaxT2ICSlots = 8192;
+    T2ICSlot* allocT2ICSlots(int count);
+    void flushT2ICs();
+
     // Per-bcOffset SimStack entry state, used by tryResume to detect when
     // an entry offset lands on a register-reading (_N) stencil. Keyed by
     // JITMethod* (GC-stable), so GC compaction doesn't invalidate entries.
@@ -195,6 +207,10 @@ private:
     // (GC-stable). Used by tryResume to reject resume at register-reading
     // (_N) stencil offsets to avoid entering with garbage in x19-x22.
     std::unordered_map<JITMethod*, std::vector<uint8_t>> bcEntryStates_;
+
+    // T2 monomorphic IC slot pool (128KB, bump-allocated per compilation)
+    T2ICSlot t2ICPool_[MaxT2ICSlots] = {};
+    int t2ICNextSlot_ = 0;
 };
 
 // ===== RUNTIME HELPER FUNCTIONS =====
@@ -219,6 +235,10 @@ extern "C" void jit_rt_arith_overflow(JITState* state);
 // Reads cachedTarget (method Oop), sendArgCount, ip from state.
 extern "C" void jit_rt_push_frame(JITState* state);
 extern "C" void jit_rt_pop_frame(JITState* state);
+
+// T2 monomorphic IC counters (defined in JITRuntime.cpp)
+extern int g_t2ICHits;
+extern int g_t2ICMisses;
 
 // Tier 2 inline send helper: called from MIR-generated code at each send site.
 // Performs method lookup + callee JIT execution inline, avoiding exit/resume overhead.
