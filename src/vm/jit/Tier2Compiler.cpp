@@ -837,7 +837,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 vpush(vpeek());
             } else {
                 MIR_reg_t val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: TOS is at sp[-8]
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
                 vpush(val);
             }
         }
@@ -871,8 +872,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpop();
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: decrement first, then read
                 EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
             }
             // Store to temp register
             if (tmpIdx < tempCount_ && tmpIdx < MaxTemps) {
@@ -891,8 +893,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpop();
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: decrement first, then read
                 EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
             }
             // Store to receiver slot
             MIR_reg_t addr = newScratch();
@@ -906,7 +909,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpeek();  // store without pop
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: TOS is at sp[-8]
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
             }
             if (tmpIdx < tempCount_ && tmpIdx < MaxTemps) {
                 EMIT(MIR_MOV, REG(tempRegs_[tmpIdx]), REG(val));
@@ -924,7 +928,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpeek();  // store without pop
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: TOS is at sp[-8]
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
             }
             MIR_reg_t addr = newScratch();
             EMIT(MIR_ADD, REG(addr), REG(reg_receiver_), IMM(8 + slotIdx * 8));
@@ -938,8 +943,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpop();
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: decrement first, then read
                 EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
             }
             MIR_reg_t assoc = newScratch();
             MIR_reg_t litAddr = newScratch();
@@ -958,7 +964,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpeek();  // store without pop
             } else {
                 val = newScratch();
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                // sp points PAST TOS: TOS is at sp[-8]
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
             }
             MIR_reg_t assoc = newScratch();
             MIR_reg_t litAddr = newScratch();
