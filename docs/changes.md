@@ -2,6 +2,19 @@
 
 2026-04-15
 
+## T2: monomorphic send caching (65% IC hit rate)
+
+Each T2 send site now gets a monomorphic IC slot (classIndex + resolvedMethodBits).
+On IC hit, jit_t2_send skips the full class hierarchy method lookup. 65% of T2
+sends hit the IC, avoiding the most expensive part of the send path.
+
+Implementation: 8192-slot pool in JITRuntime (128KB), bump-allocated per
+compilation. Objects only (SmallInteger/Character always miss). Flushed on GC.
+
+Also: trueOop/falseOop now loaded from JITState (2 MIR instructions) instead
+of JITRuntime globals (4 instructions). Safe because these are permanent-space
+objects set once by tryJITActivation.
+
 ## T2: inline sends via jit_t2_send for special + unsupported arith
 
 Special sends (at:, size, value, do:, new, class, x, y, etc.) and
