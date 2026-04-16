@@ -732,7 +732,7 @@ private:
     Oop findMethodInHierarchy(Oop cls, const char* selector);  // walks superclass chain
     Oop allocateInstance(const char* className);  // allocate zero-slot instance
     Oop findBenchFibMethod();  // Re-lookups Integer>>benchFib (GC-safe)
-    void handleBenchComplete();  // Benchmark run completion handler
+    void handleBenchComplete(Oop returnValue = Oop::nil());  // Benchmark run completion handler
     // Multi-benchmark support
     struct BenchSpec {
         std::string name;

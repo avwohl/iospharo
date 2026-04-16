@@ -691,8 +691,18 @@ skip:
     }
 }
 
-void Interpreter::handleBenchComplete() {
-    fprintf(stderr, "[BENCH] handleBenchComplete called (specIdx=%d runCount=%d)\n", benchSpecIdx_, benchRunCount_);
+void Interpreter::handleBenchComplete(Oop returnValue) {
+    const char* retTag =
+        returnValue.rawBits() == memory_.trueObject().rawBits() ? "true" :
+        returnValue.rawBits() == memory_.falseObject().rawBits() ? "false" :
+        returnValue.isNil() ? "nil" :
+        returnValue.isSmallInteger() ? "int" : "obj";
+    long long intVal = returnValue.isSmallInteger() ? returnValue.asSmallInteger() : 0;
+    fprintf(stderr, "[BENCH] handleBenchComplete called (specIdx=%d runCount=%d) ret=0x%llx (%s%s%lld)\n",
+            benchSpecIdx_, benchRunCount_,
+            (unsigned long long)returnValue.rawBits(), retTag,
+            returnValue.isSmallInteger() ? " " : "",
+            returnValue.isSmallInteger() ? intVal : 0LL);
     const BenchSpec& spec = benchSpecs_[benchSpecIdx_];
     if (benchRunCount_ == -1) {
         fprintf(stderr, "[BENCH] %s warmup done\n", spec.name.c_str());
@@ -4434,7 +4444,7 @@ void Interpreter::returnValue(Oop value) {
 
 terminate_process:
         if (benchMode_) {
-            handleBenchComplete();
+            handleBenchComplete(value);
             return;
         }
 
@@ -11662,7 +11672,7 @@ void Interpreter::tryJITResumeInCaller() {
                 // No valid sender — top of context chain
                 if (benchMode_) {
                     inJITResume_ = false;
-                    handleBenchComplete();
+                    handleBenchComplete(state.returnValue);
                     return;
                 }
                 terminateCurrentProcess();
@@ -12917,7 +12927,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitReturn:
             // Innermost J2J frame returned — pop one materialized frame
             if (!popFrame()) {
-                if (benchMode_) { handleBenchComplete(); return true; }
+                if (benchMode_) { handleBenchComplete(state.returnValue); return true; }
                 terminateCurrentProcess();
                 tryReschedule();
                 return true;
@@ -13188,7 +13198,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // No sender — top of context chain.
                 if (benchMode_) {
                     // PHARO_BENCH: handle benchmark completion inline
-                    handleBenchComplete();
+                    handleBenchComplete(state.returnValue);
                     return true;
                 }
                 terminateCurrentProcess();
@@ -14138,7 +14148,7 @@ jit_loop_exit:
                 }
             }
             if (benchMode_) {
-                handleBenchComplete();
+                handleBenchComplete(state.returnValue);
                 return true;
             }
             terminateCurrentProcess();
