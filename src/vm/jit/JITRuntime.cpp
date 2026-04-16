@@ -119,6 +119,32 @@ extern "C" void jit_t2_send(JITState* state) {
         return;
     }
 
+    // CORRECTNESS: bail straight to interpreter for every T2 send.
+    //
+    // Root cause of Permute miscompile (session 22/23, 2026-04-16):
+    // jit_t2_send previously invoked the callee (T1 stencil or recursive T2)
+    // and fell back on any non-ExitReturn exit. For callees with Smalltalk
+    // side effects (e.g. Permute>>permute: does `count := count + 1` before
+    // its first non-arith send), partial work happened and was NOT undone
+    // on the fallback path. The interpreter then re-activated the callee,
+    // re-running the side-effect bytecodes — double-counting. Recursive T2
+    // chains had the same problem at every depth where the callee couldn't
+    // complete without a bail.
+    //
+    // The proper fix is a chain-loop-style resumption (push SavedFrame for
+    // the caller, let interpreter continue the callee from its partial
+    // state.ip). That's a substantial refactor. For now, always bail — the
+    // interpreter performs the send cleanly from scratch exactly once.
+    //
+    // PHARO_T2_UNSAFE_CALLEE=1 restores the old buggy behavior for
+    // benchmarking only (do NOT use with methods that have side-effect
+    // bytecodes before their first bail point).
+    static bool unsafeCallee = !!getenv("PHARO_T2_UNSAFE_CALLEE");
+    if (!unsafeCallee) {
+        state->exitReason = ExitSend;
+        return;
+    }
+
     Oop selector = state->cachedTarget;
     int nArgs = state->sendArgCount;
     Oop rcvr = state->sp[-(nArgs + 1)];
@@ -218,6 +244,7 @@ ic_hit:
     int savedArgCount = state->argCount;
     void* savedJitMethod = state->jitMethod;
     uint8_t* savedIP = state->ip;
+
 
     // === Set up callee in JITState ===
     ObjectHeader* methObj = resolved.asObjectPtr();
@@ -347,9 +374,9 @@ ic_hit:
     // === Fallback: callee exited with non-ExitReturn ===
     // Restore T2 caller state and exit with ExitSend for the caller's send.
     // The chain loop will handle the send from scratch (re-resolve method,
-    // activate callee). This discards the callee's partial execution but
-    // avoids the SavedFrame/chain-loop interaction that caused infinite loops
-    // with straight-line T2 methods.
+    // activate callee). This discards the callee's partial execution —
+    // which is why PHARO_T2_UNSAFE_CALLEE=1 is unsafe for callees with
+    // side-effecting bytecodes before their first bail point.
     state->sp = savedSP;
     state->receiver = savedRecv;
     state->tempBase = savedTempBase;
