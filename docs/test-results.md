@@ -82,7 +82,21 @@ semantics, causing `SpKMCategoryBuilder>>visit:` (which uses
 otherwise be built, which cascades into full debugger UI construction.
 Next step: diff JIT code for `do:` vs interpreter semantics.
 
-## JIT eval-mode hang — session 16 bisect narrows to a *pattern*, not a single method (2026-04-15)
+## JIT eval-mode hang — PARTIALLY RESOLVED (session 21, 2026-04-15)
+
+**MAX=10 now works** after bcToEntryState fix (session 21). The `do:`,
+`nextPut:`, `ensure:` hangs at MAX=10-113 were caused by flush stencil
+resume leaking SP slots, not by stencil/ABI mismatches. The
+`PHARO_JIT_SKIP_SELECTORS` workaround is no longer needed.
+
+**MAX=50+ still hangs in eval mode** — this is a scheduling issue, not
+a JIT correctness bug. JIT-compiled Morphic methods run fast enough to
+preempt the startup process (P80). The 4-second default defer
+(PHARO_JIT_DEFER=4 in headless) ensures startup.st fires before JIT
+compiles anything. With the default, eval exits cleanly. Tested: eval
+with JIT compiled 821 methods during a 10M-iteration loop (exit=0).
+
+**Previous session 16 analysis (for reference):**
 
 With session-15's `_N` resume guard in place, `PHARO_NO_JIT=0
 PHARO_NO_T2=1 JIT_MAX_COMPILE=10` still hangs. Symptom has shifted
