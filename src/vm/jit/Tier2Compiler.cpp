@@ -375,11 +375,23 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             continue;
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
             // 0x58-0x5C: returns
-        } else if (op == 0x5D || op == 0x5E) {
-            // 0x5D = BlockReturn nil, 0x5E = BlockReturn top
-            // These are non-local returns from blocks — require context unwinding
-            t2DecodeBails[op]++;
-            return false;
+        } else if (op == 0x5D) {
+            // BlockReturn nil: in FullBlock (extB=0), equivalent to ReturnNil
+            if (extB != 0) {
+                t2DecodeBails[op]++;
+                return false;
+            }
+            // Decode as ReturnNil (0x5B)
+            d.opcode = SistaV1::ReturnNil;
+        } else if (op == 0x5E) {
+            // BlockReturn top: in FullBlock (extA=0), equivalent to ReturnTop
+            if (extA != 0) {
+                // Non-local return (enclosingLevels > 0) — complex, bail
+                t2DecodeBails[op]++;
+                return false;
+            }
+            // Decode as ReturnTop (0x5C)
+            d.opcode = SistaV1::ReturnTop;
         } else if (op == 0x5F) {
             // Nop (no operation)
             out.push_back(d);
