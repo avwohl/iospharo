@@ -358,6 +358,26 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
     out.clear();
     out.reserve(len);
 
+    // PHARO_T2_BAIL_OP=FF,F5,... — comma-separated hex opcodes.
+    // If any listed opcode appears in this method, bail T2 compilation.
+    // Useful for bisecting T2 miscompiles per opcode handler.
+    static int bailOps[256] = {0};
+    static bool bailOpsInit = false;
+    if (!bailOpsInit) {
+        bailOpsInit = true;
+        const char* env = getenv("PHARO_T2_BAIL_OP");
+        if (env) {
+            const char* p = env;
+            while (*p) {
+                char* end;
+                long v = strtol(p, &end, 16);
+                if (end != p && v >= 0 && v < 256) bailOps[v] = 1;
+                if (*end == ',') end++;
+                p = end;
+            }
+        }
+    }
+
     int extA = 0, extB = 0;
     size_t i = 0;
     while (i < len) {
@@ -370,6 +390,9 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
         d.bcLength = 1;
 
         uint8_t op = bc[i];
+        if (bailOps[op]) {
+            return false;  // bail: listed opcode triggers T2 bail
+        }
 
         if (op <= 0x0F) {
             d.operand = op & 0x0F;  // pushRecvVar
