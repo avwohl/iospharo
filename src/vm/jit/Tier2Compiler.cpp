@@ -456,6 +456,11 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             int value = (extB << 8) | bc[i + 1];
             d.operand = value;
             d.bcLength = 2;
+        } else if (op == SistaV1::PushCharacter) {
+            if (i + 1 >= len) break;
+            int codepoint = (extB << 8) | bc[i + 1];
+            d.operand = codepoint;
+            d.bcLength = 2;
         } else if (op == SistaV1::ExtSend) {
             if (i + 1 >= len) break;
             uint8_t desc = bc[i + 1];
@@ -501,12 +506,21 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             if (i + 1 >= len) break;
             d.operand = bc[i + 1];
             d.bcLength = 2;
-        } else if (op == SistaV1::ExtPopStoreLitVar ||
-                   op == SistaV1::ExtStoreRecv ||
-                   op == SistaV1::ExtStoreLitVar) {
-            // 0xF1, 0xF3, 0xF4: Store variants — decoded but bail for now
-            t2DecodeBails[op]++;
-            return false;
+        } else if (op == SistaV1::ExtPopStoreLitVar) {
+            // 0xF1: Pop and store into literal variable (Association value slot)
+            if (i + 1 >= len) break;
+            d.operand = (extA << 8) | bc[i + 1];
+            d.bcLength = 2;
+        } else if (op == SistaV1::ExtStoreRecv) {
+            // 0xF3: Store (no pop) into receiver variable
+            if (i + 1 >= len) break;
+            d.operand = (extA << 8) | bc[i + 1];
+            d.bcLength = 2;
+        } else if (op == SistaV1::ExtStoreLitVar) {
+            // 0xF4: Store (no pop) into literal variable (Association value slot)
+            if (i + 1 >= len) break;
+            d.operand = (extA << 8) | bc[i + 1];
+            d.bcLength = 2;
         } else if (op == SistaV1::CallPrimitive) {
             // Primitive methods — T1's primitive prologue handles the prim,
             // T2 can't run the primitive (just has the fallback bytecodes).
@@ -833,6 +847,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, REG(val), IMM((intVal << 3) | SMALLINT_TAG));
             vpush(val);
         }
+        else if (op == SistaV1::PushCharacter) {
+            MIR_reg_t val = newScratch();
+            int64_t codepoint = bc.operand;
+            // Character tag = 3: (codepoint << 3) | 3
+            EMIT(MIR_MOV, REG(val), IMM((codepoint << 3) | 3));
+            vpush(val);
+        }
 
         // --- Pop / Store ---
         else if (op == SistaV1::Pop) {
@@ -895,8 +916,58 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
             EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
         }
-        // ExtStoreRecv (0xF3), ExtPopStoreLitVar (0xF1), ExtStoreLitVar (0xF4):
-        // Bail in decode phase — these opcodes never reach here.
+        // --- Extended store variants ---
+        else if (op == SistaV1::ExtStoreRecv) {
+            int slotIdx = bc.operand;
+            MIR_reg_t val;
+            if (vstackDepth_ > 0) {
+                val = vpeek();  // store without pop
+            } else {
+                val = newScratch();
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+            }
+            MIR_reg_t addr = newScratch();
+            EMIT(MIR_ADD, REG(addr), REG(reg_receiver_), IMM(8 + slotIdx * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
+        }
+        else if (op == SistaV1::ExtPopStoreLitVar) {
+            // Pop and store into literal variable (Association's value slot)
+            int litIdx = bc.operand;
+            MIR_reg_t val;
+            if (vstackDepth_ > 0) {
+                val = vpop();
+            } else {
+                val = newScratch();
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+                EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+            }
+            MIR_reg_t assoc = newScratch();
+            MIR_reg_t litAddr = newScratch();
+            EMIT(MIR_ADD, REG(litAddr), REG(reg_literals_), IMM(litIdx * 8));
+            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, litAddr, 0));
+            // Association value is at assoc + 16 (header + slot 1)
+            MIR_reg_t valAddr = newScratch();
+            EMIT(MIR_ADD, REG(valAddr), REG(assoc), IMM(16));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, valAddr, 0), REG(val));
+        }
+        else if (op == SistaV1::ExtStoreLitVar) {
+            // Store (no pop) into literal variable (Association's value slot)
+            int litIdx = bc.operand;
+            MIR_reg_t val;
+            if (vstackDepth_ > 0) {
+                val = vpeek();  // store without pop
+            } else {
+                val = newScratch();
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+            }
+            MIR_reg_t assoc = newScratch();
+            MIR_reg_t litAddr = newScratch();
+            EMIT(MIR_ADD, REG(litAddr), REG(reg_literals_), IMM(litIdx * 8));
+            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, litAddr, 0));
+            MIR_reg_t valAddr = newScratch();
+            EMIT(MIR_ADD, REG(valAddr), REG(assoc), IMM(16));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, valAddr, 0), REG(val));
+        }
 
         // --- Return instructions ---
         else if (op == SistaV1::ReturnReceiver) {
