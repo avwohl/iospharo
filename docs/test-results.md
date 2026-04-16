@@ -1,6 +1,55 @@
 # Test Results
 
-Last updated: 2026-04-15
+Last updated: 2026-04-16
+
+## T2 silent miscompile on Permute — NEW (session 22, 2026-04-16)
+
+Post-session-21 AWFY validation revealed T2 is silently wrong on
+`Permute>>innerBenchmarkLoop:`. Under `PHARO_T2=1` the benchmark returns
+`false` (verification failed) in 4-6ms instead of `true` in ~2250ms.
+Interpreter and T1 both return `true`.
+
+Bisected with `T2_LIMIT=1`: compiling just `Permute>>permute:` as T2 is
+sufficient to break the benchmark. The miscompile is in one of:
+  - instVar read-modify-write (`count := count + 1`)
+  - self-recursion with cascade (`swap:; permute:; swap:`)
+  - `to:by:do:` with negative step
+  - `~= 0` short-jump-false
+
+Added handleBenchComplete return-value print (commit fed11d6) to catch
+silent miscompiles — a benchmark returning the wrong value is no longer
+disguised as a speedup.
+
+Reproducer:
+```
+cp /tmp/Pharo-awfy-recomp-full.image /tmp/p.image
+PHARO_BENCH=awfy PHARO_AWFY_ONLY=Permute PHARO_NO_JIT=0 \
+  PHARO_T2=1 T2_LIMIT=1 \
+  ./build/test_load_image /tmp/p.image 2>&1 | \
+  grep -E "BENCH.*handleBench|Tier 2"
+```
+
+This is separate from the GC-safety issue (MIR holding oops in registers
+across `jit_t2_send`) that also keeps T2 disabled by default. T2 is wrong
+*even without GC happening* on this workload.
+
+## JIT post-bcToEntryState AWFY (session 22, 2026-04-16)
+
+First post-fix comparison, median of 5 runs per benchmark:
+
+    Benchmark      NO_JIT   T1 JIT   Ratio
+    tinyBenchmarks  7090ms   5431ms   1.31x WIN
+    fib(30)          137ms     27ms   5.08x WIN (steady state)
+    Sieve (AWFY)    2935ms   1328ms   2.21x WIN
+    Bounce          1891ms   3316ms   0.57x LOSS
+    Permute         2229ms   4912ms   0.45x LOSS
+    Queens          1568ms   3244ms   0.48x LOSS
+
+No crashes, no hangs across 5x5 AWFY runs plus tiny/fib/sieve. Send-heavy
+AWFY still loses 1.75-2.2x due to T1's ~42-memop J2J save/restore path
+(47% IC hit on AWFY vs 99% on tinyBench). Consistent with the 2026-04-12
+AWFY geomean 1.00x baseline. The bcToEntryState fix improved stability,
+not raw send throughput. See docs/benchmark-results.md for the full entry.
 
 ## JIT stack overflow in push() — RESOLVED (session 21, 2026-04-15)
 
