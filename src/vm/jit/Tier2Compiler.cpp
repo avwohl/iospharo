@@ -136,6 +136,8 @@ static constexpr int OFF_YIELD_CD  = 176;  // yieldCountdown (int32_t)
 // Exit reasons (must match JITState.hpp)
 static constexpr int EXIT_RETURN       = 1;
 static constexpr int EXIT_SEND         = 2;
+static constexpr int EXIT_BLOCK_CREATE = 8;
+static constexpr int EXIT_ARRAY_CREATE = 9;
 static constexpr int EXIT_YIELD        = 11;
 
 // SmallInteger tag
@@ -472,6 +474,11 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             i += d.bcLength;
             extA = extB = 0;
             continue;
+        } else if (op == SistaV1::PushArray) {
+            // 0xE7: j=0: Push (Array new: k); j=1: Pop k into (Array new: k)
+            if (i + 1 >= len) break;
+            d.operand = bc[i + 1];  // desc byte: bit7=popIntoArray, bits0-6=arraySize
+            d.bcLength = 2;
         } else if (op == SistaV1::ExtSend) {
             if (i + 1 >= len) break;
             uint8_t desc = bc[i + 1];
@@ -547,8 +554,11 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             t2DecodeBails[op]++;
             return false;
         } else if (op == SistaV1::PushFullBlock) {
-            t2DecodeBails[op]++;
-            return false;
+            // 0xF9: Push FullBlockClosure (3-byte)
+            if (i + 2 >= len) break;
+            d.operand = (extA << 8) | bc[i + 1];  // litIndex (+ ExtA)
+            d.operand2 = bc[i + 2];               // flags byte
+            d.bcLength = 3;
         } else if (op == SistaV1::PushClosure) {
             t2DecodeBails[op]++;
             return false;
@@ -1448,6 +1458,89 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
             unreachable = true;
+        }
+
+        // --- PushFullBlock (0xF9): exit to chain loop for closure creation ---
+        else if (op == SistaV1::PushFullBlock) {
+            flushVStack();
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            // Set ip to PushFullBlock bytecode address
+            MIR_reg_t ipReg = newScratch();
+            EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+            // Pack litIndex and flags into cachedTarget: (litIndex & 0xFFFF) | (flags << 32)
+            int litIndex = bc.operand;
+            int flags = bc.operand2;
+            uint64_t packed = (uint64_t)(litIndex & 0xFFFF) | ((uint64_t)(uint32_t)flags << 32);
+            MIR_reg_t packReg = newScratch();
+            EMIT(MIR_MOV, REG(packReg), IMM((int64_t)packed));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(packReg));
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_BLOCK_CREATE));
+            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+
+            // Resume label: chain loop creates closure, then re-enters T2 here
+            MIR_label_t resumeLabel = MIR_new_label(mirCtx_);
+            MIR_append_insn(mirCtx_, mirFunc_, resumeLabel);
+            // Reload state (prologue loaded some, but ensure consistency)
+            EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
+            EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
+            EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
+            EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
+            {
+                JITRuntime& rt = interp_.jitRuntime();
+                MIR_reg_t addr = newScratch();
+                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
+                EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
+                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
+                EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
+            }
+            for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
+            int postBC = bc.bcOffset + bc.bcLength;
+            if (resumeCount_ < MaxResume) {
+                resumePoints_[resumeCount_].postSendBC = postBC;
+                resumePoints_[resumeCount_].label = resumeLabel;
+                resumeCount_++;
+            }
+            // NOT unreachable — code continues after resume
+        }
+
+        // --- PushArray (0xE7): exit to chain loop for array allocation ---
+        else if (op == SistaV1::PushArray) {
+            flushVStack();
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            // Set ip to PushArray bytecode address
+            MIR_reg_t ipReg = newScratch();
+            EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+            // cachedTarget = desc byte (arraySize | popIntoArray<<7)
+            MIR_reg_t descReg = newScratch();
+            EMIT(MIR_MOV, REG(descReg), IMM(bc.operand));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(descReg));
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_ARRAY_CREATE));
+            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+
+            // Resume label
+            MIR_label_t resumeLabel = MIR_new_label(mirCtx_);
+            MIR_append_insn(mirCtx_, mirFunc_, resumeLabel);
+            EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
+            EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
+            EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
+            EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
+            {
+                JITRuntime& rt = interp_.jitRuntime();
+                MIR_reg_t addr = newScratch();
+                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
+                EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
+                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
+                EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
+            }
+            for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
+            int postBC = bc.bcOffset + bc.bcLength;
+            if (resumeCount_ < MaxResume) {
+                resumePoints_[resumeCount_].postSendBC = postBC;
+                resumePoints_[resumeCount_].label = resumeLabel;
+                resumeCount_++;
+            }
         }
 
         // --- Temp vector operations (closure captured temps) ---
