@@ -2,6 +2,51 @@
 
 Last updated: 2026-04-15
 
+## JIT process deaths — session 19: JIT produces wrong values (2026-04-15)
+
+**KEY FINDING**: The original `do:`, `nextPut:`, `ensure:` hang from sessions
+14-17 is resolved — unlimited JIT compilation runs to completion (10/10
+trials). The remaining issue is **JIT-compiled methods returning wrong
+values**, causing DNUs that kill processes.
+
+**Process deaths (fd=0 terminations)**:
+
+    Configuration               Deaths/run  Notes
+    Interpreter only             0          always clean
+    JIT T1+T2, chain loop       0-9        non-deterministic
+    JIT T1+T2, no chain         6          consistent
+    JIT T1 only, no resume      3-15       non-deterministic
+    JIT T1+T2, no resume        6          consistent
+
+**DNU breakdown (interpreter vs JIT)**:
+
+    Interpreter: only isTransparent (10x) + fillRectangle:on: (10x)
+                 from SpStyleEnvironmentColorProxy — all caught by handlers
+
+    JIT adds (never in interpreter):
+      31x  #withAllSuccessorsDo:alreadySeen:  in #ifNotNil:   (Opal CFG)
+       9x  #absorbJumpToSingleInstr:          in #ifNotNil:   (Opal opt)
+       7x  #value:keywordPositions:           in #parseUnaryMessageWith:
+       2x  #evaluate:onBehalfOf:              in #exception
+       1x  #readStream on SmallInt 3          in #parseNamedFunction:
+       1x  #next on SmallInt 3                in #parseType
+       1x  #last on SmallInt 5                in #resolveType:
+       1x  #currentSettings on SmallInt 2     in #wantsRoundedCorners
+
+    SmallIntegers (3, 5, 16) appear where objects (collections, strings,
+    AST nodes) should be. This is JIT miscompilation: stencils return
+    indices/tags instead of actual values.
+
+**Chain loop observation**: MORE deaths without chain loop (12) than with
+(3-6). The chain loop handles exits correctly; the interpreter-JIT transition
+is where state corruption occurs.
+
+**Next step**: Add post-exit validation in tryJITActivation to catch the
+exact moment a wrong value is produced. Check state.returnValue and
+stack values after JIT exits.
+
+---
+
 ## JIT eval-mode hang — session 17: found nil-DNU shortcut typo (2026-04-15)
 
 Session 14's 4094-deep `Context>>copyTo:` recursion IS still reproducing
