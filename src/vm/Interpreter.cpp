@@ -16,6 +16,7 @@
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
 #include "jit/TrampolineAsm.hpp"
+#include "jit/Tier2Compiler.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
@@ -1028,6 +1029,7 @@ void Interpreter::dumpJITStats() {
             jitChainActivateChains_, jitChainActivateFalls_,
             jitChainPrimChains_, jitChainPrimFalls_);
     fprintf(stderr, "  yields=%zu OSR=%zu\n", jitYieldCount_, jitOSREntries_);
+    jit::Tier2Compiler::dumpBailStats();
     fprintf(stderr, "=================\n");
 #endif
 }

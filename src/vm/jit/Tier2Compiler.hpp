@@ -72,6 +72,9 @@ public:
     size_t methodsCompiled() const { return methodsCompiled_; }
     size_t compilationsFailed() const { return compilationsFailed_; }
 
+    // Print T2 bail statistics (which opcodes cause compilation to fail)
+    static void dumpBailStats();
+
 private:
     // Emit MIR IR for one bytecode. Returns false on unsupported bytecode.
     bool emitBytecode(uint8_t opcode, int operand, int operand2,

@@ -208,11 +208,13 @@ extern "C" void jit_t2_send(JITState* state) {
     // === Try T2 code first (avoids ExitSendCached from T1 stencils) ===
     // T1 stencils exit with ExitSendCached on inner sends (J2J disabled),
     // so prefer T2 callee which handles sends via recursive jit_t2_send.
+    // Exception: methods with primitives — T2 skips CallPrimitive, so the
+    // primitive would never run. Use T1 which has a primitive prologue.
     JITRuntime& rt = interp->jitRuntime();
-    void* t2code = rt.lookupTier2(resolved.rawBits());
+    void* t2code = hasPrim ? nullptr : rt.lookupTier2(resolved.rawBits());
     if (t2SendDebug && t2SendCount < 5) {
-        fprintf(stderr, "[T2SEND-LOOKUP] resolved=0x%llx t2code=%p jm=%p\n",
-                (unsigned long long)resolved.rawBits(), t2code, (void*)jm);
+        fprintf(stderr, "[T2SEND-LOOKUP] resolved=0x%llx t2code=%p jm=%p hasPrim=%d\n",
+                (unsigned long long)resolved.rawBits(), t2code, (void*)jm, hasPrim);
     }
     if (t2code && t2code != (void*)1) {
         state->exitReason = ExitNone;

@@ -150,6 +150,25 @@ struct T2BC {
     int     bcLength;
 };
 
+// ===== T2 bail statistics (per opcode) =====
+static int t2DecodeBails[256] = {};  // bail in decodeBytecodes
+static int t2EmitBails[256] = {};    // bail in emit loop
+
+void Tier2Compiler::dumpBailStats() {
+    int totalDecode = 0, totalEmit = 0;
+    for (int i = 0; i < 256; i++) {
+        totalDecode += t2DecodeBails[i];
+        totalEmit += t2EmitBails[i];
+    }
+    if (totalDecode + totalEmit == 0) return;
+    fprintf(stderr, "[T2] Bail stats: %d decode, %d emit\n", totalDecode, totalEmit);
+    for (int i = 0; i < 256; i++) {
+        if (t2DecodeBails[i] || t2EmitBails[i])
+            fprintf(stderr, "  0x%02X: decode=%d emit=%d\n",
+                    i, t2DecodeBails[i], t2EmitBails[i]);
+    }
+}
+
 // ===== Tier2Compiler =====
 
 Tier2Compiler::Tier2Compiler(CodeZone& zone, MethodMap& methodMap,
@@ -339,7 +358,7 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             // 0x50-0x51
         } else if (op == 0x52) {
             // pushThisContext — not supported in Tier 2
-            fprintf(stderr, "[T2] decodeBytecodes: pushThisContext at offset %zu\n", i);
+            t2DecodeBails[op]++;
             return false;
         } else if (op == SistaV1::Dup) {
             // 0x53
@@ -351,8 +370,13 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             continue;
         } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
             // 0x58-0x5C: returns
-        } else if (op >= 0x5D && op <= 0x5F) {
-            // Unused — nop
+        } else if (op == 0x5D || op == 0x5E) {
+            // 0x5D = BlockReturn nil, 0x5E = BlockReturn top
+            // These are non-local returns from blocks — require context unwinding
+            t2DecodeBails[op]++;
+            return false;
+        } else if (op == 0x5F) {
+            // Nop (no operation)
             out.push_back(d);
             i += d.bcLength;
             extA = extB = 0;
@@ -361,11 +385,16 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             d.operand = d.bcOffset;
             d.operand2 = 1;  // all arith are 1-arg sends
         } else if (op >= 0x70 && op <= 0x7F) {
-            // Special sends (at:, at:put:, value, etc.) — bail T2.
-            // Selector isn't in the literals array, requiring special resolution
-            // that the chain loop ExitSend handler can't do for T2 exits.
-            fprintf(stderr, "[T2] decodeBytecodes: special send 0x%02X at offset %zu\n", op, i);
-            return false;
+            // Special sends: selector from special selectors array, not literals.
+            // Arg counts are fixed by the Sista V1 spec:
+            // at:(1) at:put:(2) size(0) next(0) nextPut:(1) atEnd(0) ==(1) class(0)
+            // ~~(1) value(0) value:(1) do:(1) new(0) new:(1) x(0) y(0)
+            static const int specialArgCounts[16] = {
+                1, 2, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0
+            };
+            int idx = op - 0x70;
+            d.operand = idx;   // special selector index (0-15)
+            d.operand2 = specialArgCounts[idx];  // arg count
         } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
             d.operand = op & 0x0F;
             d.operand2 = 0;
@@ -472,19 +501,23 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             if (i + 1 >= len) break;
             d.operand = bc[i + 1];
             d.bcLength = 2;
+        } else if (op == SistaV1::ExtPopStoreLitVar ||
+                   op == SistaV1::ExtStoreRecv ||
+                   op == SistaV1::ExtStoreLitVar) {
+            // 0xF1, 0xF3, 0xF4: Store variants — decoded but bail for now
+            t2DecodeBails[op]++;
+            return false;
         } else if (op == SistaV1::CallPrimitive) {
-            // 3-byte primitive call — skip it (already handled by activateMethod)
-            if (i + 2 >= len) break;
-            d.bcLength = 3;
-            out.push_back(d);
-            i += d.bcLength;
-            extA = extB = 0;
-            continue;
+            // Primitive methods — T1's primitive prologue handles the prim,
+            // T2 can't run the primitive (just has the fallback bytecodes).
+            // Bail: T1 with primitive prologue is the right path.
+            t2DecodeBails[op]++;
+            return false;
         } else if (op == SistaV1::PushFullBlock) {
-            fprintf(stderr, "[T2] decodeBytecodes: PushFullBlock at offset %zu\n", i);
+            t2DecodeBails[op]++;
             return false;
         } else if (op == SistaV1::PushClosure) {
-            fprintf(stderr, "[T2] decodeBytecodes: PushClosure at offset %zu\n", i);
+            t2DecodeBails[op]++;
             return false;
         } else if (op >= 0xDA && op <= 0xDF) {
             // Reserved — nop
@@ -494,7 +527,7 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             continue;
         } else {
             // Unsupported bytecode — bail
-            fprintf(stderr, "[T2] decodeBytecodes: unsupported opcode 0x%02X at offset %zu\n", op, i);
+            t2DecodeBails[op]++;
             return false;
         }
 
@@ -664,6 +697,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // --- Extension bytecodes: skip (already decoded) ---
         if (op == SistaV1::ExtendA || op == SistaV1::ExtendB) continue;
+
+        // CallPrimitive: bails in decode, never reaches emit.
 
         // --- Push instructions ---
         if (op <= 0x0F) {
@@ -860,6 +895,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
             EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
         }
+        // ExtStoreRecv (0xF3), ExtPopStoreLitVar (0xF1), ExtStoreLitVar (0xF4):
+        // Bail in decode phase — these opcodes never reach here.
 
         // --- Return instructions ---
         else if (op == SistaV1::ReturnReceiver) {
@@ -1245,12 +1282,54 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             unreachable = true;
         }
 
+        // --- Special sends (0x70-0x7F) ---
+        // Selector from special selectors array, resolved at compile time.
+        // These exit to the chain loop (EXIT_SEND) rather than calling
+        // jit_t2_send, because jit_t2_send recurses on the C stack and
+        // methods with special sends (do:, value, size, etc.) cause
+        // unbounded recursion depth. The chain loop handles activation
+        // without C-stack growth.
+        else if (op >= 0x70 && op <= 0x7F) {
+            int nArgs = bc.operand2;
+            if (nArgs < 0) nArgs = 0;
+
+            // Resolve selector from special selectors array
+            int selectorIndex = 16 + bc.operand;  // 0x70-0x7F → indices 16-31
+            Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+            uint64_t selBits = 0;
+            if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+                ObjectHeader* ssArray = specialSelectors.asObjectPtr();
+                size_t selectorSlot = selectorIndex * 2;
+                if (selectorSlot < ssArray->slotCount()) {
+                    selBits = ssArray->slotAt(selectorSlot).rawBits();
+                }
+            }
+            if (selBits == 0) {
+                t2EmitBails[op]++;
+                bail = true;
+                break;
+            }
+
+            flushVStack();
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
+            MIR_reg_t ipReg = newScratch();
+            EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+            // Store selector (compile-time resolved) in cachedTarget
+            MIR_reg_t selReg = newScratch();
+            EMIT(MIR_MOV, REG(selReg), IMM(selBits));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+            // Exit to chain loop — avoids jit_t2_send C-stack recursion
+            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
+            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+            unreachable = true;
+        }
+
         // --- Unsupported: bail ---
         else {
-            static int bailCount = 0;
-            if (bailCount++ < 5)
-                fprintf(stderr, "[T2] Bail on unsupported opcode 0x%02X at bc[%d]\n",
-                        op, bc.bcOffset);
+            t2EmitBails[op]++;
             bail = true;
             break;
         }
