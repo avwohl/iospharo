@@ -2,6 +2,31 @@
 
 2026-04-15
 
+## fix: bcToEntryState max-wins prevents stack leak on JIT resume
+
+Resume from interpreter into JIT at a bytecode where flush stencils have
+pending register values caused a +1 SP leak per cycle. The flush stencil
+pushes register values to the stack, but resume enters at the post-flush
+real stencil which assumes those values are already there — skipping the
+flush leaks a slot each time.
+
+Root cause: bcToEntryState used last-write-wins, so the real stencil's
+state=0 overwrote the flush stencil's state=2 at the same bytecode offset.
+tryResume saw state=0 and allowed entry.
+
+Fix (3 parts):
+1. bcToEntryState now uses max-wins (std::max) — if any stencil at a
+   bytecode offset has pending register state, the max is preserved.
+2. Post-compilation loop zeroes bcToCodeOffset for all bytecodes with
+   non-zero entry state. codeOffsetForBC returns 0, which ALL callers
+   (C++ tryResume, asm trampoline, J2J chain loop) treat as "no valid
+   entry point". This single mechanism blocks all resume paths.
+3. Added getBcEntryState checks to 3 J2J resume-address precomputation
+   sites (tryJITResumeInCaller, tryJITActivation, chain loop) as defense
+   in depth.
+
+Verified: 0/10 stack overflows (was 5/5 before, 3/5 with partial fix).
+
 ## fix: disable T2 resume to prevent MIR spill-slot corruption
 
 MIR's register allocator spills values to the C stack during normal T2

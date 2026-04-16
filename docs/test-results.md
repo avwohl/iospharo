@@ -2,6 +2,23 @@
 
 Last updated: 2026-04-15
 
+## JIT stack overflow in push() — RESOLVED (session 21, 2026-04-15)
+
+bcToEntryState max-wins fix. Resume from interpreter into JIT at flush
+stencil bytecodes leaked +1 SP slot per cycle because the flush stencil's
+non-zero entry state was overwritten by the real stencil's state=0.
+
+Fix: bcToEntryState uses std::max (preserves flush state), plus
+bcToCodeOffset zeroed for all non-zero-state bytecodes. This blocks ALL
+resume paths: C++ tryResume, asm trampoline (reads bcToCode table),
+J2J chain loop. Added getBcEntryState checks to 3 J2J resume-address
+precomputation sites as defense in depth.
+
+**Verification (10 runs, JIT MAX=200, T1-only)**:
+
+    Before fix   5/5 overflow (pollEvent: bc=2, then bc=6)
+    After fix    0/10 overflow
+
 ## JIT process deaths — RESOLVED (session 20, 2026-04-15)
 
 **Root cause found and fixed**: T2 (MIR) resume corruption. MIR's register
@@ -25,9 +42,6 @@ T1 stencil code.
     Before fix   2-3 corruption events per run, 3 megaCache scan hits
     After fix    0 corruption, 0 megaCache scan hits
     Interp-only  0 (baseline)
-
-**Remaining**: 2 consistent "Stack overflow in push()" stopVMs with JIT
-(not present in interpreter-only mode). Separate issue — not corruption.
 
 ---
 

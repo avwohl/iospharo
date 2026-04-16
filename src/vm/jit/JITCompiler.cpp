@@ -1677,18 +1677,24 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // path unconditionally, ignoring the actual comparison result.
         (void)simStackEntryState;  // plumbed through for future use
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_nop) {
-            // Last-write-wins: the real stencil at bcOffset X overwrites any
-            // SimStack flush inserted before it, so jumps and tryResume both
-            // land on the real stencil (Empty SimStack state at entry).
+            // Last-write-wins for code offsets: the real stencil at bcOffset X
+            // overwrites any SimStack flush inserted before it, so jumps land
+            // on the real stencil (post-flush, empty SimStack).
             bcToCodeOffset[bc.bcOffset] = codeSize;
             bcToBranchOffset[bc.bcOffset] = codeSize;
+            // Max-wins for entry state: if a flush stencil at this bcOffset has
+            // a non-zero entry state (registers pending), keep it. tryResume
+            // must reject entry at offsets with pending register values — the
+            // flush stencil pushes those registers and we'd skip it if we enter
+            // at the post-flush real stencil. Without this, the skipped flush
+            // leaks stack slots on every resume (session 20: pollEvent: leak).
             uint8_t st = (di < simStackEntryState.size())
                 ? static_cast<uint8_t>(simStackEntryState[di]) : 0;
-            bcToEntryState[bc.bcOffset] = st;
+            bcToEntryState[bc.bcOffset] = std::max(bcToEntryState[bc.bcOffset], st);
             for (int b = 1; b < bc.bcLength && (bc.bcOffset + b) <= (int)bcLen; b++) {
                 bcToCodeOffset[bc.bcOffset + b] = codeSize;
                 bcToBranchOffset[bc.bcOffset + b] = codeSize;
-                bcToEntryState[bc.bcOffset + b] = st;
+                bcToEntryState[bc.bcOffset + b] = std::max(bcToEntryState[bc.bcOffset + b], st);
             }
         }
         // Even nop stencils contribute to code size (they emit a branch instruction)
@@ -1713,6 +1719,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Sentinel: code offset for "one past the last bytecode"
     bcToCodeOffset[bcLen] = codeSize;
     bcToBranchOffset[bcLen] = codeSize;
+
+    // Clear bcToCodeOffset for bytecodes with non-zero entry state.
+    // Flush stencils at a bytecode offset push register values to the stack;
+    // the post-flush real stencil (where bcToCodeOffset points) assumes those
+    // values are already there. Resume from interpreter skips the flush, so
+    // entering at the real stencil would read stale stack data and leak slots.
+    // Setting bcToCodeOffset to 0 makes codeOffsetForBC return 0, which ALL
+    // callers (tryResume, J2J trampoline, chain loop, asm trampoline) treat
+    // as "no valid entry point".
+    for (size_t i = 0; i <= bcLen; i++) {
+        if (bcToEntryState[i] != 0) {
+            bcToCodeOffset[i] = 0;
+        }
+    }
 
     // Literal pool lives after the code, 8-byte aligned
     uint32_t literalPoolOffset = (codeSize + 7) & ~7u;

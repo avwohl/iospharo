@@ -11203,6 +11203,7 @@ void Interpreter::tryJITResumeInCaller() {
     // caller has JIT code, resume execution in JIT from this bytecode.
     if (inJITResume_) return;  // Prevent re-entrancy from returnValue or tryJITActivation
     inJITResume_ = true;
+
     int resumeIter = 0;
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
@@ -11455,11 +11456,17 @@ void Interpreter::tryJITResumeInCaller() {
                     {
                         uint32_t bcOff =
                             static_cast<uint32_t>(state.ip - callerBCStart);
-                        uint32_t codeOff = callerJM->codeOffsetForBC(bcOff);
-                        save.resumeAddr =
-                            (codeOff == 0 || codeOff >= callerJM->codeSize)
-                                ? nullptr
-                                : callerJM->codeStart() + codeOff;
+                        // Safety: refuse register-reading entry offsets —
+                        // see JITRuntime::tryResume / deferred-issues.md #4.
+                        if (jitRuntime_.getBcEntryState(callerJM, bcOff) != 0) {
+                            save.resumeAddr = nullptr;
+                        } else {
+                            uint32_t codeOff = callerJM->codeOffsetForBC(bcOff);
+                            save.resumeAddr =
+                                (codeOff == 0 || codeOff >= callerJM->codeSize)
+                                    ? nullptr
+                                    : callerJM->codeStart() + codeOff;
+                        }
                     }
 
                     // Stack overflow check
@@ -12687,10 +12694,16 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // bytecode, so bcToCode maps to the stencil AFTER the send.
                 {
                     uint32_t bcOffset = static_cast<uint32_t>(state.ip - callerBCStart);
-                    uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
-                    save.resumeAddr = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
-                        ? nullptr
-                        : callerJM->codeStart() + codeOffset;
+                    // Safety: refuse register-reading entry offsets —
+                    // see JITRuntime::tryResume / deferred-issues.md #4.
+                    if (jitRuntime_.getBcEntryState(callerJM, bcOffset) != 0) {
+                        save.resumeAddr = nullptr;
+                    } else {
+                        uint32_t codeOffset = callerJM->codeOffsetForBC(bcOffset);
+                        save.resumeAddr = (codeOffset == 0 || codeOffset >= callerJM->codeSize)
+                            ? nullptr
+                            : callerJM->codeStart() + codeOffset;
+                    }
                 }
 
                 // Lazy frame: just increment local depth, no SavedFrame write.
@@ -13490,6 +13503,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 jit::JITMethod* jm = jitRuntime_.methodMap().lookup(
                     method.rawBits());
                 if (!jm || !jm->isExecutable()) return true;
+                // Safety: refuse register-reading entry offsets —
+                // see JITRuntime::tryResume / deferred-issues.md #4.
+                if (jitRuntime_.getBcEntryState(jm, bcOffset) != 0) return true;
                 uint32_t codeOff = jm->codeOffsetForBC(bcOffset);
                 if (codeOff == 0 || codeOff >= jm->codeSize) return true;
                 state.jitMethod = jm;
