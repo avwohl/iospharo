@@ -1,5 +1,48 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## 2026-04-16 — JIT validation after bcToEntryState fix (session 21)
+
+Context: the bcToEntryState max-wins fix (62443cb) resolved the MAX=10-113
+eval hang and the JIT stack-overflow in push(). VM now runs reliably at
+unlimited JIT. This is the first post-fix comparison with JIT on vs off.
+
+All runs on the same fresh image copy, median of 5 timed runs reported
+(1 warmup excluded). T1-only unless noted.
+
+    Benchmark      NO_JIT   T1 JIT   T1 Ratio   T1+T2   T2 Ratio
+    tinyBenchmarks  7090ms   5431ms    1.31x       —       —
+    fib(30)          137ms     27ms    5.08x*      —       —
+    Bounce          1891ms   3316ms    0.57x    2832ms   0.67x
+    Permute         2229ms   4912ms    0.45x       4ms    suspect
+    Queens          1568ms   3244ms    0.48x    3309ms   0.47x
+    Sieve           2935ms   1328ms    2.21x    1319ms   2.23x
+
+    * fib last run only (27ms); first 3 runs were slower than interpreter
+      (~149ms) due to compilation overhead. Fib is a good steady-state
+      case because the recursive method is hot immediately.
+
+Observations:
+- JIT now runs stable at unlimited MAX — no crashes, no hangs during 5x5
+  AWFY runs or the tiny/fib/sieve runs. bcToEntryState fix verified.
+- Arithmetic/loop-heavy benchmarks win with JIT (tinyBench 1.31x, Sieve
+  2.2x, fib 5x steady-state).
+- Send-heavy AWFY benchmarks (Bounce, Permute, Queens) are 1.75-2.2x
+  SLOWER with JIT. The T1 J2J save/restore overhead (~42 memory ops per
+  send) dominates polymorphic dispatch paths. Consistent with the
+  2026-04-12 AWFY geomean 1.00x baseline.
+- T2 enabled with PHARO_T2=1 did NOT crash on this workload, but also
+  didn't help: Bounce 3316→2832ms (modest), Queens/Sieve unchanged.
+  Permute 4912→4ms is almost certainly a correctness bug, not a speedup
+  (no result verification in the harness).
+- T1 JIT stats on AWFY subset: 98.6% activation hit, 47% IC hit rate —
+  polymorphic dispatch kills IC locality.
+
+Takeaway: correctness fixes unlocked JIT at full speed, but T1's send
+path is architecturally too slow for polymorphic workloads. Next
+meaningful win requires either (a) register-based call frames that
+shrink J2J memory ops, or (b) fixing T2 GC safety so MIR can be the
+default and T2-to-T2 calls skip the C++ round-trip.
+
 ## Latest: Build 115 — superinstructions + accessor inlining
 
     Date:          2026-03-31
