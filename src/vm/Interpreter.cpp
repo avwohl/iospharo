@@ -11154,15 +11154,22 @@ void Interpreter::tryJITResumeInCaller() {
         state.argCount = argCount_;
         state.icDataPtr = nullptr;
         state.sendArgCount = 0;
-        // Disable stencil J2J for dispatch-loop resume (no save stack)
-        state.j2jSaveCursor = nullptr;
-        state.j2jSaveLimit = nullptr;
+        // Allocate J2J save stack so stencils can do J2J calls during resume.
+        int rj2jBase = j2jPoolCursor_;
+        int rj2jEnd = std::min(rj2jBase + J2JSlotPerEntry, MaxJ2JPoolSize);
+        j2jPoolCursor_ = rj2jEnd;
+        state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[rj2jBase]);
+        state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[rj2jEnd]);
+        state.j2jDepth = 0;
+        state.j2jTotalCalls = 0;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
 
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
+            j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
         }
+        jitJ2JStencilCalls_ += state.j2jTotalCalls;
 
         if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
             long long _sp = (long long)(state.sp - framePointer_);
@@ -11190,6 +11197,65 @@ void Interpreter::tryJITResumeInCaller() {
             checkCountdown_ -= state.jitMethod->numBytecodes;
             g_stepNum += state.jitMethod->numBytecodes;
         }
+
+        // If the stencil did J2J calls (j2jDepth > 0), materialize the
+        // saved caller frames as interpreter-visible SavedFrames.  This lets
+        // the normal switch/popFrame path unwind them correctly regardless
+        // of whether the callee returned or exited for a send.
+        if (state.j2jDepth > 0) {
+            Oop nil = memory_.nil();
+            J2JSave* saves = &j2jPool_[rj2jBase];
+            for (int i = 0; i < state.j2jDepth; i++) {
+                if (frameDepth_ >= StackOverflowLimit) break;
+                J2JSave& save = saves[i];
+                SavedFrame& frame = savedFrames_[frameDepth_++];
+
+                uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+                bool isSelfRec = (jmBits & 1) != 0;
+                jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
+                    jmBits & ~static_cast<uintptr_t>(1));
+                Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
+                int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
+
+                frame.savedIP = save.ip;
+                frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                frame.savedMethod = saveMethod;
+                frame.savedHomeMethod = saveMethod;
+                frame.savedReceiver = save.receiver;
+                frame.savedClosure = nil;
+                frame.savedActiveContext = nil;
+                frame.materializedContext = nil;
+                frame.savedFP = save.tempBase - 1;
+                frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                frame.homeFrameDepth = SIZE_MAX;
+            }
+            // Sync interpreter state from innermost JIT frame (the callee).
+            if (state.jitMethod) {
+                uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
+                jmBits &= ~static_cast<uintptr_t>(1);
+                state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
+                state.method = Oop::fromRawBits(
+                    reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+            }
+            method_ = state.method;
+            homeMethod_ = state.method;
+            receiver_ = state.receiver;
+            stackPointer_ = state.sp;
+            instructionPointer_ = state.ip;
+            framePointer_ = state.tempBase - 1;
+            argCount_ = state.argCount;
+            {
+                ObjectHeader* mObj = state.method.asObjectPtr();
+                bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+            }
+            jitMaterializeCount_++;
+            jitMaterializeTotalDepth_ += state.j2jDepth;
+        }
+
+        // Release J2J pool slice (safe: materialization already read the saves)
+        j2jPoolCursor_ = rj2jBase;
 
         switch (state.exitReason) {
         case jit::ExitReturn:

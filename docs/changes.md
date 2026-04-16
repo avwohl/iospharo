@@ -2,6 +2,21 @@
 
 2026-04-15
 
+## Enable J2J stencil calls in tryJITResumeInCaller
+
+Previously, the resume-in-caller path disabled stencil-to-stencil (J2J) calls
+by setting j2jSaveCursor=nullptr. This meant ~83M resume attempts per SUnit run
+could never do in-stencil J2J sends — every send fell through to ExitSend.
+
+Fix: allocate a J2J save stack slice from the shared pool before tryResume, and
+materialize saved frames as interpreter-visible SavedFrames when the stencil
+exits with j2jDepth > 0. The materialization follows the same pattern as
+tryJITActivation (oldest-first save loop, self-recursive marker handling,
+interpreter state sync from innermost callee). The normal switch/popFrame path
+then unwinds the materialized frames correctly for both ExitReturn (pop caller,
+push return value, resume) and non-return exits (interpreter handles the send
+with caller frames visible on the stack).
+
 ## Expand: Inline cache from 4 to 6 entries
 
 Increased PIC (polymorphic inline cache) from 4 to 6 entries per send site.
