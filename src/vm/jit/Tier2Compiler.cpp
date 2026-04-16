@@ -1803,7 +1803,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     MIR_load_external(mirCtx_, "jit_t2_send", reinterpret_cast<void*>(jit_t2_send));
 
     MIR_gen_init(mirCtx_);
-    MIR_gen_set_optimize_level(mirCtx_, 2);  // opt 2: register allocation enabled
+    // DIAGNOSTIC: PHARO_T2_OPT=0|1|2|3 overrides default optimization level.
+    int optLevel = 2;
+    if (const char* e = getenv("PHARO_T2_OPT")) {
+        int v = atoi(e);
+        if (v >= 0 && v <= 3) optLevel = v;
+    }
+    MIR_gen_set_optimize_level(mirCtx_, optLevel);
     MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
 
     void* mirCode = MIR_gen(mirCtx_, mirFunc_);
