@@ -2159,7 +2159,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     {
         std::string sel = interp_.memory().selectorOf(compiledMethod);
         bool isKeysDo = (sel == "keysDo:");
-        bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:" || sel == "hasChanged" || sel == "hasPrimitive" || sel == "primitive");
+        bool isDebugTarget = (sel == "do:" || sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:" || sel == "hasChanged" || sel == "hasPrimitive" || sel == "primitive");
         // Env-based selector dump: PHARO_JIT_DUMP_SEL=do:,max:,...
         static const char* dumpSelEnv = getenv("PHARO_JIT_DUMP_SEL");
         bool isEnvDump = false;

@@ -7466,12 +7466,77 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
             fprintf(stderr, "[DNU] #%d: #%s not understood by rcvr=0x%llx argCount=%d fd=%zu in #%s P%d\n",
                     dnuLogCount, selName.c_str(), (unsigned long long)rcvr.rawBits(), argCount, frameDepth_,
                     memory_.selectorOf(method_).c_str(), pri);
+            bool suspiciousRcvr = false;
             if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
                 ObjectHeader* rH = rcvr.asObjectPtr();
+                uint32_t cls = rH->classIndex();
                 fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
-                        rH->classIndex(), (int)rH->format(), memory_.classNameOf(rcvr).c_str());
+                        cls, (int)rH->format(), memory_.classNameOf(rcvr).c_str());
+                if (cls == 0) suspiciousRcvr = true;  // Invalid object
             } else if (rcvr.isSmallInteger()) {
                 fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
+                suspiciousRcvr = true;
+            }
+            // Dump JIT provenance for suspicious receivers (SmallInt or classIdx=0)
+            if (suspiciousRcvr && lastJitReturn_.methodBits != 0) {
+                Oop ljm = Oop::fromRawBits(lastJitReturn_.methodBits);
+                Oop ljr = Oop::fromRawBits(lastJitReturn_.returnBits);
+                fprintf(stderr, "[DNU-JIT] lastJitReturn: method=#%s(0x%llx) retVal=0x%llx(%s%lld) fd=%zu %s\n",
+                        memory_.selectorOf(ljm).c_str(),
+                        (unsigned long long)lastJitReturn_.methodBits,
+                        (unsigned long long)lastJitReturn_.returnBits,
+                        ljr.isSmallInteger() ? "SmallInt " : "obj ",
+                        ljr.isSmallInteger() ? ljr.asSmallInteger() : 0LL,
+                        lastJitReturn_.frameDepth,
+                        lastJitReturn_.wasResume ? "(resume)" : "(activation)");
+                // Check if caller method_ is JIT-compiled
+                jit::JITMethod* callerJM = jitRuntime_.methodMap().lookup(method_.rawBits());
+                fprintf(stderr, "[DNU-JIT] caller=#%s jitCompiled=%s\n",
+                        memory_.selectorOf(method_).c_str(),
+                        callerJM ? "YES" : "no");
+                // Dump frame stack with JIT annotations
+                for (size_t f = 0; f <= frameDepth_ && f < 20; f++) {
+                    SavedFrame& sf = savedFrames_[f];
+                    std::string mSel = memory_.selectorOf(sf.savedMethod);
+                    jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(sf.savedMethod.rawBits());
+                    fprintf(stderr, "[DNU-JIT]   [%zu] #%s %s\n", f, mSel.c_str(),
+                            fjm ? "<<JIT>>" : "");
+                }
+                // Identify where the corrupt receiver lives in memory
+                uint64_t rv = rcvr.rawBits();
+                uint64_t sBase = (uint64_t)stackBase_;
+                uint64_t sTop  = (uint64_t)(stackBase_ + MaxStackDepth);
+                uint64_t cStart = (uint64_t)jitRuntime_.codeZone().rawStart();
+                uint64_t cEnd   = cStart + jitRuntime_.codeZone().totalBytes();
+                bool inHeap = rcvr.isObject() && memory_.isValidPointer(rcvr);
+                fprintf(stderr, "[DNU-JIT] rcvr 0x%llx: inHeap=%d stack=[0x%llx,0x%llx) code=[0x%llx,0x%llx)\n",
+                        (unsigned long long)rv, inHeap,
+                        (unsigned long long)sBase, (unsigned long long)sTop,
+                        (unsigned long long)cStart, (unsigned long long)cEnd);
+                if (rv >= sBase && rv < sTop)
+                    fprintf(stderr, "[DNU-JIT]   -> IN INTERPRETER STACK (offset %lld slots)\n", (long long)((rv - sBase) / 8));
+                else if (inHeap)
+                    fprintf(stderr, "[DNU-JIT]   -> IN HEAP (valid pointer)\n");
+                else if (rv >= cStart && rv < cEnd)
+                    fprintf(stderr, "[DNU-JIT]   -> IN JIT CODE ZONE\n");
+                else
+                    fprintf(stderr, "[DNU-JIT]   -> UNKNOWN REGION\n");
+                // Also dump this, SP/FP, and offset analysis
+                fprintf(stderr, "[DNU-JIT] this=0x%llx SP=0x%llx FP=0x%llx fd=%zu\n",
+                        (unsigned long long)(uint64_t)this,
+                        (unsigned long long)(uint64_t)stackPointer_,
+                        (unsigned long long)(uint64_t)framePointer_,
+                        frameDepth_);
+                fprintf(stderr, "[DNU-JIT] rcvr offset from this: 0x%llx, from stackBase: 0x%llx\n",
+                        (unsigned long long)(rv - (uint64_t)this),
+                        (unsigned long long)(rv - sBase));
+                uint64_t megaBase = (uint64_t)jitRuntime_.megaCache();
+                uint64_t megaEnd = megaBase + 65536 * 32;
+                fprintf(stderr, "[DNU-JIT] megaCache=[0x%llx,0x%llx) rcvr offset from mega: %lld (entry %lld, field %lld)\n",
+                        (unsigned long long)megaBase, (unsigned long long)megaEnd,
+                        (long long)(rv - megaBase),
+                        (long long)((rv - megaBase) / 32),
+                        (long long)((rv - megaBase) % 32));
             }
             // Dump args and frame info for debugging
             if (dnuLogCount <= 3) {
@@ -11205,9 +11270,48 @@ void Interpreter::tryJITResumeInCaller() {
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
 
+        // --- DIAGNOSTIC: scan stack for megaCache pointers before resume ---
+        Oop* preResumeSP = stackPointer_;
+        uint64_t megaBase = (uint64_t)jitRuntime_.megaCache();
+        uint64_t megaEnd  = megaBase + 65536 * 32;
+        {
+            static bool megaScan = !!getenv("PHARO_JIT_MEGA_SCAN");
+            if (megaScan) {
+                // Scan from FP to SP for any values in megaCache range
+                for (Oop* p = framePointer_; p < stackPointer_; p++) {
+                    uint64_t v = p->rawBits();
+                    if (v >= megaBase && v < megaEnd) {
+                        fprintf(stderr, "[MEGA-PRE] CORRUPT at FP+%lld: 0x%llx (megaEntry %lld) BEFORE resume in #%s bc=%u\n",
+                                (long long)(p - framePointer_),
+                                (unsigned long long)v,
+                                (long long)((v - megaBase) / 32),
+                                memory_.selectorOf(method_).c_str(), bcOffset);
+                    }
+                }
+            }
+        }
+
         if (!jitRuntime_.tryResume(method_, bcOffset, state)) {
             j2jPoolCursor_ = rj2jBase;  // Release pool slice
             break;  // No re-entry at this offset
+        }
+
+        // --- DIAGNOSTIC: scan stack for megaCache pointers after resume ---
+        {
+            static bool megaScan = !!getenv("PHARO_JIT_MEGA_SCAN");
+            if (megaScan) {
+                for (Oop* p = framePointer_; p < state.sp; p++) {
+                    uint64_t v = p->rawBits();
+                    if (v >= megaBase && v < megaEnd) {
+                        fprintf(stderr, "[MEGA-POST] CORRUPT at FP+%lld: 0x%llx (megaEntry %lld) AFTER resume in #%s bc=%u exit=%d\n",
+                                (long long)(p - framePointer_),
+                                (unsigned long long)v,
+                                (long long)((v - megaBase) / 32),
+                                memory_.selectorOf(method_).c_str(), bcOffset,
+                                (int)state.exitReason);
+                    }
+                }
+            }
         }
         jitJ2JStencilCalls_ += state.j2jTotalCalls;
 
@@ -11564,6 +11668,10 @@ void Interpreter::tryJITResumeInCaller() {
                 return;
             }
             if (running_) {
+                lastJitReturn_.methodBits = state.method.rawBits();
+                lastJitReturn_.returnBits = state.returnValue.rawBits();
+                lastJitReturn_.frameDepth = frameDepth_;
+                lastJitReturn_.wasResume = true;
                 push(state.returnValue);
             }
             continue;  // Try to resume in the next caller
@@ -12395,6 +12503,50 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     }
     jitActivationHits_++;
 
+    // Diagnostic: detect when JIT produces obviously wrong return values.
+    // A small SmallInteger (<256) as returnValue from a non-arithmetic method
+    // suggests a stencil bug (returning index/tag instead of actual value).
+    if (__builtin_expect(state.exitReason == jit::ExitReturn, 0)) {
+        static bool dbg = !!getenv("PHARO_JIT_RETVAL_DBG");
+        if (dbg && state.returnValue.isSmallInteger()) {
+            int64_t rv = state.returnValue.asSmallInteger();
+            if (rv >= 0 && rv < 256) {
+                static size_t retSmallCount = 0;
+                retSmallCount++;
+                if (retSmallCount <= 50 || (retSmallCount & 0xFFF) == 0) {
+                    std::string sel = memory_.selectorOf(method);
+                    fprintf(stderr, "[JIT-RETVAL] #%zu method=#%s retVal=%lld(0x%llx) exit=Return\n",
+                            retSmallCount, sel.c_str(), (long long)rv,
+                            (unsigned long long)state.returnValue.rawBits());
+                }
+            }
+        }
+    }
+    // Diagnostic: when ExitSend fires, check if receiver on stack is a small int
+    // where an object would be expected (selector is not arithmetic).
+    if (__builtin_expect(state.exitReason == jit::ExitSend, 0)) {
+        static bool dbg2 = !!getenv("PHARO_JIT_RETVAL_DBG");
+        if (dbg2 && state.sp && state.sendArgCount >= 0 && state.sendArgCount < 20) {
+            Oop rcvr = state.sp[-(state.sendArgCount + 1)];
+            if (rcvr.isSmallInteger()) {
+                int64_t rv = rcvr.asSmallInteger();
+                if (rv >= 0 && rv < 256) {
+                    static size_t sendSmallCount = 0;
+                    sendSmallCount++;
+                    if (sendSmallCount <= 50 || (sendSmallCount & 0xFFF) == 0) {
+                        Oop sendSel = state.icDataPtr
+                            ? Oop::fromRawBits(state.icDataPtr[18])
+                            : state.cachedTarget;
+                        std::string sel = sendSel.isObject() ? memory_.selectorOf(sendSel) : "?";
+                        std::string meth = memory_.selectorOf(method);
+                        fprintf(stderr, "[JIT-SEND-SMALLRCVR] #%zu send=#%s rcvr=%lld method=#%s\n",
+                                sendSmallCount, sel.c_str(), (long long)rv, meth.c_str());
+                    }
+                }
+            }
+        }
+    }
+
     // Charge the periodic check countdown for JIT-executed bytecodes.
     // Without this, JIT execution starves the interpreter's periodic checks
     // (GC, timer semaphores, process scheduling, heartbeat) because the
@@ -13030,6 +13182,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 tryReschedule();
                 return true;
             }
+            lastJitReturn_.methodBits = state.method.rawBits();
+            lastJitReturn_.returnBits = state.returnValue.rawBits();
+            lastJitReturn_.frameDepth = frameDepth_;
+            lastJitReturn_.wasResume = false;
             push(state.returnValue);
             return true;
         }

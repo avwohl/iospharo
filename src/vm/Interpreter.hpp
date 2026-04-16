@@ -901,6 +901,15 @@ private:
     size_t jitOSREntries_ = 0;  // On-stack replacement entries from backward jumps
     int osrCountdown_ = 0;      // OSR sampling: only check every N backward jumps
 
+    // Last JIT return tracker — for diagnosing wrong-value DNUs.
+    // Updated on every ExitReturn from JIT. Checked in DNU handler.
+    struct {
+        uint64_t methodBits = 0;  // CompiledMethod oop of callee that returned
+        uint64_t returnBits = 0;  // Return value raw bits
+        size_t   frameDepth = 0;  // Frame depth at return time
+        bool     wasResume = false; // true = tryJITResumeInCaller, false = tryJITActivation
+    } lastJitReturn_;
+
     // J2J ban set: methods whose J2J calls always bail out (callee modifies
     // state before hitting a send, causing double-execution on re-entry).
     // Key = method oop raw bits. Checked in patchJITICAfterSend to avoid
