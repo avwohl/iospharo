@@ -2,6 +2,33 @@
 
 2026-04-15
 
+## T2: bytecode coverage expansion
+
+Multiple T2 compiler improvements in one session:
+
+- **Temp vector ops (0xFB/0xFC/0xFD)**: PushTempAtInVec, StoreTempAtInVec,
+  PopStoreTempAtInVec — two-level indirection for closure-captured variables.
+- **Unassigned nops (0xE6, 0xF6-F7, 0xFE-FF)**: decoded as no-ops instead of
+  bailing, matching interpreter behavior. Also added explicit nop handling in
+  emit phase for all reserved bytecodes.
+- **PushFullBlock (0xF9)**: exits with ExitBlockCreate to chain loop, which
+  creates the FullBlockClosure, then resumes T2 at next bytecode. Follows
+  existing T1 pattern.
+- **PushArray (0xE7)**: exits with ExitArrayCreate to chain loop for allocation.
+- **BlockReturn (0x5D/0x5E)**: in FullBlock closures (extA=0, extB=0), these
+  are equivalent to ReturnNil/ReturnTop. Decode normalizes to 0x5B/0x5C.
+  Non-local returns (extA > 0) still correctly bail.
+
+Non-CallPrimitive decode bails: 14 (down from 58 at session start).
+T2 compilations: ~230-280 (up from ~200).
+
+## T2: sp convention fix
+
+Fixed critical bug: all T2 empty-vstack handlers read sp[0] (past TOS)
+instead of sp[-8] (actual TOS). Pop operations now use sp -= 8; val = sp[0].
+Store-without-pop operations now read sp[-8]. This was causing silent data
+corruption. T2 compilations jumped from ~80 to ~196, T1 from ~200 to ~377.
+
 ## T2: store opcodes and PushCharacter
 
 Implemented T2 decode + emit for four new bytecodes:
