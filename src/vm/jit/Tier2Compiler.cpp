@@ -1098,6 +1098,27 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Selector mapping: + - < > <= >= = ~= * / \\ @ bitShift: // bitAnd: bitOr:
         else if (op >= SistaV1::ArithBase && op <= 0x6F) {
             int arithOp = op - SistaV1::ArithBase;
+            // DIAGNOSTIC: PHARO_T2_NO_ARITH_FAST=1 disables SmallInt fast path
+            // for ALL arith ops. PHARO_T2_NO_ARITH_OPS="0,1,5,7" disables the
+            // fast path only for listed ops (comma-separated decimal).
+            static bool noArithFast = !!getenv("PHARO_T2_NO_ARITH_FAST");
+            static int noArithOp[16] = {0};
+            static bool noArithOpInit = false;
+            if (!noArithOpInit) {
+                noArithOpInit = true;
+                const char* env = getenv("PHARO_T2_NO_ARITH_OPS");
+                if (env) {
+                    const char* p = env;
+                    while (*p) {
+                        char* end;
+                        long v = strtol(p, &end, 10);
+                        if (end != p && v >= 0 && v < 16) noArithOp[v] = 1;
+                        if (*end == ',') end++;
+                        p = end;
+                    }
+                }
+            }
+            bool thisOpNoFast = noArithFast || noArithOp[arithOp];
             // SmallInteger fast-path for + - * < > <= >= = ~=
             bool handled = false;
 
@@ -1132,7 +1153,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
                 MIR_reg_t result = newScratch();
 
-                if (arithOp == 0) {
+                if (thisOpNoFast) {
+                    // DIAGNOSTIC: force slow-path send for this arith op
+                    EMIT(MIR_JMP, LABEL_OP(slowPath));
+                }
+                else if (arithOp == 0) {
                     // + : (a >> 3) + (b >> 3), check overflow, retag
                     MIR_reg_t ua = newScratch();
                     MIR_reg_t ub = newScratch();
