@@ -1,5 +1,36 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## 2026-04-16 — AWFY after T2 double-execution fix (session 23)
+
+Correctness fix `f279fd4` closes the T2 `jit_t2_send` double-execution
+bug that silently miscompiled Permute (and likely other send-heavy AWFY
+benchmarks — the "T2 faster" numbers below on Bounce/Queens were
+probably silently wrong but `verifyResult` matched by luck).
+
+After fix, T2 always bails straight to interpreter on sends. T2's inline
+arith fast path still runs. On send-heavy AWFY, T2 is now correct but
+no longer faster than T1 — small regression (~3-5%) from the extra
+compile and dispatch cost.
+
+    Benchmark    T1 only   T2 enabled   Diff
+    Bounce       3160ms    3280ms       +4%
+    Permute      4810ms    4816ms       ~0%
+    Queens       3210ms    3365ms       +5%
+    Sieve        1335ms    1330ms       ~0%
+    Towers       5575ms    —            (ran out of time budget)
+    List         2201ms    —
+
+Recommendation: keep `PHARO_T2=0` (default). T2 is a correctness liability
+via the remaining partial-side-effects issue, and no longer a perf win.
+Restoring T2 performance needs the chain-loop continuation refactor (push
+SavedFrame for T2 caller; let interpreter resume callee from its partial
+state.ip instead of re-activating).
+
+Also tested: Richards, tinyBenchmarks with T2 enabled — both ran to
+completion without crashes or GC corruption. The GC-safety rationale
+for disabling T2 (commit b18e71e) may be stale, though leaving T2 off
+by default still makes sense for the perf and correctness reasons above.
+
 ## 2026-04-16 — JIT validation after bcToEntryState fix (session 21)
 
 Context: the bcToEntryState max-wins fix (62443cb) resolved the MAX=10-113
