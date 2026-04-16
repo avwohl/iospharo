@@ -2,6 +2,26 @@
 
 2026-04-15
 
+## Investigation: JIT MAX=13 hang is megamorphic IC thrashing
+
+Bisected the JIT_MAX_COMPILE threshold: MAX=12 works, MAX=13 hangs. Method #13
+is WriteStream>>nextPut:, which calls at:put: on many different receiver classes
+(ByteString, ByteArray, WideString, etc.). With nextPut: JIT-compiled:
+
+- The at:put: send goes through the stencil's 4-entry IC
+- With 100+ receiver classes, every probe misses
+- Each miss exits to the interpreter via EXIT_SEND_CACHED (mega cache) or
+  EXIT_SEND (full lookup), then returns to JIT
+- This JIT→interpreter→JIT roundtrip per send makes the VM ~30x slower
+- IC hit rate drops from 89% to 0% as different classes flood the cache
+
+At MAX=12, nextPut: runs in the interpreter, which calls at:put: directly
+via the method cache (much cheaper per call, no JIT exit overhead).
+
+Not a correctness bug — a performance cliff from megamorphic IC thrashing.
+Possible fixes: (1) mega-cache J2J direct calls from stencils, (2) IC
+thrash detection + deopt, (3) skip JIT for megamorphic-heavy methods.
+
 ## Cleanup: Remove debug probes from BAD-AT-ACT investigation
 
 Removed 445 lines of diagnostic probes from Interpreter.cpp: CACHE-BADREAD,
