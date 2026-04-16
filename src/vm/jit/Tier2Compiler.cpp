@@ -259,22 +259,10 @@ void Tier2Compiler::emitPrologue(int tempCount, int argCount) {
 }
 
 void Tier2Compiler::flushVStack() {
-    // Write all vstack values to JITState->sp in memory.
-    // The Smalltalk stack grows upward: sp[0] = TOS, sp[-1] = NOS, etc.
-    // After flush: sp points past the top element.
-    //
-    // We need to adjust sp based on how many vstack values there are vs
-    // the original sp position. The vstack represents values that would
-    // have been pushed on sp.
-    //
-    // Strategy: write vstack[0] to *(sp), vstack[1] to *(sp+8), etc.
-    // Then advance sp by vstackDepth_.
+    // Write all vstack values to memory, then advance sp.
+    // Strategy: write vstack[i] to *(sp + i*8), then sp += vstackDepth_*8.
     for (int i = 0; i < vstackDepth_; i++) {
-        // *(sp + i*8) = vstack[i]
-        // sp is a pointer, so offset is i * sizeof(Oop) = i * 8
-        MIR_reg_t addr = newScratch();
-        EMIT(MIR_ADD, REG(addr), REG(reg_sp_), IMM(i * 8));
-        EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(vstack_[i]));
+        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_sp_, i * 8), REG(vstack_[i]));
     }
     if (vstackDepth_ > 0) {
         EMIT(MIR_ADD, REG(reg_sp_), REG(reg_sp_), IMM(vstackDepth_ * 8));
@@ -783,38 +771,26 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // --- Push instructions ---
         if (op <= 0x0F) {
-            // pushRecvVar: load receiver slot
+            // pushRecvVar: load receiver slot (header + slotIdx*8)
             int slotIdx = bc.operand;
             MIR_reg_t val = newScratch();
-            // receiver is an Oop (object pointer). Slot is at receiver + 8 + slotIdx*8
-            // ObjectHeader: first 8 bytes are header word, then slots
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_receiver_), IMM(8 + slotIdx * 8));
-            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, addr, 0));
+            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_receiver_, 8 + slotIdx * 8));
             vpush(val);
         }
         else if (op <= 0x1F) {
-            // pushLitVar: load association value
-            // literals[operand] is an Association; its value is at slot 1 (offset 8+8=16)
+            // pushLitVar: load association value (assoc = literals[i], val = assoc->slot1)
             int litIdx = bc.operand;
             MIR_reg_t assoc = newScratch();
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_literals_), IMM(litIdx * 8));
-            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, addr, 0));
-            // assoc->value is at assoc + 8 + 8 (header word + slot 1)
+            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, reg_literals_, litIdx * 8));
             MIR_reg_t val = newScratch();
-            MIR_reg_t valAddr = newScratch();
-            EMIT(MIR_ADD, REG(valAddr), REG(assoc), IMM(16));
-            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, valAddr, 0));
+            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, assoc, 16));
             vpush(val);
         }
         else if (op <= 0x3F) {
-            // pushLitConst: load literal
+            // pushLitConst: load literal directly
             int litIdx = bc.operand;
             MIR_reg_t val = newScratch();
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_literals_), IMM(litIdx * 8));
-            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, addr, 0));
+            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_literals_, litIdx * 8));
             vpush(val);
         }
         else if (op >= SistaV1::PushTempBase && op <= 0x4B) {
@@ -822,19 +798,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             int tmpIdx = bc.operand;
             if (tmpIdx < tempCount_ && tmpIdx < MaxTemps) {
                 if (!tempLoaded_[tmpIdx]) {
-                    // Load from tempBase[tmpIdx]
-                    MIR_reg_t addr = newScratch();
-                    EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
-                    EMIT(MIR_MOV, REG(tempRegs_[tmpIdx]), MEM(MIR_T_I64, addr, 0));
+                    EMIT(MIR_MOV, REG(tempRegs_[tmpIdx]), MEM(MIR_T_I64, reg_tempBase_, tmpIdx * 8));
                     tempLoaded_[tmpIdx] = true;
                 }
                 vpush(tempRegs_[tmpIdx]);
             } else {
                 // Fallback: load directly
                 MIR_reg_t val = newScratch();
-                MIR_reg_t addr = newScratch();
-                EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
-                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, addr, 0));
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_tempBase_, tmpIdx * 8));
                 vpush(val);
             }
         }
@@ -949,9 +920,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 tempLoaded_[tmpIdx] = true;
             }
             // Also store to memory (for GC visibility and deopt)
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_tempBase_, tmpIdx * 8), REG(val));
         }
         else if (op >= SistaV1::PopStoreRecvBase && op <= 0xCF) {
             int slotIdx = bc.operand;
@@ -960,14 +929,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpop();
             } else {
                 val = newScratch();
-                // sp points PAST TOS: decrement first, then read
                 EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
                 EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
             }
-            // Store to receiver slot
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_receiver_), IMM(8 + slotIdx * 8));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_receiver_, 8 + slotIdx * 8), REG(val));
         }
         else if (op == SistaV1::ExtStoreTemp) {
             int tmpIdx = bc.operand;
@@ -983,9 +948,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 EMIT(MIR_MOV, REG(tempRegs_[tmpIdx]), REG(val));
                 tempLoaded_[tmpIdx] = true;
             }
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_tempBase_), IMM(tmpIdx * 8));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_tempBase_, tmpIdx * 8), REG(val));
         }
         // --- Extended store variants ---
         else if (op == SistaV1::ExtStoreRecv) {
@@ -995,12 +958,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 val = vpeek();  // store without pop
             } else {
                 val = newScratch();
-                // sp points PAST TOS: TOS is at sp[-8]
                 EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
             }
-            MIR_reg_t addr = newScratch();
-            EMIT(MIR_ADD, REG(addr), REG(reg_receiver_), IMM(8 + slotIdx * 8));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, addr, 0), REG(val));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_receiver_, 8 + slotIdx * 8), REG(val));
         }
         else if (op == SistaV1::ExtPopStoreLitVar) {
             // Pop and store into literal variable (Association's value slot)
@@ -1015,32 +975,22 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
             }
             MIR_reg_t assoc = newScratch();
-            MIR_reg_t litAddr = newScratch();
-            EMIT(MIR_ADD, REG(litAddr), REG(reg_literals_), IMM(litIdx * 8));
-            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, litAddr, 0));
-            // Association value is at assoc + 16 (header + slot 1)
-            MIR_reg_t valAddr = newScratch();
-            EMIT(MIR_ADD, REG(valAddr), REG(assoc), IMM(16));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, valAddr, 0), REG(val));
+            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, reg_literals_, litIdx * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, assoc, 16), REG(val));
         }
         else if (op == SistaV1::ExtStoreLitVar) {
             // Store (no pop) into literal variable (Association's value slot)
             int litIdx = bc.operand;
             MIR_reg_t val;
             if (vstackDepth_ > 0) {
-                val = vpeek();  // store without pop
+                val = vpeek();
             } else {
                 val = newScratch();
-                // sp points PAST TOS: TOS is at sp[-8]
                 EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
             }
             MIR_reg_t assoc = newScratch();
-            MIR_reg_t litAddr = newScratch();
-            EMIT(MIR_ADD, REG(litAddr), REG(reg_literals_), IMM(litIdx * 8));
-            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, litAddr, 0));
-            MIR_reg_t valAddr = newScratch();
-            EMIT(MIR_ADD, REG(valAddr), REG(assoc), IMM(16));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, valAddr, 0), REG(val));
+            EMIT(MIR_MOV, REG(assoc), MEM(MIR_T_I64, reg_literals_, litIdx * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, assoc, 16), REG(val));
         }
 
         // --- Return instructions ---
