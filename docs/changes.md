@@ -2,6 +2,23 @@
 
 2026-04-15
 
+## Fix: Auto-exclude exception infrastructure from JIT compilation
+
+JIT-compiled exception handling methods (signal, doesNotUnderstand:,
+signalerContext, handleSignal:, etc.) cause recursive J2J calls that overflow
+the native stack at ~400 compiled methods. The cycle: signal → receiver →
+signalerContext → signalForException: → ... → signal.
+
+Fix: built-in exclusion list in noteMethodEntry() for 18 exception infrastructure
+selectors. These are never JIT-compiled, keeping exception handling on the
+interpreter path where stack depth is bounded by Smalltalk contexts.
+
+Also fixed PHARO_JIT_THRESHOLD=1 — initial count-map insertion at count=1
+didn't trigger compilation (the compile check was only in the count-increment
+branch, not the new-entry branch).
+
+Tested: 784 methods compiled with threshold=1, zero crashes (2x previous limit).
+
 ## Fix: Auto-defer JIT compilation in headless mode
 
 Session startup must complete at full interpreter speed before JIT compilation

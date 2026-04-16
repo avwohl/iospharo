@@ -813,19 +813,21 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     uint64_t key = compiledMethod.rawBits();
     size_t idx = (key >> 3) % CountMapSize;
 
+    // Runtime-configurable threshold: PHARO_JIT_THRESHOLD=N (default: CompileThreshold=2)
+    static uint32_t threshold = 0;
+    if (threshold == 0) {
+        const char* env = getenv("PHARO_JIT_THRESHOLD");
+        threshold = env ? static_cast<uint32_t>(atoi(env)) : CompileThreshold;
+        if (threshold < 1) threshold = 1;
+    }
+
     // Simple linear probe
     for (size_t probe = 0; probe < 8; probe++) {
         size_t i = (idx + probe) % CountMapSize;
         if (countMap_[i].key == key) {
             countMap_[i].count++;
-            // Runtime-configurable threshold: PHARO_JIT_THRESHOLD=N (default: CompileThreshold=2)
-            static uint32_t threshold = 0;
-            if (threshold == 0) {
-                const char* env = getenv("PHARO_JIT_THRESHOLD");
-                threshold = env ? static_cast<uint32_t>(atoi(env)) : CompileThreshold;
-                if (threshold < 1) threshold = 1;
-            }
             if (countMap_[i].count == threshold) {
+            compile_check:
                 // Bisection: stop after N compilations
                 if (maxCompile >= 0 && (int)compiler_->methodsCompiled() >= maxCompile) {
                     return;
@@ -868,6 +870,43 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                                 return;
                             }
                             pos = comma + 1;
+                        }
+                    }
+                }
+                // Built-in exclusion: exception infrastructure selectors.
+                // When these methods are JIT-compiled, exception handling causes
+                // recursive J2J calls that overflow the native stack (~400 methods).
+                // The cycle: signal → receiver → signalerContext → ... → signal
+                {
+                    static const char* exceptionSelectors[] = {
+                        "signal",
+                        "signal:",
+                        "doesNotUnderstand:",
+                        "signalerContext",
+                        "signalForException:",
+                        "receiver",
+                        "raiseUnhandledError",
+                        "defaultAction",
+                        "handleSignal:",
+                        "findContextSuchThat:",
+                        "cannotReturn:",
+                        "aboutToReturn:through:",
+                        "noHandler:",
+                        "pass",
+                        "outer",
+                        "resume:",
+                        "retry",
+                        "return:",
+                        nullptr
+                    };
+                    if (interp_) {
+                        std::string sel = interp_->memory().selectorOf(compiledMethod);
+                        for (const char** p = exceptionSelectors; *p; p++) {
+                            if (sel == *p) {
+                                fprintf(stderr, "[JIT] AUTO-EXCLUDED exception infra #%s\n",
+                                        sel.c_str());
+                                return;
+                            }
                         }
                     }
                 }
@@ -935,6 +974,10 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         if (countMap_[i].key == 0) {
             countMap_[i].key = key;
             countMap_[i].count = 1;
+            if (threshold <= 1) {
+                // Threshold=1 means compile on first sighting.
+                goto compile_check;
+            }
             return;
         }
     }
