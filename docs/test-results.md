@@ -2,36 +2,25 @@
 
 Last updated: 2026-04-16
 
-## T2 silent miscompile on Permute — NEW (session 22, 2026-04-16)
+## T2 Permute miscompile — RESOLVED (session 23, 2026-04-16)
 
-Post-session-21 AWFY validation revealed T2 is silently wrong on
-`Permute>>innerBenchmarkLoop:`. Under `PHARO_T2=1` the benchmark returns
-`false` (verification failed) in 4-6ms instead of `true` in ~2250ms.
-Interpreter and T1 both return `true`.
+Root cause found and fixed in commit `f279fd4`. `jit_t2_send` was
+invoking the callee and falling back on any non-`ExitReturn` exit. For
+callees with Smalltalk side effects before their first bail-triggering
+send, partial work happened and was NOT undone on the fallback path.
+The interpreter then re-activated the callee, re-running the side-effect
+bytecodes — double-counting `count := count + 1` in `Permute>>permute:`.
 
-Bisected with `T2_LIMIT=1`: compiling just `Permute>>permute:` as T2 is
-sufficient to break the benchmark. The miscompile is in one of:
-  - instVar read-modify-write (`count := count + 1`)
-  - self-recursion with cascade (`swap:; permute:; swap:`)
-  - `to:by:do:` with negative step
-  - `~= 0` short-jump-false
+**Fix:** `jit_t2_send` now always bails straight to interpreter on
+sends. Interpreter performs the send exactly once. T2 inline arith
+fast path is unaffected; only the callee-invocation optimization is
+dropped. `PHARO_T2_UNSAFE_CALLEE=1` restores the old path.
 
-Added handleBenchComplete return-value print (commit fed11d6) to catch
-silent miscompiles — a benchmark returning the wrong value is no longer
-disguised as a speedup.
+**Perf side effect:** T2 now matches T1 on send-heavy AWFY (no more
+"faster" silent-wrong numbers). Correct but no net speedup over T1.
 
-Reproducer:
-```
-cp /tmp/Pharo-awfy-recomp-full.image /tmp/p.image
-PHARO_BENCH=awfy PHARO_AWFY_ONLY=Permute PHARO_NO_JIT=0 \
-  PHARO_T2=1 T2_LIMIT=1 \
-  ./build/test_load_image /tmp/p.image 2>&1 | \
-  grep -E "BENCH.*handleBench|Tier 2"
-```
-
-This is separate from the GC-safety issue (MIR holding oops in registers
-across `jit_t2_send`) that also keeps T2 disabled by default. T2 is wrong
-*even without GC happening* on this workload.
+**Bisect tooling added:** `PHARO_T2_ALWAYS_BAIL`, `PHARO_T2_OPT`,
+`PHARO_T2_NO_ARITH_FAST`, `PHARO_T2_NO_ARITH_OPS`, `PHARO_T2_BAIL_OP`.
 
 ## JIT post-bcToEntryState AWFY (session 22, 2026-04-16)
 
