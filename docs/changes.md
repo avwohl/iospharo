@@ -2,6 +2,28 @@
 
 2026-04-15
 
+## T2: store opcodes and PushCharacter
+
+Implemented T2 decode + emit for four new bytecodes:
+- ExtPopStoreLitVar (0xF1): pop and store into literal variable Association
+- ExtStoreRecv (0xF3): store (no pop) into receiver instance variable
+- ExtStoreLitVar (0xF4): store (no pop) into literal variable Association
+- PushCharacter (0xE9): push an immediate Character oop
+
+T2 bail count reduced from 101 to ~80 (20%). Methods like ReadStream>>next
+(which uses ExtStoreRecv) now compile to T2 successfully. 92 T2 compilations
+(up from 89 baseline). No write barrier in T2 stores — matches existing
+PopStoreRecv handler; safe for immediate values (SmallInteger/Character).
+
+## T2: special sends via EXIT_SEND + bail stats
+
+Special sends (0x70-0x7F: at:, at:put:, size, next, value, do:, etc.)
+now compile in T2 via EXIT_SEND rather than bailing. The chain loop handles
+method lookup, avoiding jit_t2_send C-stack recursion. CallPrimitive (0xF8)
+correctly bails in decode (T1 handles primitive prologue). Added per-opcode
+bail statistics (dumpBailStats) called from dumpJITStats. T2 bail count
+dropped from ~340 to ~137 (60% reduction from special sends alone).
+
 ## External J2J trampoline for tryJITResumeInCaller (disabled by default)
 
 Added an external J2J trampoline to the resume-in-caller path, modeled on
