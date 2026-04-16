@@ -27,6 +27,24 @@ Fix (3 parts):
 
 Verified: 0/10 stack overflows (was 5/5 before, 3/5 with partial fix).
 
+## fix: disable T2 compilation/execution by default (GC-stale registers)
+
+T2 (MIR-compiled) methods hold oops in registers across jit_t2_send
+calls. When GC runs during a send, register-held oops go stale (GC
+compaction moves objects but can't update CPU registers). The stale
+register is dereferenced on the next instruction after the call returns,
+crashing with SIGSEGV into compacted string data.
+
+Fix: T2 disabled by default. Enable with PHARO_T2=1 for benchmarking
+or short-lived sessions (crashes on first GC during T2 sends). Also
+added a GC-bail check in jit_t2_send for the C-stack-held saved oops
+(method, receiver, literals) — these bail to ExitSend so the interpreter
+re-resolves from the GC-safe Smalltalk stack. This doesn't fix the
+register issue in MIR code itself — that requires GC safepoint support
+in MIR or spill/reload barriers around send calls.
+
+Old PHARO_NO_T2 env var replaced with opt-in PHARO_T2.
+
 ## fix: disable T2 resume to prevent MIR spill-slot corruption
 
 MIR's register allocator spills values to the C stack during normal T2

@@ -259,6 +259,11 @@ ic_hit:
     // primitive would never run. Use T1 which has a primitive prologue.
     JITRuntime& rt = interp->jitRuntime();
     void* t2code = hasPrim ? nullptr : rt.lookupTier2(resolved.rawBits());
+    // Snapshot GC count: saved caller oops (method, receiver, literals) are
+    // C stack locals invisible to forEachRoot. If GC runs during the callee,
+    // these oops go stale. We detect this and bail to ExitSend so the
+    // interpreter re-resolves everything from the GC-safe Smalltalk stack.
+    size_t gcBefore = mem->statistics().gcCount;
     if (t2SendDebug && t2SendCount < 5) {
         fprintf(stderr, "[T2SEND-LOOKUP] resolved=0x%llx t2code=%p jm=%p hasPrim=%d\n",
                 (unsigned long long)resolved.rawBits(), t2code, (void*)jm, hasPrim);
@@ -290,6 +295,22 @@ ic_hit:
                 (unsigned long long)state->returnValue.rawBits(), (void*)state->sp);
     }
     t2SendCount++;
+
+    // GC during callee invalidates C-stack-held oops (savedRecv, savedMethod,
+    // savedLiterals, selector, etc.). Bail to ExitSend so the interpreter
+    // re-resolves from the GC-safe Smalltalk stack.
+    if (__builtin_expect(mem->statistics().gcCount != gcBefore, 0)) {
+        // savedSP is a stack pointer (still valid — Smalltalk stack doesn't
+        // move). All oop locals (selector, savedRecv, savedMethod, etc.) are
+        // stale. Don't touch them — just set ExitSend and let the chain loop
+        // re-derive everything from the interpreter's GC-root state.
+        state->sp = savedSP;
+        state->sendArgCount = nArgs;
+        state->icDataPtr = nullptr;
+        state->exitReason = ExitSend;
+        t2SendDepth--;
+        return;
+    }
 
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
         // === Fast path: callee returned normally ===
@@ -1032,7 +1053,11 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // Also attempt Tier 2 (MIR) compilation immediately.
                     // J2J bypasses tryExecute so the executionCount trigger never fires;
                     // compile eagerly so hot J2J methods benefit from register allocation.
-                    static bool noT2 = !!getenv("PHARO_NO_T2");
+                    // DISABLED by default: MIR holds oops in registers across
+                    // jit_t2_send calls. GC during a send makes those registers
+                    // stale, crashing on the next dereference. Enable with
+                    // PHARO_T2=1 for benchmarking / short-lived sessions.
+                    static bool noT2 = !getenv("PHARO_T2");
                     static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
@@ -1137,7 +1162,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     }
 
     // Check for Tier 2 compiled code (MIR-generated, register-allocated)
-    static bool noT2Exec = !!getenv("PHARO_NO_T2");
+    // DISABLED by default — see comment in noteMethodEntry.
+    static bool noT2Exec = !getenv("PHARO_T2");
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     if (t2code && t2code != (void*)1) {
         // Tier 2 code has resume support: on initial entry, state.ip == bcStart
