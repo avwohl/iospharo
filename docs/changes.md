@@ -2,6 +2,26 @@
 
 2026-04-15
 
+## fix: disable T2 resume to prevent MIR spill-slot corruption
+
+MIR's register allocator spills values to the C stack during normal T2
+execution. On resume (dispatch-table jump to mid-function label), the C
+stack frame is fresh — spill slots contain stale data from previous
+jit_t2_send calls. This caused &megaCache_[65535] to appear as an Oop on
+the Smalltalk stack (temp slot 4 at FP+6), leading to DNU cascades with
+classIndex=0 receivers and process deaths.
+
+Fix: skip T2 resume in tryResume(). T2 code still runs via tryExecute()
+(entry at offset 0) where the prologue initializes all spill slots.
+Mid-method resume falls through to T1 stencil code.
+
+This was the root cause of session 19's "wrong values" — SmallIntegers
+appearing where objects should be were downstream effects of megaCache
+pointer corruption, not stencil miscompilation.
+
+Verified: 0/5 corruption with unlimited JIT (was 2-3/5), 0 megaCache scan
+hits post-resume. 2 "Stack overflow in push()" stopVMs remain (separate).
+
 ## T2: monomorphic send caching (65% IC hit rate)
 
 Each T2 send site now gets a monomorphic IC slot (classIndex + resolvedMethodBits).

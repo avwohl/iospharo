@@ -2,48 +2,32 @@
 
 Last updated: 2026-04-15
 
-## JIT process deaths — session 19: JIT produces wrong values (2026-04-15)
+## JIT process deaths — RESOLVED (session 20, 2026-04-15)
 
-**KEY FINDING**: The original `do:`, `nextPut:`, `ensure:` hang from sessions
-14-17 is resolved — unlimited JIT compilation runs to completion (10/10
-trials). The remaining issue is **JIT-compiled methods returning wrong
-values**, causing DNUs that kill processes.
+**Root cause found and fixed**: T2 (MIR) resume corruption. MIR's register
+allocator spills values to the C stack during normal execution. On resume
+(dispatch-table jump to mid-function label), the C stack frame is fresh —
+spill slots contain stale data from previous jit_t2_send calls.
 
-**Process deaths (fd=0 terminations)**:
+Specifically, &megaCache_[65535] (a JITRuntime member pointer) appeared as
+an Oop on the Smalltalk stack at temp slot 4 (FP+6) after resume in #do:
+at bc=15. This caused DNU cascades with classIndex=0 receivers.
 
-    Configuration               Deaths/run  Notes
-    Interpreter only             0          always clean
-    JIT T1+T2, chain loop       0-9        non-deterministic
-    JIT T1+T2, no chain         6          consistent
-    JIT T1 only, no resume      3-15       non-deterministic
-    JIT T1+T2, no resume        6          consistent
+Session 19's "wrong values" (SmallIntegers where objects should be) were
+downstream effects of this same corruption, not stencil miscompilation.
 
-**DNU breakdown (interpreter vs JIT)**:
+**Fix (99d554d)**: Disabled T2 resume in tryResume(). T2 code still runs
+via tryExecute() (entry at offset 0). Mid-method resume falls through to
+T1 stencil code.
 
-    Interpreter: only isTransparent (10x) + fillRectangle:on: (10x)
-                 from SpStyleEnvironmentColorProxy — all caught by handlers
+**Verification (5 runs, unlimited JIT)**:
 
-    JIT adds (never in interpreter):
-      31x  #withAllSuccessorsDo:alreadySeen:  in #ifNotNil:   (Opal CFG)
-       9x  #absorbJumpToSingleInstr:          in #ifNotNil:   (Opal opt)
-       7x  #value:keywordPositions:           in #parseUnaryMessageWith:
-       2x  #evaluate:onBehalfOf:              in #exception
-       1x  #readStream on SmallInt 3          in #parseNamedFunction:
-       1x  #next on SmallInt 3                in #parseType
-       1x  #last on SmallInt 5                in #resolveType:
-       1x  #currentSettings on SmallInt 2     in #wantsRoundedCorners
+    Before fix   2-3 corruption events per run, 3 megaCache scan hits
+    After fix    0 corruption, 0 megaCache scan hits
+    Interp-only  0 (baseline)
 
-    SmallIntegers (3, 5, 16) appear where objects (collections, strings,
-    AST nodes) should be. This is JIT miscompilation: stencils return
-    indices/tags instead of actual values.
-
-**Chain loop observation**: MORE deaths without chain loop (12) than with
-(3-6). The chain loop handles exits correctly; the interpreter-JIT transition
-is where state corruption occurs.
-
-**Next step**: Add post-exit validation in tryJITActivation to catch the
-exact moment a wrong value is produced. Check state.returnValue and
-stack values after JIT exits.
+**Remaining**: 2 consistent "Stack overflow in push()" stopVMs with JIT
+(not present in interpreter-only mode). Separate issue — not corruption.
 
 ---
 
