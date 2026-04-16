@@ -11244,7 +11244,7 @@ void Interpreter::tryJITResumeInCaller() {
             // Patch IC on miss if any slot is empty
             if (state.icDataPtr) {
                 bool hasEmpty = false;
-                for (int e = 0; e < 4; e++) {
+                for (int e = 0; e < 6; e++) {
                     if (state.icDataPtr[e * 3] == 0) { hasEmpty = true; break; }
                 }
                 if (hasEmpty) {
@@ -11560,7 +11560,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // selector matches the send's selector. If they don't match, the
     // pendingICPatch_ was stale (set by a different send in a nested JIT
     // execution or process switch) — patching would corrupt the IC.
-    uint64_t icSelectorBits = icData[12];
+    uint64_t icSelectorBits = icData[18];
     if (icSelectorBits != 0 && icSelectorBits != selector.rawBits()) {
         dbgSelMismatch++;
         if (patchDbg && dbgSelMismatch <= 5) {
@@ -11584,7 +11584,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     }
 
     // Check if this key is already cached (avoid duplicates)
-    for (int e = 0; e < 4; e++) {
+    for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == lookupKey) { dbgDup++;
             if (patchDbg && dbgDup <= 5) {
                 std::string sel = memory_.selectorOf(selector);
@@ -11669,7 +11669,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     }
 
     // Selector cross-check: `selector` is the send's selector (already compared
-    // to icData[12] above). But we ALSO need the resolvedMethod's own selector
+    // to icData[18] above). But we ALSO need the resolvedMethod's own selector
     // to match — if a caller hands us a method whose selector differs, we'd
     // poison the IC. Unwrap AdditionalMethodState when penultimate lit is
     // a non-bytes object with slotCount>=2.
@@ -11692,7 +11692,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 
 
     // Find the first empty slot and fill it
-    for (int e = 0; e < 4; e++) {
+    for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == 0) {
             icData[e * 3] = lookupKey;
             icData[e * 3 + 1] = resolvedMethod.rawBits();
@@ -11730,7 +11730,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // PHARO_JIT_SKIP_SELECTORS prevents JIT compilation entirely; this only
     // prevents the J2J fast-path patch.
     //
-    // We compare against the IC's selector (icData[12]) rather than
+    // We compare against the IC's selector (icData[18]) rather than
     // selectorOf(cachedMethod), because the latter is unreliable for some
     // primitive methods (e.g. at:/at:put: returned "?" via numLiteralsOf,
     // making the bisection mis-fire).
@@ -11738,7 +11738,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
         if (skipEnv && *skipEnv) {
             std::string sel;
-            uint64_t icSelBits = icData[12];
+            uint64_t icSelBits = icData[18];
             if (icSelBits != 0 && icSelBits > 0x10000) {
                 Oop sOop = Oop::fromRawBits(icSelBits);
                 if (sOop.isObject()) {
@@ -11829,7 +11829,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
     // Find the matching IC entry and upgrade, or fill an empty slot
     int firstEmpty = -1;
-    for (int e = 0; e < 4; e++) {
+    for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == lookupKey) {
             uint64_t extra = icData[e * 3 + 2];
             if (extra == 0) {
@@ -11884,7 +11884,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         // Probe: verify cachedMethod's selector matches the IC's recorded selector.
         // If they differ, this is cross-site IC poisoning — DON'T write.
         {
-            uint64_t icSelBits = icData[12];
+            uint64_t icSelBits = icData[18];
             if (icSelBits != 0 && icSelBits > 0x10000) {
                 size_t nLits = memory_.numLiteralsOf(cachedMethod);
                 if (nLits >= 2) {
@@ -12711,7 +12711,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Get selector: from IC data (Tier 1) or cachedTarget (Tier 2).
             Oop sendSel;
             if (state.icDataPtr) {
-                sendSel = Oop::fromRawBits(state.icDataPtr[12]);
+                sendSel = Oop::fromRawBits(state.icDataPtr[18]);
             } else {
                 // Inline stencil bail or Tier 2 (MIR) exits — selector in cachedTarget.
                 sendSel = state.cachedTarget;
@@ -12796,7 +12796,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // Stale IC — invalidate and fall back to normal send
                 jitICStale_++;
                 if (state.icDataPtr) {
-                    for (int e = 0; e < 4; e++) {
+                    for (int e = 0; e < 6; e++) {
                         state.icDataPtr[e * 3] = 0;
                         state.icDataPtr[e * 3 + 1] = 0;
                         state.icDataPtr[e * 3 + 2] = 0;

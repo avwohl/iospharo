@@ -9,15 +9,20 @@ signalerContext, handleSignal:, etc.) cause recursive J2J calls that overflow
 the native stack at ~400 compiled methods. The cycle: signal → receiver →
 signalerContext → signalForException: → ... → signal.
 
-Fix: built-in exclusion list in noteMethodEntry() for 18 exception infrastructure
-selectors. These are never JIT-compiled, keeping exception handling on the
-interpreter path where stack depth is bounded by Smalltalk contexts.
+Fix: class-aware exclusion in noteMethodEntry(). Two tiers:
+  1. Unambiguous selectors (signalerContext, handleSignal:, etc.) — always excluded
+  2. Ambiguous selectors (signal, receiver, doesNotUnderstand:) — only excluded
+     when method's class is Exception/Error/Notification (not Semaphore, Context, etc.)
 
 Also fixed PHARO_JIT_THRESHOLD=1 — initial count-map insertion at count=1
 didn't trigger compilation (the compile check was only in the count-increment
 branch, not the new-entry branch).
 
-Tested: 784 methods compiled with threshold=1, zero crashes (2x previous limit).
+Results:
+  - 784 methods compiled with threshold=1, zero crashes (2x previous limit)
+  - Class-aware exclusion: 10 exclusions per SUnit run (down from 100 with broad)
+  - J2J return success rate: 40% (up from 2.3% with broad exclusion)
+  - Semaphore>>signal now JIT-compiled (critical for scheduling performance)
 
 ## Fix: Auto-defer JIT compilation in headless mode
 

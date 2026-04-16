@@ -909,7 +909,7 @@ extern "C" void stencil_sendPoly(JITState* s) {
     //   bit 63 set = getter, bits 15:0 = slot index
     //   bit 62 set = setter, bits 15:0 = slot index
     //   bit 61 set = returnsSelf (e.g. "yourself")
-    // After 4 entries: icData[12] = selectorBits for megacache
+    // After 6 entries: icData[18] = selectorBits for megacache
     uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
 
     // Get receiver: below the args on the stack
@@ -973,17 +973,19 @@ extern "C" void stencil_sendPoly(JITState* s) {
     return;                                                                 \
 } while(0)
 
-    // Check 4 IC entries (unrolled for predictable code size)
-    if (lookupKey == icData[0] && icData[0] != 0) { IC_HIT(0); }
-    if (lookupKey == icData[3] && icData[3] != 0) { IC_HIT(1); }
-    if (lookupKey == icData[6] && icData[6] != 0) { IC_HIT(2); }
-    if (lookupKey == icData[9] && icData[9] != 0) { IC_HIT(3); }
+    // Check 6 IC entries (unrolled for predictable code size)
+    if (lookupKey == icData[0]  && icData[0]  != 0) { IC_HIT(0); }
+    if (lookupKey == icData[3]  && icData[3]  != 0) { IC_HIT(1); }
+    if (lookupKey == icData[6]  && icData[6]  != 0) { IC_HIT(2); }
+    if (lookupKey == icData[9]  && icData[9]  != 0) { IC_HIT(3); }
+    if (lookupKey == icData[12] && icData[12] != 0) { IC_HIT(4); }
+    if (lookupKey == icData[15] && icData[15] != 0) { IC_HIT(5); }
 
 #undef IC_HIT
 
     // IC MISS — probe megamorphic method cache before falling back
     {
-        uint64_t selectorBits = icData[12];  // Stored at end of IC data by compiler
+        uint64_t selectorBits = icData[18];  // Stored at end of IC data by compiler
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
             // Primary probe
@@ -1091,14 +1093,16 @@ extern "C" void stencil_sendJ2J(JITState* s) {
     }
 
     // --- IC lookup: find matching entry ---
-    // Instead of duplicating the full IC-hit logic 4 times, find the matching
+    // Instead of duplicating the full IC-hit logic 6 times, find the matching
     // entry first, then run one shared copy of the hit handler.
     uint64_t extra = 0;
     uint64_t methodBits = 0;
-    if      (lookupKey == icData[0] && icData[0] != 0) { extra = icData[2]; methodBits = icData[1]; }
-    else if (lookupKey == icData[3] && icData[3] != 0) { extra = icData[5]; methodBits = icData[4]; }
-    else if (lookupKey == icData[6] && icData[6] != 0) { extra = icData[8]; methodBits = icData[7]; }
-    else if (lookupKey == icData[9] && icData[9] != 0) { extra = icData[11]; methodBits = icData[10]; }
+    if      (lookupKey == icData[0]  && icData[0]  != 0) { extra = icData[2];  methodBits = icData[1]; }
+    else if (lookupKey == icData[3]  && icData[3]  != 0) { extra = icData[5];  methodBits = icData[4]; }
+    else if (lookupKey == icData[6]  && icData[6]  != 0) { extra = icData[8];  methodBits = icData[7]; }
+    else if (lookupKey == icData[9]  && icData[9]  != 0) { extra = icData[11]; methodBits = icData[10]; }
+    else if (lookupKey == icData[12] && icData[12] != 0) { extra = icData[14]; methodBits = icData[13]; }
+    else if (lookupKey == icData[15] && icData[15] != 0) { extra = icData[17]; methodBits = icData[16]; }
     else goto ic_miss;
 
     // --- Shared IC-hit handler ---
@@ -1408,7 +1412,7 @@ ic_miss:
 
     // IC MISS — probe megamorphic method cache before falling back
     {
-        uint64_t selectorBits = icData[12];
+        uint64_t selectorBits = icData[18];
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
             MegaCacheEntry* megaHit = nullptr;

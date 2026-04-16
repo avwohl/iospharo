@@ -1217,7 +1217,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
 void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
     // Compute IC data location in the old method.
     // Layout: [JITMethod header][code][bcToCode table][IC data]
-    static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
+    static constexpr uint32_t IC_ENTRIES_PER_SITE = 6;
     static constexpr uint32_t IC_BYTES_PER_SITE_LOCAL = IC_ENTRIES_PER_SITE * 24 + 8;
 
     uint32_t bcToCodeTableSize = (oldVersion->numBytecodes + 1) * sizeof(uint32_t);
@@ -1729,12 +1729,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     }
 
     // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
-    // 104 bytes: 4 entries x [uint64_t classKey, uint64_t methodBits, uint64_t extra]
+    // 152 bytes: 6 entries x [uint64_t classKey, uint64_t methodBits, uint64_t extra]
     // + 8 bytes for selectorBits (used by mega cache probe).
     // The 'extra' field holds J2J info: high byte = kind (0x80=getter, 0x40=setter),
     // low 32 bits = slot index. When kind != 0, the send stencil inlines the
     // field access directly, bypassing the C++ boundary crossing entirely.
-    static constexpr uint32_t IC_ENTRIES_PER_SITE = 4;
+    static constexpr uint32_t IC_ENTRIES_PER_SITE = 6;
     static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 24 + 8;
     uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
@@ -1792,10 +1792,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             while (im) {
                 if (im->numICEntries > 0) {
                     uint8_t* icStart = im->codeStart() + im->codeSize
-                                     - im->numICEntries * 104;
+                                     - im->numICEntries * 152;
                     for (uint32_t i = 0; i < im->numICEntries; i++) {
-                        uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
-                        for (int e = 0; e < 4; e++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 152);
+                        for (int e = 0; e < 6; e++) {
                             uint64_t extra = slots[e * 3 + 2];
                             if (!(extra & J2J_BIT)) continue;
                             uint64_t addr = extra & ADDR_MASK;
@@ -1855,8 +1855,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->j2jDepthLimit = 2;  // Start conservative; adaptive logic promotes on clean runs
 
     // Set up IC data pointers for send sites. The IC data lives at the end
-    // of the allocation. Each send site gets 104 bytes initialized to zero
-    // (empty IC — will be patched on first miss): 4 x [key, method, extra]
+    // of the allocation. Each send site gets 152 bytes initialized to zero
+    // (empty IC — will be patched on first miss): 6 x [key, method, extra]
     // + selectorBits. The extra word encodes inline getter/setter info for
     // J2J dispatch (bit 63=getter, bit 62=setter, bit 61=returnsSelf).
     uint8_t* codeBase_pre = jitMethod->codeStart();
@@ -1875,7 +1875,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
 
-                // Store selectorBits at offset 64 (icData[8]) for mega cache probe
+                // Store selectorBits at offset 144 (icData[18]) for mega cache probe
                 uint64_t selectorBits = 0;
                 if (bc.opcode >= 0x60 && bc.opcode <= 0x6F) {
                     // Arithmetic special selector (index 0-15): from special objects array
@@ -1903,7 +1903,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     }
                 }
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
-                icSlots[12] = selectorBits;
+                icSlots[18] = selectorBits;
 
                 sendIdx++;
             }
