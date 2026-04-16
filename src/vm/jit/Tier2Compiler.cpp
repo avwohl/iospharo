@@ -105,6 +105,9 @@ namespace SistaV1 {
     constexpr uint8_t ExtStoreRecv      = 0xF3;
     constexpr uint8_t ExtStoreLitVar    = 0xF4;
     constexpr uint8_t ExtStoreTemp      = 0xF5;
+    constexpr uint8_t PushTempAtInVec   = 0xFB;
+    constexpr uint8_t StoreTempAtInVec  = 0xFC;
+    constexpr uint8_t PopStoreTempAtInVec = 0xFD;
     constexpr uint8_t CallPrimitive     = 0xF8;
     constexpr uint8_t PushFullBlock     = 0xF9;
     constexpr uint8_t PushClosure       = 0xFA;
@@ -533,6 +536,24 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
         } else if (op == SistaV1::PushClosure) {
             t2DecodeBails[op]++;
             return false;
+        } else if (op == SistaV1::PushTempAtInVec) {
+            // 0xFB: Push Temp At k In Temp Vector At j (3-byte)
+            if (i + 2 >= len) break;
+            d.operand = bc[i + 1];   // tempIndex (k)
+            d.operand2 = bc[i + 2];  // vectorIndex (j)
+            d.bcLength = 3;
+        } else if (op == SistaV1::StoreTempAtInVec) {
+            // 0xFC: Store Temp At k In Temp Vector At j (3-byte, no pop)
+            if (i + 2 >= len) break;
+            d.operand = bc[i + 1];   // tempIndex (k)
+            d.operand2 = bc[i + 2];  // vectorIndex (j)
+            d.bcLength = 3;
+        } else if (op == SistaV1::PopStoreTempAtInVec) {
+            // 0xFD: Pop and Store Temp At k In Temp Vector At j (3-byte)
+            if (i + 2 >= len) break;
+            d.operand = bc[i + 1];   // tempIndex (k)
+            d.operand2 = bc[i + 2];  // vectorIndex (j)
+            d.bcLength = 3;
         } else if (op >= 0xDA && op <= 0xDF) {
             // Reserved — nop
             out.push_back(d);
@@ -1403,6 +1424,67 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
             MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
             unreachable = true;
+        }
+
+        // --- Temp vector operations (closure captured temps) ---
+        // Temp vectors: temp[vectorIndex] is an Array, access its slot at tempIndex
+        // Array layout: header (8 bytes) + slots (8 bytes each)
+        // So slot k is at array_ptr + 8 + k*8
+        else if (op == SistaV1::PushTempAtInVec) {
+            int tempIndex = bc.operand;
+            int vectorIndex = bc.operand2;
+            // Load temp vector from tempBase[vectorIndex]
+            MIR_reg_t vec = newScratch();
+            MIR_reg_t vecAddr = newScratch();
+            EMIT(MIR_ADD, REG(vecAddr), REG(reg_tempBase_), IMM(vectorIndex * 8));
+            EMIT(MIR_MOV, REG(vec), MEM(MIR_T_I64, vecAddr, 0));
+            // Load slot tempIndex from the vector (array_ptr + 8 + tempIndex*8)
+            MIR_reg_t val = newScratch();
+            MIR_reg_t slotAddr = newScratch();
+            EMIT(MIR_ADD, REG(slotAddr), REG(vec), IMM(8 + tempIndex * 8));
+            EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, slotAddr, 0));
+            vpush(val);
+        }
+        else if (op == SistaV1::StoreTempAtInVec) {
+            int tempIndex = bc.operand;
+            int vectorIndex = bc.operand2;
+            MIR_reg_t val;
+            if (vstackDepth_ > 0) {
+                val = vpeek();  // store without pop
+            } else {
+                val = newScratch();
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, -8));
+            }
+            // Load temp vector from tempBase[vectorIndex]
+            MIR_reg_t vec = newScratch();
+            MIR_reg_t vecAddr = newScratch();
+            EMIT(MIR_ADD, REG(vecAddr), REG(reg_tempBase_), IMM(vectorIndex * 8));
+            EMIT(MIR_MOV, REG(vec), MEM(MIR_T_I64, vecAddr, 0));
+            // Store to slot tempIndex (array_ptr + 8 + tempIndex*8)
+            MIR_reg_t slotAddr = newScratch();
+            EMIT(MIR_ADD, REG(slotAddr), REG(vec), IMM(8 + tempIndex * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, slotAddr, 0), REG(val));
+        }
+        else if (op == SistaV1::PopStoreTempAtInVec) {
+            int tempIndex = bc.operand;
+            int vectorIndex = bc.operand2;
+            MIR_reg_t val;
+            if (vstackDepth_ > 0) {
+                val = vpop();
+            } else {
+                val = newScratch();
+                EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_sp_, 0));
+            }
+            // Load temp vector from tempBase[vectorIndex]
+            MIR_reg_t vec = newScratch();
+            MIR_reg_t vecAddr = newScratch();
+            EMIT(MIR_ADD, REG(vecAddr), REG(reg_tempBase_), IMM(vectorIndex * 8));
+            EMIT(MIR_MOV, REG(vec), MEM(MIR_T_I64, vecAddr, 0));
+            // Store to slot tempIndex (array_ptr + 8 + tempIndex*8)
+            MIR_reg_t slotAddr = newScratch();
+            EMIT(MIR_ADD, REG(slotAddr), REG(vec), IMM(8 + tempIndex * 8));
+            EMIT(MIR_MOV, MEM(MIR_T_I64, slotAddr, 0), REG(val));
         }
 
         // --- Unsupported: bail ---
