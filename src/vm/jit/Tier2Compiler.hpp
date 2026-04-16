@@ -91,8 +91,9 @@ private:
 
     // Emit inline CALL to jit_t2_send + exit check + state reload + resume.
     // Assumes caller already flushed vstack and stored sp/nArgs/ip/selector/icDataPtr.
+    // If registerResume is true, registers a resume point for chain loop re-entry.
     // Returns the continue label (execution resumes there on success).
-    MIR_label_t emitSendCall(int bcOffset, int bcLength);
+    MIR_label_t emitSendCall(int bcOffset, int bcLength, bool registerResume = true);
 
     // SmallInteger arithmetic fast-path
     void emitSmallIntArith(int primKind, int bcOffset);

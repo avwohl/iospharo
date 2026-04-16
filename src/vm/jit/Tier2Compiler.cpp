@@ -317,7 +317,7 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
     MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
 }
 
-MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength) {
+MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength, bool registerResume) {
     // CALL jit_t2_send(statePtr)
     MIR_append_insn(mirCtx_, mirFunc_,
         MIR_new_call_insn(mirCtx_, 3,
@@ -353,11 +353,13 @@ MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength) {
     for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
 
     // Register resume point for chain loop re-entry (bail case)
-    int postSendBC = bcOffset + bcLength;
-    if (resumeCount_ < MaxResume) {
-        resumePoints_[resumeCount_].postSendBC = postSendBC;
-        resumePoints_[resumeCount_].label = continueLabel;
-        resumeCount_++;
+    if (registerResume) {
+        int postSendBC = bcOffset + bcLength;
+        if (resumeCount_ < MaxResume) {
+            resumePoints_[resumeCount_].postSendBC = postSendBC;
+            resumePoints_[resumeCount_].label = continueLabel;
+            resumeCount_++;
+        }
     }
 
     return continueLabel;
@@ -1189,15 +1191,44 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                     MIR_reg_t savedVstack[MaxVStack];
                     memcpy(savedVstack, vstack_, sizeof(MIR_reg_t) * savedDepth);
 
-                    // Slow path: flush to memory, exit with send
-                    // (unreachable from fast path, but emits MIR for overflow)
+                    // Slow path: inline send via jit_t2_send for non-SmallInt/overflow
                     MIR_append_insn(mirCtx_, mirFunc_, slowPath);
                     vpush(a);
                     vpush(b);
-                    emitSendExit(1, bc.bcOffset, false, 0);
+
+                    // Resolve selector at compile time
+                    Oop specialSelectors2 = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                    uint64_t selBits2 = 0;
+                    if (specialSelectors2.isObject() && specialSelectors2.rawBits() > 0x10000) {
+                        ObjectHeader* ssArray2 = specialSelectors2.asObjectPtr();
+                        size_t selectorSlot2 = arithOp * 2;
+                        if (selectorSlot2 < ssArray2->slotCount()) {
+                            selBits2 = ssArray2->slotAt(selectorSlot2).rawBits();
+                        }
+                    }
+
+                    if (selBits2 != 0) {
+                        flushVStack();
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+                        EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(1));
+                        MIR_reg_t ipReg3 = newScratch();
+                        EMIT(MIR_ADD, REG(ipReg3), REG(reg_bcBase_), IMM(bc.bcOffset));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg3));
+                        MIR_reg_t selReg3 = newScratch();
+                        EMIT(MIR_MOV, REG(selReg3), IMM(selBits2));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg3));
+                        EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                        // No resume: stale vstack regs make resume-into-merge unsafe
+                        emitSendCall(bc.bcOffset, bc.bcLength, /*registerResume=*/false);
+                        // Read retval from sp, adjust sp to match fast path
+                        EMIT(MIR_MOV, REG(result), MEM(MIR_T_I64, reg_sp_, -8));
+                        EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM((savedDepth + 1) * 8));
+                        EMIT(MIR_JMP, LABEL_OP(doneLbl));
+                    } else {
+                        emitSendExit(1, bc.bcOffset, false, 0);
+                    }
 
                     // Restore compile-time vstack to fast-path state
-                    // (slow path's vpush/flush corrupted depth & array)
                     vstackDepth_ = savedDepth;
                     memcpy(vstack_, savedVstack, sizeof(MIR_reg_t) * savedDepth);
 
