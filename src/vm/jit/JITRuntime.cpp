@@ -137,14 +137,19 @@ extern "C" void jit_t2_send(JITState* state) {
     uint64_t* ic = reinterpret_cast<uint64_t*>(state->icDataPtr);
     if (ic && ic[0] != 0) {
         uint64_t bits = rcvr.rawBits();
-        if ((bits & 7) == 0 && bits != 0) {  // object receiver only
-            uint32_t classIdx = static_cast<uint32_t>(
+        uint32_t classIdx = 0;
+        if ((bits & 7) == 0 && bits != 0) {
+            // Object: classIndex from header bits 0-21
+            classIdx = static_cast<uint32_t>(
                 *reinterpret_cast<uint64_t*>(bits) & 0x3FFFFFULL);
-            if (classIdx == static_cast<uint32_t>(ic[0])) {
-                resolved = Oop::fromRawBits(ic[1]);
-                g_t2ICHits++;
-                goto ic_hit;
-            }
+        } else if ((bits & 7) == 1) {
+            // SmallInteger: fixed classIndex
+            classIdx = interp->jitRuntime().smallIntClassIdx;
+        }
+        if (classIdx != 0 && classIdx == static_cast<uint32_t>(ic[0])) {
+            resolved = Oop::fromRawBits(ic[1]);
+            g_t2ICHits++;
+            goto ic_hit;
         }
     }
 
@@ -161,12 +166,18 @@ extern "C" void jit_t2_send(JITState* state) {
 
         g_t2ICMisses++;
 
-        // Update IC for object receivers
+        // Update IC for object and SmallInteger receivers
         if (ic) {
             uint64_t bits = rcvr.rawBits();
+            uint32_t classIdx = 0;
             if ((bits & 7) == 0 && bits != 0) {
-                ic[0] = static_cast<uint32_t>(
+                classIdx = static_cast<uint32_t>(
                     *reinterpret_cast<uint64_t*>(bits) & 0x3FFFFFULL);
+            } else if ((bits & 7) == 1) {
+                classIdx = interp->jitRuntime().smallIntClassIdx;
+            }
+            if (classIdx != 0) {
+                ic[0] = classIdx;
                 ic[1] = resolved.rawBits();
             }
         }
@@ -721,6 +732,11 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
     nilOopBits = Oop::nil().rawBits();
     trueOopBits = memory.trueObject().rawBits();
     falseOopBits = memory.falseObject().rawBits();
+    // SmallInteger classIndex for T2 IC (identityHash of SmallInteger class)
+    Oop siClass = memory.specialObject(SpecialObjectIndex::ClassSmallInteger);
+    if (siClass.isObject()) {
+        smallIntClassIdx = siClass.asObjectPtr()->identityHash();
+    }
 }
 
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {

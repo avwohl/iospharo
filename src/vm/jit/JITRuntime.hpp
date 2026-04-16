@@ -82,6 +82,7 @@ public:
     uint64_t nilOopBits;
     uint64_t trueOopBits;
     uint64_t falseOopBits;
+    uint32_t smallIntClassIdx = 0;  // classTable index for SmallInteger class
 
     // Update special Oops (call after GC moves objects)
     void updateSpecialOops(ObjectMemory& memory);
