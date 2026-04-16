@@ -2,6 +2,14 @@
 
 2026-04-15
 
+## Expand: Inline cache from 4 to 6 entries
+
+Increased PIC (polymorphic inline cache) from 4 to 6 entries per send site.
+Measured: neutral effect on IC hit rate (32% — unchanged). Most sends are
+monomorphic (1 entry) and megamorphic sites (>6 classes) already use the
+64K-entry mega cache. Memory overhead +134 KB (3.6%). Standard PIC size
+for future workloads with moderate polymorphism.
+
 ## Fix: Auto-exclude exception infrastructure from JIT compilation
 
 JIT-compiled exception handling methods (signal, doesNotUnderstand:,
