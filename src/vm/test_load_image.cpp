@@ -558,6 +558,11 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
     _exit(139);
 }
 
+static void sigtermHandler(int) {
+    if (gTestInterpreter) gTestInterpreter->dumpJITStats();
+    _exit(0);
+}
+
 int main(int argc, char* argv[]) {
     struct sigaction sa;
     sa.sa_sigaction = sigsegvAction;
@@ -565,6 +570,7 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
+    signal(SIGTERM, sigtermHandler);
 #ifdef __APPLE__
     activateMacOSApp();
 #endif
@@ -944,6 +950,7 @@ int main(int argc, char* argv[]) {
 
         std::cout << "\n=== Execution Summary ===" << std::endl;
         std::cout << "Active bytecode steps: " << activeSteps << std::endl;
+        interpreter.dumpJITStats();
 
         // In test mode, print results file if it exists
         if (testMode) {
