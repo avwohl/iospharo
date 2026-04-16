@@ -464,6 +464,14 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             int codepoint = (extB << 8) | bc[i + 1];
             d.operand = codepoint;
             d.bcLength = 2;
+        } else if (op == 0xE6) {
+            // UNASSIGNED (was pushNClosureTemps) — 2-byte nop
+            if (i + 1 >= len) break;
+            d.bcLength = 2;
+            out.push_back(d);
+            i += d.bcLength;
+            extA = extB = 0;
+            continue;
         } else if (op == SistaV1::ExtSend) {
             if (i + 1 >= len) break;
             uint8_t desc = bc[i + 1];
@@ -524,6 +532,14 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             if (i + 1 >= len) break;
             d.operand = (extA << 8) | bc[i + 1];
             d.bcLength = 2;
+        } else if (op == 0xF6 || op == 0xF7) {
+            // UNASSIGNED — 2-byte nop
+            if (i + 1 >= len) break;
+            d.bcLength = 2;
+            out.push_back(d);
+            i += d.bcLength;
+            extA = extB = 0;
+            continue;
         } else if (op == SistaV1::CallPrimitive) {
             // Primitive methods — T1's primitive prologue handles the prim,
             // T2 can't run the primitive (just has the fallback bytecodes).
@@ -554,6 +570,14 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             d.operand = bc[i + 1];   // tempIndex (k)
             d.operand2 = bc[i + 2];  // vectorIndex (j)
             d.bcLength = 3;
+        } else if (op == 0xFE || op == 0xFF) {
+            // UNASSIGNED — 3-byte nop
+            if (i + 2 >= len) break;
+            d.bcLength = 3;
+            out.push_back(d);
+            i += d.bcLength;
+            extA = extB = 0;
+            continue;
         } else if (op >= 0xDA && op <= 0xDF) {
             // Reserved — nop
             out.push_back(d);
@@ -1485,6 +1509,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             MIR_reg_t slotAddr = newScratch();
             EMIT(MIR_ADD, REG(slotAddr), REG(vec), IMM(8 + tempIndex * 8));
             EMIT(MIR_MOV, MEM(MIR_T_I64, slotAddr, 0), REG(val));
+        }
+
+        // --- Nop bytecodes (unassigned/reserved, skip in emit) ---
+        else if ((op >= 0x54 && op <= 0x57) || op == 0x5F ||
+                 (op >= 0xDA && op <= 0xDF) ||
+                 op == 0xE6 || op == 0xF6 || op == 0xF7 ||
+                 op == 0xFE || op == 0xFF) {
+            // No-op: these bytecodes exist in the stream but do nothing
         }
 
         // --- Unsupported: bail ---
