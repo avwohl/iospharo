@@ -1324,7 +1324,8 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         goto exit_send_cached;
     }
 
-    // J2J direct call (bit 60)
+    // J2J direct call (bit 60) — also reached from mega cache J2J path
+j2j_direct_call:
     if (extra & J2J_ENTRY_BIT) {
         uint64_t entryAddr = extra & J2J_ADDR_MASK;
         if (entryAddr != 0) {
@@ -1425,6 +1426,16 @@ ic_miss:
                 }
             }
             if (megaHit) {
+                // Try J2J direct call if target has JIT code
+                if (megaHit->jitEntry != 0) {
+                    uint8_t* _jm = (uint8_t*)megaHit->jitEntry - JM_SIZE;
+                    // Validate JITMethod.state == Compiled (offset 32)
+                    if (*(_jm + 32) == 1) {
+                        extra = J2J_ENTRY_BIT | (megaHit->jitEntry & J2J_ADDR_MASK);
+                        methodBits = megaHit->methodBits;
+                        goto j2j_direct_call;
+                    }
+                }
                 s->cachedTarget.bits = megaHit->methodBits;
                 goto exit_send_cached;
             }

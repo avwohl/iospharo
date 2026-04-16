@@ -12707,6 +12707,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
+
             // Get selector: from IC data (Tier 1) or cachedTarget (Tier 2).
             Oop sendSel;
             if (state.icDataPtr) {
