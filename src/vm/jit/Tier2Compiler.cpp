@@ -1428,48 +1428,101 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
 
         // --- Special sends (0x70-0x7F) ---
-        // Selector from special selectors array, resolved at compile time.
-        // These exit to the chain loop (EXIT_SEND) rather than calling
-        // jit_t2_send, because jit_t2_send recurses on the C stack and
-        // methods with special sends (do:, value, size, etc.) cause
-        // unbounded recursion depth. The chain loop handles activation
-        // without C-stack growth.
+        // at:(0) at:put:(1) size(2) next(3) nextPut:(4) atEnd(5) ==(6) class(7)
+        // ~~(8) value(9) value:(10) do:(11) new(12) new:(13) x(14) y(15)
         else if (op >= 0x70 && op <= 0x7F) {
+            int specIdx = bc.operand;  // 0-15
             int nArgs = bc.operand2;
             if (nArgs < 0) nArgs = 0;
 
-            // Resolve selector from special selectors array
-            int selectorIndex = 16 + bc.operand;  // 0x70-0x7F → indices 16-31
-            Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
-            uint64_t selBits = 0;
-            if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
-                ObjectHeader* ssArray = specialSelectors.asObjectPtr();
-                size_t selectorSlot = selectorIndex * 2;
-                if (selectorSlot < ssArray->slotCount()) {
-                    selBits = ssArray->slotAt(selectorSlot).rawBits();
-                }
-            }
-            if (selBits == 0) {
-                t2EmitBails[op]++;
-                bail = true;
-                break;
-            }
+            // --- Inline fast paths for trivial special sends ---
 
-            flushVStack();
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
-            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
-            MIR_reg_t ipReg = newScratch();
-            EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
-            // Store selector (compile-time resolved) in cachedTarget
-            MIR_reg_t selReg = newScratch();
-            EMIT(MIR_MOV, REG(selReg), IMM(selBits));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
-            EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
-            // Exit to chain loop — avoids jit_t2_send C-stack recursion
-            EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
-            MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
-            unreachable = true;
+            // == (identity): pop arg+rcv, push (rcv == arg ? true : false)
+            if (specIdx == 6) {
+                MIR_reg_t a, b;
+                if (vstackDepth_ >= 2) {
+                    b = vpop(); a = vpop();
+                } else if (vstackDepth_ == 1) {
+                    b = vpop();
+                    a = newScratch();
+                    EMIT(MIR_MOV, REG(a), MEM(MIR_T_I64, reg_sp_, -8));
+                    EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                } else {
+                    b = newScratch(); a = newScratch();
+                    EMIT(MIR_MOV, REG(b), MEM(MIR_T_I64, reg_sp_, -8));
+                    EMIT(MIR_MOV, REG(a), MEM(MIR_T_I64, reg_sp_, -16));
+                    EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(16));
+                }
+                MIR_reg_t result = newScratch();
+                MIR_label_t isTrue = MIR_new_label(mirCtx_);
+                MIR_label_t done = MIR_new_label(mirCtx_);
+                EMIT(MIR_BEQ, LABEL_OP(isTrue), REG(a), REG(b));
+                EMIT(MIR_MOV, REG(result), REG(reg_falseOop_));
+                EMIT(MIR_JMP, LABEL_OP(done));
+                MIR_append_insn(mirCtx_, mirFunc_, isTrue);
+                EMIT(MIR_MOV, REG(result), REG(reg_trueOop_));
+                MIR_append_insn(mirCtx_, mirFunc_, done);
+                vpush(result);
+            }
+            // ~~ (not identical): pop arg+rcv, push (rcv != arg ? true : false)
+            else if (specIdx == 8) {
+                MIR_reg_t a, b;
+                if (vstackDepth_ >= 2) {
+                    b = vpop(); a = vpop();
+                } else if (vstackDepth_ == 1) {
+                    b = vpop();
+                    a = newScratch();
+                    EMIT(MIR_MOV, REG(a), MEM(MIR_T_I64, reg_sp_, -8));
+                    EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
+                } else {
+                    b = newScratch(); a = newScratch();
+                    EMIT(MIR_MOV, REG(b), MEM(MIR_T_I64, reg_sp_, -8));
+                    EMIT(MIR_MOV, REG(a), MEM(MIR_T_I64, reg_sp_, -16));
+                    EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(16));
+                }
+                MIR_reg_t result = newScratch();
+                MIR_label_t isTrue = MIR_new_label(mirCtx_);
+                MIR_label_t done = MIR_new_label(mirCtx_);
+                EMIT(MIR_BNE, LABEL_OP(isTrue), REG(a), REG(b));
+                EMIT(MIR_MOV, REG(result), REG(reg_falseOop_));
+                EMIT(MIR_JMP, LABEL_OP(done));
+                MIR_append_insn(mirCtx_, mirFunc_, isTrue);
+                EMIT(MIR_MOV, REG(result), REG(reg_trueOop_));
+                MIR_append_insn(mirCtx_, mirFunc_, done);
+                vpush(result);
+            }
+            // --- Fallback: exit to chain loop for other special sends ---
+            else {
+                int selectorIndex = 16 + specIdx;
+                Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+                uint64_t selBits = 0;
+                if (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000) {
+                    ObjectHeader* ssArray = specialSelectors.asObjectPtr();
+                    size_t selectorSlot = selectorIndex * 2;
+                    if (selectorSlot < ssArray->slotCount()) {
+                        selBits = ssArray->slotAt(selectorSlot).rawBits();
+                    }
+                }
+                if (selBits == 0) {
+                    t2EmitBails[op]++;
+                    bail = true;
+                    break;
+                }
+
+                flushVStack();
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_SP), REG(reg_sp_));
+                EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SENDNARGS), IMM(nArgs));
+                MIR_reg_t ipReg = newScratch();
+                EMIT(MIR_ADD, REG(ipReg), REG(reg_bcBase_), IMM(bc.bcOffset));
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_IP), REG(ipReg));
+                MIR_reg_t selReg = newScratch();
+                EMIT(MIR_MOV, REG(selReg), IMM(selBits));
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_CACHED), REG(selReg));
+                EMIT(MIR_MOV, MEM(MIR_T_I64, reg_statePtr_, OFF_ICDATA), IMM(0));
+                EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_EXIT), IMM(EXIT_SEND));
+                MIR_append_insn(mirCtx_, mirFunc_, MIR_new_ret_insn(mirCtx_, 0));
+                unreachable = true;
+            }
         }
 
         // --- PushFullBlock (0xF9): exit to chain loop for closure creation ---
