@@ -2,6 +2,31 @@
 
 2026-04-15
 
+## Fix: Auto-defer JIT compilation in headless mode
+
+Session startup must complete at full interpreter speed before JIT compilation
+kicks in. When JIT compiles methods with megamorphic sends (like WriteStream>>
+nextPut: with its polymorphic at:put:), IC miss overhead slows the startup
+process enough for the Morphic UI loop to permanently preempt it via
+Smalltalk-level semaphore scheduling (P80 startup process waits on Mutex,
+DelaySemaphoreScheduler round-robins at P80).
+
+Fix: auto-defer JIT compilation for ~120M steps (~4s) in headless mode.
+This is NOT timer/forceYield based — the root cause is Smalltalk-level
+semaphore waits in session handlers, which can't be suppressed from the VM.
+
+- PHARO_JIT_DEFER=N still works to override (in seconds)
+- GUI mode is unaffected (no deferral)
+- Tested: MAX=13, MAX=50, and unlimited all complete eval expression
+
+## Feature: Mega cache J2J direct calls in stencil_sendJ2J
+
+When a megamorphic IC miss hits the mega cache and the target method has
+compiled JIT code (jitEntry != 0), do a J2J direct call instead of exiting
+via EXIT_SEND_CACHED. Reuses the existing IC-hit J2J call handler by
+setting extra/methodBits and jumping to the j2j_direct_call label. A state
+check (JITMethod.state == Compiled) prevents calling into invalidated methods.
+
 ## Investigation: JIT MAX=13 hang is megamorphic IC thrashing
 
 Bisected the JIT_MAX_COMPILE threshold: MAX=12 works, MAX=13 hangs. Method #13
