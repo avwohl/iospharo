@@ -222,17 +222,10 @@ void Tier2Compiler::emitPrologue(int tempCount, int argCount) {
     EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
     EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
 
-    // Load trueOop/falseOop from JITRuntime's global storage (stable addresses,
-    // not from JITState which can be a different instance on re-entry).
-    // The address is baked in as an immediate — safe because JITRuntime doesn't move.
-    {
-        JITRuntime& rt = interp_.jitRuntime();
-        MIR_reg_t addr = newScratch();
-        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
-        EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
-        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
-        EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
-    }
+    // Load trueOop/falseOop from JITState (offsets 128/136).
+    // Set once by tryJITActivation; stable for image lifetime (permanent space).
+    EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_TRUE));
+    EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_FALSE));
 
     // Compute bcBase = state.method (raw object ptr) + bcStartFromObj_
     // This gives the bytecodes start address, used for ip computation in send exits.
@@ -340,14 +333,8 @@ MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength, bool registe
     EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
     EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
     EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
-    {
-        JITRuntime& rt = interp_.jitRuntime();
-        MIR_reg_t addr = newScratch();
-        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
-        EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
-        EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
-        EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
-    }
+    EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_TRUE));
+    EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_FALSE));
 
     // Invalidate temp register cache (callee may have modified stack/heap)
     for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
@@ -1543,19 +1530,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // Resume label: chain loop creates closure, then re-enters T2 here
             MIR_label_t resumeLabel = MIR_new_label(mirCtx_);
             MIR_append_insn(mirCtx_, mirFunc_, resumeLabel);
-            // Reload state (prologue loaded some, but ensure consistency)
+            // Reload state after chain loop handled the closure creation
             EMIT(MIR_MOV, REG(reg_sp_), MEM(MIR_T_I64, reg_statePtr_, OFF_SP));
             EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
             EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
             EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
-            {
-                JITRuntime& rt = interp_.jitRuntime();
-                MIR_reg_t addr = newScratch();
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
-                EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
-                EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
-            }
+            EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_TRUE));
+            EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_FALSE));
             for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
             int postBC = bc.bcOffset + bc.bcLength;
             if (resumeCount_ < MaxResume) {
@@ -1588,14 +1569,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, REG(reg_receiver_), MEM(MIR_T_I64, reg_statePtr_, OFF_RECEIVER));
             EMIT(MIR_MOV, REG(reg_literals_), MEM(MIR_T_I64, reg_statePtr_, OFF_LITERALS));
             EMIT(MIR_MOV, REG(reg_tempBase_), MEM(MIR_T_I64, reg_statePtr_, OFF_TEMPBASE));
-            {
-                JITRuntime& rt = interp_.jitRuntime();
-                MIR_reg_t addr = newScratch();
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.trueOopBits)));
-                EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, addr, 0));
-                EMIT(MIR_MOV, REG(addr), IMM(reinterpret_cast<int64_t>(&rt.falseOopBits)));
-                EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, addr, 0));
-            }
+            EMIT(MIR_MOV, REG(reg_trueOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_TRUE));
+            EMIT(MIR_MOV, REG(reg_falseOop_), MEM(MIR_T_I64, reg_statePtr_, OFF_FALSE));
             for (int i = 0; i < tempCount_; i++) tempLoaded_[i] = false;
             int postBC = bc.bcOffset + bc.bcLength;
             if (resumeCount_ < MaxResume) {
