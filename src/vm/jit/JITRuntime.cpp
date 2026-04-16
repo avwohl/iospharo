@@ -875,23 +875,31 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 }
                 // Built-in exclusion: exception infrastructure selectors.
                 // When these methods are JIT-compiled, exception handling causes
-                // recursive J2J calls that overflow the native stack (~400 methods).
+                // recursive native stack growth that overflows at ~400 methods.
                 // The cycle: signal → receiver → signalerContext → ... → signal
+                //
+                // Two tiers:
+                //   1. Unambiguous selectors (only used in exception/context handling)
+                //   2. Ambiguous selectors (also used by Semaphore, etc.) —
+                //      only excluded when the method's class is Exception-related
                 {
-                    static const char* exceptionSelectors[] = {
-                        "signal",
-                        "signal:",
-                        "doesNotUnderstand:",
+                    static const char* unambiguousSelectors[] = {
                         "signalerContext",
                         "signalForException:",
-                        "receiver",
                         "raiseUnhandledError",
-                        "defaultAction",
                         "handleSignal:",
                         "findContextSuchThat:",
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
+                        nullptr
+                    };
+                    static const char* ambiguousSelectors[] = {
+                        "signal",
+                        "signal:",
+                        "doesNotUnderstand:",
+                        "receiver",
+                        "defaultAction",
                         "pass",
                         "outer",
                         "resume:",
@@ -901,11 +909,30 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     };
                     if (interp_) {
                         std::string sel = interp_->memory().selectorOf(compiledMethod);
-                        for (const char** p = exceptionSelectors; *p; p++) {
+                        for (const char** p = unambiguousSelectors; *p; p++) {
                             if (sel == *p) {
                                 fprintf(stderr, "[JIT] AUTO-EXCLUDED exception infra #%s\n",
                                         sel.c_str());
                                 return;
+                            }
+                        }
+                        for (const char** p = ambiguousSelectors; *p; p++) {
+                            if (sel == *p) {
+                                // Check if method belongs to an Exception-related class
+                                Oop methodClass = interp_->methodClassOf(compiledMethod);
+                                std::string cls = interp_->memory().classNameOf(methodClass);
+                                // Exclude if class name contains "Exception", "Error",
+                                // "Notification", or is "Object" (for doesNotUnderstand:)
+                                if (cls.find("Exception") != std::string::npos ||
+                                    cls.find("Error") != std::string::npos ||
+                                    cls.find("Notification") != std::string::npos ||
+                                    cls.find("Warning") != std::string::npos ||
+                                    (sel == "doesNotUnderstand:" && cls == "Object") ||
+                                    (sel == "doesNotUnderstand:" && cls == "ProtoObject")) {
+                                    fprintf(stderr, "[JIT] AUTO-EXCLUDED exception infra #%s (class %s)\n",
+                                            sel.c_str(), cls.c_str());
+                                    return;
+                                }
                             }
                         }
                     }

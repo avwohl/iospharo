@@ -909,6 +909,9 @@ public:
     bool isJ2JBanned(uint64_t methodBits) const {
         return j2jBannedMethods_.count(methodBits) > 0;
     }
+    /// Get the class where a CompiledMethod is defined (from last literal).
+    /// Public for JIT exclusion checks.
+    Oop methodClassOf(Oop method) const;
     size_t jitICHits() const { return jitICHits_; }
     size_t jitICMisses() const { return jitICMisses_; }
     size_t jitICPatches() const { return jitICPatches_; }
@@ -2344,10 +2347,6 @@ private:
 
     /// Get the superclass of a class
     Oop superclassOf(Oop classOop) const;
-
-    /// Get the class where a CompiledMethod is defined (from last literal)
-    /// This is critical for super sends which must lookup from method's defining class
-    Oop methodClassOf(Oop method) const;
 
     /// Get the method dictionary of a class
     Oop methodDictOf(Oop classOop) const;
