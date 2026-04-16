@@ -2,6 +2,14 @@
 
 2026-04-15
 
+## Cleanup: Remove debug probes from BAD-AT-ACT investigation
+
+Removed 445 lines of diagnostic probes from Interpreter.cpp: CACHE-BADREAD,
+LOOKUP-BAD, CACHE-BADMETHOD, CLSIDX, BAD-AT-ACT, SNAPOP, RS-TRACE/RS-STORE,
+IC-BADWRITE, IC-BADWRITE-U. Retained the IC selector-mismatch safety guards
+(IC-PATCH-BADSEL, IC-UPGRADE-MISMATCH) but stripped their verbose fprintf
+logging. Root cause was stale stencil binaries, fixed in prior commit.
+
 ## Fix: Inline stencil bail selector recovery + nil guard + stencil regen
 
 Three fixes for JIT stability:
