@@ -2,6 +2,20 @@
 
 2026-04-15
 
+## T2: inline sends via jit_t2_send for special + unsupported arith
+
+Special sends (at:, size, value, do:, new, class, x, y, etc.) and
+unsupported arithmetic ops (@, //, bitShift:, bitAnd:, bitOr:) no
+longer exit to the chain loop. They now call jit_t2_send inline, so
+T2 execution continues past these sends without chain loop round-trips.
+
+Also extracted emitSendCall helper to share the post-call state reload
+logic between regular sends, special sends, and arithmetic fallbacks.
+
+MEM displacement optimization: replaced scratch register + ADD + MOV
+patterns with direct MEM(base, displacement) across all push/store/flush
+handlers, eliminating ~30 unnecessary scratch registers.
+
 ## T2: bytecode coverage expansion
 
 Multiple T2 compiler improvements in one session:
