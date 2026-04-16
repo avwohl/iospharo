@@ -690,12 +690,22 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
 
     // Deferral: skip counting for the first N million interpreter steps.
     // This lets the interpreter run at full speed during startup.
-    // PHARO_JIT_DEFER=N (seconds; default: 0 = no deferral)
+    // In headless mode (eval/test), session startup must complete before JIT
+    // compilation starts — compiled methods with megamorphic sends cause IC
+    // miss overhead that slows the startup process enough for Morphic to
+    // preempt it, preventing the eval expression from ever executing.
+    // PHARO_JIT_DEFER=N (seconds; default: 4s headless, 0 GUI)
     static int64_t deferSteps = -1; // -1 = uninitialized
     if (deferSteps == -1) {
         const char* env = getenv("PHARO_JIT_DEFER");
-        // Convert seconds to approximate step count (~30M steps/sec on interpreter)
-        deferSteps = env ? (int64_t)atoi(env) * 30000000 : 0;
+        if (env) {
+            deferSteps = (int64_t)atoi(env) * 30000000;
+        } else if (interp_ && interp_->isHeadless()) {
+            // Auto-defer: ~4 seconds at interpreter speed (~30M steps/sec)
+            deferSteps = 120000000;
+        } else {
+            deferSteps = 0;
+        }
         if (deferSteps > 0)
             fprintf(stderr, "[JIT] Deferring compilation for ~%lld steps\n", (long long)deferSteps);
     }
