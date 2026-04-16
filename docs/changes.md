@@ -2,20 +2,31 @@
 
 2026-04-15
 
-## Enable J2J stencil calls in tryJITResumeInCaller
+## External J2J trampoline for tryJITResumeInCaller (disabled by default)
 
-Previously, the resume-in-caller path disabled stencil-to-stencil (J2J) calls
-by setting j2jSaveCursor=nullptr. This meant ~83M resume attempts per SUnit run
-could never do in-stencil J2J sends — every send fell through to ExitSend.
+Added an external J2J trampoline to the resume-in-caller path, modeled on
+tryJITActivation's C++ trampoline. Stencils exit with ExitSendCached (j2jSaveCursor
+remains null); the trampoline converts to J2JCall via pharo_jit_convert_send when
+the callee is compiled, pushes J2JSave, and enters the callee. ExitReturn pops
+saves and re-enters the caller. ExitYield charges checkCountdown_ and re-enters.
+Non-return exits materialize remaining saves and bail to interpreter.
 
-Fix: allocate a J2J save stack slice from the shared pool before tryResume, and
-materialize saved frames as interpreter-visible SavedFrames when the stencil
-exits with j2jDepth > 0. The materialization follows the same pattern as
-tryJITActivation (oldest-first save loop, self-recursive marker handling,
-interpreter state sync from innermost callee). The normal switch/popFrame path
-then unwinds the materialized frames correctly for both ExitReturn (pop caller,
-push return value, resume) and non-return exits (interpreter handles the send
-with caller frames visible on the stack).
+Two approaches were tested:
+- **Internal J2J** (stencil-managed j2jSaveCursor): caused catastrophic slowdown
+  (~1K steps/sec). Non-return exits (ExitYield, ExitSendCached to uncompiled methods)
+  bypassed J2J_INLINE_RETURN, leaving stale depth and triggering expensive
+  materialization on every exit. Inherited yieldCountdown caused premature yields.
+- **External J2J** (trampoline-managed saves): works correctly but is 18% slower
+  than the baseline at current compilation levels (~250-600 methods). ~47% of J2J
+  calls hit uncompiled sends and require materialization (3.4M materializations in
+  20s vs 28K without the trampoline).
+
+The trampoline is disabled by default (enable with PHARO_RESUME_J2J=1). The
+existing activateMethod chain rate (39.5%) via the dispatch loop is adequate.
+The trampoline becomes profitable only when compilation coverage is high enough
+that most J2J callees return cleanly without hitting uncompiled sends.
+
+Also added: dumpJITStats() method + SIGTERM handler for structured metrics.
 
 ## Expand: Inline cache from 4 to 6 entries
 

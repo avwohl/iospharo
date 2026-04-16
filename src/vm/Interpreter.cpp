@@ -11184,11 +11184,11 @@ void Interpreter::tryJITResumeInCaller() {
         state.argCount = argCount_;
         state.icDataPtr = nullptr;
         state.sendArgCount = 0;
-        // Disable stencil J2J for dispatch-loop resume (no save stack).
-        // Enabling J2J here requires a trampoline to handle callee exits,
-        // but the current implementation causes severe slowdowns. The
-        // resume loop's ExitSendCached handler already chains successfully
-        // at ~40%, so the overhead of J2J save/restore is not yet justified.
+        // External J2J: stencils always exit with ExitSendCached (j2jSaveCursor
+        // is null). The trampoline below converts to J2JCall when the callee is
+        // compiled, avoiding the internal save-cursor mechanism which caused
+        // severe slowdowns (stencil-managed J2J + frequent materialization from
+        // inherited yieldCountdown and non-return exits).
         int rj2jBase = j2jPoolCursor_;
         state.j2jSaveCursor = nullptr;
         state.j2jSaveLimit = nullptr;
@@ -11230,58 +11230,259 @@ void Interpreter::tryJITResumeInCaller() {
             g_stepNum += state.jitMethod->numBytecodes;
         }
 
-        // Mini-trampoline: when stencils did J2J calls (j2jDepth > 0) and
-        // the callee returned, pop the save, restore the caller, push the
-        // return value, and re-enter the caller's stencil. This avoids the
-        // expensive materialize→bail path for the common ExitReturn case.
-        if (state.j2jDepth > 0) {
-            J2JSave* saves = &j2jPool_[rj2jBase];
+        // External J2J trampoline: when the stencil exits with ExitSendCached,
+        // try to convert the send to a J2JCall (if callee is compiled). This
+        // chains sends in JIT without materializing frames for each one.
+        // Modeled on tryJITActivation's C++ trampoline.
+        // Resume J2J trampoline: disabled by default. At current compilation
+        // levels (~250-600 methods), ~47% of J2J calls hit uncompiled sends
+        // and require expensive materialization, making it 18% slower overall.
+        // Enable with PHARO_RESUME_J2J=1 when compilation coverage improves.
+        {
+            static bool noResumeJ2J = !getenv("PHARO_RESUME_J2J");
+            int rj2jDepth = 0;
+            size_t rj2jCalls = 0, rj2jReturns = 0;
+            J2JSave* rj2jSaves = &j2jPool_[rj2jBase];
+            int rj2jMaxDepth = std::min(J2JSlotPerEntry,
+                                        MaxJ2JPoolSize - rj2jBase);
+
+          if (!noResumeJ2J) {
 #if defined(__APPLE__) && defined(__arm64__)
-            if (state.exitReason == jit::ExitReturn) pthread_jit_write_protect_np(1);
+            pthread_jit_write_protect_np(1);  // JIT zone executable
 #endif
-            while (state.j2jDepth > 0 && state.exitReason == jit::ExitReturn) {
-                state.j2jDepth--;
-                J2JSave& save = saves[state.j2jDepth];
-                Oop retVal = state.returnValue;
-                // Restore caller state from save
-                state.sp = save.sp;
-                state.receiver = save.receiver;
-                state.tempBase = save.tempBase;
-                state.ip = save.ip;
-                state.jitMethod = save.jitMethod;
-                state.literals = save.literals;
-                state.argCount = save.argCount;
-                // Push return value onto caller's stack
-                *(++(state.sp)) = retVal;
-                // Update save cursor so re-entered stencil can push new saves
-                state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&saves[state.j2jDepth]);
-                state.j2jTotalCalls = 0;
-                state.yieldCountdown = 1000;
-                // Re-enter caller stencil at resume point
-                JIT_CALL(save.resumeAddr, &state);
-                jitJ2JStencilCalls_ += state.j2jTotalCalls;
+            while (state.exitReason == jit::ExitSendCached ||
+                   state.exitReason == jit::ExitYield ||
+                   (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
+
+                // --- ExitYield: charge countdown and re-enter callee ---
+                if (state.exitReason == jit::ExitYield) {
+                    jitYieldCount_++;
+                    auto* yJM = reinterpret_cast<jit::JITMethod*>(
+                        reinterpret_cast<uintptr_t>(state.jitMethod)
+                        & ~static_cast<uintptr_t>(1));
+                    int yNumBC = yJM ? yJM->numBytecodes : 20;
+                    checkCountdown_ -= 1000 * yNumBC;
+                    g_stepNum += 1000 * yNumBC;
+                    if (checkCountdown_ <= 0) break;  // Scheduler needs to run
+
+                    // Compute callee's resume address from yield IP
+                    if (!yJM) break;
+                    ObjectHeader* yMO =
+                        Oop::fromRawBits(yJM->compiledMethodOop)
+                            .asObjectPtr();
+                    int yNL = static_cast<int>(yJM->methodHeader & 0x7FFF);
+                    uint8_t* yBCStart = yMO->bytes() + (1 + yNL) * 8;
+                    uint32_t yBCOff =
+                        static_cast<uint32_t>(state.ip - yBCStart);
+                    uint32_t yCodeOff = yJM->codeOffsetForBC(yBCOff);
+                    if (yCodeOff == 0 || yCodeOff >= yJM->codeSize) break;
+
+                    state.yieldCountdown = 1000;
+                    JIT_CALL(yJM->codeStart() + yCodeOff, &state);
+                    continue;
+                }
+
+                // --- ExitSendCached → ExitJ2JCall conversion ---
+                if (state.exitReason == jit::ExitSendCached) {
+                    if (!pharo_jit_convert_send(&state)) break;
+                }
+
+                if (state.exitReason == jit::ExitJ2JCall) {
+                    // --- J2J Call: save caller, enter callee ---
+                    if (rj2jDepth >= rj2jMaxDepth) {
+                        state.exitReason = jit::ExitSendCached;
+                        break;
+                    }
+
+                    rj2jCalls++;
+
+                    jit::JITMethod* callerJM =
+                        reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                    uint8_t* entryAddr =
+                        reinterpret_cast<uint8_t*>(state.returnValue.rawBits());
+                    jit::JITMethod* calleeJM =
+                        reinterpret_cast<jit::JITMethod*>(
+                            entryAddr - sizeof(jit::JITMethod));
+                    int nArgs = state.sendArgCount;
+
+                    // Advance IP past send bytecode
+                    {
+                        uint8_t sendOp = *state.ip;
+                        if (sendOp >= 0xEA && sendOp <= 0xEB) state.ip += 2;
+                        else state.ip += 1;
+                    }
+
+                    // Save caller state
+                    J2JSave& save = rj2jSaves[rj2jDepth++];
+                    save.sp = state.sp;
+                    save.receiver = state.receiver;
+                    save.tempBase = state.tempBase;
+                    save.ip = state.ip;
+                    save.sendArgCount = nArgs;
+
+                    bool selfRecursive = (callerJM == calleeJM);
+                    int callerNumLits =
+                        static_cast<int>(callerJM->methodHeader & 0x7FFF);
+                    ObjectHeader* callerMethObj =
+                        Oop::fromRawBits(callerJM->compiledMethodOop)
+                            .asObjectPtr();
+                    uint8_t* callerBCStart =
+                        callerMethObj->bytes() + (1 + callerNumLits) * 8;
+
+                    if (__builtin_expect(selfRecursive, 1)) {
+                        save.jitMethod = reinterpret_cast<jit::JITMethod*>(
+                            reinterpret_cast<uintptr_t>(callerJM) | 1ULL);
+                    } else {
+                        save.jitMethod = callerJM;
+                        save.literals = state.literals;
+                        save.argCount = state.argCount;
+                        save.bcStart = callerBCStart;
+                    }
+
+                    // Precompute resume JIT code address
+                    {
+                        uint32_t bcOff =
+                            static_cast<uint32_t>(state.ip - callerBCStart);
+                        uint32_t codeOff = callerJM->codeOffsetForBC(bcOff);
+                        save.resumeAddr =
+                            (codeOff == 0 || codeOff >= callerJM->codeSize)
+                                ? nullptr
+                                : callerJM->codeStart() + codeOff;
+                    }
+
+                    // Stack overflow check
+                    if (__builtin_expect(
+                            frameDepth_ + rj2jDepth >= StackOverflowLimit,
+                            0)) {
+                        rj2jDepth--;
+                        state.exitReason = jit::ExitStackOverflow;
+                        break;
+                    }
+
+                    // Setup callee in JITState
+                    Oop targetMethod = state.cachedTarget;
+                    ObjectHeader* methObj = targetMethod.asObjectPtr();
+                    Oop calleeRecv = state.sp[-(nArgs + 1)];
+                    Oop* fp = state.sp - (nArgs + 1);
+
+                    state.receiver = calleeRecv;
+                    state.tempBase = fp + 1;
+
+                    if (__builtin_expect(!selfRecursive, 0)) {
+                        state.literals = methObj->slots() + 1;
+                        state.argCount = nArgs;
+                        state.jitMethod = calleeJM;
+                    }
+
+                    if (__builtin_expect(selfRecursive, 1)) {
+                        state.ip = callerBCStart;
+                    } else {
+                        int numLits = static_cast<int>(
+                            calleeJM->methodHeader & 0x7FFF);
+                        state.ip = methObj->bytes() + (1 + numLits) * 8;
+                    }
+
+                    // Allocate temps if needed
+                    int totalTemps = calleeJM->tempCount;
+                    if (__builtin_expect(nArgs < totalTemps, 0)) {
+                        Oop nil = memory_.nil();
+                        for (int i = nArgs; i < totalTemps; i++) {
+                            *state.sp = nil;
+                            state.sp++;
+                        }
+                    }
+
+                    JIT_CALL(entryAddr, &state);
+
+                } else {
+                    // --- ExitReturn: pop save, re-enter caller ---
+                    rj2jReturns++;
+                    rj2jDepth--;
+
+                    Oop retVal = state.returnValue;
+                    J2JSave& save = rj2jSaves[rj2jDepth];
+
+                    state.sp = save.sp;
+                    state.receiver = save.receiver;
+                    state.tempBase = save.tempBase;
+
+                    uintptr_t savedJMBits =
+                        reinterpret_cast<uintptr_t>(save.jitMethod);
+                    if (__builtin_expect((savedJMBits & 1) == 0, 0)) {
+                        state.literals = save.literals;
+                        state.jitMethod = save.jitMethod;
+                        state.argCount = save.argCount;
+                        state.ip = save.bcStart;
+                    }
+
+                    // Pop receiver+args, push return value
+                    state.sp[-(save.sendArgCount + 1)] = retVal;
+                    state.sp -= save.sendArgCount;
+
+                    if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
+                        state.ip = save.ip;
+                        state.exitReason = jit::ExitReturn;
+                        break;
+                    }
+
+                    JIT_CALL(save.resumeAddr, &state);
+                }
+
+                // Charge bytecodes for each trampoline iteration
+                if (state.jitMethod) {
+                    auto* jm = reinterpret_cast<jit::JITMethod*>(
+                        reinterpret_cast<uintptr_t>(state.jitMethod)
+                        & ~static_cast<uintptr_t>(1));
+                    checkCountdown_ -= jm->numBytecodes;
+                    g_stepNum += jm->numBytecodes;
+                }
             }
+
 #if defined(__APPLE__) && defined(__arm64__)
-            pthread_jit_write_protect_np(0);
+            pthread_jit_write_protect_np(0);  // JIT zone writable
 #endif
-            // If we exited the trampoline with j2jDepth still > 0 (non-return
-            // exit), materialize remaining saves and bail to interpreter.
-            if (state.j2jDepth > 0) {
+          } // !noResumeJ2J
+
+            // Reconstruct state.method from state.jitMethod
+            if (state.jitMethod) {
+                uintptr_t jmBits =
+                    reinterpret_cast<uintptr_t>(state.jitMethod);
+                jmBits &= ~static_cast<uintptr_t>(1);
+                state.jitMethod =
+                    reinterpret_cast<jit::JITMethod*>(jmBits);
+                state.method = Oop::fromRawBits(
+                    reinterpret_cast<jit::JITMethod*>(jmBits)
+                        ->compiledMethodOop);
+            }
+
+            // Merge stats
+            jitJ2JStencilCalls_ += rj2jCalls + state.j2jTotalCalls;
+            jitJ2JStencilReturns_ += rj2jReturns;
+            checkCountdown_ -= static_cast<int>(rj2jCalls + rj2jReturns) * 10;
+
+            // Materialize remaining J2J saves if trampoline bailed with depth>0
+            if (rj2jDepth > 0) {
                 Oop nil = memory_.nil();
-                for (int i = 0; i < state.j2jDepth; i++) {
+                for (int i = 0; i < rj2jDepth; i++) {
                     if (frameDepth_ >= StackOverflowLimit) break;
-                    J2JSave& save = saves[i];
+                    J2JSave& save = rj2jSaves[i];
                     SavedFrame& frame = savedFrames_[frameDepth_++];
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
+                    uintptr_t jmBits =
+                        reinterpret_cast<uintptr_t>(save.jitMethod);
                     bool isSelfRec = (jmBits & 1) != 0;
-                    jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                        jmBits & ~static_cast<uintptr_t>(1));
-                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
+                    jit::JITMethod* saveJM =
+                        reinterpret_cast<jit::JITMethod*>(
+                            jmBits & ~static_cast<uintptr_t>(1));
+                    Oop saveMethod =
+                        Oop::fromRawBits(saveJM->compiledMethodOop);
                     ObjectHeader* saveMO = saveMethod.asObjectPtr();
-                    int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                    uint8_t* saveBCStart = saveMO->bytes() + (1 + saveNumLits) * 8;
+                    int saveNumLits =
+                        static_cast<int>(saveJM->methodHeader & 0x7FFF);
+                    uint8_t* saveBCStart =
+                        saveMO->bytes() + (1 + saveNumLits) * 8;
                     frame.savedIP = save.ip;
-                    frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                    frame.savedBytecodeEnd =
+                        saveBCStart + saveJM->numBytecodes;
                     frame.savedMethod = saveMethod;
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
@@ -11289,17 +11490,11 @@ void Interpreter::tryJITResumeInCaller() {
                     frame.savedActiveContext = nil;
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
-                    frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                    frame.savedArgCount =
+                        isSelfRec ? saveJM->argCount : save.argCount;
                     frame.homeFrameDepth = SIZE_MAX;
                 }
                 // Sync interpreter state from innermost callee
-                if (state.jitMethod) {
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                    jmBits &= ~static_cast<uintptr_t>(1);
-                    state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
-                    state.method = Oop::fromRawBits(
-                        reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
-                }
                 method_ = state.method;
                 homeMethod_ = state.method;
                 receiver_ = state.receiver;
@@ -11312,17 +11507,13 @@ void Interpreter::tryJITResumeInCaller() {
                     bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                 }
                 jitMaterializeCount_++;
-                jitMaterializeTotalDepth_ += state.j2jDepth;
+                jitMaterializeTotalDepth_ += rj2jDepth;
                 j2jPoolCursor_ = rj2jBase;
-                // Bail to interpreter for non-return exit
                 inJITResume_ = false;
                 return;
             }
-            // Trampoline drained all saves — j2jDepth==0.  The outermost
-            // caller's exit falls through to the normal switch below.
         }
 
-        // Release J2J pool slice (safe: no materialization occurred)
         j2jPoolCursor_ = rj2jBase;
 
         switch (state.exitReason) {
