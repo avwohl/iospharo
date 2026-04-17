@@ -199,7 +199,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         LitVar,             // ^ literal-var N — push association's value from literals[N]
         TempReturn,         // ^ tempN — return argument or local temp
         SendExit,           // push N values + exit with ExitSend (interpreter finishes)
-        SelfSendInlineIC    // ^ self foo — push self + inline IC probe + exit Cached/Send
+        ZeroArgSendInlineIC // ^ <push> foo — 1 push + inline IC probe + Cached/Send
     };
     // SendExit push source (what to push before bailing to interpreter).
     enum class PushSrc { None, Receiver, RecvVar, LitVar, Temp, ImmOop };
@@ -306,13 +306,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (bodyLen >= 3 && b0 == SistaV1::PushReceiver
-                            && SistaV1::isSend0(b1)
-                            && b2 == SistaV1::ReturnTop) {
-        // ^ self foo — push self + emit an inline 6-way IC probe;
-        // on hit exit ExitSendCached, on miss exit ExitSend.  Stays
-        // in native code on the hit path.
-        kind = ReturnKind::SelfSendInlineIC;
+    } else if (bodyLen >= 3 && SistaV1::isSend0(b1)
+                            && b2 == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])) {
+        // ^ <push> foo — 1 push + inline 6-way IC probe; on hit
+        // exit ExitSendCached, on miss exit ExitSend.
+        kind = ReturnKind::ZeroArgSendInlineIC;
+        numPushes = 1;
         sendIPOff = 1;
     } else if (false) {
         // 1-arg send pattern (Push + Push + Send1 + ReturnTop) is
@@ -432,32 +432,59 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
     }
-    case ReturnKind::SelfSendInlineIC: {
-        // ^ self foo — push self + inline IC probe.
+    case ReturnKind::ZeroArgSendInlineIC: {
+        // ^ <push> foo — 1 push + inline IC probe.
         //   hit:  cachedTarget = icData[N*3+1], exitReason = ExitSendCached
         //   miss: cachedTarget left alone, exitReason = ExitSend
         // Both paths set icDataPtr, sendArgCount=0, ip += 1.
-        // We use a shared epilogue and an `exitReason` register to
-        // avoid duplicating the state-flush code.
 
         // Allocate IC buffer (152 bytes) and seed icData[18] with the
-        // send's selector.  The chain loop in Interpreter.cpp reads
-        // the selector from this slot on bail — if it's 0 we get
-        // early-return and the IC never populates.
+        // send's selector.
         icBuffers_.emplace_back(IC_SLOTS, uint64_t{0});
         uint64_t icAddr = reinterpret_cast<uint64_t>(icBuffers_.back().data());
         {
-            // Selector is at literal index (b1 - 0x80) for Send0[N].
             int selIdx = bytes[bcStart + 1] - SistaV1::Send0Base;
             Oop sel = methodObj->slotAt(1 + selIdx);
             icBuffers_.back()[18] = sel.rawBits();
         }
 
-        // Push receiver
-        a64::Gp sp   = cc.new_gp64("sp");
+        // Load the receiver into `recv` per the push source.  recv is
+        // used both as the pushed value and as the lookupKey source.
         a64::Gp recv = cc.new_gp64("recv");
-        cc.ldr(sp,   a64::ptr(statePtr, OFF_SP));
-        cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+        switch (pushes[0].src) {
+        case PushSrc::Receiver:
+            cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+            break;
+        case PushSrc::RecvVar: {
+            a64::Gp recvPtr = cc.new_gp64("recvPtr");
+            cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
+            cc.ldr(recv, a64::ptr(recvPtr, OBJ_SLOT_0 + pushes[0].idx * 8));
+            break;
+        }
+        case PushSrc::LitVar: {
+            a64::Gp litsPtr = cc.new_gp64("litsPtr");
+            a64::Gp assoc   = cc.new_gp64("assoc");
+            cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
+            cc.ldr(assoc,   a64::ptr(litsPtr, pushes[0].idx * 8));
+            cc.ldr(recv,    a64::ptr(assoc, ASSOC_VALUE));
+            break;
+        }
+        case PushSrc::Temp: {
+            a64::Gp tempPtr = cc.new_gp64("tempPtr");
+            cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
+            cc.ldr(recv, a64::ptr(tempPtr, pushes[0].idx * 8));
+            break;
+        }
+        case PushSrc::ImmOop:
+            cc.mov(recv, asmjit::Imm(pushes[0].bits));
+            break;
+        case PushSrc::None:
+            break;
+        }
+
+        // Push recv onto the Smalltalk stack
+        a64::Gp sp = cc.new_gp64("sp");
+        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
         cc.str(recv, a64::ptr(sp));
         cc.add(sp, sp, 8);
         cc.str(sp, a64::ptr(statePtr, OFF_SP));
