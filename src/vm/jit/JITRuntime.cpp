@@ -1363,6 +1363,10 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     // Flush T2 monomorphic IC slots (resolvedBits are stale after compaction)
     flushT2ICs();
 
+    // Flush asmjit-T2 IC buffers too — each T2-compiled send has its own
+    // 152-byte IC storing methodBits Oops that can become stale post-GC.
+    if (tier2Compiler_) tier2Compiler_->flushAllICs();
+
     // Update nil/true/false bits (GC may have moved them)
     updateSpecialOops(memory);
 
