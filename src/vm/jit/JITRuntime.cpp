@@ -1205,7 +1205,7 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
 
     // Validate IC data area is within code zone
     if (jm->numICEntries > 0) {
-        uint32_t icSize = jm->numICEntries * 152;
+        uint32_t icSize = jm->numICEntries * IC_BYTES_PER_SITE;
         uint8_t* icStart = jm->codeStart() + jm->codeSize - icSize;
         if (icStart < codeZone_.rawStart() || icStart + icSize > codeZone_.rawStart() + codeZone_.totalBytes()) {
             fprintf(stderr, "[JIT] BUG: IC data %p outside code zone [%p, %p)\n",
@@ -1289,7 +1289,7 @@ void JITRuntime::flushCaches() {
     // Clear IC entries but preserve selectorBits (slot 18 of each 19-slot IC).
     // selectorBits is written once at compile time and never re-patched,
     // so zeroing it would permanently disable megamorphic cache probes.
-    // Layout per IC site: 6 entries × [key, method, extra] + selectorBits = 19 uint64_t = 152 bytes
+    // Layout per IC site defined by IC_* constants in JITMethod.hpp.
     //
     // Ensure the entire code zone is writable. mprotect operates on pages,
     // so a prior makeExecutable() on one method can leave adjacent methods'
@@ -1302,11 +1302,12 @@ void JITRuntime::flushCaches() {
     while (m) {
         if (m->numICEntries > 0) {
             uint8_t* icStart = m->codeStart() + m->codeSize
-                             - m->numICEntries * 152;
+                             - m->numICEntries * IC_BYTES_PER_SITE;
             for (uint32_t i = 0; i < m->numICEntries; i++) {
-                uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 152);
-                // Zero the 6 IC entries (slots 0-17) but keep slot 18 (selectorBits)
-                std::memset(slots, 0, 18 * sizeof(uint64_t));
+                uint64_t* slots = reinterpret_cast<uint64_t*>(
+                    icStart + i * IC_BYTES_PER_SITE);
+                // Zero the entries but keep selectorBits at IC_SELBITS_SLOT
+                std::memset(slots, 0, IC_SELBITS_SLOT * sizeof(uint64_t));
             }
         }
         m = m->nextInZone;
@@ -1343,8 +1344,8 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         while (m) {
             if (m->numICEntries > 0) {
                 uint8_t* icStart = m->codeStart() + m->codeSize
-                                 - m->numICEntries * 152;
-                std::memset(icStart, 0, m->numICEntries * 152);
+                                 - m->numICEntries * IC_BYTES_PER_SITE;
+                std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
             }
             m = m->nextInZone;
         }

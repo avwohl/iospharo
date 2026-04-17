@@ -1162,9 +1162,6 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
 void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
     // Compute IC data location in the old method.
     // Layout: [JITMethod header][code][bcToCode table][IC data]
-    static constexpr uint32_t IC_ENTRIES_PER_SITE = 6;
-    static constexpr uint32_t IC_BYTES_PER_SITE_LOCAL = IC_ENTRIES_PER_SITE * 24 + 8;
-
     uint32_t bcToCodeTableSize = (oldVersion->numBytecodes + 1) * sizeof(uint32_t);
     uint32_t icDataOff = (oldVersion->bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
 
@@ -1178,7 +1175,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
         if (sendIdx >= oldVersion->numICEntries)
             break;  // more sends than IC slots (shouldn't happen)
 
-        uint8_t* icBase = oldVersion->codeStart() + icDataOff + sendIdx * IC_BYTES_PER_SITE_LOCAL;
+        uint8_t* icBase = oldVersion->codeStart() + icDataOff + sendIdx * IC_BYTES_PER_SITE;
         uint64_t* ic = reinterpret_cast<uint64_t*>(icBase);
 
         // Check monomorphic: slot 0 populated, slot 1 empty
@@ -1693,14 +1690,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             numSendSites++;
     }
 
-    // IC data lives after bcToCode table, 8-byte aligned. Each send site gets
-    // 152 bytes: 6 entries x [uint64_t classKey, uint64_t methodBits, uint64_t extra]
-    // + 8 bytes for selectorBits (used by mega cache probe).
-    // The 'extra' field holds J2J info: high byte = kind (0x80=getter, 0x40=setter),
-    // low 32 bits = slot index. When kind != 0, the send stencil inlines the
-    // field access directly, bypassing the C++ boundary crossing entirely.
-    static constexpr uint32_t IC_ENTRIES_PER_SITE = 6;
-    static constexpr uint32_t IC_BYTES_PER_SITE = IC_ENTRIES_PER_SITE * 24 + 8;
+    // IC data lives after bcToCode table, 8-byte aligned. Each send site's
+    // size comes from IC_BYTES_PER_SITE in JITMethod.hpp. The 'extra' field
+    // holds J2J info: high byte = kind (0x80=getter, 0x40=setter), low 32
+    // bits = slot index. When kind != 0, the send stencil inlines the field
+    // access directly, bypassing the C++ boundary crossing entirely.
     uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     uint32_t totalSize = icDataOffset + icDataSize;
@@ -1757,10 +1751,11 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             while (im) {
                 if (im->numICEntries > 0) {
                     uint8_t* icStart = im->codeStart() + im->codeSize
-                                     - im->numICEntries * 152;
+                                     - im->numICEntries * IC_BYTES_PER_SITE;
                     for (uint32_t i = 0; i < im->numICEntries; i++) {
-                        uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 152);
-                        for (int e = 0; e < 6; e++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(
+                            icStart + i * IC_BYTES_PER_SITE);
+                        for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE; e++) {
                             uint64_t extra = slots[e * 3 + 2];
                             if (!(extra & J2J_BIT)) continue;
                             uint64_t addr = extra & ADDR_MASK;

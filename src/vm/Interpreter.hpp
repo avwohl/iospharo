@@ -2550,25 +2550,28 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                 Oop& selOop = *reinterpret_cast<Oop*>(&m->selectorOop);
                 visitor(selOop);
             }
-            // Visit IC entries: each IC site has 4 entries × [key, method, extra]
-            // + selectorBits = 13 uint64_t = 104 bytes.
-            // key = classIndex (stable, not an Oop)
-            // method = CompiledMethod Oop (needs GC update)
-            // extra = flags + slot/address (not an Oop)
-            // selectorBits = Symbol Oop (needs GC update)
+            // Visit IC entries. Layout from JITMethod.hpp IC_BYTES_PER_SITE:
+            //   [key, method, extra] * IC_ENTRIES_PER_SITE + selectorBits
+            //   key = classIndex (stable, not an Oop)
+            //   method = CompiledMethod Oop (needs GC update)
+            //   extra = flags + slot/address (not an Oop)
+            //   selectorBits = Symbol Oop (needs GC update)
+            // `numICEntries` is the SITE count (yes, misnamed), sized as
+            // numSites * IC_BYTES_PER_SITE in the code zone.
             if (m->numICEntries > 0) {
                 uint8_t* icStart = m->codeStart() + m->codeSize
-                                 - m->numICEntries * 104;
+                                 - m->numICEntries * jit::IC_BYTES_PER_SITE;
                 for (uint32_t i = 0; i < m->numICEntries; i++) {
-                    uint64_t* slots = reinterpret_cast<uint64_t*>(icStart + i * 104);
-                    for (int e = 0; e < 4; e++) {
+                    uint64_t* slots = reinterpret_cast<uint64_t*>(
+                        icStart + i * jit::IC_BYTES_PER_SITE);
+                    for (uint32_t e = 0; e < jit::IC_ENTRIES_PER_SITE; e++) {
                         uint64_t& methodBits = slots[e * 3 + 1];
                         if (methodBits != 0) {
                             Oop& mOop = *reinterpret_cast<Oop*>(&methodBits);
                             visitor(mOop);
                         }
                     }
-                    uint64_t& selBits = slots[12];
+                    uint64_t& selBits = slots[jit::IC_SELBITS_SLOT];
                     if (selBits != 0) {
                         Oop& sOop = *reinterpret_cast<Oop*>(&selBits);
                         visitor(sOop);
