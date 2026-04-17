@@ -315,13 +315,15 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::ZeroArgSendInlineIC;
         numPushes = 1;
         sendIPOff = 1;
-    } else if (false && bodyLen >= 4 && SistaV1::isSend1(b2)
+    } else if (bodyLen >= 4 && SistaV1::isSend1(b2)
                             && bytes[bcStart + 3] == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])
-                            && decodePush(b1, pushes[1])) {
-        // DISABLED: OneArgSendInlineIC induces `#isNumber not
-        // understood by 0x500000003000026` during startup.
-        // Investigation pending.
+                            && decodePush(b1, pushes[1])
+                            && (pushes[0].src == PushSrc::Receiver ||
+                                pushes[0].src == PushSrc::RecvVar)) {
+        // ^ self|instVar foo: <push1> — safer 1-arg send IC forms.
+        // LitVar/Temp/ImmOop as push0 triggered `#isNumber not
+        // understood` DNU during startup; keep those out for now.
         kind = ReturnKind::OneArgSendInlineIC;
         numPushes = 2;
         sendIPOff = 2;
