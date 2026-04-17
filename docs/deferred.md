@@ -20,13 +20,20 @@ as-is, or project-mission work.
 **Effort:** 4-6 hours, 5-file coordinated change.
 **Value:** ~7% per-send improvement. J2JSave shrinks 72→56 bytes.
 
-### A3. IC hit rate investigation
-**Analysis:** `memory/project_ic_hit_rate_investigation.md`.
-**Status:** Diagnostic needed — add mega-cache-hit counter via a new
-stencil HOLE. Run through extract_stencils.py regen.
-**Effort:** ~2 hours for the diagnostic; fix depends on what it shows.
-**Value:** Permute shows 50.6% IC hit with only 51 patches — very
-likely a fixable bug with big upside.
+### A3. IC hit rate investigation — **DIAGNOSTIC LANDED, FIX DEFERRED**
+**Analysis:** `memory/project_ic_hit_rate_investigation.md` +
+`memory/project_ic_selbits_mystery.md`.
+**Status:** Miss-breakdown counters landed (commit b381525). They
+expose a real bug: 100% of miss events report `noSelBits` (icData[18]
+is 0 at runtime). The compile-time write at JITCompiler.cpp:1926 goes
+to a DIFFERENT address than what the stencil reads at runtime — only
+33 compile-time icBase addresses, and the ~4 runtime icData pointers
+sampled don't match any of them. Root cause: `_HOLE_OPERAND2` likely
+resolves to the pool-slot address (one level of indirection wrong).
+**Effort:** ~half day to fix properly — need to inspect the actual
+patched ARM64 code and reconcile the compile-time / runtime icBase
+understanding. Unblocks the megacache fast path.
+**Value:** High — likely ~90% IC hit rate after fix (vs current 50%).
 
 ---
 
