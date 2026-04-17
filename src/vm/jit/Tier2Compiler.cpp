@@ -33,6 +33,7 @@
 #include <vector>
 
 #include <setjmp.h>
+#include <signal.h>
 
 #if PHARO_JIT_ENABLED
 
@@ -52,6 +53,30 @@ static thread_local bool mir_error_active = false;
     }
     // If no jmp_buf is active, abort (shouldn't happen)
     abort();
+}
+
+// SEGV recovery for MIR codegen: some methods hit latent MIR bugs that
+// crash generate_func_code / MIR_link / MIR_gen. Catch the signal,
+// longjmp back to compile(), and return nullptr so the method falls
+// through to T1. The VM's main SEGV handler (sigsegvAction) is
+// restored when the guard exits so unrelated crashes still produce the
+// full diagnostic.
+static thread_local jmp_buf mir_segv_jmp;
+static thread_local bool mir_segv_active = false;
+static thread_local uint64_t mir_segv_method_oop = 0;
+
+static void mir_segv_handler(int sig, siginfo_t* info, void* ctx) {
+    (void)info; (void)ctx;
+    if (mir_segv_active) {
+        mir_segv_active = false;  // prevent re-entry
+        fprintf(stderr, "[T2] SEGV during MIR codegen on method 0x%llx — skipping\n",
+                (unsigned long long)mir_segv_method_oop);
+        fflush(stderr);
+        longjmp(mir_segv_jmp, 1);
+    }
+    // Not ours — re-raise with default action
+    signal(sig, SIG_DFL);
+    raise(sig);
 }
 
 namespace pharo {
@@ -1768,11 +1793,46 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (v >= 0 && v <= 3) optLevel = v;
     }
     MIR_gen_set_optimize_level(mirCtx_, optLevel);
-    MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
+    // DIAG: log the method being compiled so crashes in MIR can be
+    // attributed to a specific CompiledMethod oop. PHARO_T2_COMPILE_TRACE=1.
+    static bool compileTrace = !!getenv("PHARO_T2_COMPILE_TRACE");
+    if (compileTrace) {
+        std::string sel = interp_.memory().selectorOf(compiledMethod);
+        fprintf(stderr, "[T2-COMPILE] #%zu oop=0x%llx sel=#%s numBC=%zu\n",
+                methodsCompiled_ + 1,
+                (unsigned long long)compiledMethod.rawBits(),
+                sel.c_str(), decoded.size());
+        fflush(stderr);
+    }
 
-    void* mirCode = MIR_gen(mirCtx_, mirFunc_);
+    // Guard MIR codegen against latent crashes (seen in
+    // generate_func_code, MIR_link, MIR_gen on specific methods). On
+    // SEGV we longjmp back here and bail the compilation.
+    void* mirCode = nullptr;
+    struct sigaction prevSegv, prevBus;
+    struct sigaction newAction;
+    newAction.sa_sigaction = mir_segv_handler;
+    newAction.sa_flags = SA_SIGINFO | SA_NODEFER;
+    sigemptyset(&newAction.sa_mask);
+    sigaction(SIGSEGV, &newAction, &prevSegv);
+    sigaction(SIGBUS,  &newAction, &prevBus);
+    mir_segv_method_oop = compiledMethod.rawBits();
+    if (setjmp(mir_segv_jmp) == 0) {
+        mir_segv_active = true;
+        MIR_link(mirCtx_, MIR_set_gen_interface, nullptr);
+        mirCode = MIR_gen(mirCtx_, mirFunc_);
+        mir_segv_active = false;
+    } else {
+        // SEGV during codegen — already logged in handler. Tear down
+        // partial MIR state and return nullptr so the caller falls
+        // through to T1 execution for this method.
+        mir_segv_active = false;
+    }
+    sigaction(SIGSEGV, &prevSegv, nullptr);
+    sigaction(SIGBUS,  &prevBus,  nullptr);
     mir_error_active = false;
 
+    // MIR_gen_finish is still safe to call on a torn-down gen context.
     MIR_gen_finish(mirCtx_);
 
     if (!mirCode) {
