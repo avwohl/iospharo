@@ -1,12 +1,19 @@
 # Deferred Issues
 
-Last updated: 2026-04-14 (session 3b: AMS selector fix + new JIT bisect data)
+Last updated: 2026-04-16 (session 23: T2 Permute fix; issue #1 re-confirmed standalone-passing)
 
 Issues that were identified during test-suite runs and deferred rather
 than fixed. Each entry has a hypothesis, what's been ruled out, and a
 concrete next step.
 
 ## 1. Harness SemaphoreTest / valueWithin timing interaction
+
+**Status 2026-04-16 (session 23):** re-confirmed the 3 affected classes
+pass 100% in direct eval (SemaphoreTest 18/18, BlockClosureValueWithinTest
+5/5, BlockClosureValueWithinDurationTest 5/5). Issue is harness-specific
+(P40 fork + GC pauses) as analyzed below. No VM-side fix in scope.
+
+
 
 **Tests affected (10 in total, all pass standalone):**
 
@@ -356,6 +363,20 @@ in <1s because JIT inlines the loop body. Without JIT (deferred
 Reclassify these tests as "JIT-required" or accept the timeout
 class. Real fix is unblocking deferred #4 (JIT eval-mode hang).
 
+**Update (2026-04-16, session 23):** with JIT enabled (PHARO_NO_JIT=0)
+and the bcToEntryState + T2 correctness fixes landed:
+
+    Test                                 Status (60s timeout, JIT on)
+    ProtoObjectTest>>testFastPointersTo  PASS (1/0/0)
+    ProtoObjectTest>>testPointersToCycle PASS (1/0/0)
+    ProtoObjectTest>>testPointersTo      TIMEOUT (>60s)
+    ByteSymbolTest class                 3 pass, 0 fail, 1 err
+
+So most reflection-walk tests are now unblocked by JIT. A few
+(testPointersTo is the biggest one) still exceed 60s due to very
+large heap traversals — those are fundamentally O(heap-size × N).
+Acceptable as a known slow class.
+
 Optional palliatives if pre-JIT progress is wanted:
   - Add a `primitivePointersToAmong:` prim that does the
     `select: [:e | e pointsTo: self]` loop at C++ speed
@@ -367,6 +388,18 @@ Optional palliatives if pre-JIT progress is wanted:
 None of these are pursued — the right fix is JIT.
 
 ## 3. Weak-reference / finalization timing tests
+
+**Status 2026-04-16 (session 23):** re-ran affected classes in eval mode.
+
+    WeakKeyDictionaryTest         206 pass  1 fail  (testClearing)
+    WeakIdentityKeyDictionaryTest 208 pass  1 fail  (testClearing + chain-continues-at-front)
+    WeakAnnouncerTest              32 pass  2 fail  (testWeakObject + testWeakDoubleAnnouncer)
+
+4 residuals (matching the ~5 previously noted). All share the "test
+framework retains references during Smalltalk garbageCollect" pattern —
+not a VM bug. See analysis below.
+
+
 
 **Tests affected (6 known):**
 
@@ -605,7 +638,25 @@ stale Oops from setUp's `keys do:[:n| dict at: n put: n,n]` loop.
 Closes the VM-side investigation of deferred #3. Further work is
 either a test-runner rewrite or a stack-slot scrub primitive.
 
-## 4. JIT eval-mode boot hang (PARTIAL FIX 2026-04-15, still broken at MAX≥10)
+## 4. JIT eval-mode boot hang (session 21 bcToEntryState fix resolved stack overflows; scheduling residual remains)
+
+**Status 2026-04-16 (session 23):** with `PHARO_NO_JIT=0 PHARO_JIT_DEFER=4`
+(the default), `42 printString` eval completes cleanly — 99M bytecode steps,
+no compiled methods (deferred past eval completion). With `PHARO_JIT_DEFER=0`
+(immediate JIT) eval STILL HANGS: 306 methods compile, 97.4% IC hit, but
+`[STARTUP-ST-FIRED]` never fires — stuck in `ProcessorScheduler>>idleProcess`.
+
+So the hang is specifically a **scheduling issue when JIT compilation runs
+during boot/eval handoff**. The workaround of deferring JIT until after
+startup.st fires is sufficient for every non-benchmark workload. Benchmarks
+set `PHARO_JIT_DEFER=0` explicitly and use `PHARO_BENCH` which bypasses
+the startup.st path entirely.
+
+Low priority since the default behavior is correct and performant. Real
+fix requires understanding why JIT'd Morphic methods cause the startup
+process to not get scheduled.
+
+
 
 **PARTIAL (2026-04-15, session 15, commits 6c7658e + ff7159d +
 49caee0).** The session-14d `max:` stack leak is fixed. `PHARO_NO_T2=1
