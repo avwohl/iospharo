@@ -31,14 +31,22 @@ the state after 2026-04-17 session.
     Setter         0x40 + 0xC8-0xCF + 0x58  ivar := arg; ^ self
     Init-const     {0x4D-0x51} + 0xC8-0xCF + 0x58  ivar := const; ^ self
 
-Gated off: any pattern that contains a send.  Tried the "push + exit
-with ExitSend" approach — correctness is fine, but the round-trip to
-the interpreter for each send is ~1.8× slower than T1 staying inline.
-Any real send support needs an inline IC check (6-way probe + direct
-J2J call on hit) — see task #31.
+Sends (partial):
+- **0-arg inline IC** shipped (c94e1ce): `^ <push> foo` emits a
+  real 6-way IC probe in asmjit, exits `ExitSendCached` on hit and
+  `ExitSend` on miss.  ~36% hit rate on yourself-loop workload.
+  Critical fix: seed `icData[18]` with the send's selector at
+  compile time so the chain-loop bail patches the IC (1d575b3).
+- **1-arg inline IC** scaffolding in (gated): intermittent DNU
+  on startup; see task #31 status in
+  memory/project_asmjit_t2_migration.md.
 
-Perf impact today: negligible.  MVP proves the asmjit pipeline;
-coverage doesn't overlap the hot bytecodes.
+Still missing: arith fast paths (task #32), control flow,
+multi-send methods, block activation.
+
+Perf impact today: negligible — T2-compiled methods aren't typically
+on the benchmark hot path.  The inline IC removes per-call C
+round-trip on IC hits but doesn't add coverage.
 
 **Measured perf (prior MIR T2):** JIT was **net-negative** on arith-heavy
 loops (2.5× slower than interpreter at 3M iterations; MIR T2 was 12×
