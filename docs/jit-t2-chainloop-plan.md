@@ -1,98 +1,131 @@
-# T2 Chain-Loop Continuation — Design
+# T2 Chain-Loop Continuation — Refined Design
 
-**Status:** Design-only; not implemented in session 23.
+**Status:** Design-only; not implemented. Commit f279fd4 (T2 always-bail)
+remains in place for correctness. This doc updated session post-A2.
 
 ## Goal
 
-Restore T2's callee-invocation speedup (lost in fix `f279fd4`) while
-preserving the correctness guarantee. Current T2 always bails on sends
-because the callee may do partial side effects before bailing, and the
-interpreter can't safely re-activate.
+Restore T2's callee-invocation speedup (lost in f279fd4) while keeping
+the correctness guarantee. Current T2 always bails on sends because the
+callee may do partial side effects before its own inner send bails, and
+the interpreter can't safely re-activate the whole call chain.
 
-## Design
+## Core idea
 
 When `jit_t2_send`'s callee bails with non-`ExitReturn`:
+1. **Don't restore caller state.** Leave callee's `JITState` intact.
+2. **Push a `SavedFrame`** for the T2 caller onto `savedFrames_`.
+3. **Set a new `ExitReason` — `ExitT2CalleeContinue`** — that tells the
+   interpreter "state is a callee; dispatch from state.ip without
+   re-activating anything."
+4. **Interpreter resumes at callee's current bytecode.** When the callee
+   eventually `returnReceiver`s, the existing `normalReturn` path pops
+   the SavedFrame and restores the caller (also in interpreter mode).
 
-1. **Don't restore caller state.** The callee's `JITState`
-   (`sp`, `receiver`, `tempBase`, `ip`, `method`) is the source of truth
-   for where execution stands.
+## Key simplifications discovered
 
-2. **Push a `SavedFrame` for the T2 caller.** Snapshot enough to
-   restore the caller when the callee's top-level `returnReceiver`
-   eventually fires. Fields to save (parallels J1's chain loop):
-   - `savedIP`   = caller's resume IP (the send bytecode + opcode size)
-   - `savedMethod` = caller's CompiledMethod
-   - `savedReceiver` = caller's receiver
-   - `savedFP` = caller's tempBase - 1
-   - `savedArgCount` = caller's argCount
-   - `savedClosure` = nil (T2 doesn't touch closure yet)
-   - `savedActiveContext` = nil (lazy materialization)
+- **The T1 J2J chain loop already does something similar**: T1 stencils
+  push saves onto `j2jSaveCursor`, the chain loop materializes them to
+  `savedFrames_` on bail. We don't have to build that machinery from
+  scratch; we can co-opt the same materialization path.
+- **After A2 (commit 415d899)**, `save.jitMethod` is the only piece
+  needed to derive `literals`/`argCount`/`bcStart`. So a T2-pushed
+  J2J save with just `jitMethod`, `sp`, `receiver`, `tempBase`, `ip`,
+  `sendArgCount`, `resumeAddr` is all we need — exactly matches the
+  existing 56-byte `J2JSave` struct.
+- **Resume address:** T2 methods use a single entry point + dispatch
+  table keyed on `state.ip`. So `resumeAddr` for a T2 save = the T2
+  method's `codeStart()` — the dispatch table handles the rest.
 
-3. **Set `state.exitReason` to a new value, `ExitResumeCallee`.**
-   The interpreter's dispatch loop recognizes this and, instead of
-   re-activating a callee, continues at `state.ip` (which is the
-   callee's current partial position).
+## Cleanest implementation plan
 
-4. **Update interpreter fields** (`method_`, `ip_`, `framePointer_`,
-   etc.) from the callee's `JITState` before dropping into the main
-   dispatch. This mirrors the `j2jMaterialized` code path
-   (Interpreter.cpp:12898-12914).
+### Step 1: make jit_t2_send push onto the J2J save stack
 
-5. **On the callee's final `returnReceiver`:** the interpreter's
-   existing `normalReturn` path already pops `SavedFrames` and resumes
-   the caller. Nothing new needed.
+Currently `jit_t2_send` sets `j2jSaveCursor = nullptr` before calling
+the callee (disabling the T1 stencil J2J chain). Instead:
 
-## Compared to T1's J2J chain
+- On entry: push a caller-save J2J entry using the SAME format as T1's
+  stencil_sendJ2J does (sp, receiver, tempBase, ip, jitMethod,
+  sendArgCount, resumeAddr = T2 entry).
+- Leave `j2jSaveCursor` pointing PAST that new entry so the callee can
+  push further.
+- On successful callee return (`ExitReturn`): pop our pushed entry,
+  restore sp+retval as before.
+- On bail: DO NOT pop our entry. DO NOT restore caller. Just return
+  with `state.exitReason = ExitSend`. The chain loop will see
+  `state.j2jDepth > 0`, materialize our entry (and any deeper ones
+  the callee pushed) into `savedFrames_`, and continue the callee in
+  interpreter.
 
-T1 already does this pattern via `ExitSendCached` + chain-loop
-materialization. T2 needs to hook into the same materialization path
-but with T2-specific frame metadata.
+### Step 2: handle materialization of T2-style saves
+
+The existing materialization code (`src/vm/Interpreter.cpp` has 3-4
+sites) reads `save.jitMethod` and derives everything. A T2-pushed save
+has the same shape, so nothing changes.
+
+### Step 3: interpreter continues from callee's state
+
+On `ExitSend` with `j2jMaterialized`, the interpreter already syncs
+`method_`/`ip_`/`framePointer_`/`receiver_` from state and continues
+dispatch. Nothing new needed.
+
+### Step 4: ensure resume doesn't re-execute the send
+
+The callee's current `state.ip` is at the SEND BYTECODE that bailed.
+Interpreter will dispatch that bytecode normally — so the send
+happens exactly once (in interpreter), not duplicated.
 
 ## Expected performance
 
-- T2 inline arith fast path (current): unchanged
-- T2 callee send that COMPLETES with ExitReturn: unchanged
-- T2 callee send that BAILS (currently ALWAYS bails in the safe fix):
-  was ~1 interpreter-activation per bail; becomes 1 SavedFrame push +
-  interpreter continuation. Should match T1's cost on the same send.
+- Successful T2-T2 callee return: same as today (ExitReturn fast path).
+- T2-T1 callee that completes: same as today.
+- T2 callee that bails after partial work: goes from "re-activate
+  everything and double-count" (current bug, prevented by always-bail)
+  to "materialize one SavedFrame, continue in interpreter" (fast and
+  correct).
 
-Target: T2 on send-heavy AWFY moves from "slightly slower than T1"
-back to "at least equal, potentially faster via arith fast path
-compounding."
+For send-heavy AWFY (Bounce/Permute/Queens), this removes the primary
+reason T2 = T1 performance. Target: T2 on these benchmarks matches or
+beats T1.
 
-## Files touched (estimated 4)
+## Files touched (estimate 3, ~200 lines)
 
-1. `src/vm/jit/JITRuntime.cpp` — `jit_t2_send` fallback path
-2. `src/vm/Interpreter.cpp` — new `ExitResumeCallee` handler +
-   SavedFrame push helper
-3. `src/vm/Interpreter.hpp` — helper declarations
-4. `src/vm/jit/JITState.hpp` — new `ExitReason` enum value
+1. `src/vm/jit/JITRuntime.cpp` — `jit_t2_send`: push J2J save at entry,
+   pop on fast-path return, skip pop on bail.
+2. `src/vm/Interpreter.cpp` — verify the existing chain-loop
+   materialization handles a T2-style save correctly (likely yes, it
+   already uses `save.jitMethod` and derives).
+3. `src/vm/jit/JITState.hpp` — probably no changes (can reuse ExitSend).
 
 ## Gotchas
 
-- The callee might have pushed temps beyond its receiver/args window
-  (stack layout between caller's flushed args and callee's locals is
-  continuous). Interpreter's frame conventions assume `framePointer_`
-  points to the SAVED FP slot. Verify this matches `state.tempBase - 1`
-  convention T2 uses.
-- GC roots: during interpreter takeover, `savedFrames_[]` and
-  `activeContext_` are the GC roots. The SavedFrame push must include
-  all oop fields the caller holds.
-- Nested T2 bails: if a T2 callee calls another T2 that also bails,
-  we'd need to unwind multiple SavedFrame pushes. The materialization
-  code handles this for T1 (`j2jDepth` counts).
+- **j2jSaveCursor ownership:** T2 needs a place to write its save. The
+  existing `j2jPool_` in `Interpreter` is sized for T1 J2J chains; T2
+  can use the same pool. Just don't set cursor to nullptr.
+- **GC roots:** SavedFrames_ is a GC root. J2JSave pushed by
+  jit_t2_send must have all oop fields (receiver, jitMethod→
+  compiledMethod) GC-reachable. Already handled via the J2JSave struct.
+- **Yield / preemption during callee:** callee might yield mid-bail.
+  The saved frame is already in the pool so it survives.
+- **Non-local returns from callee:** if the callee does a block return
+  up past the T2 caller, the saved frame needs to be unwound too.
+  The existing `returnFromMethod` + `popFrame` handles SavedFrame
+  stack already — should just work if we use the same
+  mechanism.
 
 ## Estimated effort
 
-Probably 1-2 days:
-- Day 1: hook jit_t2_send into SavedFrame push, add ExitResumeCallee,
-  get Permute returning true with callee running partial work.
-- Day 2: iron out edge cases (nested bails, non-local returns, GC
-  triggered mid-callee).
+- Implementation: 4-6 hours with testing.
+- Verification: full AWFY pass to confirm no regressions.
+- Highest risk: the T2 caller's `state.ip` needs to be set correctly
+  so that on return from callee, the caller resumes at post-send.
+  `jit_t2_send` already sets `state.ip = bcBase + bcOffset` via
+  emitSendCall; the caller's resumeAddr = T2 entry uses state.ip to
+  dispatch to the matching resume label.
 
-## Why deferred in session 23
+## Why still deferred
 
-The f279fd4 correctness fix already prevents the bug. T2 currently
-matches T1 performance, which is good enough to not block any
-feature. Perf recovery via chain-loop is a pure optimization.
-Implementing it carefully needs a longer uninterrupted session.
+This session did A3 (diag) + A2 (J2J shrink) + wanted to do this too,
+but A1 needs a real code change across jit_t2_send + verification, and
+the time box was used up on A2. The plan is now concrete enough that a
+future session can pick it up directly.
