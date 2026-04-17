@@ -20,18 +20,25 @@ the state after 2026-04-17 session.
 
 **Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
 
-**asmjit T2 coverage (~4.5% of candidates):**
+**asmjit T2 coverage (~5-15% of candidates depending on workload):**
 
     Return-only    0x58/59/5A/5B            ^ self/true/false/nil
     Push-return    0x4C-0x4F + 0x5C         ^ self/true/false/nil (2-byte)
     Push-return    0x50/0x51 + 0x5C         ^ 0 / ^ 1
     Push-return    0x20-0x3F + 0x5C         ^ literal[N]
+    Push-return    0x10-0x1F + 0x5C         ^ globalVar                    (assoc.value)
     Getter         0x00-0x0F + 0x5C         ^ instVar[N]
     Setter         0x40 + 0xC8-0xCF + 0x58  ivar := arg; ^ self
+    Init-const     {0x4D-0x51} + 0xC8-0xCF + 0x58  ivar := const; ^ self
 
-Everything else bails to T1.  No sends, no arith fast paths, no control
-flow yet.  Perf impact: negligible (MVP proves the pipeline; coverage
-doesn't overlap the hot bytecodes).
+Gated off: any pattern that contains a send.  Tried the "push + exit
+with ExitSend" approach — correctness is fine, but the round-trip to
+the interpreter for each send is ~1.8× slower than T1 staying inline.
+Any real send support needs an inline IC check (6-way probe + direct
+J2J call on hit) — see task #31.
+
+Perf impact today: negligible.  MVP proves the asmjit pipeline;
+coverage doesn't overlap the hot bytecodes.
 
 **Measured perf (prior MIR T2):** JIT was **net-negative** on arith-heavy
 loops (2.5× slower than interpreter at 3M iterations; MIR T2 was 12×
