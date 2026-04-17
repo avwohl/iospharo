@@ -202,7 +202,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         ZeroArgSendInlineIC,// ^ <push> foo — 1 push + inline IC probe + Cached/Send
         OneArgSendInlineIC, // ^ <push0> foo: <push1> — 2 pushes + inline IC probe
         IntArithAddReturn,  // ^ <push0> + <push1> — SmallInt fast path (+ only)
-        IntArithSubReturn   // ^ <push0> - <push1> — SmallInt fast path (- only)
+        IntArithSubReturn,  // ^ <push0> - <push1> — SmallInt fast path (- only)
+        IntAccumRecvVar     // ivar[M] := ivar[M] +/- <push1>; ^ self  (SmallInt)
     };
     int arithOp = 0;           // 0x60 (+) or 0x61 (-) for IntArith* kinds
     // SendExit push source (what to push before bailing to interpreter).
@@ -318,6 +319,20 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::ZeroArgSendInlineIC;
         numPushes = 1;
         sendIPOff = 1;
+    } else if (bodyLen >= 5 && SistaV1::isPushRecvVar(b0)
+                            && (b2 == 0x60 || b2 == 0x61)
+                            && SistaV1::isPopStoreRecv(bytes[bcStart + 3])
+                            && bytes[bcStart + 4] == SistaV1::ReturnReceiver
+                            && decodePush(b1, pushes[1])
+                            && (b0 - SistaV1::PushRecvVarBase)
+                                 == (bytes[bcStart + 3] - SistaV1::PopStoreRecvBase)) {
+        // ivar[M] := ivar[M] +/- <push1>; ^ self
+        // PushRecvVar M; <push1>; Arith(+/-); PopStoreRecvVar M; ReturnReceiver
+        // (5 bytes).  The push/store indices must match — same instVar.
+        kind = ReturnKind::IntAccumRecvVar;
+        recvVarIndex = b0 - SistaV1::PushRecvVarBase;
+        arithOp = b2;
+        // numPushes not used; emission reads pushes[1] directly.
     } else if (bodyLen >= 4 && (b2 == 0x60 || b2 == 0x61)
                             && bytes[bcStart + 3] == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])
@@ -459,6 +474,130 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
         cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
+    }
+    case ReturnKind::IntAccumRecvVar: {
+        // ivar[M] := ivar[M] +/- <push1>; ^ self.
+        // Fast path: tag-check both, do tagged add/sub with overflow,
+        // store back to ivar[M], return receiver.  Bail path: emit
+        // the original sequence's equivalent by setting up state and
+        // exiting ExitSend at the arith byte.
+        auto loadPush = [&](const Push& p) -> a64::Gp {
+            a64::Gp v = cc.new_gp64("pv");
+            switch (p.src) {
+            case PushSrc::Receiver:
+                cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER));
+                break;
+            case PushSrc::RecvVar: {
+                a64::Gp rp = cc.new_gp64("rp");
+                cc.ldr(rp, a64::ptr(statePtr, OFF_RECEIVER));
+                cc.ldr(v, a64::ptr(rp, OBJ_SLOT_0 + p.idx * 8));
+                break;
+            }
+            case PushSrc::Temp: {
+                a64::Gp tp = cc.new_gp64("tp");
+                cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+                cc.ldr(v, a64::ptr(tp, p.idx * 8));
+                break;
+            }
+            case PushSrc::ImmOop:
+                cc.mov(v, asmjit::Imm(p.bits));
+                break;
+            case PushSrc::LitVar: {
+                a64::Gp lp = cc.new_gp64("lp");
+                a64::Gp as = cc.new_gp64("as");
+                cc.ldr(lp, a64::ptr(statePtr, OFF_LITERALS));
+                cc.ldr(as, a64::ptr(lp, p.idx * 8));
+                cc.ldr(v,  a64::ptr(as, ASSOC_VALUE));
+                break;
+            }
+            case PushSrc::None:
+                break;
+            }
+            return v;
+        };
+
+        // Load receiver pointer + current ivar value.
+        a64::Gp recvPtr = cc.new_gp64("recvPtr");
+        cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
+        int slotOff = OBJ_SLOT_0 + recvVarIndex * 8;
+        a64::Gp a = cc.new_gp64("a");
+        cc.ldr(a, a64::ptr(recvPtr, slotOff));
+        a64::Gp b = loadPush(pushes[1]);
+
+        Label lblBail = cc.new_label();
+        Label lblDone = cc.new_label();
+
+        a64::Gp aTag = cc.new_gp64("aTag");
+        cc.and_(aTag, a, asmjit::Imm(0x7));
+        cc.cmp(aTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+        a64::Gp bTag = cc.new_gp64("bTag");
+        cc.and_(bTag, b, asmjit::Imm(0x7));
+        cc.cmp(bTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+
+        a64::Gp result = cc.new_gp64("result");
+        if (arithOp == 0x60) {
+            a64::Gp tmp = cc.new_gp64("tmp");
+            cc.sub(tmp, a, asmjit::Imm(1));
+            cc.adds(result, tmp, b);
+        } else {
+            a64::Gp tmp = cc.new_gp64("tmp");
+            cc.subs(tmp, a, b);
+            cc.add(result, tmp, asmjit::Imm(1));
+        }
+        cc.b_vs(lblBail);
+
+        // Store back to ivar[M].
+        cc.str(result, a64::ptr(recvPtr, slotOff));
+        // Return receiver.
+        cc.str(recvPtr, a64::ptr(statePtr, OFF_RETVAL));
+        a64::Gp exitOk = cc.new_gp32("exitOk");
+        cc.mov(exitOk, EXIT_RETURN);
+        cc.str(exitOk, a64::ptr(statePtr, OFF_EXIT));
+        cc.b(lblDone);
+
+        // Bail path: restore the original bytecode's stack state and
+        // let the interpreter re-run from PushRecvVar.  Since we
+        // haven't pushed anything in the fast path, just set ip back
+        // to bcStart and exit ExitSend... actually simpler: push a and
+        // b, set ip to the arith byte, sendArgCount=1, ExitSend.  The
+        // interpreter will see <a> <b> on stack and dispatch the
+        // arith send, then the PopStore + Return will follow in
+        // interpreter mode.  Wait — on ExitSend the interpreter
+        // dispatches the send bytecode at state.ip, consuming 2 stack
+        // items.  But then PopStoreRecvVar would run AFTER on its
+        // own.  So the flow works: send pops+pushes result, PopStore
+        // stores and pops, Return fires.
+        cc.bind(lblBail);
+        a64::Gp sp = cc.new_gp64("sp");
+        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
+        cc.str(a, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(b, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+        a64::Gp ip = cc.new_gp64("ip");
+        cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+        cc.add(ip, ip, 2);  // arith bytecode is at bcStart+2
+        cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+        a64::Gp w1 = cc.new_gp32("w1");
+        cc.mov(w1, 1);
+        cc.str(w1, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+        a64::Gp zero64 = cc.new_gp64("zero64");
+        cc.mov(zero64, 0);
+        cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+        a64::Gp exitBail = cc.new_gp32("exitBail");
+        cc.mov(exitBail, EXIT_SEND);
+        cc.str(exitBail, a64::ptr(statePtr, OFF_EXIT));
+
+        cc.bind(lblDone);
+        cc.end_func();
+        goto emitted;
     }
     case ReturnKind::IntArithAddReturn:
     case ReturnKind::IntArithSubReturn: {
