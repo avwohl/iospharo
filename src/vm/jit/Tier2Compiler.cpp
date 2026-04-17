@@ -199,7 +199,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         LitVar,             // ^ literal-var N — push association's value from literals[N]
         TempReturn,         // ^ tempN — return argument or local temp
         SendExit,           // push N values + exit with ExitSend (interpreter finishes)
-        ZeroArgSendInlineIC // ^ <push> foo — 1 push + inline IC probe + Cached/Send
+        ZeroArgSendInlineIC,// ^ <push> foo — 1 push + inline IC probe + Cached/Send
+        OneArgSendInlineIC  // ^ <push0> foo: <push1> — 2 pushes + inline IC probe
     };
     // SendExit push source (what to push before bailing to interpreter).
     enum class PushSrc { None, Receiver, RecvVar, LitVar, Temp, ImmOop };
@@ -314,6 +315,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::ZeroArgSendInlineIC;
         numPushes = 1;
         sendIPOff = 1;
+    } else if (false && bodyLen >= 4 && SistaV1::isSend1(b2)
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // DISABLED: induces `#isNumber not understood` DNU on
+        // receiver with invalid tag 0x...26.  The IC logic looks
+        // correct on paper (receiver/arg push order, sendArgCount=1,
+        // ip += 2) — still investigating.  May be an asmjit register
+        // aliasing bug with multiple loads through the same base.
+        kind = ReturnKind::OneArgSendInlineIC;
+        numPushes = 2;
+        sendIPOff = 2;
     } else if (false) {
         // 1-arg send pattern (Push + Push + Send1 + ReturnTop) is
         // correct by construction but the push+exit+resume-to-C
@@ -432,61 +445,75 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
     }
-    case ReturnKind::ZeroArgSendInlineIC: {
-        // ^ <push> foo — 1 push + inline IC probe.
+    case ReturnKind::ZeroArgSendInlineIC:
+    case ReturnKind::OneArgSendInlineIC: {
+        // ^ <push0> [foo: <push1>] — 1 or 2 pushes + inline IC probe.
         //   hit:  cachedTarget = icData[N*3+1], exitReason = ExitSendCached
         //   miss: cachedTarget left alone, exitReason = ExitSend
-        // Both paths set icDataPtr, sendArgCount=0, ip += 1.
+        // Both paths set icDataPtr, sendArgCount=(numPushes-1), ip += sendIPOff.
 
         // Allocate IC buffer (152 bytes) and seed icData[18] with the
-        // send's selector.
+        // send's selector.  Send byte is at bcStart + (numPushes-1);
+        // for Send0 base is 0x80, for Send1 base is 0x90.
+        int sendByteOff = sendIPOff;  // offset of the send byte
+        uint8_t sendOp = bytes[bcStart + sendByteOff];
+        uint8_t sendBase = (numPushes == 1) ? SistaV1::Send0Base
+                                            : SistaV1::Send1Base;
+        int selIdx = sendOp - sendBase;
+
         icBuffers_.emplace_back(IC_SLOTS, uint64_t{0});
         uint64_t icAddr = reinterpret_cast<uint64_t>(icBuffers_.back().data());
-        {
-            int selIdx = bytes[bcStart + 1] - SistaV1::Send0Base;
-            Oop sel = methodObj->slotAt(1 + selIdx);
-            icBuffers_.back()[18] = sel.rawBits();
-        }
+        icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
 
-        // Load the receiver into `recv` per the push source.  recv is
-        // used both as the pushed value and as the lookupKey source.
-        a64::Gp recv = cc.new_gp64("recv");
-        switch (pushes[0].src) {
-        case PushSrc::Receiver:
-            cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
-            break;
-        case PushSrc::RecvVar: {
-            a64::Gp recvPtr = cc.new_gp64("recvPtr");
-            cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
-            cc.ldr(recv, a64::ptr(recvPtr, OBJ_SLOT_0 + pushes[0].idx * 8));
-            break;
-        }
-        case PushSrc::LitVar: {
-            a64::Gp litsPtr = cc.new_gp64("litsPtr");
-            a64::Gp assoc   = cc.new_gp64("assoc");
-            cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
-            cc.ldr(assoc,   a64::ptr(litsPtr, pushes[0].idx * 8));
-            cc.ldr(recv,    a64::ptr(assoc, ASSOC_VALUE));
-            break;
-        }
-        case PushSrc::Temp: {
-            a64::Gp tempPtr = cc.new_gp64("tempPtr");
-            cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
-            cc.ldr(recv, a64::ptr(tempPtr, pushes[0].idx * 8));
-            break;
-        }
-        case PushSrc::ImmOop:
-            cc.mov(recv, asmjit::Imm(pushes[0].bits));
-            break;
-        case PushSrc::None:
-            break;
-        }
+        // Helper to load a Push value into a register.
+        auto loadPush = [&](const Push& p) -> a64::Gp {
+            a64::Gp v = cc.new_gp64("pushV");
+            switch (p.src) {
+            case PushSrc::Receiver:
+                cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER));
+                break;
+            case PushSrc::RecvVar: {
+                a64::Gp rp = cc.new_gp64("rp");
+                cc.ldr(rp, a64::ptr(statePtr, OFF_RECEIVER));
+                cc.ldr(v, a64::ptr(rp, OBJ_SLOT_0 + p.idx * 8));
+                break;
+            }
+            case PushSrc::LitVar: {
+                a64::Gp lp = cc.new_gp64("lp");
+                a64::Gp as = cc.new_gp64("as");
+                cc.ldr(lp, a64::ptr(statePtr, OFF_LITERALS));
+                cc.ldr(as, a64::ptr(lp, p.idx * 8));
+                cc.ldr(v,  a64::ptr(as, ASSOC_VALUE));
+                break;
+            }
+            case PushSrc::Temp: {
+                a64::Gp tp = cc.new_gp64("tp");
+                cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+                cc.ldr(v, a64::ptr(tp, p.idx * 8));
+                break;
+            }
+            case PushSrc::ImmOop:
+                cc.mov(v, asmjit::Imm(p.bits));
+                break;
+            case PushSrc::None:
+                break;
+            }
+            return v;
+        };
 
-        // Push recv onto the Smalltalk stack
+        // Load receiver (push0) — used for both push and IC key.
+        a64::Gp recv = loadPush(pushes[0]);
+
+        // Push receiver + any args onto the Smalltalk stack.
         a64::Gp sp = cc.new_gp64("sp");
         cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
         cc.str(recv, a64::ptr(sp));
         cc.add(sp, sp, 8);
+        if (numPushes >= 2) {
+            a64::Gp a = loadPush(pushes[1]);
+            cc.str(a, a64::ptr(sp));
+            cc.add(sp, sp, 8);
+        }
         cc.str(sp, a64::ptr(statePtr, OFF_SP));
 
         // Compute lookupKey
@@ -562,7 +589,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.bind(lblEpi);
         cc.str(icData, a64::ptr(statePtr, OFF_ICDATAPTR));
         a64::Gp w0 = cc.new_gp32("argCount");
-        cc.mov(w0, 0);
+        cc.mov(w0, numPushes - 1);   // 0-arg send = 0, 1-arg send = 1
         cc.str(w0, a64::ptr(statePtr, OFF_SENDARGCOUNT));
         a64::Gp ip = cc.new_gp64("ip");
         cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
