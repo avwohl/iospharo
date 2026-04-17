@@ -1753,8 +1753,16 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     MIR_load_external(mirCtx_, "jit_t2_send", reinterpret_cast<void*>(jit_t2_send));
 
     MIR_gen_init(mirCtx_);
-    // DIAGNOSTIC: PHARO_T2_OPT=0|1|2|3 overrides default optimization level.
-    int optLevel = 2;
+    // Default MIR optimize level is 1, not 2. At level 2+ the MIR register
+    // allocator's live-range analysis miscompiles our tagged-integer
+    // arithmetic — specifically the ADDO/SUBO/MULO + tag-bit slotted
+    // sequences and the cmp→trueOop/falseOop select pattern. Crashes
+    // reproduce at T2_LIMIT=9 and 81+ on `t2_minimal.st` with OPT=2, clean
+    // at OPT=0/1.  Op-bisect (PHARO_T2_NO_ARITH_OPS=1 or 2 or 3 clears it)
+    // pointed at the arith fast path; level-bisect narrowed to OPT=2+.
+    // PHARO_T2_OPT=0|1|2|3 lets callers opt in higher levels for
+    // benchmarking — at your own risk on send-heavy workloads.
+    int optLevel = 1;
     if (const char* e = getenv("PHARO_T2_OPT")) {
         int v = atoi(e);
         if (v >= 0 && v <= 3) optLevel = v;
