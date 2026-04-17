@@ -168,17 +168,50 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop,
         InitRecvVar,        // push constant, pop into recvVar, return self
         LitVar,             // ^ literal-var N — push association's value from literals[N]
-        SendZeroArg         // ^ <push> foo — push value + exit with ExitSend
+        SendExit            // push N values + exit with ExitSend (interpreter finishes)
     };
-    // SendZeroArg push source (what to push before bailing to interpreter).
-    enum class PushSrc { None, Receiver, RecvVar, LitVar };
+    // SendExit push source (what to push before bailing to interpreter).
+    enum class PushSrc { None, Receiver, RecvVar, LitVar, Temp, ImmOop };
+
+    struct Push {
+        PushSrc  src  = PushSrc::None;
+        int      idx  = 0;        // recvVar / litVar / temp index
+        uint64_t bits = 0;        // ImmOop raw bits (literals pre-fetched at compile time)
+    };
 
     ReturnKind kind;
     uint64_t immBits = 0;      // ImmediateOop / NilImm / InitRecvVar value
-    int recvVarIndex = 0;      // RecvVar / SetterRecvVar / InitRecvVar / push src
-    int litIndex     = 0;      // LitVar / push src
-    int sendIPOff    = 0;      // SendZeroArg: byte offset of the send bytecode
-    PushSrc pushSrc  = PushSrc::None;  // SendZeroArg
+    int recvVarIndex = 0;      // RecvVar / SetterRecvVar / InitRecvVar
+    int litIndex     = 0;      // LitVar
+    int sendIPOff    = 0;      // SendExit: byte offset of the send/arith bytecode
+    Push pushes[2];            // SendExit: up to 2 values to push
+    int numPushes    = 0;
+
+    // Helper: decode a single-byte "push" bytecode into a Push entry.
+    // Returns true on success, false if `op` isn't a supported push.
+    auto decodePush = [&](uint8_t op, Push& p) -> bool {
+        if (op == SistaV1::PushReceiver)  { p.src = PushSrc::Receiver; return true; }
+        if (op == SistaV1::PushTrue)      { p.src = PushSrc::ImmOop;
+            p.bits = memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits(); return true; }
+        if (op == SistaV1::PushFalse)     { p.src = PushSrc::ImmOop;
+            p.bits = memory_.specialObject(SpecialObjectIndex::FalseObject).rawBits(); return true; }
+        if (op == SistaV1::PushNil)       { p.src = PushSrc::ImmOop;
+            p.bits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits(); return true; }
+        if (op == SistaV1::PushZero)      { p.src = PushSrc::ImmOop;
+            p.bits = Oop::fromSmallInteger(0).rawBits(); return true; }
+        if (op == SistaV1::PushOne)       { p.src = PushSrc::ImmOop;
+            p.bits = Oop::fromSmallInteger(1).rawBits(); return true; }
+        if (SistaV1::isPushRecvVar(op))   { p.src = PushSrc::RecvVar;
+            p.idx = op - SistaV1::PushRecvVarBase; return true; }
+        if (SistaV1::isPushLitVar(op))    { p.src = PushSrc::LitVar;
+            p.idx = op - SistaV1::PushLitVarBase; return true; }
+        if (SistaV1::isPushLitConst(op))  { p.src = PushSrc::ImmOop;
+            p.bits = methodObj->slotAt(1 + (op - SistaV1::PushLitConstBase)).rawBits();
+            return true; }
+        if (SistaV1::isPushTemp(op))      { p.src = PushSrc::Temp;
+            p.idx = op - SistaV1::PushTempBase; return true; }
+        return false;
+    };
 
     if (b0 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::Receiver;
@@ -237,29 +270,24 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (bodyLen >= 3 && b0 == SistaV1::PushReceiver
-                            && SistaV1::isSend0(b1)
-                            && b2 == SistaV1::ReturnTop) {
-        // ^ self foo — push self, then let the interpreter dispatch.
-        kind = ReturnKind::SendZeroArg;
-        pushSrc = PushSrc::Receiver;
+    } else if (bodyLen >= 3 && SistaV1::isSend0(b1)
+                            && b2 == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])) {
+        // ^ <push> foo — one push + 0-arg send + return top.
+        kind = ReturnKind::SendExit;
+        numPushes = 1;
         sendIPOff = 1;
-    } else if (bodyLen >= 3 && SistaV1::isPushRecvVar(b0)
-                            && SistaV1::isSend0(b1)
-                            && b2 == SistaV1::ReturnTop) {
-        // ^ instVar foo
-        kind = ReturnKind::SendZeroArg;
-        pushSrc = PushSrc::RecvVar;
-        recvVarIndex = b0 - SistaV1::PushRecvVarBase;
-        sendIPOff = 1;
-    } else if (bodyLen >= 3 && SistaV1::isPushLitVar(b0)
-                            && SistaV1::isSend0(b1)
-                            && b2 == SistaV1::ReturnTop) {
-        // ^ GlobalName foo
-        kind = ReturnKind::SendZeroArg;
-        pushSrc = PushSrc::LitVar;
-        litIndex = b0 - SistaV1::PushLitVarBase;
-        sendIPOff = 1;
+    } else if (bodyLen >= 4 && (SistaV1::isSend1(b2)
+                                 || SistaV1::isArithSelector(b2)
+                                 || SistaV1::isSpecialSelector(b2))
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // ^ <push0> <op> <push1> — two pushes + 1-arg send/arith + return.
+        // Covers `^ self + arg`, `^ self foo: arg`, etc.
+        kind = ReturnKind::SendExit;
+        numPushes = 2;
+        sendIPOff = 2;
     } else if (bodyLen >= 3 && SistaV1::isPopStoreRecv(b1)
                             && b2 == SistaV1::ReturnReceiver
                             && (b0 == SistaV1::PushZero
@@ -362,41 +390,49 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop,  a64::ptr(assoc, ASSOC_VALUE));
         break;
     }
-    case ReturnKind::SendZeroArg: {
-        // ^ <push> foo — push value, then bail to interpreter at the
-        // send bytecode.  State flush:
-        //   *sp++ = value;
-        //   state.ip += sendIPOff;
-        //   state.sendArgCount = 0;
-        //   state.icDataPtr    = nullptr;
-        //   state.exitReason   = ExitSend;
-        a64::Gp pushVal = cc.new_gp64("pushVal");
-        switch (pushSrc) {
-        case PushSrc::Receiver:
-            cc.ldr(pushVal, a64::ptr(statePtr, OFF_RECEIVER));
-            break;
-        case PushSrc::RecvVar: {
-            a64::Gp recvPtr = cc.new_gp64("recvPtr");
-            cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
-            cc.ldr(pushVal, a64::ptr(recvPtr, OBJ_SLOT_0 + recvVarIndex * 8));
-            break;
-        }
-        case PushSrc::LitVar: {
-            a64::Gp litsPtr = cc.new_gp64("litsPtr");
-            a64::Gp assoc   = cc.new_gp64("assoc");
-            cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
-            cc.ldr(assoc,   a64::ptr(litsPtr, litIndex * 8));
-            cc.ldr(pushVal, a64::ptr(assoc, ASSOC_VALUE));
-            break;
-        }
-        case PushSrc::None:
-            break;
-        }
-
+    case ReturnKind::SendExit: {
+        // Push 1 or 2 values, advance state.ip to the send/arith byte,
+        // clear IC + sendArgCount, exit with ExitSend.  The interpreter
+        // resumes at the send bytecode, dispatches it, then executes the
+        // trailing ReturnTop.
         a64::Gp sp = cc.new_gp64("sp");
         cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
-        cc.str(pushVal, a64::ptr(sp));
-        cc.add(sp, sp, 8);
+        for (int i = 0; i < numPushes; i++) {
+            const Push& p = pushes[i];
+            a64::Gp v = cc.new_gp64("pushV");
+            switch (p.src) {
+            case PushSrc::Receiver:
+                cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER));
+                break;
+            case PushSrc::ImmOop:
+                cc.mov(v, asmjit::Imm(p.bits));
+                break;
+            case PushSrc::RecvVar: {
+                a64::Gp recvPtr = cc.new_gp64("recvPtr");
+                cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
+                cc.ldr(v, a64::ptr(recvPtr, OBJ_SLOT_0 + p.idx * 8));
+                break;
+            }
+            case PushSrc::LitVar: {
+                a64::Gp litsPtr = cc.new_gp64("litsPtr");
+                a64::Gp assoc   = cc.new_gp64("assoc");
+                cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
+                cc.ldr(assoc,   a64::ptr(litsPtr, p.idx * 8));
+                cc.ldr(v,       a64::ptr(assoc, ASSOC_VALUE));
+                break;
+            }
+            case PushSrc::Temp: {
+                a64::Gp tempPtr = cc.new_gp64("tempPtr");
+                cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
+                cc.ldr(v, a64::ptr(tempPtr, p.idx * 8));
+                break;
+            }
+            case PushSrc::None:
+                break;
+            }
+            cc.str(v, a64::ptr(sp));
+            cc.add(sp, sp, 8);
+        }
         cc.str(sp, a64::ptr(statePtr, OFF_SP));
 
         a64::Gp ip = cc.new_gp64("ip");
