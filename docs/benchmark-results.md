@@ -33,9 +33,16 @@ Key findings:
 - T2 on and interpreter produce the same timings for every
   micro-benchmark. The JIT is not accelerating these code paths.
 - tinyBenchmarks hangs with JIT enabled; completes cleanly in
-  interpreter-only mode. Likely a specific bytecode pattern or
-  a deep recursion T2 / chain-loop bug that only fires inside
-  tinyBench's measurement loop.
+  interpreter-only mode. Root cause: not a JIT bug per se — the VM
+  completes most of the benchmark (9.5B bytecode steps in 90s) then
+  the scheduler stops making progress, stuck in ProcessorScheduler
+  whileTrue: waiting for a timer. Unclear interaction with T2 IC
+  patching or chain-loop state. Distinct from the crashes we fixed.
+- Latent MIR codegen crashes: specific methods (e.g. #position:)
+  trigger SIGSEGV inside MIR's generate_func_code / MIR_link.
+  Worked around with a signal-guarded compile wrapper (commit
+  9ffa5f7); those methods fall through to T1 instead of crashing
+  the whole VM. Affected method count is small (seen once per run).
 - Bytecode throughput in pure-interpreter mode (303M/sec) is already
   4× Cog's (77M/sec). Send throughput is 232× worse. The gap is
   almost entirely in method dispatch, not bytecode execution.
