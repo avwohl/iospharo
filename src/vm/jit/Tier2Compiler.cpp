@@ -43,11 +43,17 @@ namespace {
 // JITState field offsets (mirror JITState.hpp; keep these in sync).
 constexpr int OFF_SP        = 0;
 constexpr int OFF_RECEIVER  = 8;
+constexpr int OFF_LITERALS  = 16;
 constexpr int OFF_TEMPBASE  = 24;
 constexpr int OFF_EXIT      = 76;
 constexpr int OFF_RETVAL    = 80;
 constexpr int OFF_TRUEOOP   = 128;
 constexpr int OFF_FALSEOOP  = 136;
+
+// Oop object layout: ObjectHeader is 8 bytes, slots follow at offset 8.
+// So slot[N] is at byte offset 8 + N*8 from the object pointer.
+constexpr int OBJ_SLOT_0    = 8;
+constexpr int ASSOC_VALUE   = 16;  // Association.value = slot[1]
 
 // ExitReason values (mirror JITState.hpp).
 constexpr int EXIT_RETURN = 1;
@@ -156,11 +162,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     enum class ReturnKind {
         Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop,
-        InitRecvVar       // push constant, pop into recvVar, return self
+        InitRecvVar,      // push constant, pop into recvVar, return self
+        LitVar            // ^ literal-var N — push association's value from literals[N]
     };
     ReturnKind kind;
     uint64_t immBits = 0;      // ImmediateOop / NilImm / InitRecvVar value
     int recvVarIndex = 0;      // RecvVar / SetterRecvVar / InitRecvVar
+    int litIndex     = 0;      // LitVar
 
     if (b0 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::Receiver;
@@ -202,11 +210,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && SistaV1::isPushLitConst(b0)) {
         // ^ literal-const N  — fetch from the method's literal frame at
         // compile time and bake in as an immediate.
-        int litIndex = b0 - SistaV1::PushLitConstBase;
+        int idx = b0 - SistaV1::PushLitConstBase;
         // Literal frame starts at slot 1 (slot 0 is the header).
-        Oop lit = methodObj->slotAt(1 + litIndex);
+        Oop lit = methodObj->slotAt(1 + idx);
         kind = ReturnKind::ImmediateOop;
         immBits = lit.rawBits();
+    } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
+                            && SistaV1::isPushLitVar(b0)) {
+        // ^ literal-var N — literals[N] is an Association; return
+        // association.value.  Value can change at runtime (global
+        // reassignment) so load it dynamically via state.literals.
+        kind = ReturnKind::LitVar;
+        litIndex = b0 - SistaV1::PushLitVarBase;
     } else if (bodyLen >= 3 && b0 == SistaV1::PushTempBase
                             && SistaV1::isPopStoreRecv(b1)
                             && b2 == SistaV1::ReturnReceiver) {
@@ -300,9 +315,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         a64::Gp cstVal  = cc.new_gp64("cstVal");
         cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
         cc.mov(cstVal,  asmjit::Imm(immBits));
-        int slotOff = 8 + recvVarIndex * 8;
+        int slotOff = OBJ_SLOT_0 + recvVarIndex * 8;
         cc.str(cstVal,  a64::ptr(recvPtr, slotOff));
         cc.mov(retOop,  recvPtr);
+        break;
+    }
+    case ReturnKind::LitVar: {
+        // ^ literal-var N = literals[N].value (association slot 1).
+        a64::Gp litsPtr = cc.new_gp64("litsPtr");
+        a64::Gp assoc   = cc.new_gp64("assoc");
+        cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
+        cc.ldr(assoc,   a64::ptr(litsPtr, litIndex * 8));
+        cc.ldr(retOop,  a64::ptr(assoc, ASSOC_VALUE));
         break;
     }
     }
