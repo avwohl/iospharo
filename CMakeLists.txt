@@ -90,12 +90,15 @@ endif()
 set_source_files_properties(${PLUGIN_C_SOURCES} PROPERTIES LANGUAGE C)
 list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 
-# Tier 2 JIT backend: MIR was removed 2026-04-17 pending asmjit
-# replacement. See docs/jit-toolkit-evaluation.md. Tier2Compiler::compile
-# returns nullptr during the transition; Tier 1 (copy-and-patch stencils)
-# is unaffected.
+# Tier 2 JIT backend: asmjit (replaced MIR 2026-04-17).
+# See docs/jit-toolkit-evaluation.md for rationale.
+# Configure asmjit as a static library, embedded from the submodule.
+set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library")
+set(ASMJIT_TEST OFF CACHE BOOL "Skip asmjit's own test suite")
+add_subdirectory(third_party/asmjit EXCLUDE_FROM_ALL)
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
+target_link_libraries(PharoVMCore asmjit::asmjit)
 
 # JIT: respect command-line override, default to enabled on non-iOS
 if(DEFINED PHARO_JIT_ENABLED)
