@@ -96,9 +96,13 @@ private:
     // IC data buffers owned by the compiler — one per T2-compiled
     // method that contains a send.  Layout matches the T1 IC (see
     // JITMethod.hpp: 6 entries × 24 bytes + 8 bytes selectorBits =
-    // 152 bytes).  We use std::vector<uint64_t> so the buffer is
-    // naturally aligned and easy to zero-fill.
-    std::vector<std::vector<uint64_t>> icBuffers_;
+    // 152 bytes = 19 × uint64_t).  Use unique_ptr<uint64_t[]> so the
+    // backing memory is at a stable heap address — we bake that
+    // address into generated code as an immediate.  std::vector
+    // would also preserve element addresses across outer-vector
+    // reallocations (moves transfer the heap pointer), but the
+    // unique_ptr form is more obviously correct.
+    std::vector<std::unique_ptr<uint64_t[]>> icBuffers_;
 
     size_t methodsCompiled_ = 0;
     size_t compilationsFailed_ = 0;

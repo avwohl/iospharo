@@ -110,7 +110,7 @@ void Tier2Compiler::flushAllICs() {
     // JITRuntime::recoverAfterGC because methodBits in IC entries
     // are raw Oops that can become stale after compaction.
     for (auto& buf : icBuffers_) {
-        std::memset(buf.data(), 0, buf.size() * sizeof(uint64_t));
+        std::memset(buf.get(), 0, IC_SLOTS * sizeof(uint64_t));
     }
 }
 
@@ -319,11 +319,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && bytes[bcStart + 3] == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])
                             && decodePush(b1, pushes[1])) {
-        // DISABLED: induces `#isNumber not understood` DNU on
-        // receiver with invalid tag 0x...26.  The IC logic looks
-        // correct on paper (receiver/arg push order, sendArgCount=1,
-        // ip += 2) — still investigating.  May be an asmjit register
-        // aliasing bug with multiple loads through the same base.
+        // DISABLED: OneArgSendInlineIC induces `#isNumber not
+        // understood by 0x500000003000026` during startup.
+        // Investigation pending.
         kind = ReturnKind::OneArgSendInlineIC;
         numPushes = 2;
         sendIPOff = 2;
@@ -461,9 +459,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                                             : SistaV1::Send1Base;
         int selIdx = sendOp - sendBase;
 
-        icBuffers_.emplace_back(IC_SLOTS, uint64_t{0});
-        uint64_t icAddr = reinterpret_cast<uint64_t>(icBuffers_.back().data());
-        icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
+        auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
+        std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
+        uint64_t icAddr = reinterpret_cast<uint64_t>(ic.get());
+        icBuffers_.push_back(std::move(ic));
+        icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();  // selbits slot
 
         // Helper to load a Push value into a register.
         auto loadPush = [&](const Push& p) -> a64::Gp {
