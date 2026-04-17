@@ -11,18 +11,32 @@ the state after 2026-04-17 session.
 **Shipped** (stability + correctness):
 - IC layout GC scanner fix (`fd03572`)
 - JITState as GC root (`a311688`)
-- MIR opt level default → 1 (`8b6fbf3`)
 - J2J literals pointer +8 → +16 fix (`2b1629f`)
-- MIR codegen SIGSEGV guard (`9ffa5f7`)
 - SimStack default off (`b9ab22e`)
 - T1 J2J reduction / A2 — 72→56 byte save struct (`415d899`)
-- T2 chain-loop continuation / A1 — gated behind `PHARO_T2_A1=1` (`2f14022`)
+- **MIR removed, asmjit vendored** (`d10b00a`, `0cdd738`, `7a5061b`)
+- **asmjit T2 MVP**: compiles leaf methods — getters, setters, constant
+  returns (`3cf135c`, `1ed9590`)
 
-**Default config:** T1 JIT on, T2 off, SimStack off.
+**Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
 
-**Measured perf:** JIT is **net-negative** on arith-heavy loops (2.5× slower
-than interpreter at 3M iterations; T2 is 12× slower). See
-`docs/benchmark-results.md` for the full table + root cause analysis.
+**asmjit T2 coverage (~4.5% of candidates):**
+
+    Return-only    0x58/59/5A/5B            ^ self/true/false/nil
+    Push-return    0x4C-0x4F + 0x5C         ^ self/true/false/nil (2-byte)
+    Push-return    0x50/0x51 + 0x5C         ^ 0 / ^ 1
+    Push-return    0x20-0x3F + 0x5C         ^ literal[N]
+    Getter         0x00-0x0F + 0x5C         ^ instVar[N]
+    Setter         0x40 + 0xC8-0xCF + 0x58  ivar := arg; ^ self
+
+Everything else bails to T1.  No sends, no arith fast paths, no control
+flow yet.  Perf impact: negligible (MVP proves the pipeline; coverage
+doesn't overlap the hot bytecodes).
+
+**Measured perf (prior MIR T2):** JIT was **net-negative** on arith-heavy
+loops (2.5× slower than interpreter at 3M iterations; MIR T2 was 12×
+slower).  The asmjit replacement starts from the same baseline; the
+payoff requires adding send / arith support.
 
 ---
 
