@@ -57,6 +57,28 @@ Enabling any of the send-IC paths currently biases toward the slow
 mode.  Fixing that requires understanding the T1 warmup interaction
 so T2 doesn't steal methods that T1 still needs to populate.
 
+### Fundamental MVP limitation
+
+The T2 MVP compiles *whole methods matching small templates*.  But
+measurements (PHARO_JIT_TOP=1) show the hot paths of typical
+benchmarks contain **no method calls**:
+- `timesRepeat:`, `to:do:`, `ifTrue:`, `whileTrue:` — inlined by the
+  Pharo compiler, no send.
+- `at:`, `at:put:`, arith `+`, `size` — primitive methods, bypass
+  T2 entirely.
+- The arith inner loop `[n := n + 1]` inside `timesRepeat:` is pure
+  inline bytecodes.
+
+The top-10 methods by executionCount are startup helpers (`nextPut:`,
+`on:do:`, `byteAt:`) running 2-3k times total.  The millions of
+hot-loop iterations go through zero T2 touchpoints.
+
+To reach Cog-class perf, T2 needs **multi-bytecode compilation with
+control flow**: inline the loop body as asmjit code, with tag checks
++ overflow checks on arith, conditional branches on jumps.  That's a
+significant redesign — out of scope for this MVP but the direction
+is clear.
+
 **Measured perf (prior MIR T2):** JIT was **net-negative** on arith-heavy
 loops (2.5× slower than interpreter at 3M iterations; MIR T2 was 12×
 slower).  The asmjit replacement starts from the same baseline; the
