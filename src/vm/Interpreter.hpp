@@ -533,6 +533,21 @@ private:
     // GC: IP offsets for current frame (set by prepareForGC, read by afterGC)
     ptrdiff_t ipOffset_ = 0;
     ptrdiff_t bytecodeEndOffset_ = 0;
+
+    // GC: the live JITState currently driving JIT execution, or nullptr
+    // when no JIT code is on the stack. forEachRoot scans its Oop fields
+    // so GC compaction correctly updates state.receiver / state.method /
+    // state.cachedTarget / state.returnValue. prepareForGC stashes
+    // state.ip as an offset into state.method's bytecodes so afterGC can
+    // restore the absolute pointer against the (possibly moved) method.
+    // Only the innermost frame is tracked — tryJITActivation/tryResume
+    // sync state back to interpreter fields on return, so outer states
+    // aren't live once an inner one takes over. Push on entry, restore
+    // previous on exit (supports recursion defensively).
+#if PHARO_JIT_ENABLED
+    jit::JITState* currentJITState_ = nullptr;
+    ptrdiff_t jitStateIpOffset_ = 0;
+#endif
     Oop method_;            // Current method or CompiledBlock being executed
     Oop newMethod_;         // Method about to be activated (for primitive 117 to read literals)
     Oop homeMethod_;        // Home CompiledMethod (for literal access in blocks)
@@ -2600,6 +2615,19 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                 visitor(keyOop);
             }
         }
+    }
+
+    // Live JITState: its Oop fields aren't reachable any other way while
+    // JIT code is on the C stack. Without this, GC compaction would move
+    // state.receiver/method/cachedTarget out from under the JIT, leaving
+    // stale pointers that crash on next dereference.
+    if (currentJITState_) {
+        visitor(currentJITState_->receiver);
+        visitor(currentJITState_->method);
+        visitor(currentJITState_->returnValue);
+        visitor(currentJITState_->cachedTarget);
+        // trueOop/falseOop are visited via specialObjects_ already.
+        // sp/tempBase/literals are recomputed in afterGC from updated method.
     }
 #endif
 

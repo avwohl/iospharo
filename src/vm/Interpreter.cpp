@@ -11002,6 +11002,21 @@ void Interpreter::prepareForGC() {
         }
     }
 
+#if PHARO_JIT_ENABLED
+    // Convert live JITState's IP to an offset into state.method's bytes.
+    // state.ip/literals are absolute pointers that break if GC moves the
+    // CompiledMethod. forEachRoot updates state.method; afterGC re-derives
+    // state.ip and state.literals from the new method address.
+    if (currentJITState_ && currentJITState_->method.isObject() &&
+        currentJITState_->method.rawBits() > 0x10000 &&
+        currentJITState_->ip) {
+        uint8_t* methodBytes = currentJITState_->method.asObjectPtr()->bytes();
+        jitStateIpOffset_ = currentJITState_->ip - methodBytes;
+    } else {
+        jitStateIpOffset_ = 0;
+    }
+#endif
+
     // Sync materialized context temps with C++ stack.
     // Materialized contexts are GC roots (scanned via forEachRoot). Their temp
     // slots are snapshots from materialization time and may be stale — e.g., a
@@ -11110,6 +11125,18 @@ void Interpreter::afterGC() {
             frame.savedBytecodeEnd = methodBytes + frame.savedBytecodeEndOffset;
         }
     }
+
+#if PHARO_JIT_ENABLED
+    // Restore live JITState pointers against the (possibly moved) method.
+    // state.method was GC-updated via forEachRoot; now recompute ip and
+    // literals which are absolute pointers into the method's allocation.
+    if (currentJITState_ && currentJITState_->method.isObject() &&
+        currentJITState_->method.rawBits() > 0x10000) {
+        ObjectHeader* methObj = currentJITState_->method.asObjectPtr();
+        currentJITState_->ip = methObj->bytes() + jitStateIpOffset_;
+        currentJITState_->literals = methObj->slots() + 1;
+    }
+#endif
 
     // GC may move method and class objects, invalidating cached lookups
     flushMethodCache();
@@ -11294,6 +11321,15 @@ void Interpreter::tryJITResumeInCaller() {
         state.j2jTotalCalls = 0;
         state.methodMapPtr = &jitRuntime_.methodMap();
         state.yieldCountdown = 1000;
+
+        // Register this state as GC-reachable (see tryJITActivation for why).
+        jit::JITState* prevJITState = currentJITState_;
+        currentJITState_ = &state;
+        struct JITStateGuard {
+            Interpreter* self;
+            jit::JITState* prev;
+            ~JITStateGuard() { self->currentJITState_ = prev; }
+        } jitStateGuard{this, prevJITState};
 
         // --- DIAGNOSTIC: scan stack for megaCache pointers before resume ---
         Oop* preResumeSP = stackPointer_;
@@ -12488,6 +12524,18 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.sendArgCount = 0;
     state.trueOop = memory_.trueObject();
     state.falseOop = memory_.falseObject();
+
+    // Register this state as GC-reachable for the lifetime of this call.
+    // forEachRoot will update state.receiver / state.method / etc. in place
+    // if GC runs while JIT code is on the C stack; prepareForGC/afterGC
+    // re-derive state.ip and state.literals against the moved method.
+    jit::JITState* prevJITState = currentJITState_;
+    currentJITState_ = &state;
+    struct JITStateGuard {
+        Interpreter* self;
+        jit::JITState* prev;
+        ~JITStateGuard() { self->currentJITState_ = prev; }
+    } jitStateGuard{this, prevJITState};
 
     // J2J stencil-to-stencil save stack — carved from shared j2jPool_ to avoid
     // per-call stack allocation (was 18KB at depth 256, now zero stack cost).
