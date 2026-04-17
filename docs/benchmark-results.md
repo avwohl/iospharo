@@ -1,23 +1,62 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
-## 2026-04-17 (late) — T2 reverted to default off after regression measured
+## 2026-04-17 (late) — T2 reverted to default off; honest JIT assessment
 
-Followup to the earlier same-day T2-default-on benchmarks. Arith-loop
-measurements revealed T2 adds severe overhead on common workloads:
+Followup measurements revealed the JIT is **net-negative** on common
+workloads, not just tied with the interpreter. Deferring JIT
+compilation past the benchmark (`PHARO_JIT_DEFER=8s` or more) makes
+the same test match interpreter speed, confirming that JIT-compiled
+bytecode runs slower than the interpreter's dispatch loop:
 
-    Benchmark     interp   T1       T2 (was default)
-    sum 100K      3 ms     4 ms     3 ms
-    sum 1M        33 ms    32 ms    32 ms
-    sum 3M        96 ms    243 ms   1123 ms
+    Benchmark     interp   T1 on    T2 on  defer=8s
+    sum 100K      3 ms     4 ms     3 ms    3 ms
+    sum 1M        33 ms    32 ms    32 ms   32 ms
+    sum 3M        96 ms    243 ms   1123 ms 97 ms
 
-At large loop sizes, T2 costs 12× vs interpreter, 5× vs T1 alone.
-T1 itself costs 2.5× vs interpreter at the same size. The JIT is
-net-negative on these workloads.
+When JIT compilation kicks in partway through a loop, subsequent
+iterations run 2.5–12× slower than the interpreter would have.
+Rolled back PHARO_T2 to opt-in (fc08699). T1 remains on by default
+because it does help IC-hot startup, but for arith-dominated loops
+it hurts.
 
-Rolled back PHARO_T2 to opt-in (fc08699). The T2 stability fixes
-all remain — T2 runs correctly when enabled, just slower. Closing
-the gap needs send-path inlining + preamble reduction, multi-session
-work. Until then, PHARO_T2=1 is for benchmarking only.
+## Root cause
+
+Our copy-and-patch stencils average ~460 bytes per bytecode (e.g.
+13,304 bytes for a 29-bytecode method). That busts M1's 128-byte
+i-cache line size. The interpreter's computed-goto dispatch, at
+~20-50 bytes per handler, stays cache-hot.
+
+Each stencil also does prologue-save / epilogue-tailcall, with an
+indirect branch through a patched pointer at the end. The branch
+predictor is saturated by the 200+ unique tail-call targets across
+a hot method. The interpreter's single computed-goto has its own
+prediction issues, but it's one site not many.
+
+Net: the arch is wrong for a bytecode-heavy VM unless we can
+(a) dramatically shrink stencil bodies (method inlining to eliminate
+per-bytecode boundaries), or (b) switch to threaded-code style where
+tail calls go to predictable neighbors, not arbitrary addresses.
+
+## What doesn't move the needle
+
+- T2 MIR path: adds more overhead than T1, not less.
+- J2J direct-call bit: only a small fraction of sends use it.
+- IC hit rate: already ~97% on startup, ~40% on send-heavy; the
+  misses aren't the dominant cost.
+- SimStack TOS/NOS caching: correctness issues led us to disable
+  it; ~5% perf win at best.
+
+## What would move the needle
+
+1. **Sista-style method inlining** — eliminate send-boundary cost
+   entirely for inlined hot methods. Biggest win available.
+2. **Shrink stencils** — rewrite handlers in hand-tuned asm with
+   shared prologue/epilogue sequences. Might get stencil size from
+   ~460 bytes/bc down to ~80 bytes/bc, matching Cog.
+3. **Make JIT opt-in per method, not per threshold** — only compile
+   methods we're sure will benefit (e.g., hot + has sends + non-arith
+   dominant). Arith-heavy loops stay in the interpreter which is
+   faster for them.
 
 ## 2026-04-17 — T2 default-on, post GC-root fixes
 
