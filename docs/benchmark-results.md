@@ -33,16 +33,22 @@ Key findings:
 - T2 on and interpreter produce the same timings for every
   micro-benchmark. The JIT is not accelerating these code paths.
 - tinyBenchmarks hangs with JIT enabled; completes cleanly in
-  interpreter-only mode. Root cause: not a JIT bug per se — the VM
-  completes most of the benchmark (9.5B bytecode steps in 90s) then
-  the scheduler stops making progress, stuck in ProcessorScheduler
-  whileTrue: waiting for a timer. Unclear interaction with T2 IC
-  patching or chain-loop state. Distinct from the crashes we fixed.
+  interpreter-only mode. Commit b9ab22e fixed the first part of the
+  hang (Integer>>benchmark loop) by defaulting SimStack off. The
+  remaining hang is in the benchFib recursion — first call 57ms,
+  second call 1065ms (12x regression), cumulatively blowing past
+  tinyBench's time budget. Architectural send-overhead issue; not a
+  miscompile.
 - Latent MIR codegen crashes: specific methods (e.g. #position:)
   trigger SIGSEGV inside MIR's generate_func_code / MIR_link.
   Worked around with a signal-guarded compile wrapper (commit
   9ffa5f7); those methods fall through to T1 instead of crashing
   the whole VM. Affected method count is small (seen once per run).
+- SimStack (TOS/NOS register caching in x19-x22) is default-off as
+  of commit b9ab22e. PHARO_JIT_SIMSTACK=1 re-enables it. SimStack
+  was fast but has a latent correctness bug on arith-jump chains
+  inside hot loops where methods 9-14 are newly compiled. Root
+  cause not pinned; needs lldb.
 - Bytecode throughput in pure-interpreter mode (303M/sec) is already
   4× Cog's (77M/sec). Send throughput is 232× worse. The gap is
   almost entirely in method dispatch, not bytecode execution.
