@@ -168,6 +168,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop,
         InitRecvVar,        // push constant, pop into recvVar, return self
         LitVar,             // ^ literal-var N — push association's value from literals[N]
+        TempReturn,         // ^ tempN — return argument or local temp
         SendExit            // push N values + exit with ExitSend (interpreter finishes)
     };
     // SendExit push source (what to push before bailing to interpreter).
@@ -239,6 +240,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && SistaV1::isPushRecvVar(b0)) {
         kind = ReturnKind::RecvVar;
         recvVarIndex = b0 - SistaV1::PushRecvVarBase;
+    } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
+                            && SistaV1::isPushTemp(b0)) {
+        // ^ tempN — return an argument/local from tempBase[N].
+        kind = ReturnKind::TempReturn;
+        recvVarIndex = b0 - SistaV1::PushTempBase;
     } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
                             && b0 == SistaV1::PushZero) {
         // ^ 0 -> SmallInteger zero with tag 001 in low bits
@@ -388,6 +394,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(litsPtr, a64::ptr(statePtr, OFF_LITERALS));
         cc.ldr(assoc,   a64::ptr(litsPtr, litIndex * 8));
         cc.ldr(retOop,  a64::ptr(assoc, ASSOC_VALUE));
+        break;
+    }
+    case ReturnKind::TempReturn: {
+        // ^ tempN — read from tempBase[N].  recvVarIndex reused as
+        // the temp index.
+        a64::Gp tempPtr = cc.new_gp64("tempPtr");
+        cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
+        cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
     }
     case ReturnKind::SendExit: {
