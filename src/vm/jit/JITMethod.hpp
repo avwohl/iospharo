@@ -218,10 +218,14 @@ struct JITMethod {
     // save literals/bcStart redundantly. See docs/jit-j2j-reduction-plan.md.
 
     // Pointer to the method's literal frame (slots 1..numLits of the
-    // CompiledMethod object). compiledMethodOop points at the ObjectHeader;
-    // slot 0 is the method header, so literals start at +8.
+    // CompiledMethod object). compiledMethodOop points at the ObjectHeader:
+    //   +0  (8 bytes): ObjectHeader
+    //   +8  (8 bytes): slot 0 = method header word (numLits|numArgs|...)
+    //   +16 (8 bytes): slot 1 = first literal
+    // So literals start at +16, not +8. Matches `methObj->slots() + 1` used
+    // by tryJITActivation and every other literal-pointer setter.
     uint64_t* literals() const {
-        return reinterpret_cast<uint64_t*>(compiledMethodOop + 8);
+        return reinterpret_cast<uint64_t*>(compiledMethodOop + 16);
     }
 
     // Pointer to the first bytecode. Layout after the ObjectHeader:

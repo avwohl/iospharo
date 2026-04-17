@@ -1002,11 +1002,17 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // Also attempt Tier 2 (MIR) compilation immediately.
                     // J2J bypasses tryExecute so the executionCount trigger never fires;
                     // compile eagerly so hot J2J methods benefit from register allocation.
-                    // DISABLED by default: MIR holds oops in registers across
-                    // jit_t2_send calls. GC during a send makes those registers
-                    // stale, crashing on the next dereference. Enable with
-                    // PHARO_T2=1 for benchmarking / short-lived sessions.
-                    static bool noT2 = !getenv("PHARO_T2");
+                    //
+                    // Enabled by default. The historical "stale oops across GC"
+                    // hazard (b18e71e) is closed by the JITState GC-root
+                    // registration (a311688) and the IC-layout scanner fix
+                    // (fd03572). The literal-pointer off-by-8 in J2J return
+                    // paths is fixed (stencils + JITMethod::literals() +
+                    // TrampolineAsm.S all use method+16 now). T2 MIR opt
+                    // level defaults to 1 (level 2+ miscompiles tagged
+                    // arith). PHARO_T2=0 disables, PHARO_T2=1 (or unset) enables.
+                    const char* t2env = getenv("PHARO_T2");
+                    static bool noT2 = t2env && t2env[0] == '0';
                     static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
@@ -1110,9 +1116,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         }
     }
 
-    // Check for Tier 2 compiled code (MIR-generated, register-allocated)
-    // DISABLED by default — see comment in noteMethodEntry.
-    static bool noT2Exec = !getenv("PHARO_T2");
+    // Check for Tier 2 compiled code (MIR-generated, register-allocated).
+    // T2 execution enabled by default; PHARO_T2=0 forces T1-only for
+    // bisect / fallback.
+    static const char* t2envExec = getenv("PHARO_T2");
+    static bool noT2Exec = t2envExec && t2envExec[0] == '0';
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     if (t2code && t2code != (void*)1) {
         // Tier 2 code has resume support: on initial entry, state.ip == bcStart

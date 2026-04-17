@@ -418,12 +418,17 @@ extern "C" void stencil_storeLitVar(JITState* s) {
         s->tempBase = _sv->tempBase;                                         \
         uint8_t* _callerJM = (uint8_t*)_sv->jitMethod;                       \
         s->jitMethod = (void*)_callerJM;                                     \
-        /* Derive: literals = compiledMethod + 8; ip = bcStart =             \
-           compiledMethod + (2 + numLits) * 8; argCount from JM field */     \
+        /* Derive: literals points to first literal at slot[1] = method+16  \
+           (slot[0] at method+8 is the method header word — not a literal). \
+           ip = bcStart = compiledMethod + (2 + numLits) * 8.                \
+           Previous code used method+8 and corrupted s->literals, which     \
+           broke pushLitVar on resume after a J2J send return (seen as a    \
+           SmallInt getting dereferenced in the caller's next pushLitVar).  \
+           argCount comes from the cached JITMethod field. */               \
         uint64_t _cmo = *(uint64_t*)(_callerJM + JM_COMPILED_METHOD);        \
         uint64_t _mh  = *(uint64_t*)(_callerJM + JM_METHOD_HEADER);          \
         uint64_t _numLits = _mh & 0x7FFFu;                                   \
-        s->literals = (Oop*)(uintptr_t)(_cmo + 8);                           \
+        s->literals = (Oop*)(uintptr_t)(_cmo + 16);                          \
         s->ip = (uint8_t*)(uintptr_t)(_cmo + (_numLits + 2) * 8);            \
         s->argCount = *(uint8_t*)(_callerJM + 34); /* JITMethod.argCount */  \
         /* Pop receiver+args, push retVal */                                 \

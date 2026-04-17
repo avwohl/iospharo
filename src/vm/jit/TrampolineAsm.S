@@ -178,7 +178,10 @@ Ltramp_return:
     str     x11, [x21, #JS_JITMETHOD]
     ldr     x12, [x11, #JM_COMPILEDMETHOD]    // x12 = compiledMethodOop
     ldr     x13, [x11, #JM_METHODHEADER]      // x13 = methodHeader
-    add     x14, x12, #8                       // literals = compiledMethod + 8
+    // literals = &slots[1] = compiledMethod + ObjectHeader(8) + slot0(8) = +16.
+    // Previously used +8 (which lands on the method header word); that
+    // corrupted the caller's literals on J2J return and crashed pushLitVar.
+    add     x14, x12, #16                      // literals = compiledMethod + 16
     str     x14, [x21, #JS_LITERALS]
     and     x13, x13, #0x7FFF                  // numLits
     add     x13, x13, #2
