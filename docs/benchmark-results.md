@@ -1,5 +1,24 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## 2026-04-17 (late) — T2 reverted to default off after regression measured
+
+Followup to the earlier same-day T2-default-on benchmarks. Arith-loop
+measurements revealed T2 adds severe overhead on common workloads:
+
+    Benchmark     interp   T1       T2 (was default)
+    sum 100K      3 ms     4 ms     3 ms
+    sum 1M        33 ms    32 ms    32 ms
+    sum 3M        96 ms    243 ms   1123 ms
+
+At large loop sizes, T2 costs 12× vs interpreter, 5× vs T1 alone.
+T1 itself costs 2.5× vs interpreter at the same size. The JIT is
+net-negative on these workloads.
+
+Rolled back PHARO_T2 to opt-in (fc08699). The T2 stability fixes
+all remain — T2 runs correctly when enabled, just slower. Closing
+the gap needs send-path inlining + preamble reduction, multi-session
+work. Until then, PHARO_T2=1 is for benchmarking only.
+
 ## 2026-04-17 — T2 default-on, post GC-root fixes
 
 Benchmarks re-run after landing: IC layout fix (fd03572), JITState
