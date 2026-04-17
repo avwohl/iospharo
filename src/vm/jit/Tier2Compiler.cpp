@@ -155,11 +155,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     uint8_t b2 = (bodyLen >= 3) ? bytes[bcStart + 2] : 0;
 
     enum class ReturnKind {
-        Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop
+        Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop,
+        InitRecvVar       // push constant, pop into recvVar, return self
     };
     ReturnKind kind;
-    uint64_t immBits = 0;      // ImmediateOop / NilImm
-    int recvVarIndex = 0;      // RecvVar / SetterRecvVar
+    uint64_t immBits = 0;      // ImmediateOop / NilImm / InitRecvVar value
+    int recvVarIndex = 0;      // RecvVar / SetterRecvVar / InitRecvVar
 
     if (b0 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::Receiver;
@@ -211,6 +212,21 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
+    } else if (bodyLen >= 3 && SistaV1::isPopStoreRecv(b1)
+                            && b2 == SistaV1::ReturnReceiver
+                            && (b0 == SistaV1::PushZero
+                             || b0 == SistaV1::PushOne
+                             || b0 == SistaV1::PushNil
+                             || b0 == SistaV1::PushTrue
+                             || b0 == SistaV1::PushFalse)) {
+        // init-style: ivar := <constant>; ^ self
+        kind = ReturnKind::InitRecvVar;
+        recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
+        if (b0 == SistaV1::PushZero)       immBits = Oop::fromSmallInteger(0).rawBits();
+        else if (b0 == SistaV1::PushOne)   immBits = Oop::fromSmallInteger(1).rawBits();
+        else if (b0 == SistaV1::PushNil)   immBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
+        else if (b0 == SistaV1::PushTrue)  immBits = memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits();
+        else /* PushFalse */                immBits = memory_.specialObject(SpecialObjectIndex::FalseObject).rawBits();
     } else {
         // Pattern not recognised — fall through to T1.  PHARO_T2_VERBOSE=1
         // surfaces the leading bytes so we can see which shapes are hot
@@ -276,6 +292,17 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.str(argVal,  a64::ptr(recvPtr, slotOff));
         // Returned value is the receiver itself.
         cc.mov(retOop, recvPtr);
+        break;
+    }
+    case ReturnKind::InitRecvVar: {
+        // init-style: receiver.instVar[recvVarIndex] := <constant>; return receiver.
+        a64::Gp recvPtr = cc.new_gp64("recvPtr");
+        a64::Gp cstVal  = cc.new_gp64("cstVal");
+        cc.ldr(recvPtr, a64::ptr(statePtr, OFF_RECEIVER));
+        cc.mov(cstVal,  asmjit::Imm(immBits));
+        int slotOff = 8 + recvVarIndex * 8;
+        cc.str(cstVal,  a64::ptr(recvPtr, slotOff));
+        cc.mov(retOop,  recvPtr);
         break;
     }
     }
