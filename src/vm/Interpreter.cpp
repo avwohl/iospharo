@@ -1025,6 +1025,9 @@ void Interpreter::dumpJITStats() {
             jitICHits_, icTotal,
             icTotal > 0 ? 100.0 * jitICHits_ / icTotal : 0.0,
             jitICPatches_, jitICStale_);
+    fprintf(stderr, "  IC miss breakdown: noSelBits=%zu cold=%zu poly=%zu noICData=%zu\n",
+            jitICMissNoSelBits_, jitICMissCold_,
+            jitICMissPolymorphic_, jitICMissNoICData_);
     fprintf(stderr, "  activations: %zu hits / %zu total (%.1f%%)\n",
             jitActivationHits_, actTotal,
             actTotal > 0 ? 100.0 * jitActivationHits_ / actTotal : 0.0);
@@ -13219,6 +13222,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             jitICMisses_++;
+
+            // DIAGNOSTIC: distinguish "IC had room" vs "IC full" vs
+            // "icData[18] was 0 (megacache skip)" to pin down why IC
+            // hit rate is only 50%.
+            if (state.icDataPtr) {
+                bool anyFilled = false;
+                for (int e = 0; e < 6; e++) if (state.icDataPtr[e*3]) { anyFilled = true; break; }
+                uint64_t selBits18 = state.icDataPtr[18];
+                if (selBits18 == 0) {
+                    jitICMissNoSelBits_++;
+                } else if (!anyFilled) {
+                    jitICMissCold_++;
+                } else {
+                    jitICMissPolymorphic_++;
+                }
+            } else {
+                jitICMissNoICData_++;
+            }
 
             // Get selector: from IC data (Tier 1) or cachedTarget (Tier 2).
             Oop sendSel;

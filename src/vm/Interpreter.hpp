@@ -873,6 +873,11 @@ private:
     size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)
     size_t jitICPatches_ = 0;     // Successful IC data patches
     size_t jitICStale_ = 0;       // Stale IC invalidations
+    // Miss breakdown (why ExitSend fired):
+    size_t jitICMissNoSelBits_ = 0;    // icData[18] was 0 — megacache path skipped
+    size_t jitICMissCold_ = 0;         // IC had empty slots — first miss at this site
+    size_t jitICMissPolymorphic_ = 0;  // IC had entries but none matched — true polymorphism
+    size_t jitICMissNoICData_ = 0;     // state.icDataPtr was null (shouldn't happen for T1)
     size_t jitJ2JChains_ = 0;     // JIT-to-JIT chain hits (resume path)
     size_t jitJ2JFallbacks_ = 0;  // JIT-to-JIT fallbacks (resume path)
     size_t jitJ2JActChains_ = 0;  // JIT-to-JIT chain hits (activation path)
