@@ -24,6 +24,7 @@
 #include "JITRuntime.hpp"
 #include "CodeZone.hpp"
 #include "JITMethod.hpp"
+#include "SistaV1.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
@@ -56,62 +57,10 @@ static thread_local bool mir_error_active = false;
 namespace pharo {
 namespace jit {
 
-// Sista V1 bytecode constants (duplicated from JITCompiler.cpp to avoid header dependency)
-namespace SistaV1 {
-    constexpr uint8_t PushRecvVarBase   = 0x00;
-    constexpr uint8_t PushLitVarBase    = 0x10;
-    constexpr uint8_t PushLitConstBase  = 0x20;
-    constexpr uint8_t PushTempBase      = 0x40;
-    constexpr uint8_t PushReceiver      = 0x4C;
-    constexpr uint8_t PushTrue          = 0x4D;
-    constexpr uint8_t PushFalse         = 0x4E;
-    constexpr uint8_t PushNil           = 0x4F;
-    constexpr uint8_t PushZero          = 0x50;
-    constexpr uint8_t PushOne           = 0x51;
-    constexpr uint8_t Dup               = 0x53;
-    constexpr uint8_t ReturnReceiver    = 0x58;
-    constexpr uint8_t ReturnTrue        = 0x59;
-    constexpr uint8_t ReturnFalse       = 0x5A;
-    constexpr uint8_t ReturnNil         = 0x5B;
-    constexpr uint8_t ReturnTop         = 0x5C;
-    constexpr uint8_t ArithBase         = 0x60;
-    constexpr uint8_t Send0Base         = 0x80;
-    constexpr uint8_t Send1Base         = 0x90;
-    constexpr uint8_t Send2Base         = 0xA0;
-    constexpr uint8_t ShortJumpBase     = 0xB0;
-    constexpr uint8_t ShortJumpTrueBase = 0xB8;
-    constexpr uint8_t ShortJumpFalseBase= 0xC0;
-    constexpr uint8_t PopStoreRecvBase  = 0xC8;
-    constexpr uint8_t PopStoreTempBase  = 0xD0;
-    constexpr uint8_t Pop               = 0xD8;
-    constexpr uint8_t ExtendA           = 0xE0;
-    constexpr uint8_t ExtendB           = 0xE1;
-    constexpr uint8_t ExtPushRecvVar    = 0xE2;
-    constexpr uint8_t ExtPushLitVar     = 0xE3;
-    constexpr uint8_t ExtPushLitConst   = 0xE4;
-    constexpr uint8_t ExtPushTemp       = 0xE5;
-    constexpr uint8_t PushArray         = 0xE7;
-    constexpr uint8_t PushInteger       = 0xE8;
-    constexpr uint8_t PushCharacter     = 0xE9;
-    constexpr uint8_t ExtSend           = 0xEA;
-    constexpr uint8_t ExtSuperSend      = 0xEB;
-    constexpr uint8_t InlinedPrimitive  = 0xEC;
-    constexpr uint8_t ExtJump           = 0xED;
-    constexpr uint8_t ExtJumpTrue       = 0xEE;
-    constexpr uint8_t ExtJumpFalse      = 0xEF;
-    constexpr uint8_t ExtPopStoreRecv   = 0xF0;
-    constexpr uint8_t ExtPopStoreLitVar = 0xF1;
-    constexpr uint8_t ExtPopStoreTemp   = 0xF2;
-    constexpr uint8_t ExtStoreRecv      = 0xF3;
-    constexpr uint8_t ExtStoreLitVar    = 0xF4;
-    constexpr uint8_t ExtStoreTemp      = 0xF5;
-    constexpr uint8_t PushTempAtInVec   = 0xFB;
-    constexpr uint8_t StoreTempAtInVec  = 0xFC;
-    constexpr uint8_t PopStoreTempAtInVec = 0xFD;
-    constexpr uint8_t CallPrimitive     = 0xF8;
-    constexpr uint8_t PushFullBlock     = 0xF9;
-    constexpr uint8_t PushClosure       = 0xFA;
-}
+// Sista V1 bytecode opcodes live in src/vm/jit/SistaV1.hpp (shared with
+// JITCompiler.cpp). The `using namespace SistaV1` below brings the names
+// into this translation unit without the `SistaV1::` prefix.
+using namespace SistaV1;
 
 // JITState field offsets (must match JITState.hpp)
 static constexpr int OFF_SP        = 0;

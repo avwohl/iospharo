@@ -17,6 +17,7 @@
 #include "FFI.hpp"
 #include "jit/TrampolineAsm.hpp"
 #include "jit/Tier2Compiler.hpp"
+#include "jit/SistaV1.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
@@ -3330,12 +3331,7 @@ ExecuteResult Interpreter::stepDetailed() {
     uint8_t bytecode = fetchByte();
 
     // Check if this is a send bytecode (message send) per Sista V1 spec
-    bool isSend = (bytecode >= 0x60 && bytecode <= 0x6F) ||  // Send Arithmetic Message
-                  (bytecode >= 0x70 && bytecode <= 0x7F) ||  // Send Special Message
-                  (bytecode >= 0x80 && bytecode <= 0x8F) ||  // Send Literal Selector, 0 args
-                  (bytecode >= 0x90 && bytecode <= 0x9F) ||  // Send Literal Selector, 1 arg
-                  (bytecode >= 0xA0 && bytecode <= 0xAF) ||  // Send Literal Selector, 2 args
-                  bytecode == 0xEA || bytecode == 0xEB;       // Extended send / super send
+    bool isSend = jit::SistaV1::isSendBytecode(bytecode);
 
     // Reset primitive tracking before dispatch
     lastPrimitiveIndex_ = 0;
@@ -3412,17 +3408,14 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         break;
 
     // 0x4C-0x4F: Push specials
-    case 0x4C: push(receiver_); break;              // push self
-    case 0x4D: push(memory_.trueObject()); break;   // push true
-    case 0x4E: push(memory_.falseObject()); break;  // push false
-    case 0x4F: push(memory_.nil()); break;           // push nil
+    case jit::SistaV1::PushReceiver: push(receiver_); break;
+    case jit::SistaV1::PushTrue:     push(memory_.trueObject()); break;
+    case jit::SistaV1::PushFalse:    push(memory_.falseObject()); break;
+    case jit::SistaV1::PushNil:      push(memory_.nil()); break;
 
-    // 0x50: Push 0
-    case 0x50: push(Oop::fromSmallInteger(0)); break;
-    // 0x51: Push 1
-    case 0x51: push(Oop::fromSmallInteger(1)); break;
-    // 0x52: Push thisContext / thisProcess
-    case 0x52: {
+    case jit::SistaV1::PushZero:     push(Oop::fromSmallInteger(0)); break;
+    case jit::SistaV1::PushOne:      push(Oop::fromSmallInteger(1)); break;
+    case jit::SistaV1::PushThisContext: {
         int savedExtB = extB_;
         extB_ = 0;
         if (savedExtB == 1) {
@@ -3440,39 +3433,33 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         push(contextToPush);
         break;
     }
-    // 0x53: Duplicate top
-    case 0x53: push(stackTop()); break;
+    case jit::SistaV1::Dup: push(stackTop()); break;
 
     // 0x54-0x57: UNASSIGNED
     case 0x54: case 0x55: case 0x56: case 0x57:
         break;
 
-    // 0x58: Return self
-    case 0x58:
+    case jit::SistaV1::ReturnReceiver:
         push(receiver_);
         returnFromMethod();
         break;
-    // 0x59: Return true
-    case 0x59:
+    case jit::SistaV1::ReturnTrue:
         push(memory_.trueObject());
         returnFromMethod();
         break;
-    // 0x5A: Return false
-    case 0x5A:
+    case jit::SistaV1::ReturnFalse:
         push(memory_.falseObject());
         returnFromMethod();
         break;
     // 0x5B: Return nil
-    case 0x5B:
+    case jit::SistaV1::ReturnNil:
         push(memory_.nil());
         returnFromMethod();
         break;
-    // 0x5C: Return top
-    case 0x5C:
+    case jit::SistaV1::ReturnTop:
         returnFromMethod();
         break;
-    // 0x5D: BlockReturn nil
-    case 0x5D: {
+    case jit::SistaV1::BlockReturnNil: {
         bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
                             method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
         if (inFullBlock) {
@@ -3486,8 +3473,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         }
         break;
     }
-    // 0x5E: BlockReturn top
-    case 0x5E: {
+    case jit::SistaV1::BlockReturnTop: {
         int enclosingLevels = extA_;
         int jumpDist = extB_;
         extA_ = 0;
@@ -3626,7 +3612,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
 
     // 0xD8: Pop stack (discard top)
-    case 0xD8:
+    case jit::SistaV1::Pop:
         pop();
         break;
 
@@ -3641,13 +3627,13 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
     // ====== 2-byte bytecodes: Extensions and Push operations (0xE0-0xE7) ======
 
-    case 0xE0: { // Extend A (unsigned)
+    case jit::SistaV1::ExtendA: { // Extend A (unsigned)
         uint8_t extByte = fetchByte();
         extA_ = (extA_ << 8) | extByte;
         inExtension_ = true;
         break;
     }
-    case 0xE1: { // Extend B (signed)
+    case jit::SistaV1::ExtendB: { // Extend B (signed)
         uint8_t extByte = fetchByte();
         if (extByte >= 128)
             extB_ = (extB_ << 8) | extByte | 0xFFFFFF00;
@@ -3656,28 +3642,28 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         inExtension_ = true;
         break;
     }
-    case 0xE2: { // Push Receiver Variable #i (+ extA * 256)
+    case jit::SistaV1::ExtPushRecvVar: { // Push Receiver Variable #i (+ extA * 256)
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
         pushReceiverVariable(fullIndex);
         break;
     }
-    case 0xE3: { // Push Literal Variable #i (+ extA * 256)
+    case jit::SistaV1::ExtPushLitVar: { // Push Literal Variable #i (+ extA * 256)
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
         pushLiteralVariable(fullIndex);
         break;
     }
-    case 0xE4: { // Push Literal Constant #i (+ extA * 256)
+    case jit::SistaV1::ExtPushLitConst: { // Push Literal Constant #i (+ extA * 256)
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
         pushLiteralConstant(fullIndex);
         break;
     }
-    case 0xE5: { // Push Temporary Variable #i
+    case jit::SistaV1::ExtPushTemp: { // Push Temporary Variable #i
         uint8_t indexByte = fetchByte();
         pushTemporary(indexByte);
         break;
@@ -3685,7 +3671,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     case 0xE6: // UNASSIGNED (was pushNClosureTemps)
         fetchByte();
         break;
-    case 0xE7: { // Push Array (j=0) or Pop into Array (j=1)
+    case jit::SistaV1::PushArray: { // Push Array (j=0) or Pop into Array (j=1)
         uint8_t desc = fetchByte();
         int arraySize = desc & 0x7F;
         bool popIntoArray = (desc >> 7) != 0;
@@ -3733,21 +3719,21 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
     // ====== 2-byte bytecodes: Push/Send/Jump (0xE8-0xEF) ======
 
-    case 0xE8: { // Push Integer #i (+ extB * 256, signed)
+    case jit::SistaV1::PushInteger: { // Push Integer #i (+ extB * 256, signed)
         uint8_t intByte = fetchByte();
         int value = intByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extB_ = 0;
         push(Oop::fromSmallInteger(value));
         break;
     }
-    case 0xE9: { // Push Character #i (+ extB * 256)
+    case jit::SistaV1::PushCharacter: { // Push Character #i (+ extB * 256)
         uint8_t charByte = fetchByte();
         int codePoint = charByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extB_ = 0;
         push(Oop::fromCharacter(codePoint));
         break;
     }
-    case 0xEA: { // Send Literal Selector #iiiii (+ extA*32) with jjj (+ extB*8) args
+    case jit::SistaV1::ExtSend: { // Send Literal Selector #iiiii (+ extA*32) with jjj (+ extB*8) args
         uint8_t desc = fetchByte();
         int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
         int numArgs = ((extB_ << 3) | (desc & 0x07)) & 0xFF;
@@ -3756,7 +3742,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         sendSelector(literal(selectorIndex), numArgs);
         break;
     }
-    case 0xEB: { // Send To Superclass
+    case jit::SistaV1::ExtSuperSend: { // Send To Superclass
         uint8_t desc = fetchByte();
         int selectorIndex = ((extA_ << 5) | (desc >> 3)) & 0xFFFF;
         int effectiveExtB = extB_;
@@ -3825,12 +3811,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         }
         break;
     }
-    case 0xEC: { // Call Mapped Inlined Primitive #i
+    case jit::SistaV1::InlinedPrimitive: { // Call Mapped Inlined Primitive #i
         uint8_t primByte = fetchByte();
         (void)primByte; // Interpreter fallback — JIT handles these
         break;
     }
-    case 0xED: { // Jump #i (+ extB * 256, signed)
+    case jit::SistaV1::ExtJump: { // Jump #i (+ extB * 256, signed)
         uint8_t offsetByte = fetchByte();
         int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extB_ = 0;
@@ -3840,7 +3826,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 #endif
         break;
     }
-    case 0xEE: { // Pop and Jump On True #i (+ extB * 256)
+    case jit::SistaV1::ExtJumpTrue: { // Pop and Jump On True #i (+ extB * 256)
         uint8_t offsetByte = fetchByte();
         int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extA_ = 0;
@@ -3857,7 +3843,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         }
         break;
     }
-    case 0xEF: { // Pop and Jump On False #i (+ extB * 256)
+    case jit::SistaV1::ExtJumpFalse: { // Pop and Jump On False #i (+ extB * 256)
         uint8_t offsetByte = fetchByte();
         int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extA_ = 0;
@@ -3877,7 +3863,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
     // ====== 2-byte bytecodes: Store operations (0xF0-0xF7) ======
 
-    case 0xF0: { // Pop and Store Receiver Variable #i (+ extA * 256)
+    case jit::SistaV1::ExtPopStoreRecv: { // Pop and Store Receiver Variable #i (+ extA * 256)
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -3885,7 +3871,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         setReceiverInstVar(fullIndex, value);
         break;
     }
-    case 0xF1: { // Pop and Store Literal Variable #i (+ extA * 256)
+    case jit::SistaV1::ExtPopStoreLitVar: { // Pop and Store Literal Variable #i (+ extA * 256)
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -3895,20 +3881,20 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             memory_.storePointer(1, assoc, value);
         break;
     }
-    case 0xF2: { // Pop and Store Temporary Variable #i
+    case jit::SistaV1::ExtPopStoreTemp: { // Pop and Store Temporary Variable #i
         uint8_t indexByte = fetchByte();
         Oop value = pop();
         setTemporary(indexByte, value);
         break;
     }
-    case 0xF3: { // Store Receiver Variable #i (+ extA * 256) - no pop
+    case jit::SistaV1::ExtStoreRecv: { // Store Receiver Variable #i (+ extA * 256) - no pop
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
         setReceiverInstVar(fullIndex, stackTop());
         break;
     }
-    case 0xF4: { // Store Literal Variable #i (+ extA * 256) - no pop
+    case jit::SistaV1::ExtStoreLitVar: { // Store Literal Variable #i (+ extA * 256) - no pop
         uint8_t indexByte = fetchByte();
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
@@ -3917,7 +3903,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             memory_.storePointer(1, assoc, stackTop());
         break;
     }
-    case 0xF5: { // Store Temporary Variable #i - no pop
+    case jit::SistaV1::ExtStoreTemp: { // Store Temporary Variable #i - no pop
         uint8_t indexByte = fetchByte();
         setTemporary(indexByte, stackTop());
         break;
@@ -3929,14 +3915,14 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
     // ====== 3-byte bytecodes (0xF8-0xFF) ======
 
-    case 0xF8: { // Call Primitive
+    case jit::SistaV1::CallPrimitive: { // Call Primitive
         uint8_t primLowByte = fetchByte();
         uint8_t flagsAndHigh = fetchByte();
         int primIndex = primLowByte | ((flagsAndHigh & 0x1F) << 8);
         (void)primIndex; // Skipped at activation time
         break;
     }
-    case 0xF9: { // Push FullBlockClosure
+    case jit::SistaV1::PushFullBlock: { // Push FullBlockClosure
         uint8_t litIndex = fetchByte();
         uint8_t flags = fetchByte();
         int fullLitIndex = (extA_ << 8) | litIndex;
@@ -3947,7 +3933,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         createFullBlockWithLiteral(fullLitIndex, numCopied, receiverOnStack, ignoreOuterContext);
         break;
     }
-    case 0xFA: { // Push Closure
+    case jit::SistaV1::PushClosure: { // Push Closure
         uint8_t desc = fetchByte();
         uint8_t blockSizeLow = fetchByte();
         int numCopied = ((desc >> 3) & 0x07) | ((extA_ >> 4) << 3);
@@ -3958,14 +3944,14 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         createBlockWithArgs(numArgs, numCopied, blockSize);
         break;
     }
-    case 0xFB: { // Push Temp At k In Temp Vector At j
+    case jit::SistaV1::PushTempAtInVec: { // Push Temp At k In Temp Vector At j
         uint8_t tempIndex = fetchByte();
         uint8_t vectorIndex = fetchByte();
         Oop tempVector = temporary(vectorIndex);
         push(tempVector.isObject() ? memory_.fetchPointer(tempIndex, tempVector) : memory_.nil());
         break;
     }
-    case 0xFC: { // Store Temp At k In Temp Vector At j (no pop)
+    case jit::SistaV1::StoreTempAtInVec: { // Store Temp At k In Temp Vector At j (no pop)
         uint8_t tempIndex = fetchByte();
         uint8_t vectorIndex = fetchByte();
         Oop tempVector = temporary(vectorIndex);
@@ -3973,7 +3959,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             memory_.storePointer(tempIndex, tempVector, stackTop());
         break;
     }
-    case 0xFD: { // Pop and Store Temp At k In Temp Vector At j
+    case jit::SistaV1::PopStoreTempAtInVec: { // Pop and Store Temp At k In Temp Vector At j
         uint8_t tempIndex = fetchByte();
         uint8_t vectorIndex = fetchByte();
         Oop value = pop();

@@ -4,6 +4,7 @@
 - **Never use markdown tables** (pipes and dashes). They look terrible when
   copy-pasted into email. Use indented plain-text columns or bullet lists instead.
   A fixed-width font can be assumed.
+- **Do not use random numbers like 0x23 for opcode or other constants. Use named constants.
 
 ## MANDATORY: Save Progress Every Hour
 
@@ -307,7 +308,7 @@ To avoid context pollution from large files (Interpreter.cpp: 8K lines, Primitiv
 
 ### Delegate to Agents
 - **Primitive table audits**: "Compare primitiveTable_ entries N-M against cointerp-cpp.c and list discrepancies"
-- **Cross-file verification**: "Find all places primitive X is referenced and check consistency"
+- **Cross-file verification**: "Find all places primitive X is referenced and check conisstency"
 - **Large grep/search tasks**: When searching across 20K+ lines of code
 - **Reference extraction**: "Parse cointerp-cpp.c primitive table into a structured list"
 
