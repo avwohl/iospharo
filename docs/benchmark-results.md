@@ -1,5 +1,63 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## 2026-04-17 — T2 default-on, post GC-root fixes
+
+Benchmarks re-run after landing: IC layout fix (fd03572), JITState
+GC-root (a311688), T2 MIR opt level default→1 (8b6fbf3), J2J literals
+off-by-8 fix (2b1629f), and flipping PHARO_T2 default from off→on.
+
+Ref VM: Pharo 10.3.9 Cog JIT. Our VM: test_load_image, same Pharo 13
+image for both. Times are median of first clean run; all values in ms
+unless noted.
+
+    Benchmark                Cog    Ours T2-on   Ours interp   Ours/Cog
+    ----------------------   ---    ----------   -----------   --------
+    fib(28)                    2       (timeout)       57         28.5x
+    fib(26)                  ~0.5*        21           20           40x
+    sum 1M                     4       (timeout)    (timeout)      >25x
+    sum 100K                 ~0.4*         9            9           22x
+    100K Object new            2          10           10            5x
+    10K Object new           ~0.2*         1            1            5x
+    sieve x100                 9       (timeout)    (timeout)        --
+    sieve x10                ~0.9*        14           14           15x
+
+    tinyBench bytecodes/sec  77M      [hang]        303M           N/A
+    tinyBench sends/sec    4400M      [hang]         19M          232x
+
+    (* = extrapolated from Cog's larger-input number since the
+       small-input version rounds to zero on Cog.)
+
+Key findings:
+- T2 is stable by default. 200+ T2 methods compiled across the run
+  with zero crashes (vs previous sessions where T2 = crash).
+- T2 on and interpreter produce the same timings for every
+  micro-benchmark. The JIT is not accelerating these code paths.
+- tinyBenchmarks hangs with JIT enabled; completes cleanly in
+  interpreter-only mode. Likely a specific bytecode pattern or
+  a deep recursion T2 / chain-loop bug that only fires inside
+  tinyBench's measurement loop.
+- Bytecode throughput in pure-interpreter mode (303M/sec) is already
+  4× Cog's (77M/sec). Send throughput is 232× worse. The gap is
+  almost entirely in method dispatch, not bytecode execution.
+
+Why T2 doesn't help these benchmarks:
+- Micro-benchmarks are mostly one-shot. A method is called, it runs
+  once, done. By the time the JIT compiles it (executionCount
+  threshold is 500), the benchmark is over.
+- For the hot send paths that ARE compiled, our per-send overhead
+  (J2J save/restore + IC probe + C helper round-trip on miss) still
+  exceeds Cog's native-inlined dispatch.
+
+Closing the gap still requires either:
+  (a) Method inlining (Sista-style) so hot sends become inline MIR,
+      eliminating the C round-trip entirely.
+  (b) A warmup pass + lower compile threshold for benchmarks.
+
+Takeaway vs the "as fast as Cog" target: **not met**. T2 enabling
+delivered correctness and stability but no measurable speedup on
+these workloads. The architectural bottleneck remains the T1/T2
+send path.
+
 ## 2026-04-16 — AWFY after T2 double-execution fix (session 23)
 
 Correctness fix `f279fd4` closes the T2 `jit_t2_send` double-execution
