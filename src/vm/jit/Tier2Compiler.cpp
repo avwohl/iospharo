@@ -343,48 +343,46 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             return false;  // bail: listed opcode triggers T2 bail
         }
 
-        if (op <= 0x0F) {
-            d.operand = op & 0x0F;  // pushRecvVar
-        } else if (op <= 0x1F) {
-            d.operand = op & 0x0F;  // pushLitVar
-        } else if (op <= 0x3F) {
-            d.operand = op & 0x1F;  // pushLitConst
-        } else if (op <= 0x4B) {
-            d.operand = op - SistaV1::PushTempBase;  // pushTemp
+        if (SistaV1::isPushRecvVar(op)) {
+            d.operand = op & 0x0F;
+        } else if (SistaV1::isPushLitVar(op)) {
+            d.operand = op & 0x0F;
+        } else if (SistaV1::isPushLitConst(op)) {
+            d.operand = op & 0x1F;
+        } else if (SistaV1::isPushTemp(op)) {
+            d.operand = op - SistaV1::PushTempBase;
         } else if (op >= SistaV1::PushReceiver && op <= SistaV1::PushNil) {
-            // 0x4C-0x4F: pushReceiver, pushTrue, pushFalse, pushNil
+            // pushReceiver, pushTrue, pushFalse, pushNil
         } else if (op == SistaV1::PushZero || op == SistaV1::PushOne) {
-            // 0x50-0x51
-        } else if (op == 0x52) {
-            // pushThisContext — not supported in Tier 2
+            // no operand
+        } else if (op == SistaV1::PushThisContext) {
+            // not supported in Tier 2
             t2DecodeBails[op]++;
             return false;
         } else if (op == SistaV1::Dup) {
-            // 0x53
+            // no operand
         } else if (op >= 0x54 && op <= 0x57) {
-            // Unused — nop
+            // Unused in Sista V1 — nop
             out.push_back(d);
             i += d.bcLength;
             extA = extB = 0;
             continue;
-        } else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
-            // 0x58-0x5C: returns
-        } else if (op == 0x5D) {
-            // BlockReturn nil: in FullBlock (extB=0), equivalent to ReturnNil
+        } else if (SistaV1::isReturn(op)) {
+            // returns: ReturnReceiver..ReturnTop
+        } else if (op == SistaV1::BlockReturnNil) {
+            // In FullBlock (extB=0): equivalent to ReturnNil.
             if (extB != 0) {
                 t2DecodeBails[op]++;
                 return false;
             }
-            // Decode as ReturnNil (0x5B)
             d.opcode = SistaV1::ReturnNil;
-        } else if (op == 0x5E) {
-            // BlockReturn top: in FullBlock (extA=0), equivalent to ReturnTop
+        } else if (op == SistaV1::BlockReturnTop) {
+            // In FullBlock (extA=0): equivalent to ReturnTop.
             if (extA != 0) {
                 // Non-local return (enclosingLevels > 0) — complex, bail
                 t2DecodeBails[op]++;
                 return false;
             }
-            // Decode as ReturnTop (0x5C)
             d.opcode = SistaV1::ReturnTop;
         } else if (op == 0x5F) {
             // Nop (no operation)
@@ -392,10 +390,10 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             i += d.bcLength;
             extA = extB = 0;
             continue;
-        } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
+        } else if (SistaV1::isArithSelector(op)) {
             d.operand = d.bcOffset;
             d.operand2 = 1;  // all arith are 1-arg sends
-        } else if (op >= 0x70 && op <= 0x7F) {
+        } else if (SistaV1::isSpecialSelector(op)) {
             // Special sends: selector from special selectors array, not literals.
             // Arg counts are fixed by the Sista V1 spec:
             // at:(1) at:put:(2) size(0) next(0) nextPut:(1) atEnd(0) ==(1) class(0)
@@ -403,27 +401,27 @@ static bool decodeBytecodes(const uint8_t* bc, size_t len, std::vector<T2BC>& ou
             static const int specialArgCounts[16] = {
                 1, 2, 0, 0, 1, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0
             };
-            int idx = op - 0x70;
-            d.operand = idx;   // special selector index (0-15)
-            d.operand2 = specialArgCounts[idx];  // arg count
-        } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
+            int idx = op - SistaV1::SpecialSendBase;
+            d.operand = idx;
+            d.operand2 = specialArgCounts[idx];
+        } else if (SistaV1::isSend0(op)) {
             d.operand = op & 0x0F;
             d.operand2 = 0;
-        } else if (op >= SistaV1::Send1Base && op <= 0x9F) {
+        } else if (SistaV1::isSend1(op)) {
             d.operand = op & 0x0F;
             d.operand2 = 1;
-        } else if (op >= SistaV1::Send2Base && op <= 0xAF) {
+        } else if (SistaV1::isSend2(op)) {
             d.operand = op & 0x0F;
             d.operand2 = 2;
-        } else if (op >= SistaV1::ShortJumpBase && op <= 0xB7) {
+        } else if (SistaV1::isShortJump(op)) {
             d.branchTarget = (int)i + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::ShortJumpTrueBase && op <= 0xBF) {
+        } else if (SistaV1::isShortJumpTrue(op)) {
             d.branchTarget = (int)i + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::ShortJumpFalseBase && op <= 0xC7) {
+        } else if (SistaV1::isShortJumpFalse(op)) {
             d.branchTarget = (int)i + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::PopStoreRecvBase && op <= 0xCF) {
+        } else if (SistaV1::isPopStoreRecv(op)) {
             d.operand = op & 0x07;
-        } else if (op >= SistaV1::PopStoreTempBase && op <= 0xD7) {
+        } else if (SistaV1::isPopStoreTemp(op)) {
             d.operand = op - SistaV1::PopStoreTempBase;
         } else if (op == SistaV1::Pop) {
             // no operand
@@ -783,14 +781,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // CallPrimitive: bails in decode, never reaches emit.
 
         // --- Push instructions ---
-        if (op <= 0x0F) {
+        if (SistaV1::isPushRecvVar(op)) {
             // pushRecvVar: load receiver slot (header + slotIdx*8)
             int slotIdx = bc.operand;
             MIR_reg_t val = newScratch();
             EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_receiver_, 8 + slotIdx * 8));
             vpush(val);
         }
-        else if (op <= 0x1F) {
+        else if (SistaV1::isPushLitVar(op)) {
             // pushLitVar: load association value (assoc = literals[i], val = assoc->slot1)
             int litIdx = bc.operand;
             MIR_reg_t assoc = newScratch();
@@ -799,14 +797,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, assoc, 16));
             vpush(val);
         }
-        else if (op <= 0x3F) {
+        else if (SistaV1::isPushLitConst(op)) {
             // pushLitConst: load literal directly
             int litIdx = bc.operand;
             MIR_reg_t val = newScratch();
             EMIT(MIR_MOV, REG(val), MEM(MIR_T_I64, reg_literals_, litIdx * 8));
             vpush(val);
         }
-        else if (op >= SistaV1::PushTempBase && op <= 0x4B) {
+        else if (SistaV1::isPushTemp(op)) {
             // pushTemp
             int tmpIdx = bc.operand;
             if (tmpIdx < tempCount_ && tmpIdx < MaxTemps) {
@@ -916,7 +914,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 EMIT(MIR_SUB, REG(reg_sp_), REG(reg_sp_), IMM(8));
             }
         }
-        else if (op >= SistaV1::PopStoreTempBase && op <= 0xD7) {
+        else if (SistaV1::isPopStoreTemp(op)) {
             int tmpIdx = bc.operand;
             MIR_reg_t val;
             if (vstackDepth_ > 0) {
@@ -935,7 +933,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // Also store to memory (for GC visibility and deopt)
             EMIT(MIR_MOV, MEM(MIR_T_I64, reg_tempBase_, tmpIdx * 8), REG(val));
         }
-        else if (op >= SistaV1::PopStoreRecvBase && op <= 0xCF) {
+        else if (SistaV1::isPopStoreRecv(op)) {
             int slotIdx = bc.operand;
             MIR_reg_t val;
             if (vstackDepth_ > 0) {
@@ -1043,9 +1041,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             unreachable = true;
         }
 
-        // --- Arithmetic sends (0x60-0x6F) ---
+        // --- Arithmetic sends ---
         // Selector mapping: + - < > <= >= = ~= * / \\ @ bitShift: // bitAnd: bitOr:
-        else if (op >= SistaV1::ArithBase && op <= 0x6F) {
+        else if (SistaV1::isArithSelector(op)) {
             int arithOp = op - SistaV1::ArithBase;
             // DIAGNOSTIC: PHARO_T2_NO_ARITH_FAST=1 disables SmallInt fast path
             // for ALL arith ops. PHARO_T2_NO_ARITH_OPS="0,1,5,7" disables the
@@ -1273,7 +1271,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
 
         // --- Jumps ---
-        else if (op >= SistaV1::ShortJumpBase && op <= 0xB7) {
+        else if (SistaV1::isShortJump(op)) {
             // Unconditional jump
             int target = bc.branchTarget;
             if (target >= 0 && target < MaxBCLabels && bcLabelUsed_[target]) {
@@ -1301,7 +1299,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 bail = true; break;
             }
         }
-        else if (op >= SistaV1::ShortJumpTrueBase && op <= 0xBF) {
+        else if (SistaV1::isShortJumpTrue(op)) {
             // Jump if true
             int target = bc.branchTarget;
             if (target >= 0 && target < MaxBCLabels && bcLabelUsed_[target]) {
@@ -1341,7 +1339,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 bail = true; break;
             }
         }
-        else if (op >= SistaV1::ShortJumpFalseBase && op <= 0xC7) {
+        else if (SistaV1::isShortJumpFalse(op)) {
             // Jump if false
             int target = bc.branchTarget;
             if (target >= 0 && target < MaxBCLabels && bcLabelUsed_[target]) {
@@ -1384,8 +1382,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // --- Sends ---
         // Regular sends: inline via jit_t2_send CALL
-        else if ((op >= SistaV1::Send0Base && op <= 0xAF) ||
-                 op == SistaV1::ExtSend) {
+        else if (SistaV1::isLiteralSend(op) || op == SistaV1::ExtSend) {
             int nArgs = bc.operand2;
             if (nArgs < 0) nArgs = 0;
             int litIndex = bc.operand;
@@ -1430,10 +1427,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             unreachable = true;
         }
 
-        // --- Special sends (0x70-0x7F) ---
+        // --- Special sends (0x70-0x7F: special selectors 16..31) ---
         // at:(0) at:put:(1) size(2) next(3) nextPut:(4) atEnd(5) ==(6) class(7)
         // ~~(8) value(9) value:(10) do:(11) new(12) new:(13) x(14) y(15)
-        else if (op >= 0x70 && op <= 0x7F) {
+        else if (SistaV1::isSpecialSelector(op)) {
             int specIdx = bc.operand;  // 0-15
             int nArgs = bc.operand2;
             if (nArgs < 0) nArgs = 0;

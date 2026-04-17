@@ -159,17 +159,17 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         // Extended (2-3 byte) bytecodes use separate bytes + extension prefixes.
         //
         // The ranges are tested in bytecode order (0x00 → 0xFF).
-        if (op <= 0x0F) {
-            bc.operand = op & 0x0F;                            // pushRecvVar
-        } else if (op <= 0x1F) {
-            bc.operand = op & 0x0F;                            // pushLitVar
-        } else if (op <= 0x3F) {
-            bc.operand = op & 0x1F;                            // pushLitConst
-        } else if (op <= 0x4B) {
-            bc.operand = op - SistaV1::PushTempBase;           // pushTemp
+        if (SistaV1::isPushRecvVar(op)) {
+            bc.operand = op & 0x0F;                            // pushRecvVar 0..15
+        } else if (SistaV1::isPushLitVar(op)) {
+            bc.operand = op & 0x0F;                            // pushLitVar 0..15
+        } else if (SistaV1::isPushLitConst(op)) {
+            bc.operand = op & 0x1F;                            // pushLitConst 0..31
+        } else if (SistaV1::isPushTemp(op)) {
+            bc.operand = op - SistaV1::PushTempBase;           // pushTemp 0..11
         } else if (op >= SistaV1::PushReceiver && op <= SistaV1::Dup) {
             // 0x4C-0x53: individual push bytecodes, no operand
-            if (op == 0x52) {
+            if (op == SistaV1::PushThisContext) {
                 // pushThisContext — deopt to interpreter
                 bc.operand = bc.bcOffset;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -198,11 +198,10 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             // In a method (not a block): simple return — fall through to selectStencil.
-        } else if (op == 0x5D || op == 0x5E) {
+        } else if (SistaV1::isBlockReturn(op)) {
             if (isFullBlock && extA == 0) {
                 // In a FullBlock with no enclosing levels: these are simple returns.
-                // 0x5D = return nil from block, 0x5E = return top from block.
-                if (op == 0x5D) {
+                if (op == SistaV1::BlockReturnNil) {
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnNil);
                 } else {
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_returnTop);
@@ -226,35 +225,35 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             i += bc.bcLength;
             extA = 0; extB = 0; firstExtBCOffset = -1;
             continue;
-        } else if (op >= SistaV1::ArithBase && op <= 0x6F) {
+        } else if (SistaV1::isArithSelector(op)) {
             bc.operand = bc.bcOffset;                          // bytecode offset (for ArithOverflow ip)
             bc.operand2 = 1;                                   // all arith selectors are 1-arg
-        } else if (op >= 0x70 && op <= 0x7F) {
-            bc.operand = op - 0x70;                            // send special 16-31
+        } else if (SistaV1::isSpecialSelector(op)) {
+            bc.operand = op - SistaV1::SpecialSendBase;        // send special 16-31
             // nArgs per selector: at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
             static const uint8_t specialNArgs[16] = {1,2,0,0,1,0,1,0,1,0,1,1,0,1,0,0};
             bc.operand2 = specialNArgs[bc.operand];
-        } else if (op >= SistaV1::Send0Base && op <= 0x8F) {
+        } else if (SistaV1::isSend0(op)) {
             bc.operand = op & 0x0F;
-            bc.operand2 = 0;                                   // send 0 args
-        } else if (op >= SistaV1::Send1Base && op <= 0x9F) {
+            bc.operand2 = 0;
+        } else if (SistaV1::isSend1(op)) {
             bc.operand = op & 0x0F;
-            bc.operand2 = 1;                                   // send 1 arg
-        } else if (op >= SistaV1::Send2Base && op <= 0xAF) {
+            bc.operand2 = 1;
+        } else if (SistaV1::isSend2(op)) {
             bc.operand = op & 0x0F;
-            bc.operand2 = 2;                                   // send 2 args
-        } else if (op >= SistaV1::ShortJumpBase && op <= 0xB7) {
+            bc.operand2 = 2;
+        } else if (SistaV1::isShortJump(op)) {
             bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::ShortJumpTrueBase && op <= 0xBF) {
+        } else if (SistaV1::isShortJumpTrue(op)) {
             bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::ShortJumpFalseBase && op <= 0xC7) {
+        } else if (SistaV1::isShortJumpFalse(op)) {
             bc.branchTarget = static_cast<int>(i) + 1 + (op & 0x07) + 1;
-        } else if (op >= SistaV1::PopStoreRecvBase && op <= 0xCF) {
-            bc.operand = op & 0x07;                            // popStoreRecvVar
-        } else if (op >= SistaV1::PopStoreTempBase && op <= 0xD7) {
-            bc.operand = op - SistaV1::PopStoreTempBase;       // popStoreTemp
+        } else if (SistaV1::isPopStoreRecv(op)) {
+            bc.operand = op & 0x07;                            // popStoreRecvVar 0..7
+        } else if (SistaV1::isPopStoreTemp(op)) {
+            bc.operand = op - SistaV1::PopStoreTempBase;       // popStoreTemp 0..7
         } else if (op == SistaV1::Pop) {
-            // 0xD8: no operand
+            // No operand
         } else if (op == 0xD9) {
             // Unconditional trap — deopt to interpreter (stopVM)
             bc.operand = bc.bcOffset;
