@@ -1482,7 +1482,27 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // functions. extract_stencils.py verifies this statically.
 #ifdef __aarch64__
     {
-        static bool noSimStack = getenv("PHARO_JIT_NO_SIMSTACK") != nullptr;
+        // SimStack caches stack TOS/NOS/3rd/4th in x19-x22 between bytecode
+        // stencils. Arith binary slow paths spill x19+x20 and bail to the
+        // interpreter, leaving the interpreter to re-execute the arith
+        // bytecode. On `Integer>>benchmark` and similar hot loops, this
+        // path produces nil where a boolean is expected (k<=size fires
+        // mustBeBoolean after JIT_MAX_COMPILE=9, which enables a cascade).
+        // Root cause is not yet pinned to a specific stencil — fast paths
+        // look correct in isolation, and the slow path's spill + ip setup
+        // match what the interpreter resumption expects. Something about
+        // the SimStack register transitions across a hot arith+jump pair
+        // produces the bad value. Until we have lldb-level access to
+        // trace, default SimStack off; PHARO_JIT_SIMSTACK=1 re-enables it.
+        // Perf cost: ~5-10% on arith-heavy code; correctness restored on
+        // everything that uses Integer>>benchmark (tinyBench, sieve etc.).
+        static bool noSimStack = []() {
+            const char* noEnv = getenv("PHARO_JIT_NO_SIMSTACK");
+            if (noEnv && noEnv[0] == '1') return true;
+            const char* yesEnv = getenv("PHARO_JIT_SIMSTACK");
+            if (yesEnv && yesEnv[0] == '1') return false;
+            return true;  // default: SimStack off
+        }();
         // Per-selector SimStack disable for bisection:
         // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...
         bool skipSimStackHere = noSimStack;
