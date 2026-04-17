@@ -31,22 +31,31 @@ the state after 2026-04-17 session.
     Setter         0x40 + 0xC8-0xCF + 0x58  ivar := arg; ^ self
     Init-const     {0x4D-0x51} + 0xC8-0xCF + 0x58  ivar := const; ^ self
 
-Sends (partial):
-- **0-arg inline IC** shipped (c94e1ce): `^ <push> foo` emits a
-  real 6-way IC probe in asmjit, exits `ExitSendCached` on hit and
-  `ExitSend` on miss.  ~36% hit rate on yourself-loop workload.
-  Critical fix: seed `icData[18]` with the send's selector at
-  compile time so the chain-loop bail patches the IC (1d575b3).
-- **1-arg inline IC** scaffolding in (gated): intermittent DNU
-  on startup; see task #31 status in
-  memory/project_asmjit_t2_migration.md.
+Sends (partial, all gated):
+- **0-arg inline IC** (`PHARO_T2_ZEROARG_IC=1` to enable): emits the
+  6-way IC probe inline; ~36% hit rate when on the hot path.
+  Default off: observed a bimodal bench result (~205ms fast / ~380ms
+  slow) where enabling the IC pushes all runs into slow mode.
+  Hypothesis: T2 intercepts methods that T1 needs to IC-warm for the
+  fast path to kick in.
+- **1-arg inline IC** (`PHARO_T2_ONEARG_IC=1`): scaffolding complete;
+  same IC machinery as 0-arg but for 2-push bail.  Triggers
+  intermittent startup DNUs independent of the IC probe itself
+  (force-miss still reproduces) — bug is in the 2-push bail path.
+- **IntArithAdd/Sub** (on by default): SmallInt fast-path for
+  `^ a + b`/`^ a - b` 4-byte methods.  Correct but matches zero
+  real methods — inlined arith lives in larger bodies.
+- **IntAccumRecvVar** (on by default): `ivar := ivar +/- arg; ^ self`
+  5-byte accumulator.  Matches a handful of real methods.
 
-Still missing: arith fast paths (task #32), control flow,
-multi-send methods, block activation.
+Still missing: control flow, multi-send methods, block activation.
 
-Perf impact today: negligible — T2-compiled methods aren't typically
-on the benchmark hot path.  The inline IC removes per-call C
-round-trip on IC hits but doesn't add coverage.
+Perf impact on default (T2=1 leaf-only): **~neutral to slightly
+favourable** on array-fill bench (60% fast-mode runs vs 40% for
+T2=0, though with only 10-run samples the difference is near noise).
+Enabling any of the send-IC paths currently biases toward the slow
+mode.  Fixing that requires understanding the T1 warmup interaction
+so T2 doesn't steal methods that T1 still needs to populate.
 
 **Measured perf (prior MIR T2):** JIT was **net-negative** on arith-heavy
 loops (2.5× slower than interpreter at 3M iterations; MIR T2 was 12×
