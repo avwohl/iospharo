@@ -330,12 +330,15 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         numPushes = 2;
         sendIPOff = 2;
         arithOp = b2;
-    } else if (false && bodyLen >= 4 && SistaV1::isSend1(b2)
-                            && bytes[bcStart + 3] == SistaV1::ReturnTop
-                            && decodePush(b0, pushes[0])
-                            && decodePush(b1, pushes[1])) {
-        // GATED: OneArgSendInlineIC — see earlier commit for the
-        // intermittent DNU bug.
+    } else if (getenv("PHARO_T2_ONEARG_IC")
+                && bodyLen >= 4 && SistaV1::isSend1(b2)
+                && bytes[bcStart + 3] == SistaV1::ReturnTop
+                && decodePush(b0, pushes[0])
+                && decodePush(b1, pushes[1])) {
+        // GATED: OneArgSendInlineIC (and its force-miss variant) both
+        // trigger intermittent DNUs during startup — see jit-todo.md.
+        // Explicit opt-in via PHARO_T2_ONEARG_IC=1 so we can debug
+        // later without accidentally enabling in benchmarks.
         kind = ReturnKind::OneArgSendInlineIC;
         numPushes = 2;
         sendIPOff = 2;
@@ -694,12 +697,15 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         a64::Gp icData = cc.new_gp64("icData");
         cc.mov(icData, asmjit::Imm(icAddr));
 
-        // 6-way probe
-        for (int i = 0; i < IC_ENTRIES; i++) {
-            a64::Gp key = cc.new_gp64("key");
-            cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(i)));
-            cc.cmp(lookupKey, key);
-            cc.b_eq(lblHit[i]);
+        // 6-way probe (PHARO_T2_FORCE_MISS=1 skips the probe to isolate
+        // whether the IC hit path contributes to the 1-arg bug).
+        if (!getenv("PHARO_T2_FORCE_MISS")) {
+            for (int i = 0; i < IC_ENTRIES; i++) {
+                a64::Gp key = cc.new_gp64("key");
+                cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(i)));
+                cc.cmp(lookupKey, key);
+                cc.b_eq(lblHit[i]);
+            }
         }
         cc.b(lblMiss);
 
