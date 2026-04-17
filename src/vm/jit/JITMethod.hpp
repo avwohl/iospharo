@@ -193,6 +193,28 @@ struct JITMethod {
     size_t allocationSize() const {
         return totalSize;
     }
+
+    // --- Derived from compiledMethodOop + methodHeader ---
+    // Used by J2J return paths to recompute caller state without having to
+    // save literals/bcStart redundantly. See docs/jit-j2j-reduction-plan.md.
+
+    // Pointer to the method's literal frame (slots 1..numLits of the
+    // CompiledMethod object). compiledMethodOop points at the ObjectHeader;
+    // slot 0 is the method header, so literals start at +8.
+    uint64_t* literals() const {
+        return reinterpret_cast<uint64_t*>(compiledMethodOop + 8);
+    }
+
+    // Pointer to the first bytecode. Layout after the ObjectHeader:
+    //   slot 0 = method header (1 uint64)
+    //   slot 1..numLits = literals (numLits uint64s)
+    //   byte 0 onward = bytecodes
+    // So bcStart = compiledMethodOop + (1 + numLits + 1) * 8
+    //            = compiledMethodOop + (2 + numLits) * 8
+    uint8_t* bcStart() const {
+        uint64_t numLits = methodHeader & 0x7FFFu;
+        return reinterpret_cast<uint8_t*>(compiledMethodOop + (2 + numLits) * 8);
+    }
 };
 
 // JITMethod header is 72 bytes (fits in 2 cache lines at 64-byte alignment)

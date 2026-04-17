@@ -11466,15 +11466,11 @@ void Interpreter::tryJITResumeInCaller() {
                     uint8_t* callerBCStart =
                         callerMethObj->bytes() + (1 + callerNumLits) * 8;
 
-                    if (__builtin_expect(selfRecursive, 1)) {
-                        save.jitMethod = reinterpret_cast<jit::JITMethod*>(
-                            reinterpret_cast<uintptr_t>(callerJM) | 1ULL);
-                    } else {
-                        save.jitMethod = callerJM;
-                        save.literals = state.literals;
-                        save.argCount = state.argCount;
-                        save.bcStart = callerBCStart;
-                    }
+                    // literals/argCount/bcStart are derived from
+                    // save.jitMethod on return (see J2J_INLINE_RETURN).
+                    // The self-recursive marker is obsolete.
+                    (void)selfRecursive;
+                    save.jitMethod = callerJM;
 
                     // Precompute resume JIT code address
                     {
@@ -11549,13 +11545,15 @@ void Interpreter::tryJITResumeInCaller() {
                     state.receiver = save.receiver;
                     state.tempBase = save.tempBase;
 
-                    uintptr_t savedJMBits =
-                        reinterpret_cast<uintptr_t>(save.jitMethod);
-                    if (__builtin_expect((savedJMBits & 1) == 0, 0)) {
-                        state.literals = save.literals;
-                        state.jitMethod = save.jitMethod;
-                        state.argCount = save.argCount;
-                        state.ip = save.bcStart;
+                    // Derive literals/argCount/ip from save.jitMethod —
+                    // see docs/jit-j2j-reduction-plan.md.  The old
+                    // self-recursive marker is gone.
+                    {
+                        auto* savedJM = save.jitMethod;
+                        state.jitMethod = savedJM;
+                        state.literals = reinterpret_cast<Oop*>(savedJM->literals());
+                        state.argCount = savedJM->argCount;
+                        state.ip = savedJM->bcStart();
                     }
 
                     // Pop receiver+args, push return value
@@ -11573,9 +11571,7 @@ void Interpreter::tryJITResumeInCaller() {
 
                 // Charge bytecodes for each trampoline iteration
                 if (state.jitMethod) {
-                    auto* jm = reinterpret_cast<jit::JITMethod*>(
-                        reinterpret_cast<uintptr_t>(state.jitMethod)
-                        & ~static_cast<uintptr_t>(1));
+                    auto* jm = state.jitMethod;
                     checkCountdown_ -= jm->numBytecodes;
                     g_stepNum += jm->numBytecodes;
                 }
@@ -11586,16 +11582,11 @@ void Interpreter::tryJITResumeInCaller() {
 #endif
           } // !noResumeJ2J
 
-            // Reconstruct state.method from state.jitMethod
+            // Reconstruct state.method from state.jitMethod.
+            // (Previously masked out the obsolete self-recursive marker bit.)
             if (state.jitMethod) {
-                uintptr_t jmBits =
-                    reinterpret_cast<uintptr_t>(state.jitMethod);
-                jmBits &= ~static_cast<uintptr_t>(1);
-                state.jitMethod =
-                    reinterpret_cast<jit::JITMethod*>(jmBits);
                 state.method = Oop::fromRawBits(
-                    reinterpret_cast<jit::JITMethod*>(jmBits)
-                        ->compiledMethodOop);
+                    state.jitMethod->compiledMethodOop);
             }
 
             // Merge stats
@@ -11610,22 +11601,11 @@ void Interpreter::tryJITResumeInCaller() {
                     if (frameDepth_ >= StackOverflowLimit) break;
                     J2JSave& save = rj2jSaves[i];
                     SavedFrame& frame = savedFrames_[frameDepth_++];
-                    uintptr_t jmBits =
-                        reinterpret_cast<uintptr_t>(save.jitMethod);
-                    bool isSelfRec = (jmBits & 1) != 0;
-                    jit::JITMethod* saveJM =
-                        reinterpret_cast<jit::JITMethod*>(
-                            jmBits & ~static_cast<uintptr_t>(1));
-                    Oop saveMethod =
-                        Oop::fromRawBits(saveJM->compiledMethodOop);
-                    ObjectHeader* saveMO = saveMethod.asObjectPtr();
-                    int saveNumLits =
-                        static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                    uint8_t* saveBCStart =
-                        saveMO->bytes() + (1 + saveNumLits) * 8;
+                    jit::JITMethod* saveJM = save.jitMethod;
+                    Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                     frame.savedIP = save.ip;
                     frame.savedBytecodeEnd =
-                        saveBCStart + saveJM->numBytecodes;
+                        saveJM->bcStart() + saveJM->numBytecodes;
                     frame.savedMethod = saveMethod;
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
@@ -11633,8 +11613,7 @@ void Interpreter::tryJITResumeInCaller() {
                     frame.savedActiveContext = nil;
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
-                    frame.savedArgCount =
-                        isSelfRec ? saveJM->argCount : save.argCount;
+                    frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
                 }
                 // Sync interpreter state from innermost callee
@@ -12701,20 +12680,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     Oop::fromRawBits(callerJM->compiledMethodOop).asObjectPtr();
                 uint8_t* callerBCStart =
                     callerMethObj->bytes() + (1 + callerNumLits) * 8;
-                if (__builtin_expect(selfRecursive, 1)) {
-                    // Self-recursive: calleeBCStart == callerBCStart. On a
-                    // clean return, state.ip will still equal callerBCStart
-                    // (stencils don't touch state.ip on the fast path), so
-                    // we don't need to save bcStart OR restore state.ip on
-                    // return. Skip both stores.
-                    save.jitMethod = reinterpret_cast<jit::JITMethod*>(
-                        reinterpret_cast<uintptr_t>(callerJM) | 1ULL);
-                } else {
-                    save.jitMethod = callerJM;
-                    save.literals = state.literals;
-                    save.argCount = state.argCount;
-                    save.bcStart = callerBCStart;
-                }
+                // literals/argCount/bcStart are derived from save.jitMethod
+                // on return (see J2J_INLINE_RETURN).
+                (void)selfRecursive;
+                save.jitMethod = callerJM;
                 // Precompute resume JIT code address from the advanced IP.
                 // bcOffset = (advancedIP - callerBCStart) gives the next
                 // bytecode, so bcToCode maps to the stencil AFTER the send.
@@ -12798,21 +12767,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.sp = save.sp;
                 state.receiver = save.receiver;
                 state.tempBase = save.tempBase;
-                // Low bit of save.jitMethod = 1 marks a self-recursive save:
-                // literals, argCount, jitMethod are unchanged. Also, state.ip
-                // is already equal to callerBCStart (same method, stencils
-                // don't modify ip on the fast path), so we don't need to
-                // restore it — and save.bcStart wasn't even written for
-                // self-recursive saves.
-                uintptr_t savedJMBits =
-                    reinterpret_cast<uintptr_t>(save.jitMethod);
-                if (__builtin_expect((savedJMBits & 1) == 0, 0)) {
-                    state.literals = save.literals;
-                    state.jitMethod = save.jitMethod;
-                    state.argCount = save.argCount;
-                    // Non-self: must reset state.ip from calleeBCStart to
-                    // callerBCStart before resuming caller's stencils.
-                    state.ip = save.bcStart;
+                // Derive literals/argCount/ip from save.jitMethod — see
+                // docs/jit-j2j-reduction-plan.md.  The old self-recursive
+                // marker bit is gone.
+                {
+                    auto* savedJM = save.jitMethod;
+                    state.jitMethod = savedJM;
+                    state.literals = reinterpret_cast<Oop*>(savedJM->literals());
+                    state.argCount = savedJM->argCount;
+                    state.ip = savedJM->bcStart();
                 }
 
                 // Pop receiver+args, push return value
@@ -12866,41 +12829,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Reconstruct state.method from state.jitMethod — we skip updating it
         // in the hot loop for speed, but fall-through paths need it current.
         if (state.jitMethod) {
-            // Mask off possible self-recursive bit 0 from stencil J2J
-            uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-            jmBits &= ~static_cast<uintptr_t>(1);
-            state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
             state.method = Oop::fromRawBits(
-                reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                state.jitMethod->compiledMethodOop);
         }
 
         // If we bailed out with pending J2J frames, materialize them
-        // so the interpreter can see them.
+        // so the interpreter can see them.  literals/argCount/bcStart
+        // are derived from save.jitMethod; the old self-recursive
+        // marker bit is gone.
         if (j2jDepth > 0) {
             j2jMaterialized = true;
-            // Materialize SavedFrames from save stack (oldest first).
-            // For self-recursive saves (low bit of save.jitMethod set), the
-            // effective method is the SAME as the caller. Mask the bit off
-            // and derive argCount from JITMethod::argCount since we skipped
-            // saving it on the hot path.
             Oop nil = memory_.nil();
             for (int i = 0; i < j2jDepth; i++) {
                 J2JSave& save = j2jStack[i];
                 SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
-
-                uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                bool isSelfRecursive = (jmBits & 1) != 0;
-                jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                    jmBits & ~static_cast<uintptr_t>(1));
+                jit::JITMethod* saveJM = save.jitMethod;
                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
-                int frameArgCount =
-                    isSelfRecursive ? saveJM->argCount : save.argCount;
-
                 frame.savedIP = save.ip;
-                frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                frame.savedBytecodeEnd =
+                    saveJM->bcStart() + saveJM->numBytecodes;
                 frame.savedMethod = saveMethod;
                 frame.savedHomeMethod = saveMethod;
                 frame.savedReceiver = save.receiver;
@@ -12908,7 +12855,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 frame.savedActiveContext = nil;
                 frame.materializedContext = nil;
                 frame.savedFP = save.tempBase - 1;
-                frame.savedArgCount = frameArgCount;
+                frame.savedArgCount = saveJM->argCount;
                 frame.homeFrameDepth = SIZE_MAX;
             }
             // Sync interpreter from current JITState (innermost frame)
@@ -12995,16 +12942,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (frameDepth_ >= StackOverflowLimit) break;
             J2JSave& save = j2jStack[i];
             SavedFrame& frame = savedFrames_[frameDepth_++];
-            uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-            bool isSelfRec = (jmBits & 1) != 0;
-            jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                jmBits & ~static_cast<uintptr_t>(1));
+            jit::JITMethod* saveJM = save.jitMethod;
             Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-            ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-            int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-            uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
             frame.savedIP = save.ip;
-            frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+            frame.savedBytecodeEnd =
+                saveJM->bcStart() + saveJM->numBytecodes;
             frame.savedMethod = saveMethod;
             frame.savedHomeMethod = saveMethod;
             frame.savedReceiver = save.receiver;
@@ -13012,16 +12954,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             frame.savedActiveContext = nil;
             frame.materializedContext = nil;
             frame.savedFP = save.tempBase - 1;
-            frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+            frame.savedArgCount = saveJM->argCount;
             frame.homeFrameDepth = SIZE_MAX;
         }
         chainCallDepth += state.j2jDepth;
         if (state.jitMethod) {
-            uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-            jmBits &= ~static_cast<uintptr_t>(1);
-            state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
             state.method = Oop::fromRawBits(
-                reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                state.jitMethod->compiledMethodOop);
         }
         method_ = state.method;
         method = state.method;
@@ -13148,16 +13087,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         if (frameDepth_ >= StackOverflowLimit) break;
                         J2JSave& save = j2jStack[i];
                         SavedFrame& frame = savedFrames_[frameDepth_++];
-                        uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                        bool isSelfRec = (jmBits & 1) != 0;
-                        jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                            jmBits & ~static_cast<uintptr_t>(1));
+                        jit::JITMethod* saveJM = save.jitMethod;
                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                        ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                        int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                        uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
                         frame.savedIP = save.ip;
-                        frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                        frame.savedBytecodeEnd =
+                            saveJM->bcStart() + saveJM->numBytecodes;
                         frame.savedMethod = saveMethod;
                         frame.savedHomeMethod = saveMethod;
                         frame.savedReceiver = save.receiver;
@@ -13165,16 +13099,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         frame.savedActiveContext = nil;
                         frame.materializedContext = nil;
                         frame.savedFP = save.tempBase - 1;
-                        frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                        frame.savedArgCount = saveJM->argCount;
                         frame.homeFrameDepth = SIZE_MAX;
                     }
                     chainCallDepth += state.j2jDepth;
                     if (state.jitMethod) {
-                        uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                        jmBits &= ~static_cast<uintptr_t>(1);
-                        state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
                         state.method = Oop::fromRawBits(
-                            reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                            state.jitMethod->compiledMethodOop);
                     }
                     method_ = state.method;
                     method = state.method;
@@ -13575,16 +13506,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 for (int i = 0; i < state.j2jDepth; i++) {
                     J2JSave& save = j2jStack[i];
                     SavedFrame& frame = savedFrames_[baseDepth + i];
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                    bool isSelfRec = (jmBits & 1) != 0;
-                    jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                        jmBits & ~static_cast<uintptr_t>(1));
+                    jit::JITMethod* saveJM = save.jitMethod;
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                    ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                    int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                    uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
                     frame.savedIP = save.ip;
-                    frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                    frame.savedBytecodeEnd =
+                        saveJM->bcStart() + saveJM->numBytecodes;
                     frame.savedMethod = saveMethod;
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
@@ -13592,18 +13518,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     frame.savedActiveContext = nil;
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
-                    frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                    frame.savedArgCount = saveJM->argCount;
                     frame.homeFrameDepth = SIZE_MAX;
                 }
                 frameDepth_ = baseDepth + state.j2jDepth;
                 chainCallDepth += state.j2jDepth;
                 // Sync interpreter from innermost frame
                 if (state.jitMethod) {
-                    uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                    jmBits &= ~static_cast<uintptr_t>(1);
-                    state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
                     state.method = Oop::fromRawBits(
-                        reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                        state.jitMethod->compiledMethodOop);
                 }
                 method_ = state.method;
                 method = state.method;
@@ -13799,16 +13722,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         if (frameDepth_ >= StackOverflowLimit) break;
                                         J2JSave& save = j2jStack[i];
                                         SavedFrame& frame = savedFrames_[frameDepth_++];
-                                        uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                                        bool isSelfRec = (jmBits & 1) != 0;
-                                        jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                                            jmBits & ~static_cast<uintptr_t>(1));
+                                        jit::JITMethod* saveJM = save.jitMethod;
                                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                                        ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                                        int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                                        uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
                                         frame.savedIP = save.ip;
-                                        frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                                        frame.savedBytecodeEnd =
+                                            saveJM->bcStart() + saveJM->numBytecodes;
                                         frame.savedMethod = saveMethod;
                                         frame.savedHomeMethod = saveMethod;
                                         frame.savedReceiver = save.receiver;
@@ -13816,16 +13734,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         frame.savedActiveContext = nil;
                                         frame.materializedContext = nil;
                                         frame.savedFP = save.tempBase - 1;
-                                        frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                                        frame.savedArgCount = saveJM->argCount;
                                         frame.homeFrameDepth = SIZE_MAX;
                                     }
                                     chainCallDepth += state.j2jDepth;
                                     if (state.jitMethod) {
-                                        uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                                        jmBits &= ~static_cast<uintptr_t>(1);
-                                        state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
                                         state.method = Oop::fromRawBits(
-                                            reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                                            state.jitMethod->compiledMethodOop);
                                     }
                                     method_ = state.method;
                                     method = state.method;
@@ -13908,16 +13823,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 if (frameDepth_ >= StackOverflowLimit) break;
                                 J2JSave& save = j2jStack[i];
                                 SavedFrame& frame = savedFrames_[frameDepth_++];
-                                uintptr_t jmBits = reinterpret_cast<uintptr_t>(save.jitMethod);
-                                bool isSelfRec = (jmBits & 1) != 0;
-                                jit::JITMethod* saveJM = reinterpret_cast<jit::JITMethod*>(
-                                    jmBits & ~static_cast<uintptr_t>(1));
+                                jit::JITMethod* saveJM = save.jitMethod;
                                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
-                                ObjectHeader* saveMethObj = saveMethod.asObjectPtr();
-                                int saveNumLits = static_cast<int>(saveJM->methodHeader & 0x7FFF);
-                                uint8_t* saveBCStart = saveMethObj->bytes() + (1 + saveNumLits) * 8;
                                 frame.savedIP = save.ip;
-                                frame.savedBytecodeEnd = saveBCStart + saveJM->numBytecodes;
+                                frame.savedBytecodeEnd =
+                                    saveJM->bcStart() + saveJM->numBytecodes;
                                 frame.savedMethod = saveMethod;
                                 frame.savedHomeMethod = saveMethod;
                                 frame.savedReceiver = save.receiver;
@@ -13925,17 +13835,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 frame.savedActiveContext = nil;
                                 frame.materializedContext = nil;
                                 frame.savedFP = save.tempBase - 1;
-                                frame.savedArgCount = isSelfRec ? saveJM->argCount : save.argCount;
+                                frame.savedArgCount = saveJM->argCount;
                                 frame.homeFrameDepth = SIZE_MAX;
                             }
                             chainCallDepth += state.j2jDepth;
                             // Sync from innermost J2J frame
                             if (state.jitMethod) {
-                                uintptr_t jmBits = reinterpret_cast<uintptr_t>(state.jitMethod);
-                                jmBits &= ~static_cast<uintptr_t>(1);
-                                state.jitMethod = reinterpret_cast<jit::JITMethod*>(jmBits);
                                 state.method = Oop::fromRawBits(
-                                    reinterpret_cast<jit::JITMethod*>(jmBits)->compiledMethodOop);
+                                    state.jitMethod->compiledMethodOop);
                             }
                         }
 

@@ -105,21 +105,22 @@ struct JITState {
     int32_t       yieldCountdown; // offset 176
 };
 
-// J2JSave matches the struct in Interpreter.cpp exactly (72 bytes).
+// J2JSave matches the struct in Interpreter.cpp exactly (56 bytes).
 // Field order: hot fields first for STP/LDP pairing.
+// Previously also held literals/argCount/bcStart; those are derivable
+// from jitMethod on return and were removed (saves 3 stores per send).
+// See docs/jit-j2j-reduction-plan.md.
 struct J2JSave {
     Oop*     sp;              // 0
     Oop      receiver;        // 8
     Oop*     tempBase;        // 16
     uint8_t* ip;              // 24
-    void*    jitMethod;       // 32 (bit 0 = self-recursive marker)
+    void*    jitMethod;       // 32
     uint8_t* resumeAddr;      // 40
     int      sendArgCount;    // 48
-    int      argCount;        // 52
-    Oop*     literals;        // 56
-    uint8_t* bcStart;         // 64
+    int      _pad;            // 52
 };
-static_assert(sizeof(J2JSave) == 72, "J2JSave must be 72 bytes");
+static_assert(sizeof(J2JSave) == 56, "J2JSave must be 56 bytes");
 
 // Tag bit constants (must match Oop.hpp)
 static constexpr uint64_t SmallIntegerTag = 0x1;     // bit 0 = 1, bits 2:1 = 00
@@ -403,6 +404,10 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 // J2J inline return: if j2jDepth > 0, pop save frame and tail-call
 // to caller's resume stencil.  Otherwise fall through to normal exit.
 // retVal is the Oop to push onto the caller's stack.
+//
+// We DERIVE caller's literals/argCount/bcStart from save.jitMethod on the
+// restore path so J2JSave doesn't have to store them (saves 3 stores per
+// send). See docs/jit-j2j-reduction-plan.md.
 #define J2J_INLINE_RETURN(s, retVal) do {                                     \
     if (s->j2jDepth > 0) {                                                   \
         s->j2jDepth--;                                                        \
@@ -411,15 +416,16 @@ extern "C" void stencil_storeLitVar(JITState* s) {
         /* Restore caller state */                                           \
         s->receiver = _sv->receiver;                                          \
         s->tempBase = _sv->tempBase;                                         \
-        uintptr_t _jmBits = (uintptr_t)_sv->jitMethod;                      \
-        if ((_jmBits & 1) == 0) {                                            \
-            /* Non-self-recursive: restore literals, jitMethod, argCount,    \
-               ip (bcStart) */                                               \
-            s->literals = _sv->literals;                                      \
-            s->jitMethod = _sv->jitMethod;                                   \
-            s->argCount = _sv->argCount;                                     \
-            s->ip = _sv->bcStart;                                            \
-        }                                                                     \
+        uint8_t* _callerJM = (uint8_t*)_sv->jitMethod;                       \
+        s->jitMethod = (void*)_callerJM;                                     \
+        /* Derive: literals = compiledMethod + 8; ip = bcStart =             \
+           compiledMethod + (2 + numLits) * 8; argCount from JM field */     \
+        uint64_t _cmo = *(uint64_t*)(_callerJM + JM_COMPILED_METHOD);        \
+        uint64_t _mh  = *(uint64_t*)(_callerJM + JM_METHOD_HEADER);          \
+        uint64_t _numLits = _mh & 0x7FFFu;                                   \
+        s->literals = (Oop*)(uintptr_t)(_cmo + 8);                           \
+        s->ip = (uint8_t*)(uintptr_t)(_cmo + (_numLits + 2) * 8);            \
+        s->argCount = *(uint8_t*)(_callerJM + 34); /* JITMethod.argCount */  \
         /* Pop receiver+args, push retVal */                                 \
         int _nArgs = _sv->sendArgCount;                                      \
         _sv->sp[-(_nArgs + 1)] = retVal;                                     \
@@ -1259,7 +1265,9 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                         // Check J2J save stack space
                         if ((uintptr_t)s->j2jSaveCursor <
                             (uintptr_t)s->j2jSaveLimit) {
-                            // Save caller state
+                            // Save caller state. literals/argCount/bcStart
+                            // are derived from jitMethod on return — see
+                            // J2J_INLINE_RETURN.
                             J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
                             _save->sp = s->sp;
                             _save->receiver = s->receiver;
@@ -1268,16 +1276,6 @@ extern "C" void stencil_sendJ2J(JITState* s) {
                             _save->sendArgCount = nArgs;
                             _save->resumeAddr = RESUME_ADDR;
                             _save->jitMethod = s->jitMethod;
-                            _save->literals = s->literals;
-                            _save->argCount = s->argCount;
-                            {
-                                uint64_t _mh = *(uint64_t*)((uint8_t*)s->jitMethod
-                                                            + JM_METHOD_HEADER);
-                                int _nl = (int)(_mh & 0x7FFF);
-                                uint64_t _cmo = *(uint64_t*)((uint8_t*)s->jitMethod
-                                                             + JM_COMPILED_METHOD);
-                                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;
-                            }
                             s->j2jSaveCursor += sizeof(J2JSave);
                             s->j2jDepth++;
                             s->j2jTotalCalls++;
@@ -1347,23 +1345,12 @@ j2j_direct_call:
             _save->ip = s->ip + bcOffset + bcLen;
             _save->sendArgCount = nArgs;
             _save->resumeAddr = RESUME_ADDR;
-            // Detect self-recursive
+            // literals/argCount/bcStart are derived from save.jitMethod
+            // on return (see J2J_INLINE_RETURN).  The self-recursive
+            // marker bit is obsolete now that all 3 fields are derived.
             uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;
             void* _callerJM = s->jitMethod;
-            if (_callerJM == (void*)_calleeJM) {
-                _save->jitMethod =
-                    (void*)((uintptr_t)_callerJM | 1ULL);
-            } else {
-                _save->jitMethod = _callerJM;
-                _save->literals = s->literals;
-                _save->argCount = s->argCount;
-                uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM
-                                            + JM_METHOD_HEADER);
-                int _nl = (int)(_mh & 0x7FFF);
-                uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM
-                                             + JM_COMPILED_METHOD);
-                _save->bcStart = (uint8_t*)_cmo + (_nl + 2) * 8;
-            }
+            _save->jitMethod = _callerJM;
             s->j2jSaveCursor += sizeof(J2JSave);
             s->j2jDepth++;
             s->j2jTotalCalls++;

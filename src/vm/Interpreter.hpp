@@ -486,6 +486,11 @@ private:
 
     // J2J save frame — stencil-to-stencil call state saved during J2J execution.
     // Used by the ASM trampoline and chain loop J2J path.
+    //
+    // Previously held literals/argCount/bcStart as separate fields; those are
+    // all derivable from `jitMethod` on return, so we dropped them. Saves 3
+    // stores per send, shrinks from 72 to 56 bytes. See
+    // docs/jit-j2j-reduction-plan.md for the derivation math.
     struct J2JSave {
         Oop* sp;                  // 0
         Oop receiver;             // 8
@@ -493,12 +498,10 @@ private:
         uint8_t* ip;              // 24
         jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
         uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
-        int sendArgCount;         // 48  (packed with argCount)
-        int argCount;             // 52  (non-self-recursive only)
-        Oop* literals;            // 56
-        uint8_t* bcStart;         // 64  Precomputed bytecodeStart
+        int sendArgCount;         // 48
+        int _pad;                 // 52  (alignment)
     };
-    static_assert(sizeof(J2JSave) == 72, "J2JSave should be 72 bytes");
+    static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image)

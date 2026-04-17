@@ -41,7 +41,9 @@
 #define JS_CACHEDTARGET   88
 #define JS_SENDARGCOUNT   104
 
-// -------- J2JSave field offsets (see Interpreter.cpp struct J2JSave) --------
+// -------- J2JSave field offsets (see Interpreter.hpp struct J2JSave) --------
+// 56 bytes after dropping literals/argCount/bcStart — those are derived from
+// save.jitMethod on return. See docs/jit-j2j-reduction-plan.md.
 #define JSV_SP            0
 #define JSV_RECEIVER      8
 #define JSV_TEMPBASE      16
@@ -49,16 +51,14 @@
 #define JSV_JITMETHOD     32
 #define JSV_RESUMEADDR    40
 #define JSV_SENDARGCOUNT  48
-#define JSV_ARGCOUNT      52
-#define JSV_LITERALS      56
-#define JSV_BCSTART       64
-#define JSV_SIZE          72
+#define JSV_SIZE          56
 
 // -------- JITMethod field offsets (see src/vm/jit/JITMethod.hpp) --------
 #define JM_COMPILEDMETHOD 0
 #define JM_METHODHEADER   16
 #define JM_CODESIZE       24
 #define JM_NUMBYTECODES   30
+#define JM_ARGCOUNT       34   // uint8_t cached from method header
 #define JM_TEMPCOUNT      35
 #define JM_BCTOCODEOFF    76
 #define JM_SIZE           80
@@ -70,7 +70,7 @@
 #define EXIT_J2JCALL      10
 
 // Maximum J2J save stack depth (matches MaxJ2JDepth in Interpreter.cpp)
-#define MAX_J2J_BYTES     18432    // 256 * 72
+#define MAX_J2J_BYTES     14336    // 256 * 56
 
 // Stack overflow threshold (matches Interpreter::StackOverflowLimit)
 #define SO_LIMIT          4096
@@ -164,8 +164,7 @@ Ltramp_return:
     ldr     x17, [x21, #JS_RETURNVALUE]   // retVal
 
     // Load save fields. JSV_JITMETHOD(32) and JSV_RESUMEADDR(40) are
-    // adjacent — LDP hoists the resume address load all the way up here so
-    // the load latency is fully hidden behind the self-recursive restore.
+    // adjacent → LDP.
     ldp     x8, x9, [x23, #JSV_SP]         // x8=save.sp, x9=save.receiver
     ldr     x10, [x23, #JSV_TEMPBASE]      // x10=save.tempBase
     ldp     x11, x7, [x23, #JSV_JITMETHOD] // x11=save.jitMethod, x7=save.resumeAddr
@@ -173,17 +172,20 @@ Ltramp_return:
     str     x9,  [x21, #JS_RECEIVER]
     str     x10, [x21, #JS_TEMPBASE]
 
-    // Bit 0 set ⇒ self-recursive ⇒ skip literals/jitMethod/argCount/ip restore
-    tbnz    x11, #0, Lret_after_restore
-
-    // Non-self-recursive: restore caller's literals/jitMethod/argCount/ip
-    ldr     x12, [x23, #JSV_LITERALS]
-    str     x12, [x21, #JS_LITERALS]
+    // Derive caller's literals/ip/argCount from save.jitMethod (x11).
+    // No self-recursive short-cut anymore: derivation is cheap (2 loads +
+    // compute) and unconditional.  See docs/jit-j2j-reduction-plan.md.
     str     x11, [x21, #JS_JITMETHOD]
-    ldr     w12, [x23, #JSV_ARGCOUNT]
+    ldr     x12, [x11, #JM_COMPILEDMETHOD]    // x12 = compiledMethodOop
+    ldr     x13, [x11, #JM_METHODHEADER]      // x13 = methodHeader
+    add     x14, x12, #8                       // literals = compiledMethod + 8
+    str     x14, [x21, #JS_LITERALS]
+    and     x13, x13, #0x7FFF                  // numLits
+    add     x13, x13, #2
+    add     x14, x12, x13, lsl #3              // bcStart = cm + (numLits+2)*8
+    str     x14, [x21, #JS_IP]
+    ldrb    w12, [x11, #JM_ARGCOUNT]           // cached argCount
     str     w12, [x21, #JS_ARGCOUNT]
-    ldr     x12, [x23, #JSV_BCSTART]
-    str     x12, [x21, #JS_IP]
 
 Lret_after_restore:
     // Pop receiver+args, push retVal onto caller's stack
@@ -249,38 +251,17 @@ Ltramp_call:
     stp     x10, x11, [x23, #JSV_TEMPBASE] // save.tempBase, save.ip
     str     w9,       [x23, #JSV_SENDARGCOUNT]
 
-    // Compute callerBCStart:
-    //   numLits = callerJM->methodHeader & 0x7FFF
-    //   callerBCStart = (uint8_t*)callerJM->compiledMethodOop
-    //                   + sizeof(ObjectHeader=8)
-    //                   + (numLits + 1) * 8
-    //                 = compiledMethodOop + (numLits + 2) * 8
+    // Save caller jitMethod. literals/argCount/bcStart are derived from
+    // this on return (see Lret_after_restore).  Compute callerBCStart
+    // inline since the resume-address computation below needs it.
+    str     x6,  [x23, #JSV_JITMETHOD]
+
     ldr     x10, [x6, #JM_METHODHEADER]
     and     x10, x10, #0x7FFF
     ldr     x12, [x6, #JM_COMPILEDMETHOD]  // ObjectHeader* (Oop raw bits)
     add     x10, x10, #2
     add     x11, x12, x10, lsl #3          // x11 = callerBCStart
 
-    // Self-recursive test: callerJM == calleeJM ?
-    cmp     x6,  x8
-    b.eq    Lcall_save_self_rec
-
-    // Non-self-recursive save: jitMethod, literals, argCount, bcStart
-    str     x6,  [x23, #JSV_JITMETHOD]
-    ldr     x10, [x21, #JS_LITERALS]
-    str     x10, [x23, #JSV_LITERALS]
-    ldr     w10, [x21, #JS_ARGCOUNT]
-    str     w10, [x23, #JSV_ARGCOUNT]
-    str     x11, [x23, #JSV_BCSTART]
-    b       Lcall_compute_resume
-
-Lcall_save_self_rec:
-    // save.jitMethod = callerJM | 1
-    orr     x10, x6, #1
-    str     x10, [x23, #JSV_JITMETHOD]
-    // literals/argCount/bcStart not saved for self-recursive path
-
-Lcall_compute_resume:
     // Precompute resume JIT code address:
     //   bcOffset  = state.ip - callerBCStart
     //   codeOff   = (bcOffset >= numBytecodes) ? codeSize
