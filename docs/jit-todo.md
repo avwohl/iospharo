@@ -111,6 +111,27 @@ send-heavy methods benefit from IC caching.
 
 **Scope:** half session. Low risk, modest upside.
 
+### P3b. Cache state.sp in a dedicated register across the hot loop
+(discovered from native-dump inspection 2026-04-17)
+
+`reg_sp_` gets spilled to `state.sp` whenever any path in the method
+stores it (e.g., every emitSendExit or flushVStack). In benchmarks
+with slow-path arith exits, MIR has to spill/reload sp on every
+iteration of the main loop, even if those slow paths never execute.
+
+Possible fixes:
+- Remove the explicit `state.sp = reg_sp_` writes from emitSendExit
+  and let the C helper read sp from a known register via the
+  JITState passed in. Would need the C side to know to read sp from
+  (say) x21 instead of state.sp — non-trivial ABI change.
+- Use MIR's hard-register attribute on reg_sp_ (if MIR supports it)
+  to force it to stay in one register across the whole function.
+- Emit a single `state.sp = reg_sp_` at the END of each basic block
+  or only at actual bail/send sites, not per-pop.
+
+Small scope (half session) with potentially 10-20% win on loop-
+dominated benchmarks. Requires MIR API investigation first.
+
 ### P4. Fix `upgradeICToJ2J` to layer J2J on existing extras
 IC entries with inline-primKind bits (52:48) never get the J2J direct-
 call bit (60) added later. My attempt at this caused regression
@@ -143,6 +164,46 @@ than T1, so A1 gains nothing.
 ---
 
 ## Architectural notes
+
+### T2 inner-loop inspection findings (2026-04-17)
+
+Dumped the native code for `DoIt` running `1 to: 3M do: [:i | sum := sum + i]`
+via `PHARO_T2_NATIVE_DUMP=DoIt`. Loop body is 214 ARM64 instructions
+(for 3 sends + arith). 3M iterations × 214 = 642M instructions; at
+IPC 1.5 that's ~140ms minimum just for instruction throughput. We
+measure 1170ms. Gap = ~1030ms of stalls / memory / miss costs.
+
+Key codegen weaknesses visible in the native dump:
+
+1. **MIR uses indexed addressing instead of immediate offsets.**
+   State-struct field access compiles to `add x1, x19, #off; ldr xN,
+   [x1, xzr, lsl #3]` — 2 instructions where 1 (`ldr xN, [x19,
+   #off]`) would suffice. On M1 these don't always fuse to a single
+   μop so we pay ~2 cycles per field read.
+
+2. **`state.sp` is reloaded from memory every iteration.**  At the
+   loop head we see `ldr x0, [x19, xzr, lsl #3]` (load sp from
+   state), and at the end `str x0, [x19, ...]` (write sp back).
+   Ideal code keeps sp in a callee-saved register for the entire
+   loop. MIR's register allocator is forced to spill it because
+   slow-path exits write `state.sp = reg_sp_`; the spill then
+   pollutes the fast path.
+
+3. **SmallInt constants are materialized via 2-3 mov/movk per use.**
+   E.g. `mov x1, #0x1658; movk #0x6bac lsl16; movk #0x4 lsl32` for
+   each Oop literal. MIR has no literal pool for tagged immediates
+   on ARM64, so heavy-literal methods emit many movk chains.
+
+4. **Helper function address reloaded per call site.**  Every call
+   to `jit_t2_send` re-materializes its 48-bit address with three
+   movk instructions, then `blr x1`. A shared helper pointer slot
+   + `ldr x1, [base, #off]` would be fewer bytes and possibly
+   predictable.
+
+5. **Per-pop `sp -= 8` + writeback.** Explicit `sub x0, x0, #8;
+   str x0, [x19, ...]` at every stack pop. For a fast-path arith
+   comparison that doesn't touch the Smalltalk stack (values are
+   in vstack registers), this is pure overhead.
 
 ### Why stencils are this large
 
