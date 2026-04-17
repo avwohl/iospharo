@@ -1842,6 +1842,35 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
+    // DIAG: dump the first N bytes of native code for a specific method.
+    // PHARO_T2_NATIVE_DUMP=<selector> dumps to stderr. Enable with
+    // PHARO_T2_NATIVE_DUMP_MAX to cap byte count (default 2048).
+    {
+        static const char* dumpSel = getenv("PHARO_T2_NATIVE_DUMP");
+        static int dumpMax = []() {
+            const char* e = getenv("PHARO_T2_NATIVE_DUMP_MAX");
+            return e ? atoi(e) : 2048;
+        }();
+        if (dumpSel && *dumpSel) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel == dumpSel) {
+                fprintf(stderr, "[T2-NATIVE] #%zu sel=#%s oop=0x%llx code=%p\n",
+                        methodsCompiled_ + 1, sel.c_str(),
+                        (unsigned long long)compiledMethod.rawBits(),
+                        mirCode);
+                const uint8_t* bytes = reinterpret_cast<const uint8_t*>(mirCode);
+                for (int i = 0; i < dumpMax; i += 16) {
+                    fprintf(stderr, "  %04x:", i);
+                    for (int j = 0; j < 16 && i + j < dumpMax; j++) {
+                        fprintf(stderr, " %02x", bytes[i + j]);
+                    }
+                    fprintf(stderr, "\n");
+                }
+                fflush(stderr);
+            }
+        }
+    }
+
     // Keep MIR context alive so generated code stays valid.
     // Each context is ~50KB; acceptable for the hot method set.
     liveContexts_.push_back(mirCtx_);
