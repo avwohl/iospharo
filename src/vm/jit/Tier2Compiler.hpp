@@ -1,16 +1,31 @@
 /*
- * Tier2Compiler.hpp - optimizing JIT compiler interface
+ * Tier2Compiler.hpp - asmjit-based optimizing JIT compiler
  *
  * Copyright (c) 2026 Aaron Wohl. Licensed under the MIT License.
  *
- * STATUS (2026-04-17): MIR backend removed; asmjit-based replacement
- * pending. Current implementation stubs Tier2Compiler::compile() to
- * return nullptr so the runtime falls through to Tier 1. No tier-2
- * code is generated until the asmjit implementation lands.
+ * Replaces the removed MIR-based tier-2 with asmjit (2026-04-17).
+ * See docs/jit-toolkit-evaluation.md for the tradeoff analysis.
  *
- * PLAN: use asmjit's `Compiler` API for per-arch (arm64 + x64)
- * codegen. See docs/jit-toolkit-evaluation.md for why MIR was
- * dropped. Rewrite happens in src/vm/jit/Tier2Compiler.cpp.
+ * ARCHITECTURE
+ *
+ *   Per-method compile: walk decoded SistaV1 bytecodes, emit native
+ *   code via asmjit's Compiler API. asmjit handles register
+ *   allocation and instruction selection.
+ *
+ *   Per-arch code lives in Tier2Compiler_arm64.cpp / Tier2Compiler_x64.cpp
+ *   (arm64 first; x64 later). Shared plumbing (method walk, bailout,
+ *   code-zone allocation) is in Tier2Compiler.cpp.
+ *
+ *   Every generated function has signature `void(*)(JITState*)`.
+ *   It reads state.sp / state.receiver / etc., does its work, then
+ *   writes state.returnValue + state.exitReason and returns.
+ *
+ * CURRENT STATUS
+ *
+ *   MVP: compile supports only `ReturnReceiver` (bytecode 0x58) —
+ *   just enough to prove the asmjit pipeline works end-to-end.
+ *   All other bytecode patterns bail (compile returns nullptr,
+ *   runtime falls through to Tier 1).
  */
 
 #ifndef PHARO_TIER2_COMPILER_HPP
@@ -22,9 +37,16 @@
 #include "../Oop.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #if PHARO_JIT_ENABLED
+
+// We need the full JitRuntime type because we hold it by
+// std::unique_ptr. asmjit uses an inline ABI namespace so a simple
+// forward-declare in `namespace asmjit { class JitRuntime; }` doesn't
+// match the real definition in `asmjit::vXX::JitRuntime`.
+#include <asmjit/core/jitruntime.h>
 
 namespace pharo {
 
@@ -42,19 +64,16 @@ public:
                   ObjectMemory& memory, Interpreter& interp);
     ~Tier2Compiler();
 
-    // Initialize backend. Returns false on failure.
     bool initialize();
 
-    // Compile a hot method to Tier 2. Returns function pointer or
-    // nullptr. During the MIR→asmjit transition this always returns
-    // nullptr; the runtime falls through to Tier 1.
+    // Compile a hot method. Returns a function pointer of type
+    // `void(JITState*)` or nullptr if the method can't be handled
+    // (too complex, unsupported bytecode, or asmjit error).
     void* compile(Oop compiledMethod, JITMethod* oldVersion);
 
-    // Statistics
     size_t methodsCompiled() const { return methodsCompiled_; }
     size_t compilationsFailed() const { return compilationsFailed_; }
 
-    // Print T2 bail statistics (no-op during stub period).
     static void dumpBailStats();
 
 private:
@@ -62,6 +81,11 @@ private:
     MethodMap&    methodMap_;
     ObjectMemory& memory_;
     Interpreter&  interp_;
+
+    // asmjit runtime owns the code memory allocator. One JitRuntime
+    // is reused across all compilations; it handles MAP_JIT / W^X
+    // protection on macOS/iOS internally.
+    std::unique_ptr<asmjit::JitRuntime> runtime_;
 
     size_t methodsCompiled_ = 0;
     size_t compilationsFailed_ = 0;
