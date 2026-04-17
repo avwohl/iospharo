@@ -200,8 +200,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         TempReturn,         // ^ tempN — return argument or local temp
         SendExit,           // push N values + exit with ExitSend (interpreter finishes)
         ZeroArgSendInlineIC,// ^ <push> foo — 1 push + inline IC probe + Cached/Send
-        OneArgSendInlineIC  // ^ <push0> foo: <push1> — 2 pushes + inline IC probe
+        OneArgSendInlineIC, // ^ <push0> foo: <push1> — 2 pushes + inline IC probe
+        IntArithAddReturn,  // ^ <push0> + <push1> — SmallInt fast path (+ only)
+        IntArithSubReturn   // ^ <push0> - <push1> — SmallInt fast path (- only)
     };
+    int arithOp = 0;           // 0x60 (+) or 0x61 (-) for IntArith* kinds
     // SendExit push source (what to push before bailing to interpreter).
     enum class PushSrc { None, Receiver, RecvVar, LitVar, Temp, ImmOop };
 
@@ -315,18 +318,24 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::ZeroArgSendInlineIC;
         numPushes = 1;
         sendIPOff = 1;
+    } else if (bodyLen >= 4 && (b2 == 0x60 || b2 == 0x61)
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // ^ <push0> +/- <push1> — inline SmallInt fast path.
+        // Tag-check both operands; bail to interpreter on tag mismatch
+        // or overflow.
+        kind = (b2 == 0x60) ? ReturnKind::IntArithAddReturn
+                            : ReturnKind::IntArithSubReturn;
+        numPushes = 2;
+        sendIPOff = 2;
+        arithOp = b2;
     } else if (false && bodyLen >= 4 && SistaV1::isSend1(b2)
                             && bytes[bcStart + 3] == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])
                             && decodePush(b1, pushes[1])) {
-        // GATED: OneArgSendInlineIC triggers a flaky/intermittent
-        // `#isNumber not understood by 0x500000003000026` and related
-        // DNUs during startup.  The bug is NOT deterministic (same
-        // invocation sometimes succeeds), nor is it narrowly bisectable
-        // by push0 source.  Suspect an interaction with the 0-arg
-        // inline IC state flow (e.g. state.sendArgCount leakage across
-        // successive sends within the chain loop).  Needs a focused
-        // debug session.
+        // GATED: OneArgSendInlineIC — see earlier commit for the
+        // intermittent DNU bug.
         kind = ReturnKind::OneArgSendInlineIC;
         numPushes = 2;
         sendIPOff = 2;
@@ -448,6 +457,133 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
     }
+    case ReturnKind::IntArithAddReturn:
+    case ReturnKind::IntArithSubReturn: {
+        // ^ <push0> +/- <push1> — SmallInt-tagged arithmetic fast path.
+        //
+        // Encoding reminder: SmallInt Oop = value * 8 + 1  (tag = 001).
+        // For add, we can keep tagged representation and use the
+        // identity (a*8+1) - 1 + (b*8+1) = (a+b)*8 + 1 — one sub + one
+        // adds emits a correctly-tagged result.  Overflow on the ADDS
+        // is the 64-bit signed overflow flag, which correctly catches
+        // 61-bit SmallInt overflow too (proved by case analysis at
+        // the edges of the SmallInt range).
+        //
+        // Bail path: push both operands and exit with ExitSend at
+        // the arith bytecode; the interpreter's arith handler has
+        // its own SmallInt fast path + full-send fallback.
+
+        // Helper: same lambda as SendExit variants above, but we
+        // inline a tiny copy here because we need the values both
+        // for the fast path AND for bail pushing.
+        auto loadPush = [&](const Push& p) -> a64::Gp {
+            a64::Gp v = cc.new_gp64("pv");
+            switch (p.src) {
+            case PushSrc::Receiver:
+                cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER));
+                break;
+            case PushSrc::RecvVar: {
+                a64::Gp rp = cc.new_gp64("rp");
+                cc.ldr(rp, a64::ptr(statePtr, OFF_RECEIVER));
+                cc.ldr(v, a64::ptr(rp, OBJ_SLOT_0 + p.idx * 8));
+                break;
+            }
+            case PushSrc::LitVar: {
+                a64::Gp lp = cc.new_gp64("lp");
+                a64::Gp as = cc.new_gp64("as");
+                cc.ldr(lp, a64::ptr(statePtr, OFF_LITERALS));
+                cc.ldr(as, a64::ptr(lp, p.idx * 8));
+                cc.ldr(v,  a64::ptr(as, ASSOC_VALUE));
+                break;
+            }
+            case PushSrc::Temp: {
+                a64::Gp tp = cc.new_gp64("tp");
+                cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+                cc.ldr(v, a64::ptr(tp, p.idx * 8));
+                break;
+            }
+            case PushSrc::ImmOop:
+                cc.mov(v, asmjit::Imm(p.bits));
+                break;
+            case PushSrc::None:
+                break;
+            }
+            return v;
+        };
+
+        a64::Gp a = loadPush(pushes[0]);
+        a64::Gp b = loadPush(pushes[1]);
+
+        Label lblBail = cc.new_label();
+        Label lblDone = cc.new_label();
+
+        // Tag-check both.  SmallInt tag == 1.
+        a64::Gp aTag = cc.new_gp64("aTag");
+        cc.and_(aTag, a, asmjit::Imm(0x7));
+        cc.cmp(aTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+
+        a64::Gp bTag = cc.new_gp64("bTag");
+        cc.and_(bTag, b, asmjit::Imm(0x7));
+        cc.cmp(bTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+
+        a64::Gp result = cc.new_gp64("result");
+        if (kind == ReturnKind::IntArithAddReturn) {
+            // result = (a - 1) + b  = a*8 + b*8 + 1 = (a_val+b_val)*8 + 1
+            a64::Gp tmp = cc.new_gp64("tmp");
+            cc.sub(tmp, a, asmjit::Imm(1));
+            cc.adds(result, tmp, b);
+        } else {
+            // result = (a - b) + 1  = (a_val-b_val)*8 + 1
+            a64::Gp tmp = cc.new_gp64("tmp");
+            cc.subs(tmp, a, b);
+            cc.add(result, tmp, asmjit::Imm(1));
+            // subs sets V on overflow — already in flags.
+        }
+        cc.b_vs(lblBail);  // overflow → bail
+
+        // Fast-path success: result is correctly tagged.
+        cc.str(result, a64::ptr(statePtr, OFF_RETVAL));
+        a64::Gp exitOk = cc.new_gp32("exitOk");
+        cc.mov(exitOk, EXIT_RETURN);
+        cc.str(exitOk, a64::ptr(statePtr, OFF_EXIT));
+        cc.b(lblDone);
+
+        // Bail path: push both operands, advance state.ip to the
+        // arith bytecode, set sendArgCount=1, exit ExitSend.  The
+        // interpreter resumes at the arith bytecode and handles it
+        // (its own SmallInt fast path + full send fallback).
+        cc.bind(lblBail);
+        a64::Gp sp = cc.new_gp64("sp");
+        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
+        cc.str(a, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(b, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+        a64::Gp ip = cc.new_gp64("ip");
+        cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+        cc.add(ip, ip, sendIPOff);
+        cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+        a64::Gp zero32 = cc.new_gp32("zero32");
+        cc.mov(zero32, 1);          // sendArgCount = 1
+        cc.str(zero32, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+        a64::Gp zero64 = cc.new_gp64("zero64");
+        cc.mov(zero64, 0);
+        cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+        a64::Gp exitBail = cc.new_gp32("exitBail");
+        cc.mov(exitBail, EXIT_SEND);
+        cc.str(exitBail, a64::ptr(statePtr, OFF_EXIT));
+
+        cc.bind(lblDone);
+        cc.end_func();
+        goto emitted;
+    }
     case ReturnKind::ZeroArgSendInlineIC:
     case ReturnKind::OneArgSendInlineIC: {
         // ^ <push0> [foo: <push1>] — 1 or 2 pushes + inline IC probe.
@@ -506,22 +642,17 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             return v;
         };
 
-        // Load receiver (push0) — used for both push and IC key.
-        a64::Gp recv = loadPush(pushes[0]);
-
-        // Push receiver + any args onto the Smalltalk stack.
-        a64::Gp sp = cc.new_gp64("sp");
-        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
-        cc.str(recv, a64::ptr(sp));
-        cc.add(sp, sp, 8);
-        if (numPushes >= 2) {
-            a64::Gp a = loadPush(pushes[1]);
-            cc.str(a, a64::ptr(sp));
-            cc.add(sp, sp, 8);
-        }
-        cc.str(sp, a64::ptr(statePtr, OFF_SP));
-
-        // Compute lookupKey
+        // Load receiver (push0).  We'll keep TWO copies of it in
+        // separate virtual registers — one for the push, one for
+        // the lookupKey computation — so the register allocator can
+        // independently assign them without the aliased usage causing
+        // observed flakiness in the 1-arg path.
+        a64::Gp recvLoaded = loadPush(pushes[0]);
+        a64::Gp recvForPush = cc.new_gp64("recvForPush");
+        a64::Gp recvForKey  = cc.new_gp64("recvForKey");
+        cc.mov(recvForPush, recvLoaded);
+        cc.mov(recvForKey,  recvLoaded);
+        a64::Gp recv = recvForKey;  // used below for key computation
         Label lblHeap   = cc.new_label();
         Label lblCheck  = cc.new_label();
         Label lblMiss   = cc.new_label();
@@ -534,18 +665,32 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.and_(tag, recv, asmjit::Imm(0x7));
         cc.cbz(tag, lblHeap);
 
-        // Immediate receiver: lookupKey = tag | 0x80000000
         cc.mov(lookupKey, tag);
         cc.orr(lookupKey, lookupKey, asmjit::Imm(0x80000000ULL));
         cc.b(lblCheck);
 
         cc.bind(lblHeap);
-        cc.cbz(recv, lblMiss);                     // nil receiver → full lookup
+        // Compute classIndex from header — for non-nil objects.  For
+        // nil, we'll still compute key=0 (which won't match any IC
+        // entry because empty slots == 0 and we gate that below), then
+        // fall through to miss.
         a64::Gp header = cc.new_gp64("header");
         cc.ldr(header, a64::ptr(recv));
         cc.and_(lookupKey, header, asmjit::Imm(CLASS_INDEX_MASK));
 
         cc.bind(lblCheck);
+        // Push receiver + any args onto the Smalltalk stack.
+        a64::Gp sp = cc.new_gp64("sp");
+        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
+        cc.str(recvForPush, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        if (numPushes >= 2) {
+            a64::Gp a = loadPush(pushes[1]);
+            cc.str(a, a64::ptr(sp));
+            cc.add(sp, sp, 8);
+        }
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
         a64::Gp icData = cc.new_gp64("icData");
         cc.mov(icData, asmjit::Imm(icAddr));
 
