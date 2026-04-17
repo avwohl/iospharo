@@ -212,6 +212,9 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
     } else {
+        // Pattern not recognised — fall through to T1.  PHARO_T2_VERBOSE=1
+        // surfaces the leading bytes so we can see which shapes are hot
+        // and decide what to add next.
         if (getenv("PHARO_T2_VERBOSE")) {
             fprintf(stderr, "[T2 bail] len=%zu bytes=%02x %02x %02x %02x\n",
                     bodyLen, b0, b1, b2,
