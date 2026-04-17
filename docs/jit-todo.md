@@ -119,18 +119,40 @@ stores it (e.g., every emitSendExit or flushVStack). In benchmarks
 with slow-path arith exits, MIR has to spill/reload sp on every
 iteration of the main loop, even if those slow paths never execute.
 
-Possible fixes:
-- Remove the explicit `state.sp = reg_sp_` writes from emitSendExit
-  and let the C helper read sp from a known register via the
-  JITState passed in. Would need the C side to know to read sp from
-  (say) x21 instead of state.sp — non-trivial ABI change.
-- Use MIR's hard-register attribute on reg_sp_ (if MIR supports it)
-  to force it to stay in one register across the whole function.
-- Emit a single `state.sp = reg_sp_` at the END of each basic block
-  or only at actual bail/send sites, not per-pop.
+**Attempted 2026-04-17, FAILED:**  moved the `state.sp = reg_sp_`
+write out of the jumpTrue/jumpFalse/jump backward-branch yield check
+so only the yield-taken branch writes state.sp. Fast-path just
+branches to the loop head with reg_sp_ live in register. Result: T2
+hangs on `sum 3M`. Likely root cause: MIR's post-send reload of
+reg_sp_ from `state.sp` (in emitSendCall continuation) creates a
+data dependency with the state.sp memory; removing the back-edge
+write leaves state.sp stale when the fast-path feeds into a reload.
+Reverted.
 
-Small scope (half session) with potentially 10-20% win on loop-
-dominated benchmarks. Requires MIR API investigation first.
+Remaining possibilities:
+- Remove the explicit `state.sp = reg_sp_` writes from emitSendCall
+  too, trust that MIR's register allocator keeps reg_sp_ across
+  the C call (requires verifying MIR's ABI treats the MIR-reg as
+  callee-saved for our function).
+- Use a separate MIR register for sp that's NEVER stored to
+  state.sp except at true exits. Require reg_sp_ to be the "live"
+  sp, with explicit `state.sp = reg_sp_` only at RET points.
+- Investigate MIR's hard-register attribute.
+
+Perf target: ~10-20% win on loop-dominated benchmarks. Requires
+deeper MIR internals knowledge than I had this session.  Next
+attempt should start by reading MIR's register allocator docs /
+source to confirm the reg-vs-memory model for MIR_T_I64 locals.
+
+### Also tried + reverted this session (2026-04-17):
+- `PHARO_T2_OPT=2/3`: level 2 gives 1250ms vs level 1 1162ms on
+  sum 3M — higher opt levels DON'T help (level 3 hangs, level 2
+  slightly worse).
+- Dirty-temp writeback: hangs on sum 3M. Interaction with send
+  bail / reload paths.
+- `upgradeICToJ2J` layering: regression on bench_loop.
+- Inline fast-reject at tryJITActivation call site: no measurable
+  change.
 
 ### P4. Fix `upgradeICToJ2J` to layer J2J on existing extras
 IC entries with inline-primKind bits (52:48) never get the J2J direct-
