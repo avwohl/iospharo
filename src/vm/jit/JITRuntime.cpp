@@ -999,20 +999,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                                 nLits, penCls.c_str(), lastCls.c_str());
                     }
 
-                    // Also attempt Tier 2 (MIR) compilation immediately.
-                    // J2J bypasses tryExecute so the executionCount trigger never fires;
-                    // compile eagerly so hot J2J methods benefit from register allocation.
-                    //
-                    // Enabled by default. The historical "stale oops across GC"
-                    // hazard (b18e71e) is closed by the JITState GC-root
-                    // registration (a311688) and the IC-layout scanner fix
-                    // (fd03572). The literal-pointer off-by-8 in J2J return
-                    // paths is fixed (stencils + JITMethod::literals() +
-                    // TrampolineAsm.S all use method+16 now). T2 MIR opt
-                    // level defaults to 1 (level 2+ miscompiles tagged
-                    // arith). PHARO_T2=0 disables, PHARO_T2=1 (or unset) enables.
+                    // Tier 2 (MIR) compilation is now opt-in.  Enabling it
+                    // made arith loops 5-12× slower than T1 alone (measured
+                    // sum 3M: T1 237ms, T2 1123ms, interp 96ms).  Stability
+                    // fixes from 2b1629f/a311688/fd03572/9ffa5f7/b9ab22e still
+                    // apply — T2 runs correctly when enabled — but the
+                    // MIR-generated code pays a big per-send overhead that
+                    // more than eats the register-allocation win on hot
+                    // loops.  Keep PHARO_T2=1 as the opt-in for when that
+                    // overhead gets fixed (inline hot sends, cut MIR
+                    // preamble/postamble, skip unnecessary state flushes).
                     const char* t2env = getenv("PHARO_T2");
-                    static bool noT2 = t2env && t2env[0] == '0';
+                    static bool noT2 = !(t2env && t2env[0] == '1');
                     static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
@@ -1117,10 +1115,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     }
 
     // Check for Tier 2 compiled code (MIR-generated, register-allocated).
-    // T2 execution enabled by default; PHARO_T2=0 forces T1-only for
-    // bisect / fallback.
+    // T2 execution opt-in via PHARO_T2=1.  Default off because T2 is
+    // currently slower than T1 on arith loops (see noteMethodEntry
+    // comment).
     static const char* t2envExec = getenv("PHARO_T2");
-    static bool noT2Exec = t2envExec && t2envExec[0] == '0';
+    static bool noT2Exec = !(t2envExec && t2envExec[0] == '1');
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     if (t2code && t2code != (void*)1) {
         // Tier 2 code has resume support: on initial entry, state.ip == bcStart
