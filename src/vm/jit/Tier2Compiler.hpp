@@ -76,6 +76,12 @@ public:
 
     static void dumpBailStats();
 
+    // Called from JITRuntime::recoverAfterGC.  CompiledMethod Oops
+    // stored in T2 IC data (as methodBits) may become stale after a
+    // GC moves objects — zero all entries so the next send does a
+    // full lookup and re-patches.
+    void flushAllICs();
+
 private:
     CodeZone&     zone_;
     MethodMap&    methodMap_;
@@ -86,6 +92,13 @@ private:
     // is reused across all compilations; it handles MAP_JIT / W^X
     // protection on macOS/iOS internally.
     std::unique_ptr<asmjit::JitRuntime> runtime_;
+
+    // IC data buffers owned by the compiler — one per T2-compiled
+    // method that contains a send.  Layout matches the T1 IC (see
+    // JITMethod.hpp: 6 entries × 24 bytes + 8 bytes selectorBits =
+    // 152 bytes).  We use std::vector<uint64_t> so the buffer is
+    // naturally aligned and easy to zero-fill.
+    std::vector<std::vector<uint64_t>> icBuffers_;
 
     size_t methodsCompiled_ = 0;
     size_t compilationsFailed_ = 0;

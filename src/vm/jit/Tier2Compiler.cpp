@@ -48,6 +48,7 @@ constexpr int OFF_TEMPBASE     = 24;
 constexpr int OFF_IP           = 48;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
+constexpr int OFF_CACHEDTARGET = 88;
 constexpr int OFF_ICDATAPTR    = 96;
 constexpr int OFF_SENDARGCOUNT = 104;
 constexpr int OFF_TRUEOOP      = 128;
@@ -59,8 +60,20 @@ constexpr int OBJ_SLOT_0    = 8;
 constexpr int ASSOC_VALUE   = 16;  // Association.value = slot[1]
 
 // ExitReason values (mirror JITState.hpp).
-constexpr int EXIT_RETURN = 1;
-constexpr int EXIT_SEND   = 2;
+constexpr int EXIT_RETURN         = 1;
+constexpr int EXIT_SEND           = 2;
+constexpr int EXIT_SEND_CACHED    = 7;  // ExitSendCached
+
+// ObjectHeader classIndex layout (mirror ObjectHeader.hpp).
+constexpr uint64_t CLASS_INDEX_MASK = 0x3FFFFFULL;  // bits 0-21
+
+// IC data layout (mirror JITMethod.hpp: 6 entries × 24 bytes + 8 bytes
+// selectorBits = 152 bytes, 19 × uint64_t).
+constexpr int IC_ENTRIES = 6;
+constexpr int IC_SLOTS   = IC_ENTRIES * 3 + 1;
+constexpr int IC_KEY_OFF(int i)    { return i * 3 * 8;       }
+constexpr int IC_METHOD_OFF(int i) { return i * 3 * 8 + 8;   }
+constexpr int IC_EXTRA_OFF(int i)  { return i * 3 * 8 + 16;  }
 
 } // namespace
 
@@ -76,13 +89,29 @@ bool Tier2Compiler::initialize() {
 }
 
 namespace {
-size_t g_compiled = 0;
-size_t g_bailed   = 0;
+size_t   g_compiled = 0;
+size_t   g_bailed   = 0;
+uint64_t g_icHit    = 0;
+uint64_t g_icMiss   = 0;
 } // namespace
 
 void Tier2Compiler::dumpBailStats() {
-    fprintf(stderr, "  T2 (asmjit): compiled=%zu bailed=%zu\n",
-            g_compiled, g_bailed);
+    uint64_t icTot = g_icHit + g_icMiss;
+    fprintf(stderr,
+        "  T2 (asmjit): compiled=%zu bailed=%zu | IC %llu/%llu (%.1f%% hit)\n",
+        g_compiled, g_bailed,
+        (unsigned long long)g_icHit, (unsigned long long)icTot,
+        icTot ? 100.0 * g_icHit / icTot : 0.0);
+}
+
+void Tier2Compiler::flushAllICs() {
+    // Zero every T2 IC entry — next send re-populates via the
+    // interpreter's pendingICPatch_ mechanism.  Called from
+    // JITRuntime::recoverAfterGC because methodBits in IC entries
+    // are raw Oops that can become stale after compaction.
+    for (auto& buf : icBuffers_) {
+        std::memset(buf.data(), 0, buf.size() * sizeof(uint64_t));
+    }
 }
 
 void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
@@ -169,7 +198,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         InitRecvVar,        // push constant, pop into recvVar, return self
         LitVar,             // ^ literal-var N — push association's value from literals[N]
         TempReturn,         // ^ tempN — return argument or local temp
-        SendExit            // push N values + exit with ExitSend (interpreter finishes)
+        SendExit,           // push N values + exit with ExitSend (interpreter finishes)
+        SelfSendInlineIC    // ^ self foo — push self + inline IC probe + exit Cached/Send
     };
     // SendExit push source (what to push before bailing to interpreter).
     enum class PushSrc { None, Receiver, RecvVar, LitVar, Temp, ImmOop };
@@ -276,15 +306,13 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (false && bodyLen >= 3 && SistaV1::isSend0(b1)
-                            && b2 == SistaV1::ReturnTop
-                            && decodePush(b0, pushes[0])) {
-        // 0-arg send (^ <push> foo) also gated off for now — same
-        // problem as 1-arg: bailing to the interpreter for the send
-        // is slower than T1's inline IC check.  Needs a proper IC
-        // check emission to be a perf win (task #31).
-        kind = ReturnKind::SendExit;
-        numPushes = 1;
+    } else if (bodyLen >= 3 && b0 == SistaV1::PushReceiver
+                            && SistaV1::isSend0(b1)
+                            && b2 == SistaV1::ReturnTop) {
+        // ^ self foo — push self + emit an inline 6-way IC probe;
+        // on hit exit ExitSendCached, on miss exit ExitSend.  Stays
+        // in native code on the hit path.
+        kind = ReturnKind::SelfSendInlineIC;
         sendIPOff = 1;
     } else if (false) {
         // 1-arg send pattern (Push + Push + Send1 + ReturnTop) is
@@ -403,6 +431,120 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(tempPtr, a64::ptr(statePtr, OFF_TEMPBASE));
         cc.ldr(retOop,  a64::ptr(tempPtr, recvVarIndex * 8));
         break;
+    }
+    case ReturnKind::SelfSendInlineIC: {
+        // ^ self foo — push self + inline IC probe.
+        //   hit:  cachedTarget = icData[N*3+1], exitReason = ExitSendCached
+        //   miss: cachedTarget left alone, exitReason = ExitSend
+        // Both paths set icDataPtr, sendArgCount=0, ip += 1.
+        // We use a shared epilogue and an `exitReason` register to
+        // avoid duplicating the state-flush code.
+
+        // Allocate IC buffer (152 bytes) and seed icData[18] with the
+        // send's selector.  The chain loop in Interpreter.cpp reads
+        // the selector from this slot on bail — if it's 0 we get
+        // early-return and the IC never populates.
+        icBuffers_.emplace_back(IC_SLOTS, uint64_t{0});
+        uint64_t icAddr = reinterpret_cast<uint64_t>(icBuffers_.back().data());
+        {
+            // Selector is at literal index (b1 - 0x80) for Send0[N].
+            int selIdx = bytes[bcStart + 1] - SistaV1::Send0Base;
+            Oop sel = methodObj->slotAt(1 + selIdx);
+            icBuffers_.back()[18] = sel.rawBits();
+        }
+
+        // Push receiver
+        a64::Gp sp   = cc.new_gp64("sp");
+        a64::Gp recv = cc.new_gp64("recv");
+        cc.ldr(sp,   a64::ptr(statePtr, OFF_SP));
+        cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+        cc.str(recv, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+        // Compute lookupKey
+        Label lblHeap   = cc.new_label();
+        Label lblCheck  = cc.new_label();
+        Label lblMiss   = cc.new_label();
+        Label lblHit[IC_ENTRIES];
+        for (int i = 0; i < IC_ENTRIES; i++) lblHit[i] = cc.new_label();
+        Label lblEpi    = cc.new_label();
+
+        a64::Gp tag       = cc.new_gp64("tag");
+        a64::Gp lookupKey = cc.new_gp64("lookupKey");
+        cc.and_(tag, recv, asmjit::Imm(0x7));
+        cc.cbz(tag, lblHeap);
+
+        // Immediate receiver: lookupKey = tag | 0x80000000
+        cc.mov(lookupKey, tag);
+        cc.orr(lookupKey, lookupKey, asmjit::Imm(0x80000000ULL));
+        cc.b(lblCheck);
+
+        cc.bind(lblHeap);
+        cc.cbz(recv, lblMiss);                     // nil receiver → full lookup
+        a64::Gp header = cc.new_gp64("header");
+        cc.ldr(header, a64::ptr(recv));
+        cc.and_(lookupKey, header, asmjit::Imm(CLASS_INDEX_MASK));
+
+        cc.bind(lblCheck);
+        a64::Gp icData = cc.new_gp64("icData");
+        cc.mov(icData, asmjit::Imm(icAddr));
+
+        // 6-way probe
+        for (int i = 0; i < IC_ENTRIES; i++) {
+            a64::Gp key = cc.new_gp64("key");
+            cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(i)));
+            cc.cmp(lookupKey, key);
+            cc.b_eq(lblHit[i]);
+        }
+        cc.b(lblMiss);
+
+        // Hit paths: load method, set exitReason = ExitSendCached,
+        // jump to epilogue
+        a64::Gp method   = cc.new_gp64("method");
+        a64::Gp exitCode = cc.new_gp32("exitCode");
+        for (int i = 0; i < IC_ENTRIES; i++) {
+            cc.bind(lblHit[i]);
+            cc.ldr(method, a64::ptr(icData, IC_METHOD_OFF(i)));
+            cc.mov(exitCode, EXIT_SEND_CACHED);
+            cc.str(method, a64::ptr(statePtr, OFF_CACHEDTARGET));
+            // bump g_icHit (non-atomic; single-threaded for now)
+            {
+                a64::Gp ctrAddr = cc.new_gp64("ctrAddr");
+                a64::Gp ctrVal  = cc.new_gp64("ctrVal");
+                cc.mov(ctrAddr, asmjit::Imm(reinterpret_cast<uint64_t>(&g_icHit)));
+                cc.ldr(ctrVal, a64::ptr(ctrAddr));
+                cc.add(ctrVal, ctrVal, 1);
+                cc.str(ctrVal, a64::ptr(ctrAddr));
+            }
+            cc.b(lblEpi);
+        }
+
+        // Miss: exitReason = ExitSend; fall through to epilogue.
+        cc.bind(lblMiss);
+        cc.mov(exitCode, EXIT_SEND);
+        {
+            a64::Gp ctrAddr = cc.new_gp64("ctrAddr");
+            a64::Gp ctrVal  = cc.new_gp64("ctrVal");
+            cc.mov(ctrAddr, asmjit::Imm(reinterpret_cast<uint64_t>(&g_icMiss)));
+            cc.ldr(ctrVal, a64::ptr(ctrAddr));
+            cc.add(ctrVal, ctrVal, 1);
+            cc.str(ctrVal, a64::ptr(ctrAddr));
+        }
+
+        cc.bind(lblEpi);
+        cc.str(icData, a64::ptr(statePtr, OFF_ICDATAPTR));
+        a64::Gp w0 = cc.new_gp32("argCount");
+        cc.mov(w0, 0);
+        cc.str(w0, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+        a64::Gp ip = cc.new_gp64("ip");
+        cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+        cc.add(ip, ip, sendIPOff);
+        cc.str(ip, a64::ptr(statePtr, OFF_IP));
+        cc.str(exitCode, a64::ptr(statePtr, OFF_EXIT));
+
+        cc.end_func();
+        goto emitted;
     }
     case ReturnKind::SendExit: {
         // Push 1 or 2 values, advance state.ip to the send/arith byte,
