@@ -41,14 +41,17 @@ namespace jit {
 namespace {
 
 // JITState field offsets (mirror JITState.hpp; keep these in sync).
-constexpr int OFF_SP        = 0;
-constexpr int OFF_RECEIVER  = 8;
-constexpr int OFF_LITERALS  = 16;
-constexpr int OFF_TEMPBASE  = 24;
-constexpr int OFF_EXIT      = 76;
-constexpr int OFF_RETVAL    = 80;
-constexpr int OFF_TRUEOOP   = 128;
-constexpr int OFF_FALSEOOP  = 136;
+constexpr int OFF_SP           = 0;
+constexpr int OFF_RECEIVER     = 8;
+constexpr int OFF_LITERALS     = 16;
+constexpr int OFF_TEMPBASE     = 24;
+constexpr int OFF_IP           = 48;
+constexpr int OFF_EXIT         = 76;
+constexpr int OFF_RETVAL       = 80;
+constexpr int OFF_ICDATAPTR    = 96;
+constexpr int OFF_SENDARGCOUNT = 104;
+constexpr int OFF_TRUEOOP      = 128;
+constexpr int OFF_FALSEOOP     = 136;
 
 // Oop object layout: ObjectHeader is 8 bytes, slots follow at offset 8.
 // So slot[N] is at byte offset 8 + N*8 from the object pointer.
@@ -57,6 +60,7 @@ constexpr int ASSOC_VALUE   = 16;  // Association.value = slot[1]
 
 // ExitReason values (mirror JITState.hpp).
 constexpr int EXIT_RETURN = 1;
+constexpr int EXIT_SEND   = 2;
 
 } // namespace
 
@@ -162,13 +166,15 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     enum class ReturnKind {
         Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop,
-        InitRecvVar,      // push constant, pop into recvVar, return self
-        LitVar            // ^ literal-var N — push association's value from literals[N]
+        InitRecvVar,        // push constant, pop into recvVar, return self
+        LitVar,             // ^ literal-var N — push association's value from literals[N]
+        SendSelfZeroArg     // ^ self foo — push receiver + exit with ExitSend at byte 1
     };
     ReturnKind kind;
     uint64_t immBits = 0;      // ImmediateOop / NilImm / InitRecvVar value
     int recvVarIndex = 0;      // RecvVar / SetterRecvVar / InitRecvVar
     int litIndex     = 0;      // LitVar
+    int sendIPOff    = 0;      // SendSelfZeroArg: byte offset of the send bytecode
 
     if (b0 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::Receiver;
@@ -227,6 +233,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
+    } else if (bodyLen >= 3 && b0 == SistaV1::PushReceiver
+                            && SistaV1::isSend0(b1)
+                            && b2 == SistaV1::ReturnTop) {
+        // ^ self foo — push self, then let the interpreter dispatch the
+        // send.  T2 exits with ExitSend at the send bytecode; after the
+        // send completes the interpreter executes the trailing ReturnTop.
+        kind = ReturnKind::SendSelfZeroArg;
+        sendIPOff = 1;  // offset of Send0[N] within the method
     } else if (bodyLen >= 3 && SistaV1::isPopStoreRecv(b1)
                             && b2 == SistaV1::ReturnReceiver
                             && (b0 == SistaV1::PushZero
@@ -329,17 +343,57 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop,  a64::ptr(assoc, ASSOC_VALUE));
         break;
     }
+    case ReturnKind::SendSelfZeroArg: {
+        // ^ self foo — emit:
+        //   *state.sp = state.receiver;  state.sp += 8;
+        //   state.ip += sendIPOff;          (→ send bytecode)
+        //   state.sendArgCount = 0;
+        //   state.icDataPtr    = nullptr;
+        //   state.exitReason   = ExitSend;
+        // Interpreter resumes at the send bytecode, dispatches, then
+        // executes the trailing ReturnTop.
+        a64::Gp sp   = cc.new_gp64("sp");
+        a64::Gp recv = cc.new_gp64("recv");
+        cc.ldr(sp,   a64::ptr(statePtr, OFF_SP));
+        cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+        cc.str(recv, a64::ptr(sp));           // *sp = receiver
+        cc.add(sp, sp, 8);
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+        a64::Gp ip = cc.new_gp64("ip");
+        cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+        cc.add(ip, ip, sendIPOff);
+        cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+        a64::Gp zero32 = cc.new_gp32("zero32");
+        cc.mov(zero32, 0);
+        cc.str(zero32, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+        a64::Gp zero64 = cc.new_gp64("zero64");
+        cc.mov(zero64, 0);
+        cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+        a64::Gp exitVal = cc.new_gp32("exitVal");
+        cc.mov(exitVal, EXIT_SEND);
+        cc.str(exitVal, a64::ptr(statePtr, OFF_EXIT));
+
+        cc.end_func();
+        goto emitted;
+    }
     }
 
     // state.returnValue = retOop
     cc.str(retOop, a64::ptr(statePtr, OFF_RETVAL));
 
     // state.exitReason = EXIT_RETURN (int32)
-    a64::Gp exitVal = cc.new_gp32("exitVal");
-    cc.mov(exitVal, EXIT_RETURN);
-    cc.str(exitVal, a64::ptr(statePtr, OFF_EXIT));
+    {
+        a64::Gp exitVal = cc.new_gp32("exitVal");
+        cc.mov(exitVal, EXIT_RETURN);
+        cc.str(exitVal, a64::ptr(statePtr, OFF_EXIT));
+    }
 
     cc.end_func();
+emitted:
     Error err = cc.finalize();
     if (err != kErrorOk) {
         compilationsFailed_++;
