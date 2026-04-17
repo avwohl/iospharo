@@ -270,24 +270,24 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (bodyLen >= 3 && SistaV1::isSend0(b1)
+    } else if (false && bodyLen >= 3 && SistaV1::isSend0(b1)
                             && b2 == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])) {
-        // ^ <push> foo — one push + 0-arg send + return top.
+        // 0-arg send (^ <push> foo) also gated off for now — same
+        // problem as 1-arg: bailing to the interpreter for the send
+        // is slower than T1's inline IC check.  Needs a proper IC
+        // check emission to be a perf win (task #31).
         kind = ReturnKind::SendExit;
         numPushes = 1;
         sendIPOff = 1;
-    } else if (bodyLen >= 4 && (SistaV1::isSend1(b2)
-                                 || SistaV1::isArithSelector(b2)
-                                 || SistaV1::isSpecialSelector(b2))
-                            && bytes[bcStart + 3] == SistaV1::ReturnTop
-                            && decodePush(b0, pushes[0])
-                            && decodePush(b1, pushes[1])) {
-        // ^ <push0> <op> <push1> — two pushes + 1-arg send/arith + return.
-        // Covers `^ self + arg`, `^ self foo: arg`, etc.
-        kind = ReturnKind::SendExit;
-        numPushes = 2;
-        sendIPOff = 2;
+    } else if (false) {
+        // 1-arg send pattern (Push + Push + Send1 + ReturnTop) is
+        // correct by construction but the push+exit+resume-to-C
+        // round-trip is MUCH slower than T1 staying in native code.
+        // Measured 1.8× regression on array-fill benchmark.  Gated
+        // off until we can emit the send *inline* (IC check + direct
+        // J2J call on hit) instead of bailing to the interpreter.
+        // See task #31.
     } else if (bodyLen >= 3 && SistaV1::isPopStoreRecv(b1)
                             && b2 == SistaV1::ReturnReceiver
                             && (b0 == SistaV1::PushZero
