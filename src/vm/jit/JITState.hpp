@@ -69,6 +69,7 @@ struct JITState {
     Oop  cachedTarget;        // offset 88: Cached method Oop for IC hit (ExitSendCached)
     uint64_t* icDataPtr;      // offset 96: Pointer to IC data [classIndex, methodOop]
     int  sendArgCount;        // offset 104: Number of args for the current send (IC path)
+    uint32_t sendBCLength;    // offset 108: Byte length of current send bytecode (T2 chain-loop)
 
     // --- SimStack register caching ---
     // TOS/NOS cached in JITState fields to avoid sp manipulation in
@@ -119,6 +120,7 @@ static_assert(offsetof(JITState, method)    == 64, "method offset");
 static_assert(offsetof(JITState, cachedTarget)  == 88, "cachedTarget offset");
 static_assert(offsetof(JITState, icDataPtr)     == 96, "icDataPtr offset");
 static_assert(offsetof(JITState, sendArgCount)  == 104, "sendArgCount offset");
+static_assert(offsetof(JITState, sendBCLength)  == 108, "sendBCLength offset");
 static_assert(offsetof(JITState, j2jSaveCursor) == 144, "j2jSaveCursor offset");
 static_assert(offsetof(JITState, j2jSaveLimit)  == 152, "j2jSaveLimit offset");
 static_assert(offsetof(JITState, j2jDepth)      == 160, "j2jDepth offset");

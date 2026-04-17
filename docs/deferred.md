@@ -8,17 +8,21 @@ as-is, or project-mission work.
 
 ## A. JIT performance — code to write
 
-### A1. T2 chain-loop continuation
-**Design:** `docs/jit-t2-chainloop-plan.md` (commit f2e3f0f).
-**Status:** Design-only. Not implemented.
-**Effort:** 1-2 days.
+### A1. T2 chain-loop continuation — **IMPLEMENTED, GATED**
+**Design:** `docs/jit-t2-chainloop-plan.md`.
+**Status:** Implemented 2026-04-16. Gated behind `PHARO_T2_A1=1`.
+Default is still always-bail (f279fd4) because T2 itself is disabled
+(b18e71e, stale oops across GC).
+**Effort to unblock:** Fix T2 GC oops issue first (separate bug).
 **Value:** Restores T2's callee-invocation speedup (lost in f279fd4 safety fix). Target: T2 on send-heavy AWFY beats T1.
 
-### A2. T1 J2J memory-op reduction
-**Design:** `docs/jit-j2j-reduction-plan.md` (commit cb145f3).
-**Status:** Design-only. Not implemented.
-**Effort:** 4-6 hours, 5-file coordinated change.
-**Value:** ~7% per-send improvement. J2JSave shrinks 72→56 bytes.
+### A2. T1 J2J memory-op reduction — **LANDED** (commit 415d899)
+**Design:** `docs/jit-j2j-reduction-plan.md`.
+**Status:** Shipped 2026-04-16.  J2JSave struct went 72→56 bytes, 3
+stores dropped per send; ASM+stencils+Interpreter materialization all
+updated in lockstep.
+**Value achieved:** Core intent landed; benchmarks pending next full
+run.  Helps T1 send-heavy workloads.
 
 ### A3. IC hit rate investigation — **DIAGNOSTIC LANDED, FIX DEFERRED**
 **Analysis:** `memory/project_ic_hit_rate_investigation.md` +
@@ -132,16 +136,18 @@ changes; they're image-side issues to propose upstream.
 
 ## F. What's left for a future session
 
-Practical next-session starting points, in suggested order:
+**Post 2026-04-16 update:**  A1, A2, and A3 diag have all shipped.
+Remaining practical work:
 
-1. **Implement A3 (IC hit-rate counter).** Cheap, informative. Likely
-   reveals a real fixable problem.
-2. **Implement A2 (T1 J2J reduction).** Concrete, bounded, high-
-   confidence win on send-heavy AWFY.
-3. **Implement A1 (T2 chain-loop).** Biggest perf unlock but riskiest
-   and most invasive.
-4. **Pivot to D (iOS device work).** Needs physical hardware, not
+1. **Fix T2 GC staleness (blocks A1 activation).** MIR holds oops in
+   registers across potential GC points. Until fixed, `PHARO_T2=1`
+   crashes and A1 cannot be benchmarked. Likely needs MIR-level
+   GC-safety annotations or a spill-before-allocate discipline.
+2. **Finish A3 (IC hit-rate).** Diagnostics shipped, actual fix needs
+   lldb watchpoint session — something clears `icData[18]` between
+   compile and first `ExitSend`, invisible to static analysis.
+3. **Pivot to D (iOS device work).** Needs physical hardware, not
    just code.
 
-Once A1/A2/A3 are all done, JIT reaches diminishing returns and D is
-where the project's actual value delivery happens.
+Once T2 GC is fixed + A3 fixed, JIT reaches diminishing returns and D
+is where the project's actual value delivery happens.

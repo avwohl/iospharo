@@ -1,5 +1,31 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
+2026-04-16
+
+## jit: implement A1 T2 chain-loop continuation (gated behind PHARO_T2_A1)
+
+`jit_t2_send` now pushes a `J2JSave` for the T2 caller before invoking
+the callee.  On `ExitReturn` it pops the save and restores the caller
+on the fast path; on any other exit it leaves the save in the pool so
+the chain loop materializes it into `savedFrames_`, letting the
+interpreter continue the callee from its partial `state.ip`.
+
+Replaces the old "always bail" safety path that caused Permute to
+double-count side-effect bytecodes (and was the correctness reason T2
+effectively regressed to T1 speed).
+
+Infrastructure changes:
+- Added `uint32_t sendBCLength` to `JITState` (offset 108, free padding
+  slot). MIR `emitSendCall` stores `bcLength` so the runtime can compute
+  post-send IP for the caller's save.
+- Made `Interpreter::J2JSave` public so `JITRuntime.cpp` can push entries
+  without duplicating the struct.
+
+**Gated behind `PHARO_T2_A1=1`.** Default is still always-bail because
+T2 itself remains disabled by default (commit b18e71e: MIR holds stale
+oops across GC). A1 code is wired up and ready to benchmark once the
+T2 GC issue is resolved.
+
 2026-04-15
 
 ## fix: bcToEntryState max-wins prevents stack leak on JIT resume

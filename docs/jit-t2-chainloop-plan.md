@@ -1,7 +1,9 @@
 # T2 Chain-Loop Continuation — Refined Design
 
-**Status:** Design-only; not implemented. Commit f279fd4 (T2 always-bail)
-remains in place for correctness. This doc updated session post-A2.
+**Status:** Implemented but gated behind `PHARO_T2_A1=1`. Default is
+still always-bail (f279fd4) for correctness. Gating is required because
+T2 itself is disabled by default (commit b18e71e — MIR holds stale oops
+across GC). Once the T2 GC issue is fixed, flip A1 on and benchmark.
 
 ## Goal
 
@@ -123,9 +125,34 @@ beats T1.
   emitSendCall; the caller's resumeAddr = T2 entry uses state.ip to
   dispatch to the matching resume label.
 
-## Why still deferred
+## Implementation notes (A1 landed 2026-04-16)
 
-This session did A3 (diag) + A2 (J2J shrink) + wanted to do this too,
-but A1 needs a real code change across jit_t2_send + verification, and
-the time box was used up on A2. The plan is now concrete enough that a
-future session can pick it up directly.
+- Added `uint32_t sendBCLength` at JITState offset 108 (padding slot
+  after `sendArgCount`).  MIR `emitSendCall` stores `bcLength` before
+  calling `jit_t2_send`, so the runtime can compute post-send IP.
+- `jit_t2_send` push path: records caller `sp/receiver/tempBase/
+  jitMethod`, sets `ip = state.ip + bcLen` (post-send), `resumeAddr =
+  callerJM->codeStart()`, `sendArgCount = nArgs`.  Advances
+  `j2jSaveCursor` by 56 bytes and bumps `j2jDepth`.
+- Does NOT null `j2jSaveCursor` for the callee — keep it so the callee
+  can push deeper (T1 stencil J2J or recursive T2).
+- ExitReturn: pop (decrement cursor/depth), derive caller `argCount/
+  literals/method` from `saveEntry->jitMethod`, set `ip = saveEntry->
+  ip`, place retval on stack, sp -= nArgs.
+- Non-ExitReturn: leave save in pool, return ExitSend.  Chain loop's
+  `materializeJ2J` materializes all saves (ours + any deeper the callee
+  pushed) into `savedFrames_`.  State reflects callee → interpreter
+  continues from there.
+- Made `Interpreter::J2JSave` public so `JITRuntime.cpp` can reference
+  it without a duplicate struct.
+- J2JSave is GC-rooted via `j2jPool_` scanning in `recoverAfterGC`, so
+  the pushed save's `receiver` and `jitMethod->compiledMethodOop` survive
+  GC during the callee.
+
+## Why still gated
+
+T2 currently crashes at runtime on longer workloads due to a separate
+bug: MIR-generated code holds oops in registers across potential GC
+points (commit b18e71e disabled T2 by default).  Until that's resolved,
+turning on A1 gains nothing.  Once T2 is stable, set `PHARO_T2_A1=1`
+for benchmarking.

@@ -78,6 +78,7 @@ static constexpr int OFF_RETVAL    = 80;
 static constexpr int OFF_CACHED    = 88;
 static constexpr int OFF_ICDATA    = 96;
 static constexpr int OFF_SENDNARGS = 104;
+static constexpr int OFF_SEND_BCLEN = 108;  // sendBCLength (uint32_t)
 static constexpr int OFF_TRUE      = 128;
 static constexpr int OFF_FALSE     = 136;
 static constexpr int OFF_YIELD_CD  = 176;  // yieldCountdown (int32_t)
@@ -259,6 +260,9 @@ void Tier2Compiler::emitSendExit(int nArgs, int bcOffset, bool cached, MIR_reg_t
 }
 
 MIR_label_t Tier2Compiler::emitSendCall(int bcOffset, int bcLength, bool registerResume) {
+    // state->sendBCLength = bcLength (for post-send resume IP in jit_t2_send)
+    EMIT(MIR_MOV, MEM(MIR_T_I32, reg_statePtr_, OFF_SEND_BCLEN), IMM(bcLength));
+
     // CALL jit_t2_send(statePtr)
     MIR_append_insn(mirCtx_, mirFunc_,
         MIR_new_call_insn(mirCtx_, 3,

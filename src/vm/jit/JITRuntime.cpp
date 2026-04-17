@@ -105,57 +105,45 @@ extern "C" void jit_t2_send(JITState* state) {
     using namespace pharo;
     using namespace pharo::jit;
 
-    static int t2SendCount = 0;
     static int t2SendDepth = 0;
-    static bool t2SendDebug = !!getenv("T2_SEND_DBG");
+    // A1 chain-loop continuation is implemented but gated behind
+    // PHARO_T2_A1=1 because T2 itself is currently disabled by default
+    // (MIR holds stale oops across GC — see commit b18e71e). Once the T2
+    // GC issue is resolved, flip A1 on to replace the correctness-safe
+    // always-bail with the chain-loop callee invocation.
+    static bool a1Enabled = !!getenv("PHARO_T2_A1");
 
     Interpreter* interp = state->interp;
     ObjectMemory* mem = state->memory;
 
     // Depth guard: prevent unbounded C-stack growth from recursive T2 sends.
-    // At depth 200, bail to interpreter (chain loop) to unwind safely.
     if (t2SendDepth >= 200) {
         state->exitReason = ExitSend;
         return;
     }
 
-    // CORRECTNESS: bail straight to interpreter for every T2 send.
-    //
-    // Root cause of Permute miscompile (session 22/23, 2026-04-16):
-    // jit_t2_send previously invoked the callee (T1 stencil or recursive T2)
-    // and fell back on any non-ExitReturn exit. For callees with Smalltalk
-    // side effects (e.g. Permute>>permute: does `count := count + 1` before
-    // its first non-arith send), partial work happened and was NOT undone
-    // on the fallback path. The interpreter then re-activated the callee,
-    // re-running the side-effect bytecodes — double-counting. Recursive T2
-    // chains had the same problem at every depth where the callee couldn't
-    // complete without a bail.
-    //
-    // The proper fix is a chain-loop-style resumption (push SavedFrame for
-    // the caller, let interpreter continue the callee from its partial
-    // state.ip). That's a substantial refactor. For now, always bail — the
-    // interpreter performs the send cleanly from scratch exactly once.
-    //
-    // PHARO_T2_UNSAFE_CALLEE=1 restores the old buggy behavior for
-    // benchmarking only (do NOT use with methods that have side-effect
-    // bytecodes before their first bail point).
-    static bool unsafeCallee = !!getenv("PHARO_T2_UNSAFE_CALLEE");
-    if (!unsafeCallee) {
+    // Always-bail unless A1 is explicitly enabled. Correctness-safe default.
+    if (!a1Enabled) {
         state->exitReason = ExitSend;
         return;
     }
 
+    // A1: need J2J save slot for the caller so the chain loop can
+    // materialize it on callee bail.
+    if (!state->j2jSaveCursor || !state->j2jSaveLimit ||
+        (uintptr_t)state->j2jSaveCursor + sizeof(Interpreter::J2JSave)
+          > (uintptr_t)state->j2jSaveLimit) {
+        state->exitReason = ExitSend;
+        return;
+    }
+    Interpreter::J2JSave* saveEntry =
+        reinterpret_cast<Interpreter::J2JSave*>(state->j2jSaveCursor);
+
     Oop selector = state->cachedTarget;
     int nArgs = state->sendArgCount;
+    uint32_t bcLen = state->sendBCLength;
     Oop rcvr = state->sp[-(nArgs + 1)];
 
-    if (t2SendDebug && t2SendCount < 30) {
-        fprintf(stderr, "[T2SEND#%d d=%d] sel=0x%llx nArgs=%d rcvr=0x%llx sp=%p ip=%p\n",
-                t2SendCount, t2SendDepth,
-                (unsigned long long)selector.rawBits(), nArgs,
-                (unsigned long long)rcvr.rawBits(), (void*)state->sp,
-                (void*)state->ip);
-    }
     t2SendDepth++;
 
     // --- T2 monomorphic IC: skip method lookup if receiver class matches ---
@@ -165,11 +153,9 @@ extern "C" void jit_t2_send(JITState* state) {
         uint64_t bits = rcvr.rawBits();
         uint32_t classIdx = 0;
         if ((bits & 7) == 0 && bits != 0) {
-            // Object: classIndex from header bits 0-21
             classIdx = static_cast<uint32_t>(
                 *reinterpret_cast<uint64_t*>(bits) & 0x3FFFFFULL);
         } else if ((bits & 7) == 1) {
-            // SmallInteger: fixed classIndex
             classIdx = interp->jitRuntime().smallIntClassIdx;
         }
         if (classIdx != 0 && classIdx == static_cast<uint32_t>(ic[0])) {
@@ -181,18 +167,13 @@ extern "C" void jit_t2_send(JITState* state) {
 
     {
         Oop rcvrClass = mem->classOf(rcvr);
-
-        // Method lookup (cache probe → full hierarchy search)
         resolved = interp->lookupMethodForSend(selector, rcvrClass);
         if (!resolved.isObject() || resolved.rawBits() < 0x10000) {
             state->exitReason = ExitSend;
             t2SendDepth--;
             return;
         }
-
         g_t2ICMisses++;
-
-        // Update IC for object and SmallInteger receivers
         if (ic) {
             uint64_t bits = rcvr.rawBits();
             uint32_t classIdx = 0;
@@ -210,8 +191,7 @@ extern "C" void jit_t2_send(JITState* state) {
     }
 
 ic_hit:
-
-    // Check if callee is JIT-compiled
+    // Callee must be JIT-compiled to run here.
     MethodMap* mm = reinterpret_cast<MethodMap*>(state->methodMapPtr);
     JITMethod* jm = mm->lookup(resolved.rawBits());
     if (!jm || !jm->isExecutable()) {
@@ -220,33 +200,37 @@ ic_hit:
         return;
     }
 
-    // Check for primitive without prim prologue (needs interpreter handling)
+    // Primitive methods need the T1 prim prologue path; if neither tier has
+    // one, bail so the interpreter runs the primitive cleanly.
     bool hasPrim = (jm->methodHeader >> 16) & 1;
     if (hasPrim && !jm->hasPrimPrologue) {
         state->exitReason = ExitSend;
         t2SendDepth--;
         return;
     }
-
-    // Validate receiver is a compiled method
     if (resolved.asObjectPtr()->classIndex() != interp->compiledMethodClassIdx()) {
         state->exitReason = ExitSend;
         t2SendDepth--;
         return;
     }
 
-    // === Save T2 caller state ===
-    Oop* savedSP = state->sp;
-    Oop savedRecv = state->receiver;
-    Oop* savedTempBase = state->tempBase;
-    Oop* savedLiterals = state->literals;
-    Oop savedMethod = state->method;
-    int savedArgCount = state->argCount;
-    void* savedJitMethod = state->jitMethod;
-    uint8_t* savedIP = state->ip;
+    // === Push J2JSave for CALLER before setting up callee state ===
+    // On non-ExitReturn bail, we leave this entry in the pool and the chain
+    // loop materializes it as a SavedFrame. On ExitReturn we pop it.
+    // Use post-send IP so resume (via T2 dispatch table) lands at continueLabel.
+    JITMethod* callerJM = state->jitMethod;
+    saveEntry->sp           = state->sp;
+    saveEntry->receiver     = state->receiver;
+    saveEntry->tempBase     = state->tempBase;
+    saveEntry->ip           = state->ip + bcLen;
+    saveEntry->jitMethod    = callerJM;
+    saveEntry->resumeAddr   = callerJM ? callerJM->codeStart() : nullptr;
+    saveEntry->sendArgCount = nArgs;
+    state->j2jSaveCursor += sizeof(Interpreter::J2JSave);
+    state->j2jDepth++;
+    state->j2jTotalCalls++;
 
-
-    // === Set up callee in JITState ===
+    // === Set up CALLEE state ===
     ObjectHeader* methObj = resolved.asObjectPtr();
     Oop* fp = state->sp - (nArgs + 1);
 
@@ -262,7 +246,6 @@ ic_hit:
     int numLits = static_cast<int>(jm->methodHeader & 0x7FFF);
     state->ip = methObj->bytes() + (1 + numLits) * 8;
 
-    // Allocate temps if callee needs more than nArgs
     int totalTemps = jm->tempCount;
     if (__builtin_expect(nArgs < totalTemps, 0)) {
         Oop nil = mem->nil();
@@ -272,123 +255,62 @@ ic_hit:
         }
     }
 
-    // Disable stencil J2J — the J2J trampoline only runs in tryJITActivation.
-    state->j2jSaveCursor = nullptr;
-    state->j2jSaveLimit = nullptr;
-    state->j2jDepth = 0;
-    state->j2jTotalCalls = 0;
+    // Keep j2jSaveCursor/limit — callee may push deeper entries.
     state->yieldCountdown = 1000;
 
-    // === Try T2 code first (avoids ExitSendCached from T1 stencils) ===
-    // T1 stencils exit with ExitSendCached on inner sends (J2J disabled),
-    // so prefer T2 callee which handles sends via recursive jit_t2_send.
-    // Exception: methods with primitives — T2 skips CallPrimitive, so the
-    // primitive would never run. Use T1 which has a primitive prologue.
+    // Prefer T2 code; fall back to T1 stencil for leaf / prim-prologue callees.
     JITRuntime& rt = interp->jitRuntime();
     void* t2code = hasPrim ? nullptr : rt.lookupTier2(resolved.rawBits());
-    // Snapshot GC count: saved caller oops (method, receiver, literals) are
-    // C stack locals invisible to forEachRoot. If GC runs during the callee,
-    // these oops go stale. We detect this and bail to ExitSend so the
-    // interpreter re-resolves everything from the GC-safe Smalltalk stack.
     size_t gcBefore = mem->statistics().gcCount;
-    if (t2SendDebug && t2SendCount < 5) {
-        fprintf(stderr, "[T2SEND-LOOKUP] resolved=0x%llx t2code=%p jm=%p hasPrim=%d\n",
-                (unsigned long long)resolved.rawBits(), t2code, (void*)jm, hasPrim);
-    }
     if (t2code && t2code != (void*)1) {
         state->exitReason = ExitNone;
-        state->returnValue = Oop::fromRawBits(0xDEAD0001ULL);  // sentinel
-        if (t2SendDebug && t2SendCount < 5) {
-            fprintf(stderr, "[T2SEND-T2-PRE] rcv=0x%llx sp=%p lit[0]=0x%llx ip=%p method=0x%llx\n",
-                    (unsigned long long)state->receiver.rawBits(), (void*)state->sp,
-                    (unsigned long long)state->literals[0].rawBits(),
-                    (void*)state->ip, (unsigned long long)state->method.rawBits());
-        }
+        state->returnValue = Oop::fromRawBits(0xDEAD0001ULL);
         ((void(*)(JITState*))t2code)(state);
-        if (t2SendDebug && t2SendCount < 5) {
-            fprintf(stderr, "[T2SEND-T2-POST] exit=%d rv=0x%llx sp=%p\n",
-                    state->exitReason, (unsigned long long)state->returnValue.rawBits(),
-                    (void*)state->sp);
-        }
     } else {
-        // Fall back to T1 stencil code (works for leaf methods)
         JIT_CALL(jm->codeStart(), state);
     }
 
-    if (t2SendDebug && t2SendCount < 30) {
-        fprintf(stderr, "[T2SEND#%d d=%d] callee exit=%d retVal=0x%llx sp=%p\n",
-                t2SendCount, t2SendDepth,
-                state->exitReason,
-                (unsigned long long)state->returnValue.rawBits(), (void*)state->sp);
-    }
-    t2SendCount++;
-
-    // GC during callee invalidates C-stack-held oops (savedRecv, savedMethod,
-    // savedLiterals, selector, etc.). Bail to ExitSend so the interpreter
-    // re-resolves from the GC-safe Smalltalk stack.
+    // GC during callee invalidates C-stack oops (selector, rcvr, etc.).
+    // Our pushed save has GC-reachable oops (receiver, jitMethod-derived
+    // compiledMethodOop) via the pool, which tryJITActivation scans.
+    // State reflects callee — chain loop re-derives from Smalltalk stack.
     if (__builtin_expect(mem->statistics().gcCount != gcBefore, 0)) {
-        // savedSP is a stack pointer (still valid — Smalltalk stack doesn't
-        // move). All oop locals (selector, savedRecv, savedMethod, etc.) are
-        // stale. Don't touch them — just set ExitSend and let the chain loop
-        // re-derive everything from the interpreter's GC-root state.
-        state->sp = savedSP;
-        state->sendArgCount = nArgs;
-        state->icDataPtr = nullptr;
         state->exitReason = ExitSend;
         t2SendDepth--;
         return;
     }
 
     if (__builtin_expect(state->exitReason == ExitReturn, 1)) {
-        // === Fast path: callee returned normally ===
+        // Fast path: pop our save, restore caller, return value on stack.
+        state->j2jSaveCursor -= sizeof(Interpreter::J2JSave);
+        state->j2jDepth--;
+
         Oop retVal = state->returnValue;
-
-        // Restore T2 caller state
-        state->sp = savedSP;
-        state->receiver = savedRecv;
-        state->tempBase = savedTempBase;
-        state->literals = savedLiterals;
-        state->method = savedMethod;
-        state->argCount = savedArgCount;
-        state->jitMethod = reinterpret_cast<JITMethod*>(savedJitMethod);
-        state->ip = savedIP;
-
-        // Pop receiver+args, push return value.
-        // Convention: sp past TOS (matches chain-loop resume).
-        // retval replaces receiver; pop the args above it.
-        state->sp[-(nArgs + 1)] = retVal;
-        state->sp -= nArgs;  // sp[-1] = retVal, sp[0] = next free
-
-        if (t2SendDebug && t2SendCount < 50) {
-            fprintf(stderr, "[T2SEND-RET d=%d] restored sp=%p rcv=0x%llx retVal=0x%llx\n",
-                    t2SendDepth, (void*)state->sp,
-                    (unsigned long long)state->receiver.rawBits(),
-                    (unsigned long long)retVal.rawBits());
+        state->sp = saveEntry->sp;
+        state->receiver = saveEntry->receiver;
+        state->tempBase = saveEntry->tempBase;
+        state->jitMethod = saveEntry->jitMethod;
+        state->ip = saveEntry->ip;
+        if (saveEntry->jitMethod) {
+            state->argCount = saveEntry->jitMethod->argCount;
+            state->literals = reinterpret_cast<Oop*>(
+                saveEntry->jitMethod->compiledMethodOop + 8);
+            state->method = Oop::fromRawBits(
+                saveEntry->jitMethod->compiledMethodOop);
         }
+
+        state->sp[-(nArgs + 1)] = retVal;
+        state->sp -= nArgs;
 
         state->exitReason = ExitNone;
         t2SendDepth--;
         return;
     }
 
-    // === Fallback: callee exited with non-ExitReturn ===
-    // Restore T2 caller state and exit with ExitSend for the caller's send.
-    // The chain loop will handle the send from scratch (re-resolve method,
-    // activate callee). This discards the callee's partial execution —
-    // which is why PHARO_T2_UNSAFE_CALLEE=1 is unsafe for callees with
-    // side-effecting bytecodes before their first bail point.
-    state->sp = savedSP;
-    state->receiver = savedRecv;
-    state->tempBase = savedTempBase;
-    state->literals = savedLiterals;
-    state->method = savedMethod;
-    state->argCount = savedArgCount;
-    state->jitMethod = reinterpret_cast<JITMethod*>(savedJitMethod);
-    state->ip = savedIP;
-    // Restore send context so chain loop can handle the caller's send
-    state->cachedTarget = selector;
-    state->sendArgCount = nArgs;
-    state->icDataPtr = nullptr;
+    // Callee bailed (ExitSend / ExitSendCached / ExitYield / etc.).
+    // LEAVE our save in the pool; the chain loop will materialize it and
+    // any deeper saves the callee pushed. State reflects callee — that's
+    // the correct current frame for the interpreter to resume from.
     state->exitReason = ExitSend;
     t2SendDepth--;
     return;

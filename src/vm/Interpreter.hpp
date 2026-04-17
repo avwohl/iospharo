@@ -491,6 +491,10 @@ private:
     // all derivable from `jitMethod` on return, so we dropped them. Saves 3
     // stores per send, shrinks from 72 to 56 bytes. See
     // docs/jit-j2j-reduction-plan.md for the derivation math.
+    //
+    // PUBLIC so jit_t2_send (JITRuntime.cpp) can push entries for A1
+    // chain-loop continuation.
+public:
     struct J2JSave {
         Oop* sp;                  // 0
         Oop receiver;             // 8
@@ -502,6 +506,7 @@ private:
         int _pad;                 // 52  (alignment)
     };
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
+private:
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image)
