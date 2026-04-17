@@ -154,10 +154,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     uint8_t b1 = (bodyLen >= 2) ? bytes[bcStart + 1] : 0;
     uint8_t b2 = (bodyLen >= 3) ? bytes[bcStart + 2] : 0;
 
-    enum class ReturnKind { Receiver, True, False, NilImm, RecvVar, SetterRecvVar };
+    enum class ReturnKind {
+        Receiver, True, False, NilImm, RecvVar, SetterRecvVar, ImmediateOop
+    };
     ReturnKind kind;
-    uint64_t nilBits = 0;
-    int recvVarIndex = 0;  // for RecvVar (getter) and SetterRecvVar (setter target)
+    uint64_t immBits = 0;      // ImmediateOop / NilImm
+    int recvVarIndex = 0;      // RecvVar / SetterRecvVar
 
     if (b0 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::Receiver;
@@ -167,7 +169,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::False;
     } else if (b0 == SistaV1::ReturnNil) {
         kind = ReturnKind::NilImm;
-        nilBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
+        immBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
     } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
                             && b0 == SistaV1::PushReceiver) {
         kind = ReturnKind::Receiver;
@@ -180,11 +182,30 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
                             && b0 == SistaV1::PushNil) {
         kind = ReturnKind::NilImm;
-        nilBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
+        immBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
     } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
                             && SistaV1::isPushRecvVar(b0)) {
         kind = ReturnKind::RecvVar;
         recvVarIndex = b0 - SistaV1::PushRecvVarBase;
+    } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
+                            && b0 == SistaV1::PushZero) {
+        // ^ 0 -> SmallInteger zero with tag 001 in low bits
+        kind = ReturnKind::ImmediateOop;
+        immBits = Oop::fromSmallInteger(0).rawBits();
+    } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
+                            && b0 == SistaV1::PushOne) {
+        // ^ 1
+        kind = ReturnKind::ImmediateOop;
+        immBits = Oop::fromSmallInteger(1).rawBits();
+    } else if (bodyLen >= 2 && b1 == SistaV1::ReturnTop
+                            && SistaV1::isPushLitConst(b0)) {
+        // ^ literal-const N  — fetch from the method's literal frame at
+        // compile time and bake in as an immediate.
+        int litIndex = b0 - SistaV1::PushLitConstBase;
+        // Literal frame starts at slot 1 (slot 0 is the header).
+        Oop lit = methodObj->slotAt(1 + litIndex);
+        kind = ReturnKind::ImmediateOop;
+        immBits = lit.rawBits();
     } else if (bodyLen >= 3 && b0 == SistaV1::PushTempBase
                             && SistaV1::isPopStoreRecv(b1)
                             && b2 == SistaV1::ReturnReceiver) {
@@ -226,7 +247,8 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.ldr(retOop, a64::ptr(statePtr, OFF_FALSEOOP));
         break;
     case ReturnKind::NilImm:
-        cc.mov(retOop, asmjit::Imm(nilBits));
+    case ReturnKind::ImmediateOop:
+        cc.mov(retOop, asmjit::Imm(immBits));
         break;
     case ReturnKind::RecvVar: {
         // Getter: return state.receiver->slotAt(recvVarIndex).
