@@ -1870,6 +1870,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
                 icSlots[18] = selectorBits;
 
+                // A3 DIAG: count compile-time selBits=0 vs non-zero.
+                static size_t compileSelZero = 0, compileSelNonZero = 0;
+                if (selectorBits == 0) compileSelZero++;
+                else compileSelNonZero++;
+                if (getenv("PHARO_IC_HIT_DBG")) {
+                    fprintf(stderr, "[IC-COMPILE-SEL] %s opcode=0x%02X litIdx=%d numLits=%d icBase=%p selBits=0x%llx\n",
+                            selectorBits == 0 ? "ZERO" : "OK",
+                            bc.opcode, bc.branchTarget, numLiterals, (void*)icBase,
+                            (unsigned long long)selectorBits);
+                }
+
                 sendIdx++;
             }
         }

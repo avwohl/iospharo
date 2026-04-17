@@ -1014,6 +1014,31 @@ void Interpreter::dumpCurrentMethod() {
     fprintf(stderr, "=== END ===\n\n");
 }
 
+// A3 DIAGNOSTIC: instrument IC hits to see if icData[18] (selectorBits
+// for megacache) is 0. If it's NON-zero on hits but 0 on misses, the
+// stencil's IC-hit path and ExitSend miss path are reading different
+// addresses. See memory/project_ic_selbits_mystery.md.
+static inline void countICHitDbg(const uint64_t* ic) {
+#if PHARO_JIT_ENABLED
+    static bool dbg = !!getenv("PHARO_IC_HIT_DBG");
+    if (!dbg) return;
+    static size_t withSel = 0, noSel = 0, noIC = 0;
+    if (ic) {
+        if (ic[18] == 0) noSel++;
+        else withSel++;
+    } else {
+        noIC++;
+    }
+    size_t total = withSel + noSel + noIC;
+    if (total % 1000000 == 1) {
+        fprintf(stderr, "[IC-HIT-DBG] hitSel18=%zu hitNoSel18=%zu noIC=%zu\n",
+                withSel, noSel, noIC);
+    }
+#else
+    (void)ic;
+#endif
+}
+
 void Interpreter::dumpJITStats() {
 #if PHARO_JIT_ENABLED
     size_t icTotal = jitICHits_ + jitICMisses_;
@@ -11735,6 +11760,7 @@ void Interpreter::tryJITResumeInCaller() {
                 return;
             }
             jitICHits_++;
+            countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
 
@@ -11887,6 +11913,7 @@ void Interpreter::tryJITResumeInCaller() {
                 return;
             }
             jitICHits_++;
+            countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;  // Already past the send
             stackPointer_ = state.sp;
 
@@ -13326,6 +13353,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 return false;
             }
             jitICHits_++;
+            countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
 
@@ -13481,6 +13509,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 return false;
             }
             jitICHits_++;
+            countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             chainTarget = j2jCached;
