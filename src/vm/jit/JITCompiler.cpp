@@ -1275,6 +1275,40 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     const uint8_t* bytecodes = bytes + bcStart;
 
+    // Method-level opt-in heuristic (task #2.6): skip JIT compilation
+    // for methods with fewer than PHARO_JIT_MIN_SENDS sends.
+    //
+    // Default: 0 (no filtering).  Benchmark measurement (2026-04-18):
+    // setting this to 3 on the array-fill workload produced a 13-25×
+    // slowdown (4902ms vs ~205-370ms).  The docs/jit-todo.md
+    // hypothesis that "interpreter beats JIT on arith loops" doesn't
+    // hold for THIS workload — the hot path relies on
+    // JIT-compiled `to:do:` / `timesRepeat:` bodies running in native
+    // code.  Leaving the knob in for future bisection but it should
+    // never be enabled by default.
+    {
+        static int minSends = -1;
+        if (minSends == -1) {
+            const char* env = getenv("PHARO_JIT_MIN_SENDS");
+            minSends = env ? atoi(env) : 0;
+        }
+        if (minSends > 0) {
+            int sendCount = 0;
+            for (size_t i = 0; i < bcLen; i++) {
+                uint8_t op = bytecodes[i];
+                // All send-like bytecodes (arith + special + Send{0,1,2} + ExtSend + ExtSuperSend).
+                if ((op >= 0x60 && op <= 0xAF) || op == 0xEA || op == 0xEB) {
+                    sendCount++;
+                    if (sendCount >= minSends) break;
+                }
+            }
+            if (sendCount < minSends) {
+                compilationsFailed_++;
+                return nullptr;
+            }
+        }
+    }
+
     // Check if this is a CompiledBlock (FullBlock) — block returns are simple returns
     uint32_t methodClassIndex = methObj->classIndex();
     bool isFullBlock = (methodClassIndex == interp_.compiledBlockClassIndex());
