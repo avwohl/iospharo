@@ -1481,15 +1481,14 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             continue;
         }
         if (isMBCBailableSend(op)) {
-            // Gated: compiling the prefix of a send-containing method
-            // currently regresses benchmarks because T2 intercepts
-            // the method (replacing T1's inline IC path) and bails
-            // to the interpreter at the send.  The lost T1 inline
-            // IC + J2J direct call more than offsets the T2 prefix
-            // gain.  Enable only with PHARO_T2_MBC_SENDS=1 to bisect
-            // / measure.  Default: fail whole-method compile on any
-            // send.
-            if (!getenv("PHARO_T2_MBC_SENDS")) {
+            // Gated: enabling multi-bc-send (either simple bail or
+            // inline IC) causes a bench regression similar to the
+            // 0-arg inline IC experiment — T2 intercepts methods
+            // that T1 warms up via its own IC path.  IC hit rate
+            // drops from 97.5% to 49.9% when enabled.  Keep as
+            // opt-in (PHARO_T2_MBC_SENDS=1 bail, default=off) until
+            // we untangle the T1/T2 IC interaction.
+            if (!getenv("PHARO_T2_MBC_SENDS") && !getenv("PHARO_T2_MBC_IC")) {
                 g_mbcBailed++;
                 return nullptr;
             }
@@ -1498,7 +1497,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             willBailAtSend = true;
             bailSendOffset = i;
             bailSendOp = op;
-            break;   // stop compiling; send + everything after runs in interpreter
+            break;
         }
         // Unsupported — bail the whole method.
         g_mbcBailed++;
@@ -1527,6 +1526,14 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     uint64_t nilBits   = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
     uint64_t oneBits   = Oop::fromSmallInteger(1).rawBits();
     uint64_t zeroBits  = Oop::fromSmallInteger(0).rawBits();
+
+    int numLiterals = 0;
+    {
+        Oop hdrOop = methodObj->slotAt(0);
+        if (hdrOop.isSmallInteger()) {
+            numLiterals = (int)(hdrOop.asSmallInteger() & 0x7FFF);
+        }
+    }
 
     // Pass 2: emit.  Maintain state.sp as a live register that we
     // write back to state on every arith bail + at method end.
@@ -1572,30 +1579,120 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
         uint8_t op = bytes[bcStart + i];
         size_t opStart = i;
 
-        // Stop at the first bailable send: flush state.sp, advance
-        // state.ip to the send byte, set sendArgCount, icDataPtr=0,
-        // exit ExitSend.  Interpreter resumes at the send bytecode
-        // and runs it + everything after in interpreter mode.
+        // At the first bailable send we have two modes:
+        //   default: inline IC probe (6-way) → ExitSendCached on hit
+        //            so the chain loop does a J2J direct call; only
+        //            the miss exits to the interpreter.
+        //   PHARO_T2_MBC_SENDS=1: bail straight to interpreter
+        //            (the older simpler behaviour; kept for bisection).
         if (willBailAtSend && i == bailSendOffset) {
+            // Flush state.sp so the interpreter/chain-loop sees the
+            // right stack layout after our pushes.
             cc.str(sp, a64::ptr(statePtr, OFF_SP));
 
+            int nArgs = mbcSendArgCount(op);
+
+            // Always update state.ip to the send byte (both code paths
+            // need this).
             a64::Gp ip = cc.new_gp64("sendIp");
             cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
             cc.add(ip, ip, i);
             cc.str(ip, a64::ptr(statePtr, OFF_IP));
 
-            int nArgs = mbcSendArgCount(op);
             a64::Gp wArgs = cc.new_gp32("wArgs");
             cc.mov(wArgs, nArgs);
             cc.str(wArgs, a64::ptr(statePtr, OFF_SENDARGCOUNT));
 
-            a64::Gp zero64 = cc.new_gp64("zero64");
-            cc.mov(zero64, 0);
-            cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+            // One of PHARO_T2_MBC_SENDS / PHARO_T2_MBC_IC is set here
+            // (guaranteed by the pass-1 check above).
+            if (getenv("PHARO_T2_MBC_SENDS")) {
+                // SIMPLE BAIL mode: icDataPtr=0, exit ExitSend.
+                a64::Gp zero64 = cc.new_gp64("zero64");
+                cc.mov(zero64, 0);
+                cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+                a64::Gp exitV = cc.new_gp32("exitV");
+                cc.mov(exitV, EXIT_SEND);
+                cc.str(exitV, a64::ptr(statePtr, OFF_EXIT));
+                emittedSendBail = true;
+                break;
+            }
 
-            a64::Gp exitV = cc.new_gp32("exitV");
-            cc.mov(exitV, EXIT_SEND);
-            cc.str(exitV, a64::ptr(statePtr, OFF_EXIT));
+            // INLINE IC mode (default, task 1.2f): 6-way probe with
+            // hit → ExitSendCached (chain loop makes direct J2J call
+            // to target) and miss → ExitSend (interpreter patches IC
+            // via pendingICPatch_).
+
+            // Allocate IC buffer for this send site.
+            auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
+            std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
+            uint64_t icAddr = reinterpret_cast<uint64_t>(ic.get());
+            icBuffers_.push_back(std::move(ic));
+            // Seed selector from the method's literal frame at icData[18]
+            // so the chain loop's pendingICPatch_ path populates the IC.
+            int sendBase = 0x80;  // Send0
+            if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;   // Send1
+            else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;  // Send2
+            int selIdx = op - sendBase;
+            if (selIdx >= 0 && selIdx < (int)numLiterals) {
+                icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
+            }
+
+            // Get receiver from stack: sp[-(nArgs+1)*8].
+            a64::Gp recv = cc.new_gp64("recvIC");
+            cc.ldr(recv, a64::ptr(sp, -(nArgs + 1) * 8));
+
+            // Compute lookupKey: heap obj → classIndex, immediate → tag|0x80000000.
+            Label lblHeap = cc.new_label();
+            Label lblCheck = cc.new_label();
+            Label lblMiss = cc.new_label();
+            Label lblEpi = cc.new_label();
+            Label lblHit[IC_ENTRIES];
+            for (int k = 0; k < IC_ENTRIES; k++) lblHit[k] = cc.new_label();
+
+            a64::Gp tag = cc.new_gp64("tag");
+            a64::Gp lookupKey = cc.new_gp64("lookupKey");
+            cc.and_(tag, recv, asmjit::Imm(0x7));
+            cc.cbz(tag, lblHeap);
+            cc.mov(lookupKey, tag);
+            cc.orr(lookupKey, lookupKey, asmjit::Imm(0x80000000ULL));
+            cc.b(lblCheck);
+
+            cc.bind(lblHeap);
+            cc.cbz(recv, lblMiss);   // nil → bail
+            a64::Gp header = cc.new_gp64("hdr");
+            cc.ldr(header, a64::ptr(recv));
+            cc.and_(lookupKey, header, asmjit::Imm(CLASS_INDEX_MASK));
+
+            cc.bind(lblCheck);
+            a64::Gp icData = cc.new_gp64("icData");
+            cc.mov(icData, asmjit::Imm(icAddr));
+            for (int k = 0; k < IC_ENTRIES; k++) {
+                a64::Gp key = cc.new_gp64("key");
+                cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(k)));
+                cc.cmp(lookupKey, key);
+                cc.b_eq(lblHit[k]);
+            }
+            cc.b(lblMiss);
+
+            a64::Gp exitCode = cc.new_gp32("exitIC");
+            // Hit paths: load method from entry, set cachedTarget,
+            // exitReason=ExitSendCached, jump to epilogue.
+            for (int k = 0; k < IC_ENTRIES; k++) {
+                cc.bind(lblHit[k]);
+                a64::Gp method = cc.new_gp64("methodIC");
+                cc.ldr(method, a64::ptr(icData, IC_METHOD_OFF(k)));
+                cc.str(method, a64::ptr(statePtr, OFF_CACHEDTARGET));
+                cc.mov(exitCode, EXIT_SEND_CACHED);
+                cc.b(lblEpi);
+            }
+
+            // Miss: exitReason=ExitSend; fall through to epilogue.
+            cc.bind(lblMiss);
+            cc.mov(exitCode, EXIT_SEND);
+
+            cc.bind(lblEpi);
+            cc.str(icData, a64::ptr(statePtr, OFF_ICDATAPTR));
+            cc.str(exitCode, a64::ptr(statePtr, OFF_EXIT));
 
             emittedSendBail = true;
             break;
