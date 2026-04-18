@@ -69,9 +69,20 @@ Next slices (each ~1 session):
 - **1.2e  Block activation.**  0xF9 (PushFullBlock), 0xFA
   (PushClosure).  Enables `to:do:` body compilation.
 
-- **1.2f  Inline IC at send sites in multi-bc.**  Reuse the IC
-  buffer + probe infrastructure from 1.1.  Keep caller in native
-  code on IC hit → direct J2J call to compiled target.
+- **1.2f  Inline IC at send sites in multi-bc.**  **IMPLEMENTED
+  BUT GATED (4cdfa0a, 05b494d).**  Emits a 6-way IC probe at the
+  first send site; hit exits ExitSendCached (chain loop makes J2J
+  direct call), miss exits ExitSend + icDataPtr (interpreter
+  patches IC).  With private IC buffer: IC hit rate 98.9% → 49.9%
+  (two independent ICs, neither warms fully).  Tried sharing T1's
+  IC: 5× slowdown because T1's sendIdx walk counts extra bytecodes
+  that my walk doesn't, patches land on the wrong slot and
+  corrupt T1's IC.  Gated behind `PHARO_T2_MBC_IC=1`.
+
+  Real fix options (neither done): (a) match T1's send-counting
+  exactly so shared IC works; (b) skip T2 compilation entirely for
+  methods T1 has already IC-warmed (requires retry mechanism in
+  tier2Insert so T2 isn't permanently "tried-failed"-stamped).
 
 ### 1.3  Understand the T1 warm-up / T2 interaction  (blocks inline IC)
 
