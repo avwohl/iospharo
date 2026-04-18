@@ -74,17 +74,43 @@ during Morphic boot — scheduling, not correctness.
 ### B5. JIT `PHARO_JIT_DEFER=0` eager-compile DNU cascade
 At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods immediately
 and hits multiple DNUs during `SmalltalkImage>>isInteractiveGraphic`:
-- `#atEnd` on SmallInteger 13 inside `ZnUTF8Encoder>>decodeBytes:`
-- `#do:` not understood on 0x300016768 in `#nextPutAll:`
+- `#atEnd` on SmallInteger inside `ZnUTF8Encoder>>decodeBytes:`
+- `#do:` not understood on `Symbol class` in `#nextPutAll:`
 - `#isNumber` not understood on a SmallFloat in `#=`
-Skipping JIT of `#decodeBytes:` uncovers the next miscompile.
-Root cause: likely a JIT bug in temp/inst-var access or block-capture
-under some bytecode pattern.  Default eval works fine (deferred JIT
-lets startup interpret the critical paths); only the aggressive
-`PHARO_JIT_DEFER=0` path fails.
+
+**Diagnosis progress (2026-04-18):**
+- The `atEnd` DNU receiver is a SmallInteger whose value matches the
+  size of the attribute string being decoded ("--headless"→10,
+  "--interactive"→13, etc.).  Strong signal that `aCollection size`
+  ends up where the ReadStream should be.
+- Bisection via `PHARO_JIT_SKIP_SELECTORS`:
+  - Skipping `#on:` (both class and inst methods) → atEnd gone
+    (but exposes the `#do:` DNU elsewhere).
+  - Skipping `#decodeBytes:` alone → atEnd gone (exposes `#do:`).
+  - Skipping `#utf8Decoded` / `#getSystemAttribute:` → atEnd gone.
+  - Skipping `#basicNew`, `#size`, `#reset`, `#readStream`, or
+    `#isHeadless` individually → atEnd still fires.
+  - `PHARO_JIT_NO_BLOCKS=1` → atEnd still fires (so not a compiled-
+    block bug).
+- So the bug is in JIT-compiled *method* code somewhere in the
+  `on:` chain (PositionableStream class>>on: or
+  PositionableStream>>on:), which passes a stale / wrong value up
+  through readStream to decodeBytes:.
+- The CompiledBlock (outer block of `streamContents: [...]`) runs
+  through the interpreter at this stage (not yet hot-compiled), so
+  the bug is in a JIT-compiled method return that leaves the
+  receiver's `readLimit` (SmallInt size) on the stack where the
+  stream instance should be.
+- Prime suspect: J2J inline-return state in the class-method
+  `^ self basicNew on: aCollection` chain, where multiple stacked
+  J2J saves may interact with the nested on: (class→inst) send.
+
 **Mitigation:** default `PHARO_JIT_DEFER=4` already sidesteps it.
-**Fix scope:** needs lldb-driven bisection on a specific method;
-out of scope for §B3 fix.
+**Fix scope:** needs JIT runtime trace (printfs on J2J save
+cursor, per-bytecode stack state in decodeBytes:) to confirm the
+exact J2J corruption.  Pure-code bisection cannot resolve further.
+Not blocking the default path; deferred until a targeted debug
+session.
 
 ---
 
