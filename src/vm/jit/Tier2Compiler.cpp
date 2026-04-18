@@ -1481,6 +1481,18 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             continue;
         }
         if (isMBCBailableSend(op)) {
+            // Gated: compiling the prefix of a send-containing method
+            // currently regresses benchmarks because T2 intercepts
+            // the method (replacing T1's inline IC path) and bails
+            // to the interpreter at the send.  The lost T1 inline
+            // IC + J2J direct call more than offsets the T2 prefix
+            // gain.  Enable only with PHARO_T2_MBC_SENDS=1 to bisect
+            // / measure.  Default: fail whole-method compile on any
+            // send.
+            if (!getenv("PHARO_T2_MBC_SENDS")) {
+                g_mbcBailed++;
+                return nullptr;
+            }
             int nArgs = mbcSendArgCount(op);
             if (nArgs < 0) { g_mbcBailed++; return nullptr; }
             willBailAtSend = true;
