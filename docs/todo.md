@@ -148,20 +148,33 @@ The 50% hit rate in the original memory note was specific to the
 AWFY Permute bench; typical workloads show 97%+.  No further
 action.
 
-### 2.5  Shrink `stencil_sendJ2J`  (P2)  **PARTIAL (2026-04-18)**
+### 2.5  Shrink `stencil_sendJ2J`  (P2)  **MEASURED (2026-04-18)**
 
 523 ARM64 instructions per send-site.  Target 150-200 by
 extracting the probe loop + megamorphic fallback into a shared
 helper that stencils tail-call.  Saves ~2KB per send site,
 improves i-cache.
 
-Attempted shortcut: swap sendJ2J (2092 B) for the existing
-smaller sendPoly (696 B) behind `PHARO_JIT_POLY=1` (12ebbb9).
-Segfaults in resume path — the two stencils' operand / save-
-stack contracts differ despite sharing the first two packed
-fields.  Real progress here needs stencil source changes +
-regeneration via `extract_stencils.py`.  Out of scope for
-"hours" budget.
+Two attempts:
+
+1. **Swap sendJ2J → sendPoly (696 B).**  Segfaults in resume
+   path — the two stencils' operand / save-stack contracts
+   differ despite sharing the first two packed fields.  12ebbb9.
+
+2. **Compile stencils with -Os instead of -O2** (276288c).
+   Results: sendJ2J 2092 → 1752 bytes (-16%), total stencils
+   11918 → 10631 (-11%), bench perf regressed 10-15% both in
+   fast-mode (205→229ms) and slow-mode (375→388ms).  Fast-mode
+   ratio dropped too.  Reverted to -O2; knob documented in
+   extract_stencils.py.
+
+Further shrinkage (toward the 150-200 target) needs structural
+stencil refactoring — factor the rarely-taken megacache probe +
+full-miss path into a helper called only on IC miss.  That's
+doable via the same extract_stencils.py workflow but needs care
+to avoid breaking the `goto j2j_direct_call` / `goto
+exit_send_cached` label structure the current code uses.  Future
+session.
 
 ### 2.6  Method-level JIT opt-in  (P3)  **DISPROVEN (2026-04-18)**
 
