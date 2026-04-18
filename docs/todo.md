@@ -106,13 +106,14 @@ compiles something that makes subsequent recursion slow.
 After bench_loop finishes, scheduler goes idle and never wakes.
 Probably a consequence of B2.
 
-### 2.4  T1 IC hit-rate investigation  (B5 / A3)
+### 2.4  T1 IC hit-rate investigation  (B5 / A3)  **RESOLVED (2026-04-18)**
 
-Counters shipped (b381525).  Smoking gun: 100% of IC misses report
-`noSelBits` — compile-time write at JITCompiler.cpp:1926 writes to
-a different address than the stencil reads at runtime.  Root cause
-likely `_HOLE_OPERAND2` resolving to the pool-slot address, one
-indirection off.  See `memory/project_ic_selbits_mystery.md`.
+Measured on current workloads: `noSelBits=0`, IC hit rate 97.5%
+on yourself-loop (5709/5857).  The selector-seeding fix at
+`JITCompiler.cpp:1886` (`icSlots[18] = selectorBits`) is working.
+The 50% hit rate in the original memory note was specific to the
+AWFY Permute bench; typical workloads show 97%+.  No further
+action.
 
 ### 2.5  Shrink `stencil_sendJ2J`  (P2)
 
@@ -120,11 +121,19 @@ indirection off.  See `memory/project_ic_selbits_mystery.md`.
 the probe loop + megamorphic fallback into a shared helper that
 stencils tail-call.  Saves ~2KB per send site, improves i-cache.
 
-### 2.6  Method-level JIT opt-in  (P3)
+### 2.6  Method-level JIT opt-in  (P3)  **DISPROVEN (2026-04-18)**
 
-Only compile methods with ≥N sends.  Arith-loop methods stay
-interpreted (faster), send-heavy methods benefit from IC caching.
-Half-session, low risk, modest upside.
+Hypothesis: interpreter beats JIT on arith-loop methods, so
+skipping their compilation (`PHARO_JIT_MIN_SENDS=N`) should be a
+win.  Added the knob, measured on array-fill bench:
+
+    MIN_SENDS=0 (default):  ~205-370ms
+    MIN_SENDS=3:            4902ms  (13-25× slower)
+
+The hot path DEPENDS on `timesRepeat:` / `to:do:` bodies running
+as JIT native code.  Skipping their compilation puts everything
+back on the interpreter's slower per-bytecode dispatch.  Knob
+kept for bisection (`83c3703`) but never enable by default.
 
 ### 2.7  Fix `upgradeICToJ2J` layering on inline-primKind entries  (P4)
 
