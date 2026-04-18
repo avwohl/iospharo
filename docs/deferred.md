@@ -11,10 +11,12 @@ as-is, or project-mission work.
 ### A1. T2 chain-loop continuation — **IMPLEMENTED, GATED**
 **Design:** `docs/jit-t2-chainloop-plan.md`.
 **Status:** Implemented 2026-04-16. Gated behind `PHARO_T2_A1=1`.
-Default is still always-bail (f279fd4) because T2 itself is disabled
-(b18e71e, stale oops across GC).
-**Effort to unblock:** Fix T2 GC oops issue first (separate bug).
-**Value:** Restores T2's callee-invocation speedup (lost in f279fd4 safety fix). Target: T2 on send-heavy AWFY beats T1.
+Under coexist default (2026-04-18), T2 rarely executes anyway, so
+A1's behavior difference is moot unless PHARO_T2_REPLACE=1.
+**Effort to unblock:** Need a demonstrable T2 win (bench where T2
+beats T1 ignoring send cost) to justify re-examining A1.
+**Value:** Restores T2's callee-invocation speedup (lost in
+f279fd4).  Not observed on current benches.
 
 ### A2. T1 J2J memory-op reduction — **LANDED** (commit 415d899)
 **Design:** `docs/jit-j2j-reduction-plan.md`.
@@ -24,20 +26,20 @@ updated in lockstep.
 **Value achieved:** Core intent landed; benchmarks pending next full
 run.  Helps T1 send-heavy workloads.
 
-### A3. IC hit rate investigation — **DIAGNOSTIC LANDED, FIX DEFERRED**
+### A3. IC hit rate investigation — **PARTIALLY DIAGNOSED**
 **Analysis:** `memory/project_ic_hit_rate_investigation.md` +
 `memory/project_ic_selbits_mystery.md`.
-**Status:** Miss-breakdown counters landed (commit b381525). They
-expose a real bug: 100% of miss events report `noSelBits` (icData[18]
-is 0 at runtime). The compile-time write at JITCompiler.cpp:1926 goes
-to a DIFFERENT address than what the stencil reads at runtime — only
-33 compile-time icBase addresses, and the ~4 runtime icData pointers
-sampled don't match any of them. Root cause: `_HOLE_OPERAND2` likely
-resolves to the pool-slot address (one level of indirection wrong).
-**Effort:** ~half day to fix properly — need to inspect the actual
-patched ARM64 code and reconcile the compile-time / runtime icBase
-understanding. Unblocks the megacache fast path.
-**Value:** High — likely ~90% IC hit rate after fix (vs current 50%).
+**Status:** Re-measured 2026-04-18: current IC hit rate on
+array-fill is 89.1% (not 50%).  The old "100% noSelBits on
+miss" observation doesn't reproduce — the fraction is now
+~74% of misses (4734/6339), not 100%.  Something changed
+between sessions that improved the fundamental picture.
+**Remaining diagnostic:** 74% of misses still report
+noSelBits.  Root cause still hypothesised as `_HOLE_OPERAND2`
+indirection, but needs lldb watchpoint to confirm.
+**Value:** Lifts IC hit from 89% to ~94% if fully fixed —
+marginal over the current baseline, below the threshold that
+would justify the lldb session.
 
 ---
 
@@ -71,12 +73,15 @@ during Morphic boot — scheduling, not correctness.
 
 ### C1. `PHARO_T2=0` (default off)
 T2 is off by default.  Current rationale (2026-04-18):
-- `PHARO_T2=1` regresses IC hit rate 90.8% → 81.9% on array-fill
-  without affecting raw bench time (22ms both ways).  The IC
-  regression is the §1.3 T1/T2 interaction issue — T2 intercepts
-  methods before T1 warms its IC.
-- Until §1.3 is resolved, flipping the default saves nothing and
-  costs IC hit rate on send-heavy workloads.
+- T2 never demonstrably wins on any measured bench.  Without a
+  workload-level reason to enable, the default stays off.
+- With coexist default (see §1.3c), `PHARO_T2=1` is safe — T2
+  doesn't intercept T1's hot path — but also largely dormant
+  (compiles nothing on typical benches because T1 handles every
+  method).  So flipping the default is a no-op semantically.
+- `PHARO_T2_REPLACE=1` restores "T2 takes over" behavior; with
+  `PHARO_T2_MBC_IC=1` the shared-IC side-table (§1.3a) keeps IC
+  at ~88%.  Still no bench win, just no regression.
 - Historical b18e71e "GC register staleness" no longer applies
   (MIR removed 2026-04-17).
 
