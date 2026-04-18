@@ -96,38 +96,53 @@ Next slices (each ~1 session):
 - **1.2e  Block activation.**  0xF9 (PushFullBlock), 0xFA
   (PushClosure).  Enables `to:do:` body compilation.
 
-- **1.2f  Inline IC at send sites in multi-bc.**  **IMPLEMENTED
-  BUT GATED (4cdfa0a, 05b494d).**  Emits a 6-way IC probe at the
-  first send site; hit exits ExitSendCached (chain loop makes J2J
-  direct call), miss exits ExitSend + icDataPtr (interpreter
-  patches IC).  With private IC buffer: IC hit rate 98.9% → 49.9%
-  (two independent ICs, neither warms fully).  Tried sharing T1's
-  IC: 5× slowdown because T1's sendIdx walk counts extra bytecodes
-  that my walk doesn't, patches land on the wrong slot and
-  corrupt T1's IC.  Gated behind `PHARO_T2_MBC_IC=1`.
+- **1.2f  Inline IC at send sites in multi-bc.**  **FIXED (this session).**
+  T2 now shares T1's IC slot for each send site (§1.3a).
+  JITCompiler populates a `sendSiteMap_` (compiledMethodOop →
+  vector of bytecode offsets, one per sendJ2J site) as it
+  compiles.  Tier2Compiler looks up the map and finds the
+  sendIdx that matches the current bytecode offset, then points
+  its inline-IC at T1's existing icBase.
 
-  Real fix options (neither done): (a) match T1's send-counting
-  exactly so shared IC works; (b) skip T2 compilation entirely for
-  methods T1 has already IC-warmed (requires retry mechanism in
-  tier2Insert so T2 isn't permanently "tried-failed"-stamped).
+  Measured: T2=1 MBC_IC=1 bench stable at 33ms (5/5, previously
+  bifurcated 33/163ms).  IC hit rate 49.9% → 88.4% — close to
+  T2-off baseline of 89.1%.  T2 compiled 120 methods (vs 100
+  without MBC_IC).  Correctness preserved across SmallIntegerTest,
+  stress_c2, whileTrue: patterns.
 
-### 1.3  T1 warm-up / T2 interaction  (blocks inline IC)  **CONFIRMED 2026-04-18**
+  Gated behind `PHARO_T2_MBC_IC=1` for the moment; can be flipped
+  default-on after broader bench validation.  The previous
+  "walk T1's decoder and count" approach corrupted T1's IC
+  because the sendIdx walk was subtly wrong — the new side-table
+  approach reuses T1's actual compile-time assignment.
 
-Hypothesis confirmed experimentally:
+### 1.3  T1 warm-up / T2 interaction  **PARTIAL FIX (2026-04-18)**
+
+Hypothesis confirmed experimentally (earlier):
 - Default (no T2 IC): IC hit rate 98.9%.
-- T2 multi-bc inline IC enabled (PHARO_T2_MBC_IC=1): drops to 49.9%.
-- T2 shared-T1-IC attempt (compute T1's sendIdx by walking
-  bytecodes): 25.2% hit rate AND 5× bench slowdown — sendIdx
-  mapping is wrong (T1 counts extension bytes / ExtSuperSend that
-  my walk doesn't).
-- `PHARO_T2_WARMUP=10` (delay T2 compile until T1 has executed N
-  times): 4/6 fast-mode runs, IC 75.6%.  Helps slightly but still
-  lower than baseline.
+- T2 multi-bc inline IC enabled (PHARO_T2_MBC_IC=1) with private
+  IC: IC hit rate drops to 49.9%.
+- Previous shared-T1-IC attempt (walk T1's decoder and count):
+  25.2% hit rate AND 5× bench slowdown — sendIdx mapping was
+  wrong.
 
-Fundamental issue: T2 REPLACES T1 for its covered methods.  T1's
-IC for those methods becomes unused; T2's private IC starts cold.
-No amount of warmup delay fixes the problem permanently — it just
-shifts when T1→T2 handover happens.
+**Fix landed this session (§1.3a):** JITCompiler populates a
+`sendSiteMap_` during T1 compile (compiledMethodOop → vector
+of bytecode offsets per sendJ2J site).  Tier2Compiler queries
+it to find the sendIdx for each send at T2-compile time, then
+points the inline-IC probe at T1's icBase.  Measured on
+array-fill bench: IC hit rate 49.9% → 88.4% (close to the
+T2-off 89.1% baseline), bench 33ms stable (previously
+bifurcated 33/163ms).  Gated behind `PHARO_T2_MBC_IC=1`.
+
+**Fundamental issue remains** for §1.2a (sends in multi-bc):
+T2 still REPLACES T1 for methods it compiles, but now shares
+the IC slot so cache state doesn't diverge.  The replacement
+cost (T2 does bail-to-interp for sends while T1 has inline
+stencil_sendJ2J) is still present.  To fully fix, T2 would need
+a tail-call into T1's stencil_sendJ2J rather than its own send
+logic (§1.3b), or arrangement where T2 coexists with T1
+(§1.3c).
 
 Real fixes (not done):
 - (a) Compute T1's sendIdx exactly (match T1's send-counting

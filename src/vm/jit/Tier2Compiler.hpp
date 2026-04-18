@@ -58,6 +58,8 @@ namespace jit {
 class CodeZone;
 class MethodMap;
 
+class JITCompiler; // forward-declare for shared-IC accessor
+
 class Tier2Compiler {
 public:
     Tier2Compiler(CodeZone& zone, MethodMap& methodMap,
@@ -65,6 +67,11 @@ public:
     ~Tier2Compiler();
 
     bool initialize();
+
+    // §1.3a: wire a reference to the T1 compiler so Tier2 can query
+    // T1's send-site map and share IC slots.  Called once after
+    // both compilers are constructed.
+    void setT1Compiler(JITCompiler* t1) { t1Compiler_ = t1; }
 
     // Compile a hot method. Returns a function pointer of type
     // `void(JITState*)` or nullptr if the method can't be handled
@@ -97,6 +104,7 @@ private:
     MethodMap&    methodMap_;
     ObjectMemory& memory_;
     Interpreter&  interp_;
+    JITCompiler*  t1Compiler_ = nullptr;  // §1.3a: for shared-IC lookup
 
     // asmjit runtime owns the code memory allocator. One JitRuntime
     // is reused across all compilations; it handles MAP_JIT / W^X

@@ -1167,6 +1167,14 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
 
 #endif // __aarch64__
 
+// ===== SHARED-IC SEND-SITE MAP (§1.3a) =====
+
+const std::vector<uint16_t>*
+JITCompiler::getSendSiteBCOffsets(uint64_t compiledMethodBits) const {
+    auto it = sendSiteMap_.find(compiledMethodBits);
+    return it != sendSiteMap_.end() ? &it->second : nullptr;
+}
+
 // ===== IC-GUIDED SPECIALIZATION =====
 
 void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
@@ -1902,11 +1910,21 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         ObjectHeader* ssArray = (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000)
             ? specialSelectors.asObjectPtr() : nullptr;
 
+        // §1.3a: populate the shared-IC send-site map so Tier2Compiler
+        // can look up sendIdx for a given bytecode offset and share
+        // this method's IC table.  Replaces any prior entry (e.g.,
+        // after recompile).
+        std::vector<uint16_t>& siteOffsets =
+            sendSiteMap_[compiledMethod.rawBits()];
+        siteOffsets.clear();
+        siteOffsets.reserve(numSendSites);
+
         uint16_t sendIdx = 0;
         for (auto& bc : decoded) {
             if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendJ2J) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
+                siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));
 
                 // Store selectorBits at offset 144 (icData[18]) for mega cache probe
                 uint64_t selectorBits = 0;

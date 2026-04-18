@@ -36,6 +36,7 @@
 #include "../Oop.hpp"
 #include <cstdint>
 #include <cstddef>
+#include <unordered_map>
 #include <vector>
 
 #if PHARO_JIT_ENABLED
@@ -100,6 +101,21 @@ public:
     size_t methodsCompiled() const { return methodsCompiled_; }
     size_t compilationsFailed() const { return compilationsFailed_; }
 
+    // §1.3a shared-IC helper — returns the list of bytecode offsets
+    // where T1 assigned a sendJ2J stencil, one entry per IC site.
+    // `sites[sendIdx] = bcOffset`.  Tier2Compiler uses this to find
+    // the matching T1 IC slot for a send at bytecode offset X:
+    //   sendIdx = (find X in sites) ; icBase = T1.codeStart + ...
+    // Returns nullptr if the method was never T1-compiled or was
+    // evicted.  Populated during T1 compile; invalidated on GC
+    // compaction via clearSendSiteMap().
+    const std::vector<uint16_t>* getSendSiteBCOffsets(uint64_t compiledMethodBits) const;
+
+    // Drop every entry — called from JITRuntime::recoverAfterGC after
+    // Oop bits change.  The map is an optimization only; T2 falls
+    // back to private IC buffers when lookup returns nullptr.
+    void clearSendSiteMap() { sendSiteMap_.clear(); }
+
 private:
     // Decode all bytecodes in a method.
     // On failure, failedOpcode is set to the bytecode that caused the bail-out.
@@ -137,6 +153,10 @@ private:
     MethodMap&     methodMap_;
     ObjectMemory&  memory_;
     Interpreter&   interp_;
+    // §1.3a: compiledMethodOop → [bcOffset per sendIdx].
+    // Populated during T1 compile.  Tier2 queries it to share IC
+    // with T1 instead of allocating a private buffer.
+    std::unordered_map<uint64_t, std::vector<uint16_t>> sendSiteMap_;
     RuntimeHelpers helpers_;
 
     size_t methodsCompiled_ = 0;

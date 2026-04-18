@@ -745,12 +745,15 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
     compiler_->setHelpers(helpers);
 
-    // Create Tier 2 compiler (MIR-based)
+    // Create Tier 2 compiler (asmjit-based)
     tier2Compiler_ = new Tier2Compiler(codeZone_, methodMap_, memory, interp);
     if (!tier2Compiler_->initialize()) {
         fprintf(stderr, "[JIT] Warning: Tier 2 compiler failed to initialize\n");
         delete tier2Compiler_;
         tier2Compiler_ = nullptr;
+    } else {
+        // §1.3a: let Tier2 query T1's send-site map for shared IC.
+        tier2Compiler_->setT1Compiler(compiler_);
     }
 
     // After MAP_JIT mmap with PROT_EXEC, the initial W^X state might be

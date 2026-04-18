@@ -1728,23 +1728,54 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // to target) and miss → ExitSend (interpreter patches IC
             // via pendingICPatch_).
             //
-            // Tried shared T1 IC (computing T1's sendIdx by walking
-            // bytecodes): gave 5× slowdown (1600ms vs 370ms) — the
-            // sendIdx mapping is subtly wrong (T1 includes extra/
-            // ext bytecodes in the count), so patches land on the
-            // wrong IC slot and corrupt T1's IC data.  Reverted to
-            // private IC; still hits the "T1 and T2 warm
-            // independently" issue but at least doesn't corrupt.
-            auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
-            std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
-            uint64_t icAddr = reinterpret_cast<uint64_t>(ic.get());
-            icBuffers_.push_back(std::move(ic));
-            int sendBase = 0x80;
-            if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;
-            else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;
-            int selIdx = op - sendBase;
-            if (selIdx >= 0 && selIdx < (int)numLiterals) {
-                icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
+            // §1.3a SHARED-IC: look up T1's send-site list (populated
+            // when T1 compiled this method) to find the sendIdx that
+            // matches our bytecode offset i, then point T2 at T1's IC
+            // slot for that site so they share cache state.  Falls
+            // back to a private per-compile IC buffer if T1 hasn't
+            // compiled this method or if the offset doesn't line up.
+            uint64_t icAddr = 0;
+            if (t1Compiler_) {
+                const std::vector<uint16_t>* sites =
+                    t1Compiler_->getSendSiteBCOffsets(compiledMethod.rawBits());
+                JITMethod* t1Method = methodMap_.lookup(compiledMethod.rawBits());
+                if (sites && t1Method && t1Method->numICEntries > 0) {
+                    uint16_t sendIdx = UINT16_MAX;
+                    for (size_t s = 0; s < sites->size(); s++) {
+                        if ((*sites)[s] == (uint16_t)i) {
+                            sendIdx = static_cast<uint16_t>(s);
+                            break;
+                        }
+                    }
+                    if (sendIdx < t1Method->numICEntries) {
+                        // T1 allocation layout (mirrors JITCompiler):
+                        //   code → literalPool → bcToCode → icData (tail).
+                        uint32_t bcTableSize =
+                            (t1Method->numBytecodes + 1) * sizeof(uint32_t);
+                        uint32_t icOff =
+                            (t1Method->bcToCodeTableOffset + bcTableSize + 7) & ~7u;
+                        uint8_t* icBase = t1Method->codeStart() + icOff +
+                                          sendIdx * IC_BYTES_PER_SITE;
+                        icAddr = reinterpret_cast<uint64_t>(icBase);
+                        // T1 already wrote selectorBits to icBase[18];
+                        // no need to rewrite.
+                    }
+                }
+            }
+            if (icAddr == 0) {
+                // Fallback: private IC buffer (T1 not compiled yet, or
+                // bc offset didn't line up with any T1 send site).
+                auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
+                std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
+                icAddr = reinterpret_cast<uint64_t>(ic.get());
+                icBuffers_.push_back(std::move(ic));
+                int sendBase = 0x80;
+                if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;
+                else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;
+                int selIdx = op - sendBase;
+                if (selIdx >= 0 && selIdx < (int)numLiterals) {
+                    icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
+                }
             }
 
             // Get receiver from stack: sp[-(nArgs+1)*8].
