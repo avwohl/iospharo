@@ -28,6 +28,17 @@ the state after 2026-04-17 session.
 - **PHARO_T2_WARMUP default 0 → 3** (`b921f10`, 2026-04-18) — T2=1
   users get IC hit rate preservation (89.3% vs 80-86% with
   WARMUP=0) without manual env-var setup.
+- **§1.3a shared-IC via side-table** (`4e36f6a`, 2026-04-18) —
+  JITCompiler populates a `sendSiteMap_` (compiledMethodOop →
+  bcOffsets per sendIdx) during T1 compile; Tier2Compiler looks
+  it up to share T1's IC slots.  Fixes MBC_IC's IC hit rate
+  (49.9% → 88.4%) and bimodal bench (33/163ms → 33ms stable).
+- **§1.3c T2/T1 coexist default** (`fb3346b`, `668d348`,
+  2026-04-18) — `tryJITActivation` prefers T1 whenever both
+  tiers compiled the same method; `noteMethodEntry` skips the
+  T2 compile entirely when T1 has the method.  T2 now only
+  fires for methods T1 couldn't compile (excluded classes,
+  primitive-only, etc.).  Opt out via PHARO_T2_REPLACE=1.
 
 **Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
 

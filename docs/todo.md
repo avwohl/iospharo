@@ -469,27 +469,33 @@ submissions to the Pharo project.
 
 ## 8. Recommendation — what to do next
 
-**Status after 2026-04-18:** 1.1, 2.4, 2.2, 2.9 shipped/resolved;
-2.5, 2.6 disproven.  1.2b, 1.2c (short forward jumps) shipped
-gated.  Remaining VM work is 1.2d (backward jumps + loops), 1.2e
-(block activation), and the architectural 1.3 T1/T2 interaction.
+**Status after 2026-04-18:** 1.1, 1.2b/c/d, 1.3a, 1.3c, 2.4, 2.2,
+2.9 shipped (most default-on for T2 users); 2.5, 2.6 disproven;
+2.3 reclassified as not-a-bug.  T2 is now structurally safe:
+coexist default means T2 never regresses T1's hot path, and when
+someone opts into `PHARO_T2_REPLACE=1` + `PHARO_T2_MBC_IC=1` the
+shared-IC side-table keeps IC hit rate at 88-89%.
 
 For the VM codebase:
 
-1. **Multi-bc 1.2d (backward jumps).**  Supports `whileTrue:`
-   loops.  Needs 0xE0/0xE1 ExtA/B prefix handling (2-byte
-   bytecodes), 0xED ExtJump with signed 16-bit offset, and
-   yield-countdown emission at back-edges.  Without 1.2e the
-   wins are bounded to loops that don't activate blocks.
+1. **Multi-bc 1.2e (block activation).**  0xF9/0xFA push-block
+   + closure-capture.  Enables non-inlined `to:do:` / `collect:`
+   bodies.  Pharo inlines hot cases at compile time, so the win
+   is marginal, but this is the last structural gap in multi-bc
+   coverage.  Uses the existing `ExitBlockCreate` mechanism.
 
-2. **Multi-bc 1.2e (block activation).**  0xF9/0xFA push-block
-   + closure-capture.  Enables `to:do:` bodies.  This is where
-   the array-fill / awfy wins actually come from.
+2. **§1.3b (T2 tail-calls T1's stencil_sendJ2J).**  Would let T2
+   reuse T1's full send logic including the megacache probe, at
+   a simple call overhead.  Complex: the stencil is designed as
+   inline code not a callable, so either T2 uses a bespoke
+   helper entry or we refactor the stencil.  Deferred until
+   there's a workload where T2 demonstrably wins ignoring send
+   cost.
 
-3. **Architectural T1/T2 interaction (1.3).**  T2 intercepting
-   methods breaks T1's inline-IC warmup.  Neither shared-IC,
-   warmup delay, nor self-only narrowing has solved this.  Needs
-   a rethink (shared IC table?  patch-T1-when-T2-compiles?).
+3. **A3 IC hit-rate investigation.**  74% of IC misses report
+   `noSelBits` (icData[18]=0 at runtime despite being non-zero
+   at compile time).  Root cause suggested as `_HOLE_OPERAND2`
+   indirection wrong.  Needs lldb watchpoint to trace.
 
 For the project mission:
 
