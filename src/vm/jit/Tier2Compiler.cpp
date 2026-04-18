@@ -55,6 +55,7 @@ constexpr int OFF_ICDATAPTR    = 96;
 constexpr int OFF_SENDARGCOUNT = 104;
 constexpr int OFF_TRUEOOP      = 128;
 constexpr int OFF_FALSEOOP     = 136;
+constexpr int OFF_YIELDCD      = 176;  // int32_t yieldCountdown
 
 // Oop object layout: ObjectHeader is 8 bytes, slots follow at offset 8.
 // So slot[N] is at byte offset 8 + N*8 from the object pointer.
@@ -65,6 +66,7 @@ constexpr int ASSOC_VALUE   = 16;  // Association.value = slot[1]
 constexpr int EXIT_RETURN         = 1;
 constexpr int EXIT_SEND           = 2;
 constexpr int EXIT_SEND_CACHED    = 7;  // ExitSendCached
+constexpr int EXIT_YIELD          = 11; // Backward-jump yield
 
 // ObjectHeader classIndex layout (mirror ObjectHeader.hpp).
 constexpr uint64_t CLASS_INDEX_MASK = 0x3FFFFFULL;  // bits 0-21
@@ -1513,6 +1515,42 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             i += 2;
             continue;
         }
+        if (op == SistaV1::ExtendB && jumpsEnabled) {
+            // ExtB prefix: ONLY recognise the pattern
+            //   0xE1 <extByte> 0xED <offByte>
+            // (unconditional backward ExtJump).  ExtB before any other
+            // bytecode is unsupported in this first cut and bails.
+            //
+            // Combined signed 16-bit offset = (extByte_sign<<8) | offByte.
+            // Target = (ExtJump offset i+2) + 2 (past 2-byte op) + offset.
+            if (i + 3 >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            uint8_t extByte = bytes[bcStart + i + 1];
+            uint8_t nextOp  = bytes[bcStart + i + 2];
+            uint8_t offByte = bytes[bcStart + i + 3];
+            if (nextOp != SistaV1::ExtJump) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            int extBVal = (extByte >= 128) ? ((int)extByte | ~0xFF) : (int)extByte;
+            int offset = (extBVal << 8) | (int)offByte;
+            int64_t targetSigned = (int64_t)i + 2 + 2 + offset;
+            if (targetSigned < 0 || (size_t)targetSigned >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            size_t target = (size_t)targetSigned;
+            // Backward target must already have been visited by the
+            // linear walk (which means it's a valid BC start).  Forward
+            // targets are also allowed but redundant with the shorter
+            // ExtJump-without-ExtB path and we don't need them for this
+            // increment.
+            jumpTargets.insert(target);
+            i += 4;   // consume ExtB (2) + ExtJump (2)
+            continue;
+        }
         if (isMBCSupported(op)) {
             if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
                 sawReturn = true;
@@ -1612,6 +1650,10 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // that might bail stores its own bcStart-relative offset into ipOffReg
     // before branching to lblBailTail.
     a64::Gp bailIPOff = cc.new_gp64("bailIPOff");
+
+    // Function-end label — allocated here so back-edge yield bails can
+    // branch to it.  Bound after the bail tail below.
+    Label lblFuncEnd = cc.new_label();
 
     // Pre-allocate one asmjit label per jump target; bound when we
     // emit the op at that offset (below).
@@ -2072,6 +2114,48 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             i += 2;
             continue;
         }
+        else if (op == SistaV1::ExtendB) {
+            // ExtB <extByte> ExtJump <offByte>: backward unconditional
+            // jump with yield-countdown check.  Pass 1 validated the
+            // pattern + range.  After the backward branch, linear walk
+            // continues past the 4-byte sequence — the bytecode at
+            // i+4 is typically reached by a forward ExtJumpFalse that
+            // terminates the loop, so emitting it is still useful.
+            uint8_t extByte = bytes[bcStart + i + 1];
+            uint8_t offByte = bytes[bcStart + i + 3];
+            int extBVal = (extByte >= 128) ? ((int)extByte | ~0xFF) : (int)extByte;
+            int offset = (extBVal << 8) | (int)offByte;
+            size_t target = (size_t)((int64_t)i + 2 + 2 + offset);
+
+            // Flush sp so the yield bail sees a consistent stack state.
+            cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+            // yieldCountdown-- <= 0 → ExitYield with ip = target offset.
+            a64::Gp yc = cc.new_gp32("yc");
+            cc.ldr(yc, a64::ptr(statePtr, OFF_YIELDCD));
+            cc.subs(yc, yc, asmjit::Imm(1));
+            cc.str(yc, a64::ptr(statePtr, OFF_YIELDCD));
+            Label lblYieldBail = cc.new_label();
+            cc.b_le(lblYieldBail);
+
+            // Normal back-edge.
+            cc.b(offsetLabels.at(target));
+
+            cc.bind(lblYieldBail);
+            // Set ip = bcStart + target (loop-top) and exit ExitYield.
+            a64::Gp ipYld = cc.new_gp64("ipYld");
+            cc.ldr(ipYld, a64::ptr(statePtr, OFF_IP));
+            cc.add(ipYld, ipYld, asmjit::Imm(target));
+            cc.str(ipYld, a64::ptr(statePtr, OFF_IP));
+            a64::Gp exitY = cc.new_gp32("exitY");
+            cc.mov(exitY, EXIT_YIELD);
+            cc.str(exitY, a64::ptr(statePtr, OFF_EXIT));
+            // Exit the T2 function immediately — ExitYield state is set,
+            // the chain loop will observe it and yield the scheduler.
+            cc.b(lblFuncEnd);
+            i += 4;
+            continue;
+        }
         else {
             // Should have been caught in pass 1.
             g_mbcBailed++;
@@ -2085,7 +2169,8 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // Shared arith bail tail: consumes bailIPOff as the offset into
     // the method's bytecodes.  state.sp is already flushed (we store
     // sp back to state before each arith op).
-    Label lblFuncEnd = cc.new_label();
+    // lblFuncEnd was pre-allocated above so the yield-bail path at
+    // back-edges can branch to it.
     cc.b(lblFuncEnd);   // skip past the bail tail on normal flow
 
     cc.bind(lblBailTail);

@@ -68,24 +68,31 @@ Next slices (each ~1 session):
   `even ifTrue:[1] ifFalse:[2]` loop (result 199999 matches
   interpreter).
 
-- **1.2d  Backward jumps (loops).**  `whileTrue:` etc.  Asmjit
-  labels with back-edges.  Need yield-countdown check at each
-  back-edge to keep scheduler happy.
+- **1.2d  Backward jumps (loops).**  **IMPLEMENTED GATED (this session).**
+  Supports `whileTrue:` patterns.  Gated behind same
+  `PHARO_T2_MBC_JUMPS=1`.
 
-  **PARTIAL (this session):** 2-byte forward `ExtJump` /
-  `ExtJumpTrue` / `ExtJumpFalse` (0xED-0xEF) now compile when
-  the preceding byte is NOT an `ExtA`/`ExtB` prefix (0xE0/0xE1).
-  Offset is unsigned 8-bit (0-255 forward).  Gated behind same
-  `PHARO_T2_MBC_JUMPS=1`.  Adds +1 method compile on
-  array-fill bench.  Correctness verified on extended
-  `ifTrue:ifFalse:` bodies.
+  Two layers landed this session:
+  1. 2-byte forward `ExtJump` / `ExtJumpTrue` / `ExtJumpFalse`
+     (0xED-0xEF) when NOT prefixed by ExtA/ExtB — offset is
+     unsigned 8-bit (0..+255 forward).
+  2. ExtB + ExtJump pattern (0xE1 extByte 0xED offByte) for
+     signed 16-bit backward unconditional jumps.  Pass 1/2
+     recognise the 4-byte sequence; pass 2 emits the
+     back-edge with a yield-countdown check (reads
+     JITState.yieldCountdown at offset 176, decrements, and
+     exits with `EXIT_YIELD` when it hits zero so the chain
+     loop can yield the scheduler).
 
-  Still TODO for full 1.2d:
-  - 0xE0/0xE1 prefix handling — signed 16-bit offset enables
-    backward jumps.  Requires walker state machine (extA,
-    extB tracked across 2-byte prefix + next bytecode).
-  - Yield-countdown emission at back-edges (read
-    `yieldCountdown_`, decrement, branch to `ExitYield` if 0).
+  Correctness: 1 000 000-iter `[x < 1000000] whileTrue:
+  [x := x + 1]` returns x=1000000 with and without jumps.
+  Bench unchanged (33ms on array-fill).
+
+  Still TODO:
+  - ExtA (0xE0) prefix for large index bytecodes (ExtPushLitVar,
+    ExtPushLitConst, etc.).  Not required for loops.
+  - ExtB-prefixed CONDITIONAL backward jumps (0xEE/0xEF) —
+    rare but used in loops with inverted conditions.
 
 - **1.2e  Block activation.**  0xF9 (PushFullBlock), 0xFA
   (PushClosure).  Enables `to:do:` body compilation.
