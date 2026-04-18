@@ -389,17 +389,23 @@ submissions to the Pharo project.
 ## 8. Recommendation — what to do next
 
 **Status after 2026-04-18:** 1.1, 2.4, 2.2, 2.9 shipped/resolved;
-2.5, 2.6 disproven.  Remaining VM work is the long multi-bc
-extensions in §1.2 and the architectural T1/T2 interaction in
-§1.3.
+2.5, 2.6 disproven.  1.2b, 1.2c (short forward jumps) shipped
+gated.  Remaining VM work is 1.2d (backward jumps + loops), 1.2e
+(block activation), and the architectural 1.3 T1/T2 interaction.
 
 For the VM codebase:
 
-1. **Multi-bc 1.2a (sends).**  Emit push-args + ExitSend inside
-   the existing multi-bc walker.  Opens up arith + send bodies
-   like `^ self at: idx + 1` for T2 compilation.
+1. **Multi-bc 1.2d (backward jumps).**  Supports `whileTrue:`
+   loops.  Needs 0xE0/0xE1 ExtA/B prefix handling (2-byte
+   bytecodes), 0xED ExtJump with signed 16-bit offset, and
+   yield-countdown emission at back-edges.  Without 1.2e the
+   wins are bounded to loops that don't activate blocks.
 
-2. **Architectural T1/T2 interaction (1.3).**  T2 intercepting
+2. **Multi-bc 1.2e (block activation).**  0xF9/0xFA push-block
+   + closure-capture.  Enables `to:do:` bodies.  This is where
+   the array-fill / awfy wins actually come from.
+
+3. **Architectural T1/T2 interaction (1.3).**  T2 intercepting
    methods breaks T1's inline-IC warmup.  Neither shared-IC,
    warmup delay, nor self-only narrowing has solved this.  Needs
    a rethink (shared IC table?  patch-T1-when-T2-compiles?).
