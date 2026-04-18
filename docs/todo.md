@@ -177,11 +177,17 @@ as JIT native code.  Skipping their compilation puts everything
 back on the interpreter's slower per-bytecode dispatch.  Knob
 kept for bisection (`83c3703`) but never enable by default.
 
-### 2.7  Fix `upgradeICToJ2J` layering on inline-primKind entries  (P4)
+### 2.7  Fix `upgradeICToJ2J` layering on inline-primKind entries  (P4)  **ATTEMPTED / REVERTED (2026-04-18)**
 
-IC entries with bits 52:48 set never get the J2J direct-call bit
-(60) added later.  Prior attempt regressed (hang at n=16).  Needs
-lldb to trace the stencil IC-hit path interaction.
+Changed the `if (extra == 0)` guard to
+`if ((extra & (1ULL << 60)) == 0)` so entries with primKind bits
+already set get J2J layered on.  Result: T2=1 bench collapsed
+from 5/8 fast-mode runs to 0/8, ~410ms average (5e13ddd).
+
+The stencil's primKind dispatch + J2J direct-call paths are
+supposed to be mutually exclusive per branch; layering them
+creates an unintended slower path.  Real fix needs stencil-side
+analysis / regeneration.
 
 ### 2.8  Re-enable SimStack TOS/NOS caching  (P5)
 
