@@ -22,9 +22,12 @@ the state after 2026-04-17 session.
   state-dependent failures that don't repro in interp or isolation.
   Default remains OFF.  Kept 137e7d5 in history for reference.
 - **Multi-bc T2 forward + backward jumps** (`3ead4ff`, `27774cc`,
-  `535d1ab`, 2026-04-18) — short 0xB0-0xC7 + forward ExtJump +
-  ExtB+ExtJump backward with yield countdown, gated behind
-  `PHARO_T2_MBC_JUMPS=1`
+  `535d1ab`, `327012e`, 2026-04-18) — short 0xB0-0xC7 + forward
+  ExtJump + ExtB+ExtJump backward with yield countdown.  Default
+  ON; set `PHARO_T2_MBC_JUMPS=0` to disable for bisection.
+- **PHARO_T2_WARMUP default 0 → 3** (`b921f10`, 2026-04-18) — T2=1
+  users get IC hit rate preservation (89.3% vs 80-86% with
+  WARMUP=0) without manual env-var setup.
 
 **Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
 
@@ -58,9 +61,9 @@ Sends (partial, all gated):
 
 Control flow: **ADDED 2026-04-18** — multi-bc walker now handles
 short (0xB0-0xC7) and extended (0xED-0xEF + 0xE1) jumps, both
-forward and backward, gated behind `PHARO_T2_MBC_JUMPS=1`.  Does
-not yet handle ExtA-prefixed large-index bytecodes or
-ExtB-prefixed conditional backward jumps.
+forward and backward.  Default ON; `PHARO_T2_MBC_JUMPS=0` to
+disable.  Does not yet handle ExtA-prefixed large-index bytecodes
+or ExtB-prefixed conditional backward jumps.
 
 Still missing: multi-send methods (regresses due to §1.3), block
 activation (0xF9/0xFA PushFullBlock/PushClosure).
