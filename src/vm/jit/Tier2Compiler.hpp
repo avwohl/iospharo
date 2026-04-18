@@ -76,6 +76,16 @@ public:
 
     static void dumpBailStats();
 
+    // Multi-bytecode compilation path — walks bytecodes sequentially
+    // and emits asmjit code for each.  Supports pure arithmetic +
+    // push/pop/store + return methods (no sends, jumps, blocks).
+    // Returns a function pointer on success, nullptr if any bytecode
+    // isn't in the supported set.
+    void* tryCompileMultiBC(Oop compiledMethod,
+                             const uint8_t* bytes,
+                             size_t bcStart,
+                             size_t bodyLen);
+
     // Called from JITRuntime::recoverAfterGC.  CompiledMethod Oops
     // stored in T2 IC data (as methodBits) may become stale after a
     // GC moves objects — zero all entries so the next send does a

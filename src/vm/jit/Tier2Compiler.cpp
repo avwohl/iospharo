@@ -104,6 +104,38 @@ void Tier2Compiler::dumpBailStats() {
         icTot ? 100.0 * g_icHit / icTot : 0.0);
 }
 
+namespace {
+size_t g_mbcCompiled = 0;
+size_t g_mbcBailed   = 0;
+
+// Is this bytecode supported by the multi-bc compiler?  Currently:
+// pushes, stores, pops, returns, arith (0x60-0x6F), dup.  No sends,
+// no jumps, no blocks, no primitive calls, no remote temps.
+bool isMBCSupported(uint8_t op) {
+    // Pushes
+    if (op <= 0x4B) return true;                 // 0x00-0x4B: pushRecvVar/LitVar/LitConst/Temp
+    if (op == SistaV1::PushReceiver) return true;
+    if (op >= 0x4D && op <= 0x51) return true;   // PushTrue/False/Nil/Zero/One
+    if (op == SistaV1::Dup) return true;
+    // Returns
+    if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) return true;
+    // Arith (0x60-0x6F)
+    if (op >= 0x60 && op <= 0x6F) return true;
+    // Stores
+    if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) return true;
+    if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) return true;
+    if (op == SistaV1::Pop) return true;
+    return false;
+}
+
+// Returns the byte length of a supported bytecode (all are 1 byte
+// in the supported set).
+int mbcOpLen(uint8_t op) {
+    (void)op;
+    return 1;
+}
+} // namespace
+
 void Tier2Compiler::flushAllICs() {
     // Zero every T2 IC entry — next send re-populates via the
     // interpreter's pendingICPatch_ mechanism.  Called from
@@ -166,6 +198,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
     size_t bodyLen = totalBytes - bcStart - (size_t)unusedBytes;
+
+    // --- Try multi-bytecode compilation first ---
+    //
+    // For methods containing no sends, no jumps, no blocks — just
+    // arithmetic, pushes, stores, and a return — walk the bytecode
+    // sequence and emit asmjit code per op.  Returns nullptr on any
+    // unsupported bytecode; we then fall through to template matching.
+    if (void* mbcFunc = tryCompileMultiBC(compiledMethod, bytes, bcStart, bodyLen)) {
+        methodsCompiled_++;
+        g_compiled++;
+        return mbcFunc;
+    }
 
     // --- Recognise a small set of leading patterns ---
     //
@@ -1358,6 +1402,380 @@ emitted:
 
     methodsCompiled_++;
     g_compiled++;
+    return func;
+}
+
+// ---------------------------------------------------------------------------
+// Multi-bytecode compilation (task #33)
+// ---------------------------------------------------------------------------
+//
+// Walks the full bytecode sequence and emits asmjit code for each op,
+// maintaining state.sp in memory throughout (simple and safe — no SP
+// register caching).  Supports pushes, stores, pops, arith with
+// SmallInt fast path + bail, and returns.  Any other bytecode causes
+// the whole method to bail.
+//
+// On arith bail (tag mismatch or overflow): advance state.ip to the
+// arith bytecode, leave the two operands on state.sp, set
+// sendArgCount=1, exit ExitSend.  The interpreter resumes at the arith
+// byte and handles the send fallback.
+
+void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
+                                        const uint8_t* bytes,
+                                        size_t bcStart,
+                                        size_t bodyLen) {
+    (void)compiledMethod;
+
+    // Minimum bytecode count — skip tiny methods already covered by
+    // template matching (also avoids empty methods).
+    if (bodyLen < 2) return nullptr;
+
+    // Pass 1: verify all bytecodes are in the supported set.  Walk
+    // through without emitting anything.
+    for (size_t i = 0; i < bodyLen;) {
+        uint8_t op = bytes[bcStart + i];
+        if (!isMBCSupported(op)) {
+            g_mbcBailed++;
+            return nullptr;
+        }
+        i += mbcOpLen(op);
+    }
+
+    // Must end in a return — otherwise the method falls off the end.
+    uint8_t lastOp = bytes[bcStart + bodyLen - 1];
+    if (lastOp < SistaV1::ReturnReceiver || lastOp > SistaV1::ReturnTop) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    ObjectHeader* methodObj = reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
+    uint64_t nilBits   = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
+    uint64_t oneBits   = Oop::fromSmallInteger(1).rawBits();
+    uint64_t zeroBits  = Oop::fromSmallInteger(0).rawBits();
+
+    // Pass 2: emit.  Maintain state.sp as a live register that we
+    // write back to state on every arith bail + at method end.
+    using namespace asmjit;
+    CodeHolder code;
+    code.init(runtime_->environment(), runtime_->cpu_features());
+
+    a64::Compiler cc(&code);
+    FuncNode* funcNode = cc.add_func(FuncSignature::build<void, void*>());
+    a64::Gp statePtr = cc.new_gp64("state");
+    funcNode->set_arg(0, statePtr);
+
+    a64::Gp sp = cc.new_gp64("sp");
+    cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
+
+    // Emit a push: *sp++ = v
+    auto emitPush = [&](a64::Gp v) {
+        cc.str(v, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+    };
+
+    // Emit a pop into a fresh reg: v = *--sp
+    auto emitPop = [&]() -> a64::Gp {
+        cc.sub(sp, sp, 8);
+        a64::Gp v = cc.new_gp64("popV");
+        cc.ldr(v, a64::ptr(sp));
+        return v;
+    };
+
+    // Arith bail target — shared across all arith ops in the method.
+    // On bail, state.sp is already the pre-arith sp (with operands on
+    // the stack), so we just need to set ip/exit.
+    Label lblBailTail = cc.new_label();
+    // We use a location-register for the bail IP offset — each arith
+    // that might bail stores its own bcStart-relative offset into ipOffReg
+    // before branching to lblBailTail.
+    a64::Gp bailIPOff = cc.new_gp64("bailIPOff");
+
+    bool sawReturn = false;
+
+    for (size_t i = 0; i < bodyLen && !sawReturn;) {
+        uint8_t op = bytes[bcStart + i];
+        size_t opStart = i;
+
+        if (op >= SistaV1::PushRecvVarBase && op <= SistaV1::PushRecvVarLast) {
+            int idx = op - SistaV1::PushRecvVarBase;
+            a64::Gp recv = cc.new_gp64("recv");
+            cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(recv, OBJ_SLOT_0 + idx * 8));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
+            int idx = op - SistaV1::PushLitVarBase;
+            a64::Gp lp = cc.new_gp64("lp");
+            cc.ldr(lp, a64::ptr(statePtr, OFF_LITERALS));
+            a64::Gp as = cc.new_gp64("as");
+            cc.ldr(as, a64::ptr(lp, idx * 8));
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(as, ASSOC_VALUE));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushLitConstBase && op <= SistaV1::PushLitConstLast) {
+            int idx = op - SistaV1::PushLitConstBase;
+            Oop lit = methodObj->slotAt(1 + idx);
+            a64::Gp v = cc.new_gp64("v");
+            cc.mov(v, asmjit::Imm(lit.rawBits()));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushTempBase && op <= SistaV1::PushTempLast) {
+            int idx = op - SistaV1::PushTempBase;
+            a64::Gp tp = cc.new_gp64("tp");
+            cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(tp, idx * 8));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushReceiver) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushTrue) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(statePtr, OFF_TRUEOOP));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushFalse) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.ldr(v, a64::ptr(statePtr, OFF_FALSEOOP));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushNil) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.mov(v, asmjit::Imm(nilBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushZero) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.mov(v, asmjit::Imm(zeroBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushOne) {
+            a64::Gp v = cc.new_gp64("v");
+            cc.mov(v, asmjit::Imm(oneBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::Dup) {
+            // Read TOS (sp[-1]) and push it again.
+            a64::Gp v = cc.new_gp64("dupv");
+            cc.ldr(v, a64::ptr(sp, -8));
+            emitPush(v);
+        }
+        else if (op >= 0x60 && op <= 0x6F) {
+            // Arith.  For MVP we emit the fast path for +, -, *, and
+            // the comparison/bit ops; bail for /, //, \\, @, bitShift:.
+            // On bail, state.sp must reflect the pre-arith state (both
+            // operands on stack).  We've not pushed any extras — the
+            // operands ARE the top 2 stack entries.
+            //
+            // Before arith: state.sp IS correct already.  Write sp
+            // back to state.sp so the bail path has consistent state.
+            cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+            // Load operands from stack (non-destructive, leave them
+            // for potential bail).
+            a64::Gp b = cc.new_gp64("b");
+            a64::Gp a = cc.new_gp64("a");
+            cc.ldr(b, a64::ptr(sp, -8));
+            cc.ldr(a, a64::ptr(sp, -16));
+
+            Label lblLocalBail = cc.new_label();
+
+            // Tag-check both.
+            a64::Gp tA = cc.new_gp64("tA");
+            cc.and_(tA, a, asmjit::Imm(0x7));
+            cc.cmp(tA, asmjit::Imm(1));
+            cc.b_ne(lblLocalBail);
+            a64::Gp tB = cc.new_gp64("tB");
+            cc.and_(tB, b, asmjit::Imm(0x7));
+            cc.cmp(tB, asmjit::Imm(1));
+            cc.b_ne(lblLocalBail);
+
+            a64::Gp result = cc.new_gp64("result");
+            bool isComp = (op >= 0x62 && op <= 0x67);
+            bool isBit  = (op == 0x6E || op == 0x6F);
+
+            if (op == 0x60) {
+                a64::Gp tmp = cc.new_gp64("tmp");
+                cc.sub(tmp, a, asmjit::Imm(1));
+                cc.adds(result, tmp, b);
+                cc.b_vs(lblLocalBail);
+            }
+            else if (op == 0x61) {
+                a64::Gp tmp = cc.new_gp64("tmp");
+                cc.subs(tmp, a, b);
+                cc.add(result, tmp, asmjit::Imm(1));
+                cc.b_vs(lblLocalBail);
+            }
+            else if (op == 0x68) {
+                // mul with overflow + range check
+                a64::Gp aVal = cc.new_gp64("aVal");
+                a64::Gp bVal = cc.new_gp64("bVal");
+                cc.asr(aVal, a, asmjit::Imm(3));
+                cc.asr(bVal, b, asmjit::Imm(3));
+                a64::Gp resLo = cc.new_gp64("resLo");
+                cc.mul(resLo, aVal, bVal);
+                a64::Gp resHi = cc.new_gp64("resHi");
+                cc.smulh(resHi, aVal, bVal);
+                a64::Gp expHi = cc.new_gp64("expHi");
+                cc.asr(expHi, resLo, asmjit::Imm(63));
+                cc.cmp(resHi, expHi);
+                cc.b_ne(lblLocalBail);
+                a64::Gp tagged = cc.new_gp64("tagged");
+                cc.lsl(tagged, resLo, asmjit::Imm(3));
+                a64::Gp back = cc.new_gp64("back");
+                cc.asr(back, tagged, asmjit::Imm(3));
+                cc.cmp(back, resLo);
+                cc.b_ne(lblLocalBail);
+                cc.orr(result, tagged, asmjit::Imm(1));
+            }
+            else if (isBit) {
+                if (op == 0x6E) cc.and_(result, a, b);
+                else            cc.orr(result, a, b);
+            }
+            else if (isComp) {
+                a64::Gp tOop = cc.new_gp64("tOop");
+                a64::Gp fOop = cc.new_gp64("fOop");
+                cc.ldr(tOop, a64::ptr(statePtr, OFF_TRUEOOP));
+                cc.ldr(fOop, a64::ptr(statePtr, OFF_FALSEOOP));
+                cc.cmp(a, b);
+                auto cond = asmjit::a64::CondCode::kEQ;
+                switch (op) {
+                case 0x62: cond = asmjit::a64::CondCode::kLT; break;
+                case 0x63: cond = asmjit::a64::CondCode::kGT; break;
+                case 0x64: cond = asmjit::a64::CondCode::kLE; break;
+                case 0x65: cond = asmjit::a64::CondCode::kGE; break;
+                case 0x66: cond = asmjit::a64::CondCode::kEQ; break;
+                case 0x67: cond = asmjit::a64::CondCode::kNE; break;
+                }
+                cc.csel(result, tOop, fOop, cond);
+            }
+            else {
+                // Unsupported arith op (/ // \\ @ bitShift:) — bail always.
+                cc.b(lblLocalBail);
+                cc.bind(lblLocalBail);
+                cc.mov(bailIPOff, asmjit::Imm(opStart));
+                cc.b(lblBailTail);
+                i += mbcOpLen(op);
+                continue;
+            }
+
+            // Replace the top 2 stack entries with 1 result.
+            cc.sub(sp, sp, 8);
+            cc.str(result, a64::ptr(sp, -8));
+            // Note: sp is still in register; we'll write it back when
+            // the method returns or on next arith bail.
+            Label lblArithDone = cc.new_label();
+            cc.b(lblArithDone);
+
+            cc.bind(lblLocalBail);
+            // state.sp already written to state (above).  Branch to the
+            // shared bail tail with opStart as the ip offset.
+            cc.mov(bailIPOff, asmjit::Imm(opStart));
+            cc.b(lblBailTail);
+
+            cc.bind(lblArithDone);
+        }
+        else if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+            int idx = op - SistaV1::PopStoreRecvBase;
+            a64::Gp v = emitPop();
+            a64::Gp recv = cc.new_gp64("recv");
+            cc.ldr(recv, a64::ptr(statePtr, OFF_RECEIVER));
+            cc.str(v, a64::ptr(recv, OBJ_SLOT_0 + idx * 8));
+        }
+        else if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
+            int idx = op - SistaV1::PopStoreTempBase;
+            a64::Gp v = emitPop();
+            a64::Gp tp = cc.new_gp64("tp");
+            cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+            cc.str(v, a64::ptr(tp, idx * 8));
+        }
+        else if (op == SistaV1::Pop) {
+            cc.sub(sp, sp, 8);
+        }
+        else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+            // Flush sp back to state before we exit (so the stack state
+            // is consistent for the caller).
+            cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+            a64::Gp ret = cc.new_gp64("ret");
+            switch (op) {
+            case SistaV1::ReturnReceiver:
+                cc.ldr(ret, a64::ptr(statePtr, OFF_RECEIVER));
+                break;
+            case SistaV1::ReturnTrue:
+                cc.ldr(ret, a64::ptr(statePtr, OFF_TRUEOOP));
+                break;
+            case SistaV1::ReturnFalse:
+                cc.ldr(ret, a64::ptr(statePtr, OFF_FALSEOOP));
+                break;
+            case SistaV1::ReturnNil:
+                cc.mov(ret, asmjit::Imm(nilBits));
+                break;
+            case SistaV1::ReturnTop:
+                cc.ldr(ret, a64::ptr(sp, -8));
+                break;
+            }
+            cc.str(ret, a64::ptr(statePtr, OFF_RETVAL));
+            a64::Gp exitCode = cc.new_gp32("exit");
+            cc.mov(exitCode, EXIT_RETURN);
+            cc.str(exitCode, a64::ptr(statePtr, OFF_EXIT));
+            sawReturn = true;
+        }
+        else {
+            // Should have been caught in pass 1.
+            g_mbcBailed++;
+            return nullptr;
+        }
+
+        i += mbcOpLen(op);
+    }
+
+    // End-of-function: asmjit closes the function naturally.
+    // Shared arith bail tail: consumes bailIPOff as the offset into
+    // the method's bytecodes.  state.sp is already flushed (we store
+    // sp back to state before each arith op).
+    Label lblFuncEnd = cc.new_label();
+    cc.b(lblFuncEnd);   // skip past the bail tail on normal flow
+
+    cc.bind(lblBailTail);
+    a64::Gp ip = cc.new_gp64("ip");
+    cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+    cc.add(ip, ip, bailIPOff);
+    cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+    a64::Gp sendArgs = cc.new_gp32("sendArgs");
+    cc.mov(sendArgs, 1);    // arith is 1-arg
+    cc.str(sendArgs, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+    a64::Gp zero64 = cc.new_gp64("zero64");
+    cc.mov(zero64, 0);
+    cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+    a64::Gp exitBail = cc.new_gp32("exitBail");
+    cc.mov(exitBail, EXIT_SEND);
+    cc.str(exitBail, a64::ptr(statePtr, OFF_EXIT));
+
+    cc.bind(lblFuncEnd);
+    cc.end_func();
+
+    Error err = cc.finalize();
+    if (err != kErrorOk) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+    void* func = nullptr;
+    err = runtime_->add(&func, &code);
+    if (err != kErrorOk) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    g_mbcCompiled++;
     return func;
 }
 
