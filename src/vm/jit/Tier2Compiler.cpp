@@ -1617,21 +1617,25 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                 break;
             }
 
-            // INLINE IC mode (default, task 1.2f): 6-way probe with
+            // INLINE IC mode (PHARO_T2_MBC_IC=1): 6-way probe with
             // hit → ExitSendCached (chain loop makes direct J2J call
             // to target) and miss → ExitSend (interpreter patches IC
             // via pendingICPatch_).
-
-            // Allocate IC buffer for this send site.
+            //
+            // Tried shared T1 IC (computing T1's sendIdx by walking
+            // bytecodes): gave 5× slowdown (1600ms vs 370ms) — the
+            // sendIdx mapping is subtly wrong (T1 includes extra/
+            // ext bytecodes in the count), so patches land on the
+            // wrong IC slot and corrupt T1's IC data.  Reverted to
+            // private IC; still hits the "T1 and T2 warm
+            // independently" issue but at least doesn't corrupt.
             auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
             std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
             uint64_t icAddr = reinterpret_cast<uint64_t>(ic.get());
             icBuffers_.push_back(std::move(ic));
-            // Seed selector from the method's literal frame at icData[18]
-            // so the chain loop's pendingICPatch_ path populates the IC.
-            int sendBase = 0x80;  // Send0
-            if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;   // Send1
-            else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;  // Send2
+            int sendBase = 0x80;
+            if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;
+            else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;
             int selIdx = op - sendBase;
             if (selIdx >= 0 && selIdx < (int)numLiterals) {
                 icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
