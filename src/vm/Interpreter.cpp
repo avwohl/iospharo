@@ -12321,7 +12321,14 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         return;
     }
 
-    // Find the matching IC entry and upgrade, or fill an empty slot
+    // Find the matching IC entry and upgrade, or fill an empty slot.
+    // Note: todo.md §2.7 proposes layering J2J bits onto entries that
+    // already have inline-primKind bits (52:48).  Attempted 2026-04-18:
+    // regressed benchmarks badly (T2=1 went from 5/8 fast-mode to 0/8
+    // with average ~410ms).  The interaction between primKind inline
+    // dispatch and J2J direct call in stencil_sendJ2J is subtle —
+    // layering them creates a slower path on some branch.  Reverted.
+    // Left as-is: only upgrade when extra==0.
     int firstEmpty = -1;
     for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == lookupKey) {
