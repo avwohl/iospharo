@@ -89,19 +89,13 @@ bool Tier2Compiler::initialize() {
 }
 
 namespace {
-size_t   g_compiled = 0;
-size_t   g_bailed   = 0;
-uint64_t g_icHit    = 0;
-uint64_t g_icMiss   = 0;
+size_t g_compiled = 0;
+size_t g_bailed   = 0;
 } // namespace
 
 void Tier2Compiler::dumpBailStats() {
-    uint64_t icTot = g_icHit + g_icMiss;
-    fprintf(stderr,
-        "  T2 (asmjit): compiled=%zu bailed=%zu | IC %llu/%llu (%.1f%% hit)\n",
-        g_compiled, g_bailed,
-        (unsigned long long)g_icHit, (unsigned long long)icTot,
-        icTot ? 100.0 * g_icHit / icTot : 0.0);
+    fprintf(stderr, "  T2 (asmjit): compiled=%zu bailed=%zu\n",
+            g_compiled, g_bailed);
 }
 
 namespace {
