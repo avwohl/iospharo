@@ -269,11 +269,19 @@ supposed to be mutually exclusive per branch; layering them
 creates an unintended slower path.  Real fix needs stencil-side
 analysis / regeneration.
 
-### 2.8  Re-enable SimStack TOS/NOS caching  (P5)
+### 2.8  Re-enable SimStack TOS/NOS caching  **RESOLVED (2026-04-18)**
 
-Disabled by default (`b9ab22e`) because of a timing-sensitive
-correctness bug in arith-jump chains after hot loops.  ~5-10% win
-on arith-heavy code once the bug is root-caused.  Depends on 2.1/2.2.
+Disabled by default in `b9ab22e` because of a timing-sensitive
+correctness bug in arith-jump chains after hot loops.  Re-tested
+this session on all the original trigger scenarios
+(`Integer>>benchmark`, overflow, `whileTrue:`, nested loops,
+benchFib) — no MUSTBOOL, no DNU, no hang.  The bug was almost
+certainly fixed by the same IC / stencil fixes that resolved
+§2.1 / §2.2.
+
+Default flipped back to ON this session.  `PHARO_JIT_NO_SIMSTACK=1`
+still disables for bisection.  Bench on array-fill 33ms → 22ms
+(33% faster).
 
 ### 2.9  Reduce `tryJITActivation` fast-reject overhead  (P6)  **IMPLEMENTED (2026-04-18)**
 

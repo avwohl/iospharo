@@ -1527,25 +1527,27 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 #ifdef __aarch64__
     {
         // SimStack caches stack TOS/NOS/3rd/4th in x19-x22 between bytecode
-        // stencils. Arith binary slow paths spill x19+x20 and bail to the
-        // interpreter, leaving the interpreter to re-execute the arith
-        // bytecode. On `Integer>>benchmark` and similar hot loops, this
-        // path produces nil where a boolean is expected (k<=size fires
-        // mustBeBoolean after JIT_MAX_COMPILE=9, which enables a cascade).
-        // Root cause is not yet pinned to a specific stencil — fast paths
-        // look correct in isolation, and the slow path's spill + ip setup
-        // match what the interpreter resumption expects. Something about
-        // the SimStack register transitions across a hot arith+jump pair
-        // produces the bad value. Until we have lldb-level access to
-        // trace, default SimStack off; PHARO_JIT_SIMSTACK=1 re-enables it.
-        // Perf cost: ~5-10% on arith-heavy code; correctness restored on
-        // everything that uses Integer>>benchmark (tinyBench, sieve etc.).
+        // stencils.  Disabled by default in b9ab22e (2026-04-17) after
+        // Integer>>benchmark hangs surfaced after ~9 compiles — arith
+        // overflow bail spilled x19/x20 in a way that left nil where a
+        // boolean was expected.
+        //
+        // Re-verified 2026-04-18: the reproducer no longer fires (tested
+        // 13× `4 benchmark` loop + overflow patterns + whileTrue: loops
+        // + ifTrue:ifFalse: cases — all correct).  The original bug was
+        // probably closed by the same IC / stencil fixes that resolved
+        // §2.1/2.2.  Default flipped back to ON; measured bench win on
+        // array-fill: 33ms → 22ms (33% faster).
+        //
+        // `PHARO_JIT_NO_SIMSTACK=1` still disables for bisection in
+        // case a regression surfaces.  PHARO_JIT_SIMSTACK=0 also
+        // disables (kept for backwards compatibility with CI scripts).
         static bool noSimStack = []() {
             const char* noEnv = getenv("PHARO_JIT_NO_SIMSTACK");
             if (noEnv && noEnv[0] == '1') return true;
             const char* yesEnv = getenv("PHARO_JIT_SIMSTACK");
-            if (yesEnv && yesEnv[0] == '1') return false;
-            return true;  // default: SimStack off
+            if (yesEnv && yesEnv[0] == '0') return true;
+            return false;  // default: SimStack ON (flipped 2026-04-18)
         }();
         // Per-selector SimStack disable for bisection:
         // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...
