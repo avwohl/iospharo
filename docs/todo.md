@@ -47,14 +47,26 @@ Next slices (each ~1 session):
   Gated behind `PHARO_T2_MBC_SENDS=1`.  The real fix is inline
   IC at send sites (item 1.2f below).
   
-- **1.2b  Short forward jumps.**  Bytecodes 0xB0-0xB7 (unconditional
-  +1..+8).  Emit an asmjit label at each jump target; forward
-  branches just fall through.  Enables `ifTrue: [ ] ifFalse: [ ]`
-  bodies that don't go back.
+- **1.2b  Short forward jumps.**  **IMPLEMENTED GATED (this session).**
+  Bytecodes 0xB0-0xB7 (unconditional +1..+8).  Pass 1 walks linearly
+  and records jump targets; pass 2 binds a `asmjit::Label` at each
+  target and emits `cc.b(lbl)` for jumps.  Dead code between jump
+  and target is still emitted (unreachable).  Gated behind
+  `PHARO_T2_MBC_JUMPS=1`.
 
-- **1.2c  Conditional jumps.**  0xB8-0xC7.  Need mustBeBoolean
-  semantics on the condition (bail on non-boolean).  Pharo
-  inlines `ifTrue:ifFalse:` using these.
+- **1.2c  Conditional jumps.**  **IMPLEMENTED GATED (this session).**
+  0xB8-0xC7 (ShortJumpTrue/False).  Peek TOS, compare with true
+  then false; on match branch or fall through; on non-boolean bail
+  to interpreter at the jump op's offset so it sends
+  `#mustBeBoolean`.  Gated behind the same `PHARO_T2_MBC_JUMPS=1`.
+
+  Measured on array-fill bench: T2 compiled 100 → 105 methods
+  (+5) with jumps enabled.  Bench time unchanged (33ms for
+  20-iter array-fill).  The new compilations are mostly
+  `ifTrue:ifFalse:` bodies that previously bailed to template
+  matching.  Correctness verified against a 100 000-iter
+  `even ifTrue:[1] ifFalse:[2]` loop (result 199999 matches
+  interpreter).
 
 - **1.2d  Backward jumps (loops).**  `whileTrue:` etc.  Asmjit
   labels with back-edges.  Need yield-countdown check at each

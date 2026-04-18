@@ -29,6 +29,8 @@
 
 #include <cstring>
 #include <cstdio>
+#include <map>
+#include <set>
 
 #if PHARO_JIT_ENABLED
 
@@ -104,6 +106,9 @@ size_t g_mbcBailed   = 0;
 
 // Is this bytecode fully compilable by multi-bc?  True means we emit
 // inline asmjit code for it.  False means we'd have to bail.
+//
+// Short jumps (0xB0-0xC7: unconditional, if-true, if-false) are gated
+// behind PHARO_T2_MBC_JUMPS=1 until the feature is proven stable.
 bool isMBCSupported(uint8_t op) {
     // Pushes
     if (op <= 0x4B) return true;                 // 0x00-0x4B: pushRecvVar/LitVar/LitConst/Temp
@@ -118,6 +123,9 @@ bool isMBCSupported(uint8_t op) {
     if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) return true;
     if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) return true;
     if (op == SistaV1::Pop) return true;
+    // Short jumps — unconditional (0xB0-0xB7), if-true (0xB8-0xBF),
+    // if-false (0xC0-0xC7).  All forward; gated.
+    if (SistaV1::isAnyShortJump(op) && getenv("PHARO_T2_MBC_JUMPS") != nullptr) return true;
     return false;
 }
 
@@ -1448,12 +1456,34 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // the send-exit state flush; the interpreter runs the rest.
     // Anything else (unsupported op or special-selector send) causes
     // the whole method to bail to template matching.
+    //
+    // Forward jumps (0xB0-0xB7 unconditional, gated) are walked
+    // linearly — dead code between source and target is compiled but
+    // unreachable.  Targets must be forward (> current offset) and
+    // within bodyLen.
     bool sawReturn = false;
     bool willBailAtSend = false;
     size_t bailSendOffset = 0;
     uint8_t bailSendOp = 0;
+    std::set<size_t> jumpTargets;
+    auto shortJumpTarget = [](uint8_t op, size_t i) -> size_t {
+        uint8_t base = SistaV1::isShortJump(op)      ? SistaV1::ShortJumpBase
+                     : SistaV1::isShortJumpTrue(op)  ? SistaV1::ShortJumpTrueBase
+                                                    : SistaV1::ShortJumpFalseBase;
+        return i + 2 + (size_t)(op - base);
+    };
     for (size_t i = 0; i < bodyLen;) {
         uint8_t op = bytes[bcStart + i];
+        if (SistaV1::isAnyShortJump(op) && getenv("PHARO_T2_MBC_JUMPS") != nullptr) {
+            size_t target = shortJumpTarget(op, i);
+            if (target >= bodyLen || target <= i) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            jumpTargets.insert(target);
+            i += mbcOpLen(op);   // linear walk continues sequentially
+            continue;
+        }
         if (isMBCSupported(op)) {
             if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
                 sawReturn = true;
@@ -1554,12 +1584,23 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // before branching to lblBailTail.
     a64::Gp bailIPOff = cc.new_gp64("bailIPOff");
 
+    // Pre-allocate one asmjit label per jump target; bound when we
+    // emit the op at that offset (below).
+    std::map<size_t, Label> offsetLabels;
+    for (size_t t : jumpTargets) offsetLabels[t] = cc.new_label();
+
     bool emittedReturn = false;
     bool emittedSendBail = false;
 
     for (size_t i = 0; i < bodyLen && !emittedReturn && !emittedSendBail;) {
         uint8_t op = bytes[bcStart + i];
         size_t opStart = i;
+
+        // Bind label here if this offset is a jump target.
+        {
+            auto it = offsetLabels.find(i);
+            if (it != offsetLabels.end()) cc.bind(it->second);
+        }
 
         // At the first bailable send we have two modes:
         //   default: inline IC probe (6-way) → ExitSendCached on hit
@@ -1913,6 +1954,67 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             cc.mov(exitCode, EXIT_RETURN);
             cc.str(exitCode, a64::ptr(statePtr, OFF_EXIT));
             emittedReturn = true;
+        }
+        else if (SistaV1::isShortJump(op)) {
+            // Unconditional forward jump: branch to target label.
+            // Target was validated in pass 1.  Dead code between here
+            // and target is still emitted (linear walk) but
+            // unreachable — asmjit lays it out but control flow
+            // never enters it.
+            size_t target = i + 2 + (size_t)(op - SistaV1::ShortJumpBase);
+            cc.b(offsetLabels.at(target));
+        }
+        else if (SistaV1::isConditionalShortJump(op)) {
+            // Conditional forward jump: pop a boolean, branch to
+            // target if condition matches, fall through otherwise.
+            // On non-boolean: bail to interpreter at this op's
+            // offset so it can send #mustBeBoolean.
+            //
+            // We peek TOS (no pop yet) so the bail path leaves the
+            // value on the stack for the interpreter.  sp is flushed
+            // before the comparison so the bail state is consistent.
+            bool jumpIfTrue = SistaV1::isShortJumpTrue(op);
+            uint8_t base = jumpIfTrue ? SistaV1::ShortJumpTrueBase
+                                      : SistaV1::ShortJumpFalseBase;
+            size_t target = i + 2 + (size_t)(op - base);
+
+            cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+            a64::Gp v = cc.new_gp64("jv");
+            cc.ldr(v, a64::ptr(sp, -8));
+            a64::Gp tOop = cc.new_gp64("tOop");
+            a64::Gp fOop = cc.new_gp64("fOop");
+            cc.ldr(tOop, a64::ptr(statePtr, OFF_TRUEOOP));
+            cc.ldr(fOop, a64::ptr(statePtr, OFF_FALSEOOP));
+
+            Label lblJumpTaken    = cc.new_label();
+            Label lblFallThrough  = cc.new_label();
+            Label lblNonBool      = cc.new_label();
+
+            // Matches-condition check: is v the bool that triggers the jump?
+            cc.cmp(v, jumpIfTrue ? tOop : fOop);
+            cc.b_eq(lblJumpTaken);
+            // Else check other boolean: fall through if matches,
+            // bail on non-boolean.
+            cc.cmp(v, jumpIfTrue ? fOop : tOop);
+            cc.b_ne(lblNonBool);
+
+            // Fall-through path: pop, continue sequentially.
+            cc.sub(sp, sp, 8);
+            cc.b(lblFallThrough);
+
+            cc.bind(lblJumpTaken);
+            cc.sub(sp, sp, 8);
+            cc.b(offsetLabels.at(target));
+
+            cc.bind(lblNonBool);
+            // Leave the non-boolean on the stack; sp flushed above.
+            // Set ip to this op's offset so the interpreter re-dispatches
+            // and sends #mustBeBoolean itself.
+            cc.mov(bailIPOff, asmjit::Imm(opStart));
+            cc.b(lblBailTail);
+
+            cc.bind(lblFallThrough);
         }
         else {
             // Should have been caught in pass 1.
