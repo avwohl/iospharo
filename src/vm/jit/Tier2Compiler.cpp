@@ -392,12 +392,11 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && bodyLen >= 3 && SistaV1::isSend0(b1)
                             && b2 == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])) {
-        // ^ <push> foo — 1 push + inline 6-way IC probe; on hit
-        // exit ExitSendCached, on miss exit ExitSend.
-        // Gated behind PHARO_T2_ZEROARG_IC because benchmarks show
-        // the miss path (bail-to-interpreter for first call per
-        // class) makes this net-slower than T1 on real workloads
-        // where coverage is biased to cold methods.
+        // 0-arg inline IC — gated.  Tried narrowing to
+        // `b0 == PushReceiver` only; still regresses (4/10 fast
+        // vs 5/8 default) even though correctness is preserved
+        // (0 DNU across 5 runs).  The tier interaction (§1.3)
+        // still dominates.  Left gated.
         kind = ReturnKind::ZeroArgSendInlineIC;
         numPushes = 1;
         sendIPOff = 1;
