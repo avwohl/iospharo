@@ -1099,7 +1099,18 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // set PHARO_T2_WARMUP=0 explicitly.
                     static int t2Warmup = getenv("PHARO_T2_WARMUP")
                         ? atoi(getenv("PHARO_T2_WARMUP")) : 3;
+                    // §1.3c: under coexist mode (default), T2 code
+                    // never replaces T1 on activation.  Skip the
+                    // T2 compile entirely for methods T1 already
+                    // handles — saves asmjit memory + compile time.
+                    // Set PHARO_T2_REPLACE=1 to reactivate T2
+                    // compilation for these methods (and let T2
+                    // actually run).
+                    static bool t2ReplaceNote = !!getenv("PHARO_T2_REPLACE");
+                    bool skipCoexist = !t2ReplaceNote && jm &&
+                                       jm->isExecutable();
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
+                        !skipCoexist &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
                         if (t2Warmup > 0 && jm &&
                             (int)jm->executionCount < t2Warmup) {
