@@ -203,6 +203,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         OneArgSendInlineIC, // ^ <push0> foo: <push1> — 2 pushes + inline IC probe
         IntArithAddReturn,  // ^ <push0> + <push1> — SmallInt fast path (+ only)
         IntArithSubReturn,  // ^ <push0> - <push1> — SmallInt fast path (- only)
+        IntArithMulReturn,  // ^ <push0> * <push1> — SmallInt multiply (with 128-bit overflow check)
         IntAccumRecvVar,    // ivar[M] := ivar[M] +/- <push1>; ^ self  (SmallInt)
         IntCmpReturn,       // ^ <push0> cmp <push1> — SmallInt compare (<,>,<=,>=,=,~=)
         IntBitOpReturn      // ^ <push0> bitAnd:/bitOr: <push1> — tagged bit op
@@ -349,6 +350,16 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // or overflow.
         kind = (b2 == 0x60) ? ReturnKind::IntArithAddReturn
                             : ReturnKind::IntArithSubReturn;
+        numPushes = 2;
+        sendIPOff = 2;
+        arithOp = b2;
+    } else if (bodyLen >= 4 && b2 == 0x68
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // ^ <push0> * <push1> — SmallInt multiply fast path.
+        // Overflow handled via smulh/mul consistency check.
+        kind = ReturnKind::IntArithMulReturn;
         numPushes = 2;
         sendIPOff = 2;
         arithOp = b2;
@@ -805,6 +816,126 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.b(lblDone);
 
         // Bail: push both, exit at cmp byte with ExitSend.
+        cc.bind(lblBail);
+        a64::Gp sp = cc.new_gp64("sp");
+        cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
+        cc.str(a, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(b, a64::ptr(sp));
+        cc.add(sp, sp, 8);
+        cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+        a64::Gp ip = cc.new_gp64("ip");
+        cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+        cc.add(ip, ip, sendIPOff);
+        cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+        a64::Gp w1 = cc.new_gp32("w1");
+        cc.mov(w1, 1);
+        cc.str(w1, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+        a64::Gp zero64 = cc.new_gp64("zero64");
+        cc.mov(zero64, 0);
+        cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+        a64::Gp exitBail = cc.new_gp32("exitBail");
+        cc.mov(exitBail, EXIT_SEND);
+        cc.str(exitBail, a64::ptr(statePtr, OFF_EXIT));
+
+        cc.bind(lblDone);
+        cc.end_func();
+        goto emitted;
+    }
+    case ReturnKind::IntArithMulReturn: {
+        // ^ <push0> * <push1> — SmallInt multiply fast path.
+        // Untag, multiply, check int64 overflow via smulh, check
+        // SmallInt range via lsl/asr round-trip, retag.
+        auto loadPush = [&](const Push& p) -> a64::Gp {
+            a64::Gp v = cc.new_gp64("pv");
+            switch (p.src) {
+            case PushSrc::Receiver:
+                cc.ldr(v, a64::ptr(statePtr, OFF_RECEIVER)); break;
+            case PushSrc::RecvVar: {
+                a64::Gp rp = cc.new_gp64("rp");
+                cc.ldr(rp, a64::ptr(statePtr, OFF_RECEIVER));
+                cc.ldr(v, a64::ptr(rp, OBJ_SLOT_0 + p.idx * 8));
+                break;
+            }
+            case PushSrc::LitVar: {
+                a64::Gp lp = cc.new_gp64("lp");
+                a64::Gp as = cc.new_gp64("as");
+                cc.ldr(lp, a64::ptr(statePtr, OFF_LITERALS));
+                cc.ldr(as, a64::ptr(lp, p.idx * 8));
+                cc.ldr(v,  a64::ptr(as, ASSOC_VALUE));
+                break;
+            }
+            case PushSrc::Temp: {
+                a64::Gp tp = cc.new_gp64("tp");
+                cc.ldr(tp, a64::ptr(statePtr, OFF_TEMPBASE));
+                cc.ldr(v, a64::ptr(tp, p.idx * 8));
+                break;
+            }
+            case PushSrc::ImmOop:
+                cc.mov(v, asmjit::Imm(p.bits)); break;
+            case PushSrc::None: break;
+            }
+            return v;
+        };
+
+        a64::Gp a = loadPush(pushes[0]);
+        a64::Gp b = loadPush(pushes[1]);
+
+        Label lblBail = cc.new_label();
+        Label lblDone = cc.new_label();
+
+        a64::Gp aTag = cc.new_gp64("aTag");
+        cc.and_(aTag, a, asmjit::Imm(0x7));
+        cc.cmp(aTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+        a64::Gp bTag = cc.new_gp64("bTag");
+        cc.and_(bTag, b, asmjit::Imm(0x7));
+        cc.cmp(bTag, asmjit::Imm(1));
+        cc.b_ne(lblBail);
+
+        // Untag
+        a64::Gp aVal = cc.new_gp64("aVal");
+        a64::Gp bVal = cc.new_gp64("bVal");
+        cc.asr(aVal, a, asmjit::Imm(3));
+        cc.asr(bVal, b, asmjit::Imm(3));
+
+        // Multiply (low 64 bits)
+        a64::Gp resLo = cc.new_gp64("resLo");
+        cc.mul(resLo, aVal, bVal);
+
+        // High 64 bits for overflow check
+        a64::Gp resHi = cc.new_gp64("resHi");
+        cc.smulh(resHi, aVal, bVal);
+
+        // If result fits in int64, high == asr(low, 63).  Otherwise overflow.
+        a64::Gp expectedHi = cc.new_gp64("expHi");
+        cc.asr(expectedHi, resLo, asmjit::Imm(63));
+        cc.cmp(resHi, expectedHi);
+        cc.b_ne(lblBail);
+
+        // SmallInt range check: result * 8 must fit in int64 signed.
+        // Equivalent to: |result| < 2^60.  Verify via lsl/asr round-trip.
+        a64::Gp tagged = cc.new_gp64("tagged");
+        cc.lsl(tagged, resLo, asmjit::Imm(3));
+        a64::Gp back = cc.new_gp64("back");
+        cc.asr(back, tagged, asmjit::Imm(3));
+        cc.cmp(back, resLo);
+        cc.b_ne(lblBail);
+
+        // Set tag bit
+        a64::Gp result = cc.new_gp64("result");
+        cc.orr(result, tagged, asmjit::Imm(1));
+
+        cc.str(result, a64::ptr(statePtr, OFF_RETVAL));
+        a64::Gp exitOk = cc.new_gp32("exitOk");
+        cc.mov(exitOk, EXIT_RETURN);
+        cc.str(exitOk, a64::ptr(statePtr, OFF_EXIT));
+        cc.b(lblDone);
+
         cc.bind(lblBail);
         a64::Gp sp = cc.new_gp64("sp");
         cc.ldr(sp, a64::ptr(statePtr, OFF_SP));
