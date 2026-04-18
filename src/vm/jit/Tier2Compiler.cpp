@@ -108,9 +108,8 @@ namespace {
 size_t g_mbcCompiled = 0;
 size_t g_mbcBailed   = 0;
 
-// Is this bytecode supported by the multi-bc compiler?  Currently:
-// pushes, stores, pops, returns, arith (0x60-0x6F), dup.  No sends,
-// no jumps, no blocks, no primitive calls, no remote temps.
+// Is this bytecode fully compilable by multi-bc?  True means we emit
+// inline asmjit code for it.  False means we'd have to bail.
 bool isMBCSupported(uint8_t op) {
     // Pushes
     if (op <= 0x4B) return true;                 // 0x00-0x4B: pushRecvVar/LitVar/LitConst/Temp
@@ -128,8 +127,39 @@ bool isMBCSupported(uint8_t op) {
     return false;
 }
 
-// Returns the byte length of a supported bytecode (all are 1 byte
-// in the supported set).
+// Is this a 1-byte send?  Special selectors (0x70-0x7F) and literal
+// sends (0x80-0xAF).  If we hit one of these during multi-bc walk we
+// emit a "flush state and bail to interpreter at this byte" path and
+// stop compilation (the interpreter runs the rest of the method).
+//
+// Excludes arith (0x60-0x6F) because those are handled inline.
+// Excludes 2-byte ExtSend/ExtSuperSend (0xEA/EB) — too complex for
+// this first cut; method bails at compile time if it has those.
+bool isMBCBailableSend(uint8_t op) {
+    return (op >= 0x70 && op <= 0xAF);
+}
+
+// How many args does this send take (for sendArgCount on bail)?
+int mbcSendArgCount(uint8_t op) {
+    if (op >= 0x70 && op <= 0x7F) {
+        // Special selector N (where N = op-0x70+16): arg count varies.
+        // For the bail path, matching T1's behaviour is sufficient —
+        // the interpreter re-dispatches the bytecode.  Use 0 as a
+        // safe default (the interpreter ignores state.sendArgCount
+        // for SpecialSelector bytecodes; it reads arg count from the
+        // selector itself).  Conservative choice: return the wrong
+        // count might corrupt stack handling.  Skip SpecialSelectors
+        // for now — return -1 to signal "don't support".
+        return -1;
+    }
+    if (op >= 0x80 && op <= 0x8F) return 0;  // Send0
+    if (op >= 0x90 && op <= 0x9F) return 1;  // Send1
+    if (op >= 0xA0 && op <= 0xAF) return 2;  // Send2
+    return -1;
+}
+
+// Returns the byte length of a bytecode (all supported + bailable
+// sends are 1 byte in this first cut).
 int mbcOpLen(uint8_t op) {
     (void)op;
     return 1;
@@ -1430,22 +1460,55 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // template matching (also avoids empty methods).
     if (bodyLen < 2) return nullptr;
 
-    // Pass 1: verify all bytecodes are in the supported set.  Walk
-    // through without emitting anything.
+    // Pass 1: walk and classify.  Supported ops + one trailing return
+    // are fully compiled.  A bailable send (Send0/1/2 with known arg
+    // count) causes multi-bc to compile the PREFIX up to and including
+    // the send-exit state flush; the interpreter runs the rest.
+    // Anything else (unsupported op or special-selector send) causes
+    // the whole method to bail to template matching.
+    bool sawReturn = false;
+    bool willBailAtSend = false;
+    size_t bailSendOffset = 0;
+    uint8_t bailSendOp = 0;
     for (size_t i = 0; i < bodyLen;) {
         uint8_t op = bytes[bcStart + i];
-        if (!isMBCSupported(op)) {
-            g_mbcBailed++;
-            return nullptr;
+        if (isMBCSupported(op)) {
+            if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+                sawReturn = true;
+                break;   // rest is unreachable
+            }
+            i += mbcOpLen(op);
+            continue;
         }
-        i += mbcOpLen(op);
-    }
-
-    // Must end in a return — otherwise the method falls off the end.
-    uint8_t lastOp = bytes[bcStart + bodyLen - 1];
-    if (lastOp < SistaV1::ReturnReceiver || lastOp > SistaV1::ReturnTop) {
+        if (isMBCBailableSend(op)) {
+            int nArgs = mbcSendArgCount(op);
+            if (nArgs < 0) { g_mbcBailed++; return nullptr; }
+            willBailAtSend = true;
+            bailSendOffset = i;
+            bailSendOp = op;
+            break;   // stop compiling; send + everything after runs in interpreter
+        }
+        // Unsupported — bail the whole method.
         g_mbcBailed++;
         return nullptr;
+    }
+
+    if (!sawReturn && !willBailAtSend) {
+        // Fell off the end (e.g. last op was an unsupported bc that we
+        // lost count of).  Shouldn't happen with current logic but
+        // guard anyway.
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    // If we WILL bail at a send, we don't need a return; we'll exit
+    // ExitSend.  Otherwise we require a trailing return op.
+    if (sawReturn) {
+        uint8_t lastReturn = bytes[bcStart + bodyLen - 1];
+        // The saw-return loop broke early, so lastReturn might not be
+        // at bodyLen-1.  We just need A return somewhere along the
+        // linear path; that check is already satisfied.
+        (void)lastReturn;
     }
 
     ObjectHeader* methodObj = reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
@@ -1490,11 +1553,41 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
     // before branching to lblBailTail.
     a64::Gp bailIPOff = cc.new_gp64("bailIPOff");
 
-    bool sawReturn = false;
+    bool emittedReturn = false;
+    bool emittedSendBail = false;
 
-    for (size_t i = 0; i < bodyLen && !sawReturn;) {
+    for (size_t i = 0; i < bodyLen && !emittedReturn && !emittedSendBail;) {
         uint8_t op = bytes[bcStart + i];
         size_t opStart = i;
+
+        // Stop at the first bailable send: flush state.sp, advance
+        // state.ip to the send byte, set sendArgCount, icDataPtr=0,
+        // exit ExitSend.  Interpreter resumes at the send bytecode
+        // and runs it + everything after in interpreter mode.
+        if (willBailAtSend && i == bailSendOffset) {
+            cc.str(sp, a64::ptr(statePtr, OFF_SP));
+
+            a64::Gp ip = cc.new_gp64("sendIp");
+            cc.ldr(ip, a64::ptr(statePtr, OFF_IP));
+            cc.add(ip, ip, i);
+            cc.str(ip, a64::ptr(statePtr, OFF_IP));
+
+            int nArgs = mbcSendArgCount(op);
+            a64::Gp wArgs = cc.new_gp32("wArgs");
+            cc.mov(wArgs, nArgs);
+            cc.str(wArgs, a64::ptr(statePtr, OFF_SENDARGCOUNT));
+
+            a64::Gp zero64 = cc.new_gp64("zero64");
+            cc.mov(zero64, 0);
+            cc.str(zero64, a64::ptr(statePtr, OFF_ICDATAPTR));
+
+            a64::Gp exitV = cc.new_gp32("exitV");
+            cc.mov(exitV, EXIT_SEND);
+            cc.str(exitV, a64::ptr(statePtr, OFF_EXIT));
+
+            emittedSendBail = true;
+            break;
+        }
 
         if (op >= SistaV1::PushRecvVarBase && op <= SistaV1::PushRecvVarLast) {
             int idx = op - SistaV1::PushRecvVarBase;
@@ -1724,7 +1817,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             a64::Gp exitCode = cc.new_gp32("exit");
             cc.mov(exitCode, EXIT_RETURN);
             cc.str(exitCode, a64::ptr(statePtr, OFF_EXIT));
-            sawReturn = true;
+            emittedReturn = true;
         }
         else {
             // Should have been caught in pass 1.
