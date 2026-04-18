@@ -84,18 +84,36 @@ Next slices (each ~1 session):
   methods T1 has already IC-warmed (requires retry mechanism in
   tier2Insert so T2 isn't permanently "tried-failed"-stamped).
 
-### 1.3  Understand the T1 warm-up / T2 interaction  (blocks inline IC)
+### 1.3  T1 warm-up / T2 interaction  (blocks inline IC)  **CONFIRMED 2026-04-18**
 
-Empirical finding from session 17: enabling either IC variant
-(`PHARO_T2_ZEROARG_IC=1`) pushes the array-fill benchmark from
-~40% fast-mode runs to 100% slow-mode.  Hypothesis: T2 intercepts
-methods that T1 relies on to IC-populate its own stencils; when T2
-replaces them the T1 warmup never completes.
+Hypothesis confirmed experimentally:
+- Default (no T2 IC): IC hit rate 98.9%.
+- T2 multi-bc inline IC enabled (PHARO_T2_MBC_IC=1): drops to 49.9%.
+- T2 shared-T1-IC attempt (compute T1's sendIdx by walking
+  bytecodes): 25.2% hit rate AND 5× bench slowdown — sendIdx
+  mapping is wrong (T1 counts extension bytes / ExtSuperSend that
+  my walk doesn't).
+- `PHARO_T2_WARMUP=10` (delay T2 compile until T1 has executed N
+  times): 4/6 fast-mode runs, IC 75.6%.  Helps slightly but still
+  lower than baseline.
 
-Needs: instrument per-method IC patch counts on the T1 path,
-compare T1-only vs T1+T2 runs, confirm the warmup theory, decide
-on a fix (don't compile methods T1 is still warming?  share IC
-data between T1 and T2 for the same method?).
+Fundamental issue: T2 REPLACES T1 for its covered methods.  T1's
+IC for those methods becomes unused; T2's private IC starts cold.
+No amount of warmup delay fixes the problem permanently — it just
+shifts when T1→T2 handover happens.
+
+Real fixes (not done):
+- (a) Compute T1's sendIdx exactly (match T1's send-counting
+  including ExtSuperSend, bail-out stencils, etc.) so shared IC
+  works without corruption.
+- (b) Have T2 do the pre-send work then TAIL-CALL T1's
+  stencil_sendJ2J for the send itself.  Reuses T1's IC and code.
+  Complex: T2 needs to preserve state.sp / state.ip / regs the way
+  T1 stencils expect.
+- (c) T2 doesn't replace T1.  Both coexist: T1 runs, and T2 only
+  acts as an inline-helper for specific patterns T1 can't handle
+  efficiently (arith chains, whole-method templates).  Requires
+  rethinking the tier-dispatch model.
 
 ---
 
