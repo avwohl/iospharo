@@ -6529,7 +6529,12 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // Try JIT execution. If it handles the method, it pops the frame
     // and pushes the return value — the dispatch loop continues with
     // the caller's next bytecode.
-    if (tryJITActivation(method, argCount)) {
+    //
+    // Inline fast-reject (todo.md §2.9): ~90% of activations miss the
+    // JIT method map.  Skipping the tryJITActivation call entirely on
+    // the miss path avoids its prologue/epilogue + trace-guard costs
+    // for the common case.
+    if (canJITActivate(method) && tryJITActivation(method, argCount)) {
         return;  // JIT handled it
     }
     // Otherwise fall through to interpreter execution via the dispatch loop

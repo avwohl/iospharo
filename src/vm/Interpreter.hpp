@@ -865,6 +865,28 @@ private:
     // (caller should NOT proceed with interpreter execution).
     bool tryJITActivation(Oop method, int argCount);
 
+    // Inline fast-reject for tryJITActivation (todo.md §2.9).
+    // Returns true if the method has a chance of being JIT-compiled;
+    // false means definitely not — caller should skip the
+    // tryJITActivation call entirely, avoiding its prologue/epilogue.
+    //
+    // The full check is `jitRuntime_.methodMap().lookup(...)` +
+    // executable check; we inline both here.  The call site pattern is:
+    //   if (canJITActivate(method) && tryJITActivation(method, argCount))
+    //       return;
+    // Short-circuit `&&` avoids the call entirely on the miss path.
+    inline bool canJITActivate(Oop method) {
+#if PHARO_JIT_ENABLED
+        if (!jitInitialized_) return false;
+        if (!method.isObject() || method.rawBits() < 0x10000) return false;
+        jit::JITMethod* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+        return jm && jm->isExecutable();
+#else
+        (void)method;
+        return false;
+#endif
+    }
+
     // On-stack replacement: at interpreter backward jumps, check if the
     // current method is JIT-compiled and transfer execution to JIT.
     void tryOSRAtBackwardJump();
