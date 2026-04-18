@@ -70,14 +70,15 @@ during Morphic boot — scheduling, not correctness.
 ## C. Code state in-tree — experimental / opt-in
 
 ### C1. `PHARO_T2=0` (default off)
-T2 is off by default. Reasons:
-- Historical: `b18e71e` cited GC register staleness. Session 23 stress
-  tests ran through without crashes (see
-  `memory/project_t2_gc_safety_revalidated.md`) — this reason is
-  probably stale.
-- Current: after `f279fd4`, T2 always bails on sends. Perf ≈ T1 (no
-  longer faster). Until A1 (chain-loop) lands, no reason to flip
-  the default.
+T2 is off by default.  Current rationale (2026-04-18):
+- `PHARO_T2=1` regresses IC hit rate 90.8% → 81.9% on array-fill
+  without affecting raw bench time (22ms both ways).  The IC
+  regression is the §1.3 T1/T2 interaction issue — T2 intercepts
+  methods before T1 warms its IC.
+- Until §1.3 is resolved, flipping the default saves nothing and
+  costs IC hit rate on send-heavy workloads.
+- Historical b18e71e "GC register staleness" no longer applies
+  (MIR removed 2026-04-17).
 
 ### C2. `PHARO_T2_UNSAFE_CALLEE=1`
 Restores the pre-`f279fd4` buggy callee-invocation path (double-
@@ -89,9 +90,12 @@ only. See `memory/project_resume_j2j_trampoline.md`.
 
 ### C4. T2 diagnostic env vars (keep)
 `PHARO_T2_BAIL_OP`, `PHARO_T2_NO_ARITH_FAST`,
-`PHARO_T2_NO_ARITH_OPS`, `PHARO_T2_OPT`, `PHARO_DUMP_MIR`,
-`PHARO_T2_TRACE`, `T2_LIMIT`, `T2_VERBOSE`. Session 22/23 bisect
-tooling. All cheap when not enabled. Keep.
+`PHARO_T2_NO_ARITH_OPS`, `PHARO_T2_OPT`, `PHARO_T2_TRACE`,
+`T2_LIMIT`, `T2_VERBOSE`, `PHARO_T2_MBC_JUMPS`,
+`PHARO_T2_MBC_SENDS`, `PHARO_T2_MBC_IC`, `PHARO_T2_WARMUP`,
+`PHARO_T2_A1`, `PHARO_JIT_NO_SIMSTACK`.  All cheap when not
+enabled.  (Legacy `PHARO_DUMP_MIR` removed when MIR was deleted
+2026-04-17.)  Keep the rest.
 
 ---
 
@@ -136,18 +140,28 @@ changes; they're image-side issues to propose upstream.
 
 ## F. What's left for a future session
 
-**Post 2026-04-16 update:**  A1, A2, and A3 diag have all shipped.
-Remaining practical work:
+**Post 2026-04-18 update:**  A1, A2, A3 diag, SimStack re-enable,
+and multi-bc jumps (forward + backward) have all shipped.  MIR was
+removed in 2026-04-17; T2 now runs on asmjit with no GC staleness
+concerns.  Remaining practical work:
 
-1. **Fix T2 GC staleness (blocks A1 activation).** MIR holds oops in
-   registers across potential GC points. Until fixed, `PHARO_T2=1`
-   crashes and A1 cannot be benchmarked. Likely needs MIR-level
-   GC-safety annotations or a spill-before-allocate discipline.
+1. **Architectural T1/T2 interaction (§1.3).**  T2 intercepting
+   methods still breaks T1's inline-IC warmup — neither shared-IC,
+   warmup delay, nor self-only narrowing has solved this.  The
+   fundamental issue gates §1.2a (sends in multi-bc), §1.2f
+   (inline IC at multi-bc send sites), and the regression path
+   that forced A1 off.  Needs a design rethink (shared IC table
+   across T1/T2? patch-T1-when-T2-compiles?).
 2. **Finish A3 (IC hit-rate).** Diagnostics shipped, actual fix needs
    lldb watchpoint session — something clears `icData[18]` between
    compile and first `ExitSend`, invisible to static analysis.
-3. **Pivot to D (iOS device work).** Needs physical hardware, not
+3. **Multi-bc §1.2e block activation** (0xF9/0xFA PushFullBlock/
+   PushClosure).  Uses the existing `ExitBlockCreate` mechanism
+   (the chain loop already handles it).  Enables non-inlined
+   blocks to be T2-compiled; marginal benefit since Pharo inlines
+   to:do:/whileTrue: at compile time.
+4. **Pivot to D (iOS device work).** Needs physical hardware, not
    just code.
 
-Once T2 GC is fixed + A3 fixed, JIT reaches diminishing returns and D
-is where the project's actual value delivery happens.
+Once §1.3 is sorted + A3 fixed, JIT reaches diminishing returns
+and D is where the project's actual value delivery happens.
