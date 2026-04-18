@@ -47,6 +47,13 @@ CFLAGS_COMMON = [
     "-fno-split-machine-functions",
     "-mllvm", "-hot-cold-split=false",
     "-mllvm", "-enable-machine-outliner=never",
+    # todo.md §2.5 experiment 2026-04-18: compiling with -Os
+    # shrinks stencil_sendJ2J from 2092 → 1752 bytes (-16%, total
+    # 11918 → 10631) but regresses bench 10-15% (fast-mode runs
+    # drop from ~205ms to ~229ms, slow-mode from ~375ms to ~388ms).
+    # Not worth the tradeoff for a perf-focused build.  Revert.
+    # iOS-focused builds (where code-zone size matters more) could
+    # flip this knob.
 ]
 
 CFLAGS_ARM64 = CFLAGS_COMMON + ["-target", "arm64-apple-macos14"]
