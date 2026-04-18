@@ -170,8 +170,11 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
         } else if (op >= SistaV1::PushReceiver && op <= SistaV1::Dup) {
             // 0x4C-0x53: individual push bytecodes, no operand
             if (op == SistaV1::PushThisContext) {
-                // pushThisContext — deopt to interpreter
-                bc.operand = bc.bcOffset;
+                // pushThisContext (0x52) — deopt to interpreter.
+                // When preceded by `ExtB 1` (0xE1 0x01), the interpreter must
+                // see the ExtB to push thisProcess instead of thisContext, so
+                // resume at the first extension byte, not the 0x52 itself.
+                bc.operand = (firstExtBCOffset >= 0) ? firstExtBCOffset : bc.bcOffset;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
                 decoded.push_back(bc);
                 i += bc.bcLength;
