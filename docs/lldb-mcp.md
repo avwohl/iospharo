@@ -16,7 +16,7 @@ through code, read registers, etc. — all from inside a session.
    ```
 
 2. Restart Claude Code.  On start-up it launches the wrapper,
-   which spawns `lldb` in the background with
+   which spawns a fresh `lldb` in the background with
    `protocol-server start MCP listen://localhost:59999`, then
    forwards the session's stdio over netcat.  `claude mcp list`
    should show `lldb: ... ✓ Connected`.
@@ -28,8 +28,25 @@ through code, read registers, etc. — all from inside a session.
    ```
 
    Claude will call `lldb_command` with
-   `{"debugger_id": 0, "arguments": "version"}` and paste lldb's
-   banner back.
+   `{"debugger_id": 1, "arguments": "version"}` and paste lldb's
+   banner back.  The interactive lldb the wrapper spawns is
+   **debugger_id 1**, not 0 — id 0 returns `"no debugger with id
+   0"`.
+
+## Session lifecycle
+
+Each Claude Code MCP reconnect gets a **fresh** lldb instance.
+The wrapper spawns lldb on invocation and kills it when the stdio
+pipe closes (nc EOF).  Consequences:
+
+- Debugger state (targets, breakpoints, watchpoints) is **not**
+  preserved across Claude Code reconnects.  Treat each session as
+  starting from scratch and script any setup you need.
+- No socket leaks.  Apple's shipped lldb
+  (`lldb-2100.0.16.12` / Xcode 17E202) does not deregister
+  disconnected MCP clients from its kqueue, so a shared persistent
+  lldb would spin at 99% CPU per prior disconnected peer.
+  Fresh-per-session sidesteps that bug.
 
 ## How to use
 
@@ -59,12 +76,13 @@ commands.  Example debugging pattern for the iOS Pharo VM:
 
 ## Files
 
-- `scripts/lldb-mcp-start.sh` — wrapper that auto-starts lldb and
-  pipes stdio to the MCP socket.  Reads `PHARO_LLDB_MCP_PORT`
+- `scripts/lldb-mcp-start.sh` — wrapper that spawns a fresh lldb,
+  forwards stdio to its MCP socket, and kills the lldb on EOF so
+  each reconnect starts clean.  Reads `PHARO_LLDB_MCP_PORT`
   (default 59999) and `LLDB` (default `/usr/bin/lldb`) from the
   environment.
 - `/tmp/lldb-mcp.log` — lldb output captured for debugging the
-  wrapper itself.
+  wrapper itself, including start/exit timestamps per invocation.
 
 ## Why not Claude Code's built-in tool set?
 
