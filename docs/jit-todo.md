@@ -12,13 +12,20 @@ the state after 2026-04-17 session.
 - IC layout GC scanner fix (`fd03572`)
 - JITState as GC root (`a311688`)
 - J2J literals pointer +8 → +16 fix (`2b1629f`)
-- SimStack default off (`b9ab22e`)
+- SimStack default off (`b9ab22e`, 2026-04-17) — RE-ENABLED 2026-04-18
 - T1 J2J reduction / A2 — 72→56 byte save struct (`415d899`)
 - **MIR removed, asmjit vendored** (`d10b00a`, `0cdd738`, `7a5061b`)
 - **asmjit T2 MVP**: compiles leaf methods — getters, setters, constant
   returns (`3cf135c`, `1ed9590`)
+- **SimStack re-enabled by default** (`137e7d5`, 2026-04-18) — 33%
+  faster on array-fill bench (33ms → 22ms); original
+  Integer>>benchmark hang no longer reproduces
+- **Multi-bc T2 forward + backward jumps** (`3ead4ff`, `27774cc`,
+  `535d1ab`, 2026-04-18) — short 0xB0-0xC7 + forward ExtJump +
+  ExtB+ExtJump backward with yield countdown, gated behind
+  `PHARO_T2_MBC_JUMPS=1`
 
-**Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
+**Default config:** T1 JIT on, T2 off, **SimStack on**, asmjit as the T2 backend.
 
 **asmjit T2 coverage (~5-15% of candidates depending on workload):**
 
@@ -48,7 +55,14 @@ Sends (partial, all gated):
 - **IntAccumRecvVar** (on by default): `ivar := ivar +/- arg; ^ self`
   5-byte accumulator.  Matches a handful of real methods.
 
-Still missing: control flow, multi-send methods, block activation.
+Control flow: **ADDED 2026-04-18** — multi-bc walker now handles
+short (0xB0-0xC7) and extended (0xED-0xEF + 0xE1) jumps, both
+forward and backward, gated behind `PHARO_T2_MBC_JUMPS=1`.  Does
+not yet handle ExtA-prefixed large-index bytecodes or
+ExtB-prefixed conditional backward jumps.
+
+Still missing: multi-send methods (regresses due to §1.3), block
+activation (0xF9/0xFA PushFullBlock/PushClosure).
 
 Perf impact on default (T2=1 leaf-only): **~neutral to slightly
 favourable** on array-fill bench (60% fast-mode runs vs 40% for
