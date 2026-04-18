@@ -1,11 +1,39 @@
 # LLDB MCP — AI-controllable debugger
 
-Apple's `/usr/bin/lldb` ships with a built-in MCP (Model Context
-Protocol) server.  With it enabled, Claude Code can drive lldb via
-the `lldb_command` tool — set breakpoints, inspect memory, step
-through code, read registers, etc. — all from inside a session.
+> **Status 2026-04-18: MCP path abandoned, use `lldb --batch`
+> instead.** Apple's lldb-2100.0.16.12 MCP `protocol-server` pegs at
+> 100% CPU on the initial handshake every invocation — deterministic,
+> reproducible, not a socket-leak artifact as originally hypothesised.
+> Two `claude mcp` reconnect cycles confirmed the bug reproduces on
+> fresh lldb instances before any client disconnect could leak state.
+>
+> `claude mcp remove lldb` executed 2026-04-18. The wrapper script
+> is still in the tree for a future Apple lldb fix, but re-registering
+> currently just burns a CPU core per session.
+>
+> **Use `lldb --batch -s script.lldb --` via Bash** — works instantly.
+> See "Batch-mode pattern" below. The rest of this doc describes the
+> broken MCP setup for posterity.
 
-## Setup (one-time)
+## Batch-mode pattern (what actually works)
+
+```bash
+cat > /tmp/a3-watch.lldb <<'EOF'
+target create /Users/wohl/src/iospharo/build/test_load_image
+breakpoint set --name _ZN5pharo11Interpreter18sendMustBeBooleanENS_3OopE
+breakpoint command add --script-type default 1
+bt 3
+register read x19 x20
+continue
+DONE
+settings set target.env-vars PHARO_NO_JIT=0
+run /tmp/repro.image eval "'…'"
+quit
+EOF
+timeout 120 lldb --batch -s /tmp/a3-watch.lldb 2>&1 | tee /tmp/lldb-out.txt
+```
+
+## Setup (one-time) — MCP path, not currently working
 
 1. The MCP is registered per-project via the wrapper at
    `scripts/lldb-mcp-start.sh`.  If you're on a fresh checkout,
