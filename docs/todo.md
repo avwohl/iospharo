@@ -1,0 +1,313 @@
+# TODO
+
+Consolidated list of everything open, across JIT, tests, iOS, and
+upstream.  Superset of the narrower docs:
+- `docs/jit-todo.md`        — JIT detail
+- `docs/deferred.md`        — session-21 deferred items
+- `docs/deferred-issues.md` — test-suite issues detail
+- `docs/known-issues.md`    — rendering + image bugs
+- `docs/image_issues.md`    — image-side workarounds
+- `docs/upstream-proposals.md` — bugs to push upstream
+
+Last updated: 2026-04-17.
+
+---
+
+## 1. JIT — asmjit T2 (post MIR removal)
+
+MIR was removed 2026-04-17; T2 runs on asmjit.  Coverage is
+template-matched whole methods + a minimal multi-bytecode compiler
+for pure arith chains.  Default `PHARO_T2=1` is benchmark-neutral.
+
+### 1.1  Debug the 1-arg inline IC DNU  (task #31)
+
+`OneArgSendInlineIC` scaffolding is complete but gated behind
+`PHARO_T2_ONEARG_IC=1` because it triggers intermittent startup
+DNUs:
+- `#isNumber not understood by rcvr=0x500000003000026`  (invalid tag 6)
+- `#x not understood by rcvr=0x11`  (SmallInt)
+
+Non-deterministic (2/5 runs), reproduces with force-miss mode
+(`PHARO_T2_FORCE_MISS=1`), not narrowly bisectable by push source.
+Bug is in the 2-push bail path or its interaction with the chain
+loop's send activation / resume.  Needs an lldb breakpoint on the
+DNU to catch the corruption moment.
+
+Infrastructure is ready: `icBuffers_` storage, selector-seeded
+`icData[18]`, GC flush hook.
+
+### 1.2  Multi-bytecode T2 — extend past pure arith  (task #33)
+
+MVP shipped (`32f6f1a`).  Covers: pushes, stores, pops, Dup,
+arith 0x60-0x6F, returns.  Falls back to templates on any
+unsupported bytecode.
+
+Next slices (each ~1 session):
+
+- **1.2a  Sends in multi-bc.**  Emit push-args + ExitSend at the
+  send site.  Interpreter resumes at the send byte, dispatches,
+  then continues in interpreter mode (bail point + after).  Value:
+  covers send-containing arith methods, biggest coverage
+  unlock.  Risk: shares code paths with 1.1 (1-arg IC DNU).
+  
+- **1.2b  Short forward jumps.**  Bytecodes 0xB0-0xB7 (unconditional
+  +1..+8).  Emit an asmjit label at each jump target; forward
+  branches just fall through.  Enables `ifTrue: [ ] ifFalse: [ ]`
+  bodies that don't go back.
+
+- **1.2c  Conditional jumps.**  0xB8-0xC7.  Need mustBeBoolean
+  semantics on the condition (bail on non-boolean).  Pharo
+  inlines `ifTrue:ifFalse:` using these.
+
+- **1.2d  Backward jumps (loops).**  `whileTrue:` etc.  Asmjit
+  labels with back-edges.  Need yield-countdown check at each
+  back-edge to keep scheduler happy.
+
+- **1.2e  Block activation.**  0xF9 (PushFullBlock), 0xFA
+  (PushClosure).  Enables `to:do:` body compilation.
+
+- **1.2f  Inline IC at send sites in multi-bc.**  Reuse the IC
+  buffer + probe infrastructure from 1.1.  Keep caller in native
+  code on IC hit → direct J2J call to compiled target.
+
+### 1.3  Understand the T1 warm-up / T2 interaction  (blocks inline IC)
+
+Empirical finding from session 17: enabling either IC variant
+(`PHARO_T2_ZEROARG_IC=1`) pushes the array-fill benchmark from
+~40% fast-mode runs to 100% slow-mode.  Hypothesis: T2 intercepts
+methods that T1 relies on to IC-populate its own stencils; when T2
+replaces them the T1 warmup never completes.
+
+Needs: instrument per-method IC patch counts on the T1 path,
+compare T1-only vs T1+T2 runs, confirm the warmup theory, decide
+on a fix (don't compile methods T1 is still warming?  share IC
+data between T1 and T2 for the same method?).
+
+---
+
+## 2. JIT — legacy / pre-asmjit items still applicable
+
+From `docs/jit-todo.md` §Open bugs, mostly pre-asmjit but still
+relevant to T1 behaviour.
+
+### 2.1  `tinyBenchmarks` / `bench_loop` intermittent hang  (B1)
+
+~3/5 runs hang at `n=16` on `SmallInteger>>benchmark` in the
+doubling loop.  Timing-sensitive.  Likely stale IC entry in the
+recursive benchFib path.  `memory/project_tinybench_jit_hang.md`.
+
+### 2.2  benchFib 2nd-iteration 12× slowdown  (B2)
+
+`28 benchFib`=57ms, `29 benchFib` right after=1065ms.  First call
+compiles something that makes subsequent recursion slow.
+
+### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)
+
+After bench_loop finishes, scheduler goes idle and never wakes.
+Probably a consequence of B2.
+
+### 2.4  T1 IC hit-rate investigation  (B5 / A3)
+
+Counters shipped (b381525).  Smoking gun: 100% of IC misses report
+`noSelBits` — compile-time write at JITCompiler.cpp:1926 writes to
+a different address than the stencil reads at runtime.  Root cause
+likely `_HOLE_OPERAND2` resolving to the pool-slot address, one
+indirection off.  See `memory/project_ic_selbits_mystery.md`.
+
+### 2.5  Shrink `stencil_sendJ2J`  (P2)
+
+523 ARM64 instructions per send-site.  Target 150-200 by extracting
+the probe loop + megamorphic fallback into a shared helper that
+stencils tail-call.  Saves ~2KB per send site, improves i-cache.
+
+### 2.6  Method-level JIT opt-in  (P3)
+
+Only compile methods with ≥N sends.  Arith-loop methods stay
+interpreted (faster), send-heavy methods benefit from IC caching.
+Half-session, low risk, modest upside.
+
+### 2.7  Fix `upgradeICToJ2J` layering on inline-primKind entries  (P4)
+
+IC entries with bits 52:48 set never get the J2J direct-call bit
+(60) added later.  Prior attempt regressed (hang at n=16).  Needs
+lldb to trace the stencil IC-hit path interaction.
+
+### 2.8  Re-enable SimStack TOS/NOS caching  (P5)
+
+Disabled by default (`b9ab22e`) because of a timing-sensitive
+correctness bug in arith-jump chains after hot loops.  ~5-10% win
+on arith-heavy code once the bug is root-caused.  Depends on 2.1/2.2.
+
+### 2.9  Reduce `tryJITActivation` fast-reject overhead  (P6)
+
+~10% hit rate today; 90% of activations reach the function and bail
+at the "method not compiled" check.  Inline the check at call sites.
+
+### 2.10  Enable A1 (T2 chain-loop continuation)  (P7)
+
+Already shipped (2f14022), gated behind `PHARO_T2_A1=1`.  Can't
+enable until T2 itself beats T1 on send-heavy workloads (depends on
+1.2 or the old MIR-era P1 inlining).
+
+---
+
+## 3. Test-suite deferred issues
+
+From `docs/deferred-issues.md` — none are VM bugs; all are
+harness / framework / upstream artifacts.  Next-step is the
+harness submodule, not the VM.
+
+### 3.1  SemaphoreTest / valueWithin timing  (4 remaining residuals)
+
+Harness-specific.  Passes 100% standalone (`tc runCase`).  Fails
+in the double-watchdog SUnit wrapper (P40 fork + P60 watchdog +
+4 nested exception handlers).  Harness fast-path landed for 3 of
+4 classes; 4 residuals still fail in SUnit.
+
+Fix direction: harness's `runSingleTest:` should detect timing
+classes and drop the P60 watchdog (or run `tc run: result`
+directly).  Owner: `scripts/pharo-headless-test` submodule.
+
+### 3.2  Reflection-walk timeouts
+
+`testFastPointersTo` + `testPointersToCycle` now pass under JIT.
+`testPointersTo` still >60s due to O(heap×N) traversal —
+reclassified as known-slow.
+
+### 3.3  Weak-reference / finalization timing  (4 residuals)
+
+Test-framework retention during `Smalltalk garbageCollect` — not
+VM bugs.
+
+### 3.4  JIT eval-mode `MAX=50+` hang
+
+`PHARO_JIT_DEFER=4` default works.  `PHARO_JIT_DEFER=0` hangs in
+Morphic boot — scheduling not correctness.  Documented; not
+scheduled for fix.
+
+---
+
+## 4. iOS — project mission work
+
+The project's actual goal is iOS.  Mac Catalyst is verified
+working (2026-02-24) but iOS device work needs hardware.
+
+### 4.1  iOS device testing
+
+- Physical iOS device(s) for build verification.
+- Apple Developer signing cert setup.
+- TestFlight or direct-device deploy.
+- UI touch/pinch/pan end-to-end (not just Mac mouse).
+
+### 4.2  iOS app-store readiness
+
+- App icons, launch screen, metadata.
+- Privacy manifest (iOS 17+ requirement).
+- Crash reporting integration.
+- Remote logging for device debugging.
+
+### 4.3  Image preparation for device
+
+- Verify standard Pharo image works unmodified on real iOS.
+  Currently we use `startup.st` injection — confirm that path
+  survives Snapshot round-trip on device.
+- Touch-based Morphic input path.  Image is still desktop-mouse-
+  oriented; propose upstream + local workaround.
+- Portrait-aware layout (see 5.3).
+
+### 4.4  W^X + signing on iOS
+
+JIT is force-disabled on iOS (`PHARO_JIT_ENABLED=0` on
+`TARGET_OS_IOS && !TARGET_OS_MACCATALYST`) because Apple's kernel
+forbids W^X pages outside MAP_JIT, and MAP_JIT requires a specific
+entitlement.  For the first iOS ship, stay interpreted.  A future
+JIT-on-iOS pass would need:
+
+- `com.apple.security.cs.allow-jit` entitlement.
+- MAP_JIT + `pthread_jit_write_protect_np` (already used on Mac
+  Catalyst).
+- Entitlement request + review process.
+
+---
+
+## 5. Rendering + known display issues
+
+From `docs/known-issues.md`.
+
+### 5.1  Taskbar selected button text renders with artifacts
+
+Slight rendering glitches on "selected" state.  Low priority.
+
+### 5.2  VM single-process lifecycle
+
+- VM thread sleeps forever after `interpret()` returns (avoids a
+  pthread TSD crash).
+- VM cannot be re-launched after quit without restarting the
+  process.
+
+These are live issues with the current iOS bridge; see
+`docs/known-issues.md`.
+
+### 5.3  Portrait layout + touch input (image side)
+
+Morphic is desktop-oriented.  For iOS we need:
+- Safe-area-aware layout.
+- Touch event primitives on the standard input path (not
+  HandMorph hacks).
+
+Tracked as upstream proposals (section 7).
+
+---
+
+## 6. Image bugs we patch at startup
+
+From `docs/image_issues.md`.  All applied via
+`PharoBridge::writeStartupScript()`.  Upstream fixes listed in
+section 7; as long as the image has them we keep patching.
+
+6.1  `MicGitHubRessourceReference >> githubApi` — nil token → KeyNotFound.  
+6.2  `MicDocumentBrowserModel >> document` — sends `#message` instead of `#messageText`.  
+6.3  `MicDocumentBrowserPresenter >> childrenOf:` — missing outer error handler.  
+6.4  Menu shortcut symbols render as "?" — embedded Source Sans Pro v2.020 missing glyphs.  
+6.5  `WarpBlt >> mixPix:` Smalltalk fallback drops alpha channel.  
+6.6  Doc browser bullets render as "?" — same font glyph gap as 6.4.
+
+---
+
+## 7. Upstream proposals (image, not VM)
+
+From `docs/upstream-proposals.md`.  These are image-side
+submissions to the Pharo project.
+
+- Portrait-aware Morphic layout.
+- Touch event primitives on the standard input path.
+- Startup-preferences path that survives `Smalltalk snapshot:andQuit:`
+  round-trips.
+- Bug fixes 6.1-6.6 above (as pull requests to Pharo).
+
+---
+
+## 8. Recommendation — what to do next
+
+For the VM codebase specifically:
+
+1. **Fix the IC selBits runtime mismatch (2.4).**  Half a day with
+   lldb.  Unblocks the T1 megacache fast path; realistic ~90% IC
+   hit rate instead of current ~50%.  Highest ROI.
+
+2. **Fix the 1-arg IC DNU (1.1).**  Blocks inline IC coverage
+   expansion.  Also needs lldb.  Once fixed, 1.2f can land.
+
+3. **Method-level JIT opt-in (2.6).**  Half session.  Caps the
+   worst-case T1 regression on arith loops without touching
+   architecture.
+
+4. **Multi-bc 1.2a/b/c (sends, jumps).**  Multi-session.  Path to
+   broader real-world method coverage.
+
+For the project mission:
+
+5. **Pivot to iOS (§4).**  Mac Catalyst works today.  iOS device
+   testing is blocked on hardware + signing, not code.  JIT perf
+   has eaten 20+ sessions with diminishing returns; the VM is
+   correct and runs the image.  Ship it.
