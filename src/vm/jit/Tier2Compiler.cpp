@@ -106,11 +106,23 @@ namespace {
 size_t g_mbcCompiled = 0;
 size_t g_mbcBailed   = 0;
 
+// PHARO_T2_MBC_JUMPS flag — true (default) enables short jump
+// bytecodes (0xB0-0xC7) and extended forward/backward ExtJump
+// variants (0xED-0xEF + 0xE1 prefix) in multi-bc compilation.
+// Set PHARO_T2_MBC_JUMPS=0 to disable for bisection.  Default
+// flipped to on 2026-04-18 after sessionlong validation
+// (correctness verified on SmallIntegerTest + whileTrue/
+// ifTrue:ifFalse: stress).
+static bool jumpsEnabledByEnv() {
+    const char* env = getenv("PHARO_T2_MBC_JUMPS");
+    return !(env && env[0] == '0');
+}
+
 // Is this bytecode fully compilable by multi-bc?  True means we emit
 // inline asmjit code for it.  False means we'd have to bail.
 //
-// Short jumps (0xB0-0xC7: unconditional, if-true, if-false) are gated
-// behind PHARO_T2_MBC_JUMPS=1 until the feature is proven stable.
+// Short jumps (0xB0-0xC7: unconditional, if-true, if-false) are
+// supported by default (PHARO_T2_MBC_JUMPS=0 disables).
 bool isMBCSupported(uint8_t op) {
     // Pushes
     if (op <= 0x4B) return true;                 // 0x00-0x4B: pushRecvVar/LitVar/LitConst/Temp
@@ -127,7 +139,7 @@ bool isMBCSupported(uint8_t op) {
     if (op == SistaV1::Pop) return true;
     // Short jumps — unconditional (0xB0-0xB7), if-true (0xB8-0xBF),
     // if-false (0xC0-0xC7).  All forward; gated.
-    if (SistaV1::isAnyShortJump(op) && getenv("PHARO_T2_MBC_JUMPS") != nullptr) return true;
+    if (SistaV1::isAnyShortJump(op) && jumpsEnabledByEnv()) return true;
     return false;
 }
 
@@ -1474,7 +1486,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                                                     : SistaV1::ShortJumpFalseBase;
         return i + 2 + (size_t)(op - base);
     };
-    const bool jumpsEnabled = getenv("PHARO_T2_MBC_JUMPS") != nullptr;
+    const bool jumpsEnabled = jumpsEnabledByEnv();
     // 2-byte extended jumps (0xED/0xEE/0xEF): offset is unsigned byte
     // (0-255, forward).  ExtA/ExtB prefix bytecodes (0xE0/0xE1) are
     // NOT supported yet — methods that use them bail via the generic
