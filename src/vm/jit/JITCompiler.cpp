@@ -1532,22 +1532,29 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // overflow bail spilled x19/x20 in a way that left nil where a
         // boolean was expected.
         //
-        // Re-verified 2026-04-18: the reproducer no longer fires (tested
-        // 13× `4 benchmark` loop + overflow patterns + whileTrue: loops
-        // + ifTrue:ifFalse: cases — all correct).  The original bug was
-        // probably closed by the same IC / stencil fixes that resolved
-        // §2.1/2.2.  Default flipped back to ON; measured bench win on
-        // array-fill: 33ms → 22ms (33% faster).
+        // Re-enabled 2026-04-18 (137e7d5) after simple-case retesting
+        // (benchmark, benchFib, whileTrue:, ifTrue:ifFalse:) suggested
+        // the bug had been closed by intervening IC/stencil fixes.
+        // Array-fill bench went 33ms → 22ms (33% faster).
         //
-        // `PHARO_JIT_NO_SIMSTACK=1` still disables for bisection in
-        // case a regression surfaces.  PHARO_JIT_SIMSTACK=0 also
-        // disables (kept for backwards compatibility with CI scripts).
+        // RE-DISABLED same day: running the full IntegerTest suite
+        // (80 tests) with SimStack on produces 7 fail + 5 err that
+        // do NOT reproduce in interpreter mode (0 fail, 0 err) and
+        // do NOT reproduce in isolation (each failing test passes
+        // individually).  State-dependent corruption across
+        // many-test accumulation — the original b9ab22e symptom
+        // manifests differently but is not truly fixed.
+        //
+        // Correctness trumps the 33% bench win.  Default remains OFF.
+        // `PHARO_JIT_SIMSTACK=1` enables for bisection / targeted
+        // benches where the IntegerTest accumulation doesn't apply.
+        // `PHARO_JIT_NO_SIMSTACK=1` also disables (backwards compat).
         static bool noSimStack = []() {
             const char* noEnv = getenv("PHARO_JIT_NO_SIMSTACK");
             if (noEnv && noEnv[0] == '1') return true;
             const char* yesEnv = getenv("PHARO_JIT_SIMSTACK");
-            if (yesEnv && yesEnv[0] == '0') return true;
-            return false;  // default: SimStack ON (flipped 2026-04-18)
+            if (yesEnv && yesEnv[0] == '1') return false;
+            return true;  // default: SimStack OFF (correctness-first)
         }();
         // Per-selector SimStack disable for bisection:
         // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...

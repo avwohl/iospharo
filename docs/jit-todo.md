@@ -17,15 +17,16 @@ the state after 2026-04-17 session.
 - **MIR removed, asmjit vendored** (`d10b00a`, `0cdd738`, `7a5061b`)
 - **asmjit T2 MVP**: compiles leaf methods — getters, setters, constant
   returns (`3cf135c`, `1ed9590`)
-- **SimStack re-enabled by default** (`137e7d5`, 2026-04-18) — 33%
-  faster on array-fill bench (33ms → 22ms); original
-  Integer>>benchmark hang no longer reproduces
+- **SimStack re-enabled by default** (`137e7d5`, 2026-04-18) —
+  REVERTED same day: full IntegerTest suite produces 12
+  state-dependent failures that don't repro in interp or isolation.
+  Default remains OFF.  Kept 137e7d5 in history for reference.
 - **Multi-bc T2 forward + backward jumps** (`3ead4ff`, `27774cc`,
   `535d1ab`, 2026-04-18) — short 0xB0-0xC7 + forward ExtJump +
   ExtB+ExtJump backward with yield countdown, gated behind
   `PHARO_T2_MBC_JUMPS=1`
 
-**Default config:** T1 JIT on, T2 off, **SimStack on**, asmjit as the T2 backend.
+**Default config:** T1 JIT on, T2 off, SimStack off, asmjit as the T2 backend.
 
 **asmjit T2 coverage (~5-15% of candidates depending on workload):**
 

@@ -269,19 +269,28 @@ supposed to be mutually exclusive per branch; layering them
 creates an unintended slower path.  Real fix needs stencil-side
 analysis / regeneration.
 
-### 2.8  Re-enable SimStack TOS/NOS caching  **RESOLVED (2026-04-18)**
+### 2.8  Re-enable SimStack TOS/NOS caching  **RE-CONFIRMED BUG (2026-04-18)**
 
 Disabled by default in `b9ab22e` because of a timing-sensitive
-correctness bug in arith-jump chains after hot loops.  Re-tested
-this session on all the original trigger scenarios
-(`Integer>>benchmark`, overflow, `whileTrue:`, nested loops,
-benchFib) — no MUSTBOOL, no DNU, no hang.  The bug was almost
-certainly fixed by the same IC / stencil fixes that resolved
-§2.1 / §2.2.
+correctness bug in arith-jump chains after hot loops.
 
-Default flipped back to ON this session.  `PHARO_JIT_NO_SIMSTACK=1`
-still disables for bisection.  Bench on array-fill 33ms → 22ms
-(33% faster).
+Re-enabled and re-disabled this session:
+1. **Flipped ON (137e7d5).**  Simple tests passed (benchmark,
+   benchFib, whileTrue:, ifTrue:ifFalse:, overflow patterns —
+   all clean).  Array-fill bench 33ms → 22ms (33% faster).
+2. **Re-DISABLED same day.**  Full IntegerTest suite under
+   JIT+SimStack produces 7 fail + 5 err that do NOT reproduce
+   in interpreter mode OR in test-isolation.  Examples:
+   testNumberOfDigits, testNegativeIntegerPrinting,
+   testPositiveIntegerPrinting, testHighBitOfMagnitude,
+   testIsProbablyPrime, testANegativeIntegerCannotBeAPowerOfTwo.
+   Each passes individually.  Order-/state-dependent corruption
+   across ~80-test accumulation — the b9ab22e symptom manifests
+   differently but is not truly fixed.
+
+Default remains OFF.  PHARO_JIT_SIMSTACK=1 enables for bench
+experiments.  Fix requires lldb-level trace: ~5-10% perf cost
+until root-caused.
 
 ### 2.9  Reduce `tryJITActivation` fast-reject overhead  (P6)  **IMPLEMENTED (2026-04-18)**
 
