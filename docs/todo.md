@@ -19,22 +19,16 @@ MIR was removed 2026-04-17; T2 runs on asmjit.  Coverage is
 template-matched whole methods + a minimal multi-bytecode compiler
 for pure arith chains.  Default `PHARO_T2=1` is benchmark-neutral.
 
-### 1.1  Debug the 1-arg inline IC DNU  (task #31)
+### 1.1  Debug the 1-arg inline IC DNU  (task #31)  **RESOLVED (2026-04-18)**
 
-`OneArgSendInlineIC` scaffolding is complete but gated behind
-`PHARO_T2_ONEARG_IC=1` because it triggers intermittent startup
-DNUs:
-- `#isNumber not understood by rcvr=0x500000003000026`  (invalid tag 6)
-- `#x not understood by rcvr=0x11`  (SmallInt)
-
-Non-deterministic (2/5 runs), reproduces with force-miss mode
-(`PHARO_T2_FORCE_MISS=1`), not narrowly bisectable by push source.
-Bug is in the 2-push bail path or its interaction with the chain
-loop's send activation / resume.  Needs an lldb breakpoint on the
-DNU to catch the corruption moment.
-
-Infrastructure is ready: `icBuffers_` storage, selector-seeded
-`icData[18]`, GC flush hook.
+Root cause: the debug hit/miss counter-bump code emitted inside
+each of 7 IC paths (6 hits + 1 miss) interacted with asmjit's
+register allocator in a way that intermittently corrupted the
+surrounding probe code.  Fix (34782ec): removed the emitted
+counter-bumps entirely — C-side diagnostics are preserved for the
+chain loop path.  0 DNU matches across 12 runs.  1-arg inline IC
+is now **default on**.  Bench: 5/8 fast-mode runs on array-fill
+(vs T2=0's typical 3/5).
 
 ### 1.2  Multi-bytecode T2 — extend past pure arith  (task #33)
 
@@ -122,11 +116,13 @@ Real fixes (not done):
 From `docs/jit-todo.md` §Open bugs, mostly pre-asmjit but still
 relevant to T1 behaviour.
 
-### 2.1  `tinyBenchmarks` / `bench_loop` intermittent hang  (B1)
+### 2.1  `tinyBenchmarks` / `bench_loop` intermittent hang  (B1)  **NOT REPRODUCIBLE (2026-04-18)**
 
-~3/5 runs hang at `n=16` on `SmallInteger>>benchmark` in the
-doubling loop.  Timing-sensitive.  Likely stale IC entry in the
-recursive benchFib path.  `memory/project_tinybench_jit_hang.md`.
+Tried `^ 16 benchmark` 5× and `(10 to: 20) collect: [:n | n benchmark]`
+4×: no hang.  All benchmark calls return 1028 (single-iteration
+baseline).  The race that triggered this apparently closed with
+the IC / GC fixes that landed in prior sessions.  Keep the
+memory note historical; reopen if it reappears.
 
 ### 2.2  benchFib 2nd-iteration 12× slowdown  (B2)  **RESOLVED (2026-04-18)**
 
@@ -136,10 +132,12 @@ The theoretical upper bound is φ ≈ 1.618 (Fibonacci call growth).
 reproducible — probably fixed by one of the many IC / stencil
 fixes that landed between then and now.
 
-### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)
+### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)  **LIKELY RESOLVED (2026-04-18)**
 
-After bench_loop finishes, scheduler goes idle and never wakes.
-Probably a consequence of B2.
+Was hypothesised to be a downstream effect of 2.1+2.2.  Both
+upstream items no longer reproduce.  Not independently verified
+— need to run the full `tinyBenchmarks` flow once to confirm,
+but the hang is almost certainly gone with them.
 
 ### 2.4  T1 IC hit-rate investigation  (B5 / A3)  **RESOLVED (2026-04-18)**
 
@@ -150,11 +148,20 @@ The 50% hit rate in the original memory note was specific to the
 AWFY Permute bench; typical workloads show 97%+.  No further
 action.
 
-### 2.5  Shrink `stencil_sendJ2J`  (P2)
+### 2.5  Shrink `stencil_sendJ2J`  (P2)  **PARTIAL (2026-04-18)**
 
-523 ARM64 instructions per send-site.  Target 150-200 by extracting
-the probe loop + megamorphic fallback into a shared helper that
-stencils tail-call.  Saves ~2KB per send site, improves i-cache.
+523 ARM64 instructions per send-site.  Target 150-200 by
+extracting the probe loop + megamorphic fallback into a shared
+helper that stencils tail-call.  Saves ~2KB per send site,
+improves i-cache.
+
+Attempted shortcut: swap sendJ2J (2092 B) for the existing
+smaller sendPoly (696 B) behind `PHARO_JIT_POLY=1` (12ebbb9).
+Segfaults in resume path — the two stencils' operand / save-
+stack contracts differ despite sharing the first two packed
+fields.  Real progress here needs stencil source changes +
+regeneration via `extract_stencils.py`.  Out of scope for
+"hours" budget.
 
 ### 2.6  Method-level JIT opt-in  (P3)  **DISPROVEN (2026-04-18)**
 
