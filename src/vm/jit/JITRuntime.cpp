@@ -1205,14 +1205,26 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         }
     }
 
-    // Check for Tier 2 compiled code (MIR-generated, register-allocated).
-    // T2 execution opt-in via PHARO_T2=1.  Default off because T2 is
-    // currently slower than T1 on arith loops (see noteMethodEntry
-    // comment).
+    // Check for Tier 2 compiled code (asmjit-based).  T2 execution
+    // opt-in via PHARO_T2=1.  Default off because T2 is currently
+    // equal-or-slower than T1 (multi-bc inline IC doesn't beat T1's
+    // 2092-byte stencil_sendJ2J on the hot path).
+    //
+    // §1.3c: COEXIST MODE (default when T2 enabled).  Even with
+    // PHARO_T2=1, let T1 stay in charge for methods both tiers
+    // compiled.  T2 only wins when T1 isn't available — which in
+    // practice means T1 failed to compile (excluded class,
+    // primitive-only, etc.) and someone still wants JIT for those
+    // methods.  Opt out via PHARO_T2_REPLACE=1 to restore the old
+    // "T2 replaces T1" behavior for bisection.
     static const char* t2envExec = getenv("PHARO_T2");
     static bool noT2Exec = !(t2envExec && t2envExec[0] == '1');
+    static bool t2Replace = !!getenv("PHARO_T2_REPLACE");
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
-    if (t2code && t2code != (void*)1) {
+    bool t1Executable = jm && jm->isExecutable();
+    bool useT2 = (t2code && t2code != (void*)1) &&
+                 (!t1Executable || t2Replace);
+    if (useT2) {
         // Tier 2 code has resume support: on initial entry, state.ip == bcStart
         // (offset 0 → start from beginning). On resume after send, state.ip
         // == bcStart + N → dispatch to post-send label.

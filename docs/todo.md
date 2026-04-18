@@ -144,18 +144,26 @@ a tail-call into T1's stencil_sendJ2J rather than its own send
 logic (§1.3b), or arrangement where T2 coexists with T1
 (§1.3c).
 
-Real fixes (not done):
-- (a) Compute T1's sendIdx exactly (match T1's send-counting
-  including ExtSuperSend, bail-out stencils, etc.) so shared IC
-  works without corruption.
-- (b) Have T2 do the pre-send work then TAIL-CALL T1's
-  stencil_sendJ2J for the send itself.  Reuses T1's IC and code.
-  Complex: T2 needs to preserve state.sp / state.ip / regs the way
-  T1 stencils expect.
-- (c) T2 doesn't replace T1.  Both coexist: T1 runs, and T2 only
-  acts as an inline-helper for specific patterns T1 can't handle
-  efficiently (arith chains, whole-method templates).  Requires
-  rethinking the tier-dispatch model.
+Real fixes status:
+- (a) **DONE (this session, 4e36f6a).**  JITCompiler populates a
+  `sendSiteMap_` during T1 compile (compiledMethodOop → vector of
+  bytecode offsets per sendJ2J site).  Tier2Compiler queries it
+  to compute T1's sendIdx for each send site and points its
+  inline IC at T1's icBase.  Side table, not inline, to avoid
+  cache-alignment regressions.
+- (b) Not done.  Would have T2 do the pre-send work then
+  TAIL-CALL T1's stencil_sendJ2J for the send itself, reusing
+  T1's IC and stencil code.  Complex: T2 would need to preserve
+  state.sp / state.ip / regs the way T1 stencils expect.
+- (c) **PARTIAL (this session, this commit).**  T2 no longer
+  replaces T1 by default — `tryJITActivation` runs T1 when both
+  tiers have compiled a method.  T2 only takes over when T1 is
+  unavailable (future: methods T1 fails to compile).  Set
+  `PHARO_T2_REPLACE=1` to restore old "T2 replaces T1" behavior
+  for bisection.  This is a defensive change — T2 compilation
+  still happens, but can no longer regress methods T1 handles
+  fine.  The "T2 as inline-helper" spirit of (c) needs (b) and a
+  tier-dispatch rethink — deferred.
 
 ---
 
