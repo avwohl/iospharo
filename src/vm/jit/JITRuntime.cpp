@@ -1012,18 +1012,31 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     const char* t2env = getenv("PHARO_T2");
                     static bool noT2 = !(t2env && t2env[0] == '1');
                     static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
+                    // Warmup delay (todo.md §1.2f real fix option b):
+                    // defer T2 compilation until T1 has run this method
+                    // PHARO_T2_WARMUP (default 0 = no delay) times.
+                    // This lets T1's inline IC populate before T2
+                    // intercepts the method.  executionCount is
+                    // incremented inside T1 code; it's 0 until T1 has
+                    // actually executed the method at least once.
+                    static int t2Warmup = getenv("PHARO_T2_WARMUP")
+                        ? atoi(getenv("PHARO_T2_WARMUP")) : 0;
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
-                        void* t2code = tier2Compiler_->compile(compiledMethod, jm);
-                        // Store result or sentinel: (void*)1 means "tried, failed"
-                        // so we don't retry on every activation.
-                        tier2Insert(key, t2code ? t2code : (void*)1);
-                        if (t2code) {
-                            std::string t2sel = interp_->memory().selectorOf(compiledMethod);
-                            fprintf(stderr, "[JIT] Tier 2 compiled method %p '%s' (%zu total)\n",
-                                    (void*)compiledMethod.rawBits(),
-                                    t2sel.c_str(),
-                                    tier2Compiler_->methodsCompiled());
+                        if (t2Warmup > 0 && jm &&
+                            (int)jm->executionCount < t2Warmup) {
+                            // Not warm yet — do NOT insert sentinel;
+                            // we'll retry on the next activation.
+                        } else {
+                            void* t2code = tier2Compiler_->compile(compiledMethod, jm);
+                            tier2Insert(key, t2code ? t2code : (void*)1);
+                            if (t2code) {
+                                std::string t2sel = interp_->memory().selectorOf(compiledMethod);
+                                fprintf(stderr, "[JIT] Tier 2 compiled method %p '%s' (%zu total)\n",
+                                        (void*)compiledMethod.rawBits(),
+                                        t2sel.c_str(),
+                                        tier2Compiler_->methodsCompiled());
+                            }
                         }
                     }
                 }
