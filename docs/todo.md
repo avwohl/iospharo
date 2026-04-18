@@ -44,11 +44,14 @@ unsupported bytecode.
 
 Next slices (each ~1 session):
 
-- **1.2a  Sends in multi-bc.**  Emit push-args + ExitSend at the
-  send site.  Interpreter resumes at the send byte, dispatches,
-  then continues in interpreter mode (bail point + after).  Value:
-  covers send-containing arith methods, biggest coverage
-  unlock.  Risk: shares code paths with 1.1 (1-arg IC DNU).
+- **1.2a  Sends in multi-bc.**  **IMPLEMENTED BUT GATED (a4a3ce7).**
+  Emits push-args + ExitSend at the send site; interpreter runs
+  the send + everything after.  Coverage jumps 25 → 233 methods
+  compiled.  BUT causes array-fill bench to drop from 3/6 fast-
+  mode runs to 0/6 — same pattern as inline IC (§1.3): T2
+  replaces T1's inline IC probe with bail-to-C, net slower.
+  Gated behind `PHARO_T2_MBC_SENDS=1`.  The real fix is inline
+  IC at send sites (item 1.2f below).
   
 - **1.2b  Short forward jumps.**  Bytecodes 0xB0-0xB7 (unconditional
   +1..+8).  Emit an asmjit label at each jump target; forward
