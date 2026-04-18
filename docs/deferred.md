@@ -71,6 +71,21 @@ as known-slow.
 `PHARO_JIT_DEFER=4` default works. `PHARO_JIT_DEFER=0` still hangs
 during Morphic boot — scheduling, not correctness.
 
+### B5. JIT `PHARO_JIT_DEFER=0` eager-compile DNU cascade
+At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods immediately
+and hits multiple DNUs during `SmalltalkImage>>isInteractiveGraphic`:
+- `#atEnd` on SmallInteger 13 inside `ZnUTF8Encoder>>decodeBytes:`
+- `#do:` not understood on 0x300016768 in `#nextPutAll:`
+- `#isNumber` not understood on a SmallFloat in `#=`
+Skipping JIT of `#decodeBytes:` uncovers the next miscompile.
+Root cause: likely a JIT bug in temp/inst-var access or block-capture
+under some bytecode pattern.  Default eval works fine (deferred JIT
+lets startup interpret the critical paths); only the aggressive
+`PHARO_JIT_DEFER=0` path fails.
+**Mitigation:** default `PHARO_JIT_DEFER=4` already sidesteps it.
+**Fix scope:** needs lldb-driven bisection on a specific method;
+out of scope for §B3 fix.
+
 ---
 
 ## C. Code state in-tree — experimental / opt-in
@@ -166,10 +181,14 @@ staleness concerns.  Remaining practical work:
    (the chain loop already handles it).  Enables non-inlined
    blocks to be T2-compiled; marginal benefit since Pharo inlines
    to:do:/whileTrue: at compile time.
-3. **Fix eval-mode B3 hang** so the startup.st benchmark actually
-   runs — currently `test_load_image eval "<expr>"` hits the
-   snapshot-resume path and parks in the scheduler-idle loop
-   before executing user code.  Unblocks local perf measurement.
+3. **B3 eval-mode fix shipped (2026-04-18).**  `test_load_image eval`
+   works end-to-end at default settings (JIT on, PHARO_JIT_DEFER=4s).
+   Root cause was a JIT deopt bug for `PushThisContext` — the
+   resume IP skipped the preceding `ExtB 1` prefix, so the
+   interpreter pushed `thisContext` instead of `thisProcess` on
+   the `DebugSession>>exception` path.  Fix: `bc.operand =
+   firstExtBCOffset` (JITCompiler.cpp:175).
+   Remaining: B5 eager-compile DNU cascade at `PHARO_JIT_DEFER=0`.
 4. **Pivot to D (iOS device work).** Needs physical hardware, not
    just code.
 
