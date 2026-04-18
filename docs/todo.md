@@ -166,12 +166,24 @@ The theoretical upper bound is φ ≈ 1.618 (Fibonacci call growth).
 reproducible — probably fixed by one of the many IC / stencil
 fixes that landed between then and now.
 
-### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)  **LIKELY RESOLVED (2026-04-18)**
+### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)  **STILL REPRODUCES (2026-04-18)**
 
-Was hypothesised to be a downstream effect of 2.1+2.2.  Both
-upstream items no longer reproduce.  Not independently verified
-— need to run the full `tinyBenchmarks` flow once to confirm,
-but the hang is almost certainly gone with them.
+Was hypothesised to be a downstream effect of 2.1+2.2.  Upstream
+items no longer reproduce individually, but the full
+`1 tinyBenchmarks` flow still hangs (verified this session).
+
+Diagnostic: individually `1 benchmark` returns 1028 and
+`20 benchFib` returns 21891 in the same eval run, so the
+primitives work.  The hang is somewhere in the combination /
+timing logic inside `tinyBenchmarks` itself (presumably a
+scheduler interaction around the `Time millisecondClockValue`
+or `Transcript cr` calls between the two sub-benches).
+
+Not a regression from session 22's jump work — repro is with
+PHARO_T2_MBC_JUMPS unset.  Low priority: the harness runs the
+bench components individually with no hang, and we have a
+custom `scripts/pharo-headless-test/` runner for SUnit tests
+that doesn't use tinyBenchmarks.
 
 ### 2.4  T1 IC hit-rate investigation  (B5 / A3)  **RESOLVED (2026-04-18)**
 
