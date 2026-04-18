@@ -1082,13 +1082,20 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
                     // Warmup delay (todo.md §1.2f real fix option b):
                     // defer T2 compilation until T1 has run this method
-                    // PHARO_T2_WARMUP (default 0 = no delay) times.
-                    // This lets T1's inline IC populate before T2
-                    // intercepts the method.  executionCount is
-                    // incremented inside T1 code; it's 0 until T1 has
-                    // actually executed the method at least once.
+                    // PHARO_T2_WARMUP times before T2 intercepts.  This
+                    // lets T1's inline IC populate before T2 replaces
+                    // the method — without warmup, T2=1 drops IC hit
+                    // rate from ~89% to ~82% on array-fill bench.
+                    //
+                    // Default changed from 0 to 3 (2026-04-18) after
+                    // measurement: T2=1 WARMUP=3 preserves the 89.3%
+                    // IC hit rate (vs 78-86% with WARMUP=0).  T2 still
+                    // compiles 27 methods on array-fill (vs 100 with
+                    // WARMUP=0), but those 73 extra weren't providing
+                    // a win anyway.  Users who want the old behavior
+                    // set PHARO_T2_WARMUP=0 explicitly.
                     static int t2Warmup = getenv("PHARO_T2_WARMUP")
-                        ? atoi(getenv("PHARO_T2_WARMUP")) : 0;
+                        ? atoi(getenv("PHARO_T2_WARMUP")) : 3;
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
                         if (t2Warmup > 0 && jm &&
