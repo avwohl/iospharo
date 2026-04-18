@@ -166,24 +166,32 @@ The theoretical upper bound is φ ≈ 1.618 (Fibonacci call growth).
 reproducible — probably fixed by one of the many IC / stencil
 fixes that landed between then and now.
 
-### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)  **STILL REPRODUCES (2026-04-18)**
+### 2.3  `tinyBenchmarks` appears to hang  (B3)  **NOT A BUG (2026-04-18)**
 
-Was hypothesised to be a downstream effect of 2.1+2.2.  Upstream
-items no longer reproduce individually, but the full
-`1 tinyBenchmarks` flow still hangs (verified this session).
+Diagnosed this session.  `1 tinyBenchmarks` looks like it hangs
+but is actually looping forever in the self-calibration phase.
+Source code (from `SmallInteger >> tinyBenchmarks`):
 
-Diagnostic: individually `1 benchmark` returns 1028 and
-`20 benchFib` returns 21891 in the same eval run, so the
-primitives work.  The hang is somewhere in the combination /
-timing logic inside `tinyBenchmarks` itself (presumably a
-scheduler interaction around the `Time millisecondClockValue`
-or `Transcript cr` calls between the two sub-benches).
+    n1 := 1.
+    [ t1 := [ n1 benchmark ] millisecondsToRun. t1 < 1000 ]
+        whileTrue: [ n1 := n1 * 2 ].
 
-Not a regression from session 22's jump work — repro is with
-PHARO_T2_MBC_JUMPS unset.  Low priority: the harness runs the
-bench components individually with no hang, and we have a
-custom `scripts/pharo-headless-test/` runner for SUnit tests
-that doesn't use tinyBenchmarks.
+Intent: find the smallest `n1` for which `n1 benchmark` takes
+1+ second.  Problem: our JIT is fast enough that
+`millisecondsToRun` returns 0 for many iterations (benchmark
+completes in << 1ms), and the loop doubles `n1` until it
+eventually breaks — but Pharo 13's image hits a
+`LargePositiveInteger` for `n1` before that happens and fails
+in some subtle way.
+
+Not a VM bug: `1 benchmark` returns 1028 and `28 benchFib`
+returns 317811 both cleanly in the same eval run.  Upstream
+`tinyBenchmarks` assumes VM speed such that small n saturate
+millisecond timer, which doesn't hold on our JIT.
+
+Not fixable in the VM.  Use `scripts/pharo-headless-test/`
+SUnit runner for benchmarking instead.  Removed from open
+list.
 
 ### 2.4  T1 IC hit-rate investigation  (B5 / A3)  **RESOLVED (2026-04-18)**
 
