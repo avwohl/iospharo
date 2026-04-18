@@ -148,14 +148,14 @@ The 50% hit rate in the original memory note was specific to the
 AWFY Permute bench; typical workloads show 97%+.  No further
 action.
 
-### 2.5  Shrink `stencil_sendJ2J`  (P2)  **MEASURED (2026-04-18)**
+### 2.5  Shrink `stencil_sendJ2J`  (P2)  **EXHAUSTED (2026-04-18)**
 
-523 ARM64 instructions per send-site.  Target 150-200 by
+523 ARM64 instructions per send-site.  Target was 150-200 by
 extracting the probe loop + megamorphic fallback into a shared
 helper that stencils tail-call.  Saves ~2KB per send site,
 improves i-cache.
 
-Two attempts:
+Three attempts, all unsuccessful:
 
 1. **Swap sendJ2J → sendPoly (696 B).**  Segfaults in resume
    path — the two stencils' operand / save-stack contracts
@@ -168,13 +168,26 @@ Two attempts:
    ratio dropped too.  Reverted to -O2; knob documented in
    extract_stencils.py.
 
-Further shrinkage (toward the 150-200 target) needs structural
-stencil refactoring — factor the rarely-taken megacache probe +
-full-miss path into a helper called only on IC miss.  That's
-doable via the same extract_stencils.py workflow but needs care
-to avoid breaking the `goto j2j_direct_call` / `goto
-exit_send_cached` label structure the current code uses.  Future
-session.
+3. **Hole-based `_HOLE_RT_IC_MISS` helper** (this session,
+   reverted).  Factored the megacache probe + full-miss C++
+   block to a new `jit_rt_ic_miss` runtime helper with
+   `_HOLE_RT_IC_MISS` patched in like other RT helpers, plus
+   HOLE_KIND_MAP + RUNTIME_HELPER_ID 13 plumbing in
+   extract_stencils.py, JITCompiler.cpp, JITRuntime.cpp,
+   helpers.icMiss.  Measured: sendJ2J 2092 → 2088 bytes (-4 B
+   only — the helper call + argument setup is almost as big as
+   the inlined probe).  Bench regressed 15-20% on array-fill
+   (median ~425ms vs baseline ~370-390ms), IC hit rate fell
+   98.9% → 73.2%.  Reverted the stencils.cpp extraction but
+   kept the helper + hook machinery (jit_rt_ic_miss,
+   HELPER_ID 13, case 13 in JITCompiler) in place for future
+   experiments on larger seldom-taken paths.
+
+The inline megacache probe is hot enough that out-of-lining it
+costs more than it saves.  Further shrinkage would need a much
+larger factor (e.g. the block_value dispatch block or the full
+primitive-kind switch), which carries the same risk of
+perturbing the fast path.  Leaving §2.5 parked.
 
 ### 2.6  Method-level JIT opt-in  (P3)  **DISPROVEN (2026-04-18)**
 
@@ -363,24 +376,21 @@ submissions to the Pharo project.
 
 ## 8. Recommendation — what to do next
 
-**Status after 2026-04-18:** 2.4, 2.2, 2.9 shipped/resolved; 2.6
-disproven.  Remaining VM work is either long (1.2 multi-bc
-extensions, 2.5 stencil shrink) or blocked on lldb (1.1 one-arg
-IC DNU).
+**Status after 2026-04-18:** 1.1, 2.4, 2.2, 2.9 shipped/resolved;
+2.5, 2.6 disproven.  Remaining VM work is the long multi-bc
+extensions in §1.2 and the architectural T1/T2 interaction in
+§1.3.
 
 For the VM codebase:
 
-1. **Fix the 1-arg IC DNU (1.1).**  Requires an lldb watchpoint
-   session to catch the stack-corruption moment.  Unblocks inline
-   IC coverage expansion and 1.2f (multi-bc inline IC at sends).
-
-2. **Multi-bc 1.2a (sends).**  Emit push-args + ExitSend inside
+1. **Multi-bc 1.2a (sends).**  Emit push-args + ExitSend inside
    the existing multi-bc walker.  Opens up arith + send bodies
    like `^ self at: idx + 1` for T2 compilation.
 
-3. **Shrink `stencil_sendJ2J` (2.5).**  523 ARM64 instructions →
-   target ~150-200 by factoring the IC probe + megamorphic path
-   into a shared helper.  ~2KB saved per send site, i-cache win.
+2. **Architectural T1/T2 interaction (1.3).**  T2 intercepting
+   methods breaks T1's inline-IC warmup.  Neither shared-IC,
+   warmup delay, nor self-only narrowing has solved this.  Needs
+   a rethink (shared IC table?  patch-T1-when-T2-compiles?).
 
 For the project mission:
 

@@ -1073,6 +1073,15 @@ extern "C" void (*_HOLE_RT_POP_FRAME)(JITState*);
 extern "C" void (*_HOLE_RT_J2J_CALL)(JITState*);
 extern "C" uint64_t (*_HOLE_RT_ARRAY_PRIM)(JITState*, uint64_t);
 extern "C" uint64_t (*_HOLE_RT_NEW_PRIM)(JITState*, uint64_t);
+// IC-miss megacache probe + exit-state setup.  Returns:
+//   0 = megacache miss, state set for EXIT_SEND — stencil returns.
+//   1 = megacache hit, state set for EXIT_SEND_CACHED — stencil returns.
+//   2 = megacache hit with J2J entry — stencil falls through to inline
+//       j2j_direct_call with *out_extra / *out_methodBits filled in.
+extern "C" int (*_HOLE_RT_IC_MISS)(
+    JITState* s, uint64_t* icData, uint64_t lookupKey,
+    int nArgs, int bcOffset,
+    uint64_t* out_extra, uint64_t* out_methodBits);
 
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
@@ -1402,19 +1411,24 @@ j2j_direct_call:
 
 ic_miss:
 
-    // IC MISS — probe megamorphic method cache before falling back
+    // IC MISS — probe megamorphic method cache before falling back.
+    // Tried factoring this block to jit_rt_ic_miss (todo.md §2.5):
+    // stencil shrunk 2092 → 2088 bytes (-4 bytes only) but bench
+    // perf regressed 15-20% on array-fill AND the C-side IC hit
+    // rate fell 98.9% → 73.2%.  The inline megacache probe is hot
+    // enough that out-of-lining it costs more than it saves.
+    // Reverted.  Keeping the helper + hooks in place for future
+    // experiments (e.g. factoring the larger block_value path).
     {
         uint64_t selectorBits = icData[18];
         if (selectorBits != 0) {
             MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
             MegaCacheEntry* megaHit = nullptr;
-            // Primary probe
             size_t hash = (size_t)(selectorBits ^ lookupKey) & 65535;
             MegaCacheEntry* entry = &cache[hash];
             if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
                 megaHit = entry;
             } else {
-                // Secondary probe (rotated hash)
                 size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey) & 65535;
                 entry = &cache[hash2];
                 if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
@@ -1422,10 +1436,8 @@ ic_miss:
                 }
             }
             if (megaHit) {
-                // Try J2J direct call if target has JIT code
                 if (megaHit->jitEntry != 0) {
                     uint8_t* _jm = (uint8_t*)megaHit->jitEntry - JM_SIZE;
-                    // Validate JITMethod.state == Compiled (offset 32)
                     if (*(_jm + 32) == 1) {
                         extra = J2J_ENTRY_BIT | (megaHit->jitEntry & J2J_ADDR_MASK);
                         methodBits = megaHit->methodBits;

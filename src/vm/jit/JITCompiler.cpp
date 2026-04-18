@@ -779,6 +779,7 @@ bool JITCompiler::patchStencilInstance(
             case 10: helperAddr = helpers_.j2jCall; break;
             case 11: helperAddr = helpers_.arrayPrim; break;
             case 12: helperAddr = helpers_.newPrim; break;
+            case 13: helperAddr = helpers_.icMiss; break;
             default:
                 fprintf(stderr, "[JIT] Unknown runtime helper ID %d\n", helperId);
                 return false;
@@ -809,6 +810,7 @@ bool JITCompiler::patchStencilInstance(
                     case 10: poolValue = reinterpret_cast<uint64_t>(&helpers_.j2jCall); break;
                     case 11: poolValue = reinterpret_cast<uint64_t>(&helpers_.arrayPrim); break;
                     case 12: poolValue = reinterpret_cast<uint64_t>(&helpers_.newPrim); break;
+                    case 13: poolValue = reinterpret_cast<uint64_t>(&helpers_.icMiss); break;
                     default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
                     }
                     uint64_t poolAddr = allocOrReuseSlot(reloc, poolValue);
@@ -826,6 +828,7 @@ bool JITCompiler::patchStencilInstance(
                 case 9: poolValue = reinterpret_cast<uint64_t>(&helpers_.popFrame); break;
                 case 11: poolValue = reinterpret_cast<uint64_t>(&helpers_.arrayPrim); break;
                 case 12: poolValue = reinterpret_cast<uint64_t>(&helpers_.newPrim); break;
+                case 13: poolValue = reinterpret_cast<uint64_t>(&helpers_.icMiss); break;
                 default: poolValue = reinterpret_cast<uint64_t>(helperAddr); break;
                 }
                 uint64_t poolAddr = allocPoolSlot(poolValue);

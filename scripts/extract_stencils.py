@@ -140,6 +140,7 @@ HOLE_KIND_MAP = {
     "__HOLE_RT_J2J_CALL": "HoleKind::RuntimeHelper",
     "__HOLE_RT_ARRAY_PRIM": "HoleKind::RuntimeHelper",
     "__HOLE_RT_NEW_PRIM": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_IC_MISS": "HoleKind::RuntimeHelper",
     "__HOLE_RESUME_ADDR": "HoleKind::ResumeAddr",
 }
 
@@ -162,6 +163,7 @@ RUNTIME_HELPER_ID = {
     "__HOLE_RT_J2J_CALL": 10,
     "__HOLE_RT_ARRAY_PRIM": 11,
     "__HOLE_RT_NEW_PRIM": 12,
+    "__HOLE_RT_IC_MISS": 13,
     "__HOLE_RESUME_ADDR": 0,
 }
 

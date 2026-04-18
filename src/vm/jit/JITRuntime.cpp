@@ -316,6 +316,73 @@ ic_hit:
     return;
 }
 
+// Out-of-line IC-miss megacache probe + exit-state setup.
+// todo.md §2.5: factoring this out of stencil_sendJ2J's rarely-
+// taken ic_miss branch shrinks the hot stencil body.  The branch
+// executes only on IC miss (~1-2% of sends on warm code), so the
+// call + indirection cost here is amortised.
+//
+// Returns:
+//   0 = megacache miss, state already set for EXIT_SEND
+//   1 = megacache hit, state set for EXIT_SEND_CACHED
+//   2 = megacache hit with J2J entry — caller does inline
+//       j2j_direct_call with *out_extra / *out_methodBits.
+extern "C" int jit_rt_ic_miss(
+    JITState* s, uint64_t* icData, uint64_t lookupKey,
+    int nArgs, int bcOffset,
+    uint64_t* out_extra, uint64_t* out_methodBits)
+{
+    // Constants matching stencils.cpp
+    constexpr uint64_t J2J_ENTRY_BIT  = 1ULL << 60;
+    constexpr uint64_t J2J_ADDR_MASK  = 0x0000FFFFFFFFFFFFULL;
+    // JITMethod header size used by stencils to find the methodObj
+    // immediately before jitEntry (codeStart).
+    constexpr int JM_SIZE_STENCIL = sizeof(JITMethod);
+    constexpr int JM_STATE_OFFSET = 32;
+
+    uint64_t selectorBits = icData[18];
+    JITRuntime* jr = s->interp ? &s->interp->jitRuntime() : nullptr;
+    if (selectorBits != 0 && jr) {
+        MegaCacheEntry* cache = jr->megaCache();
+        MegaCacheEntry* megaHit = nullptr;
+
+        size_t hash = (size_t)(selectorBits ^ lookupKey) & (MegaCacheSize - 1);
+        MegaCacheEntry* entry = &cache[hash];
+        if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+            megaHit = entry;
+        } else {
+            size_t hash2 = (size_t)((selectorBits >> 3) ^ (lookupKey << 2) ^ lookupKey)
+                           & (MegaCacheSize - 1);
+            entry = &cache[hash2];
+            if (entry->selectorBits == selectorBits && entry->classIndex == lookupKey) {
+                megaHit = entry;
+            }
+        }
+        if (megaHit) {
+            if (megaHit->jitEntry != 0) {
+                uint8_t* jm = reinterpret_cast<uint8_t*>(megaHit->jitEntry) - JM_SIZE_STENCIL;
+                if (*(jm + JM_STATE_OFFSET) == 1) {
+                    *out_extra = J2J_ENTRY_BIT | (megaHit->jitEntry & J2J_ADDR_MASK);
+                    *out_methodBits = megaHit->methodBits;
+                    return 2;
+                }
+            }
+            s->cachedTarget = Oop::fromRawBits(megaHit->methodBits);
+            s->icDataPtr = icData;
+            s->sendArgCount = nArgs;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = ExitSendCached;
+            return 1;
+        }
+    }
+    // Megacache miss
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = ExitSend;
+    return 0;
+}
+
 // Out-of-line array primitive handler for IC hit path.
 // Called from sendJ2J stencil when primKind >= 14 (at:/at:put:/size).
 // info = (primKind << 8) | nArgs
@@ -675,6 +742,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.j2jCall = reinterpret_cast<void*>(&jit_rt_j2j_call);
     helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
     helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
+    helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (MIR-based)

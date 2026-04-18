@@ -91,6 +91,7 @@ public:
         void* j2jCall;          // jit_rt_j2j_call (merged push+call+pop)
         void* arrayPrim;        // jit_rt_array_prim (out-of-line at:/at:put:/size)
         void* newPrim;          // jit_rt_new_prim (out-of-line new/new:)
+        void* icMiss;           // jit_rt_ic_miss (out-of-line megacache probe + exit-state)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }
