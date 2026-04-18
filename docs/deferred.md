@@ -26,20 +26,24 @@ updated in lockstep.
 **Value achieved:** Core intent landed; benchmarks pending next full
 run.  Helps T1 send-heavy workloads.
 
-### A3. IC hit rate investigation — **PARTIALLY DIAGNOSED**
+### A3. IC hit rate investigation — **RESOLVED (2026-04-18)**
 **Analysis:** `memory/project_ic_hit_rate_investigation.md` +
-`memory/project_ic_selbits_mystery.md`.
-**Status:** Re-measured 2026-04-18: current IC hit rate on
-array-fill is 89.1% (not 50%).  The old "100% noSelBits on
-miss" observation doesn't reproduce — the fraction is now
-~74% of misses (4734/6339), not 100%.  Something changed
-between sessions that improved the fundamental picture.
-**Remaining diagnostic:** 74% of misses still report
-noSelBits.  Root cause still hypothesised as `_HOLE_OPERAND2`
-indirection, but needs lldb watchpoint to confirm.
-**Value:** Lifts IC hit from 89% to ~94% if fully fixed —
-marginal over the current baseline, below the threshold that
-would justify the lldb session.
+`memory/project_ic_selbits_mystery.md` (both historical).
+**Final status:** `noSelBits=0` on every workload reproduced in
+this session — startup, short loops, mixed send workloads.  IC hit
+rate 97.5% on startup-dominated runs (5697/5845).  See also
+`docs/todo.md` §2.4 (RESOLVED 2026-04-18) which reached the same
+conclusion via the yourself-loop measurement.
+**Root-cause review:** the `_HOLE_OPERAND2` GOT-indirect reloc
+pattern (`adrp+ldr` → `x1 = *poolSlot = icBase`) is correct by
+construction; `icData[18]` at runtime reads `icBase + 144`, which
+is where the compiler writes `selectorBits` at
+`JITCompiler.cpp:1957`.
+**Historical 74%/100% observations** came from specific benches
+(AWFY Permute, array-fill) that no longer reproduce.  Not worth
+chasing without a live reproducer, and the fix ceiling was
+already marginal (89% → 94% IC hit, ~5% on the marginal workload).
+**Closed.
 
 ---
 
@@ -145,10 +149,10 @@ changes; they're image-side issues to propose upstream.
 
 ## F. What's left for a future session
 
-**Post 2026-04-18 update:**  A1, A2, A3 diag, SimStack re-enable,
-and multi-bc jumps (forward + backward) have all shipped.  MIR was
-removed in 2026-04-17; T2 now runs on asmjit with no GC staleness
-concerns.  Remaining practical work:
+**Post 2026-04-18 update:**  A1, A2, A3, SimStack re-enable,
+and multi-bc jumps (forward + backward) have all shipped or closed.
+MIR was removed in 2026-04-17; T2 now runs on asmjit with no GC
+staleness concerns.  Remaining practical work:
 
 1. **Architectural T1/T2 interaction (§1.3).**  T2 intercepting
    methods still breaks T1's inline-IC warmup — neither shared-IC,
@@ -157,16 +161,17 @@ concerns.  Remaining practical work:
    (inline IC at multi-bc send sites), and the regression path
    that forced A1 off.  Needs a design rethink (shared IC table
    across T1/T2? patch-T1-when-T2-compiles?).
-2. **Finish A3 (IC hit-rate).** Diagnostics shipped, actual fix needs
-   lldb watchpoint session — something clears `icData[18]` between
-   compile and first `ExitSend`, invisible to static analysis.
-3. **Multi-bc §1.2e block activation** (0xF9/0xFA PushFullBlock/
+2. **Multi-bc §1.2e block activation** (0xF9/0xFA PushFullBlock/
    PushClosure).  Uses the existing `ExitBlockCreate` mechanism
    (the chain loop already handles it).  Enables non-inlined
    blocks to be T2-compiled; marginal benefit since Pharo inlines
    to:do:/whileTrue: at compile time.
+3. **Fix eval-mode B3 hang** so the startup.st benchmark actually
+   runs — currently `test_load_image eval "<expr>"` hits the
+   snapshot-resume path and parks in the scheduler-idle loop
+   before executing user code.  Unblocks local perf measurement.
 4. **Pivot to D (iOS device work).** Needs physical hardware, not
    just code.
 
-Once §1.3 is sorted + A3 fixed, JIT reaches diminishing returns
-and D is where the project's actual value delivery happens.
+Once §1.3 is sorted, JIT reaches diminishing returns and D is
+where the project's actual value delivery happens.
