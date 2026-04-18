@@ -585,6 +585,13 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                     // deopt to the interpreter for correct lookup.
                     int argCount = bc.operand2;
                     bc.branchTarget = bc.operand;  // Save literal/selector index for mega cache
+                    // Tried swapping to stencil_sendPoly (696 bytes,
+                    // vs sendJ2J's 2092) behind PHARO_JIT_POLY=1 for
+                    // todo.md §2.5: caused a tryResume/chain-loop
+                    // crash (sendPoly's operand layout / save-stack
+                    // expectations differ from sendJ2J's despite
+                    // sharing the first two packed fields).  Not a
+                    // drop-in replacement.  Reverted.
                     bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendJ2J);
                     bc.operand = (bc.bcLength << 24) | (argCount << 16) | (bc.bcOffset & 0xFFFF);
                     // operand2Ptr will be set after code zone allocation
