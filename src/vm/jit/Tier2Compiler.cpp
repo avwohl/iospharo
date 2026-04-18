@@ -1472,9 +1472,21 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                                                     : SistaV1::ShortJumpFalseBase;
         return i + 2 + (size_t)(op - base);
     };
+    const bool jumpsEnabled = getenv("PHARO_T2_MBC_JUMPS") != nullptr;
+    // 2-byte extended jumps (0xED/0xEE/0xEF): offset is unsigned byte
+    // (0-255, forward).  ExtA/ExtB prefix bytecodes (0xE0/0xE1) are
+    // NOT supported yet — methods that use them bail via the generic
+    // unsupported-op path.  This means we only compile forward jumps
+    // up to +255 bytes; signed 16-bit offsets (incl. backward loops)
+    // need 1.2d's extB state machine.
+    auto isExtForwardJump = [](uint8_t op) {
+        return op == SistaV1::ExtJump
+            || op == SistaV1::ExtJumpTrue
+            || op == SistaV1::ExtJumpFalse;
+    };
     for (size_t i = 0; i < bodyLen;) {
         uint8_t op = bytes[bcStart + i];
-        if (SistaV1::isAnyShortJump(op) && getenv("PHARO_T2_MBC_JUMPS") != nullptr) {
+        if (SistaV1::isAnyShortJump(op) && jumpsEnabled) {
             size_t target = shortJumpTarget(op, i);
             if (target >= bodyLen || target <= i) {
                 g_mbcBailed++;
@@ -1482,6 +1494,23 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             }
             jumpTargets.insert(target);
             i += mbcOpLen(op);   // linear walk continues sequentially
+            continue;
+        }
+        if (isExtForwardJump(op) && jumpsEnabled) {
+            // 2-byte bytecode: op, offset-byte.  Must have room.
+            if (i + 1 >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            uint8_t offByte = bytes[bcStart + i + 1];
+            size_t target = i + 2 + (size_t)offByte;
+            // Forward-only (unsigned byte) within bodyLen.
+            if (target >= bodyLen || target <= i) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            jumpTargets.insert(target);
+            i += 2;
             continue;
         }
         if (isMBCSupported(op)) {
@@ -1964,7 +1993,9 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             size_t target = i + 2 + (size_t)(op - SistaV1::ShortJumpBase);
             cc.b(offsetLabels.at(target));
         }
-        else if (SistaV1::isConditionalShortJump(op)) {
+        else if (SistaV1::isConditionalShortJump(op) ||
+                 op == SistaV1::ExtJumpTrue ||
+                 op == SistaV1::ExtJumpFalse) {
             // Conditional forward jump: pop a boolean, branch to
             // target if condition matches, fall through otherwise.
             // On non-boolean: bail to interpreter at this op's
@@ -1973,10 +2004,23 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // We peek TOS (no pop yet) so the bail path leaves the
             // value on the stack for the interpreter.  sp is flushed
             // before the comparison so the bail state is consistent.
-            bool jumpIfTrue = SistaV1::isShortJumpTrue(op);
-            uint8_t base = jumpIfTrue ? SistaV1::ShortJumpTrueBase
-                                      : SistaV1::ShortJumpFalseBase;
-            size_t target = i + 2 + (size_t)(op - base);
+            bool jumpIfTrue;
+            size_t target;
+            int opLen;
+            if (SistaV1::isShortJumpTrue(op)) {
+                jumpIfTrue = true;
+                target = i + 2 + (size_t)(op - SistaV1::ShortJumpTrueBase);
+                opLen = 1;
+            } else if (SistaV1::isShortJumpFalse(op)) {
+                jumpIfTrue = false;
+                target = i + 2 + (size_t)(op - SistaV1::ShortJumpFalseBase);
+                opLen = 1;
+            } else {
+                // ExtJumpTrue / ExtJumpFalse: 2-byte, offset is unsigned byte
+                jumpIfTrue = (op == SistaV1::ExtJumpTrue);
+                target = i + 2 + (size_t)bytes[bcStart + i + 1];
+                opLen = 2;
+            }
 
             cc.str(sp, a64::ptr(statePtr, OFF_SP));
 
@@ -2015,6 +2059,18 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             cc.b(lblBailTail);
 
             cc.bind(lblFallThrough);
+
+            if (opLen == 2) {
+                i += 2;
+                continue;   // skip default i += mbcOpLen(op) (returns 1)
+            }
+        }
+        else if (op == SistaV1::ExtJump) {
+            // 2-byte unconditional forward jump (ExtB=0, no prefix).
+            size_t target = i + 2 + (size_t)bytes[bcStart + i + 1];
+            cc.b(offsetLabels.at(target));
+            i += 2;
+            continue;
         }
         else {
             // Should have been caught in pass 1.
