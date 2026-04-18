@@ -215,7 +215,10 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             // Non-FullBlock or non-local return (extA > 0): complex semantics. Deopt.
-            bc.operand = bc.bcOffset;
+            // 0x5E (BlockReturnTop) reads extA_ (enclosing levels) and extB_
+            // (jump distance) in the interpreter, so resume at the first
+            // extension byte when present, not the 0x5D/0x5E itself.
+            bc.operand = (firstExtBCOffset >= 0) ? firstExtBCOffset : bc.bcOffset;
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
             decoded.push_back(bc);
             i += bc.bcLength;
@@ -494,9 +497,12 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 continue;
             }
             case SistaV1::PushClosure: {
-                // Old-style closure — deopt to interpreter (3-byte)
+                // Old-style closure — deopt to interpreter (3-byte).
+                // Interpreter reads both extA_ (numCopied/numArgs upper bits)
+                // and extB_ (blockSize upper bits), so resume at the first
+                // extension byte when present.
                 if (i + 2 >= length) goto done;
-                bc.operand = bc.bcOffset;
+                bc.operand = (firstExtBCOffset >= 0) ? firstExtBCOffset : bc.bcOffset;
                 bc.bcLength = 3;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
                 decoded.push_back(bc);
