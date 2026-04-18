@@ -464,15 +464,18 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         numPushes = 2;
         sendIPOff = 2;
         arithOp = b2;
-    } else if (getenv("PHARO_T2_ONEARG_IC")
-                && bodyLen >= 4 && SistaV1::isSend1(b2)
+    } else if (bodyLen >= 4 && SistaV1::isSend1(b2)
                 && bytes[bcStart + 3] == SistaV1::ReturnTop
                 && decodePush(b0, pushes[0])
                 && decodePush(b1, pushes[1])) {
-        // GATED: OneArgSendInlineIC (and its force-miss variant) both
-        // trigger intermittent DNUs during startup — see jit-todo.md.
-        // Explicit opt-in via PHARO_T2_ONEARG_IC=1 so we can debug
-        // later without accidentally enabling in benchmarks.
+        // ^ <push0> foo: <push1> — 2 pushes + inline IC probe.
+        //
+        // Previously gated due to a flaky "#isNumber/#x not understood"
+        // DNU that was root-caused to the IC-counter bump sequence
+        // emitting extra instructions that corrupted register
+        // allocation / code layout.  Removing the counters (hit/miss
+        // no longer logged from emitted code) fixed it — 0 DNU
+        // matches across 12 runs.
         kind = ReturnKind::OneArgSendInlineIC;
         numPushes = 2;
         sendIPOff = 2;
@@ -1290,7 +1293,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         cc.b(lblMiss);
 
         // Hit paths: load method, set exitReason = ExitSendCached,
-        // jump to epilogue
+        // jump to epilogue.  (Removed the debug counter bump here —
+        // it was emitting a 3-store per-path sequence that might
+        // have contributed to the 1-arg flakiness.  If we need the
+        // counters again they can go on the C side in the chain loop.)
         a64::Gp method   = cc.new_gp64("method");
         a64::Gp exitCode = cc.new_gp32("exitCode");
         for (int i = 0; i < IC_ENTRIES; i++) {
@@ -1298,29 +1304,12 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             cc.ldr(method, a64::ptr(icData, IC_METHOD_OFF(i)));
             cc.mov(exitCode, EXIT_SEND_CACHED);
             cc.str(method, a64::ptr(statePtr, OFF_CACHEDTARGET));
-            // bump g_icHit (non-atomic; single-threaded for now)
-            {
-                a64::Gp ctrAddr = cc.new_gp64("ctrAddr");
-                a64::Gp ctrVal  = cc.new_gp64("ctrVal");
-                cc.mov(ctrAddr, asmjit::Imm(reinterpret_cast<uint64_t>(&g_icHit)));
-                cc.ldr(ctrVal, a64::ptr(ctrAddr));
-                cc.add(ctrVal, ctrVal, 1);
-                cc.str(ctrVal, a64::ptr(ctrAddr));
-            }
             cc.b(lblEpi);
         }
 
         // Miss: exitReason = ExitSend; fall through to epilogue.
         cc.bind(lblMiss);
         cc.mov(exitCode, EXIT_SEND);
-        {
-            a64::Gp ctrAddr = cc.new_gp64("ctrAddr");
-            a64::Gp ctrVal  = cc.new_gp64("ctrVal");
-            cc.mov(ctrAddr, asmjit::Imm(reinterpret_cast<uint64_t>(&g_icMiss)));
-            cc.ldr(ctrVal, a64::ptr(ctrAddr));
-            cc.add(ctrVal, ctrVal, 1);
-            cc.str(ctrVal, a64::ptr(ctrAddr));
-        }
 
         cc.bind(lblEpi);
         cc.str(icData, a64::ptr(statePtr, OFF_ICDATAPTR));
