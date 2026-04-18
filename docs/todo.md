@@ -96,10 +96,13 @@ relevant to T1 behaviour.
 doubling loop.  Timing-sensitive.  Likely stale IC entry in the
 recursive benchFib path.  `memory/project_tinybench_jit_hang.md`.
 
-### 2.2  benchFib 2nd-iteration 12× slowdown  (B2)
+### 2.2  benchFib 2nd-iteration 12× slowdown  (B2)  **RESOLVED (2026-04-18)**
 
-`28 benchFib`=57ms, `29 benchFib` right after=1065ms.  First call
-compiles something that makes subsequent recursion slow.
+Re-measured: `28 benchFib`=55ms, `29 benchFib`=79ms, ratio=1.44.
+The theoretical upper bound is φ ≈ 1.618 (Fibonacci call growth).
+1.44 is normal.  The 12× number in the old note is no longer
+reproducible — probably fixed by one of the many IC / stencil
+fixes that landed between then and now.
 
 ### 2.3  `tinyBenchmarks` scheduler-idle hang  (B3)
 
@@ -147,10 +150,14 @@ Disabled by default (`b9ab22e`) because of a timing-sensitive
 correctness bug in arith-jump chains after hot loops.  ~5-10% win
 on arith-heavy code once the bug is root-caused.  Depends on 2.1/2.2.
 
-### 2.9  Reduce `tryJITActivation` fast-reject overhead  (P6)
+### 2.9  Reduce `tryJITActivation` fast-reject overhead  (P6)  **IMPLEMENTED (2026-04-18)**
 
-~10% hit rate today; 90% of activations reach the function and bail
-at the "method not compiled" check.  Inline the check at call sites.
+`Interpreter::canJITActivate()` inline helper added (a054b2b).
+Call site pattern: `if (canJITActivate(m) && tryJITActivation(m, n))`
+— short-circuit `&&` skips the function call + trace guards when
+the method isn't compiled.  Correctness preserved; bench noise
+dominates any visible improvement but the miss-path instruction
+count went down.
 
 ### 2.10  Enable A1 (T2 chain-loop continuation)  (P7)
 
@@ -298,25 +305,28 @@ submissions to the Pharo project.
 
 ## 8. Recommendation — what to do next
 
-For the VM codebase specifically:
+**Status after 2026-04-18:** 2.4, 2.2, 2.9 shipped/resolved; 2.6
+disproven.  Remaining VM work is either long (1.2 multi-bc
+extensions, 2.5 stencil shrink) or blocked on lldb (1.1 one-arg
+IC DNU).
 
-1. **Fix the IC selBits runtime mismatch (2.4).**  Half a day with
-   lldb.  Unblocks the T1 megacache fast path; realistic ~90% IC
-   hit rate instead of current ~50%.  Highest ROI.
+For the VM codebase:
 
-2. **Fix the 1-arg IC DNU (1.1).**  Blocks inline IC coverage
-   expansion.  Also needs lldb.  Once fixed, 1.2f can land.
+1. **Fix the 1-arg IC DNU (1.1).**  Requires an lldb watchpoint
+   session to catch the stack-corruption moment.  Unblocks inline
+   IC coverage expansion and 1.2f (multi-bc inline IC at sends).
 
-3. **Method-level JIT opt-in (2.6).**  Half session.  Caps the
-   worst-case T1 regression on arith loops without touching
-   architecture.
+2. **Multi-bc 1.2a (sends).**  Emit push-args + ExitSend inside
+   the existing multi-bc walker.  Opens up arith + send bodies
+   like `^ self at: idx + 1` for T2 compilation.
 
-4. **Multi-bc 1.2a/b/c (sends, jumps).**  Multi-session.  Path to
-   broader real-world method coverage.
+3. **Shrink `stencil_sendJ2J` (2.5).**  523 ARM64 instructions →
+   target ~150-200 by factoring the IC probe + megamorphic path
+   into a shared helper.  ~2KB saved per send site, i-cache win.
 
 For the project mission:
 
-5. **Pivot to iOS (§4).**  Mac Catalyst works today.  iOS device
+4. **Pivot to iOS (§4).**  Mac Catalyst works today.  iOS device
    testing is blocked on hardware + signing, not code.  JIT perf
    has eaten 20+ sessions with diminishing returns; the VM is
    correct and runs the image.  Ship it.
