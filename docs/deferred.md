@@ -78,39 +78,37 @@ and hits multiple DNUs during `SmalltalkImage>>isInteractiveGraphic`:
 - `#do:` not understood on `Symbol class` in `#nextPutAll:`
 - `#isNumber` not understood on a SmallFloat in `#=`
 
-**Diagnosis progress (2026-04-18):**
-- The `atEnd` DNU receiver is a SmallInteger whose value matches the
-  size of the attribute string being decoded ("--headless"→10,
-  "--interactive"→13, etc.).  Strong signal that `aCollection size`
-  ends up where the ReadStream should be.
-- Bisection via `PHARO_JIT_SKIP_SELECTORS`:
-  - Skipping `#on:` (both class and inst methods) → atEnd gone
-    (but exposes the `#do:` DNU elsewhere).
-  - Skipping `#decodeBytes:` alone → atEnd gone (exposes `#do:`).
-  - Skipping `#utf8Decoded` / `#getSystemAttribute:` → atEnd gone.
-  - Skipping `#basicNew`, `#size`, `#reset`, `#readStream`, or
-    `#isHeadless` individually → atEnd still fires.
-  - `PHARO_JIT_NO_BLOCKS=1` → atEnd still fires (so not a compiled-
-    block bug).
-- So the bug is in JIT-compiled *method* code somewhere in the
-  `on:` chain (PositionableStream class>>on: or
-  PositionableStream>>on:), which passes a stale / wrong value up
-  through readStream to decodeBytes:.
-- The CompiledBlock (outer block of `streamContents: [...]`) runs
-  through the interpreter at this stage (not yet hot-compiled), so
-  the bug is in a JIT-compiled method return that leaves the
-  receiver's `readLimit` (SmallInt size) on the stack where the
-  stream instance should be.
-- Prime suspect: J2J inline-return state in the class-method
-  `^ self basicNew on: aCollection` chain, where multiple stacked
-  J2J saves may interact with the nested on: (class→inst) send.
+**Root cause (2026-04-18):** cold-IC JIT compilation of the
+`PositionableStream class>>on:` → `PositionableStream>>on:` chain
+corrupts the J2J return stack, leaving `aCollection size`
+(SmallInt) where the stream instance should be.  The wrong SmallInt
+gets assigned to `byteStream` by `decodeBytes:` bc[2]
+`popStoreTemp 1`.
 
-**Mitigation:** default `PHARO_JIT_DEFER=4` already sidesteps it.
-**Fix scope:** needs JIT runtime trace (printfs on J2J save
-cursor, per-bytecode stack state in decodeBytes:) to confirm the
-exact J2J corruption.  Pure-code bisection cannot resolve further.
-Not blocking the default path; deferred until a targeted debug
-session.
+**Narrowing (exhaustive bisection):**
+- `PHARO_JIT_SKIP_SELECTORS='on:'` → gone.  Individual
+  `basicNew`/`size`/`reset`/`readStream`/`isHeadless` don't help.
+- `PHARO_J2J_SKIP_SELECTORS='on:'` → gone.
+- `PHARO_JIT_NO_BLOCKS=1` → still fires (not a CompiledBlock bug).
+- `PHARO_NO_EAGER_COMPILE=1` → still fires.
+- `PHARO_JIT_THRESHOLD=100` → gone.  Confirms it's a COLD-IC bug.
+- `PHARO_JIT_DEFER=1` (1s warm-up) → gone.  Default is 4s.
+
+**Why deferral fixes it:** interpreter-only pre-warming populates
+ICs via `patchJITICAfterSend` + mega cache.  When JIT finally
+compiles the methods, ICs already have filled slots; the
+IC-hit path runs on first JIT invocation, bypassing the
+corruption in the cold ic_miss / J2J-init path.
+
+**To land a fix:** needs runtime J2J tracing infrastructure —
+add `_HOLE_RT_J2J_TRACE` stencil reloc + helper, register in
+extract_stencils.py, regen stencils.  See
+`memory/project_b5_j2j_onchain.md` for full plan.
+
+**Mitigation:** default `PHARO_JIT_DEFER=4s` already sidesteps it
+entirely.  B5 only impacts aggressive `PHARO_JIT_DEFER=0` path,
+which isn't a supported default.  Not blocking any user-visible
+behavior.
 
 ---
 
