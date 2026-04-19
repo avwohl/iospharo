@@ -21,7 +21,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
   Multi-block control flow + inline arith + unspeculated sends +
   phi nodes + medium-distance jumps + loops + extended
-  push/store bytecodes now work.  25 round-trip tests passing:
+  push/store + inline int/char literals + ExtSend now work.
+  29 round-trip tests passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -33,13 +34,15 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - ExtendA / ExtendB (0xE0 / 0xE1) prefix bytes
       - ExtPushRecvVar (0xE2), ExtPushLitConst (0xE4),
         ExtPushTemp (0xE5)
+      - PushInteger (0xE8), PushCharacter (0xE9)
       - ExtPopStoreRecv (0xF0), ExtPopStoreTemp (0xF2)
       - ExtJump / ExtJumpTrue / ExtJumpFalse (0xED-0xEF) — both
         forward and backward (loops supported)
       - Arith + - * on SmallInt operands (tag-preserving, no overflow
         check yet)
-      - Send0/1/2 (0x80-0xAF) as ExitSend bail — interpreter takes
-        over at the send; compiled code never resumes
+      - Send0/1/2 (0x80-0xAF) + ExtSend (0xEA) as ExitSend bail —
+        interpreter takes over at the send; compiled code never
+        resumes
 
       IR ops implemented:
       - kConstantOop, kLoadReceiver, kLoadTrueOop, kLoadFalseOop
@@ -59,7 +62,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `6053428` (phi nodes for merge blocks),
   `7b98ee5` (ExtendB + ExtJump forward for medium-distance jumps),
   `8a5dfd0` (backward ExtJump — loop support),
-  `600fc1e` (extended push/store bytecodes 0xE2-0xE5, 0xF0, 0xF2).
+  `600fc1e` (extended push/store bytecodes 0xE2-0xE5, 0xF0, 0xF2),
+  `c1e2cb2` (PushInteger / PushCharacter / ExtSend).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
