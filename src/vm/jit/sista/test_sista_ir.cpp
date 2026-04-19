@@ -147,16 +147,85 @@ int main() {
         check(failed == 0, "fails at offset 0");
     }
 
-    // Lowering stub: interface exists, returns false (unimplemented).
+    // Lowering round-trip: lift → lower → execute → verify.
+    // Minimal JITState stand-in matching the real layout (offsets from
+    // src/vm/jit/JITState.hpp).  Only the fields the minimal subset
+    // touches are set.
+    struct FakeState {
+        void*    sp;              // offset 0
+        uint64_t receiver;        // offset 8
+        void*    literals;        // offset 16
+        void*    tempBase;        // offset 24
+        uint8_t  padA[40];        // fill to offset 72
+        int      argCount;        // offset 72
+        int      exitReason;      // offset 76
+        uint64_t returnValue;     // offset 80
+        uint8_t  padB[256];       // slack
+    };
+    static_assert(offsetof(FakeState, receiver) == 8, "receiver offset");
+    static_assert(offsetof(FakeState, tempBase) == 24, "tempBase offset");
+    static_assert(offsetof(FakeState, exitReason) == 76, "exitReason offset");
+    static_assert(offsetof(FakeState, returnValue) == 80, "returnValue offset");
+
+    Lowering lowering;
+
+    // Round-trip 1: Integer>>yourself (^ self).
     {
         Method lifted;
         const uint8_t bc[] = { SistaV1::PushReceiver, SistaV1::ReturnTop };
         Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
-        uint8_t buffer[256] = {};
-        CodeSink sink{buffer, sizeof(buffer), 0};
-        bool ok = lower(lifted, sink);
-        check(!ok, "lowering returns false until implemented");
-        check(sink.written == 0, "no bytes written by stub");
+
+        uint32_t failed = UINT32_MAX;
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower yourself succeeds");
+
+        FakeState state{};
+        state.receiver = 0xCAFEBABEULL;   // Fake Oop pattern
+        fn(&state);
+        check(state.returnValue == 0xCAFEBABEULL, "returnValue = receiver");
+        check(state.exitReason == 1, "exitReason = EXIT_RETURN");
+        std::cout << "\n--- round-trip yourself: returnValue=0x" << std::hex
+                  << state.returnValue << std::dec
+                  << " exitReason=" << state.exitReason << "\n";
+    }
+
+    // Round-trip 2: ^ t3 (PushTemp 3, ReturnTop).
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 3),
+            SistaV1::ReturnTop,
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 4, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ t3 succeeds");
+
+        uint64_t temps[4] = { 0x1111, 0x2222, 0x3333, 0xDEADBEEF };
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 0xDEADBEEFULL, "returnValue = temp[3]");
+        check(state.exitReason == 1, "exitReason = EXIT_RETURN");
+        std::cout << "--- round-trip ^ t3: returnValue=0x" << std::hex
+                  << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 3: ^ self via ReturnReceiver bytecode (same result).
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::ReturnReceiver };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower return-receiver succeeds");
+
+        FakeState state{};
+        state.receiver = 0x5555666677778888ULL;
+        fn(&state);
+        check(state.returnValue == 0x5555666677778888ULL, "returnValue = receiver");
+        std::cout << "--- round-trip return-receiver: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
     }
 
     std::cout << "PASS\n";

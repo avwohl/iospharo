@@ -1,55 +1,57 @@
 /*
- * SistaLowering.hpp - Sista IR -> native code
+ * SistaLowering.hpp - Sista IR -> native code (asmjit ARM64)
  *
- * Phase 2 of docs/sista-inlining-plan.md — takes a SistaMethod in IR
- * form and emits ARM64 machine code via asmjit, using the same
- * calling convention as the Tier 1 copy-and-patch JIT so the runtime
- * can invoke either tier transparently.
+ * Phase 2 of docs/sista-inlining-plan.md.  Takes a SistaMethod in IR
+ * form and emits ARM64 machine code via asmjit.  Calling convention
+ * matches Tier 1's copy-and-patch JIT so the runtime can invoke
+ * either tier transparently:
  *
- * Calling convention (ARM64):
- *   x0 = JITState* — input and output.
- *   Return value is placed in state->returnValue.
- *   state->exitReason is set before return.
+ *   Signature: void fn(JITState* state)
+ *   x0 = state
+ *   Return via state->returnValue + state->exitReason = EXIT_RETURN.
  *
- * Current status: interface only.  Implementation pending — Phase 2
- * will land the lowerer for the same minimal subset the builder
- * supports (load_recv, load_temp, return).  When that lands, a
- * round-trip test (lift -> lower -> execute -> compare to stencil
- * JIT result) becomes possible and gates further Phase 2 work.
+ * Current scope: the same minimal bytecode subset that SistaBuilder
+ * handles — load_recv, load_temp, return.  Expand incrementally; each
+ * new op lands with a round-trip test (lift → lower → execute →
+ * assert result matches Tier 1).
  */
 #ifndef PHARO_SISTA_LOWERING_HPP
 #define PHARO_SISTA_LOWERING_HPP
 
 #include "SistaIR.hpp"
 
-#include <cstddef>
+// asmjit inline-namespaces JitRuntime (asmjit::v13::...).  Forward
+// declaration in plain `namespace asmjit` doesn't match.  Pull in the
+// real header; it's small.
+#include <asmjit/core/jitruntime.h>
 
 namespace pharo {
 namespace sista {
 
-// Where to write the emitted code.  The Sista JIT will reuse the
-// same CodeZone the Tier 1 JIT uses — keeps GC / W^X handling
-// identical.  For unit tests, the caller can pass any buffer.
-struct CodeSink {
-    uint8_t* buffer;
-    size_t   capacity;
-    size_t   written;     // bytes produced so far (out)
-};
+// Owns an asmjit::JitRuntime so the emitted code stays resident for
+// the lifetime of the Lowering object.  Keep one per compilation
+// domain (Sista runtime); don't recreate per-method.
+class Lowering {
+public:
+    Lowering();
+    ~Lowering();
 
-// Lower a SistaMethod into the given sink.  Returns true on success.
-// On failure the sink's `written` may be non-zero; the caller should
-// discard the partial output.
-//
-// Not yet implemented (returns false).  When implemented:
-//   1. Emit a prologue that saves callee-saved registers matching
-//      the Tier 1 convention (keeps J2J call sites compatible).
-//   2. Walk the IR in topological order, materializing each value
-//      into a register (or spill slot for now).  Phase 2 uses a
-//      trivial register allocator — each value gets a fresh reg
-//      or a stack slot.
-//   3. Emit an epilogue that sets state->exitReason = EXIT_RETURN,
-//      writes state->returnValue, and returns.
-bool lower(const Method& method, CodeSink& sink);
+    Lowering(const Lowering&) = delete;
+    Lowering& operator=(const Lowering&) = delete;
+
+    // Lower the IR to native code.  Returns a callable function pointer
+    // on success, nullptr if the method contains ops the current
+    // lowerer doesn't handle.  The returned pointer is valid until this
+    // Lowering is destroyed (the asmjit runtime manages the code).
+    //
+    // `failedAtValue`, if non-null, is set to the id of the first
+    // unsupported value encountered on failure.
+    using CompiledFn = void (*)(void* state);
+    CompiledFn lower(const Method& method, uint32_t* failedAtValue = nullptr);
+
+private:
+    asmjit::JitRuntime* runtime_ = nullptr;
+};
 
 }  // namespace sista
 }  // namespace pharo
