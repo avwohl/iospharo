@@ -461,18 +461,20 @@ extern "C" void stencil_storeLitVar(JITState* s) {
     }                                                                         \
 } while(0)
 
+// For return events, extra1 = retVal.bits, extra2 packs
+// callerCM (low 48) | sendArgCount (bits 48-55) | savedSp reduced to
+// offset-from-cursor (bits 56-63 — just a sanity tag).
 #define J2J_INLINE_RETURN(s, retVal) \
     J2J_INLINE_RETURN_IMPL(s, retVal, \
         _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, \
-                           (uint64_t)(_sv->sp) | \
+                           (uint64_t)(*(uint64_t*)((uint8_t*)(_sv->jitMethod) + \
+                                                    JM_COMPILED_METHOD)) | \
                            ((uint64_t)_sv->sendArgCount << 48)))
 
-// B5 investigation: a function call here makes the bug disappear.
-// Using the trace hook always (even when tracing is disabled) to test
-// whether the effect is purely the function-call-related reloads.
+// NO_TRACE variant: no function call (preserves SimStack register
+// safety — compiler can't spill x19-x22 if there's no ABI boundary).
 #define J2J_INLINE_RETURN_NO_TRACE(s, retVal) \
-    J2J_INLINE_RETURN_IMPL(s, retVal, \
-        _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, 0))
+    J2J_INLINE_RETURN_IMPL(s, retVal, (void)0)
 
 // Return top of stack
 // Bytecode: 0x5C

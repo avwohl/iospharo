@@ -61,19 +61,25 @@ extern "C" void jit_b5_dump_ring(const char* tag) {
     size_t start = g_b5Count >= B5_RING ? g_b5Head : 0;
     for (size_t i = 0; i < n; i++) {
         const B5Event& e = g_b5Ring[(start + i) % B5_RING];
+        uint64_t callerCM, nArgs;
+        if (e.eventType == 1) {
+            callerCM = e.extra2;
+            nArgs = e.extra1;
+        } else {
+            callerCM = e.extra2 & 0x0000FFFFFFFFFFFFULL;
+            nArgs = (e.extra2 >> 48) & 0xFF;
+        }
         if (e.eventType == 1) {
             fprintf(stderr, "[B5] #%llu SAVE sp=0x%llx depth=%d nArgs=%llu callerCM=0x%llx\n",
                     (unsigned long long)e.count, (unsigned long long)e.sp,
-                    e.depth, (unsigned long long)e.extra1,
-                    (unsigned long long)e.extra2);
+                    e.depth, (unsigned long long)nArgs,
+                    (unsigned long long)callerCM);
         } else {
-            uint64_t savedSp = e.extra2 & 0xFFFFFFFFFFFFULL;
-            uint64_t savedArgs = (e.extra2 >> 48) & 0xFFFF;
-            fprintf(stderr, "[B5] #%llu RET sp=0x%llx depth=%d retVal=0x%llx "
-                           "savedSp=0x%llx savedArgs=%llu\n",
+            fprintf(stderr, "[B5] #%llu RET  sp=0x%llx depth=%d retVal=0x%llx "
+                           "callerCM=0x%llx savedArgs=%llu\n",
                     (unsigned long long)e.count, (unsigned long long)e.sp,
                     e.depth, (unsigned long long)e.extra1,
-                    (unsigned long long)savedSp, (unsigned long long)savedArgs);
+                    (unsigned long long)callerCM, (unsigned long long)nArgs);
         }
     }
     fprintf(stderr, "=== end B5 dump ===\n");
@@ -81,7 +87,7 @@ extern "C" void jit_b5_dump_ring(const char* tag) {
 
 // B5 diagnostic: called from stencils at J2J save-push and J2J return.
 // event=1: save-push.  extra1 = nArgs, extra2 = caller compiledMethod oop.
-// event=2: return.  extra1 = retVal.bits, extra2 = saved sp | args<<48.
+// event=2: return.  extra1 = retVal.bits, extra2 = callerCM | args<<48.
 extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
     static bool trace = getenv("PHARO_B5_TRACE") != nullptr;
@@ -117,13 +123,42 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
             }
         }
     }
-    // Focus filter only applies to event=1 (save-push, where extra2 is
-    // callerCM oop).  For event=2 (return), extra2 is the saved sp
-    // packed with sendArgCount, so filtering would reject valid events.
-    if (focusCount > 0 && event == 1) {
+    // Auto-trigger dump on suspicious return: callerCM is one of the 4
+    // focus methods AND retVal is a SmallInteger (tag bit 0 set).  This
+    // is the exact signature of the B5 bug — the return places a
+    // SmallInt where a stream object should be.
+    if (event == 2 && (extra1 & 0x7) == 1) {
+        uint64_t callerCM = extra2 & 0x0000FFFFFFFFFFFFULL;
+        for (int i = 0; i < focusCount; i++) {
+            if (focusOops[i] == callerCM) {
+                static int autoDumped = 0;
+                if (autoDumped < 3) {
+                    autoDumped++;
+                    fprintf(stderr, "=== B5 AUTO-TRIGGER: SmallInt retVal=0x%llx "
+                                    "to focus method 0x%llx ===\n",
+                            (unsigned long long)extra1,
+                            (unsigned long long)callerCM);
+                    jit_b5_dump_ring("auto-smallint-return");
+                }
+                break;
+            }
+        }
+    }
+    // Event-specific decoding:
+    // event=1 (save-push): extra1 = nArgs, extra2 = callerCM (unpacked).
+    // event=2 (return):    extra1 = retVal.bits, extra2 = callerCM | nArgs<<48.
+    uint64_t callerCM, nArgs;
+    if (event == 1) {
+        callerCM = extra2;
+        nArgs = extra1;
+    } else {
+        callerCM = extra2 & 0x0000FFFFFFFFFFFFULL;
+        nArgs = (extra2 >> 48) & 0xFF;
+    }
+    if (focusCount > 0) {
         bool hit = false;
         for (int i = 0; i < focusCount; i++) {
-            if (focusOops[i] == extra2) { hit = true; break; }
+            if (focusOops[i] == callerCM) { hit = true; break; }
         }
         if (!hit) return;
     }
@@ -140,19 +175,17 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (count <= skipEarly) return;
     if (count - skipEarly > maxEvents) return;
     if (event == 1) {
-        fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d cursor=%p "
+        fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d "
                         "nArgs=%llu callerCM=0x%llx\n",
                 count, state->sp, state->j2jDepth,
-                state->j2jSaveCursor, (unsigned long long)extra1,
-                (unsigned long long)extra2);
+                (unsigned long long)nArgs,
+                (unsigned long long)callerCM);
     } else if (event == 2) {
-        uint64_t savedSp = extra2 & 0xFFFFFFFFFFFFULL;
-        uint64_t savedArgs = (extra2 >> 48) & 0xFFFF;
-        fprintf(stderr, "[B5] #%zu RET sp=%p depth=%d cursor=%p "
-                        "retVal=0x%llx savedSp=0x%llx savedArgs=%llu\n",
+        fprintf(stderr, "[B5] #%zu RET  sp=%p depth=%d "
+                        "retVal=0x%llx callerCM=0x%llx savedArgs=%llu\n",
                 count, state->sp, state->j2jDepth,
-                state->j2jSaveCursor, (unsigned long long)extra1,
-                (unsigned long long)savedSp, (unsigned long long)savedArgs);
+                (unsigned long long)extra1,
+                (unsigned long long)callerCM, (unsigned long long)nArgs);
     } else {
         fprintf(stderr, "[B5] #%zu evt=%llu e1=0x%llx e2=0x%llx\n",
                 count, (unsigned long long)event,

@@ -1441,6 +1441,19 @@ void Interpreter::interpret() {
 
     op_popStoreTemp: {
         Oop value = pop();
+        // B5 diagnostic: watch for decodeBytes: storing SmallInt to byteStream.
+        if (getenv("PHARO_B5_TRACE") && (bytecode & 0x07) == 1 &&
+            method_.isObject() && value.isSmallInteger()) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "decodeBytes:") {
+                fprintf(stderr, "[B5-STORE] decodeBytes: popStoreTemp 1 "
+                               "value=SmallInt(%lld) method=0x%llx ip=%p\n",
+                        (long long)value.asSmallInteger(),
+                        (unsigned long long)method_.rawBits(),
+                        instructionPointer_);
+                pharo_jit_b5_dump_ring("popstore-smallint");
+            }
+        }
         setTemporary(bytecode & 0x07, value);
         DISPATCH_NEXT();
     }
@@ -4622,6 +4635,22 @@ terminate_process:
                     const uint8_t* _bcBase = _mObj->bytes() + (1 + _nLit) * 8;
                     if (instructionPointer_)
                         _bcBefore = (long long)(instructionPointer_ - _bcBase);
+                }
+            }
+            // B5 diagnostic: log the return value pushed on the caller's
+            // stack when returning INTO decodeBytes:.
+            if (getenv("PHARO_B5_TRACE") && method_.isObject() &&
+                stackPointer_ > framePointer_) {
+                std::string sel = memory_.selectorOf(method_);
+                if (sel == "decodeBytes:") {
+                    Oop top = stackPointer_[-1];
+                    fprintf(stderr, "[B5-RESUME] returning into decodeBytes: "
+                                   "top=0x%llx (%s) sp=%p fp=%p\n",
+                            (unsigned long long)top.rawBits(),
+                            top.isSmallInteger() ? "SmallInt"
+                              : top.isObject() ? memory_.classNameOf(top).c_str()
+                              : "other",
+                            stackPointer_, framePointer_);
                 }
             }
             tryJITResumeInCaller();
@@ -8063,6 +8092,35 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
         memory_.storePointer(4 + i, block, copiedValue);
     }
 
+    // B5 diagnostic: when creating a block in decodeBytes:, check that
+    // the copied byteStream is not a SmallInt.  If it is, print the
+    // stream corresponding to temp[1] and the current frame state.
+    if (getenv("PHARO_B5_TRACE") && numCopied > 0 && method_.isObject()) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "decodeBytes:") {
+            Oop byteStream = memory_.fetchPointer(4, block);  // copied[0]
+            if (byteStream.isSmallInteger()) {
+                Oop temp1 = *(framePointer_ + 1 + 1);  // temp 1 directly
+                fprintf(stderr, "[B5-BUG] decodeBytes: block created with "
+                               "byteStream=SmallInt(%lld) temp1=0x%llx "
+                               "sp=%p fp=%p\n",
+                        (long long)byteStream.asSmallInteger(),
+                        (unsigned long long)temp1.rawBits(),
+                        stackPointer_, framePointer_);
+                // Walk the frame to show all temps
+                for (int ti = 0; ti < 5; ti++) {
+                    Oop t = *(framePointer_ + 1 + ti);
+                    fprintf(stderr, "[B5-BUG]   temp[%d] = 0x%llx %s\n",
+                            ti, (unsigned long long)t.rawBits(),
+                            t.isSmallInteger() ? "SmallInt"
+                              : t.isObject() ? memory_.classNameOf(t).c_str()
+                              : "other");
+                }
+                pharo_jit_b5_dump_ring("block-copied-smallint");
+            }
+        }
+    }
+
     push(block);
 }
 
@@ -11302,6 +11360,20 @@ void Interpreter::tryJITResumeInCaller() {
 
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) break;
+        // B5 diagnostic: log the resume point in decodeBytes:.
+        if (getenv("PHARO_B5_TRACE") && method_.isObject()) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "decodeBytes:") {
+                Oop top = stackPointer_ > framePointer_ ?
+                    stackPointer_[-1] : Oop::fromRawBits(0);
+                fprintf(stderr, "[B5-RESUME-JIT] decodeBytes: bcOffset=%u "
+                               "top=0x%llx (%s)\n",
+                        bcOffset, (unsigned long long)top.rawBits(),
+                        top.isSmallInteger() ? "SmallInt"
+                          : top.isObject() ? memory_.classNameOf(top).c_str()
+                          : "other");
+            }
+        }
 
         // Set up JIT state from current interpreter state
         jit::JITState state;
