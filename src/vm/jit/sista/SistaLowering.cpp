@@ -164,6 +164,48 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = dst;
                 break;
             }
+
+            case Op::kPrimAddInt:
+            case Op::kPrimSubInt:
+            case Op::kPrimMulInt: {
+                // Tag-preserving arithmetic on SmallInt Oops (tag 1).
+                //   a + b → correct tagged result is a + b - 1
+                //   a - b → correct tagged result is a - b + 1
+                //   a * b → untag a (>> 3), multiply by b's value
+                //           (also untagged), re-tag ((result << 3) | 1)
+                // Phase 2 omits overflow / non-SmallInt checks —
+                // caller must supply SmallInt inputs within safe range.
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp dst = cc.new_gp64("arith");
+                if (v.op == Op::kPrimAddInt) {
+                    cc.add(dst, ita->second, itb->second);
+                    cc.sub(dst, dst, Imm(1));
+                } else if (v.op == Op::kPrimSubInt) {
+                    cc.sub(dst, ita->second, itb->second);
+                    cc.add(dst, dst, Imm(1));
+                } else {
+                    // Multiply: untag both operands, multiply, re-tag.
+                    Gp au = cc.new_gp64("au");
+                    Gp bu = cc.new_gp64("bu");
+                    cc.lsr(au, ita->second, Imm(3));
+                    cc.lsr(bu, itb->second, Imm(3));
+                    Gp prod = cc.new_gp64("prod");
+                    cc.mul(prod, au, bu);
+                    cc.lsl(dst, prod, Imm(3));
+                    cc.orr(dst, dst, Imm(1));
+                }
+                regFor[v.id] = dst;
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared

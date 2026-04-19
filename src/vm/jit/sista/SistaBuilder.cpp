@@ -196,6 +196,31 @@ private:
                 return LiftResult::kOk;
             }
 
+            // Arith sends 0x60-0x6F — inline the common ones on
+            // SmallInt operands.  No class guard or overflow check
+            // yet; safety lands with Phase 3 deopt.  Tests today
+            // ensure operands are small positive SmallInts.
+            if (op == jit::SistaV1::ArithBase + 0    // + (0x60)
+                || op == jit::SistaV1::ArithBase + 1 // - (0x61)
+                || op == jit::SistaV1::ArithBase + 8 // * (0x68)
+               ) {
+                if (stack_.size() < 2) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t b = stack_.back(); stack_.pop_back();
+                uint32_t a = stack_.back(); stack_.pop_back();
+                Op primOp = Op::kPrimAddInt;
+                if (op == jit::SistaV1::ArithBase + 1) primOp = Op::kPrimSubInt;
+                if (op == jit::SistaV1::ArithBase + 8) primOp = Op::kPrimMulInt;
+                uint32_t v = out_.newValue(currentBlock_, primOp,
+                                            Type::kOopSmallInt,
+                                            /*operands=*/{a, b});
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
             // Push-receiver: load self, push onto simulated stack.
             if (op == jit::SistaV1::PushReceiver) {
                 uint32_t v = out_.newValue(currentBlock_,

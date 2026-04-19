@@ -78,16 +78,23 @@ enum class Op : uint8_t {
                           // Inlined callee body follows via nested blocks. -> Oop (callee return)
 
     // --- Inline primitives ---
-    // Narrow-fastpath arith/compare ops that don't need a full send.
-    // Typed SmallInt input, SmallInt output; overflow bails via Guard.
-    kPrimAddInt,          // operands: a, b                                -> Int
-    kPrimSubInt,          // operands: a, b                                -> Int
-    kPrimMulInt,          // operands: a, b                                -> Int
-    kPrimLtInt,           // operands: a, b                                -> Bool
-    kPrimLeInt,           // operands: a, b                                -> Bool
-    kPrimGtInt,           // operands: a, b                                -> Bool
-    kPrimEqInt,           // operands: a, b                                -> Bool
-    kPrimTagCheckInt,     // operand: value; guards SmallInt, deopts else  -> Int
+    // Narrow-fastpath arith/compare on tagged SmallInt operands.
+    // Operate DIRECTLY on the Oop bits using tag-preserving math:
+    //   `a + b - 1`   gives the correctly-tagged sum when both
+    //                 are tag-1 SmallInts.
+    //   `a - b + 1`   gives the correctly-tagged difference.
+    // Overflow / non-SmallInt checks are the lowerer's responsibility;
+    // they bail to the interpreter via the standard send protocol.
+    // Phase 2 landed the op bodies but not the safety checks — those
+    // ship with Phase 3 deopt infrastructure.
+    kPrimAddInt,          // operands: a, b (SmallInt Oops)          -> OopSmallInt
+    kPrimSubInt,          // operands: a, b                          -> OopSmallInt
+    kPrimMulInt,          // operands: a, b                          -> OopSmallInt
+    kPrimLtInt,           // operands: a, b                          -> OopBool
+    kPrimLeInt,           // operands: a, b                          -> OopBool
+    kPrimGtInt,           // operands: a, b                          -> OopBool
+    kPrimEqInt,           // operands: a, b                          -> OopBool
+    kPrimTagCheckInt,     // operand: value; deopts if not SmallInt  -> OopSmallInt
 
     // --- Blocks ---
     kBlockCreate,         // operands: compiled-block, outer-context, copied-values...

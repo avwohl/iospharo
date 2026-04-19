@@ -62,7 +62,8 @@ int main() {
     check(OpInfo::isTerminator(Op::kReturn), "return is terminator");
     check(!OpInfo::isTerminator(Op::kPrimAddInt), "add is not terminator");
     check(OpInfo::producesOop(Op::kLoadReceiver), "load_recv is an oop");
-    check(!OpInfo::producesOop(Op::kPrimAddInt), "add_int is not an oop");
+    check(OpInfo::producesOop(Op::kPrimAddInt),
+          "add_int produces tagged SmallInt Oop");
     check(OpInfo::mayCallBack(Op::kSendUnspeculated), "send may deopt");
     check(!OpInfo::mayCallBack(Op::kPrimAddInt), "add_int stays local");
 
@@ -487,6 +488,90 @@ int main() {
                   "false path returns SmallInt 0");
         }
         std::cout << "--- multi-block cond test: ok (both branches)\n";
+    }
+
+    // Round-trip 7.A: Arith — `^ 1 + 1` → SmallInt 2 (bits = 17).
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushOne,
+            SistaV1::PushOne,
+            (uint8_t)(SistaV1::ArithBase + 0),   // +
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        check(r == LiftResult::kOk, "1 + 1 lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower 1 + 1");
+
+        FakeState state{};
+        fn(&state);
+        // SmallInt 2 bits = (2 << 3) | 1 = 17 = 0x11
+        check(state.returnValue == 0x11ULL, "1 + 1 = 2 (tagged 0x11)");
+        std::cout << "--- round-trip 1 + 1: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.B: Arith — `^ (temp0 + temp1) - 1`.
+    //   PushTemp 0, PushTemp 1, +, PushOne, -, ReturnTop
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            (uint8_t)(SistaV1::PushTempBase + 1),
+            (uint8_t)(SistaV1::ArithBase + 0),
+            SistaV1::PushOne,
+            (uint8_t)(SistaV1::ArithBase + 1),
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 2, lifted);
+        check(r == LiftResult::kOk, "(t0 + t1) - 1 lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower (t0 + t1) - 1");
+
+        // temp0 = SmallInt 10 (bits 0x51), temp1 = SmallInt 3 (bits 0x19)
+        // (10 + 3) - 1 = 12 → SmallInt bits = (12 << 3) | 1 = 97 = 0x61
+        uint64_t temps[2] = {
+            (10ULL << 3) | 1,
+            ( 3ULL << 3) | 1,
+        };
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 0x61ULL,
+              "(10 + 3) - 1 = 12 (tagged 0x61)");
+        std::cout << "--- round-trip (t0 + t1) - 1: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.C: Multiply — `^ temp0 * temp1`.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            (uint8_t)(SistaV1::PushTempBase + 1),
+            (uint8_t)(SistaV1::ArithBase + 8),   // *
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 2, lifted);
+        check(r == LiftResult::kOk, "t0 * t1 lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower t0 * t1");
+
+        // 7 * 6 = 42 → SmallInt bits = (42 << 3) | 1 = 337 = 0x151
+        uint64_t temps[2] = {
+            (7ULL << 3) | 1,
+            (6ULL << 3) | 1,
+        };
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 0x151ULL, "7 * 6 = 42");
+        std::cout << "--- round-trip 7 * 6: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
     }
 
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.

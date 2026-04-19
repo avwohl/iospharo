@@ -39,6 +39,13 @@ bool producesOop(Op op) {
     case Op::kLoadTemp:
     case Op::kLoadInstVar:
     case Op::kLoadLiteral:
+    case Op::kPrimAddInt:
+    case Op::kPrimSubInt:
+    case Op::kPrimMulInt:
+    case Op::kPrimLtInt:
+    case Op::kPrimLeInt:
+    case Op::kPrimGtInt:
+    case Op::kPrimEqInt:
     case Op::kSendUnspeculated:
     case Op::kGuardClass:
     case Op::kInlineSend:
