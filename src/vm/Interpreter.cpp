@@ -6664,12 +6664,37 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                            ? totalBytes - bytecodeStart : 0;
             for (size_t i = 0; i < bcLen; i++) {
                 uint8_t op = methodBytes[bytecodeStart + i];
-                // Inlined arith — safe (tag-preserving, SmallInt assumption).
-                if (op == jit::SistaV1::ArithBase + 0   // +
-                 || op == jit::SistaV1::ArithBase + 1   // -
-                 || op == jit::SistaV1::ArithBase + 8) {// *
-                    continue;
+                // Inlined arith — safe ONLY when operands are
+                // SmallInt.  Today's lowerer has no tag check, so
+                // calling these methods on Float/LargeInteger/etc.
+                // produces silent-miscompile garbage that causes
+                // cascading DNUs downstream (e.g., #* not understood
+                // by a malformed tagged value).  Gate off by
+                // default; re-admit when Phase 3 deopt lands.
+                if (g_debug.sistaUnsafeArith) {
+                    if (op == jit::SistaV1::ArithBase + 0   // +
+                     || op == jit::SistaV1::ArithBase + 1   // -
+                     || op == jit::SistaV1::ArithBase + 8) {// *
+                        continue;
+                    }
                 }
+                // ExitSend-triggering bytecodes — gated off by
+                // default because state.sp/state.ip sync to the
+                // interpreter currently causes image-startup
+                // divergence.  PHARO_SISTA_ALLOW_SENDS=1 bypasses
+                // this gate for diagnosis.
+                //
+                // During diagnosis we can also whitelist specific
+                // send categories only — Send0 (0xF80 + N*0x10?)
+                // wait, Send0 = 0x80-0x8F (zero args).  If we only
+                // allow Send0 bails, we narrow which ExitSend
+                // encoding is broken.  PHARO_SISTA_SEND0_ONLY=1.
+                const bool isSend0 = (op >= jit::SistaV1::Send0Base
+                                   && op <= jit::SistaV1::Send0Last);
+                const bool isSend1 = (op >= jit::SistaV1::Send1Base
+                                   && op <= jit::SistaV1::Send1Last);
+                const bool isSend2 = (op >= jit::SistaV1::Send2Base
+                                   && op <= jit::SistaV1::Send2Last);
                 if (jit::SistaV1::isSendBytecode(op)
                  || op == jit::SistaV1::ExtSend
                  || op == jit::SistaV1::ExtSuperSend
@@ -6677,13 +6702,29 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
+                    // PHARO_SISTA_SEND0_ONLY bypasses the gate for
+                    // zero-arg sends (Send0, 0x80-0x8F) — verified
+                    // behavior-preserving on the baseline workload.
+                    // Send1/Send2 stay gated off: they produce
+                    // unexplained wrong pushed values (two SmallInt-0s
+                    // instead of real receiver+arg) that cascade into
+                    // DNU divergence downstream.  Root cause still
+                    // under investigation; likely in Sista's operand
+                    // collection or the way the bail sequence writes
+                    // state.sp.
+                    if (g_debug.sistaSend0Only && isSend0) {
+                        continue;
+                    }
+                    (void)isSend1; (void)isSend2;
                     hasUnsafeOp = true;
                     break;
                 }
             }
         }
 
-        if (fn && g_debug.sistaDispatch && ipAtBytecodeStart && !hasUnsafeOp) {
+        const bool dispatchGateOpen =
+            ipAtBytecodeStart && (!hasUnsafeOp || g_debug.sistaAllowSends);
+        if (fn && g_debug.sistaDispatch && dispatchGateOpen) {
             // Tier-up dispatch.  Set up JITState the same way
             // tryJITActivation does, invoke the Sista function,
             // handle the exit reason.
@@ -6746,6 +6787,33 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     fprintf(stderr, "\n");
                 }
             }
+            // Trace the first few ExitReturn values under verbose mode
+            // to catch miscompiles of simple return methods (e.g.,
+            // `^ Array` where literal index resolution is wrong).
+            if (g_debug.sistaVerbose && sstate.exitReason == jit::ExitReturn
+                && sistaReturns < 20) {
+                std::string sel = memory_.selectorOf(method);
+                size_t bcLen = totalBytes > bytecodeStart
+                               ? totalBytes - bytecodeStart : 0;
+                fprintf(stderr, "[SISTA-RET] #%zu sel=#%s retVal=0x%llx bcLen=%zu bc=[",
+                        sistaReturns + 1, sel.c_str(),
+                        (unsigned long long)sstate.returnValue.rawBits(),
+                        bcLen);
+                for (size_t i = 0; i < std::min(bcLen, (size_t)8); i++) {
+                    fprintf(stderr, " %02x", methodBytes[bytecodeStart + i]);
+                }
+                fprintf(stderr, "] lits=[");
+                ObjectHeader* mh = method.asObjectPtr();
+                Oop hdrOop = mh->slots()[0];
+                int numLits = hdrOop.isSmallInteger()
+                               ? (hdrOop.asSmallInteger() & 0x7FFF) : 0;
+                for (int i = 0; i < std::min(numLits, 4); i++) {
+                    fprintf(stderr, " 0x%llx",
+                            (unsigned long long)mh->slots()[1 + i].rawBits());
+                }
+                fprintf(stderr, "]\n");
+            }
+
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
                 sistaReturns++;
@@ -6764,12 +6832,69 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
             case jit::ExitSend: {
                 sistaSends++;
+                // Under verbose mode, log the first few bails with
+                // full context so Send1/Send2 divergence can be
+                // caught against the baseline expectation.
+                if (g_debug.sistaVerbose && sistaSends < 15) {
+                    std::string sel = memory_.selectorOf(method);
+                    uint8_t bailOp = 0;
+                    if (sstate.ip >= methodBytes + bytecodeStart
+                     && sstate.ip < methodBytes + totalBytes) {
+                        bailOp = *sstate.ip;
+                    }
+                    ptrdiff_t sd = sstate.sp - stackPointer_;
+                    fprintf(stderr,
+                        "[SISTA-SEND] #%zu sel=#%s bailOp=0x%02x "
+                        "ipOff=%td spDelta=%td argc=%d rcvr=0x%llx",
+                        sistaSends, sel.c_str(), bailOp,
+                        sstate.ip - (methodBytes + bytecodeStart),
+                        sd, sstate.sendArgCount,
+                        (unsigned long long)receiver_.rawBits());
+                    for (ptrdiff_t i = 0; i < sd && i < 4; i++) {
+                        fprintf(stderr, " push[%td]=0x%llx", i,
+                                (unsigned long long)stackPointer_[i].rawBits());
+                    }
+                    fprintf(stderr, " bc=[");
+                    size_t bcLen = totalBytes > bytecodeStart
+                                   ? totalBytes - bytecodeStart : 0;
+                    for (size_t i = 0; i < std::min(bcLen, (size_t)8); i++) {
+                        fprintf(stderr, " %02x",
+                                methodBytes[bytecodeStart + i]);
+                    }
+                    fprintf(stderr, "] temps=[");
+                    for (int i = 0; i < 3; i++) {
+                        fprintf(stderr, " 0x%llx", (unsigned long long)
+                            (framePointer_ + 1 + i)->rawBits());
+                    }
+                    fprintf(stderr, "]\n");
+                }
                 // Sista bailed mid-method: rcvr+args (or the full IR
                 // stack, for generic bailToInterpreter) are pushed to
                 // state.sp; state.ip points to the bail bytecode.
                 // Sync interpreter registers and fall through — the
                 // dispatch loop picks up execution at state.ip in the
                 // same (still-active) Sista frame.
+                //
+                // Sanity-check Sista's output before trusting it —
+                // catches lifter/lowerer bugs early instead of
+                // letting them silently corrupt interpreter state.
+                if (g_debug.sistaVerbose) {
+                    uint8_t* bcEnd = methodBytes + totalBytes;
+                    bool ipInBounds = (sstate.ip >= methodBytes + bytecodeStart
+                                     && sstate.ip < bcEnd);
+                    bool spInBounds = (sstate.sp >= stackPointer_
+                                     && sstate.sp < stackPointer_ + 256);
+                    if (!ipInBounds || !spInBounds) {
+                        fprintf(stderr,
+                            "[SISTA-BAIL-INVALID] #disp=%zu sel=#%s "
+                            "ip=%p (bc=%p..%p) sp=%p (was %p) argc=%d\n",
+                            dispatched, memory_.selectorOf(method).c_str(),
+                            (void*)sstate.ip,
+                            (void*)(methodBytes + bytecodeStart), (void*)bcEnd,
+                            (void*)sstate.sp, (void*)stackPointer_,
+                            sstate.sendArgCount);
+                    }
+                }
                 stackPointer_ = sstate.sp;
                 instructionPointer_ = sstate.ip;
                 return;

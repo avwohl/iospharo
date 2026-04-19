@@ -134,6 +134,9 @@ DebugSettings::DebugSettings() {
     sistaCompile           = envPresent("PHARO_SISTA_COMPILE");
     sistaDispatch          = envPresent("PHARO_SISTA_DISPATCH");
     sistaVerbose           = envPresent("PHARO_SISTA_VERBOSE");
+    sistaAllowSends        = envPresent("PHARO_SISTA_ALLOW_SENDS");
+    sistaSend0Only         = envPresent("PHARO_SISTA_SEND0_ONLY");
+    sistaUnsafeArith       = envPresent("PHARO_SISTA_UNSAFE_ARITH");
 }
 
 DebugSettings g_debug;  // static-storage-duration; constructor runs before main().
