@@ -19,8 +19,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
-  Multi-block control flow + inline arith + unspeculated sends now
-  work.  17 round-trip tests passing:
+  Multi-block control flow + inline arith + unspeculated sends +
+  phi nodes now work.  18 round-trip tests passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -41,13 +41,15 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - kReturn, kBranch, kBranchIfTrue, kBranchIfFalse
       - kPrimAddInt, kPrimSubInt, kPrimMulInt
       - kSendUnspeculated (via ExitSend bail; real speculation is Phase 4)
+      - kPhi (SSA merge at blocks with non-empty entry stacks)
 
   Commits: `c638471` (IR), `42e382c` (lifter MVP), `7fa2fab`
   (lowerer + first round-trip), `2e5d61e` (push-constants +
   push-literal), `a09b5c4` (ivar + store-temp + stack ops),
   `6badd08` (setter pattern), `8680ccb` (multi-block via short
   jumps), `7c57dbe` (arith + - *), `eed3d37` (PHARO_JIT_ENABLED
-  guard for xcframework link), `379e3f7` (unspeculated sends).
+  guard for xcframework link), `379e3f7` (unspeculated sends),
+  `6053428` (phi nodes for merge blocks).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
@@ -63,8 +65,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
     check on inputs + overflow flag (`adds` / `subs`) on the
     math, bail to `kSendUnspeculated` on miss.  Gated on Phase 3
     deopt.
-  - Phi nodes for joined blocks (needed before method inlining
-    becomes useful).
+  - Backward jumps (loops).  Currently forward-short-jump-only;
+    loops use ExtJumpLong.  Needs BFS-style entry-depth
+    propagation instead of the current offset-order pass.
   - mustBeBoolean bail on conditional branch (placeholder today
     silently falls through on non-true cond; fix requires Phase 3
     deopt).
