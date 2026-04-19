@@ -128,16 +128,14 @@ public:
                 }
                 int offset = (int)bc_[i + 1] + (pass1ExtB << 8);
                 // Target = ip-after-instruction + offset.  After reading
-                // 2 bytes, ip points to i+2.  Forward-only for MVP.
-                if (offset < 0) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kUnsupportedBytecode;  // loops deferred
-                }
-                size_t target = i + 2 + (size_t)offset;
-                if (target > len_) {
+                // 2 bytes, ip points to i+2.  Both signs allowed:
+                // negative = backward (loops).
+                long longTarget = (long)(i + 2) + (long)offset;
+                if (longTarget < 0 || (size_t)longTarget > len_) {
                     if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
                     return LiftResult::kMalformedMethod;
                 }
+                size_t target = (size_t)longTarget;
                 blockStarts.insert(target);
                 if (i + 2 < len_) blockStarts.insert(i + 2);
                 pass1ExtB = 0;
@@ -188,17 +186,23 @@ public:
             stack_.clear();
             currentBlock_ = blockId;
 
-            // Determine entry stack depth from predecessors (if any).
+            // Determine entry stack depth from FORWARD predecessors
+            // (blocks with lower id, already lifted).  Backward
+            // predecessors (loops) aren't lifted yet and their
+            // outgoingStack is empty — skip them here.  Pass 4's phi
+            // wiring validates that their outgoing depth matches this
+            // block's entry depth.
             const Block& thisBlock = out_.blockAt(blockId);
             size_t entryDepth = 0;
             bool haveDepth = false;
             for (uint32_t pred : thisBlock.predecessors) {
+                if (pred >= blockId) continue;  // backward edge — validate later
                 const Block& pb = out_.blockAt(pred);
                 if (!haveDepth) {
                     entryDepth = pb.outgoingStack.size();
                     haveDepth = true;
                 } else if (pb.outgoingStack.size() != entryDepth) {
-                    // Predecessors disagree on stack depth — malformed.
+                    // Forward predecessors disagree — malformed.
                     if (failedAtBytecode)
                         *failedAtBytecode = (uint32_t)blockStart;
                     return LiftResult::kMalformedMethod;
@@ -290,10 +294,11 @@ private:
                 continue;
             }
 
-            // ExtJump family — 2-byte jump.  Offset = offsetByte + extB*256.
-            // For MVP: forward only (offset >= 0).  Backward handling
-            // requires reordering pass 3 to compute loop-header entry
-            // depths; that's a follow-up.
+            // ExtJump family — 2-byte jump.  Offset = offsetByte + extB*256,
+            // signed.  Both forward and backward (loop) jumps supported;
+            // pass 3 iteration order computes loop-header entry depths
+            // from forward predecessors and pass 4 validates that
+            // backward predecessors agree.
             if (isExtJump(op)) {
                 if (ip + 1 >= len_) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
@@ -302,11 +307,12 @@ private:
                 int offset = (int)bc_[ip + 1] + (pendingExtB_ << 8);
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
-                if (offset < 0) {
+                long longTarget = (long)(ip + 2) + (long)offset;
+                if (longTarget < 0 || (size_t)longTarget > len_) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kUnsupportedBytecode;
+                    return LiftResult::kMalformedMethod;
                 }
-                size_t target = ip + 2 + (size_t)offset;
+                size_t target = (size_t)longTarget;
                 auto tIt = offsetToBlock.find(target);
                 if (tIt == offsetToBlock.end()) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
