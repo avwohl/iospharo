@@ -30,23 +30,27 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   lifts to IR and lowers to machine code.  Baseline at session
   start was 9.57%.
 
-  **Phase 2.3 in progress.**  Lowering::lower now accepts a
+  **Phase 2.3 in progress.**  Lowering::lower accepts a
   `bytecodeBase` so send-bail sets state.ip to the absolute
-  pointer the interpreter expects.  SistaRuntime (new class)
-  provides a compile-on-demand wrapper with oop-keyed caching.
+  pointer the interpreter expects.  SistaRuntime provides a
+  compile-on-demand wrapper with oop-keyed caching.
 
   **End-to-end execute validated** on 500 real Pharo 13 methods:
-  500 compiled, 500 executed, **0 crashes**, all exited via the
-  well-formed protocol — 78 via ExitReturn (full completion),
-  422 via ExitSend (clean bail to interpreter).  In a real VM
-  the ExitSend cases hand off to the interpreter at state.ip /
-  state.sp which matches the exact convention Tier 1/Tier 2
-  already use.
+  500 compiled, 500 executed, 0 crashes, all exited via the
+  well-formed protocol — 78 via ExitReturn, 422 via ExitSend.
 
-  Still to do before tier-up wiring: state.sp synchronization
-  with the interpreter, resume-after-send handling (reentry /
-  continuation), and GC-stable cache keying (currently keyed
-  by raw oop bits which go stale across compaction).
+  **First VM-integration hook landed** (PHARO_SISTA_COMPILE=1):
+  activateMethod() now calls SistaRuntime::compile() on every
+  send when the flag is set.  Under a real workload
+  (`500 factorial printString size`) this handled **7,303,168
+  activations / 7,139 unique methods / 100% compile success /
+  0 bailouts**.  The hook doesn't dispatch to compiled code yet —
+  actual tier-up is next.
+
+  Still to do before tier-up dispatch: state.sp synchronization
+  with the live interpreter stack, ExitSend resume handling, and
+  GC-stable cache keying (raw oop key goes stale across
+  compaction).
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -119,7 +123,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   truncated ExtendA/B/Jump at EOF treated as clean stop rather
   than kMalformedMethod; 99.90% lift coverage),
   `c30ae9d` (directed super-send + empty-stack ExtStoreTemp
-  bail → **100% lift coverage over the full Pharo 13 image**).
+  bail → **100% lift coverage over the full Pharo 13 image**),
+  `1fae75a` (PHARO_SISTA_COMPILE=1 hook in activateMethod →
+  7.3M live activations, 7139 unique methods, 100% compile).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
