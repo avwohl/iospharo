@@ -35,9 +35,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   pointer the interpreter expects.  SistaRuntime provides a
   compile-on-demand wrapper with oop-keyed caching.
 
-  **End-to-end execute validated** on 500 real Pharo 13 methods:
-  500 compiled, 500 executed, 0 crashes, all exited via the
-  well-formed protocol — 78 via ExitReturn, 422 via ExitSend.
+  **End-to-end execute validated** on 10,000 real Pharo 13
+  methods (with real receivers and literals, so instVar derefs
+  target real image objects): 10,000 compiled, 10,000 executed,
+  0 crashes, 1,511 via ExitReturn, 8,489 via ExitSend bail.
 
   **First VM-integration hook landed** (PHARO_SISTA_COMPILE=1):
   activateMethod() now calls SistaRuntime::compile() on every
@@ -125,7 +126,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `c30ae9d` (directed super-send + empty-stack ExtStoreTemp
   bail → **100% lift coverage over the full Pharo 13 image**),
   `1fae75a` (PHARO_SISTA_COMPILE=1 hook in activateMethod →
-  7.3M live activations, 7139 unique methods, 100% compile).
+  7.3M live activations, 7139 unique methods, 100% compile),
+  `1647ced` (execute smoke test with real receivers/literals →
+  10K methods, 0 crashes, full Return/Send protocol clean).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
