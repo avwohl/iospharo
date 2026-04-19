@@ -26,15 +26,12 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tests passing.
 
   **Coverage over a Pharo 13 image (175K CompiledMethods)**:
-  **81.6% lift, 100% lower**.  Measured by `test_sista_survey`;
-  baseline at the start of the session was 9.57% — ~8.5x
-  improvement.  (Briefly hit 87% but that number was inflated
-  by a bytecodeSize bug; the lifter was reading past real
-  end-of-bytecodes into slot-region garbage.  Fixed in
-  `1ec9800` — honest number is 81.6%.)  Only 98 methods still
-  fail with "unsupported opcode" (all 0xEB directed super-sends).
-  The remaining ~18% gap is "lift-malformed" cases — 32,157
-  methods with multi-block structural issues.
+  **98.83% lift, 100% lower**.  Measured by `test_sista_survey`;
+  baseline at the start of the session was 9.57% — **10.3x
+  improvement**.  Only 98 methods fail with "unsupported opcode"
+  (all 0xEB directed super-sends).  Only 1,949 methods (~1%)
+  still malform.  The remaining gap is small enough that
+  runtime integration (Phase 2.3) is the clear next step.
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -91,7 +88,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   35-39% lift coverage),
   `6299a4f` (orphan-block skip in pass 3 → 87% lift coverage),
   `1ec9800` (bytecodeSize correction: was reading slot-region
-  bytes past real end-of-bytecodes; honest number is 81.6%).
+  bytes past real end-of-bytecodes; honest number is 81.6%),
+  `9555e6d` (lenient out-of-range jumps: dead-code-region
+  jumps past end-of-bytecodes no longer kill the whole
+  method's lift → 98.83% coverage).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
