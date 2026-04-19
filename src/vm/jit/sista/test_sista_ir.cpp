@@ -25,6 +25,7 @@
  */
 #include "SistaIR.hpp"
 #include "SistaBuilder.hpp"
+#include "SistaLowering.hpp"
 #include "../SistaV1.hpp"
 
 #include <cassert>
@@ -144,6 +145,18 @@ int main() {
                                                  0, 0, lifted, &failed);
         check(r == LiftResult::kUnsupportedBytecode, "bail on unsupported");
         check(failed == 0, "fails at offset 0");
+    }
+
+    // Lowering stub: interface exists, returns false (unimplemented).
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::PushReceiver, SistaV1::ReturnTop };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        uint8_t buffer[256] = {};
+        CodeSink sink{buffer, sizeof(buffer), 0};
+        bool ok = lower(lifted, sink);
+        check(!ok, "lowering returns false until implemented");
+        check(sink.written == 0, "no bytes written by stub");
     }
 
     std::cout << "PASS\n";

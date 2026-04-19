@@ -55,6 +55,7 @@ set(VM_SOURCES
     src/vm/jit/TrampolineAsm.S
     src/vm/jit/sista/SistaIR.cpp
     src/vm/jit/sista/SistaBuilder.cpp
+    src/vm/jit/sista/SistaLowering.cpp
 )
 
 # Ensure the .S file is treated as a C-preprocessed assembly source so the
