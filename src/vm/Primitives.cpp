@@ -2013,6 +2013,44 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
     size_t arrayIndex = static_cast<size_t>(idx - 1);
 
     if (header->isBytesObject()) {
+        // Diagnostic: PHARO_IMPROPER_STORE_TRACE=1 logs the caller method +
+        // raw-value bits when a bytes-object at:put: fails.  Helps narrow
+        // down method-cache or IC routing bugs where prim 61 (SmallInt
+        // at:put:) gets called with a Character value (which should
+        // route to prim 64 / primitiveStringAtPut instead).
+        static const bool improperTrace = std::getenv("PHARO_IMPROPER_STORE_TRACE") != nullptr;
+        if (__builtin_expect(improperTrace, 0)) {
+            if (!value.isSmallInteger() ||
+                value.asSmallInteger() < 0 || value.asSmallInteger() > 255 ||
+                static_cast<size_t>(idx - 1) >= header->byteSize()) {
+                std::string rcls = memory_.classNameOf(rcvr);
+                std::string mSel = memory_.selectorOf(method_);
+                int methodPrim = primitiveIndexOf(method_);
+                const char* valKind = value.isCharacter() ? "Char"
+                                    : value.isSmallInteger() ? "Int"
+                                    : value.isObject() ? "obj" : "imm";
+                std::string nSel = memory_.selectorOf(newMethod_);
+                int nPrim = primitiveIndexOf(newMethod_);
+                // Selector of the SEND: the method being invoked via
+                // primitive 61.  Look up via newMethod_ (the method
+                // that had <primitive: 61>).
+                Oop nClass = memory_.nil();
+                if (newMethod_.isObject()) {
+                    nClass = methodClassOf(newMethod_);
+                }
+                std::string nCls = nClass.isObject()
+                    ? memory_.classNameOf(nClass) : "(?)";
+                fprintf(stderr,
+                    "[IMPROPER-STORE] rcvr=%s(byteSize=%zu fmt=%d) idx=%lld"
+                    " value=0x%llx(%s) caller=#%s prim=%d"
+                    " invoked=%s>>#%s (prim=%d)\n",
+                    rcls.c_str(), header->byteSize(), (int)header->format(),
+                    (long long)idx,
+                    (unsigned long long)value.rawBits(), valKind,
+                    mSel.c_str(), methodPrim,
+                    nCls.c_str(), nSel.c_str(), nPrim);
+            }
+        }
         if (!value.isSmallInteger()) {
             return PrimitiveResult::Failure;
         }
