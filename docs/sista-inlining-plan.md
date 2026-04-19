@@ -25,11 +25,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   SpecialSend + CallPrimitive-skip now work.  30 round-trip
   tests passing.
 
-  **Coverage over a Pharo 13 image (175K CompiledMethods)**:
-  **99.90% lift, 100% lower**.  Measured by `test_sista_survey`;
-  baseline at the start of the session was 9.57% — **10.4x
-  improvement**.  Only 98 methods fail with unsupported opcode
-  (all 0xEB directed super-sends).  Only 81 methods malform.
+  **Coverage over a Pharo 13 image (175,746 CompiledMethods)**:
+  **100% lift, 100% lower**.  Every single method in the image
+  lifts to IR and lowers to machine code.  Baseline at session
+  start was 9.57%.
 
   **Phase 2.3 in progress.**  Lowering::lower now accepts a
   `bytecodeBase` so send-bail sets state.ip to the absolute
@@ -118,7 +117,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   Return or ExitSend bail, zero crashes),
   `dd28908` (trailer-tolerant Extend at end-of-bytecodes —
   truncated ExtendA/B/Jump at EOF treated as clean stop rather
-  than kMalformedMethod; 99.90% lift coverage).
+  than kMalformedMethod; 99.90% lift coverage),
+  `c30ae9d` (directed super-send + empty-stack ExtStoreTemp
+  bail → **100% lift coverage over the full Pharo 13 image**).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
