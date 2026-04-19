@@ -854,6 +854,86 @@ int main() {
                   << std::hex << state.returnValue << std::dec << "\n";
     }
 
+    // Round-trip 7.I: ExtPushTemp — temp index beyond short range.
+    // PushTemp (short) covers 0..11; ExtPushTemp reaches 0..255.
+    // Test reads temp[20] which is beyond the short range.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::ExtPushTemp, 20,     // 0,1: push temp[20]
+            SistaV1::ReturnTop,           // 2
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 21,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtPushTemp 20 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ExtPushTemp 20");
+        uint64_t temps[21];
+        for (int i = 0; i < 21; i++) temps[i] = 0x1000 + i;
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 0x1014ULL,
+              "returnValue = temp[20] = 0x1014");
+        std::cout << "--- round-trip ExtPushTemp 20: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.J: ExtendA + ExtPushLitConst — lit index > 31.
+    // ExtendA 1 + ExtPushLitConst 5 → lit index = (1 << 8) | 5 = 261.
+    // But test using a smaller index (no extA) to avoid oversized
+    // literal arrays — lit index = 33 via ExtPushLitConst 33 (extA=0).
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::ExtPushLitConst, 33, // 0,1: push lit[33]
+            SistaV1::ReturnTop,           // 2
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtPushLitConst 33 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ExtPushLitConst 33");
+        uint64_t literals[40];
+        for (int i = 0; i < 40; i++) literals[i] = 0x2000 + i;
+        FakeState state{};
+        state.literals = literals;
+        fn(&state);
+        check(state.returnValue == 0x2021ULL,
+              "returnValue = literals[33] = 0x2021");
+        std::cout << "--- round-trip ExtPushLitConst 33: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.K: ExtPopStoreTemp 15, ExtPushTemp 15.
+    // Stores and re-reads temp index 15 (out of short range).
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushOne,                      // 0
+            SistaV1::ExtPopStoreTemp, 15,          // 1,2
+            SistaV1::ExtPushTemp,     15,          // 3,4
+            SistaV1::ReturnTop,                    // 5
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 16,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ext store/push temp 15 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ext store/push temp 15");
+        uint64_t temps[16] = {0};
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 9ULL,
+              "stored PushOne, re-read SmallInt 1 (bits 9)");
+        check(temps[15] == 9ULL, "temp[15] holds stored SmallInt 1");
+        std::cout << "--- round-trip ext store/push temp 15: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

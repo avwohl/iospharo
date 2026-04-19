@@ -62,13 +62,21 @@ static inline bool isTerminatorBC(uint8_t op) {
 }
 
 // ExtJump family: 2-byte instruction.  Offset = offsetByte + (extB<<8),
-// signed.  Target = (ip after 2-byte instruction) + offset.  For lifter
-// MVP we support forward jumps only (offset >= 0); backward jumps
-// require reordering pass 3 to handle loops and are deferred.
+// signed.  Target = (ip after 2-byte instruction) + offset.  Both
+// forward and backward (loops) supported.
 static inline bool isExtJump(uint8_t op) {
     return op == jit::SistaV1::ExtJump
         || op == jit::SistaV1::ExtJumpTrue
         || op == jit::SistaV1::ExtJumpFalse;
+}
+
+// Return the length in bytes of the instruction starting with `op`.
+// 1 byte for most; 2 for 0xE0-0xF7; 3 for 0xF8-0xFD.  Keeps pass 1
+// from misinterpreting a wide op's byte-arg as a fresh opcode.
+static inline size_t instructionSize(uint8_t op) {
+    if (op >= 0xF8 && op <= 0xFD) return 3;  // CallPrim, PushClosure, etc.
+    if (op >= 0xE0 && op <= 0xF7) return 2;  // extended pushes / stores / jumps
+    return 1;
 }
 
 class LinearLifter {
@@ -154,11 +162,12 @@ public:
                 i++;
                 continue;
             }
-            if (isTerminatorBC(op) && i + 1 < len_) {
-                blockStarts.insert(i + 1);
+            size_t sz = instructionSize(op);
+            if (isTerminatorBC(op) && i + sz < len_) {
+                blockStarts.insert(i + sz);
             }
             pass1ExtB = 0;
-            i++;
+            i += sz;
         }
 
         // --- Pass 2: create blocks in offset order ---------------------
@@ -344,6 +353,97 @@ private:
                 out_.addEdge(currentBlock_, tIt->second);
                 out_.addEdge(currentBlock_, fIt->second);
                 return LiftResult::kOk;
+            }
+
+            // Extended pushes (2-byte).  index = (extA<<8) | byteArg
+            // for recv-var / lit-const; for temp it's the raw byte.
+            if (op == jit::SistaV1::ExtPushRecvVar) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t ivarIdx = (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t recv = out_.newValue(currentBlock_,
+                                               Op::kLoadReceiver, Type::kOop);
+                uint32_t v = out_.newValue(currentBlock_, Op::kLoadInstVar,
+                                            Type::kOop,
+                                            /*operands=*/{recv},
+                                            /*literal=*/ivarIdx);
+                stack_.push_back(v);
+                ip += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtPushLitConst) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t litIdx = (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t v = out_.newValue(currentBlock_, Op::kLoadLiteral,
+                                            Type::kOop,
+                                            /*operands=*/{},
+                                            /*literal=*/litIdx);
+                stack_.push_back(v);
+                ip += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtPushTemp) {
+                // ExtPushTemp uses raw byte as index (no extA per the
+                // interpreter — see Interpreter.cpp:3733).
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t tempIdx = (uint32_t)bc_[ip + 1];
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t v = out_.newValue(currentBlock_, Op::kLoadTemp,
+                                            Type::kOop,
+                                            /*operands=*/{},
+                                            /*literal=*/tempIdx);
+                stack_.push_back(v);
+                ip += 2;
+                continue;
+            }
+
+            // Extended pop-stores (2-byte).
+            if (op == jit::SistaV1::ExtPopStoreRecv) {
+                if (ip + 1 >= len_ || stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t ivarIdx = (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t val = stack_.back();
+                stack_.pop_back();
+                uint32_t recv = out_.newValue(currentBlock_,
+                                               Op::kLoadReceiver, Type::kOop);
+                out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                               /*operands=*/{recv, val},
+                               /*literal=*/ivarIdx);
+                ip += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtPopStoreTemp) {
+                if (ip + 1 >= len_ || stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t tempIdx = (uint32_t)bc_[ip + 1];
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t val = stack_.back();
+                stack_.pop_back();
+                out_.newValue(currentBlock_, Op::kStoreTemp, Type::kVoid,
+                               /*operands=*/{val},
+                               /*literal=*/tempIdx);
+                ip += 2;
+                continue;
             }
 
             // Short jumps: unconditional and conditional.
