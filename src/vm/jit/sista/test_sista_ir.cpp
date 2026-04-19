@@ -1185,6 +1185,60 @@ int main() {
                   << std::hex << state.returnValue << std::dec << "\n";
     }
 
+    // Round-trip 9: Send1 bail with PushRecvVar operands.
+    // Reproduces the shape seen in the real image #reset method
+    // (bytecodes `02 01 90 …`): two instVar pushes feeding a Send1.
+    // At bail the IR stack [ivar[2], ivar[1]] should be pushed to
+    // state.sp in receiver-first order.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushRecvVarBase + 2),   // 0x02
+            (uint8_t)(SistaV1::PushRecvVarBase + 1),   // 0x01
+            (uint8_t)(SistaV1::Send1Base + 0),          // 0x90
+            SistaV1::ReturnTop,                         // unreachable
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "Send1 w/ ivars lifts");
+
+        // Confirm lift shape: two kLoadInstVar + one kSendUnspeculated.
+        size_t ivarLoads = 0, sendCount = 0;
+        for (const Value& v : lifted.values) {
+            if (v.op == Op::kLoadInstVar) ivarLoads++;
+            if (v.op == Op::kSendUnspeculated) sendCount++;
+        }
+        check(ivarLoads == 2, "two kLoadInstVar");
+        check(sendCount == 1, "one kSendUnspeculated");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower Send1 w/ ivars");
+
+        // Fake receiver object: slot 0 at +8, slot 1 at +16, slot 2 at +24.
+        uint64_t recvObj[4] = {
+            0xDEADBEEFULL,   // header
+            0x1111,           // instVar[0]
+            0x2222,           // instVar[1] — should appear as arg on stack
+            0x3333,           // instVar[2] — should appear as rcvr on stack
+        };
+        uint64_t stack[4] = {0};
+        FakeState state{};
+        state.sp       = &stack[0];
+        state.receiver = reinterpret_cast<uint64_t>(&recvObj[0]);
+        fn(&state);
+        check(state.exitReason == 2, "Send1 bails with ExitSend");
+        check(stack[0] == 0x3333ULL,
+              "push[0] = receiver's instVar[2]");
+        check(stack[1] == 0x2222ULL,
+              "push[1] = receiver's instVar[1]");
+        check(state.sp == &stack[2],
+              "sp advanced by 2 slots (rcvr + 1 arg)");
+        std::cout << "--- round-trip Send1 w/ PushRecvVar: "
+                     "stack[0]=0x" << std::hex << stack[0]
+                  << " stack[1]=0x" << stack[1] << std::dec << "\n";
+    }
+
     std::cout << "PASS\n";
     return 0;
 }
