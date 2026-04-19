@@ -26,11 +26,13 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tests passing.
 
   **Coverage over a Pharo 13 image (175K CompiledMethods)**:
-  24.10% lift, 100% lower.  Measured by `test_sista_survey`;
-  baseline at the start of the session was 9.57% (~2.5x
-  improvement).  Remaining top blockers: PushFullBlock
-  (~8K), BlockReturnTop (~6K), PushArray (~4K), remote
-  temps (~3.7K), no-pop ExtStore variants (~4K).
+  ~35-39% lift, 100% lower.  Measured by `test_sista_survey`;
+  baseline at the start of the session was 9.57% (~3.7x+
+  improvement).  Only ~2.7K methods still fail the lifter
+  entirely — mostly CallPrimitive in non-start positions.
+  The gap to 100% is now "lift-malformed" cases (stack-depth
+  issues at merges, subsequent-block failures) rather than
+  blocked-opcodes.
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -80,7 +82,11 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `944e9cc` (survey harness + PushLitVar + SpecialSend + arith
   fallback + CallPrimitive-skip → 22.95% lift coverage),
   `a06e05f` (ExtSuperSend + reserved no-ops → 24.10% + fix
-  send-bail state.ip via `currentInstrStart_` tracking).
+  send-bail state.ip via `currentInstrStart_` tracking),
+  `4621e86` (generic bailToInterpreter() for mid-method ops:
+  PushFullBlock, PushArray, PushClosure, PushThisContext,
+  BlockReturnNil/Top, trap, remote temps, InlinedPrimitive →
+  35-39% lift coverage).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
