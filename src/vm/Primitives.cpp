@@ -12393,31 +12393,14 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
     // Process any pending events first
     processInputEvents();
     processPendingSignals();
-
-    // Short sleep if requested
-    // Set relinquishSlept_ so step() reports idle to the caller.
-    // This enables the test_load_image 30s idle timeout to kill the VM when
-    // all processes are genuinely stuck (e.g., Delay scheduler dead).
-    if (sleepUs > 0) {
-        relinquishSlept_ = true;
-        if (relinquishCallback_) {
-            // Use platform callback (e.g., CFRunLoopRunInMode on main thread)
-            relinquishCallback_(static_cast<int>(sleepUs));
-        } else {
-            #ifdef _WIN32
-            Sleep(static_cast<DWORD>(sleepUs / 1000));
-            #else
-            usleep(static_cast<useconds_t>(sleepUs));
-            #endif
-        }
-    }
-
-    // Process events again after sleep
-    processInputEvents();
-    processPendingSignals();
     checkTimerSemaphore();
 
-    // Try to yield to higher priority ready processes
+    // Yield to ready processes FIRST (before sleeping).  If other
+    // processes are runnable at same-or-lower priority, the caller
+    // shouldn't burn 10 ms of wall clock first — that starves them.
+    // Previous behavior was to sleep 10 ms unconditionally, which turned
+    // every SUnit-forked P40 test into a 30× slowdown since the caller
+    // (P40) sleeps before yielding to the test (P40).
     Oop activeProcess = getActiveProcess();
     Oop activePriorityOop = memory_.fetchPointer(ProcessPriorityIndex, activeProcess);
     int activePriority = activePriorityOop.isSmallInteger() ?
@@ -12434,15 +12417,23 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
                 ObjectHeader* queuesHdr = schedLists.asObjectPtr();
                 size_t numQueues = queuesHdr->slotCount();
 
-                // Search from highest priority down to priority 1, but SKIP the
-                // active process's own priority. Without this, multiple processes
-                // at the same priority (e.g., P79 spin-wait watchdog + Pharo's env
-                // watchdog) bounce between each other and starve lower-priority
-                // processes. Same-priority round-robin is handled separately by
-                // checkForPreemption() in the periodic step check.
-                for (int pri = static_cast<int>(numQueues); pri >= 1; pri--) {
-                    if (pri == activePriority) continue;  // skip same priority
-                    int index = pri - 1;  // Convert 1-based priority to 0-based index
+                // Search for a ready process at same or lower priority.
+                // `relinquishProcessor` semantics (per Cog): voluntarily yield
+                // so same-priority siblings round-robin and lower-priority
+                // processes get CPU.  Yielding to HIGHER priority was wrong —
+                // it created a P80↔P60 bounce pattern (main poller at P80
+                // relinquishes, picks up P60 watchdog; watchdog at P60
+                // relinquishes, picks up P80 main) that starves every
+                // P40 test process: a 2 ms test took 23 s in fork mode.
+                //
+                // Checking same priority first enables the common case
+                // (two P40 processes taking turns via relinquish);
+                // then priorities strictly below, highest first so a
+                // P60 relinquish prefers P50 over P10 when both are ready.
+                // Higher-priority work is handled by preemption
+                // (checkForPreemption), not by voluntary yield.
+                for (int pri = activePriority; pri >= 1; pri--) {
+                    int index = pri - 1;  // 1-based priority → 0-based index
                     Oop queue = memory_.fetchPointer(index, schedLists);
                     if (!queue.isObject() || queue.rawBits() == nilObj.rawBits()) continue;
 
@@ -12461,7 +12452,25 @@ PrimitiveResult Interpreter::primitiveRelinquishProcessor(int argCount) {
         }
     }
 
-    // Arg already popped above before signal processing
+    // Nothing else ready — sleep the requested time so we idle instead
+    // of busy-spinning.  relinquishSlept_ tells step() that this was idle
+    // time (enables test_load_image's idle-detection kill switch).
+    if (sleepUs > 0) {
+        relinquishSlept_ = true;
+        if (relinquishCallback_) {
+            relinquishCallback_(static_cast<int>(sleepUs));
+        } else {
+            #ifdef _WIN32
+            Sleep(static_cast<DWORD>(sleepUs / 1000));
+            #else
+            usleep(static_cast<useconds_t>(sleepUs));
+            #endif
+        }
+        processInputEvents();
+        processPendingSignals();
+        checkTimerSemaphore();
+    }
+
     return PrimitiveResult::Success;
 }
 
