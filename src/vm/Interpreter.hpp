@@ -516,8 +516,20 @@ public:
 private:
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
-    // Primitive error codes (matching PrimErrTable indices in the image)
-    static constexpr int PrimErrNoMemory_       = 4;  // Insufficient object memory
+    // Primitive error codes (matching PrimErrTable indices in the image).
+    // Index is 1-based and matches Pharo's SpecialObjectsArray slot 52.
+    //   1: nil
+    //   2: #'bad receiver'
+    //   3: #'bad argument'
+    //   4: #'bad index'
+    //   5: #'bad number of arguments'
+    //   6: #'inappropriate operation'
+    //   7: #'unsupported operation'
+    //   8: #'no modification'
+    //   9: #'insufficient object memory'  <-- OutOfMemory trigger
+    //  10: #'insufficient C memory'
+    //  ... (see Pharo SmalltalkImage>>initializePrimitiveErrors)
+    static constexpr int PrimErrNoMemory_       = 9;  // Insufficient object memory
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
     static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;

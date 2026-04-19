@@ -2691,14 +2691,12 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
         newObj = memory_.allocateSlots(classIndex, totalSlots, objFormat);
     }
 
-    if (newObj.isNil()) {
-        return PrimitiveResult::Failure;
-    }
-
-    // Allocation-failure path: `allocateBytes`/`allocateSlots` return nil when
-    // old-space is exhausted.  Signal PrimErrNoMemory so the image raises
-    // OutOfMemory (caught by tests' `on: OutOfMemory do:`) rather than the
-    // generic PrimitiveFailed.
+    // Allocation-failure path: allocateBytes / allocateSlots return nil when
+    // old-space is exhausted.  Signal PrimErrNoMemory so Pharo's basicNew:
+    // fallback (<primitive: 71 error: ec>) sees ec == #'insufficient object
+    // memory' and raises OutOfMemory, which tests can catch with
+    // `on: OutOfMemory do:`.  Without primFailCode_ set, the image falls
+    // through to generic PrimitiveFailed, uncatchable by OOM handlers.
     if (newObj.isNil()) {
         primFailCode_ = PrimErrNoMemory_;
         return PrimitiveResult::Failure;
