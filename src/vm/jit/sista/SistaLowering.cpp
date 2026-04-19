@@ -16,9 +16,12 @@ namespace {
 // JITState offsets — must match Tier 1 / Tier 2 so runtime can invoke
 // either transparently.  See src/vm/jit/JITState.hpp.
 constexpr int OFF_RECEIVER = 8;
+constexpr int OFF_LITERALS = 16;
 constexpr int OFF_TEMPBASE = 24;
 constexpr int OFF_EXIT     = 76;
 constexpr int OFF_RETVAL   = 80;
+constexpr int OFF_TRUEOOP  = 128;
+constexpr int OFF_FALSEOOP = 136;
 
 // ExitReason values (src/vm/jit/JITState.hpp).
 constexpr int EXIT_RETURN  = 1;
@@ -63,11 +66,53 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = dst;
                 break;
             }
+            case Op::kLoadTrueOop: {
+                Gp dst = cc.new_gp64("true");
+                cc.ldr(dst, ptr(state, OFF_TRUEOOP));
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kLoadFalseOop: {
+                Gp dst = cc.new_gp64("false");
+                cc.ldr(dst, ptr(state, OFF_FALSEOOP));
+                regFor[v.id] = dst;
+                break;
+            }
             case Op::kLoadTemp: {
                 Gp tempBase = cc.new_gp64("tempBase");
                 Gp dst      = cc.new_gp64("temp");
                 cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
                 cc.ldr(dst, ptr(tempBase, static_cast<int>(v.literal) * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kLoadLiteral: {
+                Gp litBase = cc.new_gp64("litBase");
+                Gp dst     = cc.new_gp64("lit");
+                cc.ldr(litBase, ptr(state, OFF_LITERALS));
+                cc.ldr(dst, ptr(litBase, static_cast<int>(v.literal) * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kStoreTemp: {
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp tempBase = cc.new_gp64("tempBase");
+                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
+                cc.str(it->second, ptr(tempBase, static_cast<int>(v.literal) * 8));
+                // kStoreTemp produces void — nothing to record.
+                break;
+            }
+            case Op::kConstantOop: {
+                Gp dst = cc.new_gp64("const");
+                cc.mov(dst, Imm(v.literal));
                 regFor[v.id] = dst;
                 break;
             }

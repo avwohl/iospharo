@@ -228,6 +228,116 @@ int main() {
                   << std::hex << state.returnValue << std::dec << "\n";
     }
 
+    // FakeState with trueOop / falseOop slots at the right offsets
+    // (must match OFF_TRUEOOP = 128, OFF_FALSEOOP = 136).
+    struct FakeStateWithBools {
+        void*    sp;
+        uint64_t receiver;
+        void*    literals;
+        void*    tempBase;
+        uint8_t  padA[40];
+        int      argCount;
+        int      exitReason;
+        uint64_t returnValue;
+        uint8_t  padB[40];
+        uint64_t trueOop;
+        uint64_t falseOop;
+        uint8_t  padC[64];
+    };
+    static_assert(offsetof(FakeStateWithBools, trueOop) == 128,  "trueOop offset");
+    static_assert(offsetof(FakeStateWithBools, falseOop) == 136, "falseOop offset");
+
+    // Round-trip 4: ^ true (PushTrue, ReturnTop).
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::PushTrue, SistaV1::ReturnTop };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ true succeeds");
+
+        FakeStateWithBools state{};
+        state.trueOop  = 0xA0A0A0A0U;
+        state.falseOop = 0xB0B0B0B0U;
+        fn(&state);
+        check(state.returnValue == 0xA0A0A0A0U, "returnValue = trueOop");
+        std::cout << "--- round-trip ^ true: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 5: ReturnFalse bytecode (single-byte).
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::ReturnFalse };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ReturnFalse succeeds");
+
+        FakeStateWithBools state{};
+        state.trueOop  = 0xA0A0A0A0U;
+        state.falseOop = 0xB0B0B0B0U;
+        fn(&state);
+        check(state.returnValue == 0xB0B0B0B0U, "returnValue = falseOop");
+        std::cout << "--- round-trip ReturnFalse: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 6: ^ 0 (PushZero, ReturnTop) → SmallInt 0 bits = 1.
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::PushZero, SistaV1::ReturnTop };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ 0 succeeds");
+
+        FakeState state{};
+        fn(&state);
+        check(state.returnValue == 1ULL, "SmallInt 0 bits = 1");
+        std::cout << "--- round-trip ^ 0: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec
+                  << " (SmallInt 0)\n";
+    }
+
+    // Round-trip 7: ^ 1 (PushOne, ReturnTop) → SmallInt 1 bits = 9.
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::PushOne, SistaV1::ReturnTop };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ 1 succeeds");
+
+        FakeState state{};
+        fn(&state);
+        check(state.returnValue == 9ULL, "SmallInt 1 bits = 9");
+        std::cout << "--- round-trip ^ 1: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec
+                  << " (SmallInt 1)\n";
+    }
+
+    // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushLitConstBase + 2),
+            SistaV1::ReturnTop,
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ lit[2] succeeds");
+
+        uint64_t literals[4] = { 0x1100, 0x2200, 0xC0FFEE, 0x4400 };
+        FakeState state{};
+        state.literals = literals;
+        fn(&state);
+        check(state.returnValue == 0xC0FFEEULL, "returnValue = literals[2]");
+        std::cout << "--- round-trip ^ lit[2]: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
     std::cout << "PASS\n";
     return 0;
 }

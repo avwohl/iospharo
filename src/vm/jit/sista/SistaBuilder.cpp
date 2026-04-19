@@ -61,6 +61,88 @@ public:
                 continue;
             }
 
+            // Push-lit-const N (0x20-0x3F): load literals[N], push.
+            if (op >= jit::SistaV1::PushLitConstBase
+                && op <= jit::SistaV1::PushLitConstLast) {
+                uint32_t litIdx = op - jit::SistaV1::PushLitConstBase;
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kLoadLiteral, Type::kOop,
+                                            /*operands=*/{}, /*literal=*/litIdx);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Push-true / push-false: read from JITState.
+            if (op == jit::SistaV1::PushTrue) {
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kLoadTrueOop, Type::kOopBool);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+            if (op == jit::SistaV1::PushFalse) {
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kLoadFalseOop, Type::kOopBool);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Push-nil: const-oop with Oop::s_nilBits (known at compile time).
+            if (op == jit::SistaV1::PushNil) {
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kConstantOop, Type::kOop,
+                                            /*operands=*/{},
+                                            /*literal=*/Oop::nil().rawBits());
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Push-zero / push-one: SmallInt immediates.
+            // Bit pattern: (value << 3) | 1.
+            if (op == jit::SistaV1::PushZero) {
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kConstantOop, Type::kOopSmallInt,
+                                            /*operands=*/{},
+                                            /*literal=*/(0ULL << 3) | 1);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+            if (op == jit::SistaV1::PushOne) {
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kConstantOop, Type::kOopSmallInt,
+                                            /*operands=*/{},
+                                            /*literal=*/(1ULL << 3) | 1);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Return-true/false/nil: ^ true, etc.  Same pattern as
+            // ReturnReceiver but loading a different constant first.
+            if (op == jit::SistaV1::ReturnTrue
+                || op == jit::SistaV1::ReturnFalse
+                || op == jit::SistaV1::ReturnNil) {
+                Op loadOp; Type ty; uint64_t lit = 0;
+                if (op == jit::SistaV1::ReturnTrue) {
+                    loadOp = Op::kLoadTrueOop; ty = Type::kOopBool;
+                } else if (op == jit::SistaV1::ReturnFalse) {
+                    loadOp = Op::kLoadFalseOop; ty = Type::kOopBool;
+                } else {
+                    loadOp = Op::kConstantOop; ty = Type::kOop;
+                    lit = Oop::nil().rawBits();
+                }
+                uint32_t val = out_.newValue(currentBlock_, loadOp, ty,
+                                              /*operands=*/{}, lit);
+                out_.newValue(currentBlock_, Op::kReturn, Type::kVoid,
+                               /*operands=*/{val});
+                ip++;
+                return LiftResult::kOk;
+            }
+
             // Return-receiver: ^ self; terminator, doesn't use the
             // simulated stack.
             if (op == jit::SistaV1::ReturnReceiver) {

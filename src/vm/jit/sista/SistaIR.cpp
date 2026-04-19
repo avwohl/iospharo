@@ -33,6 +33,8 @@ bool producesOop(Op op) {
     switch (op) {
     case Op::kConstantOop:
     case Op::kLoadReceiver:
+    case Op::kLoadTrueOop:
+    case Op::kLoadFalseOop:
     case Op::kLoadArg:
     case Op::kLoadTemp:
     case Op::kLoadInstVar:
@@ -79,6 +81,8 @@ const char* name(Op op) {
     case Op::kConstantOop:      return "const_oop";
     case Op::kConstantInt:      return "const_int";
     case Op::kLoadReceiver:     return "load_recv";
+    case Op::kLoadTrueOop:      return "load_true";
+    case Op::kLoadFalseOop:     return "load_false";
     case Op::kLoadArg:          return "load_arg";
     case Op::kLoadTemp:         return "load_temp";
     case Op::kStoreTemp:        return "store_temp";

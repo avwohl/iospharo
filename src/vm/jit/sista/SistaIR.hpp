@@ -52,9 +52,11 @@ enum class Op : uint8_t {
     kConstantOop,         // operand: 64-bit raw Oop bits                 -> Oop
     kConstantInt,         // operand: 64-bit raw int                      -> Int
     kLoadReceiver,        // 0 operands                                   -> Oop
-    kLoadArg,             // operand: arg index                           -> Oop
-    kLoadTemp,            // operand: temp index                          -> Oop
-    kStoreTemp,           // operands: temp index, value                  -> Void
+    kLoadTrueOop,         // 0 operands; reads from JITState               -> OopBool
+    kLoadFalseOop,        // 0 operands; reads from JITState               -> OopBool
+    kLoadArg,             // literal: arg index                           -> Oop
+    kLoadTemp,            // literal: temp index                          -> Oop
+    kStoreTemp,           // operand[0] = value; literal: temp index      -> Void
     kLoadInstVar,         // operands: receiver, instVar index            -> Oop
     kStoreInstVar,        // operands: receiver, instVar index, value     -> Void
     kLoadLiteral,         // operand: literal index                       -> Oop
