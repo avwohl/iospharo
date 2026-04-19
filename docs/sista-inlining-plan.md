@@ -45,13 +45,26 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   send when the flag is set.  Under a real workload
   (`500 factorial printString size`) this handled **7,303,168
   activations / 7,139 unique methods / 100% compile success /
-  0 bailouts**.  The hook doesn't dispatch to compiled code yet —
-  actual tier-up is next.
+  0 bailouts**.
 
-  Still to do before tier-up dispatch: state.sp synchronization
-  with the live interpreter stack, ExitSend resume handling, and
-  GC-stable cache keying (raw oop key goes stale across
-  compaction).
+  **MVP tier-up dispatch landed** (PHARO_SISTA_DISPATCH=1).
+  activateMethod() now invokes Sista-compiled code for methods
+  with no send bytecodes (pure getters, setters, constant
+  returns).  ExitReturn pops the Sista frame + pushes the return
+  value; ExitSend syncs `state.sp` / `state.ip` into the
+  interpreter and falls through so the dispatch loop executes
+  the bail bytecode.  Under the same workload this ran
+  **53,548 ExitReturns and 6 ExitSends** with identical bytecode
+  step count and DNU sequence to the baseline — so the
+  no-send-methods path is behavior-preserving end-to-end.
+
+  Dispatch is gated by `!hasSend` because the general ExitSend
+  state-sync path still causes image-startup divergence when
+  applied to methods with sends (wrong receiver reaches
+  `setGCParameters` during snapshot handoff).  Diagnosing and
+  lifting that restriction is the next tier-up step.  Also
+  still to do: GC-stable cache keying (raw oop key goes stale
+  across compaction).
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,

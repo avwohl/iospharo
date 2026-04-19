@@ -6589,24 +6589,146 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // std::cerr << std::dec; // DEBUG
 
 #if PHARO_JIT_ENABLED
-    // Sista speculative-compile hook (PHARO_SISTA_COMPILE=1).
-    // Runs on every activation — including non-Tier-1-compiled methods
-    // the JIT hasn't seen yet — which is exactly what we want to
-    // measure Sista's real-workload behavior.  Populates Sista's cache
-    // without dispatching.  Real tier-up wiring comes later.
-    if (g_debug.sistaCompile) {
+    // Sista speculative-compile + dispatch hook.
+    //   PHARO_SISTA_COMPILE=1  — compile on every activation; don't dispatch.
+    //   PHARO_SISTA_DISPATCH=1 — compile and, on success, invoke compiled code.
+    //
+    // Compile-only mode populates the cache so we can measure
+    // success rate on a real workload without changing VM behavior.
+    // Dispatch mode also calls the compiled function and handles
+    // its two exit reasons: ExitReturn (method returned a value) and
+    // ExitSend (Sista bailed mid-method — interpreter resumes at the
+    // bail bytecode in the same frame).
+    if (g_debug.sistaCompile || g_debug.sistaDispatch) {
         static sista::Runtime* sista = new sista::Runtime();
         static size_t attempts = 0, hits = 0;
+        static size_t dispatched = 0, sistaReturns = 0, sistaSends = 0, sistaUnknown = 0;
         static bool banner = false;
         if (!banner) {
-            fprintf(stderr, "[SISTA-COMPILE] hook active\n");
+            fprintf(stderr, "[SISTA] compile=%d dispatch=%d hook active\n",
+                    (int)g_debug.sistaCompile, (int)g_debug.sistaDispatch);
             banner = true;
         }
         attempts++;
-        if (sista->compile(method, memory_)) hits++;
-        if (attempts == 1 || (attempts & 0xFFF) == 0) {
-            fprintf(stderr, "[SISTA-COMPILE] %zu/%zu (cache=%zu)\n",
-                    hits, attempts, sista->compiledCount());
+        sista::Lowering::CompiledFn fn = sista->compile(method, memory_);
+        if (fn) hits++;
+
+        // Only dispatch when the interpreter's IP is at the raw start of
+        // bytecodes.  Methods with `<primitive: N error: ec>` cause
+        // activateMethod to advance past the ExtStoreTemp that captures
+        // the error — Sista's lifter skips only the CallPrimitive header,
+        // so its starting offset wouldn't match.  The mismatch would
+        // double-execute the error-capture store.  Skip for now; we can
+        // teach Sista about the error-temp skip later.
+        const bool ipAtBytecodeStart =
+            (instructionPointer_ == methodBytes + bytecodeStart);
+
+        // MVP restriction: only dispatch when the method contains no
+        // send bytecodes.  Sista's ExitSend path is end-to-end wired,
+        // but the state.sp / state.ip hand-off to the interpreter is
+        // not yet fully debugged — dispatching methods with sends
+        // currently causes image-startup divergence (e.g., wrong
+        // receiver reaching `setGCParameters`).  Pure leaf methods
+        // (getters, setters, constant returns) cover the return path
+        // without exercising the bail edge.  Remove this guard once
+        // the ExitSend sync is known-correct.
+        bool hasSend = false;
+        {
+            size_t bcLen = totalBytes > bytecodeStart
+                           ? totalBytes - bytecodeStart : 0;
+            for (size_t i = 0; i < bcLen; i++) {
+                uint8_t op = methodBytes[bytecodeStart + i];
+                if (jit::SistaV1::isSendBytecode(op)
+                 || op == jit::SistaV1::ExtSend
+                 || op == jit::SistaV1::ExtSuperSend
+                 || op == jit::SistaV1::PushFullBlock
+                 || op == jit::SistaV1::PushClosure
+                 || op == jit::SistaV1::PushArray
+                 || op == jit::SistaV1::PushThisContext) {
+                    hasSend = true;
+                    break;
+                }
+            }
+        }
+
+        if (fn && g_debug.sistaDispatch && ipAtBytecodeStart && !hasSend) {
+            // Tier-up dispatch.  Set up JITState the same way
+            // tryJITActivation does, invoke the Sista function,
+            // handle the exit reason.
+            jit::JITState sstate;
+            sstate.sp = stackPointer_;
+            sstate.receiver = receiver_;
+            sstate.literals = methodObj->slots() + 1;
+            sstate.tempBase = framePointer_ + 1;
+            sstate.memory = &memory_;
+            sstate.interp = this;
+            sstate.ip = instructionPointer_;
+            sstate.method = method;
+            sstate.argCount = argCount;
+            sstate.jitMethod = nullptr;
+            sstate.exitReason = jit::ExitNone;
+            sstate.icDataPtr = nullptr;
+            sstate.sendArgCount = 0;
+            sstate.trueOop = memory_.trueObject();
+            sstate.falseOop = memory_.falseObject();
+            sstate.j2jSaveCursor = nullptr;
+            sstate.j2jSaveLimit = nullptr;
+            sstate.j2jDepth = 0;
+            sstate.j2jTotalCalls = 0;
+            sstate.methodMapPtr = nullptr;
+            sstate.yieldCountdown = 0;
+
+#if defined(__APPLE__) && defined(__arm64__)
+            pthread_jit_write_protect_np(1);
+#endif
+            JIT_CALL(fn, &sstate);
+#if defined(__APPLE__) && defined(__arm64__)
+            pthread_jit_write_protect_np(0);
+#endif
+
+            dispatched++;
+            switch (sstate.exitReason) {
+            case jit::ExitReturn: {
+                sistaReturns++;
+                // Pop Sista's frame, push return value — caller resumes.
+                if (!popFrame()) {
+                    if (benchMode_) {
+                        handleBenchComplete(sstate.returnValue);
+                        return;
+                    }
+                    terminateCurrentProcess();
+                    tryReschedule();
+                    return;
+                }
+                push(sstate.returnValue);
+                return;
+            }
+            case jit::ExitSend: {
+                sistaSends++;
+                // Sista bailed mid-method: rcvr+args (or the full IR
+                // stack, for generic bailToInterpreter) are pushed to
+                // state.sp; state.ip points to the bail bytecode.
+                // Sync interpreter registers and fall through — the
+                // dispatch loop picks up execution at state.ip in the
+                // same (still-active) Sista frame.
+                stackPointer_ = sstate.sp;
+                instructionPointer_ = sstate.ip;
+                return;
+            }
+            default:
+                sistaUnknown++;
+                // Shouldn't happen — Sista only emits ExitReturn /
+                // ExitSend today.  Fall through to interpreter for
+                // safety; the frame is still set up correctly.
+                break;
+            }
+        }
+
+        if (attempts == 1 || (attempts & 0xFFFFF) == 0) {
+            fprintf(stderr,
+                "[SISTA] hits=%zu/%zu cache=%zu disp=%zu ret=%zu send=%zu unk=%zu\n",
+                hits, attempts, sista->compiledCount(),
+                dispatched, sistaReturns, sistaSends, sistaUnknown);
         }
     }
 

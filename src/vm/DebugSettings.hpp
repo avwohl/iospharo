@@ -96,6 +96,7 @@ struct DebugSettings {
     const char* jitTraceOop = nullptr;             // PHARO_JIT_TRACE_OOP
     const char* jitTop = nullptr;                  // PHARO_JIT_TOP
     bool sistaCompile = false;                     // PHARO_SISTA_COMPILE
+    bool sistaDispatch = false;                    // PHARO_SISTA_DISPATCH
 
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and

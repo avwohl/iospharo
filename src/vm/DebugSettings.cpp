@@ -132,6 +132,7 @@ DebugSettings::DebugSettings() {
     jitTraceOop            = envStr("PHARO_JIT_TRACE_OOP");
     jitTop                 = envStr("PHARO_JIT_TOP");
     sistaCompile           = envPresent("PHARO_SISTA_COMPILE");
+    sistaDispatch          = envPresent("PHARO_SISTA_DISPATCH");
 }
 
 DebugSettings g_debug;  // static-storage-duration; constructor runs before main().
