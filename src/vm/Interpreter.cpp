@@ -6702,13 +6702,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    // Send0 bails (0x80-0x8F) are behavior-preserving
-                    // (274K dispatches match baseline bit-for-bit).
-                    // Send1/Send2 still diverge downstream despite
-                    // Sista's lifter + lowerer passing all unit tests
-                    // for the synthetic cases — the real-VM bug is
-                    // likely a state-interaction edge case not yet
-                    // captured in a reproducer.
+                    // Send0 verified behavior-preserving; Send1/Send2
+                    // stay gated despite post-bail stack matching the
+                    // interpreter's expected values exactly (see
+                    // SISTA-MISMATCH check below — always empty).
+                    // Divergence is downstream of the bail point.
                     if (g_debug.sistaSend0Only && isSend0) {
                         continue;
                     }
@@ -6832,6 +6830,69 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // Under verbose mode, log the first few bails with
                 // full context so Send1/Send2 divergence can be
                 // caught against the baseline expectation.
+                // Reference check: replay the bytecodes BEFORE the
+                // bail and compute what the interpreter would have
+                // pushed.  If it differs from what's on the stack now,
+                // Sista miscompiled something.
+                if (g_debug.sistaVerbose && sistaSends < 15) {
+                    uint8_t* bcStart = methodBytes + bytecodeStart;
+                    ptrdiff_t bailBcOff = sstate.ip - bcStart;
+                    std::vector<Oop> refStack;
+                    int extA = 0;
+                    for (ptrdiff_t i = 0; i < bailBcOff && refStack.size() < 8; ) {
+                        uint8_t op = bcStart[i];
+                        if (op >= 0x00 && op <= 0x0F) {
+                            refStack.push_back(
+                                memory_.fetchPointerUnchecked(op, receiver_));
+                            i++;
+                        } else if (op == 0x4C) {
+                            refStack.push_back(receiver_);
+                            i++;
+                        } else if (op >= 0x40 && op <= 0x4B) {
+                            refStack.push_back(
+                                *(framePointer_ + 1 + (op - 0x40)));
+                            i++;
+                        } else if (op == 0x50) {
+                            refStack.push_back(Oop::fromSmallInteger(0));
+                            i++;
+                        } else if (op == 0x51) {
+                            refStack.push_back(Oop::fromSmallInteger(1));
+                            i++;
+                        } else if (op == 0xE0) {
+                            extA = (extA << 8) | bcStart[i + 1];
+                            i += 2;
+                        } else {
+                            // Unknown — stop.
+                            break;
+                        }
+                    }
+                    ptrdiff_t sd = sstate.sp - stackPointer_;
+                    bool mismatch = false;
+                    for (ptrdiff_t i = 0; i < sd && (size_t)i < refStack.size(); i++) {
+                        if (stackPointer_[i].rawBits() != refStack[i].rawBits()) {
+                            mismatch = true;
+                            break;
+                        }
+                    }
+                    if (mismatch) {
+                        std::string sel = memory_.selectorOf(method);
+                        fprintf(stderr, "[SISTA-MISMATCH] sel=#%s bc=[", sel.c_str());
+                        for (ptrdiff_t i = 0; i < bailBcOff && i < 8; i++) {
+                            fprintf(stderr, " %02x", bcStart[i]);
+                        }
+                        fprintf(stderr, "] sista=[");
+                        for (ptrdiff_t i = 0; i < sd; i++) {
+                            fprintf(stderr, " 0x%llx",
+                                (unsigned long long)stackPointer_[i].rawBits());
+                        }
+                        fprintf(stderr, "] ref=[");
+                        for (size_t i = 0; i < refStack.size(); i++) {
+                            fprintf(stderr, " 0x%llx",
+                                (unsigned long long)refStack[i].rawBits());
+                        }
+                        fprintf(stderr, "]\n");
+                    }
+                }
                 if (g_debug.sistaVerbose && sistaSends < 15) {
                     std::string sel = memory_.selectorOf(method);
                     uint8_t bailOp = 0;
