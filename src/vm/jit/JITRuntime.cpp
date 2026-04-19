@@ -1552,6 +1552,78 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     return true;
 }
 
+// Walk every compiled method's IC sites, classify each by polymorphism,
+// and print a histogram.  Uses the same IC layout constants as the
+// stencil (IC_ENTRIES_PER_SITE, IC_BYTES_PER_ENTRY).
+//
+// Sista inlining Phase 1 diagnostic: if the bulk of sites are
+// monomorphic or 2-way, speculative inlining is worth implementing.
+// If most hot sites are megamorphic, inlining won't help and the
+// whole project premise is wrong.
+void JITRuntime::dumpICHistogram() const {
+    if (!initialized_) {
+        fprintf(stderr, "[IC-HIST] runtime not initialized\n");
+        return;
+    }
+
+    size_t totalSites   = 0;
+    size_t emptySites   = 0;
+    size_t monoSites    = 0;
+    size_t poly2Sites   = 0;
+    size_t poly3Sites   = 0;
+    size_t poly4plus    = 0;
+    size_t compiledMethods = 0;
+
+    JITMethod* m = codeZone_.firstMethod();
+    while (m) {
+        if (m->state == MethodState::Compiled && m->numICEntries > 0) {
+            compiledMethods++;
+            uint8_t* icStart = m->codeStart() + m->codeSize
+                             - m->numICEntries * IC_BYTES_PER_SITE;
+            for (uint32_t s = 0; s < m->numICEntries; s++) {
+                totalSites++;
+                uint64_t* slots = reinterpret_cast<uint64_t*>(
+                    icStart + s * IC_BYTES_PER_SITE);
+                // Count non-empty entries.  Entry layout:
+                //   slots[3*i + 0] = classKey
+                //   slots[3*i + 1] = method
+                //   slots[3*i + 2] = extra
+                // Key == 0 → empty entry.
+                uint32_t populated = 0;
+                for (uint32_t i = 0; i < IC_ENTRIES_PER_SITE; i++) {
+                    if (slots[i * 3] != 0) populated++;
+                }
+                switch (populated) {
+                    case 0: emptySites++; break;
+                    case 1: monoSites++;  break;
+                    case 2: poly2Sites++; break;
+                    case 3: poly3Sites++; break;
+                    default: poly4plus++; break;
+                }
+            }
+        }
+        m = m->nextInZone;
+    }
+
+    fprintf(stderr, "[IC-HIST] compiledMethods=%zu totalSites=%zu\n",
+            compiledMethods, totalSites);
+    if (totalSites == 0) {
+        fprintf(stderr, "[IC-HIST]   (no sites)\n");
+        return;
+    }
+    auto pct = [&](size_t n) { return 100.0 * n / (double)totalSites; };
+    fprintf(stderr, "[IC-HIST]   empty:        %zu (%.1f%%)\n", emptySites, pct(emptySites));
+    fprintf(stderr, "[IC-HIST]   monomorphic:  %zu (%.1f%%)\n", monoSites,  pct(monoSites));
+    fprintf(stderr, "[IC-HIST]   2-way poly:   %zu (%.1f%%)\n", poly2Sites, pct(poly2Sites));
+    fprintf(stderr, "[IC-HIST]   3-way poly:   %zu (%.1f%%)\n", poly3Sites, pct(poly3Sites));
+    fprintf(stderr, "[IC-HIST]   4+-way poly:  %zu (%.1f%%)\n", poly4plus,  pct(poly4plus));
+    // Key ratio for Sista: sites with exactly 1 or 2 observed classes
+    // are candidates for speculative inlining.
+    size_t inlinable = monoSites + poly2Sites;
+    fprintf(stderr, "[IC-HIST] inlinable (mono or 2-way) / non-empty: %.1f%%\n",
+            100.0 * inlinable / (double)(totalSites - emptySites));
+}
+
 void JITRuntime::flushCaches() {
     if (!initialized_) return;
 

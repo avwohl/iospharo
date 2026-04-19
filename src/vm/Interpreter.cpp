@@ -790,6 +790,13 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         }
         fprintf(stderr, "[BENCH]   materialize: count=%zu totalDepth=%zu\n",
                 jitMaterializeCount_, jitMaterializeTotalDepth_);
+        // Sista Phase 1 diagnostic — IC polymorphism distribution.
+        // Gated on PHARO_IC_HISTOGRAM=1.  Reports what fraction of
+        // compiled send sites are monomorphic (inlining candidates)
+        // vs polymorphic vs megamorphic.
+        if (std::getenv("PHARO_IC_HISTOGRAM")) {
+            jitRuntime_.dumpICHistogram();
+        }
 #endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();

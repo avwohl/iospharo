@@ -67,6 +67,15 @@ public:
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 
+    // Diagnostic: walk every compiled method's IC sites and report the
+    // distribution of site polymorphism (empty / monomorphic / 2-way /
+    // 3-way / 4+-way / megamorphic).  Used to validate Phase 1 of the
+    // Sista inlining plan — if most sites are monomorphic, speculative
+    // inlining is worth the implementation cost.  Triggered by env var
+    // PHARO_IC_HISTOGRAM=1 during VM shutdown, or on-demand via the
+    // image-side mirror primitive primitiveJITICHistogram.
+    void dumpICHistogram() const;
+
     // Full recovery after GC compaction: flush caches, rebuild MethodMap from
     // updated JITMethod headers, update special Oops, clear count map.
     // Call AFTER forEachRoot has updated compiledMethodOop in JITMethod headers.
