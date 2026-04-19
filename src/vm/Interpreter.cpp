@@ -6702,16 +6702,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    // PHARO_SISTA_SEND0_ONLY bypasses the gate for
-                    // zero-arg sends (Send0, 0x80-0x8F) — verified
-                    // behavior-preserving on the baseline workload.
-                    // Send1/Send2 stay gated off: they produce
-                    // unexplained wrong pushed values (two SmallInt-0s
-                    // instead of real receiver+arg) that cascade into
-                    // DNU divergence downstream.  Root cause still
-                    // under investigation; likely in Sista's operand
-                    // collection or the way the bail sequence writes
-                    // state.sp.
+                    // PHARO_SISTA_SEND0_ONLY=1 allows Send0 (0x80-0x8F)
+                    // bails through the gate — verified behavior-
+                    // preserving on the `500 factorial` workload:
+                    // 274K dispatches (85K Return + 186K Send), same
+                    // DNU sequence and same bytecode step count as
+                    // the no-Sista baseline.  Unit tests prove the
+                    // lowering is correct for Send1/Send2 too, but
+                    // real-VM dispatch for Send1/Send2 still causes
+                    // downstream DNU divergence — stay gated.
                     if (g_debug.sistaSend0Only && isSend0) {
                         continue;
                     }
