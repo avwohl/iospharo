@@ -59,17 +59,18 @@ at the call site.  This is the same "0x300000000 sentinel" pattern
 as A1c; likely a JIT spill/reload bug around the FFI send.  Not the
 "FFI is incomplete" — the function pointer is *lost*.
 
-### A1c. `forkAt:` / block-capture returns sentinel in interpreter mode
-With JIT off, no skips, the SUnit runner's watchdog block reads
-`testProcess` (captured from the enclosing method's local temp) as
-`0x300000000 class=nil`.  Direct forkAt: works; the failure only
-reproduces in the full 4-nested-handler + ensure: + fork-plus-watchdog
-pattern in `runSingleTest:selector:timeout:priority:on:`.  Minimal
-reproducers (single fork + single watchdog) work correctly.
+### A1c. `forkAt:` sentinel — RESOLVED 2026-04-19 (was scheduler starvation)
+The watchdog's `testProcess suspend` DNU with `rcvr=0x300000000` was
+a symptom of scheduler starvation, not a memory bug.  The test
+process never actually ran; the watchdog fired its timeout handler;
+the `testProcess` local temp was still `nil` (rawBits=0) because
+the fork's local-temp array index read uninitialized header space
+that *happened* to look like `0x300000000`.
 
-Root cause likely in closure temp-vector capture when outer method's
-stack frame is still active and the captured temp is later accessed
-from a different process context.  Needs a reduced reproducer.
+Root cause was `primitiveRelinquishProcessor` yielding to highest
+priority instead of same-or-lower, plus sleeping 10 ms unconditionally
+before considering transfer.  Fix in commit `a2b99f7` — a 2 ms
+`AIAstarTest` test now runs in 2 ms via `runSingleTest` (was 23.6 s).
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
 At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods
