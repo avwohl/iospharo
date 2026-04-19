@@ -100,10 +100,28 @@ compiles the methods, ICs already have filled slots; the
 IC-hit path runs on first JIT invocation, bypassing the
 corruption in the cold ic_miss / J2J-init path.
 
-**To land a fix:** needs runtime J2J tracing infrastructure —
-add `_HOLE_RT_J2J_TRACE` stencil reloc + helper, register in
-extract_stencils.py, regen stencils.  See
-`memory/project_b5_j2j_onchain.md` for full plan.
+**Session 2026-04-19 progress:**
+- `_HOLE_RT_J2J_TRACE` tooling shipped (commits f70ad55, cf6ffaf,
+  b94c0a8).  Save-push + return trace events, 512-event ring
+  buffer, auto-trigger on SmallInt return to focus methods, DNU
+  handler auto-dumps ring.
+- Confirmed: `[B5-RESUME]` shows readStream correctly returns a
+  ReadStream for the first 2-4 iterations — interp return handling
+  is fine.  Bug kicks in on the 3rd-5th call when J2J takes the
+  full-chain fast path.
+- NO J2J_INLINE_RETURN events fire with callerCM in the focus set
+  (decodeBytes:, readStream, on:(class), on:(inst)).  The J2J chain
+  bails mid-flight to interpreter, orphaning saves and leaving
+  byteStream = SmallInt(aCollection size) instead of the stream.
+- `jit_rt_array_prim` size prim NEVER sees sizes matching the bug
+  values — so the inline size primitive isn't directly the cause.
+- Disabling new-prim / size-prim inline via env knobs sometimes
+  masks, sometimes not (timing-dependent).
+
+**Still not fixed.**  Narrowing complete; fix requires deeper
+runtime debugging (lldb batch script, single-step through
+stencil_popStoreTemp at decodeBytes bc[2] on the buggy iteration).
+See `memory/project_b5_j2j_onchain.md` for full analysis + plan.
 
 **Mitigation:** default `PHARO_JIT_DEFER=4s` already sidesteps it
 entirely.  B5 only impacts aggressive `PHARO_JIT_DEFER=0` path,
