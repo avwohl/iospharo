@@ -4,6 +4,14 @@
 <dict>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Launch screen — required by iOS 14+ App Store submission.
+	     Dictionary form (no .storyboard file).  Solid color background
+	     from the AccentColor asset; no splash image needed. -->
+	<key>UILaunchScreen</key>
+	<dict>
+		<key>UIColorName</key>
+		<string>AccentColor</string>
+	</dict>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoads</key>
