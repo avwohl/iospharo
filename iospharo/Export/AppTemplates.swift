@@ -1042,11 +1042,11 @@ enum AppTemplates {
             <string>1</string>
             <key>ITSAppUsesNonExemptEncryption</key>
             <false/>
-            <key>NSAppTransportSecurity</key>
-            <dict>
-                <key>NSAllowsArbitraryLoads</key>
-                <true/>
-            </dict>
+            <!-- Exported apps don't make outgoing network calls by
+                 default.  If your Pharo image needs network access via
+                 Foundation/URLSession, add NSExceptionDomains entries
+                 for the specific hosts.  Arbitrary-loads=true triggers
+                 App Store review scrutiny; avoid it by default. -->
             <key>UIUserInterfaceStyle</key>
             <string>Light</string>
             <key>UILaunchScreen</key>

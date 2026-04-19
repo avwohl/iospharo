@@ -12,12 +12,27 @@
 		<key>UIColorName</key>
 		<string>AccentColor</string>
 	</dict>
+	<!-- ATS policy: app only talks to files.pharo.org over HTTPS.
+	     Whitelist that domain explicitly rather than
+	     NSAllowsArbitraryLoads=true (which triggers App Store review
+	     scrutiny and requires an explicit justification).  If a Pharo
+	     image running inside the VM makes its own network calls via
+	     FFI/sockets, those aren't subject to ATS — ATS only applies
+	     to Foundation URLSession / CFNetwork. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsArbitraryLoads</key>
-		<true/>
-		<key>NSAllowsArbitraryLoadsInWebContent</key>
-		<true/>
+		<key>NSExceptionDomains</key>
+		<dict>
+			<key>pharo.org</key>
+			<dict>
+				<key>NSIncludesSubdomains</key>
+				<true/>
+				<key>NSExceptionAllowsInsecureHTTPLoads</key>
+				<false/>
+				<key>NSExceptionMinimumTLSVersion</key>
+				<string>TLSv1.2</string>
+			</dict>
+		</dict>
 	</dict>
 	<key>PharoCodeSize</key>
 	<integer>67108864</integer>
