@@ -265,14 +265,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t bcOffset = (v.literal >> 24) & 0xFFFFFFFF;
                 (void)selIdx;  // Selector resolution is the interpreter's job.
 
-                if (v.operands.size() != nArgs + 1) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                // Push operands onto interpreter stack.
+                // Push every operand onto the interpreter stack.  For a
+                // send the operands are [rcvr, arg0, ..., arg_{nArgs-1}]
+                // (so operands.size() == nArgs + 1).  For a generic
+                // mid-method bail (PushFullBlock, PushArray, etc.), the
+                // operands are the entire IR stack at bail time and
+                // sendArgCount is set to 0 — the interpreter just runs
+                // the bytecode without treating it as a send.
                 Gp sp = cc.new_gp64("sp");
                 cc.ldr(sp, ptr(state, OFF_SP));
-                for (uint32_t opIdx = 0; opIdx < nArgs + 1; opIdx++) {
+                for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
                     auto it = regFor.find(v.operands[opIdx]);
                     if (it == regFor.end()) {
                         if (failedAtValue) *failedAtValue = v.id;

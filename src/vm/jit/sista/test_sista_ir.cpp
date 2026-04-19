@@ -137,17 +137,21 @@ int main() {
         std::cout << "\n--- lifted ^ t3 ---\n" << lifted.toString();
     }
 
-    // Unsupported bytecode bails cleanly.
-    // Pick an op that we don't yet implement in Sista — PushFullBlock
-    // (0xF9) is a 3-byte block-closure-creation op.
+    // Unsupported bytecode bails cleanly.  CallPrimitive in a
+    // non-method-start position is still unsupported (we only skip
+    // at offset 0, per the Smalltalk convention that primitive
+    // declarations appear only at method entry).
     {
         Method lifted;
-        const uint8_t bc[] = { SistaV1::PushFullBlock, 0, 0 };
+        const uint8_t bc[] = {
+            SistaV1::PushOne,                  // 0: ip != 0 at 0xF8
+            SistaV1::CallPrimitive, 0, 0,      // 1,2,3
+        };
         uint32_t failed = UINT32_MAX;
         LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
                                                  0, 0, lifted, &failed);
         check(r == LiftResult::kUnsupportedBytecode, "bail on unsupported");
-        check(failed == 0, "fails at offset 0");
+        check(failed == 1, "fails at offset 1 (CallPrimitive)");
     }
 
     // Lowering round-trip: lift → lower → execute → verify.

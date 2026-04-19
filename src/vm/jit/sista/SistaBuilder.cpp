@@ -308,6 +308,49 @@ private:
                 continue;
             }
 
+            // Mid-method bail-to-interpreter: the full IR stack is
+            // pushed to the interpreter stack and control transfers
+            // via ExitSend at `currentInstrStart_`.  The interpreter
+            // then runs the bytecode normally (allocating objects,
+            // creating closures, etc.) and continues past it.  This
+            // is the generic escape hatch for ops we don't lift —
+            // correct because the IR stack exactly mirrors the
+            // Smalltalk operand stack.
+            //
+            // Used for PushFullBlock, PushClosure, PushArray,
+            // PushThisContext — all mid-method object-creating or
+            // context-reflection ops that don't fit into pure-
+            // register IR without runtime allocation support.
+            //
+            // Note: at most 255 items on the IR stack (nArgs field
+            // is 8 bits).  Real methods never exceed this.
+            auto bailToInterpreter = [&](size_t instrLen) -> LiftResult {
+                if (stack_.size() > 255) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t stackSize = (uint32_t)stack_.size();
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
+                uint64_t bailOffset = (uint64_t)currentInstrStart_;
+                uint64_t lit = 0
+                             | ((uint64_t)stackSize << 16)
+                             | (bailOffset         << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                (void)instrLen;  // bail consumes the whole instruction
+                return LiftResult::kOk;
+            };
+
+            if (op == jit::SistaV1::PushFullBlock
+             || op == jit::SistaV1::PushClosure
+             || op == jit::SistaV1::PushArray
+             || op == jit::SistaV1::PushThisContext) {
+                return bailToInterpreter(instructionSize(op));
+            }
+
             // ExtendA / ExtendB prefix: stash the byte arg and let the
             // next op consume it.  Does not emit IR.  If the next op
             // is unsupported, pass 3 bails and we stay correct.
@@ -494,6 +537,71 @@ private:
                                /*literal=*/tempIdx);
                 ip += 2;
                 continue;
+            }
+
+            // No-pop extended stores (ExtStoreRecv 0xF3, ExtStoreLitVar
+            // 0xF4, ExtStoreTemp 0xF5) — store the top of stack without
+            // consuming it.  Same as the pop variants but peek rather
+            // than pop.
+            if (op == jit::SistaV1::ExtStoreRecv) {
+                if (ip + 1 >= len_ || stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t ivarIdx = (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t val = stack_.back();  // peek, don't pop
+                uint32_t recv = out_.newValue(currentBlock_,
+                                               Op::kLoadReceiver, Type::kOop);
+                out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                               /*operands=*/{recv, val},
+                               /*literal=*/ivarIdx);
+                ip += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtStoreTemp) {
+                if (ip + 1 >= len_ || stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t tempIdx = (uint32_t)bc_[ip + 1];
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t val = stack_.back();  // peek, don't pop
+                out_.newValue(currentBlock_, Op::kStoreTemp, Type::kVoid,
+                               /*operands=*/{val},
+                               /*literal=*/tempIdx);
+                ip += 2;
+                continue;
+            }
+            // ExtStoreLitVar (0xF4): no-pop store to Association.value.
+            // Semantically: literals[N].value := TOS.  Our IR doesn't
+            // yet have a "store into ivar of Oop operand" equivalent
+            // for Associations — we have kStoreInstVar which takes the
+            // receiver as an operand.  Bail to interpreter.
+            if (op == jit::SistaV1::ExtStoreLitVar
+             || op == jit::SistaV1::ExtPopStoreLitVar) {
+                return bailToInterpreter(2);
+            }
+
+            // Remote-temp ops (0xFB PushTempAtInVec, 0xFC StoreTempInVec,
+            // 0xFD PopStoreTempInVec) access closure-captured variables
+            // via a shared temp vector.  Not yet modeled in the IR;
+            // bail to interpreter.
+            if (op == jit::SistaV1::PushTempAtInVec
+             || op == 0xFC  // StoreTempInVec
+             || op == 0xFD) // PopStoreTempInVec
+            {
+                return bailToInterpreter(3);
+            }
+
+            // InlinedPrimitive (0xEC): VMMaker inlines specific
+            // primitive operations into the bytecode stream for small
+            // perf wins (e.g., SmallInt arith with explicit overflow
+            // check).  Bail to interpreter.
+            if (op == jit::SistaV1::InlinedPrimitive) {
+                return bailToInterpreter(3);
             }
 
             // Short jumps: unconditional and conditional.
@@ -891,13 +999,45 @@ private:
                 continue;
             }
 
-            // 0x54-0x57 and 0xDA-0xDF: unassigned / reserved no-ops
-            // per the Sista V1 spec.  Pharo images emit these (as
-            // compiler artifacts / alignment) and the interpreter
-            // treats them as no-ops.  Skip in the lifter.
-            if ((op >= 0x54 && op <= 0x57) || (op >= 0xDA && op <= 0xDF)) {
+            // 0x54-0x57, 0x5F, 0xDA-0xDF: 1-byte unassigned/no-op.
+            // Interpreter treats these as no-ops; skip in the lifter.
+            if ((op >= 0x54 && op <= 0x57) || op == 0x5F
+                || (op >= 0xDA && op <= 0xDF)) {
                 ip++;
                 continue;
+            }
+            // 0xE6, 0xF6, 0xF7: 2-byte unassigned (interpreter consumes
+            // opcode + 1 arg byte and no-ops).
+            if (op == 0xE6 || op == 0xF6 || op == 0xF7) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 2;
+                continue;
+            }
+            // 0xFE, 0xFF: 3-byte unassigned.
+            if (op == 0xFE || op == 0xFF) {
+                if (ip + 2 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 3;
+                continue;
+            }
+
+            // BlockReturnNil / BlockReturnTop (0x5D / 0x5E) — non-local
+            // returns from within a block.  Semantically complex; bail
+            // to the interpreter with the full IR stack transferred.
+            // UnconditionalTrap (0xD9) — `self halt` / debugger trap.
+            if (op == jit::SistaV1::BlockReturnNil
+             || op == jit::SistaV1::BlockReturnTop
+             || op == 0xD9) {
+                return bailToInterpreter(1);
             }
 
             // Dup (0x53): duplicate TOS.
