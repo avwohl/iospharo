@@ -4025,8 +4025,10 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::pushReceiverVariable(int index) {
     Oop result = memory_.fetchPointerUnchecked(index, receiver_);
-    // Trace ReadStream instVar reads
-    {
+    // Legacy ReadStream instVar trace — left-over from B5 debugging.
+    // Gated on PHARO_RS_READ_TRACE=1 now; was always-on noise before.
+    static const bool rsTrace = std::getenv("PHARO_RS_READ_TRACE") != nullptr;
+    if (__builtin_expect(rsTrace, 0)) {
         static int rsReadCount = 0;
         if (rsReadCount < 50 && index <= 2) {
             std::string rcls = memory_.classNameOf(receiver_);
@@ -5874,8 +5876,10 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    // Trace matches: sends
-    {
+    // Legacy trace of #matches: sends — left-over from regex debugging.
+    // Gated on PHARO_MATCH_TRACE=1.
+    static const bool matchTrace = std::getenv("PHARO_MATCH_TRACE") != nullptr;
+    if (__builtin_expect(matchTrace, 0)) {
         static int matchTraceCount = 0;
         if (matchTraceCount < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
             ObjectHeader* selHdr = selector.asObjectPtr();
@@ -10947,9 +10951,10 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
-    // Temporary debug: count prim 63 calls
-    static int prim63count = 0;
-    if (primitiveIndex == 63) {
+    // Legacy prim 63 (basicAt:put:) counter — gated on PHARO_P63_TRACE.
+    static const bool p63Trace = std::getenv("PHARO_P63_TRACE") != nullptr;
+    if (__builtin_expect(p63Trace, 0) && primitiveIndex == 63) {
+        static int prim63count = 0;
         prim63count++;
         if (prim63count <= 5 || (prim63count % 10000 == 0)) {
             fprintf(stderr, "[EXEC-P63] call #%d argCount=%d\n", prim63count, argCount);
