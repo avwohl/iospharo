@@ -789,30 +789,30 @@ int main() {
                   << std::hex << state.returnValue << std::dec << "\n";
     }
 
-    // Round-trip 7.H.1: Backward ExtJump (loop).  The real return
-    // path is at bc=0..1 (PushOne, ReturnTop).  Dead code at bc=2-5
-    // contains an infinite self-loop via ExtendB -1 + ExtJump -4;
-    // we verify the lifter accepts it and produces valid IR, but we
-    // don't execute the loop (it'd spin forever).
+    // Round-trip 7.H.1: Backward ExtJump (loop) with a forward entry.
+    // The entry block jumps FORWARD into the loop body, and the loop
+    // body has a backward jump to itself.  This makes the loop header
+    // reachable (from the entry block) so orphan-skip doesn't elide it.
     //
-    // ExtendB 0xFF sets extB = -1.  ExtJump 0xFC: offset = 252 + (-256)
-    // = -4.  Target from ip=6 is 6 + (-4) = 2 — self-loop to the
-    // start of the ExtendB prefix.
+    // Structure:
+    //   0,1: ExtJump +0 → target = 2 (forward enter to loop)
+    //   2,3: ExtendB 0xFF  (extB = -1)
+    //   4,5: ExtJump 0xFC  (offset = 252-256 = -4 → target = 6-4 = 2)
+    // The test doesn't execute (infinite loop); it only verifies that
+    // the lifter records a backward edge from block-1 to itself.
     {
         Method lifted;
         const uint8_t bc[] = {
-            SistaV1::PushOne,               // 0
-            SistaV1::ReturnTop,             // 1
-            SistaV1::ExtendB, 0xFF,         // 2,3 (dead block: extB = -1)
-            SistaV1::ExtJump, 0xFC,         // 4,5 (dead block: jump -4 → 2)
+            SistaV1::ExtJump, 0x00,         // 0,1 → jump to bc=2
+            SistaV1::ExtendB, 0xFF,         // 2,3 (loop header: extB = -1)
+            SistaV1::ExtJump, 0xFC,         // 4,5 (backward -4 → bc=2)
         };
         uint32_t failed = UINT32_MAX;
         LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
                                                  lifted, &failed);
-        check(r == LiftResult::kOk, "backward self-loop lifts");
-        check(lifted.blocks.size() == 2, "two blocks (return + dead loop)");
-        // Block 1 is the dead loop; it should have itself as a
-        // predecessor (the backward edge).
+        check(r == LiftResult::kOk, "backward loop lifts");
+        // Loop header block should have itself as one of its
+        // predecessors (the backward edge) plus the entry forward edge.
         bool sawSelfLoop = false;
         for (const Block& b : lifted.blocks) {
             for (uint32_t pred : b.predecessors) {
@@ -823,13 +823,8 @@ int main() {
         check(sawSelfLoop, "backward edge creates self-loop predecessor");
 
         Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
-        check(fn != nullptr, "lower backward self-loop succeeds");
-
-        // Only execute the reachable path (PushOne, ReturnTop).
-        FakeState state{};
-        fn(&state);
-        check(state.returnValue == 9ULL, "reachable path returns ^1");
-        std::cout << "--- round-trip backward-ExtJump dead loop: ok\n";
+        check(fn != nullptr, "lower backward loop succeeds");
+        std::cout << "--- round-trip backward-ExtJump loop: ok (not executed)\n";
     }
 
     // Round-trip 7.H: ExtendB prefix gives ExtJump 256-byte reach.

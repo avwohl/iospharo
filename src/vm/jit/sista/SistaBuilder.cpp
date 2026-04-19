@@ -202,13 +202,25 @@ public:
             stack_.clear();
             currentBlock_ = blockId;
 
+            const Block& thisBlock = out_.blockAt(blockId);
+
+            // Skip orphan blocks: any non-entry block with no
+            // predecessors is unreachable (no forward edge points
+            // to it, and any loop header would have at least one
+            // forward entry).  Pass 1 sometimes creates block
+            // starts for post-terminator bytes that aren't real
+            // code — lifting them would walk off the end and
+            // malform the whole method.  Leave them empty.
+            if (blockId != 0 && thisBlock.predecessors.empty()) {
+                continue;
+            }
+
             // Determine entry stack depth from FORWARD predecessors
             // (blocks with lower id, already lifted).  Backward
             // predecessors (loops) aren't lifted yet and their
             // outgoingStack is empty — skip them here.  Pass 4's phi
             // wiring validates that their outgoing depth matches this
             // block's entry depth.
-            const Block& thisBlock = out_.blockAt(blockId);
             size_t entryDepth = 0;
             bool haveDepth = false;
             for (uint32_t pred : thisBlock.predecessors) {
