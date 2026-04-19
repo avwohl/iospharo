@@ -171,7 +171,10 @@ The project's actual purpose is an iOS Pharo VM. JIT work has
 dominated recent sessions; iOS proper is what's queued next.
 
 ### D1. iOS device testing
-Mac Catalyst is verified working (2026-02-24). Device testing needs:
+Mac Catalyst is verified working (2026-02-24). iOS Device
+xcframework slice builds as of 2026-04-19 (commit 22bcc2c —
+fixed asmjit Catalyst, LTO bitcode, and ASM flags).  Device
+testing still needs:
 - Physical iOS device(s) for build verification
 - Apple Developer signing cert setup
 - TestFlight or direct-device deploy
