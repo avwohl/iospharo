@@ -886,8 +886,15 @@ private:
         if (jitRuntime_.isInitialized()) {
             jitRuntime_.recoverAfterGC(memory_);
         }
+        recoverSistaAfterGC();
 #endif
     }
+#if PHARO_JIT_ENABLED
+    // Clears Sista's method→fn cache — raw oop keys go stale across
+    // Spur compaction.  Defined in Interpreter.cpp so it can see the
+    // file-scope Sista runtime pointer.
+    void recoverSistaAfterGC();
+#endif
 
     // ===== JIT COMPILER =====
 #if PHARO_JIT_ENABLED

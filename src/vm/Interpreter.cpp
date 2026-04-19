@@ -103,6 +103,17 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
+#if PHARO_JIT_ENABLED
+// Handle to the Sista runtime created lazily inside activateMethod.
+// recoverJITAfterGC() clears its cache — raw oop keys become stale
+// after Spur compaction.  Nullptr when Sista was never invoked.
+static sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
+
+void Interpreter::recoverSistaAfterGC() {
+    if (sistaRuntimeForGCHook_) sistaRuntimeForGCHook_->reset();
+}
+#endif
+
 
 
 
@@ -6600,7 +6611,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // ExitSend (Sista bailed mid-method — interpreter resumes at the
     // bail bytecode in the same frame).
     if (g_debug.sistaCompile || g_debug.sistaDispatch) {
-        static sista::Runtime* sista = new sista::Runtime();
+        // File-scope pointer so recoverJITAfterGC can invalidate the
+        // cache — raw oop keys become stale after Spur compaction.
+        static sista::Runtime* sista = []() {
+            auto* r = new sista::Runtime();
+            sistaRuntimeForGCHook_ = r;
+            return r;
+        }();
         static size_t attempts = 0, hits = 0;
         static size_t dispatched = 0, sistaReturns = 0, sistaSends = 0, sistaUnknown = 0;
         static bool banner = false;
