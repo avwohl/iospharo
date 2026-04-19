@@ -15,6 +15,15 @@ Surfaced 2026-04-19 by removing the harness skip list and the JIT
 auto-disable in test/eval mode.  The previous "clean" test suite
 runs were hiding these behind workarounds.
 
+**JIT-off state post-scheduler-fix (a2b99f7):** 1007 of 1013 tests
+pass (99.4%) across the first 34 alphabetical `TestCase` classes
+with no skip list, no timing fastpath, and the full SUnit handler
+stack.  Residual 6: 2 legitimate `PrimitiveFailed` errors (1-GB
+allocation, missing profileSemaphore:), 2 harness-side `#skip`
+signals, 2 genuinely-slow tests (`ArrayTest>>testPrintingRecursive`
+and one sibling) that hit the 8-s per-test timeout.  Interpreter
+mode is solid — remaining work is JIT correctness.
+
 ### A0. Chunk-format `methodsFor:` incompatible — RESOLVED (harness converted)
 Pharo 13 / 14 removed `#methodsFor:` from `ClassDescription`, so
 chunk-file headers like `<bang>SUnitRunner class methodsFor: 'cat'<bang>`
