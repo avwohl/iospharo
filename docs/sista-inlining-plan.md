@@ -26,11 +26,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tests passing.
 
   **Coverage over a Pharo 13 image (175K CompiledMethods)**:
-  **98.83% lift, 100% lower**.  Measured by `test_sista_survey`;
-  baseline at the start of the session was 9.57% — **10.3x
-  improvement**.  Only 98 methods fail with "unsupported opcode"
-  (all 0xEB directed super-sends).  Only 1,949 methods (~1%)
-  still malform.
+  **99.90% lift, 100% lower**.  Measured by `test_sista_survey`;
+  baseline at the start of the session was 9.57% — **10.4x
+  improvement**.  Only 98 methods fail with unsupported opcode
+  (all 0xEB directed super-sends).  Only 81 methods malform.
 
   **Phase 2.3 in progress.**  Lowering::lower now accepts a
   `bytecodeBase` so send-bail sets state.ip to the absolute
@@ -116,7 +115,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `3f4044c` (end-to-end execute smoke test: 500/500 real image
   methods compiled, executed, and returned cleanly),
   `acd8db3` (smoke test admits sends — 500/500 exit cleanly via
-  Return or ExitSend bail, zero crashes).
+  Return or ExitSend bail, zero crashes),
+  `dd28908` (trailer-tolerant Extend at end-of-bytecodes —
+  truncated ExtendA/B/Jump at EOF treated as clean stop rather
+  than kMalformedMethod; 99.90% lift coverage).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
