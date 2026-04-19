@@ -6678,6 +6678,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         continue;
                     }
                 }
+                // Diagnostic gate: block all state-mutating ops to
+                // test if the Send1 divergence is caused by stores
+                // (temp or instVar).
+                if (getenv("PHARO_SISTA_NO_STORES")) {
+                    if ((op >= 0xC8 && op <= 0xD7)       // PopStoreRecv/Temp
+                     || (op >= 0xF0 && op <= 0xF5)) {    // Ext store variants
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
                 // ExitSend-triggering bytecodes — gated off by
                 // default because state.sp/state.ip sync to the
                 // interpreter currently causes image-startup
@@ -6702,11 +6712,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    // Send0 verified behavior-preserving; Send1/Send2
-                    // stay gated despite post-bail stack matching the
-                    // interpreter's expected values exactly (see
-                    // SISTA-MISMATCH check below — always empty).
-                    // Divergence is downstream of the bail point.
                     if (g_debug.sistaSend0Only && isSend0) {
                         continue;
                     }
