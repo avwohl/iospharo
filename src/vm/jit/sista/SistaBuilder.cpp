@@ -490,6 +490,83 @@ private:
                 return LiftResult::kOk;
             }
 
+            // PushInteger (0xE8): inline signed integer literal.
+            // Value = byteArg + extB*256, pushed as SmallInt Oop.
+            if (op == jit::SistaV1::PushInteger) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                int value = (int)bc_[ip + 1] + (pendingExtB_ << 8);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint64_t oopBits = ((uint64_t)(int64_t)value << 3) | 1;
+                uint32_t v = out_.newValue(currentBlock_, Op::kConstantOop,
+                                            Type::kOopSmallInt,
+                                            /*operands=*/{},
+                                            /*literal=*/oopBits);
+                stack_.push_back(v);
+                ip += 2;
+                continue;
+            }
+
+            // PushCharacter (0xE9): codepoint = byteArg + extB*256.
+            // Oop bits = (codepoint << 3) | 3 (Character tag).
+            if (op == jit::SistaV1::PushCharacter) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                int codepoint = (int)bc_[ip + 1] + (pendingExtB_ << 8);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                if (codepoint < 0) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint64_t oopBits = ((uint64_t)codepoint << 3) | 3;
+                uint32_t v = out_.newValue(currentBlock_, Op::kConstantOop,
+                                            Type::kOopChar,
+                                            /*operands=*/{},
+                                            /*literal=*/oopBits);
+                stack_.push_back(v);
+                ip += 2;
+                continue;
+            }
+
+            // ExtSend (0xEA): wider selector/arg-count range than Send0/1/2.
+            //   selector = (extA << 5) | (desc >> 3)
+            //   nArgs    = (extB << 3) | (desc & 0x07)
+            // Treated as a bail-to-interpreter just like Send0/1/2.
+            if (op == jit::SistaV1::ExtSend) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint8_t desc = bc_[ip + 1];
+                uint32_t selIdx = (uint32_t)(((pendingExtA_ << 5)
+                                               | (desc >> 3)) & 0xFFFF);
+                uint32_t nArgs  = (uint32_t)(((pendingExtB_ << 3)
+                                               | (desc & 0x07)) & 0xFF);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                if (stack_.size() < nArgs + 1) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                std::vector<uint32_t> ops(nArgs + 1);
+                for (uint32_t i = 0; i < nArgs + 1; i++) {
+                    ops[nArgs - i] = stack_.back();
+                    stack_.pop_back();
+                }
+                uint64_t lit = (uint64_t)selIdx
+                             | ((uint64_t)nArgs    << 16)
+                             | ((uint64_t)bcOffset << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                return LiftResult::kOk;
+            }
+
             // Literal-selector sends (Send0/1/2, 0x80-0xAF).
             //
             // MVP: treat as a one-way compiled exit.  The lifter emits

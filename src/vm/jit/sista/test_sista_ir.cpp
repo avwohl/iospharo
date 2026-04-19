@@ -138,11 +138,11 @@ int main() {
     }
 
     // Unsupported bytecode bails cleanly.
-    // Pick an op that is NOT a send / push / store / branch / arith —
-    // 0xEA (ExtSend) requires prefix handling we haven't wired up.
+    // Pick an op that we don't yet implement in Sista — PushFullBlock
+    // (0xF9) is a 3-byte block-closure-creation op.
     {
         Method lifted;
-        const uint8_t bc[] = { SistaV1::ExtSend };
+        const uint8_t bc[] = { SistaV1::PushFullBlock, 0, 0 };
         uint32_t failed = UINT32_MAX;
         LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
                                                  0, 0, lifted, &failed);
@@ -932,6 +932,122 @@ int main() {
         check(temps[15] == 9ULL, "temp[15] holds stored SmallInt 1");
         std::cout << "--- round-trip ext store/push temp 15: returnValue=0x"
                   << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.L: PushInteger — inline integer literal.
+    // Method: ^ 42.  PushInteger 42 (2-byte), ReturnTop.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushInteger, 42,
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "PushInteger 42 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower PushInteger 42");
+        FakeState state{};
+        fn(&state);
+        // SmallInt 42 bits = (42 << 3) | 1 = 337 = 0x151.
+        check(state.returnValue == 0x151ULL, "^42 → 0x151");
+        std::cout << "--- round-trip PushInteger 42: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.M: PushInteger with ExtendB prefix for negative.
+    // ExtendB -1 + PushInteger 0xFF → value = 0xFF + (-1)*256 = -1.
+    // SmallInt -1 bits = (0xFFFFFFFFFFFFFFFF << 3) | 1 = 0xFFFFFFFFFFFFFFF9.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::ExtendB, 0xFF,
+            SistaV1::PushInteger, 0xFF,
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtB -1 + PushInteger -1 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ExtB -1 + PushInteger -1");
+        FakeState state{};
+        fn(&state);
+        uint64_t expected = ((uint64_t)(int64_t)-1 << 3) | 1;
+        check(state.returnValue == expected,
+              "^-1 → SmallInt -1 tagged bits");
+        std::cout << "--- round-trip PushInteger -1: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.N: PushCharacter 'A' (codepoint 65).
+    // Character Oop bits = (65 << 3) | 3 = 0x20B.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushCharacter, 65,
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "PushCharacter 65 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower PushCharacter 65");
+        FakeState state{};
+        fn(&state);
+        check(state.returnValue == 0x20BULL, "^$A → 0x20B");
+        std::cout << "--- round-trip PushCharacter 'A': returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.O: ExtSend with 3 args.  desc = (sel<<3) | nArgs:
+    // sel=2, nArgs=3 → desc = 0x13.  rcvr + 3 args pushed first.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,                         // 0
+            (uint8_t)(SistaV1::PushTempBase + 0),          // 1 (arg 0)
+            (uint8_t)(SistaV1::PushTempBase + 1),          // 2 (arg 1)
+            (uint8_t)(SistaV1::PushTempBase + 2),          // 3 (arg 2)
+            SistaV1::ExtSend, 0x13,                        // 4,5 → sel=2, nArgs=3
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 3, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtSend 3-arg lifts");
+        // Check the emitted op.
+        bool sawSend = false;
+        for (const Value& v : lifted.values) {
+            if (v.op == Op::kSendUnspeculated) {
+                sawSend = true;
+                check(v.operands.size() == 4, "rcvr + 3 args");
+                check((v.literal & 0xFFFF) == 2, "selIdx=2");
+                check(((v.literal >> 16) & 0xFF) == 3, "nArgs=3");
+                break;
+            }
+        }
+        check(sawSend, "emitted kSendUnspeculated");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ExtSend 3-arg");
+
+        uint64_t stack[8] = {0};
+        uint64_t temps[3] = { 0xAAA1, 0xAAA2, 0xAAA3 };
+        FakeState state{};
+        state.sp       = &stack[0];
+        state.receiver = 0xBEEF;
+        state.tempBase = temps;
+        fn(&state);
+        check(state.exitReason == 2, "ExtSend bails with ExitSend");
+        check(stack[0] == 0xBEEF, "rcvr first");
+        check(stack[1] == 0xAAA1, "arg0 second");
+        check(stack[2] == 0xAAA2, "arg1 third");
+        check(stack[3] == 0xAAA3, "arg2 fourth");
+        check(state.sp == &stack[4], "sp advanced by 32 bytes");
+        std::cout << "--- round-trip ExtSend 3-arg: exit=" << state.exitReason
+                  << " stack pushed 4 oops\n";
     }
 
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
