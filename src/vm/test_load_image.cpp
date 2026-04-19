@@ -601,18 +601,11 @@ int main(int argc, char* argv[]) {
     // Detect headless CLI mode: image args present and not --interactive
     bool headlessMode = !imageArgs.empty() && imageArgs[0] != "--interactive";
 
-    // In test/eval mode, auto-disable JIT unless explicitly overridden.
-    // JIT adds ~26x overhead for cold code (test suites call thousands of methods
-    // once, triggering heavy C++ JIT entry/exit transitions on every send).
-    // Eval is one-shot so JIT compilation overhead is pure waste.
-    // Override with PHARO_NO_JIT=0 to force JIT in these modes.
-    if ((testMode || evalMode) && !pharo::g_debug.noJit) {
-        setenv("PHARO_NO_JIT", "1", 0);
-        pharo::g_debug.reload();  // pick up the just-set env var
-        if (testMode) {
-            std::cout << "[TEST] Auto-disabled JIT for test mode (override with PHARO_NO_JIT=0)" << std::endl;
-        }
-    }
+    // Do NOT auto-disable JIT in test/eval mode.  Stock Pharo runs tests
+    // with Cog JIT always on; auto-disabling would hide JIT-specific bugs
+    // from the very suite meant to catch them.  If JIT breaks the test
+    // harness, that's the bug to fix — not a case for a workaround.
+    // Force JIT off explicitly with PHARO_NO_JIT=1 if needed.
 
     std::cout << "\nLoading image: " << imagePath << std::endl;
 
