@@ -53,6 +53,7 @@ set(VM_SOURCES
     src/vm/jit/JITRuntime.cpp
     src/vm/jit/Tier2Compiler.cpp
     src/vm/jit/TrampolineAsm.S
+    src/vm/jit/sista/SistaIR.cpp
 )
 
 # Ensure the .S file is treated as a C-preprocessed assembly source so the
@@ -313,6 +314,13 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
 
     add_executable(test_ios_bridge src/platform/test_ios_bridge.cpp)
     target_link_libraries(test_ios_bridge PharoVMCore)
+
+    # Sista IR self-test (Phase 2 of docs/sista-inlining-plan.md).
+    # Keeps the IR compile-able while the rest of the optimizer is
+    # under construction.  Linked against PharoVMCore so Oop.hpp and
+    # friends resolve, but doesn't use the runtime.
+    add_executable(test_sista_ir src/vm/jit/sista/test_sista_ir.cpp)
+    target_link_libraries(test_sista_ir PharoVMCore)
 endif()
 
 message(STATUS "PharoVM Clean C++ configured")
