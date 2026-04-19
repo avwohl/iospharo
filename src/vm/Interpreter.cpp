@@ -6719,6 +6719,27 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 #endif
 
             dispatched++;
+            // Per-selector dispatch counter, periodically dumped —
+            // useful for seeing which getters/setters are hot-path
+            // and whether dispatch is exercising the real workload
+            // or just cold startup code.
+            if (g_debug.sistaVerbose) {
+                static std::unordered_map<std::string, size_t> bySelector;
+                std::string sel = memory_.selectorOf(method);
+                bySelector[sel]++;
+                if ((dispatched & 0x3FFF) == 0) {
+                    std::vector<std::pair<std::string, size_t>> vec(
+                        bySelector.begin(), bySelector.end());
+                    std::sort(vec.begin(), vec.end(),
+                              [](auto& a, auto& b){ return a.second > b.second; });
+                    fprintf(stderr, "[SISTA-TOP] @disp=%zu:", dispatched);
+                    for (size_t i = 0; i < vec.size() && i < 10; i++) {
+                        fprintf(stderr, " #%s=%zu",
+                                vec[i].first.c_str(), vec[i].second);
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
                 sistaReturns++;
