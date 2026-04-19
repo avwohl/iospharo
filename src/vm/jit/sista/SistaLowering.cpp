@@ -7,6 +7,7 @@
 #include <asmjit/a64.h>
 
 #include <unordered_map>
+#include <vector>
 
 namespace pharo {
 namespace sista {
@@ -53,10 +54,21 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // (kOop, kInt, …); terminators have no register.
     std::unordered_map<uint32_t, Gp> regFor;
 
-    // Walk blocks in ID order.  Phase 2 doesn't support control flow
-    // past a single block — the builder only produces one — so we
-    // don't need a worklist yet.
+    // Pre-create a Label for every block, in block-id order.  Branch
+    // ops need to be able to refer to labels for successor blocks
+    // that haven't been emitted yet.
+    std::vector<Label> blockLabels;
+    blockLabels.reserve(method.blocks.size());
+    for (size_t i = 0; i < method.blocks.size(); i++) {
+        blockLabels.push_back(cc.new_label());
+    }
+
+    // Walk blocks in ID order.  The builder orders blocks by source
+    // bytecode offset, so block 0 is entry.  Phi-node support isn't
+    // here yet; multi-block patterns must have empty simulated stacks
+    // at boundaries (already enforced in the lifter).
     for (const Block& b : method.blocks) {
+        cc.bind(blockLabels[b.id]);
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
             switch (v.op) {
@@ -153,7 +165,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kReturn: {
-                // Operand[0] = value to return.
+                // Operand[0] = value to return.  Emits a tailored
+                // epilogue right here instead of jumping to a shared
+                // one — the return path is short enough that inlining
+                // is cheaper than branching.
                 if (v.operands.size() != 1) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
@@ -167,15 +182,52 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp exit = cc.new_gp32("exit");
                 cc.mov(exit, EXIT_RETURN);
                 cc.str(exit, ptr(state, OFF_EXIT));
-                cc.end_func();
-                cc.finalize();
-                CompiledFn out = nullptr;
-                Error err = runtime_->add(&out, &code);
-                if (err != kErrorOk) {
+                cc.ret();
+                break;  // Per-block return; keep emitting other blocks.
+            }
+
+            case Op::kBranch: {
+                // literal = successor block id.  One successor.
+                if (b.successors.empty()) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                return out;
+                cc.b(blockLabels[b.successors[0]]);
+                break;
+            }
+
+            case Op::kBranchIfTrue:
+            case Op::kBranchIfFalse: {
+                // operand[0] = condition Oop.  successors[0] = taken,
+                // successors[1] = fallthrough.  Compare the condition
+                // against state->trueOop / state->falseOop; branch on
+                // equality.  For Phase 2 we don't yet implement the
+                // Smalltalk "non-boolean" mustBeBoolean bail — if the
+                // cond is neither true nor false, fall through (incorrect
+                // for cond=nil; correct fix adds a deopt in Phase 3).
+                if (v.operands.size() != 1 || b.successors.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp trueOop = cc.new_gp64("true");
+                cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                cc.cmp(it->second, trueOop);
+                if (v.op == Op::kBranchIfTrue) {
+                    cc.b_eq(blockLabels[b.successors[0]]);  // taken
+                    cc.b   (blockLabels[b.successors[1]]);  // fallthrough
+                } else {
+                    // BranchIfFalse: taken when cond != true.
+                    // Simpler: branch to fallthrough when cond == true,
+                    // else branch to taken.
+                    cc.b_eq(blockLabels[b.successors[1]]);
+                    cc.b   (blockLabels[b.successors[0]]);
+                }
+                break;
             }
             default:
                 // Unsupported in this phase — punt.
@@ -185,10 +237,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         }
     }
 
-    // Ran through without hitting a return — malformed.
-    if (failedAtValue && !method.values.empty())
-        *failedAtValue = method.values.back().id;
-    return nullptr;
+    // All blocks emitted.  Finalize and register with the runtime.
+    cc.end_func();
+    cc.finalize();
+    CompiledFn out = nullptr;
+    Error err = runtime_->add(&out, &code);
+    if (err != kErrorOk) return nullptr;
+    return out;
 }
 
 }  // namespace sista

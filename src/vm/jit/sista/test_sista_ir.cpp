@@ -423,6 +423,72 @@ int main() {
                   << std::hex << obj[2] << std::dec << "\n";
     }
 
+    // Round-trip 7.9: Multi-block — ^ (cond ifTrue: [1] ifFalse: [0]).
+    // Pattern:
+    //   0: PushTrue      (condition)
+    //   1: JumpIfFalse +2  (0xC1 → target bc[4])
+    //   2: PushOne
+    //   3: ReturnTop
+    //   4: PushZero
+    //   5: ReturnTop
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushTrue,
+            0xC1,                     // jumpIfFalse +2 → target = 0+1+1+1 = …
+                                       // shortJumpTarget(1, 0xC1) = 1 + 1 + 2 = 4
+            SistaV1::PushOne,
+            SistaV1::ReturnTop,
+            SistaV1::PushZero,
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted, &failed);
+        check(r == LiftResult::kOk, "multi-block lifts");
+        check(lifted.blocks.size() >= 3,
+              "at least entry + taken + fallthrough blocks");
+        std::cout << "\n--- lifted true ifTrue:[1] ifFalse:[0] ---\n"
+                  << lifted.toString();
+
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower multi-block");
+
+        FakeStateWithBools state{};
+        state.trueOop  = 0x1111;
+        state.falseOop = 0x2222;
+
+        // cond=true path: expect SmallInt 1 bits = 9.
+        fn(&state);
+        check(state.returnValue == 9ULL,
+              "true path returns SmallInt 1");
+
+        // cond=false path: set receiver so PushTrue loads a different
+        // value... wait, we load from state->trueOop.  To test the
+        // "false" branch we'd need a different bytecode sequence with
+        // PushFalse instead.  Check that works too.
+        {
+            Method lifted2;
+            const uint8_t bc2[] = {
+                SistaV1::PushFalse,
+                0xC1,
+                SistaV1::PushOne,
+                SistaV1::ReturnTop,
+                SistaV1::PushZero,
+                SistaV1::ReturnTop,
+            };
+            Builder::buildFromBytes(bc2, sizeof(bc2), 0, 0, lifted2);
+            Lowering::CompiledFn fn2 = lowering.lower(lifted2);
+            check(fn2 != nullptr, "lower false-branch variant");
+            FakeStateWithBools s{};
+            s.trueOop  = 0x1111;
+            s.falseOop = 0x2222;
+            fn2(&s);
+            check(s.returnValue == 1ULL,
+                  "false path returns SmallInt 0");
+        }
+        std::cout << "--- multi-block cond test: ok (both branches)\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

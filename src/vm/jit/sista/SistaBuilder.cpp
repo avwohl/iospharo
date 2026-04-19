@@ -13,12 +13,52 @@
 #include "../SistaV1.hpp"
 #include "../../ObjectMemory.hpp"
 
+#include <map>
+#include <set>
 #include <vector>
 
 namespace pharo {
 namespace sista {
 
 namespace {
+
+// ---- Short-jump encoding ---------------------------------------------------
+//
+// Sista V1:  opcode 0xB0+N (uncond), 0xB8+N (if-true), 0xC0+N (if-false)
+//            where N = 0..7.  Offset added to IP AFTER the byte is
+//            consumed is (N + 1), per Interpreter.cpp line 1419.
+//
+// So at bytecode offset X with opcode B0+N, target absolute offset is:
+//     X + 1 + (N + 1)  =  X + N + 2
+static inline size_t shortJumpTarget(size_t bcOffset, uint8_t op) {
+    return bcOffset + (op & 0x07) + 2;
+}
+static inline bool isShortUncondJump(uint8_t op) {
+    return op >= jit::SistaV1::ShortJumpBase
+        && op <= jit::SistaV1::ShortJumpLast;
+}
+static inline bool isShortJumpTrue(uint8_t op) {
+    return op >= jit::SistaV1::ShortJumpTrueBase
+        && op <= jit::SistaV1::ShortJumpTrueLast;
+}
+static inline bool isShortJumpFalse(uint8_t op) {
+    return op >= jit::SistaV1::ShortJumpFalseBase
+        && op <= jit::SistaV1::ShortJumpFalseLast;
+}
+static inline bool isShortJump(uint8_t op) {
+    return isShortUncondJump(op) || isShortJumpTrue(op) || isShortJumpFalse(op);
+}
+
+// Return true if `op` is a terminator bytecode (in SistaV1).  Terminators
+// end a basic block; the next bytecode starts a new block.
+static inline bool isTerminatorBC(uint8_t op) {
+    return op == jit::SistaV1::ReturnReceiver
+        || op == jit::SistaV1::ReturnTrue
+        || op == jit::SistaV1::ReturnFalse
+        || op == jit::SistaV1::ReturnNil
+        || op == jit::SistaV1::ReturnTop
+        || isShortUncondJump(op);  // unconditional jumps end a block
+}
 
 class LinearLifter {
 public:
@@ -31,14 +71,130 @@ public:
     }
 
     LiftResult run(uint32_t* failedAtBytecode) {
-        uint32_t entry = out_.newBlock(/*sourceBc=*/0);
-        out_.entryBlock = entry;
-        currentBlock_   = entry;
+        // --- Pass 1: identify block boundaries --------------------------
+        //
+        // A block starts at:
+        //   - offset 0 (method entry)
+        //   - any branch target
+        //   - the byte AFTER a terminator (so the else-branch /
+        //     post-jump region is its own block)
+        std::set<size_t> blockStarts;
+        blockStarts.insert(0);
 
-        size_t ip = 0;
+        for (size_t i = 0; i < len_;) {
+            uint8_t op = bc_[i];
+            if (isShortJump(op)) {
+                size_t target = shortJumpTarget(i, op);
+                if (target > len_) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kMalformedMethod;
+                }
+                blockStarts.insert(target);
+                if (i + 1 < len_) blockStarts.insert(i + 1);
+                i++;
+                continue;
+            }
+            if (isTerminatorBC(op) && i + 1 < len_) {
+                blockStarts.insert(i + 1);
+            }
+            i++;
+        }
+
+        // --- Pass 2: create blocks in offset order ---------------------
+        std::map<size_t, uint32_t> offsetToBlock;
+        for (size_t offset : blockStarts) {
+            offsetToBlock[offset] = out_.newBlock((int32_t)offset);
+        }
+        out_.entryBlock = offsetToBlock[0];
+
+        // --- Pass 3: lift each block ---------------------------------
+        //
+        // Restriction for phase 2.1: the simulated stack must be empty
+        // at every block boundary.  That's true for if-then-else where
+        // each branch ends in a return; it's not for patterns where
+        // control paths merge with values on the stack.  Phi-node
+        // support comes later; for now we bail on stack-at-merge.
+        for (auto& kv : offsetToBlock) {
+            size_t blockStart = kv.first;
+            uint32_t blockId  = kv.second;
+            stack_.clear();
+            currentBlock_ = blockId;
+
+            LiftResult r = liftFromOffset(blockStart, offsetToBlock,
+                                           failedAtBytecode);
+            if (r != LiftResult::kOk) return r;
+        }
+
+        return LiftResult::kOk;
+    }
+
+private:
+    LiftResult liftFromOffset(size_t startOffset,
+                                const std::map<size_t, uint32_t>& offsetToBlock,
+                                uint32_t* failedAtBytecode) {
+        size_t ip = startOffset;
         while (ip < len_) {
             uint8_t op = bc_[ip];
             uint32_t bcOffset = static_cast<uint32_t>(ip);
+
+            // Crossed into a new block?  Must be a fall-through.
+            // Per the phase-2.1 restriction the simulated stack must
+            // be empty at this point; otherwise we'd need phi nodes.
+            if (ip != startOffset && offsetToBlock.count(ip)) {
+                if (!stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kUnsupportedBytecode;
+                }
+                uint32_t nextBlock = offsetToBlock.at(ip);
+                out_.addEdge(currentBlock_, nextBlock);
+                return LiftResult::kOk;
+            }
+
+            // Short jumps: unconditional and conditional.
+            if (isShortJump(op)) {
+                size_t target = shortJumpTarget(ip, op);
+                auto tIt = offsetToBlock.find(target);
+                if (tIt == offsetToBlock.end()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                if (isShortUncondJump(op)) {
+                    if (!stack_.empty()) {
+                        if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                        return LiftResult::kUnsupportedBytecode;
+                    }
+                    out_.newValue(currentBlock_, Op::kBranch, Type::kVoid,
+                                   /*operands=*/{}, /*literal=*/tIt->second);
+                    out_.addEdge(currentBlock_, tIt->second);
+                    return LiftResult::kOk;
+                }
+                // Conditional: needs a condition on the stack.  After
+                // the branch, both successors (target + fallthrough)
+                // must exist as separate blocks (per pass 1).
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t cond = stack_.back();
+                stack_.pop_back();
+                auto fIt = offsetToBlock.find(ip + 1);
+                if (fIt == offsetToBlock.end()) {
+                    // Couldn't find the fallthrough block — malformed
+                    // or pass-1 boundary logic broke.
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                Op brOp = isShortJumpTrue(op) ? Op::kBranchIfTrue
+                                               : Op::kBranchIfFalse;
+                // Encode successor order in literal high bits if we ever
+                // need it; the successors vector carries the data.
+                out_.newValue(currentBlock_, brOp, Type::kVoid,
+                               /*operands=*/{cond});
+                // successors[0] = taken-branch (target), [1] = fallthrough.
+                out_.addEdge(currentBlock_, tIt->second);
+                out_.addEdge(currentBlock_, fIt->second);
+                return LiftResult::kOk;
+            }
 
             // Push-receiver: load self, push onto simulated stack.
             if (op == jit::SistaV1::PushReceiver) {
