@@ -49,7 +49,8 @@ Lowering::~Lowering() {
 }
 
 Lowering::CompiledFn Lowering::lower(const Method& method,
-                                       uint32_t* failedAtValue) {
+                                       uint32_t* failedAtValue,
+                                       const uint8_t* bytecodeBase) {
     using namespace asmjit;
     using namespace asmjit::a64;
 
@@ -285,17 +286,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 cc.str(sp, ptr(state, OFF_SP));
 
-                // state.ip = method bytecode base + bcOffset.
-                // In the Tier 1/Tier 2 convention, ip is the absolute
-                // pointer into the CompiledMethod's bytecode.  We
-                // don't have that base here; the interpreter reads ip
-                // to select which bytecode to dispatch next.  For the
-                // test harness we set ip = (uint8_t*)(uintptr_t)bcOffset
-                // so callers can verify the offset.  Real runtime
-                // integration will compute the absolute pointer from
-                // the method oop at hookup time (Phase 2.3).
+                // state.ip = absolute pointer into the method's bytecode.
+                // When `bytecodeBase` was passed to lower(), we bake it
+                // in and produce the real pointer the interpreter
+                // expects.  Without a base (unit tests), we leave just
+                // the bytecode offset as a placeholder so callers can
+                // verify the encoding.
                 Gp ipReg = cc.new_gp64("ip");
-                cc.mov(ipReg, Imm(bcOffset));
+                if (bytecodeBase) {
+                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                   + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
                 cc.str(ipReg, ptr(state, OFF_IP));
 
                 // state.sendArgCount = nArgs.
@@ -436,7 +440,8 @@ namespace sista {
 Lowering::Lowering() {}
 Lowering::~Lowering() {}
 
-Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue) {
+Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue,
+                                       const uint8_t*) {
     if (failedAtValue) *failedAtValue = 0;
     return nullptr;
 }

@@ -1116,6 +1116,54 @@ int main() {
         std::cout << "--- diag: malform sample ok (orphan-skip works)\n";
     }
 
+    // Round-trip 7.Q: bytecodeBase wiring — send bail uses absolute
+    // state.ip (bytecodeBase + bcOffset), not just the offset.  This
+    // is what runtime integration needs.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,          // 0
+            (uint8_t)(SistaV1::Send0Base),  // 1: Send0 sel=0
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "send0 lifts");
+
+        // Pretend `bc` lives at address 0x1000 (fake, not actual).
+        const uint8_t* fakeBase = reinterpret_cast<const uint8_t*>(0x1000);
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed, fakeBase);
+        check(fn != nullptr, "lower with bytecodeBase succeeds");
+
+        // FakeState with an ip slot at offset 48.
+        struct FakeStateWithIp {
+            void*    sp;
+            uint64_t receiver;
+            void*    literals;
+            void*    tempBase;
+            uint8_t  padA[16];
+            uint8_t* ip;              // offset 48
+            uint8_t  padB[20];
+            int      exitReason;      // 76
+            uint64_t returnValue;
+            uint8_t  padC[256];
+        };
+        static_assert(offsetof(FakeStateWithIp, ip) == 48, "ip offset");
+
+        uint64_t stack[4] = {0};
+        FakeStateWithIp state{};
+        state.sp       = &stack[0];
+        state.receiver = 0xABCD;
+        fn(&state);
+
+        check(state.exitReason == 2, "exit = ExitSend");
+        // state.ip should now be fakeBase + bcOffset (=1, the send byte).
+        check(state.ip == (fakeBase + 1),
+              "state.ip = bytecodeBase + send bcOffset");
+        std::cout << "--- round-trip bytecodeBase: state.ip=0x"
+                  << std::hex << (uint64_t)state.ip << std::dec << "\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

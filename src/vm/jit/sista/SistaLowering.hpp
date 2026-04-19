@@ -46,8 +46,15 @@ public:
     //
     // `failedAtValue`, if non-null, is set to the id of the first
     // unsupported value encountered on failure.
+    //
+    // `bytecodeBase`, if non-null, is baked into the emitted code so
+    // that send-bails set state.ip to `bytecodeBase + bcOffset` — the
+    // absolute pointer the interpreter expects.  Pass nullptr for unit
+    // tests that only verify the offset bits.
     using CompiledFn = void (*)(void* state);
-    CompiledFn lower(const Method& method, uint32_t* failedAtValue = nullptr);
+    CompiledFn lower(const Method& method,
+                      uint32_t* failedAtValue = nullptr,
+                      const uint8_t* bytecodeBase = nullptr);
 
 private:
     asmjit::JitRuntime* runtime_ = nullptr;
