@@ -2587,7 +2587,7 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
         // updatePointersAfterCompact rewrites method header and IC Oops in
         // place; if the zone is left executable after a JIT call path that
         // didn't flip it back, the store here crashes with SIGSEGV inside
-        // fullGC. See docs/deferred.md A4.
+        // fullGC. See docs/deferred.md A1.
         jit::makeWritable(jitRuntime_.codeZone().rawStart(),
                           jitRuntime_.codeZone().totalBytes());
         jit::JITMethod* m = jitRuntime_.codeZone().firstMethod();

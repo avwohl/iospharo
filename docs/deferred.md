@@ -9,51 +9,9 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
-## A. Deferred test-suite issues — accepted
+## A. Open VM issues
 
-Each entry is a test-harness artifact, a known-slow class, or a
-test-framework retention pattern.  No VM-side fix in scope unless
-noted.
-
-### A1. Harness SemaphoreTest / valueWithin timing — CLOSED
-Standalone runs pass 100% (SemaphoreTest 18/18,
-BlockClosureValueWithinTest 5/5, etc.).  The SUnit P40-fork wrapper
-previously produced timing flakes; root cause turned out to be a
-periodic-check alignment lock in the interpreter main loop — tight
-extended-jump loops (`[] repeat` → `E1 FF ED FC`) never re-entered
-`checkTimerSemaphore` because countdown reset to 1024 kept hitting
-the same `E1` boundary.  Fixed in commit `cc10bce` (2026-04-15).
-Listed here only so re-discovery finds the history.
-
-### A2. Reflection-walk timeouts
-`testFastPointersTo` and `testPointersToCycle` pass under JIT.
-`testPointersTo` still exceeds 60 s — fundamentally O(heap × N)
-because the Smalltalk-side `select:` loop runs ~750 k iterations
-at interpreter speed.  Reclassified as known-slow.  Real fix (if
-ever wanted) is an image-side `primitivePointersToAmong:` that
-does the select: in C++.
-
-### A3. Weak-reference / finalization timing — VM-side CLOSED, 4 residuals
-Four tests still fail in the SUnit harness:
-- `WeakKeyDictionaryTest>>testClearing`
-- `WeakIdentityKeyDictionaryTest>>testClearing` +
-  `testFinalizeValuesWhenLastChainContinuesAtFront`
-- `WeakAnnouncerTest>>testWeakObject` + `testWeakDoubleAnnouncer`
-
-All share the SUnit fork retention pattern: the P40 test process
-holds the test instance across the watchdog handler chain; the
-test's `keys` ivar is nil'd but the original collection is still
-referenced from a compiler cache or test-context temp until the
-fork exits.  Direct eval (setUp inside a block, test instance
-collectible) passes 10/10 runs.  VM ephemeron firing itself is
-correct (see commit that fixed the range-based-for iterator bug in
-`fireAllEphemerons`).
-
-Real fix is either a test-runner rewrite or a stack-slot scrub
-primitive.  Neither pursued — the tests exercise a legitimate
-VM feature on a stale test-framework retention pattern.
-
-### A4. JIT eval-mode hang at PHARO_JIT_DEFER=0
+### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
 `PHARO_JIT_DEFER=0` (immediate JIT) still hangs during Morphic
 boot at `JIT_MAX_COMPILE≥10` — `do:` gets compiled and a later
@@ -67,7 +25,7 @@ correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
 via `PHARO_BENCH` which bypasses the startup.st path entirely, so
 the default path is unaffected.
 
-### A5. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
+### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
 At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods
 immediately and corrupts the J2J return stack on the
 `PositionableStream class>>on:` → `PositionableStream>>on:` chain,
@@ -82,8 +40,8 @@ Root cause not pinpointed; next step needs lldb single-stepping
 through `stencil_popStoreTemp` at the buggy iteration.  Full plan
 in `memory/project_b5_j2j_onchain.md`.
 
-**Mitigation:** default `PHARO_JIT_DEFER=4s` sidesteps it.  B5
-only impacts `PHARO_JIT_DEFER=0`, which isn't a supported default.
+**Mitigation:** default `PHARO_JIT_DEFER=4s` sidesteps it.  Only
+impacts `PHARO_JIT_DEFER=0`, which isn't a supported default.
 
 ---
 
@@ -191,8 +149,6 @@ changes; image-side issues to propose upstream.
    path.  Enables non-inlined blocks to be T2-compiled; marginal
    benefit since Pharo inlines `to:do:` / `whileTrue:` at compile
    time.
-3. **Pivot to iOS device work (C).**  Needs physical hardware,
-   not just code.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.

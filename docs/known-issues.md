@@ -33,8 +33,22 @@ See `docs/test-results.md` for full breakdown.
 
 See `docs/deferred.md` section A for full detail on:
 
-  A1. Harness SemaphoreTest / valueWithin timing — CLOSED (commit cc10bce)
-  A2. Reflection-walk timeouts (`testPointersTo` >60 s)
-  A3. Weak-reference / finalization timing — VM-side CLOSED, 4 SUnit residuals
-  A4. JIT eval-mode hang at PHARO_JIT_DEFER=0
-  A5. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
+  A1. JIT eval-mode hang at PHARO_JIT_DEFER=0
+  A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
+
+## Known-slow tests (acceptable timeouts)
+
+- `ProtoObjectTest>>testPointersTo` exceeds 60 s.  Fundamentally
+  O(heap × N): Smalltalk-side `select:` loop runs ~750 k
+  iterations at interpreter speed.  Real fix is an image-side
+  `primitivePointersToAmong:` that does the select in C++ —
+  not pursued.
+- Four SUnit weak-reference tests fail under the harness fork
+  (`WeakKeyDictionaryTest>>testClearing`,
+  `WeakIdentityKeyDictionaryTest>>testClearing` +
+  `testFinalizeValuesWhenLastChainContinuesAtFront`,
+  `WeakAnnouncerTest>>testWeakObject` +
+  `testWeakDoubleAnnouncer`).  Direct eval passes 10/10.  VM
+  ephemeron firing is correct; residuals are the SUnit fork
+  retention pattern (test instance held across watchdog handler
+  chain).  Fix would be a test-runner rewrite, not a VM change.
