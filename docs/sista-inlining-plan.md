@@ -21,8 +21,13 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
   Multi-block control flow + inline arith + unspeculated sends +
   phi nodes + medium-distance jumps + loops + extended
-  push/store + inline int/char literals + ExtSend now work.
-  29 round-trip tests passing:
+  push/store + inline int/char literals + ExtSend + PushLitVar +
+  SpecialSend + CallPrimitive-skip now work.  30 round-trip
+  tests passing.
+
+  **Coverage over a Pharo 13 image (175K CompiledMethods)**:
+  22.95% lift, 100% lower.  Measured by `test_sista_survey`;
+  baseline at the start of the session was 9.57%.
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -32,10 +37,15 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
       - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
       - ExtendA / ExtendB (0xE0 / 0xE1) prefix bytes
+      - PushLitVar 0..15 (0x10-0x1F) + ExtPushLitVar (0xE3)
       - ExtPushRecvVar (0xE2), ExtPushLitConst (0xE4),
         ExtPushTemp (0xE5)
       - PushInteger (0xE8), PushCharacter (0xE9)
       - ExtPopStoreRecv (0xF0), ExtPopStoreTemp (0xF2)
+      - SpecialSend 0x70-0x7F (arg counts from image's
+        SpecialSelectorsArray)
+      - CallPrimitive 0xF8 at method start (skip — interpreter
+        has already run the primitive when Sista is invoked)
       - ExtJump / ExtJumpTrue / ExtJumpFalse (0xED-0xEF) — both
         forward and backward (loops supported)
       - Arith + - * on SmallInt operands (tag-preserving, no overflow
@@ -63,7 +73,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `7b98ee5` (ExtendB + ExtJump forward for medium-distance jumps),
   `8a5dfd0` (backward ExtJump — loop support),
   `600fc1e` (extended push/store bytecodes 0xE2-0xE5, 0xF0, 0xF2),
-  `c1e2cb2` (PushInteger / PushCharacter / ExtSend).
+  `c1e2cb2` (PushInteger / PushCharacter / ExtSend),
+  `944e9cc` (survey harness + PushLitVar + SpecialSend + arith
+  fallback + CallPrimitive-skip → 22.95% lift coverage).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
