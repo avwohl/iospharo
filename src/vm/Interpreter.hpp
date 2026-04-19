@@ -517,8 +517,9 @@ private:
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
     // Primitive error codes (matching PrimErrTable indices in the image)
+    static constexpr int PrimErrNoMemory_       = 4;  // Insufficient object memory
     static constexpr int PrimErrNoModification_ = 8;  // Attempt to modify immutable object
-    static constexpr int PrimErrOSError = 21;  // Index in PrimErrTable for OS errors
+    static constexpr int PrimErrOSError         = 21; // Index in PrimErrTable for OS errors
     std::array<SavedFrame, MaxFrameDepth> savedFrames_;
     size_t frameDepth_;
 

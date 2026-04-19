@@ -2538,7 +2538,8 @@ PrimitiveResult Interpreter::primitiveNew(int argCount) {
     Oop newObj = memory_.allocateSlots(classIndex, instSize, objFormat);
 
     if (newObj.isNil() || newObj.rawBits() == memory_.nil().rawBits()) {
-        return PrimitiveResult::Failure;  // Out of memory
+        primFailCode_ = PrimErrNoMemory_;
+        return PrimitiveResult::Failure;
     }
 
     primitiveSuccess(newObj);
@@ -2691,6 +2692,15 @@ PrimitiveResult Interpreter::primitiveNewWithArg(int argCount) {
     }
 
     if (newObj.isNil()) {
+        return PrimitiveResult::Failure;
+    }
+
+    // Allocation-failure path: `allocateBytes`/`allocateSlots` return nil when
+    // old-space is exhausted.  Signal PrimErrNoMemory so the image raises
+    // OutOfMemory (caught by tests' `on: OutOfMemory do:`) rather than the
+    // generic PrimitiveFailed.
+    if (newObj.isNil()) {
+        primFailCode_ = PrimErrNoMemory_;
         return PrimitiveResult::Failure;
     }
 
