@@ -19,35 +19,48 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
-  Single-block coverage complete.  12 round-trip tests passing:
+  Multi-block control flow now works.  13 round-trip tests passing:
 
-      Bytecodes lifted & lowered (all single-block):
+      Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
         PushLitConst 0..31
       - PushTrue, PushFalse, PushNil, PushZero, PushOne
       - PopStoreTemp 0..7, PopStoreRecvVar 0..7, Pop, Dup
       - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
+      - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
 
       IR ops implemented:
       - kConstantOop, kLoadReceiver, kLoadTrueOop, kLoadFalseOop
       - kLoadTemp, kLoadLiteral, kLoadInstVar
       - kStoreTemp, kStoreInstVar
-      - kReturn
+      - kReturn, kBranch, kBranchIfTrue, kBranchIfFalse
 
   Commits: `c638471` (IR), `42e382c` (lifter MVP), `7fa2fab`
   (lowerer + first round-trip), `2e5d61e` (push-constants +
   push-literal), `a09b5c4` (ivar + store-temp + stack ops),
-  `6badd08` (setter pattern).
+  `6badd08` (setter pattern), `8680ccb` (multi-block via short
+  jumps).
+
+  Lifter now does two passes: pre-scan for branch targets and
+  post-terminator boundaries, create one block per offset, then
+  lift each block.  Lowerer creates per-block asmjit labels and
+  emits branches against state->trueOop comparison.  Phi-node
+  support is deferred — current restriction is empty simulated
+  stack at every block boundary, which covers the common
+  if-then-else-return pattern.
 
   Remaining Phase 2:
-  - Control flow (short jumps 0xB0-0xC7).  Requires two-pass lifter
-    that pre-scans branch targets, creates blocks, and inserts phi
-    nodes at joins.  Multi-block methods start here.
   - Arith primitives (0x60-0x6F).  kPrim*Int ops already defined in
-    IR, just need lifter cases + lowerer with overflow-deopt.  The
-    first place where the IR beats the stencil JIT structurally.
+    IR, just need lifter cases + lowerer with overflow-bail.  The
+    first place where the IR beats the stencil JIT structurally —
+    tag check once, straight ARM add, native overflow detection.
   - Sends (kSendUnspeculated).  Simple fall-through to Tier 1 IC
     probe; no speculation yet.
+  - Phi nodes for joined blocks (needed before method inlining
+    becomes useful).
+  - mustBeBoolean bail on conditional branch (placeholder today
+    silently falls through on non-true cond; fix requires Phase 3
+    deopt).
 
   Each remaining item gates on a round-trip test + SUnit
   no-regression.  Catalyst + all three iOS xcframework slices
