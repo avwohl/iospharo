@@ -178,10 +178,17 @@ Mac Catalyst is verified working (2026-02-24). Device testing needs:
 - UI touch/pinch/pan exercised end-to-end (not just Mac mouse events)
 
 ### D2. iOS app-store readiness
-- App icons, launch screen, metadata
-- Privacy manifest (iOS 17+ requirement)
-- Crash reporting integration
-- Remote logging for device debugging (can't tail -f a device easily)
+- App icons: ✓ (all sizes present in Assets.xcassets/AppIcon.appiconset)
+- Launch screen: ✓ (UILaunchScreen dict in Info.plist, commit e572ddd;
+  exported apps get the same template, commit 7b2fd4e)
+- Privacy manifest (iOS 17+ requirement): ✓ (commits d335350 + 7b2fd4e
+  for main app and exported apps)
+- Crash reporting integration: Apple's built-in crash reports (via
+  Xcode Organizer / TestFlight / App Store Connect) handle this
+  automatically.  Custom handlers can interfere with Apple's reporter;
+  not installing them is the recommended path.
+- Remote logging for device debugging: still open — needs backend
+  choice (Sentry / Firebase / custom endpoint).
 
 ### D3. Image preparation
 - Do iOS images need different startup? Currently uses standard Pharo
