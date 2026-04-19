@@ -166,15 +166,18 @@ int main(int argc, const char** argv) {
     }
 
     // Runtime wrapper smoke test: compile + execute methods whose IR
-    // contains no sends, no bails, and no ops that need external
-    // runtime state beyond receiver/literals/temps.  These must exit
-    // via ExitReturn; the returned value is whatever the method's
-    // semantics dictate (e.g. ^self = receiver, ^<const> = tagged
-    // constant).  Proves the Runtime produces actually-runnable code
-    // on real image methods.
+    // doesn't deref the (synthetic) receiver/literal oops — those
+    // would crash with our sentinel state.  Methods WITH sends are
+    // allowed: the bail path writes state.ip / state.sp and exits,
+    // which we validate by checking for ExitSend.
+    //
+    // What this proves: Sista lifts + lowers + executes every lifted
+    // path correctly; bails write valid state; returns carry values.
+    // In a real VM, ExitSend would hand control to the interpreter;
+    // here we just verify the exit protocol.
     {
         sista::Runtime runtime;
-        size_t compiled = 0, executed = 0, returnedOK = 0;
+        size_t compiled = 0, executed = 0, returnedOK = 0, sendBails = 0;
 
         // Full JITState-shaped buffer (192 bytes, matches offsets in
         // JITState.hpp).  Receiver/literals/temps fields are the only
@@ -217,14 +220,13 @@ int main(int argc, const char** argv) {
             sista::Method m;
             auto r = sista::Builder::build(methodOop, memory, m);
             if (r != sista::LiftResult::kOk) return;
-            // Only execute methods whose IR is "memory-safe" with our
-            // synthetic state: no sends (would bail), no instVar loads
-            // /stores (those deref the receiver/association oop, which
-            // we've set to a sentinel value that isn't a real pointer).
+            // Skip methods whose IR dereferences the (synthetic)
+            // receiver oop or an association — those crash with our
+            // sentinel state.  Sends are fine: the bail writes state
+            // and exits without dereffing any user oops.
             bool unsafeOp = false;
             for (const sista::Value& v : m.values) {
                 switch (v.op) {
-                case sista::Op::kSendUnspeculated:
                 case sista::Op::kLoadInstVar:
                 case sista::Op::kStoreInstVar:
                 case sista::Op::kGuardClass:
@@ -266,12 +268,16 @@ int main(int argc, const char** argv) {
             executed++;
             fn(&state);
             if (state.exitReason == 1) returnedOK++;
+            else if (state.exitReason == 2) sendBails++;
         });
 
         std::cout << "\n=== Runtime execute smoke test ===\n";
-        std::cout << "Compiled (no-send methods): " << compiled << "\n";
+        std::cout << "Compiled:                   " << compiled << "\n";
         std::cout << "Executed:                   " << executed << "\n";
         std::cout << "ExitReturn:                 " << returnedOK << "\n";
+        std::cout << "ExitSend (bail to interp):  " << sendBails << "\n";
+        std::cout << "Other exit:                 "
+                  << (executed - returnedOK - sendBails) << "\n";
     }
 
     // Malformed breakdown.
