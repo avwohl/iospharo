@@ -15,22 +15,27 @@ Surfaced 2026-04-19 by removing the harness skip list and the JIT
 auto-disable in test/eval mode.  The previous "clean" test suite
 runs were hiding these behind workarounds.
 
-### A0. Chunk-format `methodsFor:` incompatible with current image
+### A0. Chunk-format `methodsFor:` incompatible — RESOLVED (harness converted)
 Pharo 13 / 14 removed `#methodsFor:` from `ClassDescription`, so
 chunk-file headers like `<bang>SUnitRunner class methodsFor: 'cat'<bang>`
-fail to install methods cleanly.  A partial shim (`ClassDescription
-compile: 'methodsFor: aCategory ^ self'`) lets the first batch of
-chunks compile but later chunks still hit syntax errors because the
-chunk loader evaluates every chunk as a plain DoIt — it doesn't know
-"next chunk is method source after methodsFor:".
+never worked cleanly — the harness shipped that way but the image's
+CodeImporter evaluated every chunk as a plain DoIt, so multi-line
+method bodies with temps / nested blocks silently failed to install.
 
-Real fix: either update `CodeImporter evaluateFileStream:` in the
-image to handle the `methodsFor:` pattern, OR convert the harness
-files (`run_sunit_tests.st`, `setup_fake_gui.st`) from chunk format
-to explicit `compile:classified:` calls (mechanical transformation,
-~120 methods).  Partial shim is in
-`scripts/pharo-headless-test/run_sunit_tests.st` (commit `1ee8bc4`
-on that repo).
+Fixed by converting `run_sunit_tests.st` and `setup_fake_gui.st`
+from chunk format to explicit `Class compile: 'source' classified:
+'cat'` calls (submodule commits `17bd98a`, `f50f2d6`).  With the
+converted harness:
+
+- JIT off, no skips: first ~35 test classes exercised end-to-end
+  with a mix of silent passes, genuine 8-s timeouts on known-slow
+  tests (e.g., `ArrayTest>>testPrintingRecursive`), and a few real
+  PrimitiveFailed errors (e.g., 1-GB allocation).
+- JIT on, no skips: immediate DNU cascade during boot — the bugs
+  below.  Harness never reaches the test runner.
+
+Preserved the `methodsFor:` shim at the top of the harness for
+belt-and-suspenders.
 
 ### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
