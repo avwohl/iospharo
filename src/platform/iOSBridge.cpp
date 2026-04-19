@@ -45,12 +45,17 @@ void vm_parameters_destroy(VMParameters* parameters) {
 int vm_init(VMParameters* parameters) {
     if (!parameters) return 0;
 
-    // Initialize VM memory
-    size_t heapSize = parameters->maxOldSpaceSize > 0
-                      ? (size_t)parameters->maxOldSpaceSize
-                      : 2ULL * 1024 * 1024 * 1024;  // 2 GB default
+    // Memory config — two knobs:
+    //   maxOldSpaceSize: virtual-address ceiling (0 → platform default).
+    //   initialOldSpaceSize: GC soft threshold (0 → use MemoryConfig default).
+    size_t maxHeap = parameters->maxOldSpaceSize > 0
+                     ? (size_t)parameters->maxOldSpaceSize
+                     : 0;  // 0 → MemoryConfig default (4 GB)
+    size_t initialHeap = parameters->initialOldSpaceSize > 0
+                         ? (size_t)parameters->initialOldSpaceSize
+                         : 0;
 
-    if (!vm_initialize(heapSize)) {
+    if (!vm_initialize_with_config(maxHeap, initialHeap)) {
         return 0;
     }
 

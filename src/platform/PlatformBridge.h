@@ -14,7 +14,13 @@ extern "C" {
 #endif
 
 // VM lifecycle
+// Single-arg form: `heapSize` is the virtual-address ceiling.  Equivalent to
+// `vm_initialize_with_config(heapSize, 0)`.
 bool vm_initialize(size_t heapSize);
+
+/// Preferred form: pass both the virtual-address ceiling (`maxHeap`) and the
+/// initial GC-tuning threshold (`initialHeap`, 0 → use default).
+bool vm_initialize_with_config(size_t maxHeap, size_t initialHeap);
 bool vm_loadImage(const char* imagePath);
 void vm_run(void);           // Runs interpreter on a background thread
 void vm_runOnMainThread(void); // Runs interpreter on the current (main) thread

@@ -55,11 +55,22 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
     if (!permSpaceStart_) return false;
     permSpaceEnd_ = permSpaceStart_ + config.permSpaceSize;
 
-    // Use mmap for old space to get lazy-committed pages.
-    // The OS only allocates physical memory when pages are written to,
-    // so reserving a large virtual range is cheap.
+    // Old-space: reserve `oldSpaceMaxSize` virtual bytes up-front.
+    // mmap(MAP_ANONYMOUS) reserves address space without committing pages;
+    // the kernel only allocates physical memory when the VM writes to a
+    // page.  So a 4 GB reservation on an iPhone 8 with 1 GB of physical
+    // RAM costs ~0 bytes of physical memory; physical use is capped by
+    // the OS's OOM kill / jetsam policy.
+    //
+    // Back-compat: legacy callers still set `config.oldSpaceSize` — treat
+    // it as a max if set.  `oldSpaceInitialSize` is a GC-tuning hint
+    // (soft threshold); actual allocation grows lazily up to max.
+    size_t maxSize = config.oldSpaceMaxSize;
+    if (config.oldSpaceSize != 0) {
+        maxSize = config.oldSpaceSize;  // legacy single-knob path
+    }
     oldSpaceStart_ = static_cast<uint8_t*>(
-        mmap(nullptr, config.oldSpaceSize, PROT_READ | PROT_WRITE,
+        mmap(nullptr, maxSize, PROT_READ | PROT_WRITE,
              MAP_ANONYMOUS | MAP_PRIVATE, -1, 0));
     if (oldSpaceStart_ == MAP_FAILED) {
         oldSpaceStart_ = nullptr;
@@ -68,14 +79,15 @@ bool ObjectMemory::initialize(const MemoryConfig& config) {
         return false;
     }
     oldSpaceUseMmap_ = true;
-    oldSpaceMmapSize_ = config.oldSpaceSize;
-    oldSpaceEnd_ = oldSpaceStart_ + config.oldSpaceSize;
+    oldSpaceMmapSize_ = maxSize;
+    oldSpaceEnd_ = oldSpaceStart_ + maxSize;
     oldSpaceFree_ = oldSpaceStart_;
+    oldSpaceInitialTarget_ = oldSpaceStart_ + config.oldSpaceInitialSize;
     newSpaceStart_ = static_cast<uint8_t*>(
         std::aligned_alloc(8, config.newSpaceSize));
     if (!newSpaceStart_) {
         std::free(permSpaceStart_);
-        munmap(oldSpaceStart_, config.oldSpaceSize);
+        munmap(oldSpaceStart_, oldSpaceMmapSize_);
         permSpaceStart_ = nullptr;
         oldSpaceStart_ = nullptr;
         return false;

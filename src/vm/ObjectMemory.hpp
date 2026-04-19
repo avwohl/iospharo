@@ -111,8 +111,30 @@ private:
 };
 
 /// Configuration for memory allocation
+///
+/// Two old-space knobs (Linux-style "configure at launch"):
+///   - `oldSpaceInitialSize`: lower bound / GC-tuning hint.  Old-space starts
+///     empty; this is the point at which we first consider triggering a full
+///     GC (rather than just waiting for a physical OOM).
+///   - `oldSpaceMaxSize`: virtual-address-space reservation via mmap.  The
+///     OS lazy-commits pages only when we write to them, so reserving a
+///     large range on iPhone 8 (1 GB physical) costs nothing — actual
+///     physical use is capped by the platform's OOM kill (jetsam on iOS).
+///
+/// Platform defaults chosen so the VM works on small-memory devices without
+/// any configuration AND scales up on desktops without a recompile.
 struct MemoryConfig {
-    size_t oldSpaceSize = 128 * 1024 * 1024;   // 128 MB default
+    // Defaults: 128 MB initial / 4 GB max.  Virtual-address reservation is
+    // free on all Apple 64-bit targets; the OS lazy-commits pages and caps
+    // actual physical use via jetsam (iOS) / OOM killer (macOS).  Override
+    // via Info.plist (PharoInitialOldSpace / PharoMaxOldSpace) or env vars
+    // (PHARO_INITIAL_OLD_SPACE / PHARO_MAX_OLD_SPACE).  Desktop users who
+    // want a bigger ceiling just bump the env var at launch.
+    size_t oldSpaceInitialSize = 128ULL * 1024 * 1024;
+    size_t oldSpaceMaxSize     = 4ULL * 1024 * 1024 * 1024;
+    // Back-compat: callers setting oldSpaceSize still work; init copies it
+    // to oldSpaceMaxSize if max is zero.
+    size_t oldSpaceSize = 0;
     size_t newSpaceSize = 16 * 1024 * 1024;    // 16 MB default
     size_t permSpaceSize = 8 * 1024 * 1024;    // 8 MB default
     size_t classTableSize = 1 << 22;           // 4M entries (22-bit index)
@@ -673,8 +695,9 @@ private:
     uint8_t* permSpaceStart_ = nullptr;
     uint8_t* permSpaceEnd_ = nullptr;
     uint8_t* oldSpaceStart_ = nullptr;
-    uint8_t* oldSpaceEnd_ = nullptr;
-    uint8_t* oldSpaceFree_ = nullptr;   // Next allocation in old space
+    uint8_t* oldSpaceEnd_ = nullptr;     // oldSpaceStart_ + oldSpaceMaxSize (virtual ceiling)
+    uint8_t* oldSpaceFree_ = nullptr;    // Next allocation in old space
+    uint8_t* oldSpaceInitialTarget_ = nullptr;  // GC trigger: first point past which full GC fires
     bool oldSpaceUseMmap_ = false;       // true if old space was allocated with mmap
     size_t oldSpaceMmapSize_ = 0;        // Size of mmap'd region
     uint8_t* newSpaceStart_ = nullptr;

@@ -251,7 +251,7 @@ static void eventCallback(void* context) {
 
 extern "C" {
 
-bool vm_initialize(size_t heapSize) {
+bool vm_initialize_with_config(size_t maxHeap, size_t initialHeap) {
     if (gMemory) {
         return true;
     }
@@ -263,11 +263,16 @@ bool vm_initialize(size_t heapSize) {
 
     gMemory = new pharo::ObjectMemory();
     pharo::MemoryConfig config;
-    config.oldSpaceSize = heapSize;
+    if (maxHeap > 0) config.oldSpaceMaxSize = maxHeap;
+    if (initialHeap > 0) config.oldSpaceInitialSize = initialHeap;
     config.newSpaceSize = 32 * 1024 * 1024;
     config.permSpaceSize = 8 * 1024 * 1024;
 
     return gMemory->initialize(config);
+}
+
+bool vm_initialize(size_t heapSize) {
+    return vm_initialize_with_config(heapSize, 0);
 }
 
 // Set FreeTypeSettings current bitBltSubPixelAvailable := false directly in

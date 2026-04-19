@@ -26,7 +26,8 @@ typedef struct VMParameters_ {
     bool isInteractiveSession;
     bool isWorker;
     int maxStackFramesToPrint;
-    long long maxOldSpaceSize;
+    long long maxOldSpaceSize;      // Virtual-address ceiling (soft cap)
+    long long initialOldSpaceSize;  // GC-tuning hint: full-GC threshold
     long long maxCodeSize;
     long long edenSize;
     long long minPermSpaceSize;

@@ -44,8 +44,18 @@
 	<string>Pharo.image</string>
 	<key>PharoLogLevel</key>
 	<integer>1</integer>
+	<!-- Old-space virtual-address ceiling (upper bound).  4 GB suits all
+	     iOS / Catalyst devices: OS lazy-commits pages, and jetsam/OOM caps
+	     actual physical use per-device.  Override via PHARO_MAX_OLD_SPACE
+	     env var at launch. -->
 	<key>PharoMaxOldSpaceSize</key>
-	<integer>536870912</integer>
+	<integer>4294967296</integer>
+	<!-- Soft GC threshold: when old-space committed bytes exceed this, the
+	     next allocation triggers a full GC.  Small on low-RAM devices for
+	     lower RSS; bigger on desktops for less GC work.  Override via
+	     PHARO_INITIAL_OLD_SPACE env var. -->
+	<key>PharoInitialOldSpace</key>
+	<integer>134217728</integer>
 	<key>NSMotionUsageDescription</key>
 	<string>Pharo uses device motion sensors (accelerometer, gyroscope, magnetometer) for interactive programs and experiments.</string>
 	<key>UIUserInterfaceStyle</key>

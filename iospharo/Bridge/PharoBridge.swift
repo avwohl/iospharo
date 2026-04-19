@@ -209,11 +209,28 @@ class PharoBridge: ObservableObject {
         parameters.isInteractiveSession = true
         parameters.isWorker = false
 
-        // Memory: cap heap at half of physical RAM (iPhone 8 has only 2 GB
-        // and iOS rejects a 2 GB mmap reservation on low-memory devices)
-        let totalRAM = ProcessInfo.processInfo.physicalMemory
-        let maxHeap: UInt64 = min(2 * 1024 * 1024 * 1024, totalRAM / 2)
-        parameters.maxOldSpaceSize = Int64(maxHeap)
+        // Memory config — three-tier source resolution:
+        //   1. env vars (PHARO_MAX_OLD_SPACE / PHARO_INITIAL_OLD_SPACE)
+        //   2. Info.plist (PharoMaxOldSpaceSize / PharoInitialOldSpace)
+        //   3. MemoryConfig defaults (4 GB ceiling, 128 MB soft threshold)
+        //
+        // Virtual-address reservation is free on 64-bit Apple platforms —
+        // the OS lazy-commits pages, and jetsam (iOS) / OOM killer (macOS)
+        // cap actual physical use.  Reserving 4 GB on an iPhone 8 with
+        // 2 GB of RAM costs ~0 physical bytes; the kill fires if the VM
+        // actually exceeds the per-device budget.
+        let env = ProcessInfo.processInfo.environment
+        let bundle = Bundle.main.infoDictionary ?? [:]
+        func resolveSize(envKey: String, plistKey: String) -> Int64 {
+            if let s = env[envKey], let v = Int64(s), v > 0 { return v }
+            if let n = bundle[plistKey] as? Int, n > 0 { return Int64(n) }
+            if let n = bundle[plistKey] as? NSNumber { return n.int64Value }
+            return 0  // 0 → C++ side picks MemoryConfig default
+        }
+        parameters.maxOldSpaceSize     = resolveSize(envKey: "PHARO_MAX_OLD_SPACE",
+                                                      plistKey: "PharoMaxOldSpaceSize")
+        parameters.initialOldSpaceSize = resolveSize(envKey: "PHARO_INITIAL_OLD_SPACE",
+                                                      plistKey: "PharoInitialOldSpace")
         parameters.edenSize = 10 * 1024 * 1024
         parameters.maxCodeSize = 0
 
