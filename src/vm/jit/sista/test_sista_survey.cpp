@@ -56,7 +56,10 @@ int main(int argc, const char** argv) {
     size_t lowerOk         = 0;
     size_t lowerFailed     = 0;
 
-    std::map<uint8_t, size_t> blockingOp;  // opcode → count
+    std::map<uint8_t, size_t> blockingOp;        // opcode → count
+    std::map<uint8_t, size_t> malformedAtOp;     // opcode at malform → count
+    size_t malformedAtEnd = 0;                   // failedAt == len (ran past)
+    size_t sampleDumps = 0;
 
     sista::Lowering lowering;
 
@@ -101,9 +104,37 @@ int main(int argc, const char** argv) {
             }
             break;
         }
-        case sista::LiftResult::kMalformedMethod:
+        case sista::LiftResult::kMalformedMethod: {
             liftMalformed++;
+            if (failedAt != UINT32_MAX) {
+                ObjectHeader* mh = methodOop.asObjectPtr();
+                const uint8_t* bytes = mh->bytes()
+                                     + (1 + numLiterals) * 8;
+                size_t bcSize = mh->byteSize();
+                if (failedAt >= bcSize) malformedAtEnd++;
+                else {
+                    uint8_t failOp = bytes[failedAt];
+                    malformedAtOp[failOp]++;
+                    // Dump first few methods where malform is at a
+                    // short-uncond-jump (0xB0-0xB7) — those shouldn't
+                    // pop a stack or fail at the target lookup.
+                    if ((failOp >= 0xB0 && failOp <= 0xB7)
+                        && sampleDumps < 3) {
+                        sampleDumps++;
+                        std::printf("\n--- Malformed sample #%zu "
+                                    "at bc=%u op=0x%02X (len=%zu) ---\n",
+                                    sampleDumps, failedAt, failOp, bcSize);
+                        for (size_t k = 0; k < bcSize; k++) {
+                            if (k % 16 == 0) std::printf("  %04zu:", k);
+                            std::printf(" %02X", bytes[k]);
+                            if (k % 16 == 15) std::printf("\n");
+                        }
+                        if (bcSize % 16) std::printf("\n");
+                    }
+                }
+            }
             break;
+        }
         }
     });
 
@@ -126,6 +157,19 @@ int main(int argc, const char** argv) {
     size_t shown = 0;
     for (auto& kv : sorted) {
         if (shown++ >= 20) break;
+        std::printf("  0x%02X  %zu\n", kv.first, kv.second);
+    }
+
+    // Malformed breakdown.
+    std::vector<std::pair<uint8_t, size_t>> msorted(malformedAtOp.begin(),
+                                                      malformedAtOp.end());
+    std::sort(msorted.begin(), msorted.end(),
+              [](auto& a, auto& b){ return a.second > b.second; });
+    std::cout << "\n--- Malformed: opcode at failure point ---\n";
+    std::cout << "  ran-past-end: " << malformedAtEnd << "\n";
+    shown = 0;
+    for (auto& kv : msorted) {
+        if (shown++ >= 15) break;
         std::printf("  0x%02X  %zu\n", kv.first, kv.second);
     }
     return 0;

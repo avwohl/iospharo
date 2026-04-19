@@ -271,7 +271,13 @@ public:
                     if (slotIdx >= pb.outgoingStack.size()) {
                         // Predecessor didn't supply this slot.  Pass 3
                         // should have caught this, but guard anyway.
-                        if (failedAtBytecode) *failedAtBytecode = b.id;
+                        // Report the block's source bytecode offset so
+                        // the caller / survey can identify the spot.
+                        if (failedAtBytecode) {
+                            *failedAtBytecode = (b.sourceBytecodeOffset >= 0)
+                                ? (uint32_t)b.sourceBytecodeOffset
+                                : 0;
+                        }
                         return LiftResult::kMalformedMethod;
                     }
                     v.operands.push_back(pb.outgoingStack[slotIdx]);
@@ -1240,7 +1246,16 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     numTemps = (numTemps > numArgs) ? numTemps - numArgs : 0;
 
     const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
-    size_t bytecodeSize = mh->byteSize();
+    // byteSize() includes the slot region (method header + literals),
+    // so the true bytecode length is byteSize() minus the literal-slot
+    // bytes.  Previously we used byteSize() directly, which included
+    // 8 * (1 + numLiterals) of slot bytes as "bytecode" — that caused
+    // Pass 1 to create phantom block starts in the slot region and
+    // short jumps at the real end-of-bytecodes to compute out-of-range
+    // targets (since they appeared to point into the literal trailer).
+    size_t totalBytes = mh->byteSize();
+    size_t slotBytes  = (1 + numLiterals) * 8;
+    size_t bytecodeSize = (totalBytes > slotBytes) ? (totalBytes - slotBytes) : 0;
 
     out.compiledMethodOop = compiledMethod;
     // Cache literals (for now just the raw Oop array).
