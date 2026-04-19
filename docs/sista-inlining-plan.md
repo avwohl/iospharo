@@ -4,6 +4,28 @@ Written 2026-04-19.  Architectural rewrite of the JIT to actually close
 the 30× Cog gap.  Complementary to (not replacing) the docs in
 `docs/jit-toolkit-evaluation.md` and `docs/benchmark-results.md`.
 
+## Status (2026-04-19)
+
+- **Phase 0: architecture decisions** → DONE (`14d7b8f`).  See
+  `docs/sista-phase0-decisions.md` — eight decisions locked:
+  bespoke SSA-lite IR, two-tier with Tier 1 kept as fallback, lazy
+  deopt reconstruction, per-method dependency tracking for
+  invalidation, scope-locked Phase 4 to monomorphic only,
+  `PHARO_FORCE_DEOPT_FRACTION` random-deopt tester, Phase-4
+  fib(28) ≥3× speedup exit criterion.
+- **Phase 1: IC profiling** → DONE (`6539046`).  Existing ICs are
+  already 6-way polymorphic — no widening needed.  Added
+  `JITRuntime::dumpICHistogram()` for empirical validation;
+  tinyBenchmarks shows 100 % of non-empty sites are monomorphic
+  (10 / 10).  Sista premise validated for this workload.
+- **Phase 2: method-level SSA-lite IR** → NEXT.  Multi-week chunk.
+- **Phase 3: deopt infrastructure** → queued.
+- **Phase 4: monomorphic inlining** → queued.  First expected
+  speedup.  Exit-condition gate.
+- **Phase 5-8** → later.
+
+---
+
 The current JIT (copy-and-patch stencils via asmjit) is architecturally
 capped near interpreter speed on arith-bound workloads.  Root cause:
 ~460 bytes of native code per bytecode, ~200+ indirect-branch targets
