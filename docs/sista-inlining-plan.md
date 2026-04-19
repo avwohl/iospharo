@@ -30,8 +30,15 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   baseline at the start of the session was 9.57% — **10.3x
   improvement**.  Only 98 methods fail with "unsupported opcode"
   (all 0xEB directed super-sends).  Only 1,949 methods (~1%)
-  still malform.  The remaining gap is small enough that
-  runtime integration (Phase 2.3) is the clear next step.
+  still malform.
+
+  **Phase 2.3 in progress.**  Lowering::lower now accepts a
+  `bytecodeBase` so send-bail sets state.ip to the absolute
+  pointer the interpreter expects.  SistaRuntime (new class)
+  provides a compile-on-demand wrapper with oop-keyed caching;
+  100/100 methods compile cleanly through it in the smoke test.
+  Still to do before tier-up wiring: state.sp synchronization,
+  resume-after-send handling, GC-stable cache keying.
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -91,7 +98,11 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   bytes past real end-of-bytecodes; honest number is 81.6%),
   `9555e6d` (lenient out-of-range jumps: dead-code-region
   jumps past end-of-bytecodes no longer kill the whole
-  method's lift → 98.83% coverage).
+  method's lift → 98.83% coverage),
+  `6ac751e` (Phase 2.3 prereq: Lowering accepts bytecodeBase
+  so send-bail uses absolute state.ip),
+  `bb72cf8` (SistaRuntime class — compile-on-demand wrapper
+  with oop-keyed caching; 100/100 smoke test pass).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
