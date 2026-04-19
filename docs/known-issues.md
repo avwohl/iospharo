@@ -31,8 +31,10 @@ See `docs/test-results.md` for full breakdown.
 
 ## Deferred (characterized but not yet fixed)
 
-See `docs/deferred-issues.md` for full detail on:
+See `docs/deferred.md` section A for full detail on:
 
-  1. Harness SemaphoreTest / valueWithin timing interaction (10 tests)
-  2. Reflection-walk perf under batch load (pointersTo/allInstances)
-  3. Weak-reference / finalization timing tests (6 tests)
+  A1. Harness SemaphoreTest / valueWithin timing — CLOSED (commit cc10bce)
+  A2. Reflection-walk timeouts (`testPointersTo` >60 s)
+  A3. Weak-reference / finalization timing — VM-side CLOSED, 4 SUnit residuals
+  A4. JIT eval-mode hang at PHARO_JIT_DEFER=0
+  A5. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0

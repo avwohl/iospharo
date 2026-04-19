@@ -1566,7 +1566,7 @@ void JITRuntime::flushCaches() {
     // Ensure the entire code zone is writable. mprotect operates on pages,
     // so a prior makeExecutable() on one method can leave adjacent methods'
     // IC regions non-writable. Without this, flushCaches SIGSEGVs on the
-    // first IC write when called after a JIT invocation. See deferred-issues #4.
+    // first IC write when called after a JIT invocation. See deferred.md A4.
     if (codeZone_.firstMethod()) {
         makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
     }

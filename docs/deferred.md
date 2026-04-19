@@ -1,69 +1,113 @@
 # Deferred Items (consolidated)
 
-Single source of truth for currently-open work.  Everything that
-shipped is in `docs/changes.md`; this file only lists what's *not*
+Single source of truth for currently-open work.  Anything shipped
+is logged in `docs/changes.md`; this file lists only what's *not*
 done.
+
+Detailed session-by-session narratives for closed investigations
+live in `git log` and `memory/*.md` — not here.
 
 ---
 
 ## A. Deferred test-suite issues — accepted
 
-Documented in `docs/deferred-issues.md`.  No VM-side fix in scope;
-each is either a harness artifact, a known-slow class, or a
-test-framework retention pattern.
+Each entry is a test-harness artifact, a known-slow class, or a
+test-framework retention pattern.  No VM-side fix in scope unless
+noted.
 
-### A1. Harness SemaphoreTest / valueWithin timing
-Standalone runs pass 100%.  Failures only in SUnit fork-based
-harness due to GC pauses (140-300 ms) during P40 test activations.
-**Owner:** harness submodule (`scripts/pharo-headless-test`).
+### A1. Harness SemaphoreTest / valueWithin timing — CLOSED
+Standalone runs pass 100% (SemaphoreTest 18/18,
+BlockClosureValueWithinTest 5/5, etc.).  The SUnit P40-fork wrapper
+previously produced timing flakes; root cause turned out to be a
+periodic-check alignment lock in the interpreter main loop — tight
+extended-jump loops (`[] repeat` → `E1 FF ED FC`) never re-entered
+`checkTimerSemaphore` because countdown reset to 1024 kept hitting
+the same `E1` boundary.  Fixed in commit `cc10bce` (2026-04-15).
+Listed here only so re-discovery finds the history.
 
 ### A2. Reflection-walk timeouts
-`testFastPointersTo` and `testPointersToCycle` now pass under JIT.
-`testPointersTo` still >60 s due to O(heap×N) traversal.
-Reclassified as known-slow.
+`testFastPointersTo` and `testPointersToCycle` pass under JIT.
+`testPointersTo` still exceeds 60 s — fundamentally O(heap × N)
+because the Smalltalk-side `select:` loop runs ~750 k iterations
+at interpreter speed.  Reclassified as known-slow.  Real fix (if
+ever wanted) is an image-side `primitivePointersToAmong:` that
+does the select: in C++.
 
-### A3. Weak-reference / finalization timing
-4 residuals; all test-framework retention during
-`Smalltalk garbageCollect`.  Not VM bugs.
+### A3. Weak-reference / finalization timing — VM-side CLOSED, 4 residuals
+Four tests still fail in the SUnit harness:
+- `WeakKeyDictionaryTest>>testClearing`
+- `WeakIdentityKeyDictionaryTest>>testClearing` +
+  `testFinalizeValuesWhenLastChainContinuesAtFront`
+- `WeakAnnouncerTest>>testWeakObject` + `testWeakDoubleAnnouncer`
 
-### A4. JIT eval-mode MAX=50+ hang
-`PHARO_JIT_DEFER=4` default works.  `PHARO_JIT_DEFER=0` still hangs
-during Morphic boot — scheduling, not correctness.
+All share the SUnit fork retention pattern: the P40 test process
+holds the test instance across the watchdog handler chain; the
+test's `keys` ivar is nil'd but the original collection is still
+referenced from a compiler cache or test-context temp until the
+fork exits.  Direct eval (setUp inside a block, test instance
+collectible) passes 10/10 runs.  VM ephemeron firing itself is
+correct (see commit that fixed the range-based-for iterator bug in
+`fireAllEphemerons`).
+
+Real fix is either a test-runner rewrite or a stack-slot scrub
+primitive.  Neither pursued — the tests exercise a legitimate
+VM feature on a stale test-framework retention pattern.
+
+### A4. JIT eval-mode hang at PHARO_JIT_DEFER=0
+Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
+`PHARO_JIT_DEFER=0` (immediate JIT) still hangs during Morphic
+boot at `JIT_MAX_COMPILE≥10` — `do:` gets compiled and a later
+`Context>>copyTo:` recurses at frame depth 4090+.  The deeper
+chain: DNU on `#hasShortcutKey` triggers `StDebugger`, whose
+context-stack copy finds a Context with `sender == self`.
+
+306 methods compile, 97.4 % IC hit rate — this is a scheduling
+issue when JIT compile runs during the boot/eval handoff, not a
+correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
+via `PHARO_BENCH` which bypasses the startup.st path entirely, so
+the default path is unaffected.
 
 ### A5. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
 At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods
 immediately and corrupts the J2J return stack on the
 `PositionableStream class>>on:` → `PositionableStream>>on:` chain,
 leaving `aCollection size` (SmallInt) where the stream instance
-should be.  Full narrowing + diagnostic tooling is in tree
-(commits f70ad55, cf6ffaf, b94c0a8 — `_HOLE_RT_J2J_TRACE`, ring
-buffer, auto-trigger).  Root cause not pinpointed; fix requires
-lldb single-stepping through `stencil_popStoreTemp` at
-`decodeBytes:` bc[2] on the buggy iteration.
+should be.  `decodeBytes:` bc[2] `popStoreTemp 1` then stores the
+SmallInt into `byteStream`, producing DNU on `#atEnd`.
 
-**Mitigation:** default `PHARO_JIT_DEFER=4s` already sidesteps it;
-B5 only impacts aggressive `PHARO_JIT_DEFER=0`, which isn't a
-supported default.  Not blocking user-visible behavior.  See
-`memory/project_b5_j2j_onchain.md` for full plan.
+Full diagnostic tooling is in tree (commits `f70ad55`, `cf6ffaf`,
+`b94c0a8` — `_HOLE_RT_J2J_TRACE`, 512-slot ring buffer, auto-
+trigger on SmallInt return to focus methods, DNU auto-dump).
+Root cause not pinpointed; next step needs lldb single-stepping
+through `stencil_popStoreTemp` at the buggy iteration.  Full plan
+in `memory/project_b5_j2j_onchain.md`.
+
+**Mitigation:** default `PHARO_JIT_DEFER=4s` sidesteps it.  B5
+only impacts `PHARO_JIT_DEFER=0`, which isn't a supported default.
 
 ---
 
 ## B. Code state in-tree — experimental / opt-in
 
+Every knob is declared in `src/vm/DebugSettings.hpp` — one file to
+grep.
+
 ### B1. `PHARO_T2=0` (default off)
-T2 never demonstrably wins on any measured bench.  Kept default-off
-until a workload where T2 beats T1 appears.  With the §1.3c
-coexist default, `PHARO_T2=1` is safe but also largely dormant on
-typical benches.
+T2 never demonstrably wins on any measured bench.  Stays
+default-off until a workload where T2 beats T1 appears.  Under
+§1.3c coexist default, `PHARO_T2=1` is safe but also largely
+dormant on typical benches (T1 handles everything; T2 compiles
+but doesn't intercept).
 
 ### B2. `PHARO_T2_UNSAFE_CALLEE=1`
 Restores the pre-`f279fd4` buggy callee-invocation path
-(double-execution bug) for benchmarking.  Keep as a flag; do not
+(double-execution) for benchmarking.  Keep as a flag; do not
 remove.
 
 ### B3. `PHARO_RESUME_J2J=1`
-External J2J trampoline in resume path.  Works but 18% slower;
-opt-in only.  See `memory/project_resume_j2j_trampoline.md`.
+External J2J trampoline in the resume path.  Works but 18 %
+slower than inline resume; opt-in only.  See
+`memory/project_resume_j2j_trampoline.md`.
 
 ### B4. `PHARO_JIT_SIMSTACK=1`
 SimStack TOS/NOS register caching.  Default-flip attempted
@@ -72,7 +116,7 @@ don't reproduce in isolation).  Root cause open.
 
 ### B5. `PHARO_T2_A1=1` — T2 chain-loop continuation
 Implemented but dormant.  A1's callee-invocation speedup is only
-observable when T2 actually executes — under coexist default, T2
+observable when T2 actually executes; under coexist default, T2
 rarely does.  Would need a workload where T2 wins to justify
 re-examining.
 
@@ -81,22 +125,18 @@ re-examining.
 `PHARO_T2_NO_ARITH_OPS`, `PHARO_T2_OPT`, `PHARO_T2_TRACE`,
 `T2_LIMIT`, `T2_VERBOSE`, `PHARO_T2_MBC_JUMPS`,
 `PHARO_T2_MBC_SENDS`, `PHARO_T2_MBC_IC`, `PHARO_T2_WARMUP`,
-`PHARO_JIT_NO_SIMSTACK`.  All cheap when not enabled.  (Legacy
-`PHARO_DUMP_MIR` removed when MIR was deleted 2026-04-17.)
-
-All `PHARO_*` / `JIT_*` / `T2_*` knobs are now declared in one
-place — `src/vm/DebugSettings.hpp` — so future audits can grep
-there instead of scanning every source file.
+`PHARO_JIT_NO_SIMSTACK`.  All cheap when not enabled.
+(`PHARO_DUMP_MIR` removed when MIR was deleted 2026-04-17.)
 
 ---
 
 ## C. Project mission — iOS
 
 The project's purpose is an iOS Pharo VM.  JIT work has dominated
-recent sessions; iOS proper is what's queued next.
+recent sessions; iOS proper is queued next.
 
 ### C1. iOS device testing
-Mac Catalyst is verified working (2026-02-24).  iOS Device
+Mac Catalyst verified working (2026-02-24).  iOS Device
 xcframework slice builds as of 2026-04-19 (commit `22bcc2c`).
 Device testing still needs:
 
@@ -107,8 +147,8 @@ Device testing still needs:
   events).
 
 ### C2. iOS app-store readiness (remaining items)
-Shipped 2026-04-19 (see `changes.md`): privacy manifest, launch
-screen, scoped ATS.  Still open:
+Shipped 2026-04-19: privacy manifest, launch screen, scoped ATS
+(see `changes.md`).  Still open:
 
 - Remote logging for device debugging — needs a backend choice
   (Sentry / Firebase / custom endpoint).  Apple's built-in crash
@@ -143,15 +183,16 @@ changes; image-side issues to propose upstream.
    methods still breaks T1's inline-IC warmup in the non-coexist
    (REPLACE=1) path — neither shared-IC, warmup delay, nor
    self-only narrowing has fully solved this.  Coexist default
-   sidesteps it by not replacing T1 at all.  Full fix — if ever
-   needed — is a design rethink (shared IC table across tiers?
-   patch-T1-when-T2-compiles?).
-2. **Multi-bc §1.2e block activation** (`PushFullBlock` / `PushClosure`).
-   Uses the existing `ExitBlockCreate` chain-loop path.  Enables
-   non-inlined blocks to be T2-compiled; marginal benefit since
-   Pharo inlines `to:do:` / `whileTrue:` at compile time.
-3. **Pivot to iOS device work (C).**  Needs physical hardware, not
-   just code.
+   (§1.3c) sidesteps it by not replacing T1 at all.  Full fix —
+   if ever needed — is a design rethink (shared IC table across
+   tiers?  patch-T1-when-T2-compiles?).
+2. **Multi-bc §1.2e block activation** (`PushFullBlock` /
+   `PushClosure`).  Uses the existing `ExitBlockCreate` chain-loop
+   path.  Enables non-inlined blocks to be T2-compiled; marginal
+   benefit since Pharo inlines `to:do:` / `whileTrue:` at compile
+   time.
+3. **Pivot to iOS device work (C).**  Needs physical hardware,
+   not just code.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.

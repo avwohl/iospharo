@@ -282,7 +282,7 @@ DNU is caught by `WorkingSession>>on:do:` but the session handler
 chain never completes.
 
 Practical consequence: the "JIT hang" is actually a JIT miscompile
-that triggers a DNU at boot. See deferred-issues.md #4 for the
+that triggers a DNU at boot. See deferred.md A4 for the
 stack-offset hypothesis (repeated Oops at FP[-1]/[1]/[3]).
 
 ## Reflection-walk timeouts: ROOT CAUSE = interpreter send overhead (2026-04-15)
@@ -308,7 +308,7 @@ but harness-fork overhead pushes them over.
 
 Resolution path is JIT (deferred #4), not a VM-side reflection
 fix. Issue #2 reclassified as "JIT-required test class," see
-deferred-issues.md.
+deferred.md.
 
 Same set of timeouts in 10-class focused batch (2026-04-15):
 
@@ -408,7 +408,7 @@ set, even `42 printString` hangs at boot on a freshly-downloaded image
 after ~5M bytecode steps, sitting in P10 ProcessorScheduler>>whileTrue
 idle loop. Two W^X SIGSEGV crashes were fixed 2026-04-14 (commits 3ea4f7f
 forEachRoot; 5da4193 flushCaches) but the eval-mode hang persists.
-Tracked in docs/deferred-issues.md #4.
+Tracked in docs/deferred.md A4.
 
 test_load_image.cpp:603 auto-disables JIT in eval/test mode; override
 with `PHARO_NO_JIT=0` to reproduce the hang.

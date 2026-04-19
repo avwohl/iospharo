@@ -2193,7 +2193,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Ship per-bcOffset entry-state vector to runtime so tryResume can reject
     // register-reading (_N) entry offsets. Keyed by JITMethod* (GC-stable).
     // Always populated — this is a correctness prerequisite, not a diagnostic.
-    // See deferred-issues.md #4.
+    // See deferred.md A4.
     {
         static const bool resumeStateDebug = g_debug.resumeStateDebug;
         if (resumeStateDebug) {

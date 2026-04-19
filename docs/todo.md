@@ -4,7 +4,7 @@ Consolidated list of everything open, across JIT, tests, iOS, and
 upstream.  Superset of the narrower docs:
 - `docs/jit-todo.md`        — JIT detail
 - `docs/deferred.md`        — session-21 deferred items
-- `docs/deferred-issues.md` — test-suite issues detail
+- `docs/deferred.md` — test-suite issues detail
 - `docs/known-issues.md`    — rendering + image bugs
 - `docs/image_issues.md`    — image-side workarounds
 - `docs/upstream-proposals.md` — bugs to push upstream
@@ -333,7 +333,7 @@ enable until T2 itself beats T1 on send-heavy workloads (depends on
 
 ## 3. Test-suite deferred issues
 
-From `docs/deferred-issues.md` — none are VM bugs; all are
+From `docs/deferred.md` — none are VM bugs; all are
 harness / framework / upstream artifacts.  Next-step is the
 harness submodule, not the VM.
 
