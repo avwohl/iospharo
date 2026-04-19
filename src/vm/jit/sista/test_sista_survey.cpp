@@ -165,26 +165,113 @@ int main(int argc, const char** argv) {
         std::printf("  0x%02X  %zu\n", kv.first, kv.second);
     }
 
-    // Runtime wrapper smoke test: compile a small sample of lifted
-    // methods through SistaRuntime (with real bytecodeBase baked in).
-    // Just verifies that compile() succeeds — actually invoking the
-    // compiled function requires a full JITState setup and stack, which
-    // is tier-up integration (next commit).
+    // Runtime wrapper smoke test: compile + execute methods whose IR
+    // contains no sends, no bails, and no ops that need external
+    // runtime state beyond receiver/literals/temps.  These must exit
+    // via ExitReturn; the returned value is whatever the method's
+    // semantics dictate (e.g. ^self = receiver, ^<const> = tagged
+    // constant).  Proves the Runtime produces actually-runnable code
+    // on real image methods.
     {
         sista::Runtime runtime;
-        size_t runtimeAttempts = 0, runtimeCompiled = 0;
+        size_t compiled = 0, executed = 0, returnedOK = 0;
+
+        // Full JITState-shaped buffer (192 bytes, matches offsets in
+        // JITState.hpp).  Receiver/literals/temps fields are the only
+        // ones the no-send paths touch.
+        struct FullState {
+            void*     sp;              // 0
+            uint64_t  receiver;        // 8
+            void*     literals;        // 16
+            void*     tempBase;        // 24
+            uint8_t   pad48[48 - 32];
+            void*     ip;              // 48
+            uint8_t   pad76[76 - 56];
+            int       exitReason;      // 76
+            uint64_t  returnValue;     // 80
+            uint8_t   pad128[128 - 88];
+            uint64_t  trueOop;         // 128
+            uint64_t  falseOop;        // 136
+            uint8_t   trailing[56];
+        };
+        static_assert(offsetof(FullState, receiver)    == 8, "");
+        static_assert(offsetof(FullState, literals)    == 16, "");
+        static_assert(offsetof(FullState, tempBase)    == 24, "");
+        static_assert(offsetof(FullState, ip)          == 48, "");
+        static_assert(offsetof(FullState, exitReason)  == 76, "");
+        static_assert(offsetof(FullState, returnValue) == 80, "");
+        static_assert(offsetof(FullState, trueOop)     == 128, "");
+        static_assert(offsetof(FullState, falseOop)    == 136, "");
+
+        Oop trueObj  = memory.trueObject();
+        Oop falseObj = memory.falseObject();
+
         memory.forEachObjectInOldSpace([&](ObjectHeader* hdr) {
             if (!hdr->isCompiledMethod()) return;
-            if (runtimeAttempts >= 100) return;
-            runtimeAttempts++;
+            if (executed >= 500) return;
+
             Oop methodOop = Oop::fromObject(hdr);
+
+            // Check the IR first — skip methods with any kSendUnspeculated
+            // (they'd bail to an interpreter we don't have here).
+            sista::Method m;
+            auto r = sista::Builder::build(methodOop, memory, m);
+            if (r != sista::LiftResult::kOk) return;
+            // Only execute methods whose IR is "memory-safe" with our
+            // synthetic state: no sends (would bail), no instVar loads
+            // /stores (those deref the receiver/association oop, which
+            // we've set to a sentinel value that isn't a real pointer).
+            bool unsafeOp = false;
+            for (const sista::Value& v : m.values) {
+                switch (v.op) {
+                case sista::Op::kSendUnspeculated:
+                case sista::Op::kLoadInstVar:
+                case sista::Op::kStoreInstVar:
+                case sista::Op::kGuardClass:
+                case sista::Op::kInlineSend:
+                case sista::Op::kBlockCreate:
+                case sista::Op::kBlockValue:
+                    unsafeOp = true;
+                    break;
+                default:
+                    break;
+                }
+                if (unsafeOp) break;
+            }
+            if (unsafeOp) return;
+
             auto fn = runtime.compile(methodOop, memory);
-            if (fn) runtimeCompiled++;
+            if (!fn) return;
+            compiled++;
+
+            // Invoke with a minimal-but-valid state: receiver =
+            // sentinel, 64-slot temp area, 64-slot literal mirror.
+            uint64_t stackBuf[64]  = {0};
+            uint64_t tempsBuf[64]  = {0};
+            uint64_t litsBuf[64]   = {0};
+            // Populate literals from the method's cached literal table
+            // so kLoadLiteral accesses see real Oops.  (Needed for
+            // methods that push a literal constant.)
+            for (size_t i = 0; i < m.literals.size() && i < 64; i++) {
+                litsBuf[i] = m.literals[i].rawBits();
+            }
+            FullState state{};
+            state.sp       = stackBuf;
+            state.receiver = 0xCAFEBABEULL;
+            state.literals = litsBuf;
+            state.tempBase = tempsBuf;
+            state.trueOop  = trueObj.rawBits();
+            state.falseOop = falseObj.rawBits();
+
+            executed++;
+            fn(&state);
+            if (state.exitReason == 1) returnedOK++;
         });
-        std::cout << "\n=== Runtime smoke test ===\n";
-        std::cout << "Attempted:  " << runtimeAttempts << "\n";
-        std::cout << "Compiled:   " << runtimeCompiled << "\n";
-        std::cout << "Cache size: " << runtime.compiledCount() << "\n";
+
+        std::cout << "\n=== Runtime execute smoke test ===\n";
+        std::cout << "Compiled (no-send methods): " << compiled << "\n";
+        std::cout << "Executed:                   " << executed << "\n";
+        std::cout << "ExitReturn:                 " << returnedOK << "\n";
     }
 
     // Malformed breakdown.
