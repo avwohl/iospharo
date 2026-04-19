@@ -109,20 +109,79 @@ public:
 
         // --- Pass 3: lift each block ---------------------------------
         //
-        // Restriction for phase 2.1: the simulated stack must be empty
-        // at every block boundary.  That's true for if-then-else where
-        // each branch ends in a return; it's not for patterns where
-        // control paths merge with values on the stack.  Phi-node
-        // support comes later; for now we bail on stack-at-merge.
+        // Blocks are processed in offset (= id) order.  Short jumps
+        // are forward-only, so every predecessor has a lower id than
+        // its successors — i.e. by the time we lift block B, all of
+        // B's predecessors have their `outgoingStack` populated from
+        // their terminators.
+        //
+        // For blocks with non-empty entry stack (= predecessor
+        // outgoing stack of length N > 0), we pre-create N phi
+        // values at the block's head.  The phi operands are wired up
+        // in pass 4 once every block's outgoingStack is known.
         for (auto& kv : offsetToBlock) {
             size_t blockStart = kv.first;
             uint32_t blockId  = kv.second;
             stack_.clear();
             currentBlock_ = blockId;
 
+            // Determine entry stack depth from predecessors (if any).
+            const Block& thisBlock = out_.blockAt(blockId);
+            size_t entryDepth = 0;
+            bool haveDepth = false;
+            for (uint32_t pred : thisBlock.predecessors) {
+                const Block& pb = out_.blockAt(pred);
+                if (!haveDepth) {
+                    entryDepth = pb.outgoingStack.size();
+                    haveDepth = true;
+                } else if (pb.outgoingStack.size() != entryDepth) {
+                    // Predecessors disagree on stack depth — malformed.
+                    if (failedAtBytecode)
+                        *failedAtBytecode = (uint32_t)blockStart;
+                    return LiftResult::kMalformedMethod;
+                }
+            }
+            // Pre-create a phi for each stack slot the block inherits.
+            // Operands wired in pass 4.  Type is generic Oop for now;
+            // refinement comes with the type system.
+            for (size_t i = 0; i < entryDepth; i++) {
+                uint32_t phiId = out_.newValue(blockId, Op::kPhi,
+                                                Type::kOop);
+                stack_.push_back(phiId);
+            }
+
             LiftResult r = liftFromOffset(blockStart, offsetToBlock,
                                            failedAtBytecode);
             if (r != LiftResult::kOk) return r;
+
+            // Record outgoing stack for phi wiring.  The lifter may
+            // have left values on stack_ at a branch terminator; at
+            // returns / sends stack_ ends up empty.
+            out_.blocks[blockId].outgoingStack = stack_;
+        }
+
+        // --- Pass 4: wire phi operands ---------------------------------
+        for (Block& b : out_.blocks) {
+            // Phis are always at the head of the block.
+            for (uint32_t vid : b.values) {
+                Value& v = out_.values[vid];
+                if (v.op != Op::kPhi) break;  // phis come first; stop at first non-phi
+                // Find this phi's slot index within the block's phis.
+                // Since phis are created in order matching the entry
+                // stack slots (bottom-up), we can use the v.id - b.values[0]
+                // offset.
+                size_t slotIdx = vid - b.values.front();
+                for (uint32_t pred : b.predecessors) {
+                    const Block& pb = out_.blockAt(pred);
+                    if (slotIdx >= pb.outgoingStack.size()) {
+                        // Predecessor didn't supply this slot.  Pass 3
+                        // should have caught this, but guard anyway.
+                        if (failedAtBytecode) *failedAtBytecode = b.id;
+                        return LiftResult::kMalformedMethod;
+                    }
+                    v.operands.push_back(pb.outgoingStack[slotIdx]);
+                }
+            }
         }
 
         return LiftResult::kOk;
@@ -137,14 +196,10 @@ private:
             uint8_t op = bc_[ip];
             uint32_t bcOffset = static_cast<uint32_t>(ip);
 
-            // Crossed into a new block?  Must be a fall-through.
-            // Per the phase-2.1 restriction the simulated stack must
-            // be empty at this point; otherwise we'd need phi nodes.
+            // Crossed into a new block — fall-through.  The current
+            // stack_ contents become the outgoing stack and feed the
+            // successor's phis (wired in pass 4).
             if (ip != startOffset && offsetToBlock.count(ip)) {
-                if (!stack_.empty()) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kUnsupportedBytecode;
-                }
                 uint32_t nextBlock = offsetToBlock.at(ip);
                 out_.addEdge(currentBlock_, nextBlock);
                 return LiftResult::kOk;
@@ -159,10 +214,8 @@ private:
                     return LiftResult::kMalformedMethod;
                 }
                 if (isShortUncondJump(op)) {
-                    if (!stack_.empty()) {
-                        if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                        return LiftResult::kUnsupportedBytecode;
-                    }
+                    // stack_ contents become outgoing stack, feeding
+                    // the target block's phis.
                     out_.newValue(currentBlock_, Op::kBranch, Type::kVoid,
                                    /*operands=*/{}, /*literal=*/tIt->second);
                     out_.addEdge(currentBlock_, tIt->second);

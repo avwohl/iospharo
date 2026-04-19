@@ -628,6 +628,103 @@ int main() {
                   << ", 0x" << stack[1] << std::dec << "}\n";
     }
 
+    // Round-trip 7.E: Phi at join — ^ (cond ifTrue:[1] ifFalse:[0]) + 1.
+    // Pattern:
+    //   0: PushTrue        (condition)
+    //   1: JumpIfFalse +2  (0xC1 → target bc=4)
+    //   2: PushOne         (true branch: push SmallInt 1)
+    //   3: Jump +2         (0xB2 → target bc=6, skipping false branch)
+    //   4: PushZero        (false branch: push SmallInt 0)
+    //                       (fall-through to bc=5)
+    //   5: ???
+    //
+    // Let me simplify.  Use explicit unconditional jump to join:
+    //   0: PushTrue
+    //   1: JumpIfFalse +2  → target bc=4
+    //   2: PushOne
+    //   3: Jump +1         → target bc=5 (skip false branch)
+    //   4: PushZero
+    //   5: PushOne
+    //   6: Add
+    //   7: ReturnTop
+    //
+    // shortJumpTarget(1, 0xC1) = 1 + 1 + 2 = 4.   (JumpIfFalse +2)
+    // shortJumpTarget(3, 0xB0) = 3 + 0 + 2 = 5.   (Jump +0 → 5? no)
+    //   Short uncond jump N has offset (N&7)+1 + 1 = N+2.  For target=5
+    //   from ip=3, need offset=2 → opcode = 0xB0 + 0 = 0xB0.  (0xB0
+    //   means +1 per the SistaV1 offset formula?  Double-check via
+    //   shortJumpTarget: shortJumpTarget(3, 0xB0) = 3 + 0 + 2 = 5. ✓)
+    //
+    // Expected:
+    //   taken (true) path: 1 + 1 = 2  → SmallInt bits 0x11
+    //   untaken (false) path: 0 + 1 = 1 → SmallInt bits 0x9
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushTrue,                // 0
+            0xC1,                              // 1: JumpIfFalse +2 → 4
+            SistaV1::PushOne,                 // 2
+            0xB0,                              // 3: Jump → 5
+            SistaV1::PushZero,                // 4: (false branch)
+            SistaV1::PushOne,                 // 5: (join point)
+            (uint8_t)(SistaV1::ArithBase + 0),// 6: +
+            SistaV1::ReturnTop,               // 7
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "phi lifts");
+        std::cout << "\n--- lifted phi method ---\n" << lifted.toString();
+
+        // Verify a phi was created at the join block.  The join block
+        // has 2 predecessors (true-branch and false-branch).
+        bool sawPhi = false;
+        for (const Value& v : lifted.values) {
+            if (v.op == Op::kPhi) {
+                sawPhi = true;
+                check(v.operands.size() == 2,
+                      "phi has 2 incoming operands");
+                break;
+            }
+        }
+        check(sawPhi, "saw at least one phi");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower phi succeeds");
+
+        // cond=true path: phi = 1, + 1 = 2 → 0x11.
+        FakeStateWithBools state{};
+        state.trueOop  = 0x1111;
+        state.falseOop = 0x2222;
+        fn(&state);
+        check(state.returnValue == 0x11ULL, "true path: 1+1 = SmallInt 2");
+
+        // cond=false path: swap to PushFalse and re-lower.
+        {
+            Method lifted2;
+            const uint8_t bc2[] = {
+                SistaV1::PushFalse,
+                0xC1,
+                SistaV1::PushOne,
+                0xB0,
+                SistaV1::PushZero,
+                SistaV1::PushOne,
+                (uint8_t)(SistaV1::ArithBase + 0),
+                SistaV1::ReturnTop,
+            };
+            Builder::buildFromBytes(bc2, sizeof(bc2), 0, 0, lifted2);
+            Lowering::CompiledFn fn2 = lowering.lower(lifted2);
+            check(fn2 != nullptr, "lower false-path phi succeeds");
+            FakeStateWithBools s{};
+            s.trueOop  = 0x1111;
+            s.falseOop = 0x2222;
+            fn2(&s);
+            check(s.returnValue == 0x9ULL,
+                  "false path: 0+1 = SmallInt 1 (bits 0x9)");
+        }
+        std::cout << "--- round-trip phi merge: taken=0x11 untaken=0x9 ok\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

@@ -74,10 +74,41 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         blockLabels.push_back(cc.new_label());
     }
 
+    // Pre-allocate virtual regs for every phi in every block.  These
+    // regs are written by predecessors (as MOVs before their branch
+    // terminators) and read by the phi's block as its entry stack
+    // contents.  Allocating them up front means predecessors can
+    // reference them even though their owning block hasn't been
+    // visited yet.
+    for (const Block& b : method.blocks) {
+        for (uint32_t vid : b.values) {
+            const Value& v = method.valueAt(vid);
+            if (v.op != Op::kPhi) break;  // phis are always block-leading
+            regFor[v.id] = cc.new_gp64("phi");
+        }
+    }
+
+    // Helper: emit MOVs that copy this block's outgoingStack into
+    // `succ`'s phi regs.  Called right before each terminator branch
+    // (and at end-of-block for implicit fall-through) so that the
+    // phi regs hold the right values on entry to the successor.
+    auto fillPhis = [&](const Block& from, uint32_t succId) {
+        const Block& succ = method.blockAt(succId);
+        size_t phiIdx = 0;
+        for (uint32_t phiVid : succ.values) {
+            const Value& pv = method.valueAt(phiVid);
+            if (pv.op != Op::kPhi) break;
+            if (phiIdx >= from.outgoingStack.size()) break;
+            auto srcIt = regFor.find(from.outgoingStack[phiIdx]);
+            if (srcIt != regFor.end()) {
+                cc.mov(regFor[phiVid], srcIt->second);
+            }
+            phiIdx++;
+        }
+    };
+
     // Walk blocks in ID order.  The builder orders blocks by source
-    // bytecode offset, so block 0 is entry.  Phi-node support isn't
-    // here yet; multi-block patterns must have empty simulated stacks
-    // at boundaries (already enforced in the lifter).
+    // bytecode offset, so block 0 is entry.
     for (const Block& b : method.blocks) {
         cc.bind(blockLabels[b.id]);
         for (uint32_t vid : b.values) {
@@ -304,12 +335,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;  // Per-block return; keep emitting other blocks.
             }
 
+            case Op::kPhi: {
+                // Pre-allocated above; predecessors MOV into its reg
+                // before their branch.  No code here.
+                break;
+            }
             case Op::kBranch: {
                 // literal = successor block id.  One successor.
                 if (b.successors.empty()) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                fillPhis(b, b.successors[0]);
                 cc.b(blockLabels[b.successors[0]]);
                 break;
             }
@@ -335,6 +372,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp trueOop = cc.new_gp64("true");
                 cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
                 cc.cmp(it->second, trueOop);
+                // Both successors may have phis; fill both sets of
+                // phi regs before branching.  The untaken side's MOVs
+                // are dead but cheap.
+                fillPhis(b, b.successors[0]);
+                fillPhis(b, b.successors[1]);
                 if (v.op == Op::kBranchIfTrue) {
                     cc.b_eq(blockLabels[b.successors[0]]);  // taken
                     cc.b   (blockLabels[b.successors[1]]);  // fallthrough
@@ -352,6 +394,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 if (failedAtValue) *failedAtValue = v.id;
                 return nullptr;
             }
+        }
+        // Implicit fall-through: block didn't end in an explicit
+        // terminator op (kBranch / kBranchIfTrue / kBranchIfFalse /
+        // kReturn / kSendUnspeculated).  Control flows naturally to
+        // b.successors[0]'s label, but we still need to fill its phi
+        // regs with our outgoing stack values first.
+        bool endsInTerminator = false;
+        if (!b.values.empty()) {
+            Op lastOp = method.valueAt(b.values.back()).op;
+            endsInTerminator = OpInfo::isTerminator(lastOp)
+                            || lastOp == Op::kSendUnspeculated;
+        }
+        if (!endsInTerminator && !b.successors.empty()) {
+            fillPhis(b, b.successors[0]);
         }
     }
 

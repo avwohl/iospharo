@@ -51,6 +51,7 @@ bool producesOop(Op op) {
     case Op::kInlineSend:
     case Op::kBlockCreate:
     case Op::kBlockValue:
+    case Op::kPhi:
         return true;
     default:
         return false;
@@ -114,6 +115,7 @@ const char* name(Op op) {
     case Op::kPrimTagCheckInt:  return "tag_check_int";
     case Op::kBlockCreate:      return "block_create";
     case Op::kBlockValue:       return "block_value";
+    case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";
     }
     return "???";

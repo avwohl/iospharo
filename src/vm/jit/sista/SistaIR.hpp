@@ -107,6 +107,13 @@ enum class Op : uint8_t {
                           // Creates a FullBlockClosure.                    -> Oop
     kBlockValue,          // operands: block, args...  (not inlined)        -> Oop
 
+    // --- Phi ---
+    // SSA merge at a block with multiple predecessors.  Operand[i]
+    // is the incoming value from Block::predecessors[i] (same order).
+    // Emitted at block entry (before any other op) for every stack
+    // slot live at entry.
+    kPhi,                 // operands: inc_0, inc_1, ...                   -> any
+
     // --- Deopt support ---
     // A FrameState value records the interpreter's view of the call
     // stack at this program point: which method, which bytecode, which
@@ -160,6 +167,11 @@ struct Block {
     // Which source bytecode this block starts at — for deopt framepoint
     // reconstruction.  -1 if synthetic (e.g. deopt landing pad).
     int32_t sourceBytecodeOffset = -1;
+    // Simulated-stack contents at the block's terminator, in bottom-up
+    // order.  Populated by the lifter so phi wiring can read them.
+    // Both successors of a conditional branch see the same outgoing
+    // stack (the cond is already popped), so one vector suffices.
+    std::vector<uint32_t> outgoingStack;
 };
 
 // ===== Method (IR-level) =====
