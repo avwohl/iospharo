@@ -62,9 +62,17 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   state-sync path still causes image-startup divergence when
   applied to methods with sends (wrong receiver reaches
   `setGCParameters` during snapshot handoff).  Diagnosing and
-  lifting that restriction is the next tier-up step.  Also
-  still to do: GC-stable cache keying (raw oop key goes stale
-  across compaction).
+  lifting that restriction is the next tier-up step.
+
+  **GC safety landed** (`d5ef998`): Sista's raw-oop-keyed cache
+  is now reset by `recoverJITAfterGC`.  Visible cache shrinkage
+  between GC cycles under the same workload (3772 → 2325 → 447)
+  confirms the hook fires; dispatch totals and bytecode step
+  counts remain stable.
+
+  Commits: `1fae75a` (PHARO_SISTA_COMPILE=1 hook), `1647ced`
+  (10K execute smoke test), `a8865f5` (PHARO_SISTA_DISPATCH=1
+  MVP — pure-method tier-up), `d5ef998` (GC-safe cache reset).
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
