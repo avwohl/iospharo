@@ -73,6 +73,60 @@ public:
                 continue;
             }
 
+            // Push-recv-var N (0x00-0x0F): load receiver instVar[N].
+            if (op >= jit::SistaV1::PushRecvVarBase
+                && op <= jit::SistaV1::PushRecvVarLast) {
+                uint32_t ivarIdx = op - jit::SistaV1::PushRecvVarBase;
+                uint32_t recv = out_.newValue(currentBlock_,
+                                               Op::kLoadReceiver, Type::kOop);
+                uint32_t v = out_.newValue(currentBlock_,
+                                            Op::kLoadInstVar, Type::kOop,
+                                            /*operands=*/{recv},
+                                            /*literal=*/ivarIdx);
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Pop-store-temp N (0xD0-0xD7): pop TOS, store to temp[N].
+            if (op >= jit::SistaV1::PopStoreTempBase
+                && op <= jit::SistaV1::PopStoreTempLast) {
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t tempIdx = op - jit::SistaV1::PopStoreTempBase;
+                uint32_t val = stack_.back();
+                stack_.pop_back();
+                out_.newValue(currentBlock_, Op::kStoreTemp, Type::kVoid,
+                               /*operands=*/{val},
+                               /*literal=*/tempIdx);
+                ip++;
+                continue;
+            }
+
+            // Pop (0xD8): discard TOS, no other effect.
+            if (op == 0xD8) {
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                stack_.pop_back();
+                ip++;
+                continue;
+            }
+
+            // Dup (0x53): duplicate TOS.
+            if (op == jit::SistaV1::Dup) {
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                stack_.push_back(stack_.back());
+                ip++;
+                continue;
+            }
+
             // Push-true / push-false: read from JITState.
             if (op == jit::SistaV1::PushTrue) {
                 uint32_t v = out_.newValue(currentBlock_,

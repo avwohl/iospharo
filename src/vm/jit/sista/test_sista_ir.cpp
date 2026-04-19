@@ -317,6 +317,84 @@ int main() {
                   << " (SmallInt 1)\n";
     }
 
+    // Round-trip 7.5: ^ instVar[1] — PushRecvVar 1, ReturnTop.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushRecvVarBase + 1),
+            SistaV1::ReturnTop,
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower ^ ivar[1] succeeds");
+
+        // Lay out a fake object with 3 slots.  Slot 0 at +8,
+        // slot 1 at +16, slot 2 at +24.
+        uint64_t obj[4] = {
+            0xDEADDEAD,   // header (ignored by load)
+            0x1111,       // slot 0
+            0xABCD,       // slot 1 — expected return
+            0x2222,       // slot 2
+        };
+        FakeState state{};
+        state.receiver = reinterpret_cast<uint64_t>(&obj[0]);
+        fn(&state);
+        check(state.returnValue == 0xABCDULL, "returnValue = ivar[1]");
+        std::cout << "--- round-trip ^ ivar[1]: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.6: PushZero, PopStoreTemp 0, PushOne, PopStoreTemp 0,
+    // PushTemp 0, ReturnTop — stores-then-reads, ensure store is live.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushZero,
+            (uint8_t)(SistaV1::PopStoreTempBase + 0),
+            SistaV1::PushOne,
+            (uint8_t)(SistaV1::PopStoreTempBase + 0),
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 1, lifted, &failed);
+        check(r == LiftResult::kOk, "store+read temp lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower store+read succeeds");
+
+        uint64_t temps[1] = { 0xDEAD };
+        FakeState state{};
+        state.tempBase = temps;
+        fn(&state);
+        check(state.returnValue == 9ULL, "read-back temp == SmallInt 1 bits");
+        check(temps[0] == 9ULL, "store landed in temp[0]");
+        std::cout << "--- round-trip store+read temp: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.7: Pop/Dup — push, dup, pop, pop — stack accounting.
+    // Method: ^ (PushOne, Dup, Pop) = ^ 1.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushOne,
+            SistaV1::Dup,
+            0xD8,                 // Pop
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        check(r == LiftResult::kOk, "dup/pop lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower dup/pop");
+
+        FakeState state{};
+        fn(&state);
+        check(state.returnValue == 9ULL, "PushOne/Dup/Pop/Ret yields 1");
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

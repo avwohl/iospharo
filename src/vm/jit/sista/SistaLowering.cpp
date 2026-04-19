@@ -94,6 +94,25 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = dst;
                 break;
             }
+            case Op::kLoadInstVar: {
+                // operand[0] is the object pointer (Oop).  Smalltalk
+                // slots live at offsets 8 + N*8 from an object pointer
+                // (slot 0 at +8 because sizeof(ObjectHeader) == 8).
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp dst = cc.new_gp64("ivar");
+                cc.ldr(dst, ptr(it->second,
+                                 8 + static_cast<int>(v.literal) * 8));
+                regFor[v.id] = dst;
+                break;
+            }
             case Op::kStoreTemp: {
                 if (v.operands.size() != 1) {
                     if (failedAtValue) *failedAtValue = v.id;
