@@ -37,11 +37,13 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   pointer the interpreter expects.  SistaRuntime (new class)
   provides a compile-on-demand wrapper with oop-keyed caching.
 
-  **End-to-end execute validated**: a survey pass picks methods
-  whose IR is self-contained (no sends / no deref) and invokes
-  them with a synthetic JITState.  **500/500 real Pharo 13
-  methods compiled, executed, and returned cleanly via
-  ExitReturn.**  The pipeline produces actually-runnable code.
+  **End-to-end execute validated** on 500 real Pharo 13 methods:
+  500 compiled, 500 executed, **0 crashes**, all exited via the
+  well-formed protocol — 78 via ExitReturn (full completion),
+  422 via ExitSend (clean bail to interpreter).  In a real VM
+  the ExitSend cases hand off to the interpreter at state.ip /
+  state.sp which matches the exact convention Tier 1/Tier 2
+  already use.
 
   Still to do before tier-up wiring: state.sp synchronization
   with the interpreter, resume-after-send handling (reentry /
@@ -112,7 +114,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `bb72cf8` (SistaRuntime class — compile-on-demand wrapper
   with oop-keyed caching; 100/100 smoke test pass),
   `3f4044c` (end-to-end execute smoke test: 500/500 real image
-  methods compiled, executed, and returned cleanly).
+  methods compiled, executed, and returned cleanly),
+  `acd8db3` (smoke test admits sends — 500/500 exit cleanly via
+  Return or ExitSend bail, zero crashes).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
