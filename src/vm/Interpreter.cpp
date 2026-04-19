@@ -764,7 +764,6 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
                 fprintf(stderr, " p%d=%zu", top[t].idx, top[t].count);
             fprintf(stderr, "\n");
         }
-#endif
         // Top prim-chain primitives (in-place successes)
         {
             struct PC { int idx; size_t count; };
@@ -787,6 +786,7 @@ void Interpreter::handleBenchComplete(Oop returnValue) {
         }
         fprintf(stderr, "[BENCH]   materialize: count=%zu totalDepth=%zu\n",
                 jitMaterializeCount_, jitMaterializeTotalDepth_);
+#endif
         fprintf(stderr, "[BENCH] All benchmarks complete.\n");
         stop();
         return;
@@ -7544,6 +7544,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 suspiciousRcvr = true;
             }
             // Dump JIT provenance for suspicious receivers (SmallInt or classIdx=0)
+#if PHARO_JIT_ENABLED
             if (suspiciousRcvr && lastJitReturn_.methodBits != 0) {
                 Oop ljm = Oop::fromRawBits(lastJitReturn_.methodBits);
                 Oop ljr = Oop::fromRawBits(lastJitReturn_.returnBits);
@@ -7604,6 +7605,7 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         (long long)((rv - megaBase) / 32),
                         (long long)((rv - megaBase) % 32));
             }
+#endif // PHARO_JIT_ENABLED
             // Dump args and frame info for debugging
             if (dnuLogCount <= 3) {
                 for (int ai = 0; ai < argCount && ai < 5; ai++) {

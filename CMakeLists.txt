@@ -149,10 +149,14 @@ target_compile_options(PharoVMCore PRIVATE
 
 # LTO for JIT performance — enables cross-TU inlining of pushFrameForJIT
 # into j2j_call (2ms improvement on fib(28): 19ms → 17ms).
-include(CheckIPOSupported)
-check_ipo_supported(RESULT ipo_supported)
-if(ipo_supported)
-    set_target_properties(PharoVMCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+# Disabled for xcframework builds: xcodebuild -create-xcframework rejects
+# archives containing LLVM bitcode objects from -flto=thin.
+if(NOT DEFINED PHARO_DISABLE_LTO OR NOT PHARO_DISABLE_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported)
+    if(ipo_supported)
+        set_target_properties(PharoVMCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
 endif()
 
 # Suppress warnings in third-party libjpeg code

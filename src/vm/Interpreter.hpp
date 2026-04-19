@@ -84,8 +84,11 @@
 struct _VMCallbackContext;
 typedef struct _VMCallbackContext VMCallbackContext;
 
-// Forward declaration for friend access from j2j_call
+// Forward declaration for friend access from j2j_call.
+// Only meaningful when JIT is compiled in (iOS builds have JIT off).
+#if PHARO_JIT_ENABLED
 extern "C" void jit_rt_j2j_call(pharo::jit::JITState* state);
+#endif
 
 namespace pharo {
 
@@ -181,8 +184,11 @@ struct WellKnownSelectors {
 };
 
 class Interpreter {
-    // Allow j2j_call to access private interpreter state directly
+    // Allow j2j_call to access private interpreter state directly.
+    // Only needed when JIT is compiled in.
+#if PHARO_JIT_ENABLED
     friend void ::jit_rt_j2j_call(jit::JITState* state);
+#endif
 public:
     explicit Interpreter(ObjectMemory& memory);
 
@@ -493,19 +499,21 @@ private:
     // docs/jit-j2j-reduction-plan.md for the derivation math.
     //
     // PUBLIC so jit_t2_send (JITRuntime.cpp) can push entries for A1
-    // chain-loop continuation.
+    // chain-loop continuation.  Only meaningful when JIT is compiled in.
 public:
+#if PHARO_JIT_ENABLED
     struct J2JSave {
         Oop* sp;                  // 0
         Oop receiver;             // 8
         Oop* tempBase;            // 16  (pair with ip)
-        uint8_t* ip;              // 24
+        uint8_t* ip;               // 24
         jit::JITMethod* jitMethod;// 32  (pair with resumeAddr)
         uint8_t* resumeAddr;      // 40  Precomputed JIT code to resume at
         int sendArgCount;         // 48
         int _pad;                 // 52  (alignment)
     };
     static_assert(sizeof(J2JSave) == 56, "J2JSave should be 56 bytes after reduction");
+#endif
 private:
     static constexpr int J2JSlotPerEntry = 32;  // max J2J depth per tryJITActivation
     static constexpr int MaxJ2JPoolSize = 1024; // shared pool across recursive entries
@@ -517,8 +525,10 @@ private:
 
     // Shared J2J save pool — heap-allocated once, carved into per-entry slices
     // by tryJITActivation via j2jPoolCursor_ to avoid per-call stack allocation.
+#if PHARO_JIT_ENABLED
     std::array<J2JSave, MaxJ2JPoolSize> j2jPool_;
     int j2jPoolCursor_ = 0;
+#endif
 
     // Stack (single stack for all frames)
     std::array<Oop, MaxStackDepth> stack_;
@@ -969,9 +979,6 @@ public:
     bool isJ2JBanned(uint64_t methodBits) const {
         return j2jBannedMethods_.count(methodBits) > 0;
     }
-    /// Get the class where a CompiledMethod is defined (from last literal).
-    /// Public for JIT exclusion checks.
-    Oop methodClassOf(Oop method) const;
     size_t jitICHits() const { return jitICHits_; }
     size_t jitICMisses() const { return jitICMisses_; }
     size_t jitICPatches() const { return jitICPatches_; }
@@ -1134,6 +1141,13 @@ public:
 
 private:
 #endif
+
+public:
+    /// Get the class where a CompiledMethod is defined (from last literal).
+    /// Available regardless of JIT — used by super-send paths.
+    Oop methodClassOf(Oop method) const;
+
+private:
 
     // ===== BYTECODE DISPATCH =====
 
