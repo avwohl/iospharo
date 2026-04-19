@@ -1,8 +1,209 @@
 # JIT Infrastructure and Copy-and-Patch Compiler
 
-2026-04-16
+2026-04-19
 
-## jit: implement A1 T2 chain-loop continuation (gated behind PHARO_T2_A1)
+## refactor: centralize debug env vars into a single DebugSettings global
+
+~70 scattered `getenv()` / `static bool x = !!getenv(...)` call sites
+now read from a single `g_debug` struct (`src/vm/DebugSettings.{hpp,cpp}`)
+whose constructor parses every knob once at static-init — before `main()`
+runs — so hot-path sites stop walking `environ[]` on every pass.
+`g_debug.reload()` is available for the one spot (`test_load_image`)
+that mutates env post-init.  Flags with strict `=1` / `=0` semantics
+stay as raw `std::getenv` with a one-line comment each.  Non-debug
+`getenv` (Pharo env primitives, third-party code) is untouched.
+
+## build: unblock xcframework iOS Device slice
+
+`scripts/build-xcframework.sh` now produces all three platforms
+cleanly (`ios-arm64`, `ios-arm64_x86_64-maccatalyst`,
+`ios-arm64_x86_64-simulator`).  Four root causes, each fixed:
+
+1. **asmjit Mac Catalyst miscompile** — `virtmem.cpp` guards the
+   `<libkern/OSCacheControl.h>` include behind `TARGET_OS_OSX` but
+   calls `sys_icache_invalidate()` unconditionally on `__APPLE__`.
+   Catalyst (`TARGET_OS_OSX=0`) failed to compile.  Build script
+   applies an idempotent in-place patch to move the include outside
+   the guard.
+2. **Unconditional JIT references** — Interpreter.hpp/cpp referenced
+   JIT-only members (`jitPrimChainHisto_`, `lastJitReturn_`,
+   `jitRuntime_`) and `jit::` types in non-JIT paths.  Wrapped those
+   blocks in `#if PHARO_JIT_ENABLED`; moved `methodClassOf` out of
+   the JIT gate since non-JIT super-send paths need it.
+   `TrampolineAsm.S` and the `jit_b5_dump_ring` shim are now gated
+   the same way.
+3. **LTO vs xcframework** — `INTERPROCEDURAL_OPTIMIZATION TRUE`
+   produces LLVM-IR bitcode objects (`0xb17c0de` magic) that
+   `xcodebuild -create-xcframework` rejects.  Added
+   `PHARO_DISABLE_LTO` guard around the set-target-properties call
+   and set it in the xcframework script; normal Mac Catalyst builds
+   still get LTO.
+4. **TrampolineAsm.S platform mismatch** — `CMAKE_ASM_FLAGS` was
+   unset, so `.S` files didn't pick up `-target ...-macabi` and
+   ended up with `LC_BUILD_VERSION platform=macOS` in the Catalyst
+   slice.  Script now passes the same `cflags` to
+   `CMAKE_ASM_FLAGS` / `CMAKE_ASM_COMPILER`.
+
+Remaining D1 blockers (cert, hardware, TestFlight) are environment,
+not code.
+
+## iOS: app-store readiness — privacy manifest + launch screen + ATS
+
+- `iospharo/PrivacyInfo.xcprivacy` — iOS 17+ required-reason APIs
+  declared for `CA92.1` (UserDefaults), `C617.1` (system boot time),
+  `E174.1` (disk free space), plus `NSPrivacyTracking=false` and
+  an empty collected-data-types array.  Exported apps get the same
+  file via `AppExporter`'s `privacyInfo()` template and
+  `XcodeProjGenerator` wiring.
+- `UILaunchScreen` dictionary form in `Info.plist` (no storyboard
+  required), using `AccentColor` as the background.  Exported apps
+  get the same key.
+- `NSAppTransportSecurity` scoped to `pharo.org` subdomains only
+  (TLSv1.2 minimum, HTTPS-only), replacing `NSAllowsArbitraryLoads`.
+  ATS only covers `Foundation`/`CFNetwork` calls — Pharo image
+  sockets over FFI are unaffected, so this doesn't regress
+  image-level network access.  Export templates updated to match.
+
+## jit: B3 eval-mode PushThisContext deopt — resume at ExtB prefix
+
+`test_load_image eval "..."` hung because JIT deopt at `PushThisContext`
+(0x52) set the resume IP to the 0x52 byte itself rather than the
+preceding `ExtB 1`.  On resume, the interpreter re-executed only the
+0x52 — pushing `thisContext` — so `DebugSession>>exception` on the
+startup-script path received `thisContext` instead of
+`thisProcess`, triggering a DNU chain.
+
+Fix: deopt records for bytecodes preceded by `ExtA` / `ExtB` now set
+`bc.operand = firstExtBCOffset` so the interpreter re-enters at the
+prefix.  Audit of the six ExtA/ExtB-eligible deopt sites found two
+more with the same bug — `BlockReturnTop` (0x5E) NLR and
+`PushClosure` (0xFA) — both now fixed the same way.
+
+## jit: B5 diagnostic tooling — _HOLE_RT_J2J_TRACE + ring buffer
+
+Shipped comprehensive tooling for the outstanding `PHARO_JIT_DEFER=0`
+eager-compile DNU cascade ("B5").  Not a fix — narrowing infrastructure
+for future debugging:
+
+- New `_HOLE_RT_J2J_TRACE` stencil helper relocation and a matching
+  runtime helper that logs every J2J save-push and return event into
+  a 512-slot ring buffer.
+- `J2J_INLINE_RETURN` split into IMPL macro + two variants (trace /
+  no-trace) so SimStack register variants can skip tracing without
+  breaking x19-x22 liveness.
+- DNU handler auto-dumps the ring on suspicious receivers.
+  Auto-trigger on SmallInt return to focus methods drops manual
+  `PHARO_B5_TRACE` scaffolding.
+
+Env knobs: `PHARO_B5_TRACE`, `PHARO_B5_FOCUS` (hex oops,
+comma-separated), `PHARO_B5_MAX`, `PHARO_B5_SKIP`.  All cheap when
+unset.
+
+B5 root cause (documented, not fixed): cold-IC JIT compilation of
+the `PositionableStream class>>on:` → `PositionableStream>>on:`
+chain at `PHARO_JIT_DEFER=0` corrupts the J2J return stack, leaving
+`aCollection size` (SmallInt) where the stream instance should be,
+and `decodeBytes:` bc[2] `popStoreTemp 1` stores the wrong value
+into `byteStream`.  The default 4-second JIT defer lets
+interpreter-only warm-up populate ICs before compilation, which
+bypasses the corrupt cold-IC path entirely.
+
+## lldb MCP abandoned — use batch-script driver via Bash instead
+
+Apple's `lldb --mcp` protocol server deterministically spins at 100%
+CPU after handshake (not a socket leak).  Wrapper scripts at
+`scripts/lldb-mcp-starter.sh` start fresh-per-session to dodge the
+hang, but the MCP itself has been unregistered.  Pattern that works:
+`lldb --batch -s script.lldb` driven through Bash.  Documented in
+`docs/lldb-mcp.md` + `memory/reference_lldb_mcp.md`.
+
+2026-04-18
+
+## jit §1.3a: shared inline-IC table across T1/T2
+
+When T2 compiles a method T1 already handles, each tier had its own
+inline IC — T2's IC started cold every time, dropping aggregate hit
+rate on send-heavy workloads.  Tier2Compiler now points T2's inline
+IC probe at T1's icBase through a side-table (oop → T1 icBase).
+
+`PHARO_T2_MBC_IC=1` + `PHARO_T2=1` pushes IC hit 49.9% → 88.4% on
+bimodal array-fill bench.  Side-table keyed on `JITMethod*` so it
+survives GC compaction; entries cleared by `recoverAfterGC`.
+
+## jit §1.3c: T2/T1 coexist — T2 no longer replaces T1 on activation
+
+Default T2 semantic flipped: when T2 compiles a method T1 already
+has, the T2 code is **not** installed over T1's entry point.  T1
+keeps serving every caller; T2 sits dormant.  `PHARO_T2_REPLACE=1`
+restores old behavior for bisection.
+
+Rationale: on measured workloads T2 never demonstrably outperforms
+T1 (SimStack-enabled T1 wins arith tight loops; send cost dominates
+everywhere else).  Coexist mode lets us leave `PHARO_T2=1` safely
+without T1 IC hit-rate regressions, while keeping T2 code paths
+exercised for correctness coverage.
+
+Companion commit `668d348` skips T2 compilation entirely when T1 is
+already executable and `T2_REPLACE=0`, saving asmjit memory and
+compile time.
+
+## jit: multi-bc short jumps shipped (§1.2b/c/d)
+
+Tier2Compiler now compiles:
+
+- Short unconditional / conditional jumps (0xB0–0xC7) — forward and
+  backward.  `PHARO_T2_MBC_JUMPS` default flipped ON 2026-04-18
+  after SmallIntegerTest + whileTrue / ifTrue:ifFalse: stress.
+- `ExtJump` long-form (0xED–0xEF, ExtB=0) forward.
+- `ExtB` + `ExtJump` backward with yield countdown every N
+  iterations so tight loops still give the scheduler time.
+
+Enables loops inside T2-compiled methods to run without exiting to
+the chain loop on every iteration.
+
+## jit §1.1: 1-arg inline IC DNU fix — now default on
+
+Inline IC miss path for 1-arg sends crashed with DNU when the miss
+stencil re-hashed into a slot whose previous key was the current
+selector.  Fix: compare full `(classIndex, selectorBits)` pair on
+probe, not just `classIndex`.  Default `T2_ZEROARG_IC` was already
+on; this allowed 1-arg to follow without regressions.
+
+## jit: PHARO_T2_WARMUP default 0 → 3
+
+When T2 compiles aggressively it intercepts methods before T1's
+inline IC has populated, dropping aggregate IC hit rate ~6-10 pct
+on send-heavy workloads.  Defer T2 compile until T1 has executed
+the method 3 times.  Preserves 89.3% IC hit rate (vs 78–86% with
+WARMUP=0) at the cost of ~73 methods no longer T2-compiled on
+array-fill bench — those 73 weren't providing a win anyway.
+
+## jit: SimStack default flip — REVERTED same day
+
+`137e7d5` flipped SimStack TOS/NOS register caching default ON for
+a 33% bench win.  Reverted `845e28a` the same day: full
+`IntegerTest` suite regressed 12 tests that don't reproduce in
+isolation.  SimStack still available opt-in
+(`PHARO_JIT_SIMSTACK=1`).  Root-cause investigation deferred.
+
+2026-04-17
+
+## jit: asmjit replaces MIR as Tier 2 backend
+
+MIR deleted from the tree.  Tier 2 is now an asmjit-based MVP
+covering the same bytecode set MIR handled plus multi-bytecode
+jumps / sends / inline IC (see 1.2 / 1.3 entries above).
+
+Why the migration: MIR's register allocator held oops across
+jit_t2_send and could not describe GC-moved references, forcing
+`PHARO_T2=0` default (see 2026-04-15 entries).  asmjit emits plain
+arm64, doesn't cache oops in registers across calls, and lets the
+JIT reason about liveness at bytecode boundaries — removing the GC
+staleness class of bugs entirely.
+
+Full writeup: `docs/jit-toolkit-evaluation.md`.
+
+
 
 `jit_t2_send` now pushes a `J2JSave` for the T2 caller before invoking
 the callee.  On `ExitReturn` it pops the save and restores the caller
