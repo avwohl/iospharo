@@ -19,8 +19,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
-  Multi-block control flow + inline arith now work.  16 round-trip
-  tests passing:
+  Multi-block control flow + inline arith + unspeculated sends now
+  work.  17 round-trip tests passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -31,6 +31,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
       - Arith + - * on SmallInt operands (tag-preserving, no overflow
         check yet)
+      - Send0/1/2 (0x80-0xAF) as ExitSend bail — interpreter takes
+        over at the send; compiled code never resumes
 
       IR ops implemented:
       - kConstantOop, kLoadReceiver, kLoadTrueOop, kLoadFalseOop
@@ -38,13 +40,14 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - kStoreTemp, kStoreInstVar
       - kReturn, kBranch, kBranchIfTrue, kBranchIfFalse
       - kPrimAddInt, kPrimSubInt, kPrimMulInt
+      - kSendUnspeculated (via ExitSend bail; real speculation is Phase 4)
 
   Commits: `c638471` (IR), `42e382c` (lifter MVP), `7fa2fab`
   (lowerer + first round-trip), `2e5d61e` (push-constants +
   push-literal), `a09b5c4` (ivar + store-temp + stack ops),
   `6badd08` (setter pattern), `8680ccb` (multi-block via short
   jumps), `7c57dbe` (arith + - *), `eed3d37` (PHARO_JIT_ENABLED
-  guard for xcframework link).
+  guard for xcframework link), `379e3f7` (unspeculated sends).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
@@ -60,13 +63,19 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
     check on inputs + overflow flag (`adds` / `subs`) on the
     math, bail to `kSendUnspeculated` on miss.  Gated on Phase 3
     deopt.
-  - Sends (kSendUnspeculated).  Simple fall-through to Tier 1 IC
-    probe; no speculation yet.
   - Phi nodes for joined blocks (needed before method inlining
     becomes useful).
   - mustBeBoolean bail on conditional branch (placeholder today
     silently falls through on non-true cond; fix requires Phase 3
     deopt).
+  - Runtime integration (Phase 2.3).  Hook the Sista compiler into
+    the tier-up path so it's actually called by the VM.  Currently
+    the IR exists and produces machine code that passes unit
+    tests, but nothing in the runtime invokes it.  `state.ip` on
+    send bail is set to the bytecode offset as a uint64_t, not the
+    absolute pointer the interpreter expects — that translation
+    needs to happen at hookup time when we know the CompiledMethod
+    base.
 
   Each remaining item gates on a round-trip test + SUnit
   no-regression.  Catalyst + all three iOS xcframework slices
