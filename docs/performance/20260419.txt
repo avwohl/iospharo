@@ -1,0 +1,124 @@
+# Benchmark run 2026-04-19
+
+Host:   Apple M4
+Commit: dfefcc5 (post scheduler-fix + OOM fix + profiler + memory-config)
+Image:  /tmp/harness/Pharo.image (Pharo 13; md5 fe1b856dd5ea22328a95cc1377ce25e4)
+
+Reference Cog numbers are from docs/benchmark-results.md (2026-04-17 run
+on the same image; Cog Pharo 10.3.9 on the same host).
+
+
+## Our VM today vs stored Cog numbers
+
+    Benchmark          Cog       Ours JIT on    Ours JIT off   JIT/Cog    interp/Cog
+    ----------------   -------   ------------   ------------   --------   ----------
+    fib(28)             2 ms         54 ms          50 ms        27.0x       25.0x
+    sieve x3           ~3 ms*         4 ms           4 ms         1.3x        1.3x
+    tinyBenchmarks     varies        5.6 s          7.1 s         —           —
+
+    (* Cog sieve x3 extrapolated linearly from stored sieve x10 = 0.9 ms.)
+
+
+## Notes per workload
+
+fib(28)
+    5 runs, median ≈54 ms JIT-on, 50 ms JIT-off.  Run-to-run spread
+    ≤2 ms either way.  JIT stats show activations=0 / compiled=0 for
+    this bench because `PHARO_JIT_DEFER=4s` (headless default) fires
+    AFTER fib completes in 54 ms.  The "JIT on" column here is
+    effectively the interpreter — JIT never engages.
+
+sieve x3
+    Integer>>benchmark called three times.  Identical 4 ms result JIT
+    on and off, same reason as fib: defer masks JIT.
+
+tinyBenchmarks
+    JIT actually engages here — 5.6 s run time is well past the 4 s
+    defer window.  27 M IC hits, 113 IC misses (99.9996 % hit), 61
+    J2J patches, 197 k OSR entries.  JIT wall time 5.6 s vs
+    interpreter 7.1 s → JIT is 21 % faster on this workload.
+
+    This is the first time tinyBenchmarks completes cleanly under
+    JIT — the stored 2026-04-17 result was a hang.  Fixed somewhere
+    between then and today; likely the scheduler fix (a2b99f7)
+    since the earlier hang signature looked scheduler-related.
+
+
+## What changed since 2026-04-17
+
+Correctness wins:
+- tinyBenchmarks JIT: hang → 5.6 s clean.
+- fib(28) JIT: "timeout" → 54 ms clean.
+
+Peak-speed remains the same:
+- Arith-bound micro-benches (fib, sieve) still dominated by defer
+  masking JIT entirely, so effective peak is interpreter-only.
+- The 04-17 root-cause analysis (460-byte stencils busting M1's
+  128-byte i-cache line, 200+ indirect-branch targets saturating
+  the predictor) is unchanged — those are architectural.
+
+
+## Where we stand vs Cog
+
+fib(28) JIT (effectively interp): 27× slower.
+sieve x3:                          1.3× slower.
+
+fib is recursion-heavy / send-bound, where Cog's threaded-code
+dispatch dominates.  sieve is arith-heavy, where our interpreter's
+inline primitive fast-paths close the gap.
+
+Stored AWFY geomean was 30× (richer workload; Richards/Queens/Towers
+are the worst offenders).  Fib matches that order.  Without AWFY
+classes pre-loaded in the Pharo 13 image, we can't rerun the full
+AWFY matrix today.
+
+
+## AWFY not run
+
+The stock Pharo 13 image used here has no AWFY classes loaded
+(Richards, DeltaBlue, Mandelbrot, etc.).  The stored 2026-04-11 AWFY
+numbers came from an image with AWFY pre-installed; reproducing that
+comparison requires a fresh image with AWFY loaded.  fib + sieve +
+tinyBenchmarks are the signal available from a stock Pharo 13 image.
+
+
+## Raw bench output
+
+---- JIT on, PHARO_BENCH=fib ----
+[BENCH] fib(28) run 0: 54763 us (54 ms)
+[BENCH] fib(28) run 1: 54825 us (54 ms)
+[BENCH] fib(28) run 2: 55423 us (55 ms)
+[BENCH] fib(28) run 3: 54623 us (54 ms)
+[BENCH] fib(28) run 4: 54358 us (54 ms)
+[BENCH] JIT stats: activations=0/0  (DEFER masked JIT)
+
+---- JIT on, PHARO_BENCH=sieve ----
+[BENCH] sieve x3 run 0: 4608 us (4 ms)
+[BENCH] sieve x3 run 1: 4468 us (4 ms)
+[BENCH] sieve x3 run 2: 4550 us (4 ms)
+[BENCH] sieve x3 run 3: 4573 us (4 ms)
+[BENCH] sieve x3 run 4: 4540 us (4 ms)
+[BENCH] JIT stats: activations=0/0  (DEFER masked JIT)
+
+---- JIT on, PHARO_BENCH=tinyBenchmarks ----
+[BENCH] tinyBenchmarks run 0: 5616039 us (5616 ms)
+[BENCH] JIT stats: activations=0/0 (0.0 % hit) | IC hits=27887095
+                   misses=113 stale=0 | J2J patches=61
+[BENCH] OSR entries=197533, yields=197502
+
+---- JIT off, PHARO_BENCH=fib ----
+[BENCH] fib(28) run 0: 50657 us (50 ms)
+[BENCH] fib(28) run 1: 50679 us (50 ms)
+[BENCH] fib(28) run 2: 50177 us (50 ms)
+[BENCH] fib(28) run 3: 50737 us (50 ms)
+[BENCH] fib(28) run 4: 50669 us (50 ms)
+
+---- JIT off, PHARO_BENCH=sieve ----
+[BENCH] sieve x3 run 0: 4526 us (4 ms)
+[BENCH] sieve x3 run 1: 4291 us (4 ms)
+[BENCH] sieve x3 run 2: 4521 us (4 ms)
+[BENCH] sieve x3 run 3: 4406 us (4 ms)
+[BENCH] sieve x3 run 4: 4334 us (4 ms)
+
+---- JIT off, PHARO_BENCH=tinyBenchmarks ----
+[BENCH] tinyBenchmarks run 0: 7103654 us (7103 ms)
