@@ -123,10 +123,8 @@ int main(int argc, const char** argv) {
                     // Dump first few methods where malform is at a
                     // short-uncond-jump (0xB0-0xB7) — those shouldn't
                     // pop a stack or fail at the target lookup.
-                    // Dump the first few methods that fail at ExtendA
-                    // (0xE0) — those are truncated-prefix malforms we
-                    // want to understand.
-                    if (failOp == 0xE0 && sampleDumps < 3) {
+                    // Dump the first few methods that fail at 0xF5.
+                    if (failOp == 0xF5 && sampleDumps < 3) {
                         sampleDumps++;
                         std::printf("\n--- Malformed sample #%zu "
                                     "at bc=%u op=0x%02X (len=%zu) ---\n",

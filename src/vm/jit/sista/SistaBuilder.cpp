@@ -577,8 +577,13 @@ private:
                     return bailToInterpreter(1);
                 }
                 if (stack_.empty()) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    // Common pattern: method starts with
+                    // `CallPrimitive` (we skip it) + `ExtStoreTemp` to
+                    // capture a caller-pushed arg into a temp.  Our IR
+                    // stack doesn't model args-on-entry, so bail to
+                    // the interpreter at this bytecode — it has the
+                    // real stack and will execute correctly.
+                    return bailToInterpreter(2);
                 }
                 uint32_t tempIdx = (uint32_t)bc_[ip + 1];
                 pendingExtA_ = 0;
@@ -744,34 +749,48 @@ private:
             }
 
             // ExtSuperSend (0xEB): like ExtSend but with super-lookup.
-            // For the bail path we just re-dispatch via the interpreter —
-            // it handles super correctly.  We skip directed-super
-            // (extB >= 64 pops an extra "definingClass" operand) for
-            // now; those bail as unsupported.
+            // Two encodings:
+            //   extB <  64: regular super-send (ends block cleanly).
+            //   extB >= 64: directed super — pops an extra definingClass
+            //               operand on top of rcvr+args.
+            // Either way the bail just transfers the operands to the
+            // interpreter stack in Smalltalk order; the interpreter
+            // handles the super lookup.
             if (op == jit::SistaV1::ExtSuperSend) {
                 if (ip + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
-                }
-                if (pendingExtB_ >= 64) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kUnsupportedBytecode;  // directed super
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(1);
                 }
                 uint8_t desc = bc_[ip + 1];
-                uint32_t selIdx = (uint32_t)(((pendingExtA_ << 5)
-                                               | (desc >> 3)) & 0xFFFF);
-                uint32_t nArgs  = (uint32_t)(((pendingExtB_ << 3)
-                                               | (desc & 0x07)) & 0xFF);
+                uint32_t selIdx;
+                uint32_t nArgs;
+                uint32_t extras;  // extra operand count beyond rcvr+args
+                if (pendingExtB_ >= 64) {
+                    // Directed super: stack = [..., rcvr, args..., definingClass]
+                    int ebRelative = pendingExtB_ - 64;
+                    selIdx = (uint32_t)(((pendingExtA_ << 5)
+                                          | (desc >> 3)) & 0xFFFF);
+                    nArgs  = (uint32_t)(((ebRelative << 3)
+                                          | (desc & 0x07)) & 0xFF);
+                    extras = 1;
+                } else {
+                    selIdx = (uint32_t)(((pendingExtA_ << 5)
+                                          | (desc >> 3)) & 0xFFFF);
+                    nArgs  = (uint32_t)(((pendingExtB_ << 3)
+                                          | (desc & 0x07)) & 0xFF);
+                    extras = 0;
+                }
                 uint32_t bailOffset = (uint32_t)currentInstrStart_;
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
-                if (stack_.size() < nArgs + 1) {
+                uint32_t totalOps = nArgs + 1 + extras;
+                if (stack_.size() < totalOps) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
-                std::vector<uint32_t> ops(nArgs + 1);
-                for (uint32_t i = 0; i < nArgs + 1; i++) {
-                    ops[nArgs - i] = stack_.back();
+                std::vector<uint32_t> ops(totalOps);
+                for (uint32_t i = 0; i < totalOps; i++) {
+                    ops[totalOps - 1 - i] = stack_.back();
                     stack_.pop_back();
                 }
                 uint64_t lit = (uint64_t)selIdx
