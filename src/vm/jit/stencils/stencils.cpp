@@ -169,6 +169,14 @@ extern "C" {
     extern char _HOLE_RESUME_ADDR;
 }
 
+// B5 diagnostic trace helper (no-op when PHARO_B5_TRACE unset).
+// Declared here (not with the other _HOLE_RT_* below stencil_sendJ2J)
+// because it is used from J2J_INLINE_RETURN which predates the return
+// stencils — the compiler needs the declaration in scope at that
+// expansion point.
+extern "C" void (*_HOLE_RT_J2J_TRACE)(
+    JITState* s, uint64_t event, uint64_t extra1, uint64_t extra2);
+
 // _HOLE_RT_SEND / _HOLE_RT_RETURN used to tail-call jit_rt_send /
 // jit_rt_return helpers. Those helpers were empty no-ops: stencil set
 // state.exitReason, then branched through a 3-load GOT indirection to
@@ -415,7 +423,7 @@ extern "C" void stencil_storeLitVar(JITState* s) {
         J2JSave* _sv = (J2JSave*)s->j2jSaveCursor;                          \
         /* Restore caller state */                                           \
         s->receiver = _sv->receiver;                                          \
-        s->tempBase = _sv->tempBase;                                         \
+        s->tempBase = _sv->tempBase;                                          \
         uint8_t* _callerJM = (uint8_t*)_sv->jitMethod;                       \
         s->jitMethod = (void*)_callerJM;                                     \
         /* Derive: literals points to first literal at slot[1] = method+16  \
@@ -1359,6 +1367,13 @@ j2j_direct_call:
             _save->ip = s->ip + bcOffset + bcLen;
             _save->sendArgCount = nArgs;
             _save->resumeAddr = RESUME_ADDR;
+            // B5 trace: event=1 means "J2J save-push",
+            // extra1 = nArgs, extra2 = caller jitMethod (to identify chain).
+            // Pack caller's CompiledMethod oop as a 32-bit tag in extra2
+            // hi-word and nArgs in lo-word so we can correlate.
+            _HOLE_RT_J2J_TRACE(s, 1, (uint64_t)nArgs,
+                               (uint64_t)(*(uint64_t*)((uint8_t*)s->jitMethod +
+                                                       JM_COMPILED_METHOD)));
             // literals/argCount/bcStart are derived from save.jitMethod
             // on return (see J2J_INLINE_RETURN).  The self-recursive
             // marker bit is obsolete now that all 3 fields are derived.

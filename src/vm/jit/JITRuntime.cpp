@@ -38,6 +38,50 @@ extern "C" void jit_rt_send(JITState* state) {
     (void)state;
 }
 
+// B5 diagnostic: called from stencils at J2J save-push.
+// event=1: save-push.  extra1 = nArgs, extra2 = caller compiledMethod oop.
+extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
+                                 uint64_t extra1, uint64_t extra2) {
+    static bool trace = getenv("PHARO_B5_TRACE") != nullptr;
+    if (!trace) return;
+    // Only trace when the caller-oop matches one of the target methods in
+    // the atEnd chain to limit output: decodeBytes:, readStream, and
+    // PositionableStream class>>on: / PositionableStream>>on:.
+    static uint64_t focusOops[8] = {0};
+    static int focusCount = 0;
+    static bool focusInit = false;
+    if (!focusInit) {
+        focusInit = true;
+        if (const char* env = getenv("PHARO_B5_FOCUS")) {
+            // Comma-separated hex oops
+            const char* p = env;
+            while (*p && focusCount < 8) {
+                char* endp;
+                uint64_t v = strtoull(p, &endp, 0);
+                if (endp == p) break;
+                focusOops[focusCount++] = v;
+                p = endp;
+                if (*p == ',') p++;
+            }
+        }
+    }
+    if (focusCount > 0) {
+        bool hit = false;
+        for (int i = 0; i < focusCount; i++) {
+            if (focusOops[i] == extra2) { hit = true; break; }
+        }
+        if (!hit) return;
+    }
+    static size_t count = 0;
+    count++;
+    if (count > 800) return;
+    fprintf(stderr, "[B5] #%zu evt=%llu sp=%p depth=%d cursor=%p "
+                    "nArgs=%llu callerCM=0x%llx\n",
+            count, (unsigned long long)event, state->sp, state->j2jDepth,
+            state->j2jSaveCursor, (unsigned long long)extra1,
+            (unsigned long long)extra2);
+}
+
 extern "C" void jit_rt_return(JITState* state) {
     // exitReason and returnValue already set by the stencil.
     (void)state;
@@ -743,6 +787,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
     helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
     helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
+    helpers.j2jTrace = reinterpret_cast<void*>(&jit_rt_j2j_trace);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)

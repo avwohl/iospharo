@@ -93,6 +93,7 @@ public:
         void* arrayPrim;        // jit_rt_array_prim (out-of-line at:/at:put:/size)
         void* newPrim;          // jit_rt_new_prim (out-of-line new/new:)
         void* icMiss;           // jit_rt_ic_miss (out-of-line megacache probe + exit-state)
+        void* j2jTrace;         // jit_rt_j2j_trace (B5 diagnostic — logs J2J save/restore)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }
