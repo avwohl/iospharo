@@ -1050,6 +1050,40 @@ int main() {
                   << " stack pushed 4 oops\n";
     }
 
+    // Round-trip 7.P: PushLitVar — literal is an Association, push
+    // its .value slot (slot 1 at +16 bytes from Association Oop).
+    //
+    // Method: ^ MyGlobal  lifts as literals[0]=Association, then
+    // fetches Association.value.  Single bytecode: PushLitVar 0.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushLitVarBase + 0),  // 0x10
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "PushLitVar 0 lifts");
+        // Two ops: kLoadLiteral + kLoadInstVar(slot=1).
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower PushLitVar 0");
+
+        // Fake Association at literals[0]: header at +0, slot 0 (key)
+        // at +8, slot 1 (value) at +16.
+        uint64_t assoc[3] = { 0xDEADDEAD, 0xA11A11, 0xFEEDFACE };
+        uint64_t literals[1] = {
+            reinterpret_cast<uint64_t>(&assoc[0]),
+        };
+        FakeState state{};
+        state.literals = literals;
+        fn(&state);
+        check(state.returnValue == 0xFEEDFACEULL,
+              "returnValue = association.value");
+        std::cout << "--- round-trip PushLitVar 0: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

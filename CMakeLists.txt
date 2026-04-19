@@ -323,6 +323,11 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # friends resolve, but doesn't use the runtime.
     add_executable(test_sista_ir src/vm/jit/sista/test_sista_ir.cpp)
     target_link_libraries(test_sista_ir PharoVMCore asmjit::asmjit)
+
+    # Sista coverage survey — loads an image and runs the lifter against
+    # every CompiledMethod, reporting success rate + top blocking ops.
+    add_executable(test_sista_survey src/vm/jit/sista/test_sista_survey.cpp)
+    target_link_libraries(test_sista_survey PharoVMCore asmjit::asmjit)
 endif()
 
 message(STATUS "PharoVM Clean C++ configured")

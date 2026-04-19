@@ -89,6 +89,13 @@ public:
         out_.numTemps = numTemps;
     }
 
+    // If non-null, specialSendArgCount[N] gives the arg count for
+    // opcode 0x70+N (SpecialSend index 16+N in Pharo's selectors
+    // array).  When null, SpecialSend bails as unsupported.
+    void setSpecialSendArgCounts(const uint8_t* argCounts) {
+        specialSendArgCount_ = argCounts;
+    }
+
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pass 1: identify block boundaries --------------------------
         //
@@ -281,6 +288,21 @@ private:
                 return LiftResult::kOk;
             }
 
+            // CallPrimitive (0xF8): 3-byte primitive declaration that
+            // only appears at method start.  The interpreter runs the
+            // primitive; if it fails or returns, the fallback bytecodes
+            // (which start right after CallPrimitive) execute.  Sista
+            // is called only for the fallback path — so we skip the
+            // 3-byte declaration at lift time.
+            if (op == jit::SistaV1::CallPrimitive && ip == 0) {
+                if (ip + 2 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                ip += 3;
+                continue;
+            }
+
             // ExtendA / ExtendB prefix: stash the byte arg and let the
             // next op consume it.  Does not emit IR.  If the next op
             // is unsupported, pass 3 bails and we stay correct.
@@ -375,6 +397,29 @@ private:
                 ip += 2;
                 continue;
             }
+            // ExtPushLitVar (0xE3): wide-index version of PushLitVar.
+            // Same composition: load literal (Association), load slot 1.
+            if (op == jit::SistaV1::ExtPushLitVar) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t litIdx = (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                uint32_t assoc = out_.newValue(currentBlock_,
+                                                Op::kLoadLiteral, Type::kOop,
+                                                /*operands=*/{},
+                                                /*literal=*/litIdx);
+                uint32_t val = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              /*operands=*/{assoc},
+                                              /*literal=*/1);
+                stack_.push_back(val);
+                ip += 2;
+                continue;
+            }
+
             if (op == jit::SistaV1::ExtPushLitConst) {
                 if (ip + 1 >= len_) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
@@ -567,6 +612,38 @@ private:
                 return LiftResult::kOk;
             }
 
+            // SpecialSend (0x70-0x7F): send well-known selector with
+            // fixed arg count (from the image's SpecialSelectorsArray).
+            // If argCount table isn't provided (unit tests), bail.
+            if (op >= jit::SistaV1::SpecialSendBase
+                && op <= jit::SistaV1::SpecialSendLast) {
+                if (!specialSendArgCount_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kUnsupportedBytecode;
+                }
+                uint32_t ssIdx = op - jit::SistaV1::SpecialSendBase;
+                uint32_t nArgs = specialSendArgCount_[ssIdx];
+                if (stack_.size() < nArgs + 1) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                // Selector literal index encoded as special-selector
+                // marker: we use the opcode as selIdx (unused in the
+                // bail path since the interpreter dispatches via the
+                // bytecode directly).
+                std::vector<uint32_t> ops(nArgs + 1);
+                for (uint32_t i = 0; i < nArgs + 1; i++) {
+                    ops[nArgs - i] = stack_.back();
+                    stack_.pop_back();
+                }
+                uint64_t lit = (uint64_t)op
+                             | ((uint64_t)nArgs    << 16)
+                             | ((uint64_t)bcOffset << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                return LiftResult::kOk;
+            }
+
             // Literal-selector sends (Send0/1/2, 0x80-0xAF).
             //
             // MVP: treat as a one-way compiled exit.  The lifter emits
@@ -628,6 +705,29 @@ private:
                 ip++;
                 continue;
             }
+            // Other arith opcodes in 0x60-0x6F (<, >, <=, >=, =, ~=,
+            // /, \\, @, bitShift:, //, bitAnd:, bitOr:) are 1-arg
+            // sends.  Bail to interpreter; real inlining (with deopt
+            // on type miss) lands with Phase 3.
+            if (op >= jit::SistaV1::ArithBase
+                && op <= jit::SistaV1::ArithBase + 15) {
+                uint32_t nArgs = 1;
+                if (stack_.size() < nArgs + 1) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                std::vector<uint32_t> ops(nArgs + 1);
+                for (uint32_t i = 0; i < nArgs + 1; i++) {
+                    ops[nArgs - i] = stack_.back();
+                    stack_.pop_back();
+                }
+                uint64_t lit = (uint64_t)op
+                             | ((uint64_t)nArgs    << 16)
+                             | ((uint64_t)bcOffset << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                return LiftResult::kOk;
+            }
 
             // Push-receiver: load self, push onto simulated stack.
             if (op == jit::SistaV1::PushReceiver) {
@@ -658,6 +758,27 @@ private:
                                             Op::kLoadLiteral, Type::kOop,
                                             /*operands=*/{}, /*literal=*/litIdx);
                 stack_.push_back(v);
+                ip++;
+                continue;
+            }
+
+            // Push-lit-var N (0x10-0x1F): literals[N] is an Association
+            // object; push its .value slot (slot 1, at byte offset 16).
+            //
+            // Composes existing kLoadLiteral + kLoadInstVar(slot=1).
+            // No new IR op needed.
+            if (op >= jit::SistaV1::PushLitVarBase
+                && op <= jit::SistaV1::PushLitVarLast) {
+                uint32_t litIdx = op - jit::SistaV1::PushLitVarBase;
+                uint32_t assoc = out_.newValue(currentBlock_,
+                                                Op::kLoadLiteral, Type::kOop,
+                                                /*operands=*/{},
+                                                /*literal=*/litIdx);
+                uint32_t val = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              /*operands=*/{assoc},
+                                              /*literal=*/1);  // slot 1 = .value
+                stack_.push_back(val);
                 ip++;
                 continue;
             }
@@ -855,6 +976,8 @@ private:
     // ExtendA / ExtendB prefix state.  Cleared after the consuming op.
     int                    pendingExtA_ = 0;
     int                    pendingExtB_ = 0;
+    // Arg counts for SpecialSend opcodes 0x70-0x7F (if known).
+    const uint8_t*         specialSendArgCount_ = nullptr;
 };
 
 }  // namespace
@@ -865,6 +988,28 @@ LiftResult Builder::buildFromBytes(const uint8_t* bc, size_t len,
                                      uint32_t* failedAtBytecode) {
     LinearLifter l(bc, len, numArgs, numTemps, out);
     return l.run(failedAtBytecode);
+}
+
+// Read SpecialSelectorsArray from the image and extract arg counts for
+// the 16 SpecialSend opcodes (0x70-0x7F → selector indices 16..31).
+// Layout: [sel0, argCount0, sel1, argCount1, ...] — 2 slots per index.
+// Returns false if the array is missing or malformed.
+static bool readSpecialSelectorArgCounts(ObjectMemory& memory,
+                                          uint8_t out[16]) {
+    Oop ssArray = memory.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
+    if (!ssArray.isObject()) return false;
+    ObjectHeader* hdr = ssArray.asObjectPtr();
+    size_t slots = hdr->slotCount();
+    for (int N = 0; N < 16; N++) {
+        size_t argSlot = (16 + N) * 2 + 1;
+        if (argSlot >= slots) return false;
+        Oop ac = hdr->slotAt(argSlot);
+        if (!ac.isSmallInteger()) return false;
+        int64_t v = ac.asSmallInteger();
+        if (v < 0 || v > 255) return false;
+        out[N] = (uint8_t)v;
+    }
+    return true;
 }
 
 LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
@@ -894,8 +1039,15 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         out.literals.push_back(memory.fetchPointer(1 + i, compiledMethod));
     }
 
-    return buildFromBytes(bytecodes, bytecodeSize, numArgs, numTemps, out,
-                           failedAtBytecode);
+    // Resolve SpecialSend arg counts from the image so the lifter can
+    // handle 0x70-0x7F correctly.  If the array is missing / malformed,
+    // SpecialSend ops will bail as unsupported (fallback behavior).
+    uint8_t ssArgCounts[16];
+    bool haveSS = readSpecialSelectorArgCounts(memory, ssArgCounts);
+
+    LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
+    if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
+    return l.run(failedAtBytecode);
 }
 
 }  // namespace sista
