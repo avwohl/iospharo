@@ -73,27 +73,44 @@ locking the above decisions before coding.
 
 ---
 
-## Phase 1 — Polymorphic inline caches + type profiling (2–3 weeks)
+## Phase 1 — IC profiling diagnostic (DONE 2026-04-19, commit `6539046`)
 
-Our ICs currently hold one `(class, method)` pair per send site.
-Sista speculates based on observed classes, which requires at least
-polymorphic (2–3 classes) and preferably a call-count per class.
+Reality check: our ICs are already **6-way polymorphic**
+(`IC_ENTRIES_PER_SITE = 6` in JITMethod.hpp), not monomorphic as
+the original plan text assumed.  The IC structure itself needs no
+change for Phase 4 (monomorphic inlining) — "is this site
+monomorphic" is answerable today by counting populated entries.
 
-Tasks:
+Delivered:
 
-- Widen the IC slot format: `[class1, method1, count1, class2, …]`.
-  3-entry IC sufficient per the Sista paper.
-- Update IC probe stencil to check up to 3 classes in order of
-  frequency.  Missed class falls to the megamorphic cache.
-- Expose "was this site monomorphic / biased-polymorphic /
-  megamorphic" to the image via a mirror primitive so we can
-  validate with test harness.
+- `JITRuntime::dumpICHistogram()` classifies every compiled IC site
+  by populated-entry count: empty / monomorphic / 2-way / 3-way /
+  4+-way.  Gated on `PHARO_IC_HISTOGRAM=1`; runs at bench complete.
 
-Correctness gate: all existing tests still pass.  No speculative
-compilation yet — this phase is just better profiling.
+Measured on tinyBenchmarks with JIT warmed up:
 
-Risk: low.  We already understand IC lifetime, GC coherence, rebuild-
-after-compaction.  Widening one slot is mechanical.
+    compiledMethods=107  totalSites=313
+    empty:        303 (96.8%)
+    monomorphic:  10  (3.2%)
+    2-way poly:   0
+    3+-way poly:  0
+    inlinable (mono or 2-way) / non-empty: 100 %
+
+**Every non-empty hot site is monomorphic.**  Sista's core premise
+holds for this workload — Phase 4 is worth building.  Also: 97 %
+of compiled IC sites never fire, suggesting we over-compile — a
+separate observation to revisit after Phase 4.
+
+What the original Phase 1 text said to add but no longer needed
+for Phase 4:
+- Per-entry saturating counter.  The 6-way IC tells us "is this
+  monomorphic" via populated count.  Counter only matters for
+  Phase 5 (polymorphic inlining) where we'd need to rank classes
+  by hit frequency — deferred to Phase 5.
+
+Still TODO (low-priority):
+- Mirror primitive to expose histogram to the image.  The stderr
+  dump covers the dev need; image-side inspection is nice-to-have.
 
 ---
 
