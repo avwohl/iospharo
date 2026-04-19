@@ -18,7 +18,17 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `JITRuntime::dumpICHistogram()` for empirical validation;
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
-- **Phase 2: method-level SSA-lite IR** → NEXT.  Multi-week chunk.
+- **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
+  IR defined (`c638471`), bytecode lifter for trivial subset
+  (`42e382c`), and `SistaLowering::lower()` round-trip working
+  (`7fa2fab`).  Round-trip test: lift → lower → execute → verify
+  result.  Supports PushReceiver, PushTemp N, ReturnReceiver,
+  ReturnTop.  Catalyst + all three iOS xcframework slices still
+  build cleanly.
+  Remaining: expand lifter + lowerer to cover more bytecodes
+  (PushTrue/False/Nil/Zero/One, PushLitConst, StoreTemp, simple
+  arith, conditional jumps).  Each op adds one case in each file +
+  a round-trip test; gate on SUnit no-regression.
 - **Phase 3: deopt infrastructure** → queued.
 - **Phase 4: monomorphic inlining** → queued.  First expected
   speedup.  Exit-condition gate.
