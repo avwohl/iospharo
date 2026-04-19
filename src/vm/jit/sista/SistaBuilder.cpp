@@ -57,7 +57,18 @@ static inline bool isTerminatorBC(uint8_t op) {
         || op == jit::SistaV1::ReturnFalse
         || op == jit::SistaV1::ReturnNil
         || op == jit::SistaV1::ReturnTop
-        || isShortUncondJump(op);  // unconditional jumps end a block
+        || isShortUncondJump(op)
+        || op == jit::SistaV1::ExtJump;    // unconditional extended jump
+}
+
+// ExtJump family: 2-byte instruction.  Offset = offsetByte + (extB<<8),
+// signed.  Target = (ip after 2-byte instruction) + offset.  For lifter
+// MVP we support forward jumps only (offset >= 0); backward jumps
+// require reordering pass 3 to handle loops and are deferred.
+static inline bool isExtJump(uint8_t op) {
+    return op == jit::SistaV1::ExtJump
+        || op == jit::SistaV1::ExtJumpTrue
+        || op == jit::SistaV1::ExtJumpFalse;
 }
 
 class LinearLifter {
@@ -81,8 +92,58 @@ public:
         std::set<size_t> blockStarts;
         blockStarts.insert(0);
 
+        // Pass 1 tracks extB state because ExtJump computes its offset
+        // using (offsetByte + extB*256).  extB is set by a preceding
+        // ExtendB (0xE1) and consumed by the next non-Extend bytecode.
+        int pass1ExtB = 0;
+
         for (size_t i = 0; i < len_;) {
             uint8_t op = bc_[i];
+            if (op == jit::SistaV1::ExtendB) {
+                // ExtendB <byteArg>: byteArg sign-extended as signed byte
+                // supplies the high byte of the next operand.
+                if (i + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kMalformedMethod;
+                }
+                pass1ExtB = (int)(int8_t)bc_[i + 1];
+                i += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtendA) {
+                // ExtendA is a prefix for extended pushes/stores (not
+                // jumps).  We skip it in pass 1; pass 3 will bail if
+                // the following op isn't one we support yet.
+                if (i + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kMalformedMethod;
+                }
+                i += 2;
+                continue;
+            }
+            if (isExtJump(op)) {
+                if (i + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kMalformedMethod;
+                }
+                int offset = (int)bc_[i + 1] + (pass1ExtB << 8);
+                // Target = ip-after-instruction + offset.  After reading
+                // 2 bytes, ip points to i+2.  Forward-only for MVP.
+                if (offset < 0) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kUnsupportedBytecode;  // loops deferred
+                }
+                size_t target = i + 2 + (size_t)offset;
+                if (target > len_) {
+                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
+                    return LiftResult::kMalformedMethod;
+                }
+                blockStarts.insert(target);
+                if (i + 2 < len_) blockStarts.insert(i + 2);
+                pass1ExtB = 0;
+                i += 2;
+                continue;
+            }
             if (isShortJump(op)) {
                 size_t target = shortJumpTarget(i, op);
                 if (target > len_) {
@@ -91,12 +152,14 @@ public:
                 }
                 blockStarts.insert(target);
                 if (i + 1 < len_) blockStarts.insert(i + 1);
+                pass1ExtB = 0;
                 i++;
                 continue;
             }
             if (isTerminatorBC(op) && i + 1 < len_) {
                 blockStarts.insert(i + 1);
             }
+            pass1ExtB = 0;
             i++;
         }
 
@@ -202,6 +265,78 @@ private:
             if (ip != startOffset && offsetToBlock.count(ip)) {
                 uint32_t nextBlock = offsetToBlock.at(ip);
                 out_.addEdge(currentBlock_, nextBlock);
+                return LiftResult::kOk;
+            }
+
+            // ExtendA / ExtendB prefix: stash the byte arg and let the
+            // next op consume it.  Does not emit IR.  If the next op
+            // is unsupported, pass 3 bails and we stay correct.
+            if (op == jit::SistaV1::ExtendA) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                pendingExtA_ = (int)bc_[ip + 1];  // unsigned for A
+                ip += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtendB) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                pendingExtB_ = (int)(int8_t)bc_[ip + 1];  // signed for B
+                ip += 2;
+                continue;
+            }
+
+            // ExtJump family — 2-byte jump.  Offset = offsetByte + extB*256.
+            // For MVP: forward only (offset >= 0).  Backward handling
+            // requires reordering pass 3 to compute loop-header entry
+            // depths; that's a follow-up.
+            if (isExtJump(op)) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                int offset = (int)bc_[ip + 1] + (pendingExtB_ << 8);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                if (offset < 0) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kUnsupportedBytecode;
+                }
+                size_t target = ip + 2 + (size_t)offset;
+                auto tIt = offsetToBlock.find(target);
+                if (tIt == offsetToBlock.end()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                if (op == jit::SistaV1::ExtJump) {
+                    out_.newValue(currentBlock_, Op::kBranch, Type::kVoid,
+                                   /*operands=*/{}, /*literal=*/tIt->second);
+                    out_.addEdge(currentBlock_, tIt->second);
+                    return LiftResult::kOk;
+                }
+                // Conditional extended jump.  Needs condition on stack.
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t cond = stack_.back();
+                stack_.pop_back();
+                auto fIt = offsetToBlock.find(ip + 2);
+                if (fIt == offsetToBlock.end()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                Op brOp = (op == jit::SistaV1::ExtJumpTrue)
+                            ? Op::kBranchIfTrue
+                            : Op::kBranchIfFalse;
+                out_.newValue(currentBlock_, brOp, Type::kVoid,
+                               /*operands=*/{cond});
+                out_.addEdge(currentBlock_, tIt->second);
+                out_.addEdge(currentBlock_, fIt->second);
                 return LiftResult::kOk;
             }
 
@@ -534,6 +669,9 @@ private:
     Method&                out_;
     uint32_t               currentBlock_ = 0;
     std::vector<uint32_t>  stack_;  // Value ids in stack order
+    // ExtendA / ExtendB prefix state.  Cleared after the consuming op.
+    int                    pendingExtA_ = 0;
+    int                    pendingExtB_ = 0;
 };
 
 }  // namespace

@@ -725,6 +725,92 @@ int main() {
         std::cout << "--- round-trip phi merge: taken=0x11 untaken=0x9 ok\n";
     }
 
+    // Round-trip 7.F: ExtJump forward — medium-distance unconditional.
+    // Skip a dead block via ExtJump +1.  The dead block ends in
+    // ReturnFalse (terminator, outgoing stack empty) so the jump
+    // target sees no predecessor-stack mismatch.
+    //
+    // ExtJump layout: [0xED, offsetByte]; offset = byte + extB*256.
+    // With extB=0 and offsetByte=1, target = (0+2) + 1 = 3.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::ExtJump, 0x01,      // 0,1: jump to bc=3
+            SistaV1::ReturnFalse,        // 2:   dead terminator
+            SistaV1::PushOne,            // 3:
+            SistaV1::ReturnTop,          // 4:
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtJump +1 lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ExtJump +1");
+        FakeStateWithBools state{};
+        state.trueOop  = 0xAAAA;
+        state.falseOop = 0xBBBB;
+        fn(&state);
+        check(state.returnValue == 9ULL, "ExtJump skips dead block; ^1");
+        std::cout << "--- round-trip ExtJump +1: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.G: ExtJumpFalse — medium-distance conditional.
+    // Pattern: PushFalse, ExtJumpFalse +2, PushOne, ReturnTop,
+    //          PushZero, ReturnTop
+    // False → take (skip PushOne), push 0, return 0 → SmallInt 0 bits = 1.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushFalse,          // 0
+            SistaV1::ExtJumpFalse, 0x02, // 1,2: if false, jump to bc=5
+            SistaV1::PushOne,            // 3
+            SistaV1::ReturnTop,          // 4
+            SistaV1::PushZero,           // 5 (taken branch)
+            SistaV1::ReturnTop,          // 6
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtJumpFalse lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ExtJumpFalse");
+        FakeStateWithBools state{};
+        state.trueOop  = 0xAAAA;
+        state.falseOop = 0xBBBB;
+        fn(&state);
+        check(state.returnValue == 1ULL,
+              "ExtJumpFalse taken → SmallInt 0 bits = 1");
+        std::cout << "--- round-trip ExtJumpFalse: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.H: ExtendB prefix gives ExtJump 256-byte reach.
+    // Use ExtendB 0, ExtJump +1 — equivalent to plain ExtJump +1 but
+    // exercises the prefix code path.  Dead block terminates to keep
+    // predecessor stacks aligned.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::ExtendB, 0x00,      // 0,1: extB = 0 (no-op high byte)
+            SistaV1::ExtJump, 0x01,      // 2,3: jump to bc=5
+            SistaV1::ReturnFalse,        // 4:   dead terminator
+            SistaV1::PushOne,            // 5
+            SistaV1::ReturnTop,          // 6
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "ExtendB + ExtJump lifts");
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower ExtendB + ExtJump");
+        FakeState state{};
+        fn(&state);
+        check(state.returnValue == 9ULL, "ExtendB 0 + ExtJump +3 → ^1");
+        std::cout << "--- round-trip ExtendB+ExtJump: returnValue=0x"
+                  << std::hex << state.returnValue << std::dec << "\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;
