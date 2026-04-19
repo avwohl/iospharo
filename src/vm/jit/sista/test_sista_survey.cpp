@@ -14,6 +14,7 @@
 #include "SistaIR.hpp"
 #include "SistaBuilder.hpp"
 #include "SistaLowering.hpp"
+#include "SistaRuntime.hpp"
 
 #include <cstdio>
 #include <cstring>
@@ -162,6 +163,28 @@ int main(int argc, const char** argv) {
     for (auto& kv : sorted) {
         if (shown++ >= 20) break;
         std::printf("  0x%02X  %zu\n", kv.first, kv.second);
+    }
+
+    // Runtime wrapper smoke test: compile a small sample of lifted
+    // methods through SistaRuntime (with real bytecodeBase baked in).
+    // Just verifies that compile() succeeds — actually invoking the
+    // compiled function requires a full JITState setup and stack, which
+    // is tier-up integration (next commit).
+    {
+        sista::Runtime runtime;
+        size_t runtimeAttempts = 0, runtimeCompiled = 0;
+        memory.forEachObjectInOldSpace([&](ObjectHeader* hdr) {
+            if (!hdr->isCompiledMethod()) return;
+            if (runtimeAttempts >= 100) return;
+            runtimeAttempts++;
+            Oop methodOop = Oop::fromObject(hdr);
+            auto fn = runtime.compile(methodOop, memory);
+            if (fn) runtimeCompiled++;
+        });
+        std::cout << "\n=== Runtime smoke test ===\n";
+        std::cout << "Attempted:  " << runtimeAttempts << "\n";
+        std::cout << "Compiled:   " << runtimeCompiled << "\n";
+        std::cout << "Cache size: " << runtime.compiledCount() << "\n";
     }
 
     // Malformed breakdown.
