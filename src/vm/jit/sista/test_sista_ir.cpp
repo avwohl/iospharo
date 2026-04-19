@@ -24,6 +24,8 @@
  *   needs to carry the intent.)
  */
 #include "SistaIR.hpp"
+#include "SistaBuilder.hpp"
+#include "../SistaV1.hpp"
 
 #include <cassert>
 #include <cstdio>
@@ -81,6 +83,69 @@ int main() {
     check(dump.find("return") != std::string::npos, "dump mentions return");
 
     std::cout << dump;
+
+    // ===== Lifter tests =====
+    using namespace pharo::jit;
+
+    // Integer>>yourself ≡ [PushReceiver, ReturnTop]
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,
+            SistaV1::ReturnTop,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
+                                                 0, 0, lifted, &failed);
+        check(r == LiftResult::kOk, "yourself lifts");
+        check(lifted.blocks.size() == 1, "one block");
+        // Expected: load_recv, return
+        check(lifted.values.size() == 2, "two IR values for yourself");
+        check(lifted.valueAt(0).op == Op::kLoadReceiver, "v0 load_recv");
+        check(lifted.valueAt(1).op == Op::kReturn, "v1 return");
+        check(lifted.valueAt(1).operands.size() == 1 &&
+              lifted.valueAt(1).operands[0] == 0, "return feeds v0");
+        std::cout << "\n--- lifted yourself ---\n" << lifted.toString();
+    }
+
+    // Integer>>yourselfViaReturn ≡ [ReturnReceiver]
+    {
+        Method lifted;
+        const uint8_t bc[] = { SistaV1::ReturnReceiver };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
+                                                 0, 0, lifted);
+        check(r == LiftResult::kOk, "return-receiver lifts");
+        check(lifted.values.size() == 2, "2 values: load_recv + return");
+        check(lifted.valueAt(1).op == Op::kReturn, "return terminator");
+        std::cout << "\n--- lifted ^ self ---\n" << lifted.toString();
+    }
+
+    // Pushtemp, ReturnTop ≡ [PushTemp 3, ReturnTop]
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 3),
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
+                                                 0, 4, lifted);
+        check(r == LiftResult::kOk, "pushTemp/return lifts");
+        check(lifted.valueAt(0).op == Op::kLoadTemp, "load_temp");
+        check(lifted.valueAt(0).literal == 3, "temp idx 3");
+        std::cout << "\n--- lifted ^ t3 ---\n" << lifted.toString();
+    }
+
+    // Unsupported bytecode bails cleanly
+    {
+        Method lifted;
+        const uint8_t bc[] = { 0xAA };  // arbitrary unmapped op
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
+                                                 0, 0, lifted, &failed);
+        check(r == LiftResult::kUnsupportedBytecode, "bail on unsupported");
+        check(failed == 0, "fails at offset 0");
+    }
+
     std::cout << "PASS\n";
     return 0;
 }

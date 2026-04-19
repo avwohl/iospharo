@@ -1,0 +1,63 @@
+/*
+ * SistaBuilder.hpp - Bytecode -> Sista IR lifter
+ *
+ * Phase 2 of docs/sista-inlining-plan.md.  Walks a CompiledMethod's
+ * bytecodes and produces a SistaMethod in SSA-lite form.
+ *
+ * Currently supports only the trivial subset needed to validate the
+ * IR shape end-to-end:
+ *   - PushReceiver  (0x4C)
+ *   - PushTemp N    (0x40-0x4B)
+ *   - PushLiteral N (0x50-0x53 single-byte, limited literal index)
+ *   - ReturnReceiver (0x58)
+ *   - ReturnTop      (0x5C)
+ *
+ * Anything else bails.  Expansion is incremental — each bytecode
+ * lands with its own test case.
+ */
+#ifndef PHARO_SISTA_BUILDER_HPP
+#define PHARO_SISTA_BUILDER_HPP
+
+#include "SistaIR.hpp"
+
+#include <memory>
+#include <vector>
+
+namespace pharo {
+
+class ObjectMemory;
+
+namespace sista {
+
+// Result of a lifting attempt.
+enum class LiftResult {
+    kOk,
+    kUnsupportedBytecode,
+    kMalformedMethod,
+};
+
+class Builder {
+public:
+    // Build IR for the given CompiledMethod.  On success, `out` is
+    // populated with a usable Method.  On failure, `out` is left in an
+    // indeterminate state and `failedAtBytecode` is set.
+    static LiftResult build(Oop compiledMethod,
+                             ObjectMemory& memory,
+                             Method& out,
+                             uint32_t* failedAtBytecode = nullptr);
+
+    // Direct-byte variant for unit tests that don't want to allocate
+    // a real CompiledMethod.  `bytecodes` is a span of Sista V1 ops,
+    // `numArgs` / `numTemps` describe the method frame.
+    static LiftResult buildFromBytes(const uint8_t* bytecodes,
+                                      size_t length,
+                                      uint32_t numArgs,
+                                      uint32_t numTemps,
+                                      Method& out,
+                                      uint32_t* failedAtBytecode = nullptr);
+};
+
+}  // namespace sista
+}  // namespace pharo
+
+#endif  // PHARO_SISTA_BUILDER_HPP
