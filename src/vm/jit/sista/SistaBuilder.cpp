@@ -115,32 +115,19 @@ public:
         for (size_t i = 0; i < len_;) {
             uint8_t op = bc_[i];
             if (op == jit::SistaV1::ExtendB) {
-                // ExtendB <byteArg>: byteArg sign-extended as signed byte
-                // supplies the high byte of the next operand.
-                if (i + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kMalformedMethod;
-                }
+                // Truncated at end = method trailer.  Skip silently.
+                if (i + 1 >= len_) break;
                 pass1ExtB = (int)(int8_t)bc_[i + 1];
                 i += 2;
                 continue;
             }
             if (op == jit::SistaV1::ExtendA) {
-                // ExtendA is a prefix for extended pushes/stores (not
-                // jumps).  We skip it in pass 1; pass 3 will bail if
-                // the following op isn't one we support yet.
-                if (i + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kMalformedMethod;
-                }
+                if (i + 1 >= len_) break;
                 i += 2;
                 continue;
             }
             if (isExtJump(op)) {
-                if (i + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kMalformedMethod;
-                }
+                if (i + 1 >= len_) break;
                 int offset = (int)bc_[i + 1] + (pass1ExtB << 8);
                 long longTarget = (long)(i + 2) + (long)offset;
                 // Out-of-range target: don't fail the whole method.
@@ -373,20 +360,23 @@ private:
             // next op consume it.  Does not emit IR.  If the next op
             // is unsupported, pass 3 bails and we stay correct.
             if (op == jit::SistaV1::ExtendA) {
+                // ExtendA at the very last byte = trailer boundary
+                // (Pharo trailer-byte happens to be 0xE0).  Real
+                // bytecodes end here; stop lifting this block.
                 if (ip + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(1);
                 }
-                pendingExtA_ = (int)bc_[ip + 1];  // unsigned for A
+                pendingExtA_ = (int)bc_[ip + 1];
                 ip += 2;
                 continue;
             }
             if (op == jit::SistaV1::ExtendB) {
                 if (ip + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(1);
                 }
-                pendingExtB_ = (int)(int8_t)bc_[ip + 1];  // signed for B
+                pendingExtB_ = (int)(int8_t)bc_[ip + 1];
                 ip += 2;
                 continue;
             }
@@ -398,8 +388,11 @@ private:
             // backward predecessors agree.
             if (isExtJump(op)) {
                 if (ip + 1 >= len_) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    // Truncated 2-byte instruction at end of method —
+                    // likely reading into the method trailer.  Bail
+                    // rather than fail the whole method's lift.
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(1);
                 }
                 int offset = (int)bc_[ip + 1] + (pendingExtB_ << 8);
                 pendingExtA_ = 0;
@@ -579,7 +572,11 @@ private:
                 continue;
             }
             if (op == jit::SistaV1::ExtStoreTemp) {
-                if (ip + 1 >= len_ || stack_.empty()) {
+                if (ip + 1 >= len_) {
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(1);
+                }
+                if (stack_.empty()) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
@@ -1248,13 +1245,6 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     numTemps = (numTemps > numArgs) ? numTemps - numArgs : 0;
 
     const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
-    // byteSize() includes the slot region (method header + literals),
-    // so the true bytecode length is byteSize() minus the literal-slot
-    // bytes.  Previously we used byteSize() directly, which included
-    // 8 * (1 + numLiterals) of slot bytes as "bytecode" — that caused
-    // Pass 1 to create phantom block starts in the slot region and
-    // short jumps at the real end-of-bytecodes to compute out-of-range
-    // targets (since they appeared to point into the literal trailer).
     size_t totalBytes = mh->byteSize();
     size_t slotBytes  = (1 + numLiterals) * 8;
     size_t bytecodeSize = (totalBytes > slotBytes) ? (totalBytes - slotBytes) : 0;
