@@ -16,6 +16,7 @@
 		A10006 /* PharoCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20006 /* PharoCanvasView.swift */; };
 		A10007 /* ImageManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20007 /* ImageManager.swift */; };
 		A10008 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A20008 /* Assets.xcassets */; };
+		A10020 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = A20020 /* PrivacyInfo.xcprivacy */; };
 		A10009 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A20009 /* Metal.framework */; };
 		A1000A /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000A /* MetalKit.framework */; };
 		A1000C /* Frameworks/libffi.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = A2000F /* Frameworks/libffi.xcframework */; };
@@ -48,6 +49,7 @@
 		A2000C /* iospharo-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "iospharo-Bridging-Header.h"; sourceTree = "<group>"; };
 		A2000D /* iospharo.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = iospharo.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A20020 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		A2000F /* Frameworks/libffi.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Frameworks/libffi.xcframework; sourceTree = SOURCE_ROOT; };
 		A20012 /* PharoImage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PharoImage.swift; sourceTree = "<group>"; };
 		A20013 /* ImageLibraryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageLibraryView.swift; sourceTree = "<group>"; };
@@ -101,6 +103,7 @@
 				A4000A /* Export */,
 				A20008 /* Assets.xcassets */,
 				A2000E /* Info.plist */,
+				A20020 /* PrivacyInfo.xcprivacy */,
 			);
 			path = iospharo;
 			sourceTree = "<group>";
@@ -253,6 +256,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A10008 /* Assets.xcassets in Resources */,
+				A10020 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
