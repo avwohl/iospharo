@@ -70,8 +70,14 @@ enum class Op : uint8_t {
     kNonLocalReturn,      // operand: value, home-frame-depth             -> Void (terminator)
 
     // --- Sends ---
-    kSendUnspeculated,    // operands: selector-literal-idx, nArgs, rcvr, args...
-                          // Fall-through to Tier 1 IC probe.              -> Oop
+    kSendUnspeculated,    // operands: rcvr, args...
+                          // literal packs the send descriptor:
+                          //   bits  0-15: selector literal index
+                          //   bits 16-23: nArgs
+                          //   bits 24-55: send bytecode offset (for state.ip on bail)
+                          // Fall-through to Tier 1 IC probe via ExitSend —
+                          // compiled code exits at the send and the
+                          // interpreter resumes the bytecode stream.      -> Oop
     kGuardClass,          // operands: receiver, expected-class-key, deopt-target
                           // If receiver.class != expected, call deopt.   -> Oop (same as rcvr, typed as inlined class)
     kInlineSend,          // operands: guard-id, callee-method, args...

@@ -137,10 +137,12 @@ int main() {
         std::cout << "\n--- lifted ^ t3 ---\n" << lifted.toString();
     }
 
-    // Unsupported bytecode bails cleanly
+    // Unsupported bytecode bails cleanly.
+    // Pick an op that is NOT a send / push / store / branch / arith —
+    // 0xEA (ExtSend) requires prefix handling we haven't wired up.
     {
         Method lifted;
-        const uint8_t bc[] = { 0xAA };  // arbitrary unmapped op
+        const uint8_t bc[] = { SistaV1::ExtSend };
         uint32_t failed = UINT32_MAX;
         LiftResult r = Builder::buildFromBytes(bc, sizeof(bc),
                                                  0, 0, lifted, &failed);
@@ -572,6 +574,58 @@ int main() {
         check(state.returnValue == 0x151ULL, "7 * 6 = 42");
         std::cout << "--- round-trip 7 * 6: returnValue=0x"
                   << std::hex << state.returnValue << std::dec << "\n";
+    }
+
+    // Round-trip 7.D: Unspeculated send — `self foo: arg` bails to
+    // interpreter at the send bytecode.  Pattern:
+    //   0: PushReceiver
+    //   1: PushTemp 0     (one arg)
+    //   2: Send1 sel=3    (0x93)
+    // We verify exitReason = ExitSend (2), sp advanced by 16 bytes
+    // (rcvr + 1 arg), and sendArgCount = 1.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            (uint8_t)(SistaV1::Send1Base + 3),   // 0x93: send lit[3], 1 arg
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 1, 1,
+                                                 lifted, &failed);
+        check(r == LiftResult::kOk, "send1 lifts");
+        check(lifted.values.size() == 3,
+              "3 IR values: rcvr, arg, kSendUnspeculated");
+        check(lifted.valueAt(2).op == Op::kSendUnspeculated,
+              "last value is send");
+        check(lifted.valueAt(2).operands.size() == 2,
+              "send has {rcvr, arg}");
+        // literal packs selIdx=3, nArgs=1, bcOffset=2.
+        check((lifted.valueAt(2).literal & 0xFFFF) == 3, "selIdx=3");
+        check(((lifted.valueAt(2).literal >> 16) & 0xFF) == 1, "nArgs=1");
+        check(((lifted.valueAt(2).literal >> 24) & 0xFFFFFFFF) == 2,
+              "bcOffset=2");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted, &failed);
+        check(fn != nullptr, "lower send1 succeeds");
+
+        // Set up a stack, receiver, and temp, then verify the bail path.
+        uint64_t stack[8] = {0};
+        uint64_t temps[1] = { 0xBBBB };
+        FakeState state{};
+        state.sp       = &stack[0];
+        state.receiver = 0xAAAA;
+        state.tempBase = temps;
+        fn(&state);
+
+        check(state.exitReason == 2, "exit = ExitSend");
+        check(stack[0] == 0xAAAA, "rcvr pushed first");
+        check(stack[1] == 0xBBBB, "arg pushed second");
+        // sp advanced past both pushes.
+        check(state.sp == &stack[2], "sp advanced by 16 bytes");
+        std::cout << "--- round-trip send1: exit=" << state.exitReason
+                  << " sp-advanced stack={0x" << std::hex << stack[0]
+                  << ", 0x" << stack[1] << std::dec << "}\n";
     }
 
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.

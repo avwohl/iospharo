@@ -196,6 +196,43 @@ private:
                 return LiftResult::kOk;
             }
 
+            // Literal-selector sends (Send0/1/2, 0x80-0xAF).
+            //
+            // MVP: treat as a one-way compiled exit.  The lifter emits
+            // kSendUnspeculated with the operands on the simulated
+            // stack, then returns kOk — the block ends here from
+            // compiled code's perspective.  The lowerer writes an
+            // ExitSend bail sequence; the interpreter resumes from
+            // state.ip and runs the send + all subsequent bytecodes.
+            //
+            // Post-send bytes in the same block go unlifted (dead IR)
+            // but that's fine — the interpreter sees the full stream.
+            // Real speculation (kGuardClass + kInlineSend) is Phase 4.
+            if (jit::SistaV1::isLiteralSend(op)) {
+                uint32_t nArgs;
+                if      (jit::SistaV1::isSend0(op)) nArgs = 0;
+                else if (jit::SistaV1::isSend1(op)) nArgs = 1;
+                else                                 nArgs = 2;
+                if (stack_.size() < nArgs + 1) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t selIdx = op & 0x0F;
+
+                // operands = {rcvr, arg0, arg1, ...}  (stack order bottom-up)
+                std::vector<uint32_t> ops(nArgs + 1);
+                for (uint32_t i = 0; i < nArgs + 1; i++) {
+                    ops[nArgs - i] = stack_.back();
+                    stack_.pop_back();
+                }
+                uint64_t lit = static_cast<uint64_t>(selIdx)
+                             | (static_cast<uint64_t>(nArgs)    << 16)
+                             | (static_cast<uint64_t>(bcOffset) << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                return LiftResult::kOk;
+            }
+
             // Arith sends 0x60-0x6F — inline the common ones on
             // SmallInt operands.  No class guard or overflow check
             // yet; safety lands with Phase 3 deopt.  Tests today

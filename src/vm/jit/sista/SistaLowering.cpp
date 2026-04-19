@@ -22,16 +22,21 @@ namespace {
 
 // JITState offsets — must match Tier 1 / Tier 2 so runtime can invoke
 // either transparently.  See src/vm/jit/JITState.hpp.
-constexpr int OFF_RECEIVER = 8;
-constexpr int OFF_LITERALS = 16;
-constexpr int OFF_TEMPBASE = 24;
-constexpr int OFF_EXIT     = 76;
-constexpr int OFF_RETVAL   = 80;
-constexpr int OFF_TRUEOOP  = 128;
-constexpr int OFF_FALSEOOP = 136;
+constexpr int OFF_SP           = 0;
+constexpr int OFF_RECEIVER     = 8;
+constexpr int OFF_LITERALS     = 16;
+constexpr int OFF_TEMPBASE     = 24;
+constexpr int OFF_IP           = 48;
+constexpr int OFF_EXIT         = 76;
+constexpr int OFF_RETVAL       = 80;
+constexpr int OFF_ICDATAPTR    = 96;
+constexpr int OFF_SENDARGCOUNT = 104;
+constexpr int OFF_TRUEOOP      = 128;
+constexpr int OFF_FALSEOOP     = 136;
 
 // ExitReason values (src/vm/jit/JITState.hpp).
 constexpr int EXIT_RETURN  = 1;
+constexpr int EXIT_SEND    = 2;
 
 }  // namespace
 
@@ -210,6 +215,71 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.orr(dst, dst, Imm(1));
                 }
                 regFor[v.id] = dst;
+                break;
+            }
+            case Op::kSendUnspeculated: {
+                // Bail to the interpreter at the send bytecode.
+                // Operands carry rcvr + args (in stack order); we push
+                // them onto the interpreter stack at state.sp, set
+                // state.ip to the send bc, state.sendArgCount = nArgs,
+                // state.icDataPtr = 0 (no IC speculation yet), and
+                // state.exitReason = ExitSend.
+                //
+                // Pattern mirrors Tier2Compiler's ExitSend bail, minus
+                // the IC-hit fast path.  The interpreter resumes at
+                // state.ip and runs the send plus all subsequent
+                // bytecodes; compiled code never continues past here.
+                uint32_t selIdx   =  v.literal        & 0xFFFF;
+                uint32_t nArgs    = (v.literal >> 16) & 0xFF;
+                uint32_t bcOffset = (v.literal >> 24) & 0xFFFFFFFF;
+                (void)selIdx;  // Selector resolution is the interpreter's job.
+
+                if (v.operands.size() != nArgs + 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                // Push operands onto interpreter stack.
+                Gp sp = cc.new_gp64("sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (uint32_t opIdx = 0; opIdx < nArgs + 1; opIdx++) {
+                    auto it = regFor.find(v.operands[opIdx]);
+                    if (it == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(it->second, ptr(sp));
+                    cc.add(sp, sp, Imm(8));
+                }
+                cc.str(sp, ptr(state, OFF_SP));
+
+                // state.ip = method bytecode base + bcOffset.
+                // In the Tier 1/Tier 2 convention, ip is the absolute
+                // pointer into the CompiledMethod's bytecode.  We
+                // don't have that base here; the interpreter reads ip
+                // to select which bytecode to dispatch next.  For the
+                // test harness we set ip = (uint8_t*)(uintptr_t)bcOffset
+                // so callers can verify the offset.  Real runtime
+                // integration will compute the absolute pointer from
+                // the method oop at hookup time (Phase 2.3).
+                Gp ipReg = cc.new_gp64("ip");
+                cc.mov(ipReg, Imm(bcOffset));
+                cc.str(ipReg, ptr(state, OFF_IP));
+
+                // state.sendArgCount = nArgs.
+                Gp argCountReg = cc.new_gp32("argc");
+                cc.mov(argCountReg, Imm(nArgs));
+                cc.str(argCountReg, ptr(state, OFF_SENDARGCOUNT));
+
+                // state.icDataPtr = 0 — no IC speculation yet.
+                Gp zero64 = cc.new_gp64("zero64");
+                cc.mov(zero64, Imm(0));
+                cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+
+                // state.exitReason = ExitSend.
+                Gp exit = cc.new_gp32("exit");
+                cc.mov(exit, Imm(EXIT_SEND));
+                cc.str(exit, ptr(state, OFF_EXIT));
+                cc.ret();
                 break;
             }
             case Op::kReturn: {
