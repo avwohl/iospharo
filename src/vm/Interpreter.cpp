@@ -6640,21 +6640,36 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         const bool ipAtBytecodeStart =
             (instructionPointer_ == methodBytes + bytecodeStart);
 
-        // MVP restriction: only dispatch when the method contains no
-        // send bytecodes.  Sista's ExitSend path is end-to-end wired,
-        // but the state.sp / state.ip hand-off to the interpreter is
-        // not yet fully debugged — dispatching methods with sends
-        // currently causes image-startup divergence (e.g., wrong
-        // receiver reaching `setGCParameters`).  Pure leaf methods
-        // (getters, setters, constant returns) cover the return path
-        // without exercising the bail edge.  Remove this guard once
-        // the ExitSend sync is known-correct.
-        bool hasSend = false;
+        // MVP restriction: only dispatch when the method has no
+        // bytecodes that Sista bails on.  Sista's ExitSend state-sync
+        // path currently causes image-startup divergence (wrong
+        // receiver reaches `setGCParameters`), so we limit dispatch
+        // to methods whose IR never emits kSendUnspeculated.
+        //
+        // Allowed send-like bytecodes Sista inlines without bailing:
+        //   ArithAdd 0x60, ArithSub 0x61, ArithMul 0x68
+        // Everything else in the 0x60-0xAF / ExtSend / ExtSuperSend
+        // / PushFullBlock / PushClosure / PushArray / PushThisContext
+        // range causes a bail and is disallowed.
+        //
+        // Note: the inlined arith ops have no type guard today (see
+        // docs/sista-inlining-plan.md Phase 2 remaining work), so
+        // admitting them is a bet that hot callers pass SmallInt
+        // receivers + args.  Silent miscompile is possible if a
+        // subclass overrides one of these methods with non-numeric
+        // arith; that risk lands with Phase 3 deopt, not here.
+        bool hasUnsafeOp = false;
         {
             size_t bcLen = totalBytes > bytecodeStart
                            ? totalBytes - bytecodeStart : 0;
             for (size_t i = 0; i < bcLen; i++) {
                 uint8_t op = methodBytes[bytecodeStart + i];
+                // Inlined arith — safe (tag-preserving, SmallInt assumption).
+                if (op == jit::SistaV1::ArithBase + 0   // +
+                 || op == jit::SistaV1::ArithBase + 1   // -
+                 || op == jit::SistaV1::ArithBase + 8) {// *
+                    continue;
+                }
                 if (jit::SistaV1::isSendBytecode(op)
                  || op == jit::SistaV1::ExtSend
                  || op == jit::SistaV1::ExtSuperSend
@@ -6662,13 +6677,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    hasSend = true;
+                    hasUnsafeOp = true;
                     break;
                 }
             }
         }
 
-        if (fn && g_debug.sistaDispatch && ipAtBytecodeStart && !hasSend) {
+        if (fn && g_debug.sistaDispatch && ipAtBytecodeStart && !hasUnsafeOp) {
             // Tier-up dispatch.  Set up JITState the same way
             // tryJITActivation does, invoke the Sista function,
             // handle the exit reason.
