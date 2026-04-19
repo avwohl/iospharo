@@ -3,8 +3,14 @@
  */
 #include "SistaLowering.hpp"
 
-#include <asmjit/asmjit.h>
+#if PHARO_JIT_ENABLED
+
+// Match Tier2Compiler's asmjit include pattern — pulling in
+// <asmjit/asmjit.h> instantiates a 2-arg CodeHolder::init inline
+// that references a symbol the xcframework's asmjit.a doesn't
+// export (3-arg form).
 #include <asmjit/a64.h>
+#include <asmjit/core/jitruntime.h>
 
 #include <unordered_map>
 #include <vector>
@@ -290,3 +296,24 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
 }  // namespace sista
 }  // namespace pharo
+
+#else  // !PHARO_JIT_ENABLED
+
+// Provide stubs so callers link cleanly on JIT-disabled slices
+// (xcframework / iOS).  Sista is a JIT feature; without the JIT
+// backend the lowerer can't emit anything.
+namespace pharo {
+namespace sista {
+
+Lowering::Lowering() {}
+Lowering::~Lowering() {}
+
+Lowering::CompiledFn Lowering::lower(const Method&, uint32_t* failedAtValue) {
+    if (failedAtValue) *failedAtValue = 0;
+    return nullptr;
+}
+
+}  // namespace sista
+}  // namespace pharo
+
+#endif  // PHARO_JIT_ENABLED
