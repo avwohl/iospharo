@@ -104,6 +104,7 @@ class XcodeProjGenerator {
         }
         ln("\t\t\(id("build_assets")) /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = \(id("file_assets")); };")
         ln("\t\t\(id("build_resources")) /* Resources in Resources */ = {isa = PBXBuildFile; fileRef = \(id("file_resources")); };")
+        ln("\t\t\(id("build_privacy")) /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = \(id("file_privacy")); };")
         for fw in frameworks {
             ln("\t\t\(id("build_fw_\(fw)")) /* \(fw).xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = \(id("file_fw_\(fw)")); };")
             ln("\t\t\(id("embed_fw_\(fw)")) /* \(fw).xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = \(id("file_fw_\(fw)")); settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };")
@@ -182,6 +183,7 @@ class XcodeProjGenerator {
         ln("\t\t\(id("file_assets")) /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = \"<group>\"; };")
         ln("\t\t\(id("file_resources")) /* Resources */ = {isa = PBXFileReference; lastKnownFileType = folder; path = Resources; sourceTree = \"<group>\"; };")
         ln("\t\t\(id("file_infoplist")) /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = \"<group>\"; };")
+        ln("\t\t\(id("file_privacy")) /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = \"<group>\"; };")
         ln("\t\t\(id("file_entitlements")) /* \(appName).entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = \"\(appName).entitlements\"; sourceTree = \"<group>\"; };")
         for fw in frameworks {
             ln("\t\t\(id("file_fw_\(fw)")) /* \(fw).xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = \"\(fw).xcframework\"; sourceTree = \"<group>\"; };")
@@ -238,6 +240,7 @@ class XcodeProjGenerator {
         ln("\t\t\t\t\(id("file_assets")) /* Assets.xcassets */,")
         ln("\t\t\t\t\(id("file_resources")) /* Resources */,")
         ln("\t\t\t\t\(id("file_infoplist")) /* Info.plist */,")
+        ln("\t\t\t\t\(id("file_privacy")) /* PrivacyInfo.xcprivacy */,")
         ln("\t\t\t\t\(id("file_entitlements")) /* \(appName).entitlements */,")
         if watchOS {
             ln("\t\t\t\t\(id("group_watchapp")) /* WatchApp */,")
@@ -399,6 +402,7 @@ class XcodeProjGenerator {
         ln("\t\t\tfiles = (")
         ln("\t\t\t\t\(id("build_assets")) /* Assets.xcassets */,")
         ln("\t\t\t\t\(id("build_resources")) /* Resources */,")
+        ln("\t\t\t\t\(id("build_privacy")) /* PrivacyInfo.xcprivacy */,")
         ln("\t\t\t);")
         ln("\t\t\trunOnlyForDeploymentPostprocessing = 0;")
         ln("\t\t};")

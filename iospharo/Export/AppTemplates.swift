@@ -1049,14 +1049,64 @@ enum AppTemplates {
             </dict>
             <key>UIUserInterfaceStyle</key>
             <string>Light</string>
-            <key>UILaunchStoryboardName</key>
-            <string></string>
+            <key>UILaunchScreen</key>
+            <dict>
+                <key>UIColorName</key>
+                <string>AccentColor</string>
+            </dict>
             <key>PharoImageFile</key>
             <string>\(imageFileName)</string>
             <key>PharoMaxOldSpaceSize</key>
             <integer>2147483648</integer>
             <key>PharoEdenSize</key>
             <integer>10485760</integer>
+        </dict>
+        </plist>
+        """
+    }
+
+    /// iOS 17+ privacy manifest — required for App Store submission.
+    /// Declares the required-reason APIs this app uses, matching what
+    /// the Pharo VM + companion Swift code touches.
+    static func privacyInfo() -> String {
+        """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+            <key>NSPrivacyTracking</key>
+            <false/>
+            <key>NSPrivacyTrackingDomains</key>
+            <array/>
+            <key>NSPrivacyCollectedDataTypes</key>
+            <array/>
+            <key>NSPrivacyAccessedAPITypes</key>
+            <array>
+                <dict>
+                    <key>NSPrivacyAccessedAPIType</key>
+                    <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+                    <key>NSPrivacyAccessedAPITypeReasons</key>
+                    <array>
+                        <string>C617.1</string>
+                    </array>
+                </dict>
+                <dict>
+                    <key>NSPrivacyAccessedAPIType</key>
+                    <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+                    <key>NSPrivacyAccessedAPITypeReasons</key>
+                    <array>
+                        <string>CA92.1</string>
+                    </array>
+                </dict>
+                <dict>
+                    <key>NSPrivacyAccessedAPIType</key>
+                    <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
+                    <key>NSPrivacyAccessedAPITypeReasons</key>
+                    <array>
+                        <string>E174.1</string>
+                    </array>
+                </dict>
+            </array>
         </dict>
         </plist>
         """

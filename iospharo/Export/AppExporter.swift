@@ -269,6 +269,12 @@ class AppExporter {
         try infoPlist.write(to: projectDir.appendingPathComponent("Info.plist"),
                            atomically: true, encoding: .utf8)
 
+        // iOS 17+ privacy manifest — required for App Store submission.
+        let privacyInfo = AppTemplates.privacyInfo()
+        try privacyInfo.write(
+            to: projectDir.appendingPathComponent("PrivacyInfo.xcprivacy"),
+            atomically: true, encoding: .utf8)
+
         let entitlements = AppTemplates.entitlements()
         try entitlements.write(
             to: projectDir.appendingPathComponent("\(config.appName).entitlements"),
