@@ -20,7 +20,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
   Multi-block control flow + inline arith + unspeculated sends +
-  phi nodes now work.  18 round-trip tests passing:
+  phi nodes + medium-distance jumps now work.  21 round-trip tests
+  passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -29,6 +30,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - PopStoreTemp 0..7, PopStoreRecvVar 0..7, Pop, Dup
       - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
       - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
+      - ExtendA / ExtendB (0xE0 / 0xE1) prefix bytes
+      - ExtJump / ExtJumpTrue / ExtJumpFalse (0xED-0xEF) forward only
       - Arith + - * on SmallInt operands (tag-preserving, no overflow
         check yet)
       - Send0/1/2 (0x80-0xAF) as ExitSend bail — interpreter takes
@@ -49,7 +52,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `6badd08` (setter pattern), `8680ccb` (multi-block via short
   jumps), `7c57dbe` (arith + - *), `eed3d37` (PHARO_JIT_ENABLED
   guard for xcframework link), `379e3f7` (unspeculated sends),
-  `6053428` (phi nodes for merge blocks).
+  `6053428` (phi nodes for merge blocks),
+  `7b98ee5` (ExtendB + ExtJump forward for medium-distance jumps).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
