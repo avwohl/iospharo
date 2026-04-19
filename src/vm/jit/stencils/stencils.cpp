@@ -416,11 +416,15 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 // We DERIVE caller's literals/argCount/bcStart from save.jitMethod on the
 // restore path so J2JSave doesn't have to store them (saves 3 stores per
 // send). See docs/jit-j2j-reduction-plan.md.
-#define J2J_INLINE_RETURN(s, retVal) do {                                     \
+// Two variants: base has a B5-trace hook; SimStack variant omits the
+// trace call so the compiler doesn't spill x19-x22 (which would fail
+// the SimStack register-safety verification).
+#define J2J_INLINE_RETURN_IMPL(s, retVal, TRACE) do {                         \
     if (s->j2jDepth > 0) {                                                   \
         s->j2jDepth--;                                                        \
         s->j2jSaveCursor -= sizeof(J2JSave);                                 \
         J2JSave* _sv = (J2JSave*)s->j2jSaveCursor;                          \
+        TRACE;  /* B5 trace event=2: retVal + saved caller sp */             \
         /* Restore caller state */                                           \
         s->receiver = _sv->receiver;                                          \
         s->tempBase = _sv->tempBase;                                          \
@@ -456,6 +460,19 @@ extern "C" void stencil_storeLitVar(JITState* s) {
         return;                                                               \
     }                                                                         \
 } while(0)
+
+#define J2J_INLINE_RETURN(s, retVal) \
+    J2J_INLINE_RETURN_IMPL(s, retVal, \
+        _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, \
+                           (uint64_t)(_sv->sp) | \
+                           ((uint64_t)_sv->sendArgCount << 48)))
+
+// B5 investigation: a function call here makes the bug disappear.
+// Using the trace hook always (even when tracing is disabled) to test
+// whether the effect is purely the function-call-related reloads.
+#define J2J_INLINE_RETURN_NO_TRACE(s, retVal) \
+    J2J_INLINE_RETURN_IMPL(s, retVal, \
+        _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, 0))
 
 // Return top of stack
 // Bytecode: 0x5C
@@ -3633,13 +3650,14 @@ extern "C" void stencil_jumpFalseBack_1(JITState* s) {
 
 // ----- RETURN variants -----
 
-// 1: return x19 (TOS in register)
+// 1: return x19 (TOS in register) — uses NO_TRACE variant to avoid
+// x19-x22 spill from the B5 trace call (SimStack register safety).
 extern "C" void stencil_returnTop_1(JITState* s) {
     uint64_t tos;
     asm volatile("mov %0, x19" : "=r"(tos));
     Oop retVal;
     retVal.bits = tos;
-    J2J_INLINE_RETURN(s, retVal);
+    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
@@ -3649,7 +3667,7 @@ extern "C" void stencil_returnTop_1(JITState* s) {
 extern "C" void stencil_returnTop_E(JITState* s) {
     s->sp--;
     Oop retVal = *(s->sp);
-    J2J_INLINE_RETURN(s, retVal);
+    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
@@ -3658,7 +3676,7 @@ extern "C" void stencil_returnTop_E(JITState* s) {
 // Return receiver with state 1 (discard x19, return self)
 extern "C" void stencil_returnReceiver_1(JITState* s) {
     Oop retVal = s->receiver;
-    J2J_INLINE_RETURN(s, retVal);
+    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);

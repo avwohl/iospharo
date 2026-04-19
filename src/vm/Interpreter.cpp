@@ -83,6 +83,12 @@ pharo::jit::CodeZone* g_jitCodeZone = nullptr;
 void* g_jitCodeZone = nullptr;
 #endif
 
+// B5 diagnostic: ring buffer dump from JITRuntime.cpp (extern "C").
+extern "C" void jit_b5_dump_ring(const char* tag);
+static inline void pharo_jit_b5_dump_ring(const char* tag) {
+    jit_b5_dump_ring(tag);
+}
+
 namespace pharo {
 
 // Set to false to disable all debug file logging for performance
@@ -7487,6 +7493,8 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 } catch (...) {
                     fprintf(stderr, "[DNU-STACK]   (stack dump failed)\n");
                 }
+                // B5 diagnostic: dump last J2J save/return ring buffer.
+                pharo_jit_b5_dump_ring(selName.c_str());
             }
             Oop rcvr = stackValue(argCount);
             Oop currentProc = getActiveProcess();

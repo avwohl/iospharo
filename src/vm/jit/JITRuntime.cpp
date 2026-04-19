@@ -38,12 +38,64 @@ extern "C" void jit_rt_send(JITState* state) {
     (void)state;
 }
 
-// B5 diagnostic: called from stencils at J2J save-push.
+// B5 diagnostic: ring buffer capturing last N J2J save/restore events.
+// Dump to stderr on request (via dumpB5Trace) or periodically.
+struct B5Event {
+    uint64_t count;
+    uint64_t sp;
+    uint64_t extra1;
+    uint64_t extra2;
+    int32_t depth;
+    uint32_t eventType;  // 1=save, 2=return
+};
+static constexpr size_t B5_RING = 512;
+static B5Event g_b5Ring[B5_RING];
+static size_t g_b5Head = 0;
+static size_t g_b5Count = 0;
+
+extern "C" void jit_b5_dump_ring(const char* tag) {
+    if (g_b5Count == 0) return;
+    fprintf(stderr, "=== B5 ring dump (%s, %zu total events, last %zu) ===\n",
+            tag ? tag : "?", g_b5Count, std::min(g_b5Count, B5_RING));
+    size_t n = std::min(g_b5Count, B5_RING);
+    size_t start = g_b5Count >= B5_RING ? g_b5Head : 0;
+    for (size_t i = 0; i < n; i++) {
+        const B5Event& e = g_b5Ring[(start + i) % B5_RING];
+        if (e.eventType == 1) {
+            fprintf(stderr, "[B5] #%llu SAVE sp=0x%llx depth=%d nArgs=%llu callerCM=0x%llx\n",
+                    (unsigned long long)e.count, (unsigned long long)e.sp,
+                    e.depth, (unsigned long long)e.extra1,
+                    (unsigned long long)e.extra2);
+        } else {
+            uint64_t savedSp = e.extra2 & 0xFFFFFFFFFFFFULL;
+            uint64_t savedArgs = (e.extra2 >> 48) & 0xFFFF;
+            fprintf(stderr, "[B5] #%llu RET sp=0x%llx depth=%d retVal=0x%llx "
+                           "savedSp=0x%llx savedArgs=%llu\n",
+                    (unsigned long long)e.count, (unsigned long long)e.sp,
+                    e.depth, (unsigned long long)e.extra1,
+                    (unsigned long long)savedSp, (unsigned long long)savedArgs);
+        }
+    }
+    fprintf(stderr, "=== end B5 dump ===\n");
+}
+
+// B5 diagnostic: called from stencils at J2J save-push and J2J return.
 // event=1: save-push.  extra1 = nArgs, extra2 = caller compiledMethod oop.
+// event=2: return.  extra1 = retVal.bits, extra2 = saved sp | args<<48.
 extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
     static bool trace = getenv("PHARO_B5_TRACE") != nullptr;
     if (!trace) return;
+    // Always record to ring; filter only controls live stderr print.
+    g_b5Count++;
+    B5Event& slot = g_b5Ring[g_b5Head];
+    slot.count = g_b5Count;
+    slot.sp = (uint64_t)(uintptr_t)state->sp;
+    slot.extra1 = extra1;
+    slot.extra2 = extra2;
+    slot.depth = state->j2jDepth;
+    slot.eventType = (uint32_t)event;
+    g_b5Head = (g_b5Head + 1) % B5_RING;
     // Only trace when the caller-oop matches one of the target methods in
     // the atEnd chain to limit output: decodeBytes:, readStream, and
     // PositionableStream class>>on: / PositionableStream>>on:.
@@ -65,7 +117,10 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
             }
         }
     }
-    if (focusCount > 0) {
+    // Focus filter only applies to event=1 (save-push, where extra2 is
+    // callerCM oop).  For event=2 (return), extra2 is the saved sp
+    // packed with sendArgCount, so filtering would reject valid events.
+    if (focusCount > 0 && event == 1) {
         bool hit = false;
         for (int i = 0; i < focusCount; i++) {
             if (focusOops[i] == extra2) { hit = true; break; }
@@ -73,13 +128,36 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         if (!hit) return;
     }
     static size_t count = 0;
+    static size_t skipEarly = []() {
+        const char* env = getenv("PHARO_B5_SKIP");
+        return env ? (size_t)atoll(env) : 0;
+    }();
+    static size_t maxEvents = []() {
+        const char* env = getenv("PHARO_B5_MAX");
+        return env ? (size_t)atoll(env) : 800;
+    }();
     count++;
-    if (count > 800) return;
-    fprintf(stderr, "[B5] #%zu evt=%llu sp=%p depth=%d cursor=%p "
-                    "nArgs=%llu callerCM=0x%llx\n",
-            count, (unsigned long long)event, state->sp, state->j2jDepth,
-            state->j2jSaveCursor, (unsigned long long)extra1,
-            (unsigned long long)extra2);
+    if (count <= skipEarly) return;
+    if (count - skipEarly > maxEvents) return;
+    if (event == 1) {
+        fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d cursor=%p "
+                        "nArgs=%llu callerCM=0x%llx\n",
+                count, state->sp, state->j2jDepth,
+                state->j2jSaveCursor, (unsigned long long)extra1,
+                (unsigned long long)extra2);
+    } else if (event == 2) {
+        uint64_t savedSp = extra2 & 0xFFFFFFFFFFFFULL;
+        uint64_t savedArgs = (extra2 >> 48) & 0xFFFF;
+        fprintf(stderr, "[B5] #%zu RET sp=%p depth=%d cursor=%p "
+                        "retVal=0x%llx savedSp=0x%llx savedArgs=%llu\n",
+                count, state->sp, state->j2jDepth,
+                state->j2jSaveCursor, (unsigned long long)extra1,
+                (unsigned long long)savedSp, (unsigned long long)savedArgs);
+    } else {
+        fprintf(stderr, "[B5] #%zu evt=%llu e1=0x%llx e2=0x%llx\n",
+                count, (unsigned long long)event,
+                (unsigned long long)extra1, (unsigned long long)extra2);
+    }
 }
 
 extern "C" void jit_rt_return(JITState* state) {
