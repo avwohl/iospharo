@@ -614,6 +614,17 @@ private:
     int resolverSemaIndex_ = 0;            // Semaphore to signal when lookup completes
     std::atomic<int> resolverStatus_{0};   // 0=Uninit, 1=Ready, 2=Busy, 3=Error
     bool suppressContextSwitch_ = false;  // Suppress forceYield after prim 198 (ensure:) activation
+
+    // Sampling profiler state (primitiveProfileSemaphore/Start/Sample/Primitive).
+    // When profileInterval_ > 0, every method activation decrements the counter;
+    // at 0 we snapshot the active process + current primitive index, reset to
+    // interval, and signal profileSemaphore_ if set.
+    Oop profileSemaphore_ = Oop::nil();   // Semaphore to signal on each sample
+    Oop profileSample_    = Oop::nil();   // Last active process at sample time
+    Oop profilePrimitive_ = Oop::nil();   // Last primitive method at sample time
+    int64_t profileInterval_ = 0;         // Counter reload; 0 disables profiling
+    int64_t profileCounter_  = 0;         // Current countdown
+
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool dispatchTraceLeakOn_ = false;  // Diagnostic: PHARO_DEBUG_DISP_LEAK=1 enables bytecode dispatch tracing during stack leaks
@@ -2303,6 +2314,12 @@ private:
     PrimitiveResult primitiveRegisterCallback(int argCount);         // Named: register FFI callback
     PrimitiveResult primitiveUnregisterCallback(int argCount);       // Named: unregister FFI callback
     PrimitiveResult primitiveCallbackReturn(int argCount);           // Named: callback return
+
+    // Sampling profiler — named primitives used by AndreasSystemProfiler.
+    PrimitiveResult primitiveProfileSemaphore(int argCount);         // Named: install sem
+    PrimitiveResult primitiveProfileStart(int argCount);             // Named: start/stop
+    PrimitiveResult primitiveProfileSample(int argCount);            // Named: last process
+    PrimitiveResult primitiveProfilePrimitive(int argCount);         // Named: last primitive
 
     // TFFI helpers (private)
     void* tffi_readAddress(Oop externalAddress);

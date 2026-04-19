@@ -28301,4 +28301,64 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     return PrimitiveResult::Success;
 }
 
+// ===== SAMPLING PROFILER =====
+//
+// Four named primitives implementing the AndreasSystemProfiler /
+// MessageTally sampling protocol:
+//   primitiveProfileSemaphore: — install (or clear with nil) the semaphore
+//       that will be signaled each time a sample fires.
+//   primitiveProfileStart:    — arg: N interrupt-checks between samples
+//       (≤0 disables).  Resets counters.
+//   primitiveProfileSample    — return the active process snapshot from
+//       the last sample, or nil if none.
+//   primitiveProfilePrimitive — return the primitive method at the last
+//       sample, or nil.
+//
+// Sampling happens in the periodic check (every ~1024 bytecodes).  When
+// profileInterval_ > 0 and profileCounter_ drops to 0, we snapshot
+// getActiveProcess() + method_ (if its primitive index is > 0) and signal
+// profileSemaphore_.  Counter resets to profileInterval_.  This matches
+// the Cog `primitiveProfileStart` semantic (count is in "interrupt checks"
+// which is our periodic-check granularity — close enough for stat profile).
+
+PrimitiveResult Interpreter::primitiveProfileSemaphore(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop sem = stackValue(0);
+    // Accept a Semaphore object or nil (= disable).
+    profileSemaphore_ = sem;
+    pop();  // pop arg, leave receiver as return value
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveProfileStart(int argCount) {
+    if (argCount != 1) return PrimitiveResult::Failure;
+    Oop countOop = stackValue(0);
+    if (!countOop.isSmallInteger()) return PrimitiveResult::Failure;
+    int64_t count = countOop.asSmallInteger();
+    if (count <= 0) {
+        // Disable profiler.
+        profileInterval_ = 0;
+        profileCounter_  = 0;
+    } else {
+        profileInterval_ = count;
+        profileCounter_  = count;
+    }
+    pop();  // pop arg, leave receiver
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveProfileSample(int argCount) {
+    (void)argCount;
+    pop();  // pop receiver
+    push(profileSample_);
+    return PrimitiveResult::Success;
+}
+
+PrimitiveResult Interpreter::primitiveProfilePrimitive(int argCount) {
+    (void)argCount;
+    pop();  // pop receiver
+    push(profilePrimitive_);
+    return PrimitiveResult::Success;
+}
+
 } // namespace pharo

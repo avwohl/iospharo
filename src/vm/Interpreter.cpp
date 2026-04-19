@@ -1666,6 +1666,26 @@ void Interpreter::interpret() {
         g_stepNum += 1024;
         g_watchdogSteps.store(g_stepNum, std::memory_order_relaxed);
 
+        // Sampling profiler tick (installed by primitiveProfileStart).
+        // Counter is "interrupt checks" in Cog terminology — each periodic
+        // check here counts as one.  When it hits 0, snapshot active
+        // process + current method (if primitive) and signal sem.
+        if (__builtin_expect(profileInterval_ > 0, 0)) {
+            if (--profileCounter_ <= 0) {
+                profileCounter_ = profileInterval_;
+                profileSample_ = getActiveProcess();
+                // Current method is the primitive if any (method_ holds it
+                // during its fallback; for non-prim methods it holds the
+                // bytecode method).  Approximate what "last primitive"
+                // means — stock Cog distinguishes, we sample whichever
+                // method is currently executing.
+                profilePrimitive_ = method_;
+                if (profileSemaphore_.isObject() && !profileSemaphore_.isNil()) {
+                    synchronousSignal(profileSemaphore_);
+                }
+            }
+        }
+
 #if PROFILE_BYTECODE_PAIRS
         // Dump pair counts to file after 100M bytecodes (one-shot)
         if (__builtin_expect(totalSteps == 100 * 1024 * 1024, 0)) {
@@ -10948,6 +10968,11 @@ void Interpreter::initializeNamedPrimitives() {
     registerNamedPrimitive("", "primitiveRegisterCallback", &Interpreter::primitiveRegisterCallback);
     registerNamedPrimitive("", "primitiveUnregisterCallback", &Interpreter::primitiveUnregisterCallback);
     registerNamedPrimitive("", "primitiveCallbackReturn", &Interpreter::primitiveCallbackReturn);
+    // Sampling profiler (AndreasSystemProfiler / MessageTally)
+    registerNamedPrimitive("", "primitiveProfileSemaphore", &Interpreter::primitiveProfileSemaphore);
+    registerNamedPrimitive("", "primitiveProfileStart",     &Interpreter::primitiveProfileStart);
+    registerNamedPrimitive("", "primitiveProfileSample",    &Interpreter::primitiveProfileSample);
+    registerNamedPrimitive("", "primitiveProfilePrimitive", &Interpreter::primitiveProfilePrimitive);
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
