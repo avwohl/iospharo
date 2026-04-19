@@ -19,6 +19,7 @@
 #include "jit/TrampolineAsm.hpp"
 #include "jit/Tier2Compiler.hpp"
 #include "jit/SistaV1.hpp"
+#include "jit/sista/SistaRuntime.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
@@ -6588,6 +6589,27 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // std::cerr << std::dec; // DEBUG
 
 #if PHARO_JIT_ENABLED
+    // Sista speculative-compile hook (PHARO_SISTA_COMPILE=1).
+    // Runs on every activation — including non-Tier-1-compiled methods
+    // the JIT hasn't seen yet — which is exactly what we want to
+    // measure Sista's real-workload behavior.  Populates Sista's cache
+    // without dispatching.  Real tier-up wiring comes later.
+    if (g_debug.sistaCompile) {
+        static sista::Runtime* sista = new sista::Runtime();
+        static size_t attempts = 0, hits = 0;
+        static bool banner = false;
+        if (!banner) {
+            fprintf(stderr, "[SISTA-COMPILE] hook active\n");
+            banner = true;
+        }
+        attempts++;
+        if (sista->compile(method, memory_)) hits++;
+        if (attempts == 1 || (attempts & 0xFFF) == 0) {
+            fprintf(stderr, "[SISTA-COMPILE] %zu/%zu (cache=%zu)\n",
+                    hits, attempts, sista->compiledCount());
+        }
+    }
+
     // Try JIT execution. If it handles the method, it pops the frame
     // and pushes the return value — the dispatch loop continues with
     // the caller's next bytecode.
