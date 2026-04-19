@@ -84,10 +84,15 @@ void* g_jitCodeZone = nullptr;
 #endif
 
 // B5 diagnostic: ring buffer dump from JITRuntime.cpp (extern "C").
+// JIT-only — no-op when JIT is disabled (iOS Device builds).
+#if PHARO_JIT_ENABLED
 extern "C" void jit_b5_dump_ring(const char* tag);
 static inline void pharo_jit_b5_dump_ring(const char* tag) {
     jit_b5_dump_ring(tag);
 }
+#else
+static inline void pharo_jit_b5_dump_ring(const char*) {}
+#endif
 
 namespace pharo {
 

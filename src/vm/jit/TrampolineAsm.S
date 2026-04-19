@@ -23,7 +23,7 @@
 // updating src/vm/jit/JITState.hpp, Interpreter.cpp (J2JSave struct), and
 // scripts/extract_stencils.py.
 
-#if defined(__aarch64__)
+#if defined(__aarch64__) && PHARO_JIT_ENABLED
 
     .text
     .p2align 4
@@ -407,4 +407,4 @@ Ltramp_exit:
     ldp     x29, x30, [sp], #128
     ret
 
-#endif // __aarch64__
+#endif // __aarch64__ && PHARO_JIT_ENABLED
