@@ -6713,7 +6713,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 #if defined(__APPLE__) && defined(__arm64__)
             pthread_jit_write_protect_np(1);
 #endif
-            JIT_CALL(fn, &sstate);
+            // Direct call — Sista's asmjit-generated code emits a
+            // standard AArch64 prologue/epilogue via asmjit's
+            // Compiler, so it saves/restores any callee-saved
+            // registers it uses.  No need for JIT_CALL's broad
+            // clobber list (which exists for T1 stencils that do
+            // stash x19-x22 without save/restore).
+            fn(&sstate);
 #if defined(__APPLE__) && defined(__arm64__)
             pthread_jit_write_protect_np(0);
 #endif
