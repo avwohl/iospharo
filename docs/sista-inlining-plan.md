@@ -35,10 +35,18 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   **Phase 2.3 in progress.**  Lowering::lower now accepts a
   `bytecodeBase` so send-bail sets state.ip to the absolute
   pointer the interpreter expects.  SistaRuntime (new class)
-  provides a compile-on-demand wrapper with oop-keyed caching;
-  100/100 methods compile cleanly through it in the smoke test.
-  Still to do before tier-up wiring: state.sp synchronization,
-  resume-after-send handling, GC-stable cache keying.
+  provides a compile-on-demand wrapper with oop-keyed caching.
+
+  **End-to-end execute validated**: a survey pass picks methods
+  whose IR is self-contained (no sends / no deref) and invokes
+  them with a synthetic JITState.  **500/500 real Pharo 13
+  methods compiled, executed, and returned cleanly via
+  ExitReturn.**  The pipeline produces actually-runnable code.
+
+  Still to do before tier-up wiring: state.sp synchronization
+  with the interpreter, resume-after-send handling (reentry /
+  continuation), and GC-stable cache keying (currently keyed
+  by raw oop bits which go stale across compaction).
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -102,7 +110,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   `6ac751e` (Phase 2.3 prereq: Lowering accepts bytecodeBase
   so send-bail uses absolute state.ip),
   `bb72cf8` (SistaRuntime class — compile-on-demand wrapper
-  with oop-keyed caching; 100/100 smoke test pass).
+  with oop-keyed caching; 100/100 smoke test pass),
+  `3f4044c` (end-to-end execute smoke test: 500/500 real image
+  methods compiled, executed, and returned cleanly).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
