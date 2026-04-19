@@ -142,29 +142,29 @@ public:
                     return LiftResult::kMalformedMethod;
                 }
                 int offset = (int)bc_[i + 1] + (pass1ExtB << 8);
-                // Target = ip-after-instruction + offset.  After reading
-                // 2 bytes, ip points to i+2.  Both signs allowed:
-                // negative = backward (loops).
                 long longTarget = (long)(i + 2) + (long)offset;
-                if (longTarget < 0 || (size_t)longTarget > len_) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kMalformedMethod;
+                // Out-of-range target: don't fail the whole method.
+                // The jump is likely in a dead-code region (padding
+                // after a return) that orphan-skip will elide in
+                // pass 3.  Skip registering this jump's target /
+                // fallthrough as block starts.  If a live block
+                // actually reaches this jump, pass 3's short-jump
+                // handler catches the unknown-target and bails that
+                // block — but the rest of the method still lifts.
+                if (longTarget >= 0 && (size_t)longTarget <= len_) {
+                    blockStarts.insert((size_t)longTarget);
+                    if (i + 2 < len_) blockStarts.insert(i + 2);
                 }
-                size_t target = (size_t)longTarget;
-                blockStarts.insert(target);
-                if (i + 2 < len_) blockStarts.insert(i + 2);
                 pass1ExtB = 0;
                 i += 2;
                 continue;
             }
             if (isShortJump(op)) {
                 size_t target = shortJumpTarget(i, op);
-                if (target > len_) {
-                    if (failedAtBytecode) *failedAtBytecode = (uint32_t)i;
-                    return LiftResult::kMalformedMethod;
+                if (target <= len_) {
+                    blockStarts.insert(target);
+                    if (i + 1 < len_) blockStarts.insert(i + 1);
                 }
-                blockStarts.insert(target);
-                if (i + 1 < len_) blockStarts.insert(i + 1);
                 pass1ExtB = 0;
                 i++;
                 continue;
@@ -406,14 +406,14 @@ private:
                 pendingExtB_ = 0;
                 long longTarget = (long)(ip + 2) + (long)offset;
                 if (longTarget < 0 || (size_t)longTarget > len_) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    // Out-of-range: bail this block to the interpreter
+                    // rather than malforming the whole method.
+                    return bailToInterpreter(2);
                 }
                 size_t target = (size_t)longTarget;
                 auto tIt = offsetToBlock.find(target);
                 if (tIt == offsetToBlock.end()) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    return bailToInterpreter(2);
                 }
                 if (op == jit::SistaV1::ExtJump) {
                     out_.newValue(currentBlock_, Op::kBranch, Type::kVoid,
@@ -627,8 +627,10 @@ private:
                 size_t target = shortJumpTarget(ip, op);
                 auto tIt = offsetToBlock.find(target);
                 if (tIt == offsetToBlock.end()) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                    // Target not a block start — dead-code jump.  Bail
+                    // this block to the interpreter instead of failing
+                    // the whole method.
+                    return bailToInterpreter(1);
                 }
                 if (isShortUncondJump(op)) {
                     // stack_ contents become outgoing stack, feeding

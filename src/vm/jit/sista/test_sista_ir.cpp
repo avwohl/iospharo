@@ -1083,6 +1083,39 @@ int main() {
                   << std::hex << state.returnValue << std::dec << "\n";
     }
 
+    // Diagnostic: replay a bytecode pattern that malforms over real
+    // images — expose the exact failure path for debugging.
+    {
+        Method lifted;
+        // From a Pharo 13 CompiledMethod seen in the survey.  First
+        // byte is PushLitVar, then two sends, then ReturnTop.  The
+        // remaining bytes are unreachable from compiled code (only
+        // the interpreter reaches them via the send bail).
+        const uint8_t bc[] = {
+            0x10, 0x81, 0x82, 0x5C,        // push litvar, send0, send0, return
+            0x00, 0x02, 0x26, 0x1D, 0xB0,  // short jump target should exist
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x33, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x01,
+            0x28, 0xB0, 0x05, 0x20, 0x01, 0x00, 0x00, 0x00,
+            0x65, 0x0C, 0x00, 0x01, 0x00, 0x00, 0x00, 0x04,
+            0xC0, 0x81, 0xE8, 0x1F, 0x01, 0x00, 0x00, 0x00,
+            0x50, 0xA2, 0x05, 0x20, 0x01, 0x00, 0x00, 0x00, 0x00,
+        };
+        uint32_t failed = UINT32_MAX;
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 0, 0,
+                                                 lifted, &failed);
+        // Block 0 ends in a send-bail.  All other blocks are
+        // orphan (no forward predecessor — block 0's terminator is
+        // a send, not a branch).  Orphan-skip should elide them
+        // and lifting should succeed.
+        if (r != LiftResult::kOk) {
+            std::fprintf(stderr, "MALFORM DIAG: result=%d failedAt=%u\n",
+                         (int)r, failed);
+        }
+        check(r == LiftResult::kOk, "malform sample lifts via orphan-skip");
+        std::cout << "--- diag: malform sample ok (orphan-skip works)\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

@@ -91,13 +91,14 @@ int main(int argc, const char** argv) {
         }
         case sista::LiftResult::kUnsupportedBytecode: {
             liftUnsupported++;
-            // Record the blocking opcode.  `failedAt` is the bytecode
-            // offset within the method's bytecode stream.
             if (failedAt != UINT32_MAX) {
                 ObjectHeader* mh = methodOop.asObjectPtr();
                 const uint8_t* bytes = mh->bytes()
                                      + (1 + numLiterals) * 8;
-                size_t bcSize = mh->byteSize();
+                size_t totalBytes = mh->byteSize();
+                size_t slotBytes  = (1 + numLiterals) * 8;
+                size_t bcSize = (totalBytes > slotBytes)
+                                ? totalBytes - slotBytes : 0;
                 if (failedAt < bcSize) {
                     blockingOp[bytes[failedAt]]++;
                 }
@@ -110,7 +111,10 @@ int main(int argc, const char** argv) {
                 ObjectHeader* mh = methodOop.asObjectPtr();
                 const uint8_t* bytes = mh->bytes()
                                      + (1 + numLiterals) * 8;
-                size_t bcSize = mh->byteSize();
+                size_t totalBytes = mh->byteSize();
+                size_t slotBytes  = (1 + numLiterals) * 8;
+                size_t bcSize = (totalBytes > slotBytes)
+                                ? totalBytes - slotBytes : 0;
                 if (failedAt >= bcSize) malformedAtEnd++;
                 else {
                     uint8_t failOp = bytes[failedAt];
