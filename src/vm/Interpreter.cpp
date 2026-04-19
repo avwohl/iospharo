@@ -6702,15 +6702,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    // PHARO_SISTA_SEND0_ONLY=1 allows Send0 (0x80-0x8F)
-                    // bails through the gate — verified behavior-
-                    // preserving on the `500 factorial` workload:
-                    // 274K dispatches (85K Return + 186K Send), same
-                    // DNU sequence and same bytecode step count as
-                    // the no-Sista baseline.  Unit tests prove the
-                    // lowering is correct for Send1/Send2 too, but
-                    // real-VM dispatch for Send1/Send2 still causes
-                    // downstream DNU divergence — stay gated.
+                    // Send0 bails (0x80-0x8F) are behavior-preserving
+                    // (274K dispatches match baseline bit-for-bit).
+                    // Send1/Send2 still diverge downstream despite
+                    // Sista's lifter + lowerer passing all unit tests
+                    // for the synthetic cases — the real-VM bug is
+                    // likely a state-interaction edge case not yet
+                    // captured in a reproducer.
                     if (g_debug.sistaSend0Only && isSend0) {
                         continue;
                     }

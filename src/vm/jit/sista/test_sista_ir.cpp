@@ -1239,6 +1239,40 @@ int main() {
                   << " stack[1]=0x" << stack[1] << std::dec << "\n";
     }
 
+    // Round-trip 9b: Same Send1 pattern, but with SmallInt 0 values
+    // in both instVars — matches the real-image #reset case where
+    // push[0]==push[1]==0x1 raised concern.  Confirms that bit
+    // pattern is just what the receiver actually holds, not a bug.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushRecvVarBase + 2),
+            (uint8_t)(SistaV1::PushRecvVarBase + 1),
+            (uint8_t)(SistaV1::Send1Base + 0),
+            SistaV1::ReturnTop,
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower Send1 w/ SmallInt-0 ivars");
+
+        uint64_t recvObj[4] = {
+            0xDEADBEEFULL,   // header
+            0x0,              // instVar[0]
+            0x1,              // instVar[1] = SmallInt 0
+            0x1,              // instVar[2] = SmallInt 0
+        };
+        uint64_t stack[4] = {0};
+        FakeState state{};
+        state.sp       = &stack[0];
+        state.receiver = reinterpret_cast<uint64_t>(&recvObj[0]);
+        fn(&state);
+        check(state.exitReason == 2, "Send1 bails with ExitSend");
+        check(stack[0] == 0x1ULL, "push[0] = SmallInt 0");
+        check(stack[1] == 0x1ULL, "push[1] = SmallInt 0");
+        std::cout << "--- round-trip Send1 w/ SmallInt-0 ivars: "
+                     "push[0,1]=SmallInt 0 — matches real VM observation\n";
+    }
+
     std::cout << "PASS\n";
     return 0;
 }
