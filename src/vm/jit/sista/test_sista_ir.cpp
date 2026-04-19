@@ -395,6 +395,34 @@ int main() {
         check(state.returnValue == 9ULL, "PushOne/Dup/Pop/Ret yields 1");
     }
 
+    // Round-trip 7.8: Setter — PushTemp 0, PopStoreRecvVar 1, ReturnReceiver.
+    // Simulates `x: aValue  x := aValue. ^ self`.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 0),       // load arg (temp 0)
+            (uint8_t)(SistaV1::PopStoreRecvBase + 1),   // store to ivar[1]
+            SistaV1::ReturnReceiver,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 1, 1, lifted);
+        check(r == LiftResult::kOk, "setter lifts");
+
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower setter succeeds");
+
+        uint64_t obj[4]   = { 0xDEADDEAD, 0x1111, 0xBEEF, 0x3333 };
+        uint64_t temps[1] = { 0xFACADE };
+        FakeState state{};
+        state.receiver = reinterpret_cast<uint64_t>(&obj[0]);
+        state.tempBase = temps;
+        fn(&state);
+        check(obj[2] == 0xFACADE, "ivar[1] now holds arg value");
+        check(state.returnValue == reinterpret_cast<uint64_t>(&obj[0]),
+              "return value = receiver");
+        std::cout << "--- round-trip setter: ivar[1]=0x"
+                  << std::hex << obj[2] << std::dec << "\n";
+    }
+
     // Round-trip 8: ^ literal[2] — PushLitConst 2, ReturnTop.
     {
         Method lifted;

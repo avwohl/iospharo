@@ -105,6 +105,26 @@ public:
                 continue;
             }
 
+            // Pop-store-recv-var N (0xC8-0xCF): pop TOS, store to
+            // receiver.instVar[N].  Setter pattern.
+            if (op >= jit::SistaV1::PopStoreRecvBase
+                && op <= jit::SistaV1::PopStoreRecvLast) {
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t ivarIdx = op - jit::SistaV1::PopStoreRecvBase;
+                uint32_t val = stack_.back();
+                stack_.pop_back();
+                uint32_t recv = out_.newValue(currentBlock_,
+                                               Op::kLoadReceiver, Type::kOop);
+                out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                               /*operands=*/{recv, val},
+                               /*literal=*/ivarIdx);
+                ip++;
+                continue;
+            }
+
             // Pop (0xD8): discard TOS, no other effect.
             if (op == 0xD8) {
                 if (stack_.empty()) {

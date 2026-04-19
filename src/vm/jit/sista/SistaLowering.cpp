@@ -129,6 +129,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // kStoreTemp produces void — nothing to record.
                 break;
             }
+            case Op::kStoreInstVar: {
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto recvIt = regFor.find(v.operands[0]);
+                auto valIt  = regFor.find(v.operands[1]);
+                if (recvIt == regFor.end() || valIt == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                // Slot N at byte offset 8 + N*8 from object pointer.
+                cc.str(valIt->second,
+                        ptr(recvIt->second,
+                            8 + static_cast<int>(v.literal) * 8));
+                break;
+            }
             case Op::kConstantOop: {
                 Gp dst = cc.new_gp64("const");
                 cc.mov(dst, Imm(v.literal));
