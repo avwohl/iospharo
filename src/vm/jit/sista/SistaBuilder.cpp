@@ -278,6 +278,11 @@ private:
         while (ip < len_) {
             uint8_t op = bc_[ip];
             uint32_t bcOffset = static_cast<uint32_t>(ip);
+            // If we're not mid-Extend-prefix, this ip starts a new
+            // logical instruction.
+            if (pendingExtA_ == 0 && pendingExtB_ == 0) {
+                currentInstrStart_ = ip;
+            }
 
             // Crossed into a new block — fall-through.  The current
             // stack_ contents become the outgoing stack and feed the
@@ -593,6 +598,7 @@ private:
                                                | (desc >> 3)) & 0xFFFF);
                 uint32_t nArgs  = (uint32_t)(((pendingExtB_ << 3)
                                                | (desc & 0x07)) & 0xFF);
+                uint32_t bailOffset = (uint32_t)currentInstrStart_;
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
                 if (stack_.size() < nArgs + 1) {
@@ -605,8 +611,47 @@ private:
                     stack_.pop_back();
                 }
                 uint64_t lit = (uint64_t)selIdx
-                             | ((uint64_t)nArgs    << 16)
-                             | ((uint64_t)bcOffset << 24);
+                             | ((uint64_t)nArgs      << 16)
+                             | ((uint64_t)bailOffset << 24);
+                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                               Type::kOop, std::move(ops), lit);
+                return LiftResult::kOk;
+            }
+
+            // ExtSuperSend (0xEB): like ExtSend but with super-lookup.
+            // For the bail path we just re-dispatch via the interpreter —
+            // it handles super correctly.  We skip directed-super
+            // (extB >= 64 pops an extra "definingClass" operand) for
+            // now; those bail as unsupported.
+            if (op == jit::SistaV1::ExtSuperSend) {
+                if (ip + 1 >= len_) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                if (pendingExtB_ >= 64) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kUnsupportedBytecode;  // directed super
+                }
+                uint8_t desc = bc_[ip + 1];
+                uint32_t selIdx = (uint32_t)(((pendingExtA_ << 5)
+                                               | (desc >> 3)) & 0xFFFF);
+                uint32_t nArgs  = (uint32_t)(((pendingExtB_ << 3)
+                                               | (desc & 0x07)) & 0xFF);
+                uint32_t bailOffset = (uint32_t)currentInstrStart_;
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                if (stack_.size() < nArgs + 1) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                std::vector<uint32_t> ops(nArgs + 1);
+                for (uint32_t i = 0; i < nArgs + 1; i++) {
+                    ops[nArgs - i] = stack_.back();
+                    stack_.pop_back();
+                }
+                uint64_t lit = (uint64_t)selIdx
+                             | ((uint64_t)nArgs      << 16)
+                             | ((uint64_t)bailOffset << 24);
                 out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
                 return LiftResult::kOk;
@@ -846,6 +891,15 @@ private:
                 continue;
             }
 
+            // 0x54-0x57 and 0xDA-0xDF: unassigned / reserved no-ops
+            // per the Sista V1 spec.  Pharo images emit these (as
+            // compiler artifacts / alignment) and the interpreter
+            // treats them as no-ops.  Skip in the lifter.
+            if ((op >= 0x54 && op <= 0x57) || (op >= 0xDA && op <= 0xDF)) {
+                ip++;
+                continue;
+            }
+
             // Dup (0x53): duplicate TOS.
             if (op == jit::SistaV1::Dup) {
                 if (stack_.empty()) {
@@ -976,6 +1030,11 @@ private:
     // ExtendA / ExtendB prefix state.  Cleared after the consuming op.
     int                    pendingExtA_ = 0;
     int                    pendingExtB_ = 0;
+    // Start offset of the current "logical instruction" — includes any
+    // leading ExtendA/B prefix bytes.  Used for send-bail state.ip so
+    // the interpreter re-processes the Extend prefix when resuming
+    // (otherwise it re-dispatches the send with stale ext regs = 0).
+    size_t                 currentInstrStart_ = 0;
     // Arg counts for SpecialSend opcodes 0x70-0x7F (if known).
     const uint8_t*         specialSendArgCount_ = nullptr;
 };
