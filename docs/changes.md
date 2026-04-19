@@ -2,6 +2,40 @@
 
 2026-04-19
 
+## scheduler: relinquishProcessor yields to ready processes BEFORE sleeping
+
+`primitiveRelinquishProcessor` had two paired bugs that together
+starved forked test processes to a ~1500× slowdown:
+
+1. Unconditional 10 ms `usleep` *before* considering transfer —
+   if a lower-or-same priority process was ready, we burned 10 ms
+   of wall clock waiting instead of handing over the CPU
+   immediately.
+2. Transfer search ran highest-priority-first and skipped same
+   priority.  The original comment said that prevented P79 bounce,
+   but the real effect was: the P80 main poller and the P60 SUnit
+   watchdog ping-ponged between each other every 10 ms while the
+   P40 test fork never got CPU.  Same-priority round-robin never
+   triggered at all.
+
+Fix: check the scheduler queues FIRST (same priority and lower,
+highest first).  If a process is ready, transfer with no sleep.
+Only fall into `usleep` when nothing else is runnable — preserving
+the idle-detection (`relinquishSlept_`) path used by
+`test_load_image`'s stuck-VM kill switch.
+
+Measured: `SUnitRunner runSingleTest: AIAstarTest selector:
+#testSimpleWeightedGraphBacktracking` drops from 23.6 s to 2 ms —
+same speed as direct `runCase`.  Unblocks the whole harness: first
+30 `TestCase` classes now run in 20 minutes with 0 FAIL, 2 legit
+`PrimitiveFailed` errors (1-GB allocation, profileSemaphore:), and
+1 genuinely-slow timeout (`ArrayTest>>testPrintingRecursive`).
+
+Higher-priority preemption stays in `checkForPreemption()` — it was
+never `relinquishProcessor`'s job.
+
+
+
 ## refactor: centralize debug env vars into a single DebugSettings global
 
 ~70 scattered `getenv()` / `static bool x = !!getenv(...)` call sites
