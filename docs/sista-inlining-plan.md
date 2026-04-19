@@ -19,7 +19,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
-  Multi-block control flow now works.  13 round-trip tests passing:
+  Multi-block control flow + inline arith now work.  16 round-trip
+  tests passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -28,18 +29,22 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - PopStoreTemp 0..7, PopStoreRecvVar 0..7, Pop, Dup
       - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
       - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
+      - Arith + - * on SmallInt operands (tag-preserving, no overflow
+        check yet)
 
       IR ops implemented:
       - kConstantOop, kLoadReceiver, kLoadTrueOop, kLoadFalseOop
       - kLoadTemp, kLoadLiteral, kLoadInstVar
       - kStoreTemp, kStoreInstVar
       - kReturn, kBranch, kBranchIfTrue, kBranchIfFalse
+      - kPrimAddInt, kPrimSubInt, kPrimMulInt
 
   Commits: `c638471` (IR), `42e382c` (lifter MVP), `7fa2fab`
   (lowerer + first round-trip), `2e5d61e` (push-constants +
   push-literal), `a09b5c4` (ivar + store-temp + stack ops),
   `6badd08` (setter pattern), `8680ccb` (multi-block via short
-  jumps).
+  jumps), `7c57dbe` (arith + - *), `eed3d37` (PHARO_JIT_ENABLED
+  guard for xcframework link).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
@@ -50,10 +55,11 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   if-then-else-return pattern.
 
   Remaining Phase 2:
-  - Arith primitives (0x60-0x6F).  kPrim*Int ops already defined in
-    IR, just need lifter cases + lowerer with overflow-bail.  The
-    first place where the IR beats the stencil JIT structurally —
-    tag check once, straight ARM add, native overflow detection.
+  - Arith overflow / non-SmallInt bail.  Today's lowerer assumes
+    SmallInt and no overflow.  Needs a guarded fast path: tag
+    check on inputs + overflow flag (`adds` / `subs`) on the
+    math, bail to `kSendUnspeculated` on miss.  Gated on Phase 3
+    deopt.
   - Sends (kSendUnspeculated).  Simple fall-through to Tier 1 IC
     probe; no speculation yet.
   - Phi nodes for joined blocks (needed before method inlining
@@ -64,7 +70,9 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
 
   Each remaining item gates on a round-trip test + SUnit
   no-regression.  Catalyst + all three iOS xcframework slices
-  currently build clean.
+  build clean as of `eed3d37` (Sista lowerer guarded behind
+  `PHARO_JIT_ENABLED` to match Tier 2's pattern; stubs returned
+  on JIT-off slices).
 - **Phase 3: deopt infrastructure** → queued.
 - **Phase 4: monomorphic inlining** → queued.  First expected
   speedup.  Exit-condition gate.
