@@ -24,6 +24,7 @@
 #include "CodeZone.hpp"
 #include "JITMethod.hpp"
 #include "SistaV1.hpp"
+#include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 
@@ -114,7 +115,8 @@ size_t g_mbcBailed   = 0;
 // (correctness verified on SmallIntegerTest + whileTrue/
 // ifTrue:ifFalse: stress).
 static bool jumpsEnabledByEnv() {
-    const char* env = getenv("PHARO_T2_MBC_JUMPS");
+    // Custom "=0 disables, else enables" semantic — read raw.
+    const char* env = std::getenv("PHARO_T2_MBC_JUMPS");
     return !(env && env[0] == '0');
 }
 
@@ -404,7 +406,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                             && b2 == SistaV1::ReturnReceiver) {
         kind = ReturnKind::SetterRecvVar;
         recvVarIndex = b1 - SistaV1::PopStoreRecvBase;
-    } else if (getenv("PHARO_T2_ZEROARG_IC")
+    } else if (g_debug.t2ZeroargIC
                             && bodyLen >= 3 && SistaV1::isSend0(b1)
                             && b2 == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])) {
@@ -521,7 +523,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Pattern not recognised — fall through to T1.  PHARO_T2_VERBOSE=1
         // surfaces the leading bytes so we can see which shapes are hot
         // and decide what to add next.
-        if (getenv("PHARO_T2_VERBOSE")) {
+        if (g_debug.t2Verbose) {
             fprintf(stderr, "[T2 bail] len=%zu bytes=%02x %02x %02x %02x\n",
                     bodyLen, b0, b1, b2,
                     bodyLen >= 4 ? bytes[bcStart+3] : 0);
@@ -1297,7 +1299,7 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // 6-way probe (PHARO_T2_FORCE_MISS=1 skips the probe to isolate
         // whether the IC hit path contributes to the 1-arg bug).
-        if (!getenv("PHARO_T2_FORCE_MISS")) {
+        if (!g_debug.t2ForceMiss) {
             for (int i = 0; i < IC_ENTRIES; i++) {
                 a64::Gp key = cc.new_gp64("key");
                 cc.ldr(key, a64::ptr(icData, IC_KEY_OFF(i)));
@@ -1579,7 +1581,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
             // drops from 97.5% to 49.9% when enabled.  Keep as
             // opt-in (PHARO_T2_MBC_SENDS=1 bail, default=off) until
             // we untangle the T1/T2 IC interaction.
-            if (!getenv("PHARO_T2_MBC_SENDS") && !getenv("PHARO_T2_MBC_IC")) {
+            if (!g_debug.t2MbcSends && !g_debug.t2MbcIC) {
                 g_mbcBailed++;
                 return nullptr;
             }
@@ -1711,7 +1713,7 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
 
             // One of PHARO_T2_MBC_SENDS / PHARO_T2_MBC_IC is set here
             // (guaranteed by the pass-1 check above).
-            if (getenv("PHARO_T2_MBC_SENDS")) {
+            if (g_debug.t2MbcSends) {
                 // SIMPLE BAIL mode: icDataPtr=0, exit ExitSend.
                 a64::Gp zero64 = cc.new_gp64("zero64");
                 cc.mov(zero64, 0);

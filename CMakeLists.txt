@@ -31,6 +31,7 @@ message(STATUS "Crypto support: ${PHARO_WITH_CRYPTO}")
 
 # VM Core Library
 set(VM_SOURCES
+    src/vm/DebugSettings.cpp
     src/vm/ObjectMemory.cpp
     src/vm/ImageLoader.cpp
     src/vm/ImageWriter.cpp

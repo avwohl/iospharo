@@ -57,6 +57,7 @@
 #ifndef PHARO_INTERPRETER_HPP
 #define PHARO_INTERPRETER_HPP
 
+#include "DebugSettings.hpp"
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "../platform/EventQueue.hpp"
@@ -309,9 +310,7 @@ public:
         // Diagnostic (PHARO_DEBUG_FRAME_LEAK=1): fire when sp grows abnormally
         // far above the current FP. Once sp-fp crosses 500, log EVERY push
         // with the value and return address so we can identify the caller.
-        static const char* frameLeakEnv = getenv("PHARO_DEBUG_FRAME_LEAK");
-        static bool frameLeakOn = (frameLeakEnv && *frameLeakEnv == '1');
-        if (__builtin_expect(frameLeakOn, 0) && framePointer_) {
+        if (__builtin_expect(g_debug.debugFrameLeak, 0) && framePointer_) {
             long long spAboveFP = (long long)(stackPointer_ - framePointer_);
             if (spAboveFP >= 500 && spAboveFP <= 600) {
                 void* ra = __builtin_return_address(0);

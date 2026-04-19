@@ -642,7 +642,7 @@ PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
         return PrimitiveResult::Success;
     }
     Oop mourner = memory_.popMourner();
-    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+    if (g_debug.gcEphDebug) {
         if (finalizationSignalCount_ > 0) {
             auto latency = std::chrono::steady_clock::now() - lastFinalizationSignalTime_;
             auto latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(latency).count();
@@ -8003,8 +8003,8 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     // expects to still exist (e.g. ByteSymbolTest creates a symbol, discards
     // the reference, then expects allInstances to find it).
 
-    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
-    auto reflStart = (reflProfile && *reflProfile)
+    const bool reflProfile = g_debug.reflectProfile;
+    auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
 
@@ -8012,7 +8012,7 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
     std::vector<Oop> instances;
     memory_.collectInstancesOfClass(targetClassIndex, instances);
 
-    if (reflProfile && *reflProfile) {
+    if (reflProfile) {
         static uint64_t calls = 0;
         static uint64_t totalUs = 0;
         static uint64_t totalFound = 0;
@@ -8058,8 +8058,8 @@ PrimitiveResult Interpreter::primitiveAllInstances(int argCount) {
 
 // Primitive 178: Return all objects in the system
 PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
-    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
-    auto reflStart = (reflProfile && *reflProfile)
+    const bool reflProfile = g_debug.reflectProfile;
+    auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
 
@@ -8127,7 +8127,7 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
         memory_.storePointer(i, result, objects[i]);
     }
 
-    if (reflProfile && *reflProfile) {
+    if (reflProfile) {
         static uint64_t calls = 0;
         static uint64_t totalUs = 0;
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -8150,8 +8150,8 @@ PrimitiveResult Interpreter::primitiveAllObjects(int argCount) {
 // Primitive 132: Does object point to another object?
 // Per official VM: only checks pointer fields, handles compiled methods specially
 PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
-    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
-    auto reflStart = (reflProfile && *reflProfile)
+    const bool reflProfile = g_debug.reflectProfile;
+    auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
 
@@ -8224,7 +8224,7 @@ PrimitiveResult Interpreter::primitiveObjectPointsTo(int argCount) {
         }
     }
 
-    if (reflProfile && *reflProfile) {
+    if (reflProfile) {
         static uint64_t calls = 0;
         static uint64_t totalUs = 0;
         static uint64_t totalSlots = 0;
@@ -13586,8 +13586,8 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
 
     Oop targetObject = stackTop();
 
-    static const char* reflProfile = getenv("PHARO_REFLECT_PROFILE");
-    auto reflStart = (reflProfile && *reflProfile)
+    const bool reflProfile = g_debug.reflectProfile;
+    auto reflStart = reflProfile
         ? std::chrono::steady_clock::now()
         : std::chrono::steady_clock::time_point{};
 
@@ -13634,7 +13634,7 @@ PrimitiveResult Interpreter::primitiveFindRoots(int argCount) {
         memory_.storePointer(i, result, roots[i]);
     }
 
-    if (reflProfile && *reflProfile) {
+    if (reflProfile) {
         static uint64_t calls = 0;
         static uint64_t totalUs = 0;
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -14857,8 +14857,7 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
 
     // PHARO_DELAY_DEBUG: log every arm/disarm with current UTC and remaining
     // delta for diagnosing nested valueWithin / Semaphore>>wait: timeout races.
-    static const char* delayDbg = getenv("PHARO_DELAY_DEBUG");
-    if (delayDbg && *delayDbg) {
+    if (g_debug.delayDebug) {
         static constexpr int64_t kSmalltalkEpochOffset = 2177452800LL * 1000000LL;
         auto now = std::chrono::system_clock::now();
         int64_t curUsec = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -14886,7 +14885,7 @@ PrimitiveResult Interpreter::primitiveSignalAtUTCMicroseconds(int argCount) {
     // Store the timer info
     if (usecs == 0 || sema.isNil()) {
         // Disable timer
-        if (const char* dbg = getenv("PHARO_TIMER_DEBUG"); dbg && *dbg) {
+        if (g_debug.timerDebug) {
             static int disableLog = 0;
             if (disableLog < 50) {
                 disableLog++;
@@ -27683,8 +27682,7 @@ PrimitiveResult Interpreter::primitiveSameThreadCallout(int argCount) {
     void* returnHolder = alloca(returnSize);
     memset(returnHolder, 0, returnSize);
 
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[FFI-CALL] funcPtr=%p cif->nargs=%u rtype=%u\n",
                 funcPtr, (unsigned)cif->nargs,
                 cif->rtype ? (unsigned)cif->rtype->type : 0xFFFFu);
@@ -27982,8 +27980,7 @@ static pharo::Interpreter* g_interpreter = nullptr;
 // callback, then returns to C with the computed result.
 static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* userdata) {
     CallbackInfo* cbInfo = static_cast<CallbackInfo*>(userdata);
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-HANDLER] enter ret=%p args=%p\n", ret, (void*)args);
         fflush(stderr);
     }
@@ -28016,8 +28013,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         // does NOT return here.
         g_interpreter->enterInterpreterFromCallback(vmcc);
 
-        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-            (void)dbg;
+        if (g_debug.callbackDebug) {
             fprintf(stderr, "[CALLBACK-HANDLER-FELL-OUT] vmcc=%p (enterInterpreterFromCallback returned normally)\n",
                     (void*)vmcc);
             fflush(stderr);
@@ -28028,8 +28024,7 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         return;
     }
 
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-HANDLER-LONGJMP-RESUME] vmcc=%p\n", (void*)vmcc);
         fflush(stderr);
     }
@@ -28051,8 +28046,7 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
     g_callbackSemaphoreIndex = static_cast<int>(semIdxOop.asSmallInteger());
     g_interpreter = this;  // Set global for callbackClosureHandler
 
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-INIT] g_callbackSemaphoreIndex=%d\n",
                 g_callbackSemaphoreIndex);
         fflush(stderr);
@@ -28068,8 +28062,7 @@ PrimitiveResult Interpreter::primitiveInitilizeCallbacks(int argCount) {
 PrimitiveResult Interpreter::primitiveReadNextCallback(int argCount) {
     if (argCount != 0) return PrimitiveResult::Failure;
 
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-READNEXT] callbackDepth=%d\n", callbackDepth_);
         fflush(stderr);
     }
@@ -28223,8 +28216,7 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
     // we can unwind. Instead, we set a deferred return flag. The nested interpret
     // loop in enterInterpreterFromCallback detects this flag after the Smalltalk
     // code finishes its cleanup, then does the process restore and siglongjmp.
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fprintf(stderr, "[CALLBACK-PRIM-RETURN] callbackDepth=%d\n", callbackDepth_);
         fflush(stderr);
     }

@@ -606,8 +606,9 @@ int main(int argc, char* argv[]) {
     // once, triggering heavy C++ JIT entry/exit transitions on every send).
     // Eval is one-shot so JIT compilation overhead is pure waste.
     // Override with PHARO_NO_JIT=0 to force JIT in these modes.
-    if ((testMode || evalMode) && !getenv("PHARO_NO_JIT")) {
+    if ((testMode || evalMode) && !pharo::g_debug.noJit) {
         setenv("PHARO_NO_JIT", "1", 0);
+        pharo::g_debug.reload();  // pick up the just-set env var
         if (testMode) {
             std::cout << "[TEST] Auto-disabled JIT for test mode (override with PHARO_NO_JIT=0)" << std::endl;
         }
@@ -772,7 +773,7 @@ int main(int argc, char* argv[]) {
         // All session handlers run normally — no patching or deferral.
         // If a handler fails, Pharo's SessionManager catches the error and continues.
 
-        bool benchMode = !!getenv("PHARO_BENCH");
+        bool benchMode = pharo::g_debug.bench;
 
         // Create Display Form in all modes except bench/eval. MorphicRenderLoop
         // runs at P40 (userSchedulingPriority). Without a Display, it spins doing

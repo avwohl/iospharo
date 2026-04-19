@@ -6,6 +6,7 @@
 
 #include "JITRuntime.hpp"
 #include "PlatformJIT.hpp"
+#include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
@@ -90,7 +91,7 @@ extern "C" void jit_b5_dump_ring(const char* tag) {
 // event=2: return.  extra1 = retVal.bits, extra2 = callerCM | args<<48.
 extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
-    static bool trace = getenv("PHARO_B5_TRACE") != nullptr;
+    static bool trace = g_debug.b5Trace;
     if (!trace) return;
     // Always record to ring; filter only controls live stderr print.
     g_b5Count++;
@@ -110,7 +111,7 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     static bool focusInit = false;
     if (!focusInit) {
         focusInit = true;
-        if (const char* env = getenv("PHARO_B5_FOCUS")) {
+        if (const char* env = g_debug.b5Focus) {
             // Comma-separated hex oops
             const char* p = env;
             while (*p && focusCount < 8) {
@@ -163,14 +164,8 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         if (!hit) return;
     }
     static size_t count = 0;
-    static size_t skipEarly = []() {
-        const char* env = getenv("PHARO_B5_SKIP");
-        return env ? (size_t)atoll(env) : 0;
-    }();
-    static size_t maxEvents = []() {
-        const char* env = getenv("PHARO_B5_MAX");
-        return env ? (size_t)atoll(env) : 800;
-    }();
+    static size_t skipEarly = (size_t)g_debug.b5Skip;
+    static size_t maxEvents = g_debug.b5Max > 0 ? (size_t)g_debug.b5Max : 800;
     count++;
     if (count <= skipEarly) return;
     if (count - skipEarly > maxEvents) return;
@@ -205,8 +200,11 @@ extern "C" void jit_rt_arith_overflow(JITState* state) {
 
     // Diagnostic: count how often the fallback fires per method. Enabled by
     // JIT_ARITH_OFLOW_TRACE=1. Prints a periodic summary at 10k firings.
-    static const char* trace = getenv("JIT_ARITH_OFLOW_TRACE");
-    if (trace && *trace == '1') {
+    static const bool trace = []() {
+        const char* v = std::getenv("JIT_ARITH_OFLOW_TRACE");
+        return v && *v == '1';
+    }();
+    if (trace) {
         static size_t totalFirings = 0;
         totalFirings++;
         if (totalFirings <= 20 || (totalFirings % 100) == 0) {
@@ -266,7 +264,7 @@ extern "C" void jit_t2_send(JITState* state) {
     // (MIR holds stale oops across GC — see commit b18e71e). Once the T2
     // GC issue is resolved, flip A1 on to replace the correctness-safe
     // always-bail with the chain-loop callee invocation.
-    static bool a1Enabled = !!getenv("PHARO_T2_A1");
+    static bool a1Enabled = g_debug.t2A1;
 
     Interpreter* interp = state->interp;
     ObjectMemory* mem = state->memory;
@@ -948,9 +946,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // PHARO_JIT_DEFER=N (seconds; default: 4s headless, 0 GUI)
     static int64_t deferSteps = -1; // -1 = uninitialized
     if (deferSteps == -1) {
-        const char* env = getenv("PHARO_JIT_DEFER");
-        if (env) {
-            deferSteps = (int64_t)atoi(env) * 30000000;
+        if (g_debug.jitDefer >= 0) {
+            deferSteps = (int64_t)g_debug.jitDefer * 30000000;
         } else if (interp_ && interp_->isHeadless()) {
             // Auto-defer: ~4 seconds at interpreter speed (~30M steps/sec)
             deferSteps = 120000000;
@@ -963,11 +960,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (deferSteps > 0 && (int64_t)g_stepNum < deferSteps) return;
 
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
-    static int maxCompile = -2; // -2 = uninitialized
-    if (maxCompile == -2) {
-        const char* env = getenv("JIT_MAX_COMPILE");
-        maxCompile = env ? atoi(env) : -1; // -1 = unlimited
-    }
+    static const int maxCompile = g_debug.jitMaxCompile;
 
     static size_t totalEntries = 0;
     totalEntries++;
@@ -1020,11 +1013,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 tracked, hot);
 
         // Dump top methods by executionCount (opt-in: PHARO_JIT_TOP=1)
-        static int dumpTop = -1;
-        if (dumpTop == -1) {
-            const char* env = getenv("PHARO_JIT_TOP");
-            dumpTop = env ? atoi(env) : 0;
-        }
+        static int dumpTop = g_debug.jitTop ? atoi(g_debug.jitTop) : 0;
         if (dumpTop > 0 && interp_) {
             struct TopEntry { uint32_t count; JITMethod* m; };
             const size_t K = 10;
@@ -1067,8 +1056,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // Runtime-configurable threshold: PHARO_JIT_THRESHOLD=N (default: CompileThreshold=2)
     static uint32_t threshold = 0;
     if (threshold == 0) {
-        const char* env = getenv("PHARO_JIT_THRESHOLD");
-        threshold = env ? static_cast<uint32_t>(atoi(env)) : CompileThreshold;
+        threshold = (g_debug.jitThreshold > 0)
+            ? static_cast<uint32_t>(g_debug.jitThreshold) : CompileThreshold;
         if (threshold < 1) threshold = 1;
     }
 
@@ -1085,7 +1074,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 }
                 // Selector exclusion: JIT_EXCLUDE=sel1,sel2,...
                 {
-                    static const char* excludeEnv = getenv("JIT_EXCLUDE");
+                    static const char* excludeEnv = g_debug.jitExclude;
                     if (excludeEnv && interp_) {
                         std::string sel = interp_->memory().selectorOf(compiledMethod);
                         std::string excl(excludeEnv);
@@ -1105,7 +1094,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 }
                 // Oop exclusion: JIT_EXCLUDE_OOP=0xhex1,0xhex2,...
                 {
-                    static const char* excludeOopEnv = getenv("JIT_EXCLUDE_OOP");
+                    static const char* excludeOopEnv = g_debug.jitExcludeOop;
                     if (excludeOopEnv) {
                         uint64_t mOop = compiledMethod.rawBits();
                         std::string excl(excludeOopEnv);
@@ -1236,9 +1225,13 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // loops.  Keep PHARO_T2=1 as the opt-in for when that
                     // overhead gets fixed (inline hot sends, cut MIR
                     // preamble/postamble, skip unnecessary state flushes).
-                    const char* t2env = getenv("PHARO_T2");
-                    static bool noT2 = !(t2env && t2env[0] == '1');
-                    static int t2Limit = getenv("T2_LIMIT") ? atoi(getenv("T2_LIMIT")) : 999;
+                    // PHARO_T2 is strict "=1" here (compile gate — don't
+                    // enable accidentally).  Presence elsewhere is fine.
+                    static bool noT2 = []() {
+                        const char* v = std::getenv("PHARO_T2");
+                        return !(v && v[0] == '1');
+                    }();
+                    static int t2Limit = g_debug.t2Limit;
                     // Warmup delay (todo.md §1.2f real fix option b):
                     // defer T2 compilation until T1 has run this method
                     // PHARO_T2_WARMUP times before T2 intercepts.  This
@@ -1253,8 +1246,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // WARMUP=0), but those 73 extra weren't providing
                     // a win anyway.  Users who want the old behavior
                     // set PHARO_T2_WARMUP=0 explicitly.
-                    static int t2Warmup = getenv("PHARO_T2_WARMUP")
-                        ? atoi(getenv("PHARO_T2_WARMUP")) : 3;
+                    static int t2Warmup = g_debug.t2Warmup;
                     // §1.3c: under coexist mode (default), T2 code
                     // never replaces T1 on activation.  Skip the
                     // T2 compile entirely for methods T1 already
@@ -1262,7 +1254,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     // Set PHARO_T2_REPLACE=1 to reactivate T2
                     // compilation for these methods (and let T2
                     // actually run).
-                    static bool t2ReplaceNote = !!getenv("PHARO_T2_REPLACE");
+                    static bool t2ReplaceNote = g_debug.t2Replace;
                     bool skipCoexist = !t2ReplaceNote && jm &&
                                        jm->isExecutable();
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
@@ -1384,9 +1376,12 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // primitive-only, etc.) and someone still wants JIT for those
     // methods.  Opt out via PHARO_T2_REPLACE=1 to restore the old
     // "T2 replaces T1" behavior for bisection.
-    static const char* t2envExec = getenv("PHARO_T2");
-    static bool noT2Exec = !(t2envExec && t2envExec[0] == '1');
-    static bool t2Replace = !!getenv("PHARO_T2_REPLACE");
+    // PHARO_T2 is strict "=1" (execute gate).
+    static bool noT2Exec = []() {
+        const char* v = std::getenv("PHARO_T2");
+        return !(v && v[0] == '1');
+    }();
+    static bool t2Replace = g_debug.t2Replace;
     void* t2code = noT2Exec ? nullptr : tier2Lookup(compiledMethod.rawBits());
     bool t1Executable = jm && jm->isExecutable();
     bool useT2 = (t2code && t2code != (void*)1) &&
@@ -1417,7 +1412,7 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
 
 bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& state) {
     if (!initialized_) return false;
-    static bool noResume = !!getenv("PHARO_NO_RESUME");
+    static bool noResume = g_debug.noResume;
     if (noResume) return false;
 
     // T2 resume DISABLED: MIR's register allocator spills values to the C

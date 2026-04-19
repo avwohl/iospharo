@@ -1472,7 +1472,7 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
     // PHARO_DELAY_DEBUG: log any GC over 10ms. Long GCs stall the main
     // interpreter loop, which is what blocks checkTimerSemaphore and
     // causes delay-fire latency spikes seen in timing tests.
-    if (const char* dbg = getenv("PHARO_DELAY_DEBUG"); dbg && *dbg) {
+    if (g_debug.delayDebug) {
         if (result.milliseconds >= 10) {
             fprintf(stderr, "[GC-LONG] took=%lldms marked=%zu bytesReclaimed=%zu usedBefore=%zu usedAfter=%zu\n",
                     (long long)result.milliseconds, markedCount,
@@ -2384,7 +2384,7 @@ bool ObjectMemory::markInactiveEphemerons() {
         }
     }
     ephemeronList_.resize(writeIdx);
-    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg && transitioned > 0) {
+    if (g_debug.gcEphDebug && transitioned > 0) {
         fprintf(stderr, "  [MIE] transitioned=%zu remaining=%zu\n",
                 transitioned, writeIdx);
     }
@@ -2546,7 +2546,7 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
             if (obj->format() == ObjectFormat::WeakWithFixed) preEphCount++;
         }
     }
-    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+    if (g_debug.gcEphDebug) {
         fprintf(stderr, "[GC-PRE] heap-scan format-5 count=%zu\n", preEphCount);
     }
 
@@ -2591,7 +2591,7 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
             fireAllEphemerons();
             fired += thisRound;
         }
-        if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+        if (g_debug.gcEphDebug) {
             fprintf(stderr, "[GC-EPH] encountered=%zu inactive=%zu active=%zu fired=%zu weakList=%zu\n",
                     ephemeronEncounterCount_, ephemeronInactiveCount_,
                     ephemeronActiveCount_, fired, weakList_.size());

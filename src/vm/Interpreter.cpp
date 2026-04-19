@@ -13,6 +13,7 @@
  */
 
 #include "Interpreter.hpp"
+#include "DebugSettings.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
 #include "jit/TrampolineAsm.hpp"
@@ -146,7 +147,7 @@ Interpreter::Interpreter(ObjectMemory& memory)
 
     initializePrimitives();
 
-    if (const char* env = getenv("PHARO_DEBUG_DISP_LEAK"); env && *env == '1') {
+    if (g_debug.debugDispLeak) {
         dispatchTraceLeakOn_ = true;
     }
 }
@@ -483,12 +484,10 @@ bool Interpreter::initialize() {
     // PHARO_BENCH=sieve: run sieve only
     // PHARO_BENCH=all: run fib + sieve
     // PHARO_FIB_N: override fibonacci argument (default 28)
-    if (getenv("PHARO_BENCH")) {
-        const char* benchType = getenv("PHARO_BENCH");
+    if (g_debug.bench) {
+        const char* benchType = g_debug.benchType;
         fprintf(stderr, "[BENCH] PHARO_BENCH=%s detected\n", benchType);
-        int fibN = 28;
-        const char* fibEnv = getenv("PHARO_FIB_N");
-        if (fibEnv) fibN = atoi(fibEnv);
+        int fibN = (g_debug.fibN >= 0) ? g_debug.fibN : 28;
 
         bool wantFib = (strcmp(benchType, "1") == 0 || strcmp(benchType, "fib") == 0 || strcmp(benchType, "all") == 0);
         bool wantSieve = (strcmp(benchType, "sieve") == 0 || strcmp(benchType, "all") == 0);
@@ -508,7 +507,7 @@ bool Interpreter::initialize() {
 
         bool wantAWFY = (strcmp(benchType, "awfy") == 0);
         // PHARO_AWFY_ONLY=Name1,Name2 — run only named AWFY benchmarks
-        const char* awfyOnly = getenv("PHARO_AWFY_ONLY");
+        const char* awfyOnly = g_debug.awfyOnly;
         if (wantAWFY) {
             // Are We Fast Yet benchmarks — each is a class with innerBenchmarkLoop:
             struct AWFYSpec { const char* name; const char* cls; int64_t arg; };
@@ -1031,8 +1030,7 @@ void Interpreter::dumpCurrentMethod() {
 // addresses. See memory/project_ic_selbits_mystery.md.
 static inline void countICHitDbg(const uint64_t* ic) {
 #if PHARO_JIT_ENABLED
-    static bool dbg = !!getenv("PHARO_IC_HIT_DBG");
-    if (!dbg) return;
+    if (!g_debug.icHitDbg) return;
     static size_t withSel = 0, noSel = 0, noIC = 0;
     if (ic) {
         if (ic[18] == 0) noSel++;
@@ -1447,7 +1445,7 @@ void Interpreter::interpret() {
     op_popStoreTemp: {
         Oop value = pop();
         // B5 diagnostic: watch for decodeBytes: storing SmallInt to byteStream.
-        if (getenv("PHARO_B5_TRACE") && (bytecode & 0x07) == 1 &&
+        if (g_debug.b5Trace && (bytecode & 0x07) == 1 &&
             method_.isObject() && value.isSmallInteger()) {
             std::string sel = memory_.selectorOf(method_);
             if (sel == "decodeBytes:") {
@@ -2352,7 +2350,7 @@ void Interpreter::checkTimerSemaphore() {
             lastTimerSignalTime_ = std::chrono::steady_clock::now();
             timerWasArmed_ = false;
             schedulerDeathLogged_ = false;
-            if (const char* dbg = getenv("PHARO_DELAY_DEBUG"); dbg && *dbg) {
+            if (g_debug.delayDebug) {
                 fprintf(stderr, "[DELAY-FIRE] cur=%lld deadline=%lld lateUs=%lld sema=0x%llx\n",
                         (long long)currentUsec, (long long)firedDeadline,
                         (long long)(currentUsec - firedDeadline),
@@ -2507,7 +2505,7 @@ void Interpreter::signalFinalizationIfNeeded() {
     finalizationPendingTotal_ += pending;
     lastFinalizationSignalTime_ = std::chrono::steady_clock::now();
 
-    if (const char* dbg = getenv("PHARO_GC_EPH_DEBUG"); dbg && *dbg) {
+    if (g_debug.gcEphDebug) {
         Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
         Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
         bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
@@ -2690,16 +2688,14 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     }
 
     // 5. Signal callback semaphore to wake handler process
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fflush(stdout);
         fprintf(stderr, "[CALLBACK-ENTER] semIdx=%d vmcc=%p\n",
                 g_callbackSemaphoreIndex, (void*)vmcc);
         fflush(stderr);
     }
     if (g_callbackSemaphoreIndex > 0) {
-        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-            (void)dbg;
+        if (g_debug.callbackDebug) {
             Oop semTable = memory_.specialObject(SpecialObjectIndex::ExternalObjectsArray);
             if (semTable.isObject() && !semTable.isNil()) {
                 size_t idx = static_cast<size_t>(g_callbackSemaphoreIndex - 1);
@@ -2773,8 +2769,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             }
         }
 
-        if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-            (void)dbg;
+        if (g_debug.callbackDebug) {
             fprintf(stderr, "[CALLBACK-CUSTOM-SIGNAL] transferred=%d\n", (int)transferred);
             fflush(stderr);
         }
@@ -2804,7 +2799,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
     //    siglongjmp back to the C trampoline.
     long nestedStepCount = 0;
     static constexpr long kCallbackTimeout = 10000000; // 10M steps ~1s
-    bool cbDbg = getenv("PHARO_CALLBACK_DEBUG") != nullptr;
+    bool cbDbg = g_debug.callbackDebug;
     long lastDbgStep = 0;
     while (running_) {
         for (int batch = 0; batch < 1000 && running_; batch++) {
@@ -2870,8 +2865,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
         // (e.g., because an error killed the handler process), abandon the
         // callback to prevent infinite spinning.
         if (nestedStepCount >= kCallbackTimeout && !pendingCallbackReturn_) {
-            if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-                (void)dbg;
+            if (g_debug.callbackDebug) {
                 fprintf(stderr, "[CALLBACK-TIMEOUT] nestedStepCount=%ld vmcc=%p\n",
                         nestedStepCount, (void*)vmcc);
                 fflush(stderr);
@@ -2908,8 +2902,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
 
         // Check for deferred callback return AFTER the batch completes.
         if (pendingCallbackReturn_) {
-            if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-                (void)dbg;
+            if (g_debug.callbackDebug) {
                 fprintf(stderr, "[CALLBACK-RETURN] nestedStepCount=%ld vmcc=%p\n",
                         nestedStepCount, (void*)pendingCallbackReturn_);
                 fflush(stderr);
@@ -2962,8 +2955,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 if (stillHandler) {
                     putToSleep(currentProcess);
                 }
-                if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-                    (void)dbg;
+                if (g_debug.callbackDebug) {
                     fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d\n",
                             (unsigned long long)currentProcess.rawBits(),
                             (unsigned long long)savedHandler.rawBits(),
@@ -3010,8 +3002,7 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
             checkTimerSemaphore();
         }
     }
-    if (const char* dbg = getenv("PHARO_CALLBACK_DEBUG")) {
-        (void)dbg;
+    if (g_debug.callbackDebug) {
         fflush(stdout);
         fprintf(stderr, "[CALLBACK-EXIT-LOOP] running_=%d nestedStepCount=%ld vmcc=%p\n",
                 (int)running_, nestedStepCount, (void*)vmcc);
@@ -4644,7 +4635,7 @@ terminate_process:
             }
             // B5 diagnostic: log the return value pushed on the caller's
             // stack when returning INTO decodeBytes:.
-            if (getenv("PHARO_B5_TRACE") && method_.isObject() &&
+            if (g_debug.b5Trace && method_.isObject() &&
                 stackPointer_ > framePointer_) {
                 std::string sel = memory_.selectorOf(method_);
                 if (sel == "decodeBytes:") {
@@ -8102,7 +8093,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     // B5 diagnostic: when creating a block in decodeBytes:, check that
     // the copied byteStream is not a SmallInt.  If it is, print the
     // stream corresponding to temp[1] and the current frame state.
-    if (getenv("PHARO_B5_TRACE") && numCopied > 0 && method_.isObject()) {
+    if (g_debug.b5Trace && numCopied > 0 && method_.isObject()) {
         std::string sel = memory_.selectorOf(method_);
         if (sel == "decodeBytes:") {
             Oop byteStream = memory_.fetchPointer(4, block);  // copied[0]
@@ -11267,13 +11258,16 @@ void Interpreter::initializeJIT() {
     if (jitInitialized_) return;
     jitInitialized_ = true;
 
-    static bool jitDisabled = []() {
-        const char* v = getenv("PHARO_NO_JIT");
-        return v != nullptr && v[0] != '0';
-    }();
-    if (jitDisabled) {
-        fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
-        return;
+    // PHARO_NO_JIT=0 is NOT treated as disable — preserves historical
+    // behavior where "=0" meant "off" conceptually.  All other sites
+    // check only presence, but this init path is the gate, so be
+    // explicit here.
+    if (g_debug.noJit) {
+        const char* v = std::getenv("PHARO_NO_JIT");
+        if (!v || v[0] != '0') {
+            fprintf(stderr, "[JIT] Disabled via PHARO_NO_JIT env var\n");
+            return;
+        }
     }
 
     if (!jitRuntime_.initialize(memory_, *this)) {
@@ -11285,8 +11279,7 @@ void Interpreter::initializeJIT() {
 }
 
 void Interpreter::tryOSRAtBackwardJump() {
-    static bool noOSR = !!getenv("PHARO_NO_OSR");
-    if (noOSR) return;
+    if (g_debug.noOSR) return;
     if (!jitRuntime_.isInitialized()) return;
     if (inJITResume_) return;  // Already inside JIT resume loop
 
@@ -11368,7 +11361,7 @@ void Interpreter::tryJITResumeInCaller() {
         uint32_t bcOffset = computeCurrentBCOffset();
         if (bcOffset == UINT32_MAX) break;
         // B5 diagnostic: log the resume point in decodeBytes:.
-        if (getenv("PHARO_B5_TRACE") && method_.isObject()) {
+        if (g_debug.b5Trace && method_.isObject()) {
             std::string sel = memory_.selectorOf(method_);
             if (sel == "decodeBytes:") {
                 Oop top = stackPointer_ > framePointer_ ?
@@ -11428,7 +11421,7 @@ void Interpreter::tryJITResumeInCaller() {
         uint64_t megaBase = (uint64_t)jitRuntime_.megaCache();
         uint64_t megaEnd  = megaBase + 65536 * 32;
         {
-            static bool megaScan = !!getenv("PHARO_JIT_MEGA_SCAN");
+            static bool megaScan = g_debug.jitMegaScan;
             if (megaScan) {
                 // Scan from FP to SP for any values in megaCache range
                 for (Oop* p = framePointer_; p < stackPointer_; p++) {
@@ -11451,7 +11444,7 @@ void Interpreter::tryJITResumeInCaller() {
 
         // --- DIAGNOSTIC: scan stack for megaCache pointers after resume ---
         {
-            static bool megaScan = !!getenv("PHARO_JIT_MEGA_SCAN");
+            static bool megaScan = g_debug.jitMegaScan;
             if (megaScan) {
                 for (Oop* p = framePointer_; p < state.sp; p++) {
                     uint64_t v = p->rawBits();
@@ -11504,7 +11497,7 @@ void Interpreter::tryJITResumeInCaller() {
         // and require expensive materialization, making it 18% slower overall.
         // Enable with PHARO_RESUME_J2J=1 when compilation coverage improves.
         {
-            static bool noResumeJ2J = !getenv("PHARO_RESUME_J2J");
+            static bool noResumeJ2J = !g_debug.resumeJ2J;
             int rj2jDepth = 0;
             size_t rj2jCalls = 0, rj2jReturns = 0;
             J2JSave* rj2jSaves = &j2jPool_[rj2jBase];
@@ -11830,20 +11823,20 @@ void Interpreter::tryJITResumeInCaller() {
                     pendingICPatch_ = state.icDataPtr;
                     pendingICSendArgCount_ = state.sendArgCount;
                     static size_t setCount1 = 0; setCount1++;
-                    if (getenv("PHARO_IC_PATCH_DEBUG") && (setCount1 & 0xFFF) == 1) {
+                    if (g_debug.icPatchDebug && (setCount1 & 0xFFF) == 1) {
                         fprintf(stderr, "[IC-PEND-SET1] tryResume ExitSend count=%zu ic=%p\n",
                                 setCount1, (void*)state.icDataPtr);
                     }
                 } else {
                     static size_t fullCount1 = 0; fullCount1++;
-                    if (getenv("PHARO_IC_PATCH_DEBUG") && (fullCount1 & 0xFFF) == 1) {
+                    if (g_debug.icPatchDebug && (fullCount1 & 0xFFF) == 1) {
                         fprintf(stderr, "[IC-PEND-FULL1] tryResume IC full count=%zu ic=%p\n",
                                 fullCount1, (void*)state.icDataPtr);
                     }
                 }
             } else {
                 static size_t noICDataCount = 0; noICDataCount++;
-                if (getenv("PHARO_IC_PATCH_DEBUG") && (noICDataCount & 0xFFF) == 1) {
+                if (g_debug.icPatchDebug && (noICDataCount & 0xFFF) == 1) {
                     fprintf(stderr, "[IC-PEND-NONE] tryResume ExitSend no icDataPtr count=%zu\n",
                             noICDataCount);
                 }
@@ -11965,8 +11958,7 @@ void Interpreter::tryJITResumeInCaller() {
 
         case jit::ExitArithOverflow:
             {
-                static const char* dbg = getenv("PHARO_DEBUG_ARITH_EXIT");
-                static bool dbgOn = (dbg && *dbg == '1');
+                const bool dbgOn = g_debug.debugArithExit;
                 if (__builtin_expect(dbgOn, 0) && framePointer_) {
                     long long spFromFP = (long long)(state.sp - framePointer_);
                     if (spFromFP >= 400 && spFromFP <= 700) {
@@ -12095,7 +12087,7 @@ static uint8_t inlinePrimKind(int primIndex) {
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {
-    static bool patchDbg = getenv("PHARO_IC_PATCH_DEBUG") != nullptr;
+    static bool patchDbg = g_debug.icPatchDebug;
     static size_t dbgCalled = 0, dbgNoPending = 0, dbgSelMismatch = 0,
                   dbgDup = 0, dbgPatched = 0, dbgFullNoSlot = 0;
     dbgCalled++;
@@ -12115,7 +12107,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // Same skip used by upgradeICToJ2J — uses the IC's send-site selector
     // (passed in directly here), which is reliable.
     {
-        static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
+        static const char* skipEnv = g_debug.j2jSkipSelectors;
         if (skipEnv && *skipEnv) {
             std::string sel;
             if (selector.isObject() && selector.rawBits() > 0x10000) {
@@ -12220,7 +12212,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
-    static bool j2jEnabled = !getenv("PHARO_NO_J2J");
+    static bool j2jEnabled = !g_debug.noJ2J;
     if ((extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
@@ -12302,8 +12294,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
 
 void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArgCount,
                                   Oop callerMethod) {
-    static bool j2jEnabled = !getenv("PHARO_NO_J2J");
-    static bool fillEnabled = !getenv("PHARO_NO_IC_FILL");
+    static bool j2jEnabled = !g_debug.noJ2J;
+    static bool fillEnabled = !g_debug.noICFill;
     if (!j2jEnabled || !icData) return;
 
     // DEBUG: Selector-based J2J upgrade skip (PHARO_J2J_SKIP_SELECTORS).
@@ -12316,7 +12308,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // primitive methods (e.g. at:/at:put: returned "?" via numLiteralsOf,
     // making the bisection mis-fire).
     {
-        static const char* skipEnv = getenv("PHARO_J2J_SKIP_SELECTORS");
+        static const char* skipEnv = g_debug.j2jSkipSelectors;
         if (skipEnv && *skipEnv) {
             std::string sel;
             uint64_t icSelBits = icData[18];
@@ -12350,7 +12342,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     // compile threshold via noteMethodEntry because the primitive succeeds before
     // bytecodes execute. Without eager compilation, at:/at:put:/size/arithmetic
     // methods can never be called via J2J with their fast-path prologues.
-    static bool noEagerCompile = !!getenv("PHARO_NO_EAGER_COMPILE");
+    static bool noEagerCompile = g_debug.noEagerCompile;
     if (!noEagerCompile && (!target || !target->isExecutable()) && jitRuntime_.compiler()) {
         // Check if method has a primitive
         ObjectHeader* methObj = cachedMethod.asObjectPtr();
@@ -12530,7 +12522,7 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
-    static bool noJit = getenv("PHARO_NOJIT") != nullptr;
+    static bool noJit = g_debug.noJit;
     if (noJit) return false;
     jitActivations_++;
 
@@ -12540,7 +12532,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     static bool traceInit = false;
     if (!traceInit) {
         traceInit = true;
-        if (const char* env = getenv("PHARO_JIT_TRACE_OOP"); env && *env) {
+        if (const char* env = g_debug.jitTraceOop; env) {
             traceOop = strtoull(env, nullptr, 0);
             fprintf(stderr, "[JIT-TRACE] watching oop 0x%llx\n",
                     (unsigned long long)traceOop);
@@ -12666,7 +12658,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // A small SmallInteger (<256) as returnValue from a non-arithmetic method
     // suggests a stencil bug (returning index/tag instead of actual value).
     if (__builtin_expect(state.exitReason == jit::ExitReturn, 0)) {
-        static bool dbg = !!getenv("PHARO_JIT_RETVAL_DBG");
+        static bool dbg = g_debug.jitRetvalDbg;
         if (dbg && state.returnValue.isSmallInteger()) {
             int64_t rv = state.returnValue.asSmallInteger();
             if (rv >= 0 && rv < 256) {
@@ -12684,7 +12676,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // Diagnostic: when ExitSend fires, check if receiver on stack is a small int
     // where an object would be expected (selector is not arithmetic).
     if (__builtin_expect(state.exitReason == jit::ExitSend, 0)) {
-        static bool dbg2 = !!getenv("PHARO_JIT_RETVAL_DBG");
+        static bool dbg2 = g_debug.jitRetvalDbg;
         if (dbg2 && state.sp && state.sendArgCount >= 0 && state.sendArgCount < 20) {
             Oop rcvr = state.sp[-(state.sendArgCount + 1)];
             if (rcvr.isSmallInteger()) {
@@ -13061,7 +13053,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // After tryResume+continue, state holds an unprocessed exit reason
     // that MUST be handled before breaking. The countdown is checked at
     // each continue site instead (after chargeJITBytecodes).
-    static bool noChain = !!getenv("PHARO_NO_CHAIN");
+    static bool noChain = g_debug.noChain;
     int maxChain = noChain ? 1 : 10000;
     int chainCallDepth = 0;  // Inline activation depth (frames pushed by chain loop itself)
 
@@ -13549,8 +13541,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
         case jit::ExitArithOverflow: {
             {
-                static const char* dbg = getenv("PHARO_DEBUG_ARITH_EXIT");
-                static bool dbgOn = (dbg && *dbg == '1');
+                const bool dbgOn = g_debug.debugArithExit;
                 if (__builtin_expect(dbgOn, 0) && framePointer_) {
                     long long spFromFP = (long long)(state.sp - framePointer_);
                     if (spFromFP >= 400 && spFromFP <= 700) {

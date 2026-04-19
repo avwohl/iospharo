@@ -7,6 +7,7 @@
 #include "JITCompiler.hpp"
 #include "PlatformJIT.hpp"
 #include "SistaV1.hpp"
+#include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
@@ -1317,11 +1318,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // code.  Leaving the knob in for future bisection but it should
     // never be enabled by default.
     {
-        static int minSends = -1;
-        if (minSends == -1) {
-            const char* env = getenv("PHARO_JIT_MIN_SENDS");
-            minSends = env ? atoi(env) : 0;
-        }
+        const int minSends = (g_debug.jitMinSends >= 0) ? g_debug.jitMinSends : 0;
         if (minSends > 0) {
             int sendCount = 0;
             for (size_t i = 0; i < bcLen; i++) {
@@ -1346,7 +1343,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Bisection: PHARO_JIT_NO_BLOCKS=1 skips JIT compilation for CompiledBlocks.
     // Used to check whether the JIT bug is in block compilation specifically.
     if (isFullBlock) {
-        static bool noBlocks = getenv("PHARO_JIT_NO_BLOCKS") != nullptr;
+        static bool noBlocks = g_debug.noBlocks;
         if (noBlocks) {
             compilationsFailed_++;
             return nullptr;
@@ -1371,8 +1368,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Bytecode dump for bisection (JIT_DUMP_BC env var)
     {
-        static bool dumpBC = !!getenv("JIT_DUMP_BC");
-        static const char* dumpBCPre = getenv("JIT_DUMP_BC_PRE");
+        static bool dumpBC = g_debug.jitDumpBC;
+        static const char* dumpBCPre = g_debug.jitDumpBCPre;
         std::string sel;
         bool doDump = dumpBC;
         if (!doDump && dumpBCPre && *dumpBCPre) {
@@ -1397,7 +1394,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Skips JIT compilation for methods with these selectors. Useful for narrowing
     // down which compiled method causes a regression.
     {
-        static const char* skipEnv = getenv("PHARO_JIT_SKIP_SELECTORS");
+        static const char* skipEnv = g_debug.jitSkipSelectors;
         if (skipEnv && *skipEnv) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             // Match selector against comma-separated list (exact match per token).
@@ -1569,10 +1566,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // `PHARO_JIT_SIMSTACK=1` enables for bisection / targeted
         // benches where the IntegerTest accumulation doesn't apply.
         // `PHARO_JIT_NO_SIMSTACK=1` also disables (backwards compat).
+        // Strict "=1" semantics: no plain presence here because setting to
+        // "0" explicitly should *not* toggle.  Keep the raw getenv.
         static bool noSimStack = []() {
-            const char* noEnv = getenv("PHARO_JIT_NO_SIMSTACK");
+            const char* noEnv = std::getenv("PHARO_JIT_NO_SIMSTACK");
             if (noEnv && noEnv[0] == '1') return true;
-            const char* yesEnv = getenv("PHARO_JIT_SIMSTACK");
+            const char* yesEnv = std::getenv("PHARO_JIT_SIMSTACK");
             if (yesEnv && yesEnv[0] == '1') return false;
             return true;  // default: SimStack OFF (correctness-first)
         }();
@@ -1580,7 +1579,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // PHARO_JIT_NO_SIMSTACK_SELECTORS=sel1,sel2,...
         bool skipSimStackHere = noSimStack;
         if (!skipSimStackHere) {
-            static const char* skipSimStackEnv = getenv("PHARO_JIT_NO_SIMSTACK_SELECTORS");
+            static const char* skipSimStackEnv = g_debug.jitNoSimStackSelectors;
             if (skipSimStackEnv && *skipSimStackEnv) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 const char* p = skipSimStackEnv;
@@ -1610,8 +1609,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // compile-time SimStack state disagrees with runtime register
         // contents.
         {
-            static const char* spillEnv = getenv("PHARO_JIT_SPILL_WARN");
-            if (spillEnv && *spillEnv == '1') {
+            // Strict "=1" semantics preserved.
+            static const bool spillEnv = []() {
+                const char* v = std::getenv("PHARO_JIT_SPILL_WARN");
+                return v && *v == '1';
+            }();
+            if (spillEnv) {
                 int spillCount = 0;   // push_4/dup_4 → memory
                 int flushCount = 0;   // flush[1-4] → memory
                 for (auto& d : decoded) {
@@ -1650,7 +1653,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Includes entry SimStack state + stencil name so we can eyeball the
         // state transitions for a suspect method (e.g., method #8 max:).
         {
-            static const char* dumpSel = getenv("JIT_DUMP_BC_POST");
+            static const char* dumpSel = g_debug.jitDumpBCPost;
             if (dumpSel && *dumpSel) {
                 std::string sel = interp_.memory().selectorOf(compiledMethod);
                 if (sel == dumpSel) {
@@ -1972,7 +1975,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 static size_t compileSelZero = 0, compileSelNonZero = 0;
                 if (selectorBits == 0) compileSelZero++;
                 else compileSelNonZero++;
-                if (getenv("PHARO_IC_HIT_DBG")) {
+                if (g_debug.icHitDbg) {
                     fprintf(stderr, "[IC-COMPILE-SEL] %s opcode=0x%02X litIdx=%d numLits=%d icBase=%p selBits=0x%llx\n",
                             selectorBits == 0 ? "ZERO" : "OK",
                             bc.opcode, bc.branchTarget, numLiterals, (void*)icBase,
@@ -2153,7 +2156,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // the stencil template in generated_stencils_arm64.hpp. Used for verifying
     // that no stencil-copy/patch bug corrupted the code for a suspect method.
     {
-        static const char* dumpHexSel = getenv("JIT_DUMP_HEX");
+        static const char* dumpHexSel = g_debug.jitDumpHex;
         if (dumpHexSel && *dumpHexSel) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel == dumpHexSel) {
@@ -2192,7 +2195,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Always populated — this is a correctness prerequisite, not a diagnostic.
     // See deferred-issues.md #4.
     {
-        static const bool resumeStateDebug = !!getenv("PHARO_RESUME_STATE_DEBUG");
+        static const bool resumeStateDebug = g_debug.resumeStateDebug;
         if (resumeStateDebug) {
             static uint64_t methodsWithUnsafe = 0;
             static uint64_t totalUnsafeBc = 0;
@@ -2235,7 +2238,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         bool isKeysDo = (sel == "keysDo:");
         bool isDebugTarget = (sel == "noCheckAt:" || sel == "at:" || sel == "pvtCheckIndex:" || sel == "hasChanged" || sel == "hasPrimitive" || sel == "primitive");
         // Env-based selector dump: PHARO_JIT_DUMP_SEL=do:,max:,...
-        static const char* dumpSelEnv = getenv("PHARO_JIT_DUMP_SEL");
+        static const char* dumpSelEnv = g_debug.jitDumpSel;
         bool isEnvDump = false;
         if (dumpSelEnv) {
             std::string excl(dumpSelEnv);
