@@ -20,8 +20,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
   Multi-block control flow + inline arith + unspeculated sends +
-  phi nodes + medium-distance jumps now work.  21 round-trip tests
-  passing:
+  phi nodes + medium-distance jumps + loops now work.  22
+  round-trip tests passing:
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
@@ -31,7 +31,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
       - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
       - Short jumps 0xB0-0xC7 (unconditional + branch-if-true/false)
       - ExtendA / ExtendB (0xE0 / 0xE1) prefix bytes
-      - ExtJump / ExtJumpTrue / ExtJumpFalse (0xED-0xEF) forward only
+      - ExtJump / ExtJumpTrue / ExtJumpFalse (0xED-0xEF) — both
+        forward and backward (loops supported)
       - Arith + - * on SmallInt operands (tag-preserving, no overflow
         check yet)
       - Send0/1/2 (0x80-0xAF) as ExitSend bail — interpreter takes
@@ -53,7 +54,8 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   jumps), `7c57dbe` (arith + - *), `eed3d37` (PHARO_JIT_ENABLED
   guard for xcframework link), `379e3f7` (unspeculated sends),
   `6053428` (phi nodes for merge blocks),
-  `7b98ee5` (ExtendB + ExtJump forward for medium-distance jumps).
+  `7b98ee5` (ExtendB + ExtJump forward for medium-distance jumps),
+  `8a5dfd0` (backward ExtJump — loop support).
 
   Lifter now does two passes: pre-scan for branch targets and
   post-terminator boundaries, create one block per offset, then
@@ -69,9 +71,10 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
     check on inputs + overflow flag (`adds` / `subs`) on the
     math, bail to `kSendUnspeculated` on miss.  Gated on Phase 3
     deopt.
-  - Backward jumps (loops).  Currently forward-short-jump-only;
-    loops use ExtJumpLong.  Needs BFS-style entry-depth
-    propagation instead of the current offset-order pass.
+  - Full loop execution.  Backward jumps lift and lower, but
+    real loops use a send on the loop condition (e.g. `x < 10`)
+    which bails to interpreter.  Loops execute once we inline
+    integer comparisons with deopt-on-miss — ties into Phase 3.
   - mustBeBoolean bail on conditional branch (placeholder today
     silently falls through on non-true cond; fix requires Phase 3
     deopt).
