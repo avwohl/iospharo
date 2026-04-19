@@ -11,6 +11,27 @@ live in `git log` and `memory/*.md` — not here.
 
 ## A. Open VM issues
 
+Surfaced 2026-04-19 by removing the harness skip list and the JIT
+auto-disable in test/eval mode.  The previous "clean" test suite
+runs were hiding these behind workarounds.
+
+### A0. Chunk-format `methodsFor:` incompatible with current image
+Pharo 13 / 14 removed `#methodsFor:` from `ClassDescription`, so
+chunk-file headers like `<bang>SUnitRunner class methodsFor: 'cat'<bang>`
+fail to install methods cleanly.  A partial shim (`ClassDescription
+compile: 'methodsFor: aCategory ^ self'`) lets the first batch of
+chunks compile but later chunks still hit syntax errors because the
+chunk loader evaluates every chunk as a plain DoIt — it doesn't know
+"next chunk is method source after methodsFor:".
+
+Real fix: either update `CodeImporter evaluateFileStream:` in the
+image to handle the `methodsFor:` pattern, OR convert the harness
+files (`run_sunit_tests.st`, `setup_fake_gui.st`) from chunk format
+to explicit `compile:classified:` calls (mechanical transformation,
+~120 methods).  Partial shim is in
+`scripts/pharo-headless-test/run_sunit_tests.st` (commit `1ee8bc4`
+on that repo).
+
 ### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
 `PHARO_JIT_DEFER=0` (immediate JIT) still hangs during Morphic
@@ -24,6 +45,26 @@ issue when JIT compile runs during the boot/eval handoff, not a
 correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
 via `PHARO_BENCH` which bypasses the startup.st path entirely, so
 the default path is unaffected.
+
+### A1b. FFI `invokeFunction:withArguments:` receiver corruption under JIT
+Under JIT with any defer setting, `EventSensor>>pollEvent:` triggers
+DNU `#invokeFunction:withArguments: not understood by rcvr=0x300000000
+class=nil` — the FFI function-pointer oop arrives as a sentinel/nil
+at the call site.  This is the same "0x300000000 sentinel" pattern
+as A1c; likely a JIT spill/reload bug around the FFI send.  Not the
+"FFI is incomplete" — the function pointer is *lost*.
+
+### A1c. `forkAt:` / block-capture returns sentinel in interpreter mode
+With JIT off, no skips, the SUnit runner's watchdog block reads
+`testProcess` (captured from the enclosing method's local temp) as
+`0x300000000 class=nil`.  Direct forkAt: works; the failure only
+reproduces in the full 4-nested-handler + ensure: + fork-plus-watchdog
+pattern in `runSingleTest:selector:timeout:priority:on:`.  Minimal
+reproducers (single fork + single watchdog) work correctly.
+
+Root cause likely in closure temp-vector capture when outer method's
+stack frame is still active and the captured temp is later accessed
+from a different process context.  Needs a reduced reproducer.
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
 At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods
