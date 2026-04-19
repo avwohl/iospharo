@@ -19,16 +19,39 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   tinyBenchmarks shows 100 % of non-empty sites are monomorphic
   (10 / 10).  Sista premise validated for this workload.
 - **Phase 2: method-level SSA-lite IR** → IN PROGRESS (2026-04-19).
-  IR defined (`c638471`), bytecode lifter for trivial subset
-  (`42e382c`), and `SistaLowering::lower()` round-trip working
-  (`7fa2fab`).  Round-trip test: lift → lower → execute → verify
-  result.  Supports PushReceiver, PushTemp N, ReturnReceiver,
-  ReturnTop.  Catalyst + all three iOS xcframework slices still
-  build cleanly.
-  Remaining: expand lifter + lowerer to cover more bytecodes
-  (PushTrue/False/Nil/Zero/One, PushLitConst, StoreTemp, simple
-  arith, conditional jumps).  Each op adds one case in each file +
-  a round-trip test; gate on SUnit no-regression.
+  Single-block coverage complete.  12 round-trip tests passing:
+
+      Bytecodes lifted & lowered (all single-block):
+      - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
+        PushLitConst 0..31
+      - PushTrue, PushFalse, PushNil, PushZero, PushOne
+      - PopStoreTemp 0..7, PopStoreRecvVar 0..7, Pop, Dup
+      - ReturnReceiver, ReturnTrue, ReturnFalse, ReturnNil, ReturnTop
+
+      IR ops implemented:
+      - kConstantOop, kLoadReceiver, kLoadTrueOop, kLoadFalseOop
+      - kLoadTemp, kLoadLiteral, kLoadInstVar
+      - kStoreTemp, kStoreInstVar
+      - kReturn
+
+  Commits: `c638471` (IR), `42e382c` (lifter MVP), `7fa2fab`
+  (lowerer + first round-trip), `2e5d61e` (push-constants +
+  push-literal), `a09b5c4` (ivar + store-temp + stack ops),
+  `6badd08` (setter pattern).
+
+  Remaining Phase 2:
+  - Control flow (short jumps 0xB0-0xC7).  Requires two-pass lifter
+    that pre-scans branch targets, creates blocks, and inserts phi
+    nodes at joins.  Multi-block methods start here.
+  - Arith primitives (0x60-0x6F).  kPrim*Int ops already defined in
+    IR, just need lifter cases + lowerer with overflow-deopt.  The
+    first place where the IR beats the stencil JIT structurally.
+  - Sends (kSendUnspeculated).  Simple fall-through to Tier 1 IC
+    probe; no speculation yet.
+
+  Each remaining item gates on a round-trip test + SUnit
+  no-regression.  Catalyst + all three iOS xcframework slices
+  currently build clean.
 - **Phase 3: deopt infrastructure** → queued.
 - **Phase 4: monomorphic inlining** → queued.  First expected
   speedup.  Exit-condition gate.
