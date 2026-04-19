@@ -165,16 +165,28 @@ int main(int argc, const char** argv) {
         std::printf("  0x%02X  %zu\n", kv.first, kv.second);
     }
 
-    // Runtime wrapper smoke test: compile + execute methods whose IR
-    // doesn't deref the (synthetic) receiver/literal oops — those
-    // would crash with our sentinel state.  Methods WITH sends are
-    // allowed: the bail path writes state.ip / state.sp and exits,
-    // which we validate by checking for ExitSend.
+    // Runtime execute smoke test — two sub-phases:
     //
-    // What this proves: Sista lifts + lowers + executes every lifted
-    // path correctly; bails write valid state; returns carry values.
-    // In a real VM, ExitSend would hand control to the interpreter;
-    // here we just verify the exit protocol.
+    // Phase A: methods with no object-deref ops — safe to run against
+    //   synthetic receiver/literals.  Previously covered.
+    //
+    // Phase B: methods that DO deref objects (instVar access, etc.) —
+    //   use a real Pharo object as receiver, and use the method's
+    //   actual cached literals.  This is the broadest validation
+    //   short of full VM integration: every memory access the
+    //   compiled code makes targets a real object in the heap.
+    //
+    // A "real receiver" is any non-small pointer object (class
+    // instance); we just pick the first Array we find in old space.
+    Oop realReceiver = Oop::nil();
+    memory.forEachObjectInOldSpace([&](ObjectHeader* hdr) {
+        if (!realReceiver.isObject() &&
+            hdr->format() <= ObjectFormat::WeakWithFixed &&
+            hdr->slotCount() >= 4) {
+            realReceiver = Oop::fromObject(hdr);
+        }
+    });
+
     {
         sista::Runtime runtime;
         size_t compiled = 0, executed = 0, returnedOK = 0, sendBails = 0;
@@ -211,7 +223,7 @@ int main(int argc, const char** argv) {
 
         memory.forEachObjectInOldSpace([&](ObjectHeader* hdr) {
             if (!hdr->isCompiledMethod()) return;
-            if (executed >= 500) return;
+            if (executed >= 10000) return;
 
             Oop methodOop = Oop::fromObject(hdr);
 
@@ -227,7 +239,10 @@ int main(int argc, const char** argv) {
             bool unsafeOp = false;
             for (const sista::Value& v : m.values) {
                 switch (v.op) {
-                case sista::Op::kLoadInstVar:
+                // Load-only ops are safe now that we use a real
+                // receiver + real literals.  Only exclude mutations
+                // (could corrupt image state) and ops with semantics
+                // we don't model.
                 case sista::Op::kStoreInstVar:
                 case sista::Op::kGuardClass:
                 case sista::Op::kInlineSend:
@@ -259,7 +274,10 @@ int main(int argc, const char** argv) {
             }
             FullState state{};
             state.sp       = stackBuf;
-            state.receiver = 0xCAFEBABEULL;
+            // Use a real heap object so kLoadInstVar has a valid
+            // pointer to dereference (instance var slots live at
+            // +8..+N*8 from the object header).
+            state.receiver = realReceiver.rawBits();
             state.literals = litsBuf;
             state.tempBase = tempsBuf;
             state.trueOop  = trueObj.rawBits();
