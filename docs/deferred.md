@@ -15,14 +15,23 @@ Surfaced 2026-04-19 by removing the harness skip list and the JIT
 auto-disable in test/eval mode.  The previous "clean" test suite
 runs were hiding these behind workarounds.
 
-**JIT-off state post-scheduler-fix (a2b99f7):** 1007 of 1013 tests
-pass (99.4%) across the first 34 alphabetical `TestCase` classes
-with no skip list, no timing fastpath, and the full SUnit handler
-stack.  Residual 6: 2 legitimate `PrimitiveFailed` errors (1-GB
-allocation, missing profileSemaphore:), 2 harness-side `#skip`
-signals, 2 genuinely-slow tests (`ArrayTest>>testPrintingRecursive`
-and one sibling) that hit the 8-s per-test timeout.  Interpreter
-mode is solid — remaining work is JIT correctness.
+**JIT-off state (2026-04-19 after scheduler + OOM + profiler + timeout fixes):**
+Interpreter-mode test suite is effectively clean.  Each of the four
+failures surfaced by the no-skip probe has been fixed or characterized:
+
+- `AllocationTest>>testOneGWordAllocation` → **PASS**.  Fixed by
+  PrimErrNoMemory_ primFailCode in basicNew:/basicNew (commit
+  `8d69724`).  Image raises `OutOfMemory`, test catches it.
+- `AndreasSystemProfilerTest>>testSimple` → **PASS**.  Fixed by
+  implementing `primitiveProfile{Semaphore,Start,Sample,Primitive}`
+  (commit `6d21105`).
+- `BehaviorTest>>testAllReferencesTo` → **PASS** (9.6 s).  Fixed by
+  the 10× timeout multiplier when PHARO_NO_JIT is set (submodule
+  `150bbd4`).  Was 8 s > 8 s previously, now 8 s > 80 s.
+- `ArrayTest>>testPrintingRecursive` → still **TIMEOUT** at 80 s.
+  Pathological case: stuck in `InstructionStream>>scanFor:` inside
+  the recursive printOn: chain.  Needs interpreter perf work or JIT
+  correctness work — not a tractable single-session fix.
 
 ### A0. Chunk-format `methodsFor:` incompatible — RESOLVED (harness converted)
 Pharo 13 / 14 removed `#methodsFor:` from `ClassDescription`, so
