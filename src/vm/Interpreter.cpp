@@ -6787,9 +6787,70 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     fprintf(stderr, "\n");
                 }
             }
-            // Trace the first few ExitReturn values under verbose mode
-            // to catch miscompiles of simple return methods (e.g.,
-            // `^ Array` where literal index resolution is wrong).
+            // Reference-check ExitReturn: replay the bytecodes using
+            // the interpreter's own read primitives and compute what
+            // the interpreter would have returned.  If it differs
+            // from Sista's returnValue, log it.  Covers simple
+            // load-and-return methods (PushX + ReturnTop, or direct
+            // ReturnReceiver/Nil/True/False).  Always runs under
+            // verbose mode (not just the first N) so divergent
+            // returns far into a run are still caught.
+            if (g_debug.sistaVerbose && sstate.exitReason == jit::ExitReturn) {
+                uint8_t* bcStart = methodBytes + bytecodeStart;
+                size_t bcLen = totalBytes > bytecodeStart
+                               ? totalBytes - bytecodeStart : 0;
+                Oop refVal;
+                bool haveRef = false;
+                if (bcLen >= 1) {
+                    uint8_t op = bcStart[0];
+                    uint8_t op2 = bcLen >= 2 ? bcStart[1] : 0;
+                    // Single-bytecode returns.
+                    if (op == 0x58) { refVal = receiver_; haveRef = true; }
+                    else if (op == 0x59) { refVal = memory_.trueObject(); haveRef = true; }
+                    else if (op == 0x5A) { refVal = memory_.falseObject(); haveRef = true; }
+                    else if (op == 0x5B) { refVal = memory_.nil(); haveRef = true; }
+                    // Two-bytecode: PushX + ReturnTop.
+                    else if (op2 == 0x5C) {
+                        if (op >= 0x00 && op <= 0x0F) {
+                            refVal = memory_.fetchPointerUnchecked(op, receiver_);
+                            haveRef = true;
+                        } else if (op >= 0x10 && op <= 0x1F) {
+                            Oop assoc = methodObj->slots()[1 + (op - 0x10)];
+                            if (assoc.isObject()) {
+                                refVal = assoc.asObjectPtr()->slotAt(1);
+                                haveRef = true;
+                            }
+                        } else if (op >= 0x20 && op <= 0x3F) {
+                            refVal = methodObj->slots()[1 + (op - 0x20)];
+                            haveRef = true;
+                        } else if (op >= 0x40 && op <= 0x4B) {
+                            refVal = *(framePointer_ + 1 + (op - 0x40));
+                            haveRef = true;
+                        } else if (op == 0x4C) {
+                            refVal = receiver_;
+                            haveRef = true;
+                        } else if (op == 0x4D) { refVal = memory_.trueObject(); haveRef = true; }
+                        else if (op == 0x4E)   { refVal = memory_.falseObject(); haveRef = true; }
+                        else if (op == 0x4F)   { refVal = memory_.nil(); haveRef = true; }
+                        else if (op == 0x50) { refVal = Oop::fromSmallInteger(0); haveRef = true; }
+                        else if (op == 0x51) { refVal = Oop::fromSmallInteger(1); haveRef = true; }
+                    }
+                }
+                if (haveRef
+                    && refVal.rawBits() != sstate.returnValue.rawBits()) {
+                    std::string sel = memory_.selectorOf(method);
+                    fprintf(stderr,
+                        "[SISTA-RET-MISMATCH] sel=#%s "
+                        "sista=0x%llx ref=0x%llx bc=[",
+                        sel.c_str(),
+                        (unsigned long long)sstate.returnValue.rawBits(),
+                        (unsigned long long)refVal.rawBits());
+                    for (size_t i = 0; i < std::min(bcLen, (size_t)4); i++) {
+                        fprintf(stderr, " %02x", bcStart[i]);
+                    }
+                    fprintf(stderr, "]\n");
+                }
+            }
             if (g_debug.sistaVerbose && sstate.exitReason == jit::ExitReturn
                 && sistaReturns < 20) {
                 std::string sel = memory_.selectorOf(method);
