@@ -6927,9 +6927,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             refStack.push_back(
                                 memory_.fetchPointerUnchecked(op, receiver_));
                             i++;
+                        } else if (op >= 0x10 && op <= 0x1F) {
+                            // PushLitVar N: literals[N].value
+                            Oop assoc = methodObj->slots()[1 + (op - 0x10)];
+                            Oop val = assoc.isObject()
+                                ? assoc.asObjectPtr()->slotAt(1)
+                                : memory_.nil();
+                            refStack.push_back(val);
+                            i++;
+                        } else if (op >= 0x20 && op <= 0x3F) {
+                            // PushLitConst N: literals[N]
+                            refStack.push_back(
+                                methodObj->slots()[1 + (op - 0x20)]);
+                            i++;
                         } else if (op == 0x4C) {
                             refStack.push_back(receiver_);
                             i++;
+                        } else if (op == 0x4D) {
+                            refStack.push_back(memory_.trueObject()); i++;
+                        } else if (op == 0x4E) {
+                            refStack.push_back(memory_.falseObject()); i++;
+                        } else if (op == 0x4F) {
+                            refStack.push_back(memory_.nil()); i++;
                         } else if (op >= 0x40 && op <= 0x4B) {
                             refStack.push_back(
                                 *(framePointer_ + 1 + (op - 0x40)));
@@ -6944,7 +6963,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             extA = (extA << 8) | bcStart[i + 1];
                             i += 2;
                         } else {
-                            // Unknown — stop.
                             break;
                         }
                     }
