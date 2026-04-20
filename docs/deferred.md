@@ -9,6 +9,28 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
+## A00. `StringTest>>testSelect` — fails via timeout (interpreter-speed)
+
+80-class focused-SUnit broad run shows:
+
+    Pass: 4292  Fail: 0  Error: 0  Skip: 6  Timeout: 1
+
+The one timeout is `StringTest>>testSelect`.  Passes on stock Cog
+in <1s; our pure-interpreter mode (PHARO_NO_JIT=1) exceeds the
+50s `defaultTimeLimit` watchdog and gets killed.
+
+Harness categorizes it separately from `Fail` because it's an
+infrastructure ceiling (~50× interpreter-vs-JIT speed gap) rather
+than an assertion failure.  Treated as a fail for correctness
+reporting: our VM cannot currently complete this test in the
+allotted time.  Would pass with working JIT enabled, or with
+`/tmp/sunit_timeout_scale.txt` contents raised (e.g., 20 → 200s
+per test — defers the limit but doesn't address the speed gap).
+
+Next steps: JIT optimization work.  The Sista Phase 4 monomorphic
+inliner is the intended fix; shorter term, any perf win on the
+interpreter (e.g., quickening hot sends) narrows the gap.
+
 ## A0. weak-ref GC: testClearing — **RESOLVED** (2026-04-20)
 
 Both `WeakKeyDictionaryTest>>testClearing` and
