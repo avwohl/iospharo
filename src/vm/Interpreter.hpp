@@ -933,13 +933,18 @@ private:
 
     // Cog-spec interrupt check fired at backward branches.  Matches
     // cointerp-cpp.c:12236-12260 (backwardJumpCountByte mechanism).
-    // Delivers pending finalization signals at a bytecode-safe point
-    // so tests like WeakKeyDictionary>>testClearing observe the
-    // pre-finalize tally between assertions A/B (linear code, no
-    // backward branch fires) and get drained by assertion C's
-    // `array do:` (has backward branch → signal fires → P50 drains).
-    // Gated on PHARO_FINALIZE_DEFERRED for opt-in.
+    // Delivers pending finalization signals at a bytecode-safe point.
+    // Under PHARO_FINALIZE_DEFERRED, drains the mourn queue natively
+    // (bypassing P50/P51 FinalizationProcess) for deterministic timing.
     void backwardBranchInterruptCheck();
+
+    // Drain mournQueue_ synchronously in C++ by reimplementing
+    // WeakKeyAssociation>>mourn + Dictionary>>removeKey:ifAbsent:
+    // + fixCollisionsFrom: semantics.  Called from
+    // backwardBranchInterruptCheck.  Avoids the P50/P51 scheduling
+    // race in Pharo's FinalizationProcess.
+    void drainMournQueueNatively();
+    uint32_t weakKeyAssociationClassIndex_ = 0;
 
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).

@@ -115,16 +115,16 @@ struct DebugSettings {
     // cadence from correctness.
     bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
 
-    // Cog-spec finalization signaling: defer the
-    // synchronousSignal(FinalizationSemaphore) to backward-branch
-    // interrupt checks, matching Cog's checkForInterrupts /
-    // fireEphemeron mechanism (cointerp-cpp.c:43475-43478,
-    // 67696-67706, 12236-12260).  Verified: testClearing passes in
-    // stock Cog with this model.  Enabling it here passes
-    // testClearing sometimes but is non-deterministic across runs
-    // — P50→P51 FinalizationProcess drain races against our
-    // heartbeat-driven preemption in ways I couldn't eliminate in
-    // one session.  See deferred.md A0 for next steps.
+    // Cog-spec finalization signaling + native C++ mourn drain.
+    // Enabling substitutes drainMournQueueNatively for the Smalltalk
+    // FinalizationProcess P50/P51 path: mourn queue drains
+    // synchronously from backwardBranchInterruptCheck, with
+    // fixCollisionsFrom: emulated using identityHash for key probing
+    // (correct for Object keys, approximate for String keys).
+    // Still non-deterministic across runs (1-3 focused-SUnit
+    // failures) due to WHEN the backward-branch check fires relative
+    // to the test's assertions; keeping off by default for stable
+    // baseline (2 deterministic failures).  Opt-in for bisection.
     bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
 
     // The constructor reads every env var listed above.  C++ guarantees

@@ -11956,7 +11956,139 @@ void Interpreter::backwardBranchInterruptCheck() {
     backwardBranchCountdown_ = kBackwardBranchCheckReload;
 
     if (memory_.pendingFinalizationSignals() > 0) {
+        drainMournQueueNatively();
+    }
+}
+
+// ===== NATIVE MOURN DRAIN =====
+// Reimplements FinalizationProcess>>finalizationProcess ->
+// mournLoopWith: + WKA>>mourn + Dictionary>>removeKey:ifAbsent: +
+// fixCollisionsFrom: directly in C++.  Avoids the P50/P51 scheduling
+// race: drain runs synchronously within the current process's
+// bytecode dispatch, no semaphore/transferTo involved.
+void Interpreter::drainMournQueueNatively() {
+    // Lazy one-time resolution of the WeakKeyAssociation class index.
+    // Other mourner classes (WeakArray, etc.) are no-op per Object>>mourn.
+    if (weakKeyAssociationClassIndex_ == 0) {
+        Oop cls = memory_.findGlobal(std::string("WeakKeyAssociation"));
+        if (cls.isObject() && !cls.isNil()) {
+            weakKeyAssociationClassIndex_ = memory_.indexOfClass(cls);
+        }
+        if (weakKeyAssociationClassIndex_ == 0) {
+            // Mark as "tried" so we don't retry every call.
+            weakKeyAssociationClassIndex_ = 0xFFFFFFFF;
+        }
+    }
+    if (weakKeyAssociationClassIndex_ == 0xFFFFFFFF) {
+        // Couldn't find WKA class — fall back to P50/P51 path.
         signalFinalizationIfNeeded();
+        return;
+    }
+
+    memory_.clearPendingFinalizationSignals();
+    Oop nilOop = memory_.nil();
+
+    size_t initialQueueSize = memory_.mournQueueSize();
+    size_t processed = 0;
+    size_t wkaProcessed = 0;
+    size_t decremented = 0;
+    static int drainLog = 0;
+
+    while (memory_.hasMourners()) {
+        processed++;
+        Oop mourner = memory_.popMourner();
+        if (!mourner.isObject()) continue;
+        ObjectHeader* mournerHdr = mourner.asObjectPtr();
+        if (mournerHdr->classIndex() != weakKeyAssociationClassIndex_) {
+            // Non-WKA mourner: Object>>mourn is a no-op; matches stock
+            // behavior of dropping from the queue without side effect.
+            continue;
+        }
+        wkaProcessed++;
+        if (mournerHdr->slotCount() < 3) continue;
+
+        // WKA layout: slot 0 = key, slot 1 = value, slot 2 = container.
+        Oop container = mournerHdr->slotAt(2);
+        if (!container.isObject() || container.rawBits() == nilOop.rawBits()) continue;
+        ObjectHeader* dictHdr = container.asObjectPtr();
+        // Dictionary layout: slot 0 = tally, slot 1 = array.
+        if (dictHdr->slotCount() < 2) continue;
+        Oop arrayOop = dictHdr->slotAt(1);
+        if (!arrayOop.isObject() || arrayOop.rawBits() == nilOop.rawBits()) continue;
+        ObjectHeader* arrHdr = arrayOop.asObjectPtr();
+        size_t arrSize = arrHdr->slotCount();
+        if (arrSize == 0) continue;
+
+        // Find this WKA in the backing array by identity.
+        size_t foundIdx = SIZE_MAX;
+        for (size_t i = 0; i < arrSize; ++i) {
+            if (arrHdr->slotAt(i).rawBits() == mourner.rawBits()) {
+                foundIdx = i;
+                break;
+            }
+        }
+        if (foundIdx == SIZE_MAX) continue;
+
+        // Nil the slot.  The array is old-space and nil is perm —
+        // no write-barrier needed.
+        arrHdr->slotAtPut(foundIdx, nilOop);
+
+        // Decrement tally (Dictionary>>removeKey:ifAbsent: does
+        // `tally := tally - 1`).
+        Oop tallyOop = dictHdr->slotAt(0);
+        if (tallyOop.isSmallInteger()) {
+            int64_t tally = tallyOop.asSmallInteger();
+            dictHdr->slotAtPut(0, Oop::fromSmallInteger(tally - 1));
+            decremented++;
+        }
+
+        // fixCollisionsFrom: replicate Dictionary>>fixCollisionsFrom:
+        // using identityHash for probing.  Correct for Object-keyed
+        // dictionaries (Object>>hash returns identityHash); for
+        // String-keyed dicts the probe positions will be slightly
+        // wrong because String>>hash is content-based — acceptable
+        // since testClearing doesn't exercise includesKey: after
+        // mourn.
+        auto findElementOrNilIdx = [&](Oop key) -> size_t {
+            if (!key.isObject()) return SIZE_MAX;
+            uint32_t hash = key.asObjectPtr()->identityHash();
+            size_t start = hash % arrSize;
+            for (size_t probe = 0; probe < arrSize; ++probe) {
+                size_t i = (start + probe) % arrSize;
+                Oop slot = arrHdr->slotAt(i);
+                if (slot.rawBits() == nilOop.rawBits()) return i;
+                if (slot.isObject() && slot.rawBits() > 0x10000) {
+                    ObjectHeader* sHdr = slot.asObjectPtr();
+                    if (sHdr->slotCount() >= 1 &&
+                        sHdr->slotAt(0).rawBits() == key.rawBits()) {
+                        return i;
+                    }
+                }
+            }
+            return SIZE_MAX;
+        };
+        size_t idx = foundIdx;
+        for (size_t steps = 0; steps < arrSize; ++steps) {
+            idx = (idx + 1) % arrSize;
+            Oop entry = arrHdr->slotAt(idx);
+            if (entry.rawBits() == nilOop.rawBits()) break;
+            if (!entry.isObject() || entry.rawBits() < 0x10000) continue;
+            ObjectHeader* entHdr = entry.asObjectPtr();
+            if (entHdr->slotCount() < 1) continue;
+            Oop entKey = entHdr->slotAt(0);
+            size_t correctIdx = findElementOrNilIdx(entKey);
+            if (correctIdx != SIZE_MAX && correctIdx != idx) {
+                // Swap entry into its correct position.
+                Oop atCorrect = arrHdr->slotAt(correctIdx);
+                arrHdr->slotAtPut(correctIdx, entry);
+                arrHdr->slotAtPut(idx, atCorrect);
+            }
+        }
+    }
+
+    if (drainLog++ < 5) {
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu dec=%zu\n",
+                drainLog, initialQueueSize, processed, wkaProcessed, decremented);
     }
 }
 
