@@ -251,10 +251,12 @@ fine) or move at least one out-of-line method into it.
 
 ## Status summary
 
-    Fixed     1, 2, 3, 4, 5, 6, 7, 8       (8 bugs, all SUnit-impacting)
-    Open      9, 10, 11, 12, 13            (5 bugs)
+    Fixed     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
+    Open      11                                      (1 bug)
 
-Of the open ones: **11 (Sista compile corruption)** is the
-remaining show-stopper for jit-default; **10 (kStoreInstVar
-write barrier + immutability)** is one identified contributor;
-**9, 12, 13** are hygiene.
+Bug 11 (Sista compile-path corruption) is the remaining
+show-stopper for jit-default.  Bisect gates `PHARO_SISTA_NO_LOWER`
+and `PHARO_SISTA_NO_LOWER_SENDS` confirm the corruption is in
+`Lowering::lower`'s asmjit emit path itself; `kSendUnspeculated`
+alone isn't the trigger (NO_LOWER_SENDS still crashes at #99).
+Next bisect: gate kPrim*, kBranch*, kPhi individually.
