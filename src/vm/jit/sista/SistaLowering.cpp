@@ -270,9 +270,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // send the operands are [rcvr, arg0, ..., arg_{nArgs-1}]
                 // (so operands.size() == nArgs + 1).  For a generic
                 // mid-method bail (PushFullBlock, PushArray, etc.), the
-                // operands are the entire IR stack at bail time and
-                // sendArgCount is set to 0 — the interpreter just runs
-                // the bytecode without treating it as a send.
+                // operands are the entire IR stack at bail time.
+                //
+                // Use indexed addressing [sp + i*8] rather than
+                // iterating `add sp, sp, 8` per step so the register
+                // allocator doesn't have to keep sp hot through every
+                // push.  Final sp is written once at the end.
                 Gp sp = cc.new_gp64("sp");
                 cc.ldr(sp, ptr(state, OFF_SP));
                 for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
@@ -281,9 +284,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
                     }
-                    cc.str(it->second, ptr(sp));
-                    cc.add(sp, sp, Imm(8));
+                    cc.str(it->second,
+                           ptr(sp, static_cast<int>(opIdx) * 8));
                 }
+                cc.add(sp, sp, Imm(static_cast<int>(v.operands.size()) * 8));
                 cc.str(sp, ptr(state, OFF_SP));
 
                 // state.ip = absolute pointer into the method's bytecode.

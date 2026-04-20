@@ -6722,7 +6722,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     if (isSend0) {
                         continue;  // Send0 bails are safe
                     }
-                    (void)isSend1; (void)isSend2;
+                    if (getenv("PHARO_SISTA_SEND1_ONLY") && isSend1) {
+                        continue;  // diagnostic: allow Send1 only
+                    }
+                    (void)isSend2;
                     hasUnsafeOp = true;
                     break;
                 }
