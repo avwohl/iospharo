@@ -1273,6 +1273,37 @@ int main() {
                      "push[0,1]=SmallInt 0 — matches real VM observation\n";
     }
 
+    // Round-trip 9c: Send1 with PushReceiver + PushTemp — the
+    // textbook shape for `^ self foo: anArg`.  Most image methods
+    // that Send1 use this pattern.
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,                     // 0x4C: self
+            (uint8_t)(SistaV1::PushTempBase + 0),      // 0x40: temp 0 (arg)
+            (uint8_t)(SistaV1::Send1Base + 0),          // 0x90: Send1 sel-0
+            SistaV1::ReturnTop,                         // unreachable
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 1, 0, lifted);
+        Lowering::CompiledFn fn = lowering.lower(lifted);
+        check(fn != nullptr, "lower Send1 w/ Receiver+Temp");
+
+        uint64_t stack[4] = {0};
+        uint64_t temps[4] = { 0xA11A11, 0, 0, 0 };
+        FakeState state{};
+        state.sp       = &stack[0];
+        state.receiver = 0xDEADBEEF;
+        state.tempBase = temps;
+        fn(&state);
+        check(state.exitReason == 2, "Send1 Receiver+Temp ExitSend");
+        check(stack[0] == 0xDEADBEEFULL, "push[0] = self");
+        check(stack[1] == 0xA11A11ULL,    "push[1] = temp[0]");
+        check(state.sp == &stack[2],      "sp += 2 slots");
+        std::cout << "--- round-trip Send1 w/ Receiver+Temp: "
+                     "stack[0]=0x" << std::hex << stack[0]
+                  << " stack[1]=0x" << stack[1] << std::dec << "\n";
+    }
+
     std::cout << "PASS\n";
     return 0;
 }
