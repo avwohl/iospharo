@@ -7307,11 +7307,24 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Primitive 130: Perform a full garbage collection
     // Returns the number of bytes of free space after collection
     //
-    // Full GC + flush caches.  Single pass — Cog's fullGC does one
-    // mark+sweep+compact; convergence on weak refs happens lazily
-    // over subsequent GCs if transient refs hold objects live.
+    // Full GC + flush caches.
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+
+    // Signal the finalization semaphore inline (instead of
+    // deferring to the next step) so the finalization process (P50)
+    // gets a chance to run before the caller sees the post-GC
+    // state.  Tests like WeakKeyDictionary>>testClearing expect
+    // `dict size` to reflect finalized entries immediately after
+    // `Smalltalk garbageCollect` returns; deferring the signal
+    // lets transient roots from this primitive's own activation
+    // path keep the weak dictionary tally stale.
+    //
+    // Matches Cog's primitiveFullGC which also signals finalization
+    // as part of the primitive's work, not after.
+    if (memory_.pendingFinalizationSignals() > 0) {
+        signalFinalizationIfNeeded();
+    }
 
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();
