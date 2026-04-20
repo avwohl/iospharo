@@ -45,13 +45,40 @@ Fix options, ordered by size:
 
 `PHARO_YOUNG_GEN=1` enables eden allocation + scavenge (opt-in).
 Full GC auto-scavenges before compact, mark phase traces through
-eden to keep old objects reachable only via eden alive.
+eden to keep old objects reachable only via eden alive.  This was
+the hypothesized fix path for testClearing.
 
-testClearing still fails under YG — fix is not here.  Symptom the
-same as baseline: keys fire during the first assertion when weak
-processing runs earlier than the test's timing assumption.  Needs
-separate investigation into the weak-ref timing (option 1 or 2
-from the list above).
+**It did not fix testClearing.**  The real cause of the 2 remaining
+failures turned out to be orthogonal to GC reachability.  Under
+both baseline and YG, the failure sequence is the same:
+
+1. `Smalltalk garbageCollect` runs primitive 130 (fullGC).
+2. Mark phase fires 1000 ephemerons (WeakKeyAssociation instances);
+   `pendingFinalizationSignals_` is incremented.
+3. Primitive 130 calls `signalFinalizationIfNeeded()`.
+4. That calls `synchronousSignal(sema)`, which in turn calls
+   `transferTo(finalizationProcess)` — P50 preempts P40 inline.
+5. P50 runs `FinalizationProcess>>mournLoopWith:`, each iteration
+   sends `mourn` to a WKA, which calls `container removeKey: key`,
+   which decrements the dict's tally.
+6. The loop drains all 1000 mourners before P50 waits on the
+   semaphore again and yields back to P40.
+7. Control returns from primitive 130.  Tally is now 1.
+
+But the test expects tally to still be 1001 at the next assertion
+("Keys are gone but not yet finalized"), and only drop during the
+call to `dict keys` (assertion C).  Cog achieves this by *not*
+letting P50 preempt inline.  Matching that requires either:
+
+- Replacing the synchronous `signalFinalizationIfNeeded` with an
+  async enqueue whose signal is drained only at interrupt-check
+  boundaries (every ~1024 bytecodes).
+- Or: deferring the signal entirely and letting the image's own
+  yield points drive P50.
+
+Either change is VM-wide — affects every primitive that signals a
+semaphore — and was out of scope for this session.  Testing under
+YG=1 matches baseline (442 pass, 2 testClearing fail).
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and

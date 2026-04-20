@@ -7311,33 +7311,24 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Signal the finalization semaphore inline (instead of
-    // deferring to the next step) so the finalization process (P50)
-    // gets a chance to run before the caller sees the post-GC
-    // state.  Tests like WeakKeyDictionary>>testClearing expect
-    // `dict size` to reflect finalized entries immediately after
-    // `Smalltalk garbageCollect` returns; deferring the signal
-    // lets transient roots from this primitive's own activation
-    // path keep the weak dictionary tally stale.
-    //
-    // Matches Cog's primitiveFullGC which also signals finalization
-    // as part of the primitive's work, not after.
+    // Signal finalization inline; matches existing Cog-like behavior.
+    // Timing note: this synchronously runs the P50 finalizer via
+    // transferTo, which drains the mourn queue before this primitive
+    // returns.  WeakKey{,Identity}Dictionary>>testClearing expects
+    // the queue to be partially drained between assertions B and C
+    // — see deferred.md A0.
     if (memory_.pendingFinalizationSignals() > 0) {
         signalFinalizationIfNeeded();
     }
 
-    // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
-    // Push result before signaling finalization.
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    // Signal finalization on the very next step (not inside the primitive).
-    // The finalization process at P50 can then preempt and mourn dead weak keys.
     if (memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
     }
