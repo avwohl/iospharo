@@ -74,7 +74,7 @@ static_assert(sizeof(FreeBlock) <= MethodAlignment,
 class CodeZone {
 public:
     CodeZone() = default;
-    ~CodeZone() { destroy(); }
+    ~CodeZone();  // out-of-line in CodeZone.cpp so the TU emits at least one symbol
 
     // Non-copyable
     CodeZone(const CodeZone&) = delete;

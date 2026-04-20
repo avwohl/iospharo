@@ -100,10 +100,13 @@ public:
     void flushAllICs();
 
 private:
-    CodeZone&     zone_;
+    // zone_ and interp_ were stored at construction for future use
+    // (T2 inline IC patching against T1's code zone, deopt callbacks
+    // back into the interpreter), but are not yet referenced.  Keeping
+    // them out of the field list avoids -Wunused-private-field; revive
+    // when that work lands.
     MethodMap&    methodMap_;
     ObjectMemory& memory_;
-    Interpreter&  interp_;
     JITCompiler*  t1Compiler_ = nullptr;  // §1.3a: for shared-IC lookup
 
     // asmjit runtime owns the code memory allocator. One JitRuntime

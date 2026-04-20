@@ -84,7 +84,10 @@ constexpr int IC_EXTRA_OFF(int i)  { return i * 3 * 8 + 16;  }
 
 Tier2Compiler::Tier2Compiler(CodeZone& zone, MethodMap& methodMap,
                              ObjectMemory& memory, Interpreter& interp)
-    : zone_(zone), methodMap_(methodMap), memory_(memory), interp_(interp) {}
+    : methodMap_(methodMap), memory_(memory) {
+    (void)zone;
+    (void)interp;
+}
 
 Tier2Compiler::~Tier2Compiler() = default;
 

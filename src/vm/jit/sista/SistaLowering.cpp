@@ -185,21 +185,30 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kStoreInstVar: {
-                if (v.operands.size() != 2) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                auto recvIt = regFor.find(v.operands[0]);
-                auto valIt  = regFor.find(v.operands[1]);
-                if (recvIt == regFor.end() || valIt == regFor.end()) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                // Slot N at byte offset 8 + N*8 from object pointer.
-                cc.str(valIt->second,
-                        ptr(recvIt->second,
-                            8 + static_cast<int>(v.literal) * 8));
-                break;
+                // SAFETY BAIL: the historic lowering emitted a direct
+                // `str val, [recv + 8 + N*8]` with NO immutability check
+                // and NO write-barrier callout — the interpreter's
+                // setReceiverInstVar does both (raises ModificationForbidden
+                // on immutable receivers, calls rememberObject when an old
+                // object gets a young oop slot).  Without those, lowered
+                // code can:
+                //   (a) silently mutate a frozen object, breaking the
+                //       Pharo readOnly contract, or
+                //   (b) leave an unremembered old→young pointer, which
+                //       scavenge will then fail to update on object move.
+                // Both are silent miscompiles.  An activate-time gate
+                // (Interpreter.cpp ~6841) marks methods with PopStoreRecv*
+                // bytecodes as unsafe so they never *dispatch*, but the
+                // unsafe code was still being emitted into the asmjit
+                // zone at compile time.  We refuse to lower instead — if
+                // the dispatch gate ever loosens, this is the second line
+                // of defense against silent miscompile.
+                //
+                // Plan to re-enable: emit the same `attemptToAssign:withIndex:`
+                // callout the interpreter uses, plus the rememberObject
+                // write-barrier when isOld(recv) && isYoung(val).
+                if (failedAtValue) *failedAtValue = v.id;
+                return nullptr;
             }
             case Op::kConstantOop: {
                 Gp dst = cc.new_gp64("const");
