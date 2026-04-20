@@ -20,16 +20,25 @@ Run watchdog: 45m (VM wall-clock)
 
 Status legend:  P pass · F fail · E error · S skip · T timeout · — unrun
 
-    VM     Mode     Date        Classes   Tests    P       F    E     S    T    Wall
-    cog    default  —           —         —        —       —    —     —    —    —
-    main   NO_JIT   —           —         —        —       —    —     —    —    —
-    main   default  —           —         —        —       —    —     —    —    —
-    jit    NO_JIT   2026-04-20  827/836   17072    16465   18   536   40   13   45m(wd)
-    jit    default  —           —         —        —       —    —     —    —    —
+`Δcog` (rows below cog only) = count of tests that are NOT pass on this
+(VM, mode) but ARE pass on cog.  Requires per-test join with the cog
+row; marked `?` until the cog row is populated.
+
+    VM     Mode     Date        Classes   Tests    P       F    E     S    T    Wall     Δcog
+    cog    default  —           —         —        —       —    —     —    —    —        (baseline)
+    main   NO_JIT   —           —         —        —       —    —     —    —    —        ?
+    main   default  —           —         —        —       —    —     —    —    —        ?
+    jit    NO_JIT   2026-04-20  827/836   17072    16465   18   536   40   13   45m(wd)   ≥454*
+    jit    default  —           —         —        —       —    —     —    —    —        ?
 
 `wd` = hit the 45-minute VM watchdog; last 9 classes (FLBinaryFileStream,
 FinalizationRegistry, FFICallback) had 80s/300s per-test timeouts that
 ate the budget.
+
+*`≥454` is a lower bound from the 15-class probe 2026-04-20, not a
+full join.  The 15 classes sampled on cog passed 400/400; on our VM
+NO_JIT those same classes contributed 454 C11 DNUs.  Full join pending
+a cog row.  Upper bound, if every F+E+T also regresses, is 567.
 
 ## Delta vs stock Cog
 
