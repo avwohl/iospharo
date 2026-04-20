@@ -58,8 +58,8 @@ SUnit.  Two root causes found and partially fixed in commits
    Pinning prevents the eviction; null-guard skips materialization
    if state.method is nil.  **Fixed.**
 
-Residuals: more null-deref + W^X SIGBUS crashes at progressively
-later compile counts.  Progression so far:
+Residuals: more SIGBUS crashes at progressively later compile counts.
+Progression so far:
 
     Commit       Crash at   Notes
     baseline     ~5 methods SIGBUS, eviction-related
@@ -68,10 +68,17 @@ later compile counts.  Progression so far:
     dd91d26     same        saveJM null guards (no new crash signature)
     34f39cd      ~28       JIT_CALL macro auto-flips W^X executable
 
-Each fix removed one class of crash but exposed another.  Next
-candidates: a stale IC entry pointing into evicted+reallocated
-code, or a saved resume-address that wasn't fixed up after
-compaction.  jit default still cannot complete a full SUnit run.
+**Bisect**: with `PHARO_NO_SISTA=1` (T1 JIT only, no Sista), 44+
+methods compile, **no crash**.  Image hits separate "Improper store
+into indexable object" but JIT itself stays up.  Sista is the
+trigger of the residual crash, not T1 JIT.  Likely path: Sista's
+asmjit-emitted function exits cleanly but leaves *some* state that
+trips up the next T1 JIT activation — maybe a stale `state.method`
+or `state.jitMethod` from `sstate`, maybe an asmjit-internal
+bookkeeping clash with our `CodeZone` (both are MAP_JIT regions
+sharing the per-thread `pthread_jit_write_protect_np` toggle).
+jit default still cannot complete a full SUnit run; jit NO_SISTA
+gets further but isn't a real benchmark of the production config.
 
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
