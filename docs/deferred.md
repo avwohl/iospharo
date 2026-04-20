@@ -9,6 +9,76 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
+## A0a. FFI `C11 class >> #current` DNU cascade — **VM REGRESSION** (2026-04-20)
+
+Full SUnit run 2026-04-20 (`PHARO_NO_JIT=1 PHARO_NO_SISTA=1`) shows
+454 errors with identical signature:
+
+    MessageNotUnderstood: Message not understood: C11 class >> #current
+      >> C11 class(Object)>>doesNotUnderstand: #current
+      >> <Class>(Object)>>ffiCallingConvention
+      >> <Class>(Object)>>ffiCall:library:options:fixedArgumentCount:
+      >> <Class>(Object)>>ffiCall:library:options:
+      >> <Class>(Object)>>ffiCall:
+      >> <Class>>><primMethod>
+      >> <TestCase>
+
+Affected test classes include DiskFileAttributesTest (6 errors),
+DiskFileSystemTest (59), AthensCairoMatrixTest (17),
+AthensCairoPDFSurfaceTest (4), CairoLibraryTest (1),
+ClyBrowserToolValidityTest (25), ClapHelloTest (8),
+CompletionEngineTest (12), CoCompletionEngineTest (24),
+EpApplyTest (28), EpApplyPreviewerTest (40),
+EpCodeChangeIntegrationTest (32), EpRevertTest (23),
+FFICallbackTest (1), FLPlatformTest, and ~40 more.
+
+Stock Cog cross-check on the same image (`/tmp/harness/Pharo.image`)
+using the Pharo 10 VM: 15 sampled classes, **400 tests PASS / 0 FAIL
+/ 0 ERROR**.  So these failures are ours, not the image.
+
+Interactive probe on our VM:
+
+    FFICallback ffiCallingConvention          => #cdecl (correct)
+    OSPlatform current ffiCallingConvention   => #cdecl (correct)
+    AthensCairoMatrix(Object)>>ffiCallingConvention source
+        => ^ OSPlatform current ffiCallingConvention (same as stock)
+
+No `C11` class exists in either the stock image or ours (verified via
+`Smalltalk allClasses` search and `Smalltalk globals at: #C11`).  Yet
+SUnit-invoked paths on our VM resolve a receiver that prints as
+"C11 class" — suggesting a method-literal or selector-lookup issue
+specific to UFFI's pragma-driven FFI-callout compilation of methods
+like `primLoadIdentity  ^ self ffiCall: #(...)`.  UFFI rewrites these
+methods on first call to reference a cached FFICallout descriptor;
+the rewrite may install different literals on our VM.
+
+**Next steps:**
+- Capture actual bytecode / literal frame of `AthensCairoMatrix>>primLoadIdentity`
+  in our VM vs stock, post-first-call.  Diff them.
+- Inspect the `ffiCall:` path's pragma handler (FFICalloutAPI,
+  FFIFunctionResolution) for places that might reference a non-
+  existent C11 class as a default.
+- Check whether our VM's method-compilation path (e.g., eval-mode
+  compilation, JIT deopt, or FFI dynamic-recompile) introduces the
+  C11 literal.
+
+## A0b. Other stock-Cog-passing error buckets from 2026-04-20 full run
+
+Same day also saw these bucketed DNUs and other errors that need
+the same stock-Cog cross-check:
+
+    92  MessageNotUnderstood: receiver of "packageName" is nil
+    59  MessageNotUnderstood: receiver of "select:thenDo:" is nil
+    49  MessageNotUnderstood: receiver of "disable" is nil
+    17  MessageNotUnderstood: receiver of "outputFileReference" is nil
+    12  Error: Wrapper query should include single subquery
+    12  Error: Can't find the requested origin
+     8  MessageNotUnderstood: receiver of "close" is nil
+
+Given A0a's finding that VERY similar-looking "image infra" errors
+were actually VM regressions, we should not assume these pass on
+stock until verified.
+
 ## A00. `StringTest>>testSelect` — fails via timeout (interpreter-speed)
 
 80-class focused-SUnit broad run shows:

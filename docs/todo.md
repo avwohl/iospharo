@@ -25,13 +25,22 @@ Recent session-level progress:
 - **Full SUnit run 2026-04-20** (`PHARO_NO_JIT=1 PHARO_NO_SISTA=1`):
   827/836 classes finished, 17072 tests.  P:16465 F:18 E:536 S:40 T:13.
   testClearing PASS in both WKD (207/207) and WIKD (209/209).
-  Error breakdown is dominated by infrastructure issues not caused
-  by our VM: 454 FFI `C11 class>>#current` DNUs, 92 `packageName` nil,
-  59 `select:thenDo:` nil, 49 `disable` nil — all image-side
-  `OSPlatform` / package-system nil-receivers.  Only ~82 real
-  errors outside FFI.  Run hit VM 45-min watchdog; last 9 classes
-  (FLBinaryFileStream, FinalizationRegistry, FFICallback) had
-  per-test 80s/300s timeouts that ate budget.
+- **Regression: 454 FFI `C11 class>>#current` DNUs are OUR VM**.
+  Stock Cog pass-rate check against the same image (15 sampled
+  classes that errored on our VM) — stock passes 400/400.  Failing
+  path: `AthensCairoMatrix(Object)>>ffiCallingConvention` sends
+  `#current` to a receiver that prints as "C11 class".  Stock Cog
+  trace returns `#cdecl` via `OSPlatform>>ffiCallingConvention`.
+  Interactive `FFICallback ffiCallingConvention` on our VM returns
+  `#cdecl` correctly, but batched SUnit invocation via `self ffiCall:`
+  fails.  Root cause TBD — likely UFFI dynamic-recompile pragma
+  path runs once per callsite and our VM's compiled-method literal
+  or selector lookup diverges.  Recorded in `docs/deferred.md`.
+  Other error buckets (92 `packageName` nil, 59 `select:thenDo:`
+  nil, 49 `disable` nil, 17 `outputFileReference` nil, Calypso
+  Wrapper/origin 24) also warrant the same stock-Cog cross-check.
+  Run hit VM 45-min watchdog; last 9 classes (FLBinaryFileStream,
+  FinalizationRegistry, FFICallback) had 80s/300s per-test timeouts.
 - (superseded) 2 remaining `testClearing` SUnit failures (WeakKey / WeakIdentity)
   traced to context-materialization holding ephemeron keys alive
   across full-GC mark; Cog uses scavenge to avoid this.  Three
