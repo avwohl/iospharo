@@ -6488,6 +6488,25 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         return;
     }
 
+    // Cog-spec finalization drain trigger: Cog's forceInterruptCheck
+    // sets stackLimit = -1 in fireEphemeron, so the next method
+    // activation's stack-overflow check fires and — assuming
+    // canContextSwitchIfActivating holds (primitive != 198) — runs
+    // checkForEvents which signals TheFinalizationSemaphore.  P50
+    // drains the mourn queue in that flow.
+    //
+    // Our VM: if PHARO_FINALIZE_DEFERRED is on and the mourn queue
+    // is non-empty, drain it synchronously (natively, no P50/P51
+    // scheduling) right here at activation.  Quick primitives
+    // (256-519 — prim-slot-at, literal returns, etc.) don't reach
+    // activateMethod, so `dict size` returns the pre-drain tally
+    // before the first real activation arms the drain — this is
+    // the timing Cog's test suite relies on.
+    if (__builtin_expect(g_debug.finalizeDeferred &&
+                         memory_.pendingFinalizationSignals() > 0, 0)) {
+        drainMournQueueNatively();
+    }
+
     // Set up new method
     method_ = method;
     argCount_ = argCount;

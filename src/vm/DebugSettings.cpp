@@ -147,7 +147,7 @@ DebugSettings::DebugSettings() {
     sistaNoBail            = envPresent("PHARO_SISTA_NO_BAIL");
     youngGenEnabled        = envPresent("PHARO_YOUNG_GEN");
     ygNoScavenge           = envPresent("PHARO_YG_NO_SCAVENGE");
-    finalizeDeferred       = envPresent("PHARO_FINALIZE_DEFERRED");
+    finalizeDeferred       = !envPresent("PHARO_INLINE_FINALIZE");
 }
 
 DebugSettings g_debug;  // static-storage-duration; constructor runs before main().

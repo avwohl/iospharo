@@ -116,16 +116,19 @@ struct DebugSettings {
     bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
 
     // Cog-spec finalization signaling + native C++ mourn drain.
-    // Enabling substitutes drainMournQueueNatively for the Smalltalk
-    // FinalizationProcess P50/P51 path: mourn queue drains
-    // synchronously from backwardBranchInterruptCheck, with
-    // fixCollisionsFrom: emulated using identityHash for key probing
-    // (correct for Object keys, approximate for String keys).
-    // Still non-deterministic across runs (1-3 focused-SUnit
-    // failures) due to WHEN the backward-branch check fires relative
-    // to the test's assertions; keeping off by default for stable
-    // baseline (2 deterministic failures).  Opt-in for bisection.
-    bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
+    // Drain fires at method activation (not primitive calls), which
+    // matches Cog's stack-limit-trick triggering behavior: Cog's
+    // `forceInterruptCheck` sets stackLimit = -1 in fireEphemeron,
+    // then the next *real* method activation's stack-overflow check
+    // fires and drains via checkForEvents.  Quick primitives (slot
+    // accessors like dict.size) return pre-drain values because they
+    // never call activateMethod, exactly matching what
+    // testClearing expects at assertion B ("Keys are gone but not
+    // yet finalized" — tally still 1001 at the time of the read).
+    // Default-on since testClearing + testFinalize both pass in
+    // stock Cog with this semantic; set PHARO_INLINE_FINALIZE=1 to
+    // restore legacy for bisection.
+    bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
 
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and
