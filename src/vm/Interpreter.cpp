@@ -6705,6 +6705,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                                    && op <= jit::SistaV1::Send1Last);
                 const bool isSend2 = (op >= jit::SistaV1::Send2Base
                                    && op <= jit::SistaV1::Send2Last);
+                // Send0 (0x80-0x8F) bails are verified
+                // behavior-preserving end-to-end; admit by default.
+                // Send1/Send2 still diverge downstream despite
+                // Sista's observable outputs being bit-for-bit
+                // correct — stay gated.  PHARO_SISTA_SEND0_ONLY is
+                // retained as a no-op toggle (kept for diagnostic
+                // compatibility; default behavior already matches).
                 if (jit::SistaV1::isSendBytecode(op)
                  || op == jit::SistaV1::ExtSend
                  || op == jit::SistaV1::ExtSuperSend
@@ -6712,8 +6719,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                  || op == jit::SistaV1::PushClosure
                  || op == jit::SistaV1::PushArray
                  || op == jit::SistaV1::PushThisContext) {
-                    if (g_debug.sistaSend0Only && isSend0) {
-                        continue;
+                    if (isSend0) {
+                        continue;  // Send0 bails are safe
                     }
                     (void)isSend1; (void)isSend2;
                     hasUnsafeOp = true;
