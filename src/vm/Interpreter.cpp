@@ -1831,8 +1831,21 @@ void Interpreter::interpret() {
             if (suppressContextSwitch_) {
                 suppressContextSwitch_ = false;
             } else {
-                forceYield_.store(false, std::memory_order_release);
-                handleForceYield();
+                // Don't let heartbeat preempt finalization drain.
+                // FinalizationProcess wakes (P50) and forks a P51 worker
+                // that runs mournLoopWith:.  A mid-drain preemption leaves
+                // WeakKeyDictionary entries partially processed, causing
+                // races in testClearing / testFinalize.  Keep the force-
+                // yield flag set (handle on next tick) until mournQueue is
+                // empty.
+                Oop active = getActiveProcess();
+                int pri = safeProcessPriority(active);
+                bool inFinalizer = (pri == 50 || pri == 51) &&
+                                   memory_.mournQueueSize() > 0;
+                if (!inFinalizer) {
+                    forceYield_.store(false, std::memory_order_release);
+                    handleForceYield();
+                }
             }
         }
 
@@ -3202,7 +3215,11 @@ bool Interpreter::step() {
 
         // Signal finalization periodically for auto-GC mourners (not handled by the
         // one-shot flag which only fires after explicit GC primitives 130/131).
-        signalFinalizationIfNeeded();
+        // When finalizeDeferred is on, this is handled by
+        // backwardBranchInterruptCheck instead.
+        if (!g_debug.finalizeDeferred) {
+            signalFinalizationIfNeeded();
+        }
 
         // Display sync requested by heartbeat thread — safe to access heap here
         if (pendingDisplaySync_.load(std::memory_order_acquire)) {

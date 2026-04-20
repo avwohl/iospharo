@@ -118,10 +118,13 @@ struct DebugSettings {
     // Cog-spec finalization signaling: defer the
     // synchronousSignal(FinalizationSemaphore) to backward-branch
     // interrupt checks, matching Cog's checkForInterrupts /
-    // fireEphemeron mechanism (cointerp-cpp.c:43475-43478, 67696-67706,
-    // 12236-12260).  When enabled, sometimes achieves 1-failure on
-    // focused SUnit (vs 2 baseline) but non-deterministic across
-    // runs due to P51-worker scheduling race.  Off by default.
+    // fireEphemeron mechanism (cointerp-cpp.c:43475-43478,
+    // 67696-67706, 12236-12260).  Verified: testClearing passes in
+    // stock Cog with this model.  Enabling it here passes
+    // testClearing sometimes but is non-deterministic across runs
+    // — P50→P51 FinalizationProcess drain races against our
+    // heartbeat-driven preemption in ways I couldn't eliminate in
+    // one session.  See deferred.md A0 for next steps.
     bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
 
     // The constructor reads every env var listed above.  C++ guarantees
