@@ -109,8 +109,14 @@ uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static f
 // after Spur compaction.  Nullptr when Sista was never invoked.
 static sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
 
+// Per-method gate decision cache (1 = hasUnsafeOp, 0 = eligible).
+// Avoids re-scanning the method's bytecodes on every activation.
+// Reset on GC alongside the Sista fn cache.
+static std::unordered_map<uint64_t, uint8_t> sistaGateCache_;
+
 void Interpreter::recoverSistaAfterGC() {
     if (sistaRuntimeForGCHook_) sistaRuntimeForGCHook_->reset();
+    sistaGateCache_.clear();
 }
 #endif
 
@@ -6658,7 +6664,20 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // receivers + args.  Silent miscompile is possible if a
         // subclass overrides one of these methods with non-numeric
         // arith; that risk lands with Phase 3 deopt, not here.
+        // Gate-decision cache: scanning the method's bytecodes for
+        // bail ops on every activation is expensive on hot
+        // callers.  Cache the result by raw oop bits; invalidated
+        // the same way the Sista fn cache is (recoverJITAfterGC
+        // resets both).
+        uint64_t gateKey = method.rawBits();
         bool hasUnsafeOp = false;
+        {
+            auto gateIt = sistaGateCache_.find(gateKey);
+            if (gateIt != sistaGateCache_.end()) {
+                hasUnsafeOp = gateIt->second != 0;
+                goto gateDecided;
+            }
+        }
         {
             size_t bcLen = totalBytes > bytecodeStart
                            ? totalBytes - bytecodeStart : 0;
@@ -6745,7 +6764,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 (void)isSend0; (void)isSend1; (void)isSend2;
             }
+            sistaGateCache_[gateKey] = hasUnsafeOp ? 1 : 0;
         }
+    gateDecided:
 
         const bool dispatchGateOpen =
             ipAtBytecodeStart && (!hasUnsafeOp || g_debug.sistaAllowSends);
