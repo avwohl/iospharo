@@ -1396,9 +1396,7 @@ GCResult ObjectMemory::scavenge() {
         Oop newOop = tenureIfYoung(oopRef);
         if (newOop.rawBits() != oopRef.rawBits()) {
             oopRef = newOop;
-            auto it = forward.find(Oop::fromRawBits(oopRef.rawBits()
-                                                    - 0 /* already new */).asObjectPtr());
-            // We just tenured it — its new address is newOop.asObjectPtr().
+            // Newly tenured — its new address is newOop.asObjectPtr().
             scanQueue.push_back(newOop.asObjectPtr());
         } else if (newOop.isObject()) {
             // Already tenured (forwarded) — still scan if we haven't.
