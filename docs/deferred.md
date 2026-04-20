@@ -44,41 +44,75 @@ Fix options, ordered by size:
 ### Generational GC (2026-04-20)
 
 `PHARO_YOUNG_GEN=1` enables eden allocation + scavenge (opt-in).
-Full GC auto-scavenges before compact, mark phase traces through
-eden to keep old objects reachable only via eden alive.  This was
-the hypothesized fix path for testClearing.
+Full GC auto-scavenges before compact; mark phase traces through
+eden to keep old objects reachable only via eden alive.
 
-**It did not fix testClearing.**  The real cause of the 2 remaining
-failures turned out to be orthogonal to GC reachability.  Under
-both baseline and YG, the failure sequence is the same:
+**YG did not fix testClearing.**  The failures are orthogonal to GC
+reachability — they're about *finalization signal timing*, and our
+VM deviates from Cog here.
 
-1. `Smalltalk garbageCollect` runs primitive 130 (fullGC).
-2. Mark phase fires 1000 ephemerons (WeakKeyAssociation instances);
-   `pendingFinalizationSignals_` is incremented.
-3. Primitive 130 calls `signalFinalizationIfNeeded()`.
-4. That calls `synchronousSignal(sema)`, which in turn calls
-   `transferTo(finalizationProcess)` — P50 preempts P40 inline.
-5. P50 runs `FinalizationProcess>>mournLoopWith:`, each iteration
-   sends `mourn` to a WKA, which calls `container removeKey: key`,
-   which decrements the dict's tally.
-6. The loop drains all 1000 mourners before P50 waits on the
-   semaphore again and yields back to P40.
-7. Control returns from primitive 130.  Tally is now 1.
+### testClearing — finalization signal semantics
 
-But the test expects tally to still be 1001 at the next assertion
-("Keys are gone but not yet finalized"), and only drop during the
-call to `dict keys` (assertion C).  Cog achieves this by *not*
-letting P50 preempt inline.  Matching that requires either:
+Authoritative reference: Cog `cointerp-cpp.c` at commit imported
+into `src/ios/`.
 
-- Replacing the synchronous `signalFinalizationIfNeeded` with an
-  async enqueue whose signal is drained only at interrupt-check
-  boundaries (every ~1024 bytecodes).
-- Or: deferring the signal entirely and letting the image's own
-  yield points drive P50.
+**Cog's primitiveFullGC** (lines 84895-84927):
 
-Either change is VM-wide — affects every primitive that signals a
-semaphore — and was out of scope for this session.  Testing under
-YG=1 matches baseline (442 pass, 2 testClearing fail).
+    static void primitiveFullGC(void) {
+        ...
+        integerVal = fullGC();
+        pop:thenPushInteger: integerVal.
+    }
+
+No finalization signal.  `fullGC` itself calls `signalFinalization:`
+via `fireEphemeron:` (lines 43475-43478):
+
+    signalFinalization:
+      forceInterruptCheck();
+      GIV(pendingFinalizationSignals) += 1;
+
+That's **all** it does — increment a counter and flag an interrupt
+check.  The actual `synchronousSignal(TheFinalizationSemaphore)`
+runs later in `checkForInterrupts` (lines 67696-67706), and only
+when `mayContextSwitch` is true (line 67635 returns early
+otherwise).
+
+**Our primitiveFullGC** calls `signalFinalizationIfNeeded()` inline
+after `memory_.fullGC()`.  That calls `synchronousSignal(sema)` →
+`resumepreemptedYieldingIffrom` → `transferTo(P50)` →
+`executeFromContext(P50_ctx)`.  P50 preempts *inside* the primitive,
+drains the whole mourn queue before the primitive returns.
+
+Consequence: by the time `Smalltalk garbageCollect` returns,
+`dict.tally` has already been decremented 1000 times (one per
+`WKA>>mourn` → `container removeKey: key`).  testClearing's
+assertion B (`dict size equals: self size + 1`) expects 1001 (the
+test comment reads "Keys are gone but not yet finalized") but sees
+1.
+
+**Correct fix (not shipped)**: match Cog's deferred-signal model.
+`signalFinalizationIfNeeded` should just increment a counter and
+request an interrupt check; actual `synchronousSignal` should run
+from `checkForInterrupts` under a `mayContextSwitch` guard, so the
+P50 preempt happens at the *next* interrupt-check boundary after
+the primitive returns rather than inline.  Attempted this session
+(commit on branch didn't ship — moving the signal out of
+primitiveFullGC just shifts the failure to a different assertion
+because our periodic-check cadence (every 1024 bytecodes) differs
+from Cog's bytecode-triggered interrupt checks).
+
+Restoring the inline signal keeps the 2-test failure baseline.
+The correct fix requires:
+1. Move `signalFinalizationIfNeeded`'s synchronousSignal call out
+   of the primitive path.
+2. Add a `mayContextSwitch` equivalent that's false during
+   primitive execution and true at user-level bytecode boundaries.
+3. Verify testClearing + testFinalizeValuesWhenLastChainContinuesAtFront
+   both pass.
+
+That's ~200-300 LoC of structural scheduler work — out of scope
+for this session.  Baseline (442 pass, 2 testClearing fail)
+preserved under both YG=0 and YG=1.
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and

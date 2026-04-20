@@ -7311,12 +7311,14 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Signal finalization inline; matches existing Cog-like behavior.
-    // Timing note: this synchronously runs the P50 finalizer via
-    // transferTo, which drains the mourn queue before this primitive
-    // returns.  WeakKey{,Identity}Dictionary>>testClearing expects
-    // the queue to be partially drained between assertions B and C
-    // — see deferred.md A0.
+    // Signal finalization inline.  This diverges from Cog's
+    // primitiveFullGC (cointerp-cpp.c:84895-84927), which only calls
+    // fullGC() with no finalization signal (fireEphemeron just
+    // increments pendingFinalizationSignals + forceInterruptCheck,
+    // and synchronousSignal runs later in checkForInterrupts
+    // guarded by mayContextSwitch).  Matching Cog exactly requires
+    // the `mayContextSwitch` guard and async signal semantics —
+    // see deferred.md A0 for the testClearing trade-off.
     if (memory_.pendingFinalizationSignals() > 0) {
         signalFinalizationIfNeeded();
     }
