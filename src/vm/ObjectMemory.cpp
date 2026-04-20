@@ -1423,13 +1423,12 @@ GCResult ObjectMemory::scavenge() {
     //
     // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
     // objects appended during this loop (Phase 2 drains those).
-    {
-        uint8_t* oldEnd = oldSpaceFree_;
-        ObjectScanner oldScan(oldSpaceStart_, oldEnd);
-        while (ObjectHeader* oldObj = oldScan.next()) {
-            size_t np = pointerSlotsOf(oldObj);
-            Oop* slots = oldObj->slots();
-            size_t cnt = oldObj->slotCount();
+    auto scanRegionForYoung = [&](uint8_t* regionStart, uint8_t* regionEnd) {
+        ObjectScanner scan(regionStart, regionEnd);
+        while (ObjectHeader* obj = scan.next()) {
+            size_t np = pointerSlotsOf(obj);
+            Oop* slots = obj->slots();
+            size_t cnt = obj->slotCount();
             for (size_t i = 0; i < np && i < cnt; ++i) {
                 Oop s = slots[i];
                 if (!s.isObject()) continue;
@@ -1443,6 +1442,14 @@ GCResult ObjectMemory::scavenge() {
                 }
             }
         }
+    };
+    // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
+    // objects appended during this loop (Phase 2 drains those).
+    scanRegionForYoung(oldSpaceStart_, oldSpaceFree_);
+    // Permanent space holds the special-objects array, and setSpecialObject
+    // does direct slotAtPut bypassing the write barrier.
+    if (permSpaceStart_ && permSpaceEnd_ > permSpaceStart_) {
+        scanRegionForYoung(permSpaceStart_, permSpaceEnd_);
     }
     rememberedSet_.clear();
 
