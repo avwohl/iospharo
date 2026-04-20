@@ -12626,7 +12626,7 @@ void Interpreter::tryJITResumeInCaller() {
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
-                    bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                    if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                 }
                 jitMaterializeCount_++;
                 jitMaterializeTotalDepth_ += rj2jDepth;
@@ -13913,7 +13913,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // falls back to the outer method's bytecode range.
             if (state.method.isObject() && state.method.rawBits() != 0) {
                 ObjectHeader* mObj = state.method.asObjectPtr();
-                bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
             } else {
                 static int warnCount = 0;
                 if (++warnCount <= 5) {
@@ -14036,7 +14036,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         argCount_ = state.argCount;
         {
             ObjectHeader* mObj = state.method.asObjectPtr();
-            bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+            if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
         }
         methObj = method.asObjectPtr();
     };
@@ -14187,7 +14187,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     argCount_ = state.argCount;
                     {
                         ObjectHeader* mObj = state.method.asObjectPtr();
-                        bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                        if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                     }
                 }
                 if (checkCountdown_ <= 0) goto jit_loop_exit;
@@ -14613,7 +14613,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
-                    bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                    if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                 }
             }
 
@@ -14687,7 +14687,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // tryResume on the fast path (~93% of calls).
                         uint8_t* savedBcStart = nullptr;
                         uint8_t* savedResumeEntry = nullptr;
-                        if (savedJitMethod) {
+                        // Guard: savedJitMethod->compiledMethodOop can be 0
+                        // when the JITMethod slot's underlying memory is
+                        // zero-initialized or holds FreeBlock metadata
+                        // (e.g., after eviction reuse).  Bug 11b layer 3
+                        // crashed here as `savedMethod.asObjectPtr() == nullptr`
+                        // → SEGV reading slot 0.
+                        if (savedJitMethod
+                            && savedMethod.isObject()
+                            && savedMethod.rawBits() != 0) {
                             ObjectHeader* sMO = savedMethod.asObjectPtr();
                             Oop sHdr = sMO->slots()[0];
                             int sNL = sHdr.isSmallInteger() ? (sHdr.asSmallInteger() & 0x7FFF) : 0;
@@ -14833,7 +14841,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     argCount_ = state.argCount;
                                     {
                                         ObjectHeader* mObj = state.method.asObjectPtr();
-                                        bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+                                        if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                                     }
                                 }
                                 if (checkCountdown_ <= 0) goto jit_loop_exit;
@@ -14881,8 +14889,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // Push a SavedFrame for the caller so the interpreter
                         // can return to it, then bail to interpreter for the
                         // callee's remaining work.
-                        if (frameDepth_ < StackOverflowLimit) {
-                            ObjectHeader* sMO = savedMethod.asObjectPtr();
+                        // Guard: savedMethod can be nil if the chain
+                        // loop's saved state was zero-initialized or
+                        // FreeBlock-overwritten (eviction reuse).
+                        // Bug 11b layer 4 — without the guard sMO is
+                        // null and sMO->byteSize() SEGVs at offset 0.
+                        ObjectHeader* sMO = savedMethod.isObject() && savedMethod.rawBits() != 0
+                            ? savedMethod.asObjectPtr()
+                            : nullptr;
+                        if (sMO && frameDepth_ < StackOverflowLimit) {
                             SavedFrame& frame = savedFrames_[frameDepth_++];
                             frame.savedIP = instructionPointer_;  // past-send
                             frame.savedBytecodeEnd = sMO->bytes() + sMO->byteSize();
