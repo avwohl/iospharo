@@ -54,6 +54,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     using namespace asmjit;
     using namespace asmjit::a64;
 
+    // PHARO_SISTA_NO_LOWER=1 — short-circuit lowering for bisect.
+    // Confirms whether the residual jit-default crash is in the asmjit
+    // emit path itself (corrupted code zone, runtime allocator issue,
+    // W^X leak) versus higher-level Sista state.
+    static bool noLower = getenv("PHARO_SISTA_NO_LOWER") != nullptr;
+    if (noLower) {
+        if (failedAtValue) *failedAtValue = 0;
+        return nullptr;
+    }
+
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
     Compiler cc(&code);
@@ -259,6 +269,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kSendUnspeculated: {
+                // PHARO_SISTA_NO_LOWER_SENDS=1 — bisect: refuse to
+                // lower send-bail blocks, fall through to interpreter.
+                static bool noSends = getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
+                if (noSends) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
                 // Bail to the interpreter at the send bytecode.
                 // Operands carry rcvr + args (in stack order); we push
                 // them onto the interpreter stack at state.sp, set
