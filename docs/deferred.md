@@ -56,63 +56,69 @@ VM deviates from Cog here.
 Authoritative reference: Cog `cointerp-cpp.c` at commit imported
 into `src/ios/`.
 
-**Cog's primitiveFullGC** (lines 84895-84927):
+**Cog's primitiveFullGC** (lines 84895-84927) calls `fullGC()` and
+returns the result.  No inline finalization signal.
 
-    static void primitiveFullGC(void) {
-        ...
-        integerVal = fullGC();
-        pop:thenPushInteger: integerVal.
-    }
+**Cog's `signalFinalization:`** (lines 43475-43478, called from
+`fireEphemeron:`):
 
-No finalization signal.  `fullGC` itself calls `signalFinalization:`
-via `fireEphemeron:` (lines 43475-43478):
+    forceInterruptCheck();
+    GIV(pendingFinalizationSignals) += 1;
 
-    signalFinalization:
-      forceInterruptCheck();
-      GIV(pendingFinalizationSignals) += 1;
+Just increments a counter.  The actual
+`synchronousSignal(TheFinalizationSemaphore)` runs later in
+`checkForInterrupts` (lines 67696-67706), guarded by
+`mayContextSwitch` (line 67635 returns early otherwise).
+`checkForInterrupts` is triggered at backward-branch bytecodes
+(cointerp-cpp.c:12236-12260, `backwardJumpCountByte` mechanism) —
+not on a fixed bytecode interval.
 
-That's **all** it does — increment a counter and flag an interrupt
-check.  The actual `synchronousSignal(TheFinalizationSemaphore)`
-runs later in `checkForInterrupts` (lines 67696-67706), and only
-when `mayContextSwitch` is true (line 67635 returns early
-otherwise).
+**Our VM** has historically called `signalFinalizationIfNeeded()`
+inline from `primitiveFullGC`.  That calls `synchronousSignal` →
+`transferTo(P50)` → P50 preempts inside the primitive and drains
+the whole mourn queue before the primitive returns.  `dict.tally`
+is 1 by the time `Smalltalk garbageCollect` returns; testClearing's
+assertion B then fails ("Got 1 instead of 1001").
 
-**Our primitiveFullGC** calls `signalFinalizationIfNeeded()` inline
-after `memory_.fullGC()`.  That calls `synchronousSignal(sema)` →
-`resumepreemptedYieldingIffrom` → `transferTo(P50)` →
-`executeFromContext(P50_ctx)`.  P50 preempts *inside* the primitive,
-drains the whole mourn queue before the primitive returns.
+**Fix shipped** (gated on `PHARO_FINALIZE_DEFERRED=1`):
 
-Consequence: by the time `Smalltalk garbageCollect` returns,
-`dict.tally` has already been decremented 1000 times (one per
-`WKA>>mourn` → `container removeKey: key`).  testClearing's
-assertion B (`dict size equals: self size + 1`) expects 1001 (the
-test comment reads "Keys are gone but not yet finalized") but sees
-1.
+- `primitiveFullGC` no longer calls `signalFinalizationIfNeeded`
+  inline.  Just calls `fullGC()` and returns — matches Cog exactly.
+- New `Interpreter::backwardBranchInterruptCheck()` is called from
+  every backward-jump bytecode (ExtJump/ExtJumpTrue/ExtJumpFalse,
+  longJump/longJumpIfTrue/longJumpIfFalse) when the offset is
+  negative.  It uses a `backwardBranchCountdown_` (initial 60) to
+  throttle the check rate — matches Cog's `backwardJumpCountByte`
+  mechanism.  When it fires, pending finalization signals are
+  delivered via `synchronousSignal`, which then preempts P50 at a
+  bytecode-safe point.
 
-**Correct fix (not shipped)**: match Cog's deferred-signal model.
-`signalFinalizationIfNeeded` should just increment a counter and
-request an interrupt check; actual `synchronousSignal` should run
-from `checkForInterrupts` under a `mayContextSwitch` guard, so the
-P50 preempt happens at the *next* interrupt-check boundary after
-the primitive returns rather than inline.  Attempted this session
-(commit on branch didn't ship — moving the signal out of
-primitiveFullGC just shifts the failure to a different assertion
-because our periodic-check cadence (every 1024 bytecodes) differs
-from Cog's bytecode-triggered interrupt checks).
+**Current result** (442-test focused SUnit):
 
-Restoring the inline signal keeps the 2-test failure baseline.
-The correct fix requires:
-1. Move `signalFinalizationIfNeeded`'s synchronousSignal call out
-   of the primitive path.
-2. Add a `mayContextSwitch` equivalent that's false during
-   primitive execution and true at user-level bytecode boundaries.
-3. Verify testClearing + testFinalizeValuesWhenLastChainContinuesAtFront
-   both pass.
+    default (inline signal):
+      WKD testClearing     FAIL (Got 1 instead of 1001)
+      WIKD testClearing    FAIL (Got 1 instead of 1001)
+      WIKD testFinalize*   PASS
+      → 2 failures
 
-That's ~200-300 LoC of structural scheduler work — out of scope
-for this session.  Baseline (442 pass, 2 testClearing fail)
-preserved under both YG=0 and YG=1.
+    PHARO_FINALIZE_DEFERRED=1 (Cog-spec):
+      WKD testClearing     PASS ✓
+      WIKD testClearing    FAIL (Got 4..7 instead of 1)
+      WIKD testFinalize*   FAIL (Got 3 instead of 2)
+      → 2 failures (different set)
+
+    * testFinalizeValuesWhenLastChainContinuesAtFront
+
+Net count unchanged (2 failures), but `PHARO_FINALIZE_DEFERRED=1`
+fixes WKD testClearing while exposing a separate partial-drain
+failure that needs more investigation (WIKD testClearing behaves
+identically to WKD from source, yet fails — suggesting state
+carryover between tests or a subtle timing issue in the P51
+`mournLoopWith:` worker).
+
+Default stays inline to preserve legacy behavior until the WIKD /
+testFinalize regression is explained.  The new flag is ready for
+debugging or for users who want Cog-spec weak-ref semantics today.
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and

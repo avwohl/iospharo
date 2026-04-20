@@ -115,6 +115,18 @@ struct DebugSettings {
     // cadence from correctness.
     bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
 
+    // Cog-spec finalization signaling: defer the
+    // synchronousSignal(FinalizationSemaphore) to backward-branch
+    // interrupt checks, matching Cog's checkForInterrupts / fireEphemeron
+    // mechanism.  Without this, signalFinalizationIfNeeded runs inline
+    // from primitiveFullGC (our long-standing behavior), which drains
+    // the mourn queue before `Smalltalk garbageCollect` returns — that
+    // breaks testClearing's post-GC / pre-finalize assertion.  With
+    // this flag set, testClearing progresses past assertion B but can
+    // regress testFinalizeValuesWhenLastChainContinuesAtFront due to
+    // P51 worker scheduling.  See deferred.md A0.
+    bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
+
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and
     // by that time the process environment is fully populated, so this

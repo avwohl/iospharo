@@ -7311,15 +7311,17 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Signal finalization inline.  This diverges from Cog's
-    // primitiveFullGC (cointerp-cpp.c:84895-84927), which only calls
-    // fullGC() with no finalization signal (fireEphemeron just
-    // increments pendingFinalizationSignals + forceInterruptCheck,
-    // and synchronousSignal runs later in checkForInterrupts
-    // guarded by mayContextSwitch).  Matching Cog exactly requires
-    // the `mayContextSwitch` guard and async signal semantics —
-    // see deferred.md A0 for the testClearing trade-off.
-    if (memory_.pendingFinalizationSignals() > 0) {
+    // Finalization signal path depends on PHARO_FINALIZE_DEFERRED:
+    //   - Default (off): signal inline, P50 preempts → drains mourn
+    //     queue before primitive returns.  Diverges from Cog but is
+    //     what our VM has shipped with historically.
+    //   - On: match Cog (cointerp-cpp.c:84895-84927).  No inline
+    //     signal; fullGC already set pendingFinalizationSignals; the
+    //     actual synchronousSignal fires at next backward-branch
+    //     interrupt check.  Lets testClearing observe the pre-finalize
+    //     tally at assertion B.
+    if (!g_debug.finalizeDeferred &&
+        memory_.pendingFinalizationSignals() > 0) {
         signalFinalizationIfNeeded();
     }
 
@@ -7331,7 +7333,8 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    if (memory_.pendingFinalizationSignals() > 0) {
+    if (!g_debug.finalizeDeferred &&
+        memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
     }
 

@@ -931,6 +931,16 @@ private:
     // current method is JIT-compiled and transfer execution to JIT.
     void tryOSRAtBackwardJump();
 
+    // Cog-spec interrupt check fired at backward branches.  Matches
+    // cointerp-cpp.c:12236-12260 (backwardJumpCountByte mechanism).
+    // Delivers pending finalization signals at a bytecode-safe point
+    // so tests like WeakKeyDictionary>>testClearing observe the
+    // pre-finalize tally between assertions A/B (linear code, no
+    // backward branch fires) and get drained by assertion C's
+    // `array do:` (has backward branch → signal fires → P50 drains).
+    // Gated on PHARO_FINALIZE_DEFERRED for opt-in.
+    void backwardBranchInterruptCheck();
+
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).
     void tryJITResumeInCaller();
@@ -990,6 +1000,12 @@ private:
     size_t jitYieldCount_ = 0;  // ExitYield hits (backward-jump yield check)
     size_t jitOSREntries_ = 0;  // On-stack replacement entries from backward jumps
     int osrCountdown_ = 0;      // OSR sampling: only check every N backward jumps
+
+    // Matches Cog's `backwardJumpCountByte` — interrupt check fires
+    // when this hits 0 (every ~60 backward jumps).  Only consulted
+    // when PHARO_FINALIZE_DEFERRED is set.
+    int backwardBranchCountdown_ = 0;
+    static constexpr int kBackwardBranchCheckReload = 60;
 
     // Last JIT return tracker — for diagnosing wrong-value DNUs.
     // Updated on every ExitReturn from JIT. Checked in DNU handler.

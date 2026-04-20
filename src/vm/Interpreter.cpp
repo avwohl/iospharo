@@ -3932,9 +3932,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         int offset = offsetByte + static_cast<int>(static_cast<unsigned int>(extB_) << 8);
         extB_ = 0;
         instructionPointer_ += offset;
+        if (offset < 0) {
 #if PHARO_JIT_ENABLED
-        if (offset < 0) tryOSRAtBackwardJump();
+            tryOSRAtBackwardJump();
 #endif
+            backwardBranchInterruptCheck();
+        }
         break;
     }
     case jit::SistaV1::ExtJumpTrue: { // Pop and Jump On True #i (+ extB * 256)
@@ -3945,9 +3948,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop value = pop();
         if (isTrue(value)) {
             instructionPointer_ += offset;
+            if (offset < 0) {
 #if PHARO_JIT_ENABLED
-            if (offset < 0) tryOSRAtBackwardJump();
+                tryOSRAtBackwardJump();
 #endif
+                backwardBranchInterruptCheck();
+            }
         } else if (!isFalse(value)) {
             push(value);
             sendMustBeBoolean(value);
@@ -3962,9 +3968,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop value = pop();
         if (isFalse(value)) {
             instructionPointer_ += offset;
+            if (offset < 0) {
 #if PHARO_JIT_ENABLED
-            if (offset < 0) tryOSRAtBackwardJump();
+                tryOSRAtBackwardJump();
 #endif
+                backwardBranchInterruptCheck();
+            }
         } else if (!isTrue(value)) {
             push(value);
             sendMustBeBoolean(value);
@@ -5454,9 +5463,12 @@ void Interpreter::shortJumpIfFalse(int offset) {
 void Interpreter::longJump() {
     int16_t offset = static_cast<int16_t>(fetchTwoBytes());
     instructionPointer_ += offset;
+    if (offset < 0) {
 #if PHARO_JIT_ENABLED
-    if (offset < 0) tryOSRAtBackwardJump();
+        tryOSRAtBackwardJump();
 #endif
+        backwardBranchInterruptCheck();
+    }
 }
 
 void Interpreter::longJumpIfTrue() {
@@ -5464,9 +5476,12 @@ void Interpreter::longJumpIfTrue() {
     Oop value = pop();
     if (isTrue(value)) {
         instructionPointer_ += offset;
+        if (offset < 0) {
 #if PHARO_JIT_ENABLED
-        if (offset < 0) tryOSRAtBackwardJump();
+            tryOSRAtBackwardJump();
 #endif
+            backwardBranchInterruptCheck();
+        }
     } else if (!isFalse(value)) {
         push(value);
         sendMustBeBoolean(value);
@@ -5478,9 +5493,12 @@ void Interpreter::longJumpIfFalse() {
     Oop value = pop();
     if (isFalse(value)) {
         instructionPointer_ += offset;
+        if (offset < 0) {
 #if PHARO_JIT_ENABLED
-        if (offset < 0) tryOSRAtBackwardJump();
+            tryOSRAtBackwardJump();
 #endif
+            backwardBranchInterruptCheck();
+        }
     } else if (!isTrue(value)) {
         push(value);
         sendMustBeBoolean(value);
@@ -11904,6 +11922,17 @@ void Interpreter::initializeJIT() {
     }
     // Expose code zone for crash diagnostics
     ::g_jitCodeZone = &jitRuntime_.codeZone();
+}
+
+void Interpreter::backwardBranchInterruptCheck() {
+    if (!g_debug.finalizeDeferred) return;
+
+    if (--backwardBranchCountdown_ > 0) return;
+    backwardBranchCountdown_ = kBackwardBranchCheckReload;
+
+    if (memory_.pendingFinalizationSignals() > 0) {
+        signalFinalizationIfNeeded();
+    }
 }
 
 void Interpreter::tryOSRAtBackwardJump() {
