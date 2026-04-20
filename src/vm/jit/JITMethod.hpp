@@ -278,6 +278,15 @@ public:
 
     // Look up the JIT method for a CompiledMethod Oop.
     // Returns nullptr if not compiled or invalidated.
+    //
+    // Defensive: also reject if the JITMethod's compiledMethodOop field
+    // doesn't match the lookup key.  The map can hold stale entries
+    // pointing to a slot that was reallocated to a different method
+    // (free + alloc reuse).  In that case e.value->isExecutable() may
+    // still be true (state byte happens to be Compiled) but
+    // e.value->codeStart() points to a different method's code (or to
+    // garbage if the slot is now in the free list and overwritten by
+    // FreeBlock metadata).  Calling such a stale code pointer SIGILLs.
     JITMethod* lookup(uint64_t compiledMethodBits) const {
         if (!entries_) return nullptr;
         size_t mask = capacity_ - 1;
@@ -286,7 +295,10 @@ public:
         for (size_t probe = 0; probe < capacity_; probe++) {
             Entry& e = entries_[idx];
             if (e.key == 0) return nullptr;  // Empty slot
-            if (e.key == compiledMethodBits && e.value && e.value->isExecutable()) {
+            if (e.key == compiledMethodBits
+                && e.value
+                && e.value->isExecutable()
+                && e.value->compiledMethodOop == compiledMethodBits) {
                 return e.value;
             }
             idx = (idx + 1) & mask;
