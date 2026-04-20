@@ -1181,6 +1181,13 @@ void Interpreter::interpret() {
     auto runLoopBase = std::chrono::steady_clock::now();
 #endif
 
+    // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
+    // in to eden allocation + scavenge; default off until the
+    // scavenge path is verified against the full test matrix.
+    if (std::getenv("PHARO_YOUNG_GEN")) {
+        memory_.enableYoungGen_ = true;
+    }
+
     // Entry point for callback re-entry via siglongjmp(reenterInterpreter_, 1)
     if (sigsetjmp(reenterInterpreter_, 0) != 0) {
         // Re-entered from enterInterpreterFromCallback().
@@ -1773,6 +1780,14 @@ void Interpreter::interpret() {
                 lastBytecode_ = bytecode;
             }
             goto *dispatchTable[bytecode];
+        }
+
+        // -- Scavenge safe point (young-gen) --
+        if (__builtin_expect(memory_.needsScavenge(), 0)) {
+            memory_.clearScavengeFlag();
+            prepareForGC();
+            memory_.scavenge();
+            afterGC();
         }
 
         // -- GC safe point --

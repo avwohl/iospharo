@@ -125,8 +125,20 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     size_t totalSize = headerSize + bodySize;
     totalSize = (totalSize + 7) & ~7ULL;
 
-    // Allocate in old space (no generational GC — eden is reserved for compacting GC scratch)
-    ObjectHeader* obj = allocateRaw(totalSize, Space::Old);
+    // Allocate in eden (young) for pointer-slot objects except
+    // overflow-slot (>= 255 slots, large/stable objects).  Overflow
+    // variants go to old because scavenge copy hasn't been tested
+    // against the overflow-word layout yet.  Fall back to old on
+    // eden-full.
+    Space targetSpace = (hasOverflow || enableYoungGen_ == false)
+                        ? Space::Old : Space::New;
+    ObjectHeader* obj = allocateRaw(totalSize, targetSpace);
+    if (!obj && targetSpace == Space::New) {
+        // Eden full — retry in old space.  A scavenge will run at
+        // the next safe point (needsScavenge_ flag set by
+        // allocateRaw).
+        obj = allocateRaw(totalSize, Space::Old);
+    }
 
     if (!obj) {
         return nilObject_;
@@ -1306,9 +1318,182 @@ uint32_t ObjectMemory::generateHash() {
 // ===== GARBAGE COLLECTION =====
 
 GCResult ObjectMemory::scavenge() {
-    // Generational GC not implemented. All allocations go to old space.
-    // Eden is reserved as scratch space for compacting GC's saved-first-fields.
-    return fullGC();
+    // Copying scavenge: tenure all reachable young objects to old
+    // space, reset eden.  Unreachable young objects vanish when
+    // eden is reset.
+    //
+    // Roots:
+    //   1. Interpreter roots (via forEachRoot)
+    //   2. Remembered set (old→young references)
+    //   3. Class table + special objects
+    //   4. Mourn queue, ephemeron list (carried across GCs)
+    //
+    // Forwarding: an old→new address map is kept in a side table
+    // rather than overwriting headers, so young objects that get
+    // skipped (unreachable) retain valid scanners-can-read state
+    // until eden reset.
+    auto start = std::chrono::steady_clock::now();
+    GCResult result{0, 0, 0};
+
+    // If eden is empty, nothing to do.
+    if (edenFree_ == edenStart_) {
+        result.milliseconds = 0;
+        return result;
+    }
+
+    size_t edenUsedBefore = static_cast<size_t>(edenFree_ - edenStart_);
+    static int scavCount = 0;
+    if (scavCount++ < 20) {
+        fprintf(stderr, "[SCAV-%d] eden used=%zu KB remembered=%zu\n",
+            scavCount, edenUsedBefore / 1024, rememberedSet_.size());
+    }
+
+    // Forwarding map: young header address → new (old-space) header address.
+    std::unordered_map<ObjectHeader*, ObjectHeader*> forward;
+    forward.reserve(1024);
+
+    // Helper: if oop points to a young object, copy to old space and
+    // return the new Oop.  Otherwise, return unchanged.
+    auto tenureIfYoung = [&](Oop oop) -> Oop {
+        if (!oop.isObject()) return oop;
+        ObjectHeader* obj = oop.asObjectPtr();
+        uint8_t* p = reinterpret_cast<uint8_t*>(obj);
+        if (p < edenStart_ || p >= edenFree_) return oop;
+        auto it = forward.find(obj);
+        if (it != forward.end()) return Oop::fromObject(it->second);
+
+        // Copy to old space.  Use raw bytes so overflow-slot
+        // prefix (if any) and header are preserved.
+        size_t size = obj->totalSize();
+        // totalSize already includes overflow prefix; obj-start is
+        // obj minus 8 if hasOverflowSlots else obj.
+        bool overflow = obj->hasOverflowSlots();
+        uint8_t* srcStart = p - (overflow ? 8 : 0);
+        size_t copySize = size;  // totalSize includes overflow word
+
+        if (oldSpaceFree_ + copySize > oldSpaceEnd_) {
+            // Old-space OOM.  Bail — caller should fall back to fullGC.
+            return oop;  // leaves the young object in place; caller retries
+        }
+        uint8_t* destStart = oldSpaceFree_;
+        std::memcpy(destStart, srcStart, copySize);
+        oldSpaceFree_ += copySize;
+        ObjectHeader* newHdr = reinterpret_cast<ObjectHeader*>(
+            destStart + (overflow ? 8 : 0));
+        forward[obj] = newHdr;
+        return Oop::fromObject(newHdr);
+    };
+
+    // Phase 1: tenure all root-reachable young objects.  Collect
+    // newly-tenured objects so we can scan their fields (which may
+    // reference more young objects).
+    std::vector<ObjectHeader*> scanQueue;
+    scanQueue.reserve(1024);
+
+    auto visitRoot = [&](Oop& oopRef) {
+        Oop newOop = tenureIfYoung(oopRef);
+        if (newOop.rawBits() != oopRef.rawBits()) {
+            oopRef = newOop;
+            auto it = forward.find(Oop::fromRawBits(oopRef.rawBits()
+                                                    - 0 /* already new */).asObjectPtr());
+            // We just tenured it — its new address is newOop.asObjectPtr().
+            scanQueue.push_back(newOop.asObjectPtr());
+        } else if (newOop.isObject()) {
+            // Already tenured (forwarded) — still scan if we haven't.
+            // For simplicity, tenureIfYoung already returns new addr;
+            // skip duplicate enqueues via forward map.
+        }
+    };
+
+    // Roots: interpreter
+    if (interpreter_) {
+        interpreter_->forEachRoot(visitRoot);
+    }
+
+    // Roots: memory (class table, special objects, etc.)
+    forEachMemoryRoot(visitRoot, /*includeClassTable*/ true);
+
+    // Roots: remembered set (old objects with young pointers).
+    // Scan their slots, update young pointers to tenured addresses.
+    // If no young refs remain after update, clear remembered bit.
+    std::vector<ObjectHeader*> newRemembered;
+    newRemembered.reserve(rememberedSet_.size());
+    for (ObjectHeader* oldObj : rememberedSet_) {
+        size_t np = pointerSlotsOf(oldObj);
+        Oop* slots = oldObj->slots();
+        bool stillHasYoung = false;
+        for (size_t i = 0; i < np && i < oldObj->slotCount(); ++i) {
+            Oop s = slots[i];
+            if (!s.isObject()) continue;
+            ObjectHeader* h = s.asObjectPtr();
+            uint8_t* hp = reinterpret_cast<uint8_t*>(h);
+            if (hp >= edenStart_ && hp < edenFree_) {
+                Oop newS = tenureIfYoung(s);
+                slots[i] = newS;
+                if (newS.rawBits() != s.rawBits()) {
+                    scanQueue.push_back(newS.asObjectPtr());
+                }
+                // After tenure, newS is old — no young ref.
+            }
+        }
+        if (stillHasYoung) {
+            newRemembered.push_back(oldObj);
+        } else {
+            oldObj->setRemembered(false);
+        }
+    }
+    rememberedSet_.swap(newRemembered);
+
+    // Roots: mourn queue (ephemerons pending finalization hold
+    // their fields alive).
+    for (Oop& m : mournQueue_) {
+        visitRoot(m);
+    }
+
+    // Phase 2: drain scanQueue.  For each newly-tenured object,
+    // scan its pointer slots and tenure any young targets.
+    while (!scanQueue.empty()) {
+        ObjectHeader* obj = scanQueue.back();
+        scanQueue.pop_back();
+        size_t np = pointerSlotsOf(obj);
+        Oop* slots = obj->slots();
+        for (size_t i = 0; i < np && i < obj->slotCount(); ++i) {
+            Oop s = slots[i];
+            if (!s.isObject()) continue;
+            uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
+            if (hp >= edenStart_ && hp < edenFree_) {
+                Oop newS = tenureIfYoung(s);
+                if (newS.rawBits() != s.rawBits()) {
+                    slots[i] = newS;
+                    scanQueue.push_back(newS.asObjectPtr());
+                }
+            }
+        }
+    }
+
+    // Update nil/true/false bits if they moved (they shouldn't —
+    // permanent specials are in old/perm space — but defensive).
+    if (nilObject_.isObject()) {
+        auto it = forward.find(nilObject_.asObjectPtr());
+        if (it != forward.end()) {
+            nilObject_ = Oop::fromObject(it->second);
+            Oop::setNilBits(nilObject_.rawBits());
+        }
+    }
+
+    // Phase 3: reset eden.  All unreferenced young objects vanish.
+    edenFree_ = edenStart_;
+
+    size_t edenUsedAfter = 0;
+    (void)edenUsedBefore;
+    result.bytesReclaimed = edenUsedBefore - edenUsedAfter;
+
+    auto end = std::chrono::steady_clock::now();
+    result.milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+        end - start).count();
+    gcCount_++;
+    totalGCTime_ += result.milliseconds;
+    return result;
 }
 
 GCResult ObjectMemory::incrementalGC() {
@@ -1813,9 +1998,17 @@ ObjectHeader* ObjectMemory::allocateRaw(size_t size, Space space) {
             return nullptr;
         }
 
-        case Space::New:
-            // Generational GC not implemented — eden is scratch for compacting GC.
-            // Fall through to return nullptr.
+        case Space::New: {
+            // Young-gen bump-pointer allocation in eden.
+            if (edenFree_ + size <= survivorStart_) {
+                ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(edenFree_);
+                edenFree_ += size;
+                return obj;
+            }
+            // Eden full — signal scavenge at next safe point.
+            needsScavenge_ = true;
+            return nullptr;
+        }
         default:
             return nullptr;
     }

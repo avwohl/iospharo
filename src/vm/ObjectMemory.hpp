@@ -525,6 +525,8 @@ public:
     /// Check if compacting GC is needed at next safe point
     bool needsCompactGC() const { return needsCompactGC_; }
     void clearCompactGCFlag() { needsCompactGC_ = false; }
+    bool needsScavenge() const { return needsScavenge_; }
+    void clearScavengeFlag() { needsScavenge_ = false; }
 
     // ===== FINALIZATION / MOURNING =====
 
@@ -748,6 +750,14 @@ private:
     // GC state
     bool forceGCFlag_ = false;
     bool needsCompactGC_ = false;  // Set by allocator when compaction needed at safe point
+    bool needsScavenge_ = false;   // Set by allocator when eden is full
+
+public:
+    // Young-gen allocation enable — default off during image load
+    // (so image-load allocations go straight to old), flipped on
+    // after the interpreter is ready.
+    bool enableYoungGen_ = false;
+private:
     size_t lastCompactedSize_ = 0;  // Old space used bytes after last compacting GC
     size_t gcHeadroom_ = 32ULL * 1024 * 1024;  // 32MB headroom before triggering compaction GC
     Interpreter* interpreter_ = nullptr;  // For root enumeration during GC
