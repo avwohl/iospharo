@@ -67,6 +67,42 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   divergence.  SUnit suite: 548 PASS / 0 FAIL over the partial
   run before the 2-min harness timeout, no regressions.
 
+  **Dispatch default-on + opt-out** (commit `98dd350`).
+  `PHARO_SISTA_DISPATCH=1` no longer required — Sista tier-up
+  runs in every build.  Opt out with `PHARO_NO_SISTA=1`.
+  12479 PASS / 19 FAIL over a partial SUnit run; the 19
+  failures match pre-existing VM gaps (weak refs, write
+  barrier, compiler introspection), not Sista-induced.
+
+  **Send1/Send2 operand-leak — FIXED** (commit `a5c88ca`).
+  Root cause was in SistaBuilder: Send0/1/2, ExtSend,
+  ExtSuperSend, SpecialSend, and the 1-arg arith bail all
+  emitted kSendUnspeculated with ONLY the send's rcvr+args,
+  leaving IR stack values ABOVE the send-operand window in
+  virtual registers that never reached state.sp.  The
+  interpreter resumed at the bail bytecode with a truncated
+  stack, and subsequent bytecodes popped stale values —
+  manifesting downstream as `#readFrom: not understood by
+  ByteString` during image-startup `DateAndTime fromString:`.
+  Fix: all send-bail sites now flush the entire IR stack
+  (`stack_.begin()..end()`) as kSendUnspeculated operands.
+  `nArgs` still encodes the inner-send arg count so the
+  interpreter pops the right number; extras below sit on the
+  stack for later bytecodes to consume.
+
+  **Smart gate** (commit `ab56a75`).  With the leak fixed,
+  admitting all send-bytes produces correct output but 2.7x
+  slowdown because 95% of dispatches bail and the dispatch
+  overhead is higher than the interpreter for bail-only work.
+  Default gate now rejects methods whose lift would bail —
+  admits only "pure" methods (pushes / stores / returns /
+  branches / inlined +,-,*).  Re-admit bailing methods with
+  `PHARO_SISTA_ALLOW_BAIL=1` for correctness testing or when
+  Phase 4 inlining makes the bail rare.  On the default gate,
+  all three Send1 round-trip unit tests still pass and the
+  operand-leak fix keeps the emitted code correct for both
+  paths.
+
   **Send1/Send2 ExitSend open mystery.** With Send1 or Send2
   bails admitted (via hypothetical extension of the gate), the
   real VM diverges — `#readFrom: not understood by ByteString`
