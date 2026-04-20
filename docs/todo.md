@@ -9,7 +9,22 @@ upstream.  Superset of the narrower docs:
 - `docs/image_issues.md`    — image-side workarounds
 - `docs/upstream-proposals.md` — bugs to push upstream
 
-Last updated: 2026-04-17.
+Last updated: 2026-04-20.
+
+Recent session-level progress (not yet reflected in section-level
+status):
+- Sista Phase 2.3 complete (default-on, all sends admitted,
+  adaptive bail-blacklist + gate cache, 4% overhead).  See
+  `docs/sista-inlining-plan.md` for Phase 3+ roadmap.
+- Generational GC WIP behind `PHARO_YOUNG_GEN=1`.  Scavenge
+  correctness verified (brute-force old+perm scan = 0 strays),
+  but scheduler hangs after a few scavenges — deferred with
+  repro + fix-path notes in `docs/deferred.md` A0.
+- 2 remaining `testClearing` SUnit failures (WeakKey / WeakIdentity)
+  traced to context-materialization holding ephemeron keys alive
+  across full-GC mark; Cog uses scavenge to avoid this.  Three
+  fix paths documented in `docs/deferred.md` A0; largest (YG)
+  partially implemented.
 
 ---
 
