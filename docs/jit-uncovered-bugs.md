@@ -303,8 +303,15 @@ fine) or move at least one out-of-line method into it.
                   11b layer 1 (stale MethodMap entries, 2218c99)
                   11b layer 2 (codeOffsetForBC sentinel + materialize
                                bails, 2807300)
-    Open          11b layer 3 (yet another unguarded pointer deref
-                               inside tryJITActivation chain walk)
+                  11b layer 3 (6 bytecodeEnd writes + savedFrame
+                               push null-guarded, a75b0bd)
+    Open          11b layer 4 (tryResume BLR target lands at PC in
+                               code zone but not in any active
+                               JITMethod — possibly stale bcOffset
+                               passed to tryResume after recompile)
+
+Crash floor progression: compile #5 → #15 → #28 → #42 → #45 → #56 → #68.
+Each layer is a real bug; each fix is methodically peeling onion layers.
 
 Bug 11 (Sista compile-path corruption) is the remaining
 show-stopper for jit-default.  Bisect gates `PHARO_SISTA_NO_LOWER`
