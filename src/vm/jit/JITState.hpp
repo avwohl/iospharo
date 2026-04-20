@@ -22,6 +22,9 @@
 #include "../Oop.hpp"
 #include <cstdint>
 #include <cstddef>
+#if defined(__APPLE__) && defined(__arm64__)
+#include <pthread.h>
+#endif
 
 #if PHARO_JIT_ENABLED
 
@@ -170,8 +173,21 @@ typedef void (*StencilFunc)(JITState*);
 // SimStack stencils clobber x19-x22 via inline asm (without clobber lists).
 // When calling JIT code from C++, we must tell the compiler that x19-x22
 // may be modified, so it saves/restores them around the call.
+//
+// JIT_CALL also flips MAP_JIT to executable on Apple Silicon — the per-
+// thread W^X toggle may have been left in writable mode by a prior IC
+// patch, in which case the callee's first instruction would SIGBUS at
+// PC == fault_addr.  pthread_jit_write_protect_np(1) is cheap (one MSR
+// write) and idempotent.
+#if defined(__APPLE__) && defined(__arm64__)
+#define _JIT_CALL_PRE() pthread_jit_write_protect_np(1)
+#else
+#define _JIT_CALL_PRE() ((void)0)
+#endif
+
 #ifdef __aarch64__
 #define JIT_CALL(entry_ptr, state_ptr) do { \
+    _JIT_CALL_PRE(); \
     void* _jit_e = reinterpret_cast<void*>(entry_ptr); \
     void* _jit_s = reinterpret_cast<void*>(state_ptr); \
     asm volatile( \
@@ -186,6 +202,7 @@ typedef void (*StencilFunc)(JITState*);
 } while(0)
 #else
 #define JIT_CALL(entry_ptr, state_ptr) do { \
+    _JIT_CALL_PRE(); \
     ((void(*)(JITState*))(entry_ptr))(state_ptr); \
 } while(0)
 #endif
