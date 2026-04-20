@@ -497,6 +497,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     CompiledFn out = nullptr;
     Error err = runtime_->add(&out, &code);
     if (err != kErrorOk) return nullptr;
+    // PHARO_SISTA_TRACE_ADD=1 — log every successful asmjit add()
+    // address, so we can correlate addresses across compiles and
+    // check for adjacency / aliasing with our T1 CodeZone.
+    static bool traceAdd = getenv("PHARO_SISTA_TRACE_ADD") != nullptr;
+    if (traceAdd) {
+        static size_t addCount = 0;
+        addCount++;
+        if (addCount <= 50) {
+            fprintf(stderr, "[SISTA-TRACE-ADD] #%zu fn=%p\n",
+                    addCount, (void*)out);
+        }
+    }
     return out;
 }
 
