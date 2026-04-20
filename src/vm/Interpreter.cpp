@@ -14957,9 +14957,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         instructionPointer_ = state.ip;
                         framePointer_ = state.tempBase - 1;
                         argCount_ = (state.j2jDepth > 0) ? state.argCount : nArgs;
-                        {
+                        if (exitMethod.isObject() && exitMethod.rawBits() != 0) {
                             ObjectHeader* tMO = exitMethod.asObjectPtr();
-                            bytecodeEnd_ = tMO->bytes() + tMO->byteSize();
+                            if (tMO) bytecodeEnd_ = tMO->bytes() + tMO->byteSize();
                         }
                         closure_ = memory_.nil();
                         jitJ2JActFalls_++;

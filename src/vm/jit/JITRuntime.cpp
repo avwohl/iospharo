@@ -1516,6 +1516,26 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         return false;
     }
 
+    // Final entry-address sanity: must be within OUR code zone, not in
+    // an evicted/freed area or asmjit's allocator zone.  Bug 11b layer 4:
+    // a stale `jm` from a previous activation slipped through methodMap
+    // checks and `entry` lands at a JITMethod-shaped slot whose code
+    // body was never properly populated (zero bytes → ARM64 UDF).
+    uint8_t* entryByte = reinterpret_cast<uint8_t*>(entry);
+    if (!codeZone_.contains(entryByte)) {
+        makeWritable(jm->codeStart(), jm->codeSize);
+        fprintf(stderr, "[JIT] BUG: tryResume entry %p outside code zone (bc=%u code=%u jm=%p)\n",
+                (void*)entry, bcOffset, codeOffset, (void*)jm);
+        return false;
+    }
+    JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
+    if (entryMethod != jm) {
+        makeWritable(jm->codeStart(), jm->codeSize);
+        fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
+                (void*)entry, (void*)jm, (void*)entryMethod, bcOffset, codeOffset);
+        return false;
+    }
+
     entry(&state);
 
     // Back to writable (for IC patching etc.)
