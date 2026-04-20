@@ -1192,6 +1192,20 @@ void Interpreter::interpret() {
     if (sigsetjmp(reenterInterpreter_, 0) != 0) {
         // Re-entered from enterInterpreterFromCallback().
         // Active process has been switched; just fall into the loop.
+        //
+        // siglongjmp skips C++ destructors between the source and here.
+        // If asmjit's ProtectJitReadWriteScope was active when the longjmp
+        // fired, the thread's MAP_JIT W^X bit was left in writable mode
+        // (the destructor that would have flipped to executable never
+        // ran).  Subsequent JIT entry SIGBUSes with PC == fault_addr in
+        // the code zone.  Force back to executable here.
+        // See docs/jit-uncovered-bugs.md bug 11.
+#if PHARO_JIT_ENABLED
+        if (jitRuntime_.isInitialized()) {
+            jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                                jitRuntime_.codeZone().totalBytes());
+        }
+#endif
 #if __APPLE__
         runLoopBase = std::chrono::steady_clock::now();
         lastRunLoopPumpMs = 0;
@@ -2987,9 +3001,12 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 }
             }
 
-            // Return 0 to C by jumping back to the trampoline
-            siglongjmp(vmcc->trampoline, 1);
-            // DOES NOT RETURN
+            // Return 0 to C by jumping back to the trampoline.
+            // C++ exception (not siglongjmp): unwinds through all C++
+            // RAII destructors so any asmjit ProtectJitReadWriteScope
+            // active higher up runs cleanup (restoring MAP_JIT W^X to
+            // executable).  See pharo::CallbackComplete declaration.
+            throw pharo::CallbackComplete{};
         }
 
         // Check for deferred callback return AFTER the batch completes.
@@ -3082,9 +3099,10 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 }
             }
 
-            // siglongjmp back to C (callbackClosureHandler's sigsetjmp)
-            siglongjmp(retVmcc->trampoline, 1);
-            // DOES NOT RETURN
+            // Return to C (callbackClosureHandler).  Same rationale as
+            // the other callsite — exception runs RAII destructors so
+            // asmjit's W^X scope (if active higher up) cleans up.
+            throw pharo::CallbackComplete{};
         }
 
         if (hasPendingSignals() && !inExtension_) {

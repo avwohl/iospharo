@@ -28072,11 +28072,16 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
     vmcc->intregargsp = (sqIntptr_t*)args; // Argument pointers
     vmcc->floatregargsp = (double*)args;   // (Also args, for float-specific access)
 
-    // Save C return point
-    if (sigsetjmp(vmcc->trampoline, 0) == 0) {
-        // First call — enter interpreter to process callback.
-        // enterInterpreterFromCallback does siglongjmp(reenterInterpreter_) and
-        // does NOT return here.
+    // C++ exception (CallbackComplete) is the resume signal — it
+    // unwinds from primitiveCallbackReturn back here, running every
+    // C++ destructor in between (including any active asmjit
+    // ProtectJitReadWriteScope so MAP_JIT W^X is restored).  Replaces
+    // the former sigsetjmp(vmcc->trampoline) pair which skipped C++
+    // destructors and was a suspected source of bug 11.
+    try {
+        // enterInterpreterFromCallback enters the interpreter loop;
+        // it returns here only via the CallbackComplete exception
+        // thrown from primitiveCallbackReturn.
         g_interpreter->enterInterpreterFromCallback(vmcc);
 
         if (g_debug.callbackDebug) {
@@ -28088,17 +28093,16 @@ static void callbackClosureHandler(ffi_cif* cif, void* ret, void** args, void* u
         if (ret && cif->rtype->size > 0) memset(ret, 0, cif->rtype->size);
         free(vmcc);
         return;
+    } catch (const pharo::CallbackComplete&) {
+        if (g_debug.callbackDebug) {
+            fprintf(stderr, "[CALLBACK-HANDLER-EXCEPT-RESUME] vmcc=%p\n", (void*)vmcc);
+            fflush(stderr);
+        }
+        // Return value was already written to ret by Smalltalk via
+        // TFCallbackInvocation >> writeReturnValue: which writes to
+        // returnHolder (vmcc->stackp, which we set to ret above).
+        free(vmcc);
     }
-
-    if (g_debug.callbackDebug) {
-        fprintf(stderr, "[CALLBACK-HANDLER-LONGJMP-RESUME] vmcc=%p\n", (void*)vmcc);
-        fflush(stderr);
-    }
-    // Returned from primitiveCallbackReturn via siglongjmp(vmcc->trampoline, 1).
-    // The return value was already written to ret by Smalltalk via
-    // TFCallbackInvocation >> writeReturnValue: which writes to returnHolder
-    // (vmcc->stackp, which we set to ret above).
-    free(vmcc);
 }
 
 // primitiveInitilizeCallbacks (sic - typo matches image)

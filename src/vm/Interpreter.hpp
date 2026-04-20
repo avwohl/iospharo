@@ -93,6 +93,19 @@ extern "C" void jit_rt_j2j_call(pharo::jit::JITState* state);
 
 namespace pharo {
 
+/// Thrown from primitiveCallbackReturn (and equivalent paths) when a
+/// Smalltalk-side FFI callback handler has finished and we need control
+/// to return to the libffi closure trampoline (`callbackClosureHandler`
+/// in Primitives.cpp).  Replaces a former `siglongjmp(vmcc->trampoline)`
+/// pair: with the exception, every C++ destructor between the throw and
+/// the catch runs (including asmjit's `ProtectJitReadWriteScope` if any
+/// is active), so MAP_JIT W^X mode is restored correctly on its own
+/// instead of leaking into the post-callback execution.
+///
+/// libffi frames on macOS arm64 carry `__compact_unwind` so the
+/// exception traverses them safely.
+struct CallbackComplete {};
+
 /// Maximum stack depth
 constexpr size_t MaxStackDepth = 131072;  // Must be large enough for MaxFrameDepth frames
 
