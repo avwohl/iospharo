@@ -192,10 +192,30 @@ struct JITMethod {
     }
 
     // Look up the code offset for a given bytecode offset.
-    // Returns the code offset, or codeSize if bcOffset is out of range.
+    //
+    // Returns 0 ("no valid entry point") in any of these cases:
+    //   - bcOffset out of range (>= numBytecodes)
+    //   - bcOffset == numBytecodes is the sentinel "one past last
+    //     bytecode" — its slot holds codeSize (past the entire
+    //     machine-code region into literal pool / IC area), which
+    //     is NOT a valid BLR target.  Returning that as a resume
+    //     point caused SIGILL (PC in IC area, ARM64 UDF on the
+    //     zero word).  See bug 11b in docs/jit-uncovered-bugs.md.
+    //   - the slot's offset is past the real machine code (sentinel
+    //     value or compiler bug)
+    //
+    // ALL callers (tryResume, J2J trampoline, chain loop, asm
+    // trampoline) treat 0 as "not a valid entry point" and bail to
+    // interpreter, so this is a safe centralization of the bound
+    // check that was previously duplicated in only some sites.
     uint32_t codeOffsetForBC(uint32_t bcOffset) const {
-        if (bcOffset >= numBytecodes) return codeSize;
-        return bcToCodeTable()[bcOffset];
+        if (bcOffset >= numBytecodes) return 0;
+        uint32_t off = bcToCodeTable()[bcOffset];
+        // Sentinel slot at numBytecodes holds codeSize == end of payload.
+        // Any offset that reaches the literal-pool / IC area is unsafe.
+        const uint32_t machineCodeEnd = bcToCodeTable()[numBytecodes];
+        if (off == 0 || off >= machineCodeEnd) return 0;
+        return off;
     }
 
     // Function pointer to compiled code entry point

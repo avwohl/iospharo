@@ -12584,10 +12584,22 @@ void Interpreter::tryJITResumeInCaller() {
                     J2JSave& save = rj2jSaves[i];
                     jit::JITMethod* saveJM = save.jitMethod;
                     if (!saveJM) {
+                        // Half-materialized state — frameDepth_ has been
+                        // incremented for prior iterations but state.method
+                        // never got synced.  Bail the entire materialize so
+                        // the post-loop code that reads state.method->bytes()
+                        // doesn't crash.  Restore frameDepth_ to baseline by
+                        // un-pushing the in-progress slot count.
                         static int warns = 0;
                         if (++warns <= 5)
-                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at rj2j materialize (warn #%d)\n", warns);
-                        break;
+                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at rj2j materialize (warn #%d) — bailing materialize\n", warns);
+                        // Roll back the i frames we pushed.
+                        for (int j = 0; j < i; j++) {
+                            if (frameDepth_ > 0) frameDepth_--;
+                        }
+                        j2jPoolCursor_ = rj2jBase;
+                        inJITResume_ = false;
+                        return;
                     }
                     SavedFrame& frame = savedFrames_[frameDepth_++];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
@@ -13980,10 +13992,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             J2JSave& save = j2jStack[i];
             jit::JITMethod* saveJM = save.jitMethod;
             if (!saveJM) {
+                // Half-materialized state — frameDepth_ has been
+                // incremented for prior iterations, but we can't trust
+                // any of them now (they may also have been corrupted).
+                // The post-loop code reads state.method->bytes() which
+                // SIGSEGVs if state.method is nil.  Roll back the
+                // pushed frames and bail entirely.
                 static int warns = 0;
                 if (++warns <= 5)
-                    fprintf(stderr, "[JIT] WARN: null save.jitMethod in materializeJ2J lambda (warn #%d)\n", warns);
-                break;
+                    fprintf(stderr, "[JIT] WARN: null save.jitMethod in materializeJ2J lambda (warn #%d) — bailing\n", warns);
+                for (int j = 0; j < i; j++) {
+                    if (frameDepth_ > 0) frameDepth_--;
+                }
+                return;
             }
             SavedFrame& frame = savedFrames_[frameDepth_++];
             Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
