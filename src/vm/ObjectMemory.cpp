@@ -1413,36 +1413,36 @@ GCResult ObjectMemory::scavenge() {
     // Roots: memory (class table, special objects, etc.)
     forEachMemoryRoot(visitRoot, /*includeClassTable*/ true);
 
-    // Roots: remembered set (old objects with young pointers).
-    // Scan their slots, update young pointers to tenured addresses.
-    // If no young refs remain after update, clear remembered bit.
-    std::vector<ObjectHeader*> newRemembered;
-    newRemembered.reserve(rememberedSet_.size());
-    for (ObjectHeader* oldObj : rememberedSet_) {
-        size_t np = pointerSlotsOf(oldObj);
-        Oop* slots = oldObj->slots();
-        bool stillHasYoung = false;
-        for (size_t i = 0; i < np && i < oldObj->slotCount(); ++i) {
-            Oop s = slots[i];
-            if (!s.isObject()) continue;
-            ObjectHeader* h = s.asObjectPtr();
-            uint8_t* hp = reinterpret_cast<uint8_t*>(h);
-            if (hp >= edenStart_ && hp < edenFree_) {
-                Oop newS = tenureIfYoung(s);
-                slots[i] = newS;
-                if (newS.rawBits() != s.rawBits()) {
-                    scanQueue.push_back(newS.asObjectPtr());
+    // Roots: full old-space scan for old→young pointers.  This is
+    // O(oldSpace) per scavenge — slower than a maintained remembered
+    // set, but immune to missed write barriers in primitives /
+    // bytecodes that use direct slotAtPut.  Trade correctness for
+    // perf until every write site is audited.
+    //
+    // Snapshot oldSpaceFree_ so we don't re-scan freshly-tenured
+    // objects appended during this loop (Phase 2 drains those).
+    {
+        uint8_t* oldEnd = oldSpaceFree_;
+        ObjectScanner oldScan(oldSpaceStart_, oldEnd);
+        while (ObjectHeader* oldObj = oldScan.next()) {
+            size_t np = pointerSlotsOf(oldObj);
+            Oop* slots = oldObj->slots();
+            size_t cnt = oldObj->slotCount();
+            for (size_t i = 0; i < np && i < cnt; ++i) {
+                Oop s = slots[i];
+                if (!s.isObject()) continue;
+                uint8_t* hp = reinterpret_cast<uint8_t*>(s.asObjectPtr());
+                if (hp >= edenStart_ && hp < edenFree_) {
+                    Oop newS = tenureIfYoung(s);
+                    slots[i] = newS;
+                    if (newS.rawBits() != s.rawBits()) {
+                        scanQueue.push_back(newS.asObjectPtr());
+                    }
                 }
-                // After tenure, newS is old — no young ref.
             }
         }
-        if (stillHasYoung) {
-            newRemembered.push_back(oldObj);
-        } else {
-            oldObj->setRemembered(false);
-        }
     }
-    rememberedSet_.swap(newRemembered);
+    rememberedSet_.clear();
 
     // Roots: mourn queue (ephemerons pending finalization hold
     // their fields alive).
