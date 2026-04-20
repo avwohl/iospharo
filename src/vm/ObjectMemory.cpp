@@ -1343,9 +1343,11 @@ GCResult ObjectMemory::scavenge() {
 
     size_t edenUsedBefore = static_cast<size_t>(edenFree_ - edenStart_);
     static int scavCount = 0;
-    if (scavCount++ < 20) {
-        fprintf(stderr, "[SCAV-%d] eden used=%zu KB remembered=%zu\n",
-            scavCount, edenUsedBefore / 1024, rememberedSet_.size());
+    int myScavId = ++scavCount;
+    if (g_debug.gcEphDebug && myScavId <= 20) {
+        fprintf(stderr, "[SCAV-%d] eden used=%zu KB old=%zu KB\n",
+            myScavId, edenUsedBefore / 1024,
+            (size_t)(oldSpaceFree_ - oldSpaceStart_) / 1024);
     }
 
     // Forwarding map: young header address → new (old-space) header address.
