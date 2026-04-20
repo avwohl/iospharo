@@ -6723,6 +6723,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         attempts++;
         sista::Lowering::CompiledFn fn = sista->compile(method, memory_);
         if (fn) hits++;
+        // Defensive: asmjit's compile internally uses RAII W^X scopes;
+        // if any path leaks the writable state on this thread, the next
+        // T1 JIT activation crashes SIGBUS.  Force back to executable.
+        jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                            jitRuntime_.codeZone().totalBytes());
 
         // Only dispatch when the interpreter's IP is at the raw start of
         // bytecodes.  Methods with `<primitive: N error: ec>` cause
