@@ -58,11 +58,20 @@ SUnit.  Two root causes found and partially fixed in commits
    Pinning prevents the eviction; null-guard skips materialization
    if state.method is nil.  **Fixed.**
 
-Residual crash: SIGSEGV inside tryJITActivation+0x151C
-(ldr x8, [x20, #0x8] with x20=0 — NULL list-next).  Different
-path, not yet investigated.  Until resolved, jit default still
-cannot complete a full SUnit run, but it no longer crashes in the
-first few classes.
+Residuals: more null-deref + W^X SIGBUS crashes at progressively
+later compile counts.  Progression so far:
+
+    Commit       Crash at   Notes
+    baseline     ~5 methods SIGBUS, eviction-related
+    32e8cda      ~25       eviction safety pinning
+    147c3a9      ~30       W^X restore in patchJITICAfterSend + GC
+    dd91d26     same        saveJM null guards (no new crash signature)
+    34f39cd      ~28       JIT_CALL macro auto-flips W^X executable
+
+Each fix removed one class of crash but exposed another.  Next
+candidates: a stale IC entry pointing into evicted+reallocated
+code, or a saved resume-address that wasn't fixed up after
+compaction.  jit default still cannot complete a full SUnit run.
 
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
