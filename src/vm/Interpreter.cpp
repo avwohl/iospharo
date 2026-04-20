@@ -6766,6 +6766,22 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 #endif
 
             dispatched++;
+            // Charge the periodic-check machinery for bytecodes
+            // Sista executed silently — without this, checkCountdown_
+            // drifts high on ExitReturn paths (Sista never touched
+            // the interpreter's step counter), delaying timer
+            // signals and process switches.  Estimate with the
+            // method's bytecode length; overcounts slightly for
+            // ExitSend (Sista only ran prefix bytecodes, not all),
+            // but biasing early is harmless — just fires checks
+            // sooner, never later.
+            {
+                size_t bcLen = totalBytes > bytecodeStart
+                               ? totalBytes - bytecodeStart : 0;
+                checkCountdown_ -= static_cast<int>(bcLen);
+                stepCheckCounter_ += static_cast<int>(bcLen);
+                g_stepNum += bcLen;
+            }
             // Per-selector dispatch counter, periodically dumped —
             // useful for seeing which getters/setters are hot-path
             // and whether dispatch is exercising the real workload
