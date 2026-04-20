@@ -206,22 +206,44 @@ evidence the dispatched store code is one corruption source.
 
 ---
 
-## 11. Sista compile-only (no dispatch) still crashes — **NOT FIXED, root cause unknown**
+## 11. Sista compile-only (no dispatch) still crashes — **NOT FIXED, asmjit infrastructure**
 
 **Severity**: critical to fix before Sista can ship.
 
-**Evidence**: `PHARO_SISTA_COMPILE=1` with dispatch off still
-SIGILLs at compile #45.  This means just compiling — without ever
-executing the asmjit-emitted code — corrupts something.
+**Bisect** (env-var gates added in commits `d36b00f`, `059e91f`):
 
-**Hypotheses**: (a) asmjit's allocator overruns its zone into
-ours; (b) asmjit's RAII W^X scope leaves writable on a rare path;
-(c) compile triggers a callback that mutates `JITRuntime` state in
-a way that breaks T1 JIT.
+    PHARO_NO_SISTA=1            no crash, 49 compiles, image runs
+    PHARO_SISTA_NO_LOWER=1      no crash, 49 compiles (lower returns null)
+    PHARO_SISTA_NO_LOWER_BODY=1 CRASH at #15 (empty body, just `ret`)
+    PHARO_SISTA_NO_LOWER_SENDS=1 crash at #99
+    PHARO_SISTA_NO_LOWER_ARITH=1 crash at #16
+    default                     crash at #15
 
-**Fix**: requires focused audit of `sista::Lowering::compile`'s
-asmjit integration with our `JITRuntime` / `CodeZone`.  Multi-day
-work, not done.
+The NO_LOWER_BODY result is the smoking gun.  With NO_LOWER_BODY,
+`lower()` builds a CodeHolder, attaches a Compiler, emits a
+function that just sets exitReason and returns, and calls
+`runtime_->add()`.  No IR-driven body emission, no Sista-specific
+work — pure asmjit infrastructure.  And it still crashes at #15.
+
+**Conclusion**: the corruption is in asmjit's
+CodeHolder/Compiler/JitRuntime infrastructure (or its MAP_JIT
+W^X interaction with our `CodeZone`), not in any specific IR-op
+emission.
+
+**Hypotheses**:
+- asmjit's `JitAllocator` shares a page boundary with our zone
+  and one's writable scope flips the other's executability
+- asmjit's W^X RAII scope leaks through an exception path
+- asmjit's `CodeHolder` corrupts register state in a way that
+  bleeds into the next T1 JIT activation via the C stack
+
+**Next steps**:
+- Audit asmjit's mmap calls vs our `CodeZone::initialize` mmap
+  and check for adjacency or aliasing
+- Capture the protect mode before/after every Sista compile
+  and the next T1 JIT activation
+- If unfixable, replace asmjit's `JitRuntime` with a custom
+  allocator that uses our existing zone and W^X discipline
 
 ---
 
