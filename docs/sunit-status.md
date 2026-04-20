@@ -25,20 +25,49 @@ Status legend:  P pass · F fail · E error · S skip · T timeout · — unrun
 row; marked `?` until the cog row is populated.
 
     VM     Mode     Date        Classes   Tests    P       F    E     S    T    Wall     Δcog
-    cog    default  —           —         —        —       —    —     —    —    —        (baseline)
+    cog    default  2026-04-20  828/836   17258    17195   15   23    25   0    2m       (baseline)
     main   NO_JIT   —           —         —        —       —    —     —    —    —        ?
     main   default  —           —         —        —       —    —     —    —    —        ?
-    jit    NO_JIT   2026-04-20  827/836   17072    16465   18   536   40   13   45m(wd)   ≥454*
+    jit    NO_JIT   2026-04-20  827/836   17057    16467   18   537   23   12   45m(wd)  548
     jit    default  —           —         —        —       —    —     —    —    —        ?
 
 `wd` = hit the 45-minute VM watchdog; last 9 classes (FLBinaryFileStream,
 FinalizationRegistry, FFICallback) had 80s/300s per-test timeouts that
 ate the budget.
 
-*`≥454` is a lower bound from the 15-class probe 2026-04-20, not a
-full join.  The 15 classes sampled on cog passed 400/400; on our VM
-NO_JIT those same classes contributed 454 C11 DNUs.  Full join pending
-a cog row.  Upper bound, if every F+E+T also regresses, is 567.
+Numbers above are the parser's count (`scripts/classify-sunit.py`)
+for direct comparability; they differ by a handful from the harness'
+own `BATCH TOTAL` line (e.g., harness reported 16465 P / 40 S for jit,
+parser sees 16467 P / 23 S — rounding off-by-one on some class
+boundaries).  The Δcog column is the authoritative comparison and is
+computed from the parser output.
+
+## Shared non-pass (both cog and jit fail the same test)
+
+9 real shared fails/errors + 33 shared skips = 42 tests.  These are
+the *non-regressions* — cog has the same problem, so not ours to
+fix on this branch:
+
+    Fail   3  ClyAsyncQueryTest/ClyFilterQueryTest>>testHasCompositeScopeFromSubqueries
+              ClySemiAsyncQueryResultTest>>testItemsChangedNotificationShouldResetItems
+    Error  6  ClyAsyncQueryTest/ClyFilterQueryTest "Wrapper query" (3 selectors × 2 classes)
+    Error  1  DebugPointTest>>testTranscriptDebugPoint (NonInteractiveTranscript>>#contents DNU)
+    Error  1  OCClassBuilderTest>>testCreateNormalClassWithTraitComposition (OCCodeError)
+    Skip  33  Image-level skips (FFI Platform, Win32, OCCodeReparator, etc.)
+
+## Δcog for jit NO_JIT (548 regressions)
+
+Tests that pass on cog but FAIL/ERROR/TIMEOUT on our VM:
+
+    error    521    (454 of these are C11 FFI DNU cascade)
+    fail      15    (path/env + FFI params + a few assertion fails)
+    timeout   12    (FinalizationRegistry x5, FFICallback x5, FLBinary x1, misc x1)
+
+Plus 181 cog-tests that jit NO_JIT didn't execute at all (the 9
+watchdog-cut classes).  Every one of those 181 is a *potential*
+additional regression — unknown until we finish the run.
+
+Full list at `results/sunit-2026-04-20-jit-nojit.delta-vs-cog.txt`.
 
 ## Delta vs stock Cog
 
