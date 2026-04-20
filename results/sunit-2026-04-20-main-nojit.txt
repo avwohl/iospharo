@@ -1,0 +1,523 @@
+=== Stock Cog SUnit run ===
+Classes to run: 836
+Per-test timeout: 0:00:00:50
+Image: /tmp/harness/Pharo.image
+Started: 2026-04-20T13:28:41.1266-04:00
+
+=== AbstractClassDescriptionAnnouncementTest ===
+Total: 0 P:0 F:0 E:0 S:0
+
+=== AbstractClassDescriptionTest ===
+Total: 0 P:0 F:0 E:0 S:0
+
+=== AbstractFontFamilyMemberTest ===
+  RUN: testIsAbstract
+Total: 1 P:1 F:0 E:0 S:0
+
+=== AbstractFontFamilyTest ===
+  RUN: testIsAbstract
+Total: 1 P:1 F:0 E:0 S:0
+
+=== AbstractFontProviderTest ===
+  RUN: testIsAbstract
+Total: 1 P:1 F:0 E:0 S:0
+
+=== AbstractStoredSettingTest ===
+  RUN: testEqual
+  RUN: testHash
+  RUN: testPrintOn
+  RUN: testPrintOn2
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AbstractTraitsOnPreparedModelTest ===
+Total: 0 P:0 F:0 E:0 S:0
+
+=== AbstractTutorialTest ===
+  RUN: testLessonsReturnsAllLessonInstances
+  RUN: testTitleHumanizeClassName
+  RUN: testTutorialRaisesShouldBeImplemented
+  RUN: testTutorialsReturnsAllButMockTutorial
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AbstractWindowManagerTest ===
+Total: 0 P:0 F:0 E:0 S:0
+
+=== AccessorInstanceVariableSlotTest ===
+  RUN: testAccessorInstanceVariableSlot
+Total: 1 P:1 F:0 E:0 S:0
+
+=== ActiveClassAnnotationsTest ===
+  RUN: testCanBeEnumeratedForGivenClassAndUser
+  RUN: testCanBeEnumeratedForGivenUser
+  RUN: testIncludeOnlyInstancesWhichAreActiveForGivenUser
+  RUN: testNotIncludeInstancesWhichAreNotActiveForGivenUser
+  RUN: testNotIncludeInstancesWithoutContext
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AdditionalMethodStateTest ===
+  RUN: testAnalogousCodeTo
+  RUN: testAnalogousCodeToTakesSelectorIntoAccount
+  RUN: testCopy
+Total: 3 P:3 F:0 E:0 S:0
+
+=== AIAstarTest ===
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+
+=== AIBellmanFordTest ===
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIBFSTest ===
+  RUN: testAseGraph
+  RUN: testAseSccGraph
+  RUN: testComplexUndirectedGraph
+  RUN: testSimpleGraph
+  RUN: testWithoutCyclesComplexGraph
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AIDijkstraTest ===
+  RUN: testAseBasicCircuit
+  RUN: testAseBasicCircuitBacktrack
+  RUN: testComplexWeightedGraph2
+  RUN: testComplexWeightedGraph2BackTracking
+  RUN: testComplexWeightedGraph3
+  RUN: testComplexWeightedGraph3Backtracking
+  RUN: testSimpleWeightedGraph
+  RUN: testSimpleWeightedGraphBacktracking
+Total: 8 P:8 F:0 E:0 S:0
+
+=== AIDinicTest ===
+  RUN: testComplexFlow
+  RUN: testSimpleFlow
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AIGraphAlgorithmTest ===
+  RUN: testAddNodesFromChildrenBlock
+  RUN: testingAddingNodes
+  RUN: testingFindingNodes
+  RUN: testingNodeDictionary
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIGraphReducerTest ===
+  RUN: testAdjacenciesFor
+  RUN: testComplexCycle
+  RUN: testComplexCycle2
+  RUN: testComplexCycleReferences
+  RUN: testGraphReducingWhenNoCycle
+  RUN: testGraphReducingWhenNoCycleReferences
+  RUN: testMergedNodesNotReferencedInNextNodes
+  RUN: testMergedNodesNotReferencedInNextNodesC2
+  RUN: testMergedNodesNotReferencedInNextNodesForSCG
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  RUN: testStronglyConnectedGraphReferences
+Total: 12 P:12 F:0 E:0 S:0
+
+=== AIHitsTest ===
+  RUN: testComplexCycle
+  RUN: testComplexWCycle
+  RUN: testCycle
+  RUN: testGraphForHits
+  RUN: testNestedCycle
+  RUN: testSimple
+  RUN: testSimpleW
+Total: 7 P:7 F:0 E:0 S:0
+
+=== AIKruskalTest ===
+  RUN: testMaxSpanningTreeComplex
+  RUN: testMaxSpanningTreeSimple
+  RUN: testMinSpanningTreeComplex
+  RUN: testMinSpanningTreeComplexDisconnected
+  RUN: testMinSpanningTreeSimple
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AILongestPathInDAGTest ===
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AILongestPathInDCGTest ===
+  RUN: testNegativeUnconnectedWeightedGraph
+  RUN: testNegativeWeightedGraph
+  RUN: testNegativeWeightedGraph2
+  RUN: testNegativeWeightedGraphReconstrucPath
+Total: 4 P:4 F:0 E:0 S:0
+
+=== AIPrimTest ===
+  RUN: testMinSpanningTreeComplex2
+  RUN: testMinimumSpanningTreeComplex
+  RUN: testMinimumSpanningTreeSimple
+Total: 3 P:3 F:0 E:0 S:0
+
+=== AIShortestPathInDAGTest ===
+  RUN: testWeightedDAG
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AITarjanTest ===
+  RUN: testComplexCycle
+  RUN: testComplexCycle2
+  RUN: testCycle
+  RUN: testNestedCycle
+  RUN: testNoCycle
+  RUN: testStronglyConnectedGraph
+  RUN: testStronglyConnectedGraphWithObjects
+Total: 7 P:7 F:0 E:0 S:0
+
+=== AITopologicalSortingTest ===
+  RUN: testSimpleGraph
+  RUN: testSortStringHierarchy
+  RUN: testSortWithCycle
+  RUN: testSortWithReducedGraph
+  RUN: testWithoutCyclesComplexGraph
+  RUN: testWithoutCyclesMediumGraph
+Total: 6 P:6 F:0 E:0 S:0
+
+=== AIWeightedHitsTest ===
+  RUN: testComplexWeighted
+  RUN: testComplexWeighted2
+  RUN: testComplexWeighted3
+  RUN: testSimpleW
+  RUN: testWithoutCyclesComplexWeightedGraph
+Total: 5 P:5 F:0 E:0 S:0
+
+=== AllocationTest ===
+  RUN: testOneGBAllocation
+  RUN: testOneGWordAllocation
+  ERROR: testOneGWordAllocation (PrimitiveFailed: primitive #basicNew: in Array class failed)
+  RUN: testOneMBAllocation
+  RUN: testOneMWordAllocation
+Total: 4 P:3 F:0 E:1 S:0
+
+=== AndreasSystemProfilerTest ===
+  RUN: testFullPrintOn
+  RUN: testGetNewTab
+  RUN: testPrintingTally
+  RUN: testPrintingTallyUninitialized
+  RUN: testSimple
+  ERROR: testSimple (PrimitiveFailed: primitive #profileSemaphore: in SmalltalkImage failed)
+  RUN: testSimpleReport
+  RUN: testTallyTreePrint
+  RUN: testTallyTreePrintWithTab
+Total: 8 P:7 F:0 E:1 S:0
+
+=== AnnouncementSetTest ===
+  RUN: testIncludeOnlyOnce
+  RUN: testInstanceCreation
+Total: 2 P:2 F:0 E:0 S:0
+
+=== AnnouncerTest ===
+  RUN: testAccessingSubscribers
+  RUN: testAnnounceClass
+  RUN: testAnnounceInstance
+  RUN: testAnnounceWorkWithinExceptionHandlerBlocks
+  RUN: testAnnouncingReentrant
+  RUN: testConcurrentSuspendAllWhile
+  RUN: testHandleSubscriberClass
+  RUN: testNoArgBlock
+  RUN: testPreparationAnnouncementDelivery
+  RUN: testPreparationAnnouncementDeliveryWhenNoSubscriptions
+  RUN: testPreventDuring
+  RUN: testSubscribeBlock
+  RUN: testSubscribeClassWithExclusion
+  RUN: testSubscribeOnSpecificAnnouncer
+  RUN: testSubscribeSend
+  RUN: testSubscribeSet
+  RUN: testSubscribeSetWithExclusion
+  RUN: testSubscribeSetWithExclusionOfMultipleAnnouncements
+  RUN: testSubscribeSetWithExclusionOfSetItem
+  RUN: testSubscribeSubclass
+  RUN: testSubscribersForClass
+  RUN: testSuspendAllWhile
+  RUN: testSuspendAllWhileStoring
+  RUN: testSuspendAllWhileStoringNested
+  RUN: testSymbolIdentifier
+  RUN: testTwoArgBlock
+  RUN: testUnsubscribeBlock
+  RUN: testUnsubscribeSend
+  RUN: testUnsubscribeSet
+Total: 29 P:29 F:0 E:0 S:0
+
+=== ArgumentNamesTest ===
+  RUN: testAPrefixForClassNameStartingWithConsonant
+  RUN: testAnPrefixForClassNameStartingWithVowel
+  RUN: testClass
+  RUN: testCollection
+  RUN: testDefault
+  RUN: testInteger
+  RUN: testNumber
+  RUN: testString
+Total: 8 P:8 F:0 E:0 S:0
+
+=== ArgumentVariableTest ===
+  RUN: testDefiningNode
+  RUN: testUsingMethods
+Total: 2 P:2 F:0 E:0 S:0
+
+=== ArrayTest ===
+  RUN: test0CopyTest
+  RUN: test0FixtureAsSetForIdentityMultiplinessTest
+  RUN: test0FixtureAsStringCommaAndDelimiterTest
+  RUN: test0FixtureBeginsEndsWithTest
+  RUN: test0FixtureCloneTest
+  RUN: test0FixtureConverAsSortedTest
+  RUN: test0FixtureCopyPartOfForMultipliness
+  RUN: test0FixtureCopyPartOfSequenceableTest
+  RUN: test0FixtureCopySameContentsTest
+  RUN: test0FixtureCopyWithOrWithoutSpecificElementsTest
+  RUN: test0FixtureCopyWithReplacementTest
+  RUN: test0FixtureCreationWithTest
+  RUN: test0FixtureEmptySequenceableTest
+  RUN: test0FixtureEmptyTest
+  RUN: test0FixtureIncludeTest
+  RUN: test0FixtureIncludeWithIdentityTest
+  RUN: test0FixtureIndexAccessFotMultipliness
+  RUN: test0FixtureIndexAccessTest
+  RUN: test0FixtureIterateSequencedReadableTest
+  RUN: test0FixtureIterateTest
+  RUN: test0FixtureOccurrencesForMultiplinessTest
+  RUN: test0FixtureOccurrencesTest
+  RUN: test0FixturePrintTest
+  RUN: test0FixturePutOneOrMoreElementsTest
+  RUN: test0FixturePutTest
+  RUN: test0FixtureSequencedConcatenationTest
+  RUN: test0FixtureSequencedElementAccessTest
+  RUN: test0FixtureSetAritmeticTest
+  RUN: test0FixtureSubcollectionAccessTest
+  RUN: test0FixtureTConvertAsSetForMultiplinessTest
+  RUN: test0FixtureTConvertTest
+  RUN: test0SortingArrayedTest
+  RUN: test0TSequencedStructuralEqualityTest
+  RUN: test0TSizeTest
+  RUN: test0TStructuralEqualityTest
+  RUN: testAfter
+  RUN: testAfterIfAbsent
+  RUN: testAllButFirst
+  RUN: testAllButFirstDo
+  RUN: testAllButFirstNElements
+  RUN: testAllButLast
+  RUN: testAllButLastDo
+  RUN: testAllButLastNElements
+  RUN: testAllSatisfy
+  RUN: testAllSatisfyEmpty
+  RUN: testAnySastify
+  RUN: testAnySatisfy
+  RUN: testAsArray
+  RUN: testAsArrayKeepsIdentity
+  RUN: testAsBag
+  RUN: testAsByteArray
+  RUN: testAsIdentitySet
+  RUN: testAsIdentitySetWithEqualsElements
+  RUN: testAsIdentitySetWithIdentityEqualsElements
+  RUN: testAsIdentitySetWithoutIdentityEqualsElements
+  RUN: testAsMultilineString
+  RUN: testAsOrderedCollection
+  RUN: testAsSet
+  RUN: testAsSetWithEqualsElements
+  RUN: testAsSortedArray
+  RUN: testAsSortedCollection
+  RUN: testAsSortedCollectionWithSortBlock
+  RUN: testAsStringOnDelimiterEmpty
+  RUN: testAsStringOnDelimiterLastEmpty
+  RUN: testAsStringOnDelimiterLastMore
+  RUN: testAsStringOnDelimiterLastOne
+  RUN: testAsStringOnDelimiterMore
+  RUN: testAsStringOnDelimiterOne
+  RUN: testAt
+  RUN: testAtAll
+  RUN: testAtAllIndexesPut
+  RUN: testAtAllPut
+  RUN: testAtAllPutAll
+  RUN: testAtIfAbsent
+  RUN: testAtLast
+  RUN: testAtLastError
+  RUN: testAtLastIfAbsent
+  RUN: testAtLastPut
+  RUN: testAtOutOfBounds
+  RUN: testAtPin
+  RUN: testAtPut
+  RUN: testAtPutOutOfBounds
+  RUN: testAtPutTwoValues
+  RUN: testAtRandom
+  RUN: testAtWrap
+  RUN: testAtWrap2
+  RUN: testAtWrapPut
+  RUN: testBasicCollect
+  RUN: testBasicCollectEmpty
+  RUN: testBasicCollectThenDo
+  RUN: testBeReadOnlyLiteral
+  RUN: testBefore
+  RUN: testBeforeIfAbsent
+  RUN: testCartesianProductDo
+  RUN: testCartesianProductDo3Elements
+  RUN: testCartesianProductOfSize
+  RUN: testCollectFromTo
+  RUN: testCollectOnEmpty
+  RUN: testCollectThenDoOnEmpty
+  RUN: testCollectThenSelectOnEmpty
+  RUN: testCombinations
+  RUN: testCombinationsTaken
+  RUN: testConcatenation
+  RUN: testConcatenationWithEmpty
+  RUN: testCopyAfter
+  RUN: testCopyAfterEmpty
+  RUN: testCopyAfterLast
+  RUN: testCopyAfterLastEmpty
+  RUN: testCopyAfterLastWithDuplicate
+  RUN: testCopyAfterWithDuplicate
+  RUN: testCopyCreatesNewObject
+  RUN: testCopyEmpty
+  RUN: testCopyEmptyMethod
+  RUN: testCopyEmptyWith
+  RUN: testCopyEmptyWithout
+  RUN: testCopyEmptyWithoutAll
+  RUN: testCopyEquals
+  RUN: testCopyFromTo
+  RUN: testCopyNonEmpty
+  RUN: testCopyNonEmptyWith
+  RUN: testCopyNonEmptyWithout
+  RUN: testCopyNonEmptyWithoutAll
+  RUN: testCopyNonEmptyWithoutAllNotIncluded
+  RUN: testCopyNonEmptyWithoutNotIncluded
+  RUN: testCopyNotSame
+  RUN: testCopyReplaceAllWith1Occurrence
+  RUN: testCopyReplaceAllWithManyOccurrence
+  RUN: testCopyReplaceFromToWith
+  RUN: testCopyReplaceFromToWithInsertion
+  RUN: testCopySameClass
+  RUN: testCopyUpTo
+  RUN: testCopyUpToEmpty
+  RUN: testCopyUpToLast
+  RUN: testCopyUpToLastEmpty
+  RUN: testCopyUpToLastWithDuplicate
+  RUN: testCopyUpToWithDuplicate
+  RUN: testCopyWithAll
+  RUN: testCopyWithFirst
+  RUN: testCopyWithSequenceable
+  RUN: testCopyWithoutFirst
+  RUN: testCopyWithoutFirstOccuranceOf
+  RUN: testCopyWithoutIndex
+  RUN: testDetect
+  RUN: testDetectIfFoundIfNoneWhenNobodyIsFound
+  RUN: testDetectIfFoundIfNoneWhenSomethingIsFound
+  RUN: testDetectIfFoundIfNoneWhenSomethingIsFoundIgnoringTheFoundObject
+  RUN: testDetectIfFoundWhenNobodyIsFound
+  RUN: testDetectIfFoundWhenSomethingIsFound
+  RUN: testDetectIfFoundWhenSomethingIsFoundIgnoringTheFoundObject
+  RUN: testDetectIfNone
+  RUN: testDetectSequenced
+  RUN: testDifference
+  RUN: testDifferencePreservesOrder
+  RUN: testDifferenceWithNonNullIntersection
+  RUN: testDifferenceWithSeparateCollection
+  RUN: testDo
+  RUN: testDo2
+  RUN: testDoSeparatedBy
+  RUN: testDoWithout
+  RUN: testEqualSign
+  RUN: testEqualSignForSequenceableCollections
+  RUN: testEqualSignIsTrueForEmptyButNonIdenticalCollections
+  RUN: testEqualSignIsTrueForNonIdenticalButEqualCollections
+  RUN: testEqualSignOfIdenticalCollectionObjects
+  RUN: testFindBinary
+  RUN: testFindBinaryIfNone
+  RUN: testFindFirst
+  RUN: testFindFirstNotIn
+  RUN: testFindLast
+  RUN: testFindLastNotIn
+  RUN: testFirstNElements
+  RUN: testFirstSecondThird
+  RUN: testFlatCollect
+  RUN: testFlatCollectAs
+  RUN: testFlatCollectAsSet
+  RUN: testFlatCollectAsWithEmptyCollection
+  RUN: testFlattened
+  RUN: testForceToPaddingStartWith
+  RUN: testForceToPaddingWith
+  RUN: testFromToDo
+  RUN: testFromToPut
+  RUN: testGroupsOfAtATimeCollect
+  RUN: testHasEqualElements
+  RUN: testHasEqualElementsIsTrueForNonIdenticalButEqualCollections
+  RUN: testHasEqualElementsOfIdenticalCollectionObjects
+  RUN: testIdentityIncludes
+  RUN: testIdentityIncludesNonSpecificComportement
+  RUN: testIdentityIndexOf
+  RUN: testIdentityIndexOfDuplicate
+  RUN: testIdentityIndexOfIAbsent
+  RUN: testIdentityIndexOfIAbsentDuplicate
+  RUN: testIfEmpty
+  RUN: testIfEmptyifNotEmpty
+  RUN: testIfNotEmpty
+  RUN: testIfNotEmptyifEmpty
+  RUN: testIncludesAllNoneThere
+  RUN: testIncludesAnyAllThere
+  RUN: testIncludesAnyNoneThere
+  RUN: testIncludesElementIsNotThere
+  RUN: testIncludesElementIsThere
+  RUN: testIndexOf
+  RUN: testIndexOfDuplicate
+  RUN: testIndexOfIfAbsent
+  RUN: testIndexOfIfAbsentDuplicate
+  RUN: testIndexOfIfAbsentUsing
+  RUN: testIndexOfStartingAt
+  RUN: testIndexOfStartingAtDuplicate
+  RUN: testIndexOfStartingAtIfAbsent
+  RUN: testIndexOfStartingAtIfAbsentUsing
+  RUN: testIndexOfSubCollectionStartingAt
+  RUN: testIndexOfSubCollectionStartingAtIfAbsent
+  RUN: testInjectInto
+  RUN: testIntersectionBasic
+  RUN: testIntersectionEmpty
+  RUN: testIntersectionItself
+  RUN: testIntersectionTwoSimilarElementsInIntersection
+  RUN: testIsArray
+  RUN: testIsEmpty
+  RUN: testIsEmptyOrNil
+  RUN: testIsSelfEvaluating
+  RUN: testIsSorted
+  RUN: testIsSortedBy
+  RUN: testKeysAndValuesDo
+  RUN: testKeysAndValuesDoEmpty
+  RUN: testLast
+  RUN: testLastIndexOf
+  RUN: testLastIndexOfDuplicate
+  RUN: testLastIndexOfIfAbsent
+  RUN: testLastIndexOfIfAbsentDuplicate
+  RUN: testLastIndexOfStartingAt
+  RUN: testLastIndexOfStartingAtDuplicate
+  RUN: testLastNElements
+  RUN: testLessThanMinus
+  RUN: testLiteralEqual
+  RUN: testMiddle
+  RUN: testNewFromArray
+  RUN: testNewStreamContentsReturnsCollectionOfCorrectSize
+  RUN: testNewWithSize
+  RUN: testNoneSatisfy
+  RUN: testNoneSatisfyEmpty
+  RUN: testNotEmpty
+  RUN: testOFixtureReplacementSequencedTest
+  RUN: testOccurrencesOf
+  RUN: testOccurrencesOfEmpty
+  RUN: testOccurrencesOfForMultipliness
+  RUN: testOccurrencesOfNotIn
+  RUN: testOfSize
+  RUN: testPairsCollect
+  RUN: testPairsDo
+  RUN: testPremultiply
+  RUN: testPrintElementsOn
+  RUN: testPrintNameOn
+  RUN: testPrintOn
+  RUN: testPrinting
+  RUN: testPrintingRecursive

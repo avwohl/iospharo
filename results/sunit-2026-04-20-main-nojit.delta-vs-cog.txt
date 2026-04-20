@@ -1,0 +1,4 @@
+# 2 tests pass on cog but not on sunit-2026-04-20-main-nojit
+# columns: status	class	selector
+error	AllocationTest	testOneGWordAllocation
+error	AndreasSystemProfilerTest	testSimple

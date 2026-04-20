@@ -26,14 +26,21 @@ row; marked `?` until the cog row is populated.
 
     VM     Mode     Date        Classes   Tests    P       F    E     S    T    Wall     Δcog
     cog    default  2026-04-20  828/836   17258    17195   15   23    25   0    2m       (baseline)
-    main   NO_JIT   —           —         —        —       —    —     —    —    —        ?
+    main   NO_JIT   2026-04-20  34/836    412†     410     0    2     0    0    50m(wd)  2 / ≥?
     main   default  —           —         —        —       —    —     —    —    —        ?
     jit    NO_JIT   2026-04-20  827/836   17057    16467   18   537   23   12   45m(wd)  548
     jit    default  —           —         —        —       —    —     —    —    —        ?
 
-`wd` = hit the 45-minute VM watchdog; last 9 classes (FLBinaryFileStream,
-FinalizationRegistry, FFICallback) had 80s/300s per-test timeouts that
-ate the budget.
+`wd` = hit the VM watchdog.  `†` = main NO_JIT is enormously slower per
+test than jit NO_JIT: 50 minutes for 34 classes vs jit's 45 minutes for
+827.  Root cause not in this file; likely cumulative interpreter-speed
+improvements between main `d324080` and jit `ed51a22` (776 commits).
+Practically this means a full main NO_JIT comparison needs the watchdog
+raised to ~20 hours, or a narrower class list.
+
+Main also requires a `startup.st` workaround to boot headlessly — main's
+`test_load_image` has no `eval` mode, so we inject the fileIn via
+`StartupPreferencesLoader` by writing `/tmp/harness/startup.st`.
 
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
@@ -54,6 +61,24 @@ fix on this branch:
     Error  1  DebugPointTest>>testTranscriptDebugPoint (NonInteractiveTranscript>>#contents DNU)
     Error  1  OCClassBuilderTest>>testCreateNormalClassWithTraitComposition (OCCodeError)
     Skip  33  Image-level skips (FFI Platform, Win32, OCCodeReparator, etc.)
+
+## Δcog for main NO_JIT — partial run (50-min watchdog, 34/836 classes)
+
+Only 34 classes completed; 16,783 of cog's 17,258 tests weren't run.
+Real Δcog is unknown until main finishes or is run on a narrower list.
+
+Regressions seen within those 34 classes:
+
+    error  2
+        AllocationTest>>testOneGWordAllocation
+        AndreasSystemProfilerTest>>testSimple
+
+Both look VM-level (allocation limit, profiler timing).  Full list at
+`results/sunit-2026-04-20-main-nojit.delta-vs-cog.txt`.
+
+Main-vs-jit comparison is blocked until main can get through more
+classes.  Two ways forward: raise the watchdog past 20 h, or run only
+the 548 classes that jit flagged as Δcog=non-zero.
 
 ## Δcog for jit NO_JIT (548 regressions)
 
