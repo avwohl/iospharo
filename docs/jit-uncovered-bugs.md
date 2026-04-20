@@ -305,13 +305,19 @@ fine) or move at least one out-of-line method into it.
                                bails, 2807300)
                   11b layer 3 (6 bytecodeEnd writes + savedFrame
                                push null-guarded, a75b0bd)
-    Open          11b layer 4 (tryResume BLR target lands at PC in
-                               code zone but not in any active
-                               JITMethod — possibly stale bcOffset
-                               passed to tryResume after recompile)
+                  11b layer 4a (exitMethod null-guard, tryResume
+                                entry sanity check, ba73bbc)
+    Open          11b layer 4b (after tryResume's BLR succeeds,
+                                a stencil's compiled branch lands
+                                outside the method — JIT codegen,
+                                needs single-step trace tooling)
 
 Crash floor progression: compile #5 → #15 → #28 → #42 → #45 → #56 → #68.
 Each layer is a real bug; each fix is methodically peeling onion layers.
+Layer 4b is the first one that defensive guards can't catch — it's
+JIT-emitted code branching to a wrong address inside JIT execution.
+Fixing it requires either (a) hardware single-step + breakpoint on
+the bad branch, or (b) extensive stencil-relocation auditing.
 
 Bug 11 (Sista compile-path corruption) is the remaining
 show-stopper for jit-default.  Bisect gates `PHARO_SISTA_NO_LOWER`
