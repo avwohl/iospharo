@@ -12554,8 +12554,14 @@ void Interpreter::tryJITResumeInCaller() {
                 for (int i = 0; i < rj2jDepth; i++) {
                     if (frameDepth_ >= StackOverflowLimit) break;
                     J2JSave& save = rj2jSaves[i];
-                    SavedFrame& frame = savedFrames_[frameDepth_++];
                     jit::JITMethod* saveJM = save.jitMethod;
+                    if (!saveJM) {
+                        static int warns = 0;
+                        if (++warns <= 5)
+                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at rj2j materialize (warn #%d)\n", warns);
+                        break;
+                    }
+                    SavedFrame& frame = savedFrames_[frameDepth_++];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                     frame.savedIP = save.ip;
                     frame.savedBytecodeEnd =
@@ -13823,8 +13829,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             Oop nil = memory_.nil();
             for (int i = 0; i < j2jDepth; i++) {
                 J2JSave& save = j2jStack[i];
-                SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
                 jit::JITMethod* saveJM = save.jitMethod;
+                if (!saveJM) {
+                    static int warns = 0;
+                    if (++warns <= 5)
+                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at j2jBase materialize (warn #%d)\n", warns);
+                    j2jMaterialized = false;
+                    break;
+                }
+                SavedFrame& frame = savedFrames_[j2jBaseFrameDepth + i];
                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                 frame.savedIP = save.ip;
                 frame.savedBytecodeEnd =
@@ -13937,8 +13950,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         for (int i = 0; i < state.j2jDepth; i++) {
             if (frameDepth_ >= StackOverflowLimit) break;
             J2JSave& save = j2jStack[i];
-            SavedFrame& frame = savedFrames_[frameDepth_++];
             jit::JITMethod* saveJM = save.jitMethod;
+            if (!saveJM) {
+                static int warns = 0;
+                if (++warns <= 5)
+                    fprintf(stderr, "[JIT] WARN: null save.jitMethod in materializeJ2J lambda (warn #%d)\n", warns);
+                break;
+            }
+            SavedFrame& frame = savedFrames_[frameDepth_++];
             Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
             frame.savedIP = save.ip;
             frame.savedBytecodeEnd =
@@ -14082,8 +14101,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     for (int i = 0; i < state.j2jDepth; i++) {
                         if (frameDepth_ >= StackOverflowLimit) break;
                         J2JSave& save = j2jStack[i];
-                        SavedFrame& frame = savedFrames_[frameDepth_++];
                         jit::JITMethod* saveJM = save.jitMethod;
+                        if (!saveJM) {
+                            static int warns = 0;
+                            if (++warns <= 5)
+                                fprintf(stderr, "[JIT] WARN: null save.jitMethod at site4 (warn #%d)\n", warns);
+                            break;
+                        }
+                        SavedFrame& frame = savedFrames_[frameDepth_++];
                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                         frame.savedIP = save.ip;
                         frame.savedBytecodeEnd =
@@ -14500,8 +14525,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 size_t baseDepth = frameDepth_;
                 for (int i = 0; i < state.j2jDepth; i++) {
                     J2JSave& save = j2jStack[i];
-                    SavedFrame& frame = savedFrames_[baseDepth + i];
                     jit::JITMethod* saveJM = save.jitMethod;
+                    if (!saveJM) {
+                        static int warns = 0;
+                        if (++warns <= 5)
+                            fprintf(stderr, "[JIT] WARN: null save.jitMethod at site5 (warn #%d)\n", warns);
+                        break;
+                    }
+                    SavedFrame& frame = savedFrames_[baseDepth + i];
                     Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                     frame.savedIP = save.ip;
                     frame.savedBytecodeEnd =
@@ -14716,8 +14747,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     for (int i = 0; i < state.j2jDepth; i++) {
                                         if (frameDepth_ >= StackOverflowLimit) break;
                                         J2JSave& save = j2jStack[i];
-                                        SavedFrame& frame = savedFrames_[frameDepth_++];
                                         jit::JITMethod* saveJM = save.jitMethod;
+                                        if (!saveJM) {
+                                            static int warns = 0;
+                                            if (++warns <= 5)
+                                                fprintf(stderr, "[JIT] WARN: null save.jitMethod at site6 (warn #%d)\n", warns);
+                                            break;
+                                        }
+                                        SavedFrame& frame = savedFrames_[frameDepth_++];
                                         Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                                         frame.savedIP = save.ip;
                                         frame.savedBytecodeEnd =
@@ -14817,8 +14854,14 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             for (int i = 0; i < state.j2jDepth; i++) {
                                 if (frameDepth_ >= StackOverflowLimit) break;
                                 J2JSave& save = j2jStack[i];
-                                SavedFrame& frame = savedFrames_[frameDepth_++];
                                 jit::JITMethod* saveJM = save.jitMethod;
+                                if (!saveJM) {
+                                    static int warns = 0;
+                                    if (++warns <= 5)
+                                        fprintf(stderr, "[JIT] WARN: null save.jitMethod at site7 (warn #%d)\n", warns);
+                                    break;
+                                }
+                                SavedFrame& frame = savedFrames_[frameDepth_++];
                                 Oop saveMethod = Oop::fromRawBits(saveJM->compiledMethodOop);
                                 frame.savedIP = save.ip;
                                 frame.savedBytecodeEnd =
