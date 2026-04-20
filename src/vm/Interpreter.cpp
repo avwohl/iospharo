@@ -6761,6 +6761,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.methodMapPtr = nullptr;
             sstate.yieldCountdown = 0;
 
+            // Match tryJITActivation's GC-root registration so that
+            // any forEachRoot walk during Sista's call keeps state
+            // fields live.  Sista doesn't allocate, so GC shouldn't
+            // actually fire mid-call, but this rules out one class
+            // of rare-race divergence.
+            jit::JITState* prevJITState = currentJITState_;
+            currentJITState_ = &sstate;
+            struct SistaStateGuard {
+                Interpreter* self;
+                jit::JITState* prev;
+                ~SistaStateGuard() { self->currentJITState_ = prev; }
+            } sistaStateGuard{this, prevJITState};
+
 #if defined(__APPLE__) && defined(__arm64__)
             pthread_jit_write_protect_np(1);
 #endif
