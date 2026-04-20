@@ -97,6 +97,20 @@ gets further but isn't a real benchmark of the production config.
     +SIGILL handler   ~42       confirms PC is past method end
     +Sista compile bracket ~15  unmasks tryJITActivation null-deref
 
+**Bisect with Sista gates** (still residual crash, but later):
+
+    Sista config              Crash at  Notes
+    NO_SISTA=1                ∞         clean (no JIT crash; image error unrelated)
+    SISTA_COMPILE only        ~45       SIGILL — compile alone corrupts state
+    SISTA_NO_STORES           ~112      null-deref deep in tryJITActivation
+    default (compile+dispatch) ~15      same null-deref as NO_STORES, earlier
+
+The store-blocking gate pushes the crash floor from #15 to #112 —
+strong evidence Sista's `kStoreInstVar` lowering (or its temp-store
+peer) is one of the corruption sources.  Even with stores blocked
+the crash recurs deeper in the suite, so there's at least a second
+Sista codegen issue layered underneath.
+
 Each one is a real bug.  Together they suggest Sista's IR
 lowering has a fundamental correctness issue that's been masked
 by the JIT-default crash floor moving every time a more-shallow
