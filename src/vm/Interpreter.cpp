@@ -6744,16 +6744,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     hasUnsafeOp = true;
                     break;
                 }
-                // Generic bail ops (allocate in interpreter) stay
-                // out until Sista is verified end-to-end against
-                // block/array creation.
-                if (op == jit::SistaV1::PushFullBlock
-                 || op == jit::SistaV1::PushClosure
-                 || op == jit::SistaV1::PushArray
-                 || op == jit::SistaV1::PushThisContext) {
-                    hasUnsafeOp = true;
-                    break;
-                }
+                // Generic bail ops (PushFullBlock / PushClosure /
+                // PushArray / PushThisContext) are now safe —
+                // Sista's generic bailToInterpreter already flushes
+                // the full IR stack, and the adaptive bail-blacklist
+                // culls them if they over-bail.  Let them through.
                 // Sends bail cleanly via the fixed lifter.
                 // Adaptive runtime blacklist (sistaBailCounter_)
                 // removes methods that bail consecutively, so we
