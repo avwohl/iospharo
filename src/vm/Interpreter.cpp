@@ -6726,9 +6726,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     hasUnsafeOp = true;
                     break;
                 }
-                // All other send-bytes (SpecialSend, Send0/1/2,
-                // ExtSend, ExtSuperSend, comparison-arith) bail
-                // cleanly through the fixed lifter.
+                // Sends bail cleanly via the fixed lifter, but the
+                // per-activation dispatch overhead (state setup +
+                // W^X toggle + asmjit call) swamps the interpreter
+                // cost for methods that mostly bail.  Default to
+                // rejecting all send-bytes so dispatch only admits
+                // methods Sista can actually run to completion
+                // (ExitReturn).  Re-admit bailing methods with
+                // PHARO_SISTA_ALLOW_BAIL=1 for correctness testing
+                // or when Phase 4 inlining makes the bail rare.
+                if (!g_debug.sistaAllowBail) {
+                    if (jit::SistaV1::isSendBytecode(op)
+                     || op == jit::SistaV1::ExtSend
+                     || op == jit::SistaV1::ExtSuperSend) {
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
                 (void)isSend0; (void)isSend1; (void)isSend2;
             }
         }
@@ -6761,19 +6775,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.j2jTotalCalls = 0;
             sstate.methodMapPtr = nullptr;
             sstate.yieldCountdown = 0;
-
-            // Match tryJITActivation's GC-root registration so that
-            // any forEachRoot walk during Sista's call keeps state
-            // fields live.  Sista doesn't allocate, so GC shouldn't
-            // actually fire mid-call, but this rules out one class
-            // of rare-race divergence.
-            jit::JITState* prevJITState = currentJITState_;
-            currentJITState_ = &sstate;
-            struct SistaStateGuard {
-                Interpreter* self;
-                jit::JITState* prev;
-                ~SistaStateGuard() { self->currentJITState_ = prev; }
-            } sistaStateGuard{this, prevJITState};
 
 #if defined(__APPLE__) && defined(__arm64__)
             pthread_jit_write_protect_np(1);

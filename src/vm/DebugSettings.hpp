@@ -104,6 +104,7 @@ struct DebugSettings {
     bool sistaAllowSends = false;                  // PHARO_SISTA_ALLOW_SENDS
     bool sistaSend0Only = false;                   // PHARO_SISTA_SEND0_ONLY
     bool sistaUnsafeArith = false;                 // PHARO_SISTA_UNSAFE_ARITH
+    bool sistaAllowBail = false;                   // PHARO_SISTA_ALLOW_BAIL
 
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and
