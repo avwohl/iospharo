@@ -298,8 +298,10 @@ fine) or move at least one out-of-line method into it.
 
 ## Status summary
 
-    Fixed     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
-    Open      11                                      (1 bug)
+    Fixed         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
+    Partial fix   11a (siglongjmp→exception, de01be1)
+                  11b first layer (stale MethodMap entries, 2218c99)
+    Open          11b deeper layer (JIT stencil branches past method end)
 
 Bug 11 (Sista compile-path corruption) is the remaining
 show-stopper for jit-default.  Bisect gates `PHARO_SISTA_NO_LOWER`
