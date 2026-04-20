@@ -6919,12 +6919,17 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // clobber list (which exists for T1 stencils that
             // stash x19-x22 without save/restore).
             //
-            // No W^X toggle: asmjit's JitRuntime leaves code
-            // pages executable after Runtime::add, and we only
-            // read from them here.  The interpreter's T1 JIT
-            // toggle path is separate — it patches T1 code only
-            // when compiling, not during dispatch.
+            // W^X discipline: asmjit and our CodeZone share the
+            // per-thread MAP_JIT toggle on Apple Silicon.  Force
+            // executable both BEFORE the call (in case anything in
+            // the activation prologue dropped it) and AFTER (to
+            // protect the next T1 JIT entry from a stray writable
+            // state left behind by asmjit-internal bookkeeping).
+            jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                                jitRuntime_.codeZone().totalBytes());
             fn(&sstate);
+            jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                                jitRuntime_.codeZone().totalBytes());
 
             dispatched++;
             // Charge the periodic-check machinery for bytecodes
