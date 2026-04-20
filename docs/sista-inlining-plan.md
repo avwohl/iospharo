@@ -58,11 +58,46 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   step count and DNU sequence to the baseline — so the
   no-send-methods path is behavior-preserving end-to-end.
 
-  Dispatch is gated by `!hasSend` because the general ExitSend
-  state-sync path still causes image-startup divergence when
-  applied to methods with sends (wrong receiver reaches
-  `setGCParameters` during snapshot handoff).  Diagnosing and
-  lifting that restriction is the next tier-up step.
+  Default gate rejects methods with any bail-inducing bytecode.
+  `PHARO_SISTA_SEND0_ONLY=1` admits 0-arg sends (Send0,
+  0x80-0x8F) — **also verified behavior-preserving**: 274K
+  dispatches on the same workload (85K ExitReturn + 186K
+  ExitSend), same DNU sequence, same step count as baseline,
+  42! factorial round-trips correctly.
+
+  **Send1/Send2 ExitSend open mystery.** With Send1 or Send2
+  bails admitted (via hypothetical extension of the gate), the
+  real VM diverges — `#readFrom: not understood by ByteString`
+  during `DiskStore class>>checkVMVersion`.  But the bug is NOT
+  in Sista:
+  - Two round-trip unit tests (test_sista_ir.cpp §9 and §9b)
+    prove the lifter + lowerer produce correct push ordering
+    for PushRecvVar + Send1 with both heap-object and SmallInt-0
+    ivar values (`121bc9e`, `3303f71`).
+  - A post-bail reference check (`98ecb96`) replays the
+    bytecodes before state.ip using the interpreter's own
+    `fetchPointerUnchecked` / `framePointer_` reads and
+    compares to what's on stackPointer_ after Sista's bail —
+    **zero mismatches** across the full failing workload.
+  - An ExitReturn reference check (`6895d10`) computes what
+    the interpreter would return for simple return shapes and
+    compares to state.returnValue — **zero mismatches**.
+  - Blocking all state-mutating bytecodes (stores, via
+    `PHARO_SISTA_NO_STORES=1`) does not fix the divergence
+    (`e8e6ce7`), so kStoreTemp / kStoreInstVar aren't the cause.
+  - kStoreInstVar does bypass the GC remembered-set update —
+    a real Phase-3 gap — but gating stores off doesn't fix the
+    current symptom.
+
+  So Sista's observable output matches the interpreter exactly,
+  and the divergence is in some non-obvious state interaction
+  downstream of the bail — possibly affecting argCount/numTemps
+  handling, context materialization, or timing-sensitive VM
+  heuristics that respond to the wall-clock difference between
+  native-dispatched and interpreted methods.  Next step: add a
+  similar reference check for intermediate state (temps and
+  instVars touched mid-method by Sista's kStoreTemp/kStoreInstVar)
+  to rule out side-effect miscompiles.
 
   **GC safety landed** (`d5ef998`): Sista's raw-oop-keyed cache
   is now reset by `recoverJITAfterGC`.  Visible cache shrinkage
@@ -72,7 +107,13 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
 
   Commits: `1fae75a` (PHARO_SISTA_COMPILE=1 hook), `1647ced`
   (10K execute smoke test), `a8865f5` (PHARO_SISTA_DISPATCH=1
-  MVP — pure-method tier-up), `d5ef998` (GC-safe cache reset).
+  MVP — pure-method tier-up), `d5ef998` (GC-safe cache reset),
+  `c5a709e` (inlined arith +/-/*), `0ff684a` (verbose
+  histogram), `f11b7c7` (direct fn call), `36e5b74` (diagnosis
+  gate), `121bc9e`/`3303f71` (Send1 unit tests), `833682e`
+  (Send0-only safe default), `98ecb96` (post-bail push check),
+  `e8e6ce7` (store-block diagnostic), `6895d10` (ExitReturn
+  value check).
 
       Bytecodes lifted & lowered:
       - PushReceiver, PushTemp 0..11, PushRecvVar 0..15,
