@@ -9,6 +9,43 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
+## A0. weak-ref GC: testClearing convergence (2026-04-20)
+
+`WeakKeyDictionary>>testClearing` and `WeakIdentityKeyDictionaryTest>>testClearing`
+(inherited) are the remaining 2 failures in the focused SUnit suite
+after 86/88 were fixed this session.
+
+Root cause, traced via PHARO_GC_EPH_DEBUG=1 + in-GC heap walking:
+
+The test does `keys := (1 to: 1000) collect: [:n | 'key', n asString]`,
+then `keys := nil; Smalltalk garbageCollect`.  On first GC, all 1000
+key strings are marked alive because a `Context` object with `sel=#do:`
+has the backing Array as its receiver slot.  That do: context is in
+turn held by block Contexts (FullBlockClosures at slot 0 = outerContext)
+that survived the do: iteration.
+
+So the VM is heap-materializing do:'s call frame and each iteration's
+block frame; once on the heap they stay alive in the sender chain
+across GC.  The mark phase then marks all context temps transitively,
+including the Array → the 1000 test keys → the ephemerons transition
+from active to inactive → never fire.
+
+Cog avoids this via generational GC: short-lived contexts never reach
+tenure (scavenge reclaims them), so they're not seen by the mark phase
+of a major GC.  Our VM promotes everything to old space on allocation.
+
+Fix options, ordered by size:
+- Audit Context materialization triggers; ensure block/do: contexts
+  don't materialize unless `thisContext` was explicitly captured.
+- Add a "weak Context" format whose temp slots don't keep referents
+  alive when not reachable from a running process's top frame.
+- Generational GC (large structural change).
+
+Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
+SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and
+WeakIdentityKeyDictionaryTest>>testFinalizeValuesWhenLastChainContinuesAtFront)
+passes — 86/88 fixed.
+
 ## A. Open VM issues
 
 Surfaced 2026-04-19 by removing the harness skip list and the JIT
