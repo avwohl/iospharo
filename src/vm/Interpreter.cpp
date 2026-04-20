@@ -6776,19 +6776,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             sstate.methodMapPtr = nullptr;
             sstate.yieldCountdown = 0;
 
-#if defined(__APPLE__) && defined(__arm64__)
-            pthread_jit_write_protect_np(1);
-#endif
             // Direct call — Sista's asmjit-generated code emits a
             // standard AArch64 prologue/epilogue via asmjit's
             // Compiler, so it saves/restores any callee-saved
             // registers it uses.  No need for JIT_CALL's broad
-            // clobber list (which exists for T1 stencils that do
+            // clobber list (which exists for T1 stencils that
             // stash x19-x22 without save/restore).
+            //
+            // No W^X toggle: asmjit's JitRuntime leaves code
+            // pages executable after Runtime::add, and we only
+            // read from them here.  The interpreter's T1 JIT
+            // toggle path is separate — it patches T1 code only
+            // when compiling, not during dispatch.
             fn(&sstate);
-#if defined(__APPLE__) && defined(__arm64__)
-            pthread_jit_write_protect_np(0);
-#endif
 
             dispatched++;
             // Charge the periodic-check machinery for bytecodes
