@@ -7306,10 +7306,25 @@ PrimitiveResult Interpreter::primMontgomeryTimesModulo(int argCount) {
 PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     // Primitive 130: Perform a full garbage collection
     // Returns the number of bytes of free space after collection
-
-    // Trigger a full garbage collection
+    //
+    // Run GC to convergence on weak references.  A single mark+sweep
+    // pass may leave transient refs live (e.g., SUnit's runCase sets
+    // up TestExecutionEnvironment / signalerContext fields that
+    // temporarily hold the test's target objects during the first
+    // mark).  A second GC catches the objects that became unreachable
+    // only after the first sweep cleared those transient roots.
+    // Cog's fullGC does the same convergence.
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
+    // Second pass: re-mark now that the method cache is flushed and
+    // any stale transient refs from the first pass have dropped.
+    // Cheap in the common case — marking skips already-swept dead
+    // objects.  Only matters when the first pass nilled weak slots,
+    // since that's the path that affects test semantics.
+    if (memory_.pendingFinalizationSignals() > 0) {
+        memory_.fullGC();
+        flushMethodCache();
+    }
 
     // Get free space after GC
     size_t freeBytes = memory_.freeOldSpaceBytes();

@@ -2342,7 +2342,9 @@ size_t ObjectMemory::pointerSlotsOf(ObjectHeader* obj) const {
 }
 
 void ObjectMemory::processWeaklings() {
+    size_t weakCount = 0, nilledCount = 0, queuedCount = 0;
     for (ObjectHeader* obj : weakList_) {
+        weakCount++;
         size_t slots = obj->slotCount();
         Oop* slotPtr = obj->slots();
         size_t startSlot = fixedFieldCountOf(obj);
@@ -2353,6 +2355,7 @@ void ObjectMemory::processWeaklings() {
                 if (!ref.asObjectPtr()->isMarked()) {
                     slotPtr[i] = nilObject_;
                     anyNilled = true;
+                    nilledCount++;
                 }
             }
         }
@@ -2361,7 +2364,12 @@ void ObjectMemory::processWeaklings() {
             // WeakFinalizationList detects collected entries this way.
             mournQueue_.push_back(Oop::fromObject(obj));
             pendingFinalizationSignals_++;
+            queuedCount++;
         }
+    }
+    if (g_debug.gcEphDebug) {
+        fprintf(stderr, "[GC-WEAK] weakArrays=%zu slotsNilled=%zu arraysQueued=%zu\n",
+                weakCount, nilledCount, queuedCount);
     }
 }
 
