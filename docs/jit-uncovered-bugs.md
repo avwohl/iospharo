@@ -258,11 +258,17 @@ Defensive `makeExecutable` at the sigsetjmp landing site (in
 exceptions is the next clean-up.
 
 **Next steps for the residual SIGILL**:
-- Audit `JITCompiler::compile()`'s codeSize accumulation vs the
-  actual emitted byte count.  Each `cc.emit_X(...)` may produce
-  more bytes than the static `stencil.codeSize` records.
-- Verify `findMethodByPC`'s end-of-method bound matches the real
-  emitted footprint.
+- The residual crash PC (e.g., `0x109052850`) sits inside OUR T1
+  CodeZone (`0x1089d0000` + `0x682850`), NOT in asmjit's
+  allocation (asmjit at `0x100e5c...`).  Instructions at PC are
+  literal-pool data (oop bits, small ints, zero) rather than code,
+  i.e., a T1 JIT branch or call landed in the IC / literal area.
+- So the residual is a T1 JIT codegen issue, not Sista/asmjit.
+  Replacing `asmjit::JitRuntime` wouldn't help here.
+- Most likely culprits: a stale IC entry holding a code pointer
+  that's been overwritten, or a J2J resume address that wasn't
+  re-keyed after compaction, or a bcToCodeOffset entry pointing
+  into the post-code data area.
 
 ---
 
