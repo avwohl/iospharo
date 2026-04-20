@@ -2661,11 +2661,14 @@ size_t ObjectMemory::markPhase(bool skipEphemerons) {
 // ===== COMPACT PHASE =====
 
 bool ObjectMemory::planCompactSavingForwarders() {
-    // Use eden as scratch space for saved first fields.
-    // Eden is unused during full GC.
-    savedFirstFieldsSpace_.start = reinterpret_cast<Oop*>(edenStart_);
-    savedFirstFieldsSpace_.limit = reinterpret_cast<Oop*>(edenStart_ +
-        (survivorStart_ - edenStart_));
+    // Use the whole new space as scratch space for saved first
+    // fields during compacting GC.  Any live young-space objects
+    // have already been tenured by a pre-compact scavenge (or
+    // start empty in pure mark-sweep-compact mode), so eden is
+    // safe to reuse here.  Compacting GC and scavenge are never
+    // concurrent.
+    savedFirstFieldsSpace_.start = reinterpret_cast<Oop*>(newSpaceStart_);
+    savedFirstFieldsSpace_.limit = reinterpret_cast<Oop*>(newSpaceEnd_);
     savedFirstFieldsSpace_.top = savedFirstFieldsSpace_.start;
 
     uint8_t* toFinger = oldSpaceStart_;  // Destination for next live object
