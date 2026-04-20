@@ -107,6 +107,14 @@ struct DebugSettings {
     bool sistaAllowBail = false;                   // PHARO_SISTA_ALLOW_BAIL (deprecated — now default)
     bool sistaNoBail = false;                      // PHARO_SISTA_NO_BAIL (restore conservative gate)
 
+    // Generational GC (eden + scavenge).  PHARO_YOUNG_GEN=1 enables
+    // eden allocation; full GC auto-scavenges before compact.
+    bool youngGenEnabled = false;                  // PHARO_YOUNG_GEN
+    // Skip the per-safe-point scavenge trigger.  Pre-compact scavenge
+    // still runs inside fullGC.  Useful for isolating scavenge
+    // cadence from correctness.
+    bool ygNoScavenge = false;                     // PHARO_YG_NO_SCAVENGE
+
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and
     // by that time the process environment is fully populated, so this

@@ -1184,7 +1184,7 @@ void Interpreter::interpret() {
     // Generational-GC young-gen enabler.  PHARO_YOUNG_GEN=1 opts
     // in to eden allocation + scavenge; default off until the
     // scavenge path is verified against the full test matrix.
-    if (std::getenv("PHARO_YOUNG_GEN")) {
+    if (g_debug.youngGenEnabled) {
         memory_.enableYoungGen_ = true;
     }
 
@@ -1785,9 +1785,11 @@ void Interpreter::interpret() {
         // -- Scavenge safe point (young-gen) --
         if (__builtin_expect(memory_.needsScavenge(), 0)) {
             memory_.clearScavengeFlag();
-            prepareForGC();
-            memory_.scavenge();
-            afterGC();
+            if (!g_debug.ygNoScavenge) {
+                prepareForGC();
+                memory_.scavenge();
+                afterGC();
+            }
         }
 
         // -- GC safe point --

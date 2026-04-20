@@ -41,29 +41,17 @@ Fix options, ordered by size:
   alive when not reachable from a running process's top frame.
 - Generational GC (large structural change).
 
-### Generational GC — WIP (2026-04-20)
+### Generational GC (2026-04-20)
 
-Implemented behind `PHARO_YOUNG_GEN=1` (commits 4ed8a36, 2af4629, 2d5ebb6).
-Eden alloc + scavenge work; brute-force old-space scan eliminates
-write-barrier coverage gaps (verified zero strays via debug verifier).
+`PHARO_YOUNG_GEN=1` enables eden allocation + scavenge (opt-in).
+Full GC auto-scavenges before compact, mark phase traces through
+eden to keep old objects reachable only via eden alive.
 
-**Open blocker**: under YG=1 the scheduler hangs after a few scavenges.
-Trivial `eval "1+1"` never reaches the user expression — startup
-process never wakes despite `[DELAY-FIRE]` events firing on schedule
-(timer semaphore + scheduler are functioning).  The scavenge correctly
-visits all old→young pointers (post-scan stray verifier reports 0
-strays across runs).  Suspected missed root in some interpreter or
-scheduler-state field that holds an Oop the brute-force scan can't
-reach (perm-space objects with young pointers? a non-Oop field
-holding a raw ObjectHeader*?).
-
-Reproduce: `PHARO_YOUNG_GEN=1 PHARO_NO_JIT=1 timeout 30 \
-./build/test_load_image /tmp/harness/Pharo.image eval "1+1"` —
-expect timeout-124, baseline finishes <15s.
-
-Next-step ideas: log every Process Oop touched by the scheduler
-between successive scavenges; check if `permSpaceStart_..permSpaceEnd_`
-holds objects with young pointers (currently not in any GC root walk).
+testClearing still fails under YG — fix is not here.  Symptom the
+same as baseline: keys fire during the first assertion when weak
+processing runs earlier than the test's timing assumption.  Needs
+separate investigation into the weak-ref timing (option 1 or 2
+from the list above).
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and

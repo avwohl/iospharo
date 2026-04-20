@@ -2584,6 +2584,23 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(pendingDriverSetupMethod_);
     visitor(pendingDriverSetupReceiver_);
 
+    // Profiler state (may hold Process/Semaphore/Method Oops while
+    // primitiveProfileStart is active).
+    visitor(profileSemaphore_);
+    visitor(profileSample_);
+    visitor(profilePrimitive_);
+
+    // Stuck-process detector caches the current active Process by Oop.
+    // Without this visit, after scavenge the raw-bits compare in
+    // periodic_checks walks a stale young address.
+    visitor(trackedProcess_);
+
+    // Callback handler stack — Oops of waiters/handlers during FFI
+    // callbacks back into the VM.
+    for (int i = 0; i < MaxCallbackDepth; ++i) {
+        visitor(callbackHandlerStack_[i]);
+    }
+
     // World renderer roots (menu bar items, dropdown items)
     worldRenderer_.forEachOopRoot(visitor);
 

@@ -1640,6 +1640,14 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     // Symbol class corruption check and stale pointer check disabled (verified clean)
 
+    // 3.5. Pre-compact scavenge when young-gen is active.  Compact
+    // repurposes new-space as scratch for forwarding-field storage,
+    // which would overwrite any live eden objects.  Tenure them
+    // first so eden is truly empty going into plan/compact.
+    if (enableYoungGen_ && edenFree_ > edenStart_) {
+        scavenge();
+    }
+
     // 4. Plan + update + copy (compact)
     planCompactSavingForwarders();
     updatePointersAfterCompact();
@@ -2394,8 +2402,14 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Must be within USED old space bounds (not just allocated range).
     // Pointers beyond oldSpaceFree_ point to unallocated space; treating
     // the data there as headers would read garbage and corrupt mark state.
+    // Eden objects also need to be traced so old objects referenced
+    // only through eden don't get swept.  Eden doesn't get swept itself,
+    // but we still use mark bits to avoid re-visiting during trace; a
+    // post-compact pass clears them.
     auto p = reinterpret_cast<uint8_t*>(obj);
-    if (p < oldSpaceStart_ || p >= oldSpaceFree_) {
+    bool inOld = (p >= oldSpaceStart_ && p < oldSpaceFree_);
+    bool inEden = (p >= edenStart_ && p < edenFree_);
+    if (!inOld && !inEden) {
         return;
     }
 
@@ -2417,7 +2431,9 @@ void ObjectMemory::markAndTrace(Oop oop) {
     // Definitive interior pointer check: verify this address is at a real object
     // start. The classIndex check above can pass for interior pointers if the
     // slot data happens to have bits 0-21 matching a valid class table entry.
-    if (!validObjectStarts_.empty()) {
+    // Eden objects aren't in validObjectStarts_ (built from old-space scan),
+    // so skip the check for eden — its range is always valid live objects.
+    if (inOld && !validObjectStarts_.empty()) {
         uintptr_t addr = reinterpret_cast<uintptr_t>(obj);
         if (validObjectStarts_.find(addr) == validObjectStarts_.end()) {
             return;

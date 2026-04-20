@@ -145,6 +145,8 @@ DebugSettings::DebugSettings() {
     sistaUnsafeArith       = envPresent("PHARO_SISTA_UNSAFE_ARITH");
     sistaAllowBail         = envPresent("PHARO_SISTA_ALLOW_BAIL");
     sistaNoBail            = envPresent("PHARO_SISTA_NO_BAIL");
+    youngGenEnabled        = envPresent("PHARO_YOUNG_GEN");
+    ygNoScavenge           = envPresent("PHARO_YG_NO_SCAVENGE");
 }
 
 DebugSettings g_debug;  // static-storage-duration; constructor runs before main().
