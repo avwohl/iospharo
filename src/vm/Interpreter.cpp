@@ -6749,6 +6749,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // Sista's generic bailToInterpreter already flushes
                 // the full IR stack, and the adaptive bail-blacklist
                 // culls them if they over-bail.  Let them through.
+                //
+                // InstVar-store bytecodes bypass the immutability
+                // check in Sista's kStoreInstVar lowering (a direct
+                // `str val, [recv+8+N*8]` without the
+                // `attemptToAssign:withIndex:` callout the
+                // interpreter's setReceiverInstVar does).  Reject
+                // methods with any ivar-store bytecode so immutable
+                // receivers still raise ModificationForbidden.
+                // (Fix for ObjectTest>>testBeRecursivelyReadOnlyObject
+                // and related.)
+                if ((op >= jit::SistaV1::PopStoreRecvBase
+                  && op <= jit::SistaV1::PopStoreRecvLast)
+                 || op == jit::SistaV1::ExtPopStoreRecv
+                 || op == jit::SistaV1::ExtStoreRecv) {
+                    hasUnsafeOp = true;
+                    break;
+                }
                 // Sends bail cleanly via the fixed lifter.
                 // Adaptive runtime blacklist (sistaBailCounter_)
                 // removes methods that bail consecutively, so we
@@ -7944,7 +7961,6 @@ Oop Interpreter::receiverInstVar(size_t index) const {
 }
 
 void Interpreter::setReceiverInstVar(size_t index, Oop value) {
-
     // Check immutability - send attemptToAssign:withIndex: if receiver is immutable
     if (receiver_.isObject()) {
         ObjectHeader* hdr = receiver_.asObjectPtr();
