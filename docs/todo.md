@@ -11,16 +11,18 @@ upstream.  Superset of the narrower docs:
 
 Last updated: 2026-04-20.
 
-Recent session-level progress (not yet reflected in section-level
-status):
+Recent session-level progress:
 - Sista Phase 2.3 complete (default-on, all sends admitted,
   adaptive bail-blacklist + gate cache, 4% overhead).  See
   `docs/sista-inlining-plan.md` for Phase 3+ roadmap.
-- Generational GC WIP behind `PHARO_YOUNG_GEN=1`.  Scavenge
-  correctness verified (brute-force old+perm scan = 0 strays),
-  but scheduler hangs after a few scavenges — deferred with
-  repro + fix-path notes in `docs/deferred.md` A0.
-- 2 remaining `testClearing` SUnit failures (WeakKey / WeakIdentity)
+- Generational GC functional behind `PHARO_YOUNG_GEN=1`.  Scheduler
+  hang fixed (compact-scratch + mark-through-eden, commit `686bc4a`).
+- **testClearing RESOLVED** (commit `cafe6a2`): Cog-spec
+  finalization with native C++ mourn drain triggered at method
+  activation, primitiveFullGC is now a thin fullGC() wrapper.  Both
+  WKD/WIKD testClearing + testFinalize pass deterministically.
+  Opt-out via `PHARO_INLINE_FINALIZE=1` for bisection.
+- (superseded) 2 remaining `testClearing` SUnit failures (WeakKey / WeakIdentity)
   traced to context-materialization holding ephemeron keys alive
   across full-GC mark; Cog uses scavenge to avoid this.  Three
   fix paths documented in `docs/deferred.md` A0; largest (YG)
