@@ -300,8 +300,11 @@ fine) or move at least one out-of-line method into it.
 
     Fixed         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
     Partial fix   11a (siglongjmp→exception, de01be1)
-                  11b first layer (stale MethodMap entries, 2218c99)
-    Open          11b deeper layer (JIT stencil branches past method end)
+                  11b layer 1 (stale MethodMap entries, 2218c99)
+                  11b layer 2 (codeOffsetForBC sentinel + materialize
+                               bails, 2807300)
+    Open          11b layer 3 (yet another unguarded pointer deref
+                               inside tryJITActivation chain walk)
 
 Bug 11 (Sista compile-path corruption) is the remaining
 show-stopper for jit-default.  Bisect gates `PHARO_SISTA_NO_LOWER`
