@@ -86,6 +86,23 @@ return.  Out of session scope to debug further.
 jit default still cannot complete a full SUnit run; jit NO_SISTA
 gets further but isn't a real benchmark of the production config.
 
+**Whack-a-mole pattern (8 fixes this session, each uncovers the next):**
+
+    Try               Crash at  Bug exposed
+    baseline          ~5        eviction → use-after-free SIGBUS
+    +pinning          ~30       W^X mode imbalance SIGBUS
+    +W^X RAII         ~28       Sista compile path SIGBUS
+    +JIT_CALL macro   ~28       same
+    +Sista fn bracket ~42       JIT codegen overrun → SIGILL
+    +SIGILL handler   ~42       confirms PC is past method end
+    +Sista compile bracket ~15  unmasks tryJITActivation null-deref
+
+Each one is a real bug.  Together they suggest Sista's IR
+lowering has a fundamental correctness issue that's been masked
+by the JIT-default crash floor moving every time a more-shallow
+bug was fixed.  Continuing without a focused multi-day Sista
+audit will keep revealing the next bug, not converge on green.
+
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
 own `BATCH TOTAL` line (e.g., harness reported 16465 P / 40 S for jit,
