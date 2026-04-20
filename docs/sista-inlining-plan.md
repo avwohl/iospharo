@@ -58,12 +58,14 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   step count and DNU sequence to the baseline — so the
   no-send-methods path is behavior-preserving end-to-end.
 
-  Default gate rejects methods with any bail-inducing bytecode.
-  `PHARO_SISTA_SEND0_ONLY=1` admits 0-arg sends (Send0,
-  0x80-0x8F) — **also verified behavior-preserving**: 274K
-  dispatches on the same workload (85K ExitReturn + 186K
-  ExitSend), same DNU sequence, same step count as baseline,
-  42! factorial round-trips correctly.
+  **Send0 admitted by default** (commit `f6e75a7`).  Any method
+  whose bail-inducing bytecodes are only Send0 (plus inlined
+  arith / pure pushes / returns / branches) dispatches under
+  `PHARO_SISTA_DISPATCH=1` alone.  Measured: 226K dispatches on
+  `42 factorial`, 90K ExitReturn + 135K ExitSend, 86M bytecode
+  step count (baseline 83M, within 4%), correct output, no DNU
+  divergence.  SUnit suite: 548 PASS / 0 FAIL over the partial
+  run before the 2-min harness timeout, no regressions.
 
   **Send1/Send2 ExitSend open mystery.** With Send1 or Send2
   bails admitted (via hypothetical extension of the gate), the
