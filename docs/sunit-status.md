@@ -42,13 +42,27 @@ Main also requires a `startup.st` workaround to boot headlessly — main's
 `test_load_image` has no `eval` mode, so we inject the fileIn via
 `StartupPreferencesLoader` by writing `/tmp/harness/startup.st`.
 
-`sig` = crashed with SIGSEGV.  jit default SEGFAULTs during SUnit:
-at default `PHARO_JIT_DEFER=4` it crashes at class ~5; at the documented
-safer `PHARO_JIT_DEFER=30` it crashes at class ~37 (`BehaviorTest`).
-Crash signature is identical in both: `[CRASH] PC not in any active
-JIT method (evicted?)`.  Known JIT-method-eviction bug (see session
-summary 2026-04-20 before context compact).  Until fixed, jit default
-cannot complete a full SUnit run.
+`sig` = crashed with SIGSEGV/SIGBUS.  jit default SEGFAULTs during
+SUnit.  Two root causes found and partially fixed in commits
+`32e8cda` (eviction-safety pinning) and `147c3a9` (W^X restore):
+
+ * SIGBUS "PC not in any active JIT method (evicted?)" — Apple
+   Silicon `pthread_jit_write_protect_np` is a per-thread toggle
+   that affects the entire MAP_JIT region.  patchJITICAfterSend,
+   forEachRoot (GC), flushCaches, and recoverAfterGC all called
+   makeWritable() without a matching makeExecutable() before
+   returning to JIT.  **Fixed.**
+ * SIGSEGV "activateMethod+2756 → byteSize on null" — J2J save
+   path's chain-loop frame could hold a stale JITMethod* after
+   eviction, whose compiledMethodOop was zero after free+realloc.
+   Pinning prevents the eviction; null-guard skips materialization
+   if state.method is nil.  **Fixed.**
+
+Residual crash: SIGSEGV inside tryJITActivation+0x151C
+(ldr x8, [x20, #0x8] with x20=0 — NULL list-next).  Different
+path, not yet investigated.  Until resolved, jit default still
+cannot complete a full SUnit run, but it no longer crashes in the
+first few classes.
 
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
