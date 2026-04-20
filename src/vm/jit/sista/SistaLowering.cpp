@@ -66,6 +66,31 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
+
+    // PHARO_SISTA_NO_LOWER_BODY=1 — bisect: emit a function that
+    // immediately returns (just ret), without any IR-driven body.
+    // If this still crashes the run, the bug is in asmjit's
+    // CodeHolder/Compiler/Runtime::add infrastructure (or its
+    // MAP_JIT W^X interaction with our CodeZone), not in any
+    // specific IR-op emission.
+    static bool noBody = getenv("PHARO_SISTA_NO_LOWER_BODY") != nullptr;
+    if (noBody) {
+        Compiler ccx(&code);
+        FuncNode* fnx = ccx.add_func(FuncSignature::build<void, void*>());
+        Gp statex = ccx.new_gp64("state");
+        fnx->set_arg(0, statex);
+        // state.exitReason = ExitSend so caller falls back to interpreter.
+        Gp exitx = ccx.new_gp32("exit");
+        ccx.mov(exitx, Imm(EXIT_SEND));
+        ccx.str(exitx, ptr(statex, OFF_EXIT));
+        ccx.ret();
+        ccx.end_func();
+        ccx.finalize();
+        CompiledFn outx = nullptr;
+        Error errx = runtime_->add(&outx, &code);
+        if (errx != kErrorOk) return nullptr;
+        return outx;
+    }
     Compiler cc(&code);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
     Gp state = cc.new_gp64("state");
@@ -230,6 +255,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kPrimAddInt:
             case Op::kPrimSubInt:
             case Op::kPrimMulInt: {
+                // PHARO_SISTA_NO_LOWER_ARITH=1 — bisect: refuse to
+                // lower inline arithmetic ops.
+                static bool noArith = getenv("PHARO_SISTA_NO_LOWER_ARITH") != nullptr;
+                if (noArith) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
                 // Tag-preserving arithmetic on SmallInt Oops (tag 1).
                 //   a + b → correct tagged result is a + b - 1
                 //   a - b → correct tagged result is a - b + 1
