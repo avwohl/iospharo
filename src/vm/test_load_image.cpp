@@ -570,6 +570,7 @@ int main(int argc, char* argv[]) {
     sigemptyset(&sa.sa_mask);
     sigaction(SIGSEGV, &sa, nullptr);
     sigaction(SIGBUS, &sa, nullptr);
+    sigaction(SIGILL, &sa, nullptr);
     signal(SIGTERM, sigtermHandler);
 #ifdef __APPLE__
     activateMacOSApp();
