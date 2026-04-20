@@ -119,11 +119,10 @@ struct DebugSettings {
     // synchronousSignal(FinalizationSemaphore) to backward-branch
     // interrupt checks, matching Cog's checkForInterrupts /
     // fireEphemeron mechanism (cointerp-cpp.c:43475-43478, 67696-67706,
-    // 12236-12260).  Default-on since 2026-04-20 — fixes WKD
-    // testClearing, same total focused-SUnit failure count as the
-    // legacy inline-signal path.  Set PHARO_INLINE_FINALIZE=1 to
-    // restore the pre-Cog-spec behavior for bisection.
-    bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
+    // 12236-12260).  When enabled, sometimes achieves 1-failure on
+    // focused SUnit (vs 2 baseline) but non-deterministic across
+    // runs due to P51-worker scheduling race.  Off by default.
+    bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
 
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and

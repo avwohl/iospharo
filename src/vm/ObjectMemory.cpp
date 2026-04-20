@@ -2453,8 +2453,10 @@ void ObjectMemory::markAndTrace(Oop oop) {
         size_t total = obj->slotCount();
         constexpr size_t keyIndex = 0;  // Key is always slot 0 for ephemerons
         bool keyAlive = true;
+        Oop keyForLog = Oop::nil();
         if (total > 0) {
             Oop key = obj->slotAt(keyIndex);
+            keyForLog = key;
             if (key.isObject() && !isPermObject(key.asObjectPtr())) {
                 keyAlive = key.asObjectPtr()->isMarked();
             }
@@ -2464,6 +2466,7 @@ void ObjectMemory::markAndTrace(Oop oop) {
         ephemeronEncounterCount_++;
         if (keyAlive) ephemeronInactiveCount_++;
         else ephemeronActiveCount_++;
+        (void)keyForLog;
 
         if (keyAlive) {
             // Inactive ephemeron: treat as fully strong (mark all pointer fields)

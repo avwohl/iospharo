@@ -100,23 +100,41 @@ FinalizationProcess forks a worker at `activePriority + 1` (50+1
 WeakKeyDictionary entries unmourned.  `handleForceYield` now
 excludes P51 from aging while `mournQueueSize > 0`.
 
-**Current result** (442-test focused SUnit, default):
+**Current result** (442-test focused SUnit):
 
-    WKD testClearing     PASS ✓ (was Got 1 instead of 1001)
-    WIKD testClearing    PASS ✓ (was Got 1 instead of 1001)
-    WIKD testFinalize*   FAIL (Got 3 instead of 2) — regression
+    Default (legacy inline signal):
+      WKD testClearing     FAIL (Got 1 instead of 1001)
+      WIKD testClearing    FAIL (Got 1 instead of 1001)
+      WIKD testFinalize*   PASS
+      → 2 failures, deterministic
 
-    → 1 failure total (down from 2 baseline)
+    PHARO_FINALIZE_DEFERRED=1 (Cog-spec):
+      Sometimes WKD + WIKD testClearing pass, sometimes not.
+      Sometimes testFinalize fails.
+      → 2-3 failures, **non-deterministic across runs**.
 
     * testFinalizeValuesWhenLastChainContinuesAtFront
 
-`PHARO_INLINE_FINALIZE=1` restores the pre-Cog-spec behavior (2
-testClearing failures, testFinalize passes) for bisection.
+The non-determinism in the deferred path is a P51-worker / P40-test
+scheduling race.  Between `Smalltalk garbageCollect` and the next
+assertion, the backward-branch interrupt check must fire exactly
+when `dict keys` begins iterating (testClearing) but NOT when
+testFinalize reads `dict size` directly.  Timing varies by a few
+bytecodes depending on heap layout, hitting this window sometimes
+but not always.
 
-testFinalizeValuesWhenLastChainContinuesAtFront remains open — it
-exercises a specific chain-continuation scenario that the inline-
-drain path handles but the deferred path doesn't.  Needs separate
-investigation.
+To ship stable, default is legacy inline.  The `PHARO_FINALIZE_DEFERRED`
+flag remains available for:
+  - Debugging (architectural match to Cog is useful reference)
+  - A future fix that converts the signal delivery to fully
+    deterministic (e.g., running the finalizer drain inline at the
+    interrupt check rather than via P50/P51 scheduling)
+
+The correct next step would likely be: bypass the finalizationProcess
+indirection entirely and drain the mourn queue directly inside
+`backwardBranchInterruptCheck` (no process switching).  That removes
+the P50/P51 race but requires careful thought about re-entry and
+mourn-error handling.
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and
