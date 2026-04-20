@@ -6788,9 +6788,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             && (!hasUnsafeOp || g_debug.sistaAllowSends)
             && !blacklisted;
         if (fn && g_debug.sistaDispatch && dispatchGateOpen) {
-            // Tier-up dispatch.  Set up JITState the same way
-            // tryJITActivation does, invoke the Sista function,
-            // handle the exit reason.
+            // Tier-up dispatch.  Full JITState init — trimming was
+            // attempted but breaks execution (some downstream path
+            // reads an uninitialized field when Sista returns).
+            // Cost ~20 stores per dispatch, amortized by the
+            // adaptive bail-blacklist and gate cache.
             jit::JITState sstate;
             sstate.sp = stackPointer_;
             sstate.receiver = receiver_;

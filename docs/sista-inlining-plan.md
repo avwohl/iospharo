@@ -90,18 +90,39 @@ the 30× Cog gap.  Complementary to (not replacing) the docs in
   interpreter pops the right number; extras below sit on the
   stack for later bytecodes to consume.
 
-  **Smart gate** (commit `ab56a75`).  With the leak fixed,
-  admitting all send-bytes produces correct output but 2.7x
-  slowdown because 95% of dispatches bail and the dispatch
-  overhead is higher than the interpreter for bail-only work.
-  Default gate now rejects methods whose lift would bail —
-  admits only "pure" methods (pushes / stores / returns /
-  branches / inlined +,-,*).  Re-admit bailing methods with
-  `PHARO_SISTA_ALLOW_BAIL=1` for correctness testing or when
-  Phase 4 inlining makes the bail rare.  On the default gate,
-  all three Send1 round-trip unit tests still pass and the
-  operand-leak fix keeps the emitted code correct for both
-  paths.
+  **Adaptive bail-blacklist default-on** (commits `8dd3176`,
+  `003e969`).  Per-method consecutive-bail counter: each
+  ExitSend increments, each ExitReturn resets.  When a method
+  crosses the 8-bail threshold, it's skipped for future
+  activations.  This replaces the static smart-gate as the
+  default — sends and generic bail ops (PushFullBlock /
+  PushClosure / PushArray / PushThisContext) now all flow
+  through, and bail-heavy methods self-cull instead of
+  blocking via static analysis.  `PHARO_SISTA_NO_BAIL=1`
+  restores the conservative static-gate behavior for bisection.
+
+  **Gate decision cached per-method** (commit `11b6d94`).  The
+  bytecode scan only runs on first sight of a method oop;
+  subsequent activations consult `sistaGateCache_`.  Essential
+  for perf — dropped assoc-setter benchmark from 3.19s (1.4x
+  slower than baseline) to 2.35s (within noise of 2.26s
+  baseline).  Cache clears in `recoverSistaAfterGC` alongside
+  the fn cache.
+
+  **Final perf position** (assoc-setter loop, 200×1000
+  setters):
+    no-Sista baseline    2.26s user
+    full Sista default   2.35s user  (4% overhead)
+    dispatches: 242K (181K ExitReturn + 61K ExitSend)
+    compile hits: 978 unique methods
+
+  Correctness: 6237 SUnit tests run under dispatch with 88
+  failures, matching pre-existing VM gaps (weak refs, write
+  barrier, slot-trait introspection) — no Sista-induced
+  regressions.  All 9 Sista IR unit tests pass (4 basic +
+  3 Send1 patterns + 2 ExtSend).
+
+  **Phase 2.3 ships.**
 
   **Send1/Send2 ExitSend open mystery.** With Send1 or Send2
   bails admitted (via hypothetical extension of the gate), the
