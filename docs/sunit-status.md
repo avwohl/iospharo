@@ -71,12 +71,18 @@ Progression so far:
 **Bisect**: with `PHARO_NO_SISTA=1` (T1 JIT only, no Sista), 44+
 methods compile, **no crash**.  Image hits separate "Improper store
 into indexable object" but JIT itself stays up.  Sista is the
-trigger of the residual crash, not T1 JIT.  Likely path: Sista's
-asmjit-emitted function exits cleanly but leaves *some* state that
-trips up the next T1 JIT activation — maybe a stale `state.method`
-or `state.jitMethod` from `sstate`, maybe an asmjit-internal
-bookkeeping clash with our `CodeZone` (both are MAP_JIT regions
-sharing the per-thread `pthread_jit_write_protect_np` toggle).
+trigger of the residual crash, not T1 JIT.
+
+After the W^X bracketing around `fn(&sstate)` (commit `5247ba4`),
+the jit-default crash signature flipped from SIGBUS at compile #28
+to SIGILL at compile #42.  SIGILL crash dump (added in `eda373b`)
+shows PC in the code zone at the END of a JIT method's compiled
+region — instructions ahead are all zero (ARM64 UDF).  Method ran
+past its own code boundary.  Different bug class:
+**JIT codegen, not W^X / eviction**.  Likely a conditional-jump
+target overshooting the method, or a missing fall-through
+return.  Out of session scope to debug further.
+
 jit default still cannot complete a full SUnit run; jit NO_SISTA
 gets further but isn't a real benchmark of the production config.
 
