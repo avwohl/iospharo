@@ -2309,7 +2309,15 @@ void Interpreter::handleForceYield() {
             int agingThresholdMs = headless ? 500 : 500;
             int agingGraceMs = headless ? 500 : 100;
 
-            if (nextProcess.rawBits() == nilObj.rawBits() &&
+            // P51 finalization worker must complete mournLoopWith:
+            // uninterrupted — aging it out mid-drain leaves
+            // WeakKeyDictionary entries unmourned.
+            // FinalizationProcess>>finalizationProcess forks the
+            // worker at `activePriority + 1` = 50 + 1 = 51.
+            bool isFinalizer =
+                (activePriority == 51 && memory_.mournQueueSize() > 0);
+
+            if (!isFinalizer && nextProcess.rawBits() == nilObj.rawBits() &&
                 activePriority >= agingMinPri && activePriority <= agingMaxPri) {
                 if (activeProcess.rawBits() != agingProcBits) {
                     if (activePriority <= agingProcPri || agingProcBits == 0) {

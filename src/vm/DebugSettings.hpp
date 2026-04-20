@@ -117,15 +117,13 @@ struct DebugSettings {
 
     // Cog-spec finalization signaling: defer the
     // synchronousSignal(FinalizationSemaphore) to backward-branch
-    // interrupt checks, matching Cog's checkForInterrupts / fireEphemeron
-    // mechanism.  Without this, signalFinalizationIfNeeded runs inline
-    // from primitiveFullGC (our long-standing behavior), which drains
-    // the mourn queue before `Smalltalk garbageCollect` returns — that
-    // breaks testClearing's post-GC / pre-finalize assertion.  With
-    // this flag set, testClearing progresses past assertion B but can
-    // regress testFinalizeValuesWhenLastChainContinuesAtFront due to
-    // P51 worker scheduling.  See deferred.md A0.
-    bool finalizeDeferred = false;                 // PHARO_FINALIZE_DEFERRED
+    // interrupt checks, matching Cog's checkForInterrupts /
+    // fireEphemeron mechanism (cointerp-cpp.c:43475-43478, 67696-67706,
+    // 12236-12260).  Default-on since 2026-04-20 — fixes WKD
+    // testClearing, same total focused-SUnit failure count as the
+    // legacy inline-signal path.  Set PHARO_INLINE_FINALIZE=1 to
+    // restore the pre-Cog-spec behavior for bisection.
+    bool finalizeDeferred = true;                  // PHARO_INLINE_FINALIZE inverts
 
     // The constructor reads every env var listed above.  C++ guarantees
     // static-storage-duration objects are initialized before main(), and

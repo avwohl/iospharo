@@ -93,32 +93,30 @@ assertion B then fails ("Got 1 instead of 1001").
   delivered via `synchronousSignal`, which then preempts P50 at a
   bytecode-safe point.
 
-**Current result** (442-test focused SUnit):
+Additional fix: P51 worker aging-exclusion.  The
+FinalizationProcess forks a worker at `activePriority + 1` (50+1
+= 51) to run `mournLoopWith:`.  Our heartbeat-driven aging (every
+500ms) would preempt the worker mid-drain, leaving some
+WeakKeyDictionary entries unmourned.  `handleForceYield` now
+excludes P51 from aging while `mournQueueSize > 0`.
 
-    default (inline signal):
-      WKD testClearing     FAIL (Got 1 instead of 1001)
-      WIKD testClearing    FAIL (Got 1 instead of 1001)
-      WIKD testFinalize*   PASS
-      → 2 failures
+**Current result** (442-test focused SUnit, default):
 
-    PHARO_FINALIZE_DEFERRED=1 (Cog-spec):
-      WKD testClearing     PASS ✓
-      WIKD testClearing    FAIL (Got 4..7 instead of 1)
-      WIKD testFinalize*   FAIL (Got 3 instead of 2)
-      → 2 failures (different set)
+    WKD testClearing     PASS ✓ (was Got 1 instead of 1001)
+    WIKD testClearing    PASS ✓ (was Got 1 instead of 1001)
+    WIKD testFinalize*   FAIL (Got 3 instead of 2) — regression
+
+    → 1 failure total (down from 2 baseline)
 
     * testFinalizeValuesWhenLastChainContinuesAtFront
 
-Net count unchanged (2 failures), but `PHARO_FINALIZE_DEFERRED=1`
-fixes WKD testClearing while exposing a separate partial-drain
-failure that needs more investigation (WIKD testClearing behaves
-identically to WKD from source, yet fails — suggesting state
-carryover between tests or a subtle timing issue in the P51
-`mournLoopWith:` worker).
+`PHARO_INLINE_FINALIZE=1` restores the pre-Cog-spec behavior (2
+testClearing failures, testFinalize passes) for bisection.
 
-Default stays inline to preserve legacy behavior until the WIKD /
-testFinalize regression is explained.  The new flag is ready for
-debugging or for users who want Cog-spec weak-ref semantics today.
+testFinalizeValuesWhenLastChainContinuesAtFront remains open — it
+exercises a specific chain-continuation scenario that the inline-
+drain path handles but the deferred path doesn't.  Needs separate
+investigation.
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and
