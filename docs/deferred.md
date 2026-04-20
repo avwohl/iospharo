@@ -9,7 +9,35 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
-## A0. weak-ref GC: testClearing convergence (2026-04-20)
+## A0. weak-ref GC: testClearing — **RESOLVED** (2026-04-20)
+
+Both `WeakKeyDictionaryTest>>testClearing` and
+`WeakIdentityKeyDictionaryTest>>testClearing` now pass
+deterministically.
+
+**Root cause**: `HashedCollection>>size` has primitive 264 (quick
+slot-at) — no method activation.  In Cog, `forceInterruptCheck` arms
+`stackLimit = -1`, and the drain fires via the next REAL method
+activation's stack-overflow check — not primitive calls.  So
+`dict size` returns the pre-drain tally (1001), then
+`self assert:equals:` activates → triggers drain → later assertions
+see the drained tally.
+
+**Fix** (commit `cafe6a2`, default-on, opt-out via
+`PHARO_INLINE_FINALIZE=1`):
+
+1. `primitiveFullGC` matches Cog: just `fullGC()` + push result.
+2. `activateMethod` checks `pendingFinalizationSignals > 0` at
+   entry.  If set, calls `drainMournQueueNatively()` — a native
+   reimplementation of `WeakKeyAssociation>>mourn` +
+   `Dictionary>>removeKey:ifAbsent:` + `fixCollisionsFrom:` that
+   bypasses the Smalltalk `FinalizationProcess` P50/P51
+   indirection entirely.  Quick primitives (256-519, handled
+   before activateMethod) naturally return pre-drain values.
+
+Verified across 10 consecutive focused-SUnit runs, 0 failures each.
+
+## A0-original. weak-ref GC: testClearing convergence (2026-04-20)
 
 `WeakKeyDictionary>>testClearing` and `WeakIdentityKeyDictionaryTest>>testClearing`
 (inherited) are the remaining 2 failures in the focused SUnit suite
