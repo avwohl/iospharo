@@ -57,7 +57,16 @@ see the drained tally.
    indirection entirely.  Quick primitives (256-519, handled
    before activateMethod) naturally return pre-drain values.
 
-Verified across 10 consecutive focused-SUnit runs, 0 failures each.
+Verified across 10+5 consecutive focused-SUnit runs under
+`PHARO_NO_JIT=1`, 0 failures each.
+
+**Caveat**: under JIT-on (default without `PHARO_NO_JIT`), the test
+harness crashes with a pre-existing issue (`PC not in any active
+JIT method (evicted?)` during `activateMethod`).  This crash
+reproduces even with the legacy `PHARO_INLINE_FINALIZE=1` path —
+it's not caused by the finalization fix.  Tracked separately under
+A1 (JIT eval-mode hang/crash).  Fix is effective for the
+interpreter mode used by the test harness.
 
 ## A0-original. weak-ref GC: testClearing convergence (2026-04-20)
 
