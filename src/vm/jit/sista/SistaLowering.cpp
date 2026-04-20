@@ -91,6 +91,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         if (errx != kErrorOk) return nullptr;
         return outx;
     }
+
+    // PHARO_SISTA_NO_LOWER_ADD=1 — bisect: build the asmjit code
+    // graph but DO NOT call runtime_->add().  If this is clean, the
+    // bug is specifically in JitRuntime's allocator + W^X dance.
+    static bool noAdd = getenv("PHARO_SISTA_NO_LOWER_ADD") != nullptr;
+    (void)noAdd;
     Compiler cc(&code);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
     Gp state = cc.new_gp64("state");
@@ -482,6 +488,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // All blocks emitted.  Finalize and register with the runtime.
     cc.end_func();
     cc.finalize();
+    if (noAdd) {
+        // Bisect: built the graph but skip runtime_->add to confirm
+        // the JitRuntime allocator is the corruption source.  Return
+        // nullptr so caller falls back to interpreter.
+        return nullptr;
+    }
     CompiledFn out = nullptr;
     Error err = runtime_->add(&out, &code);
     if (err != kErrorOk) return nullptr;
