@@ -96,7 +96,10 @@ struct DebugSettings {
     const char* jitTraceOop = nullptr;             // PHARO_JIT_TRACE_OOP
     const char* jitTop = nullptr;                  // PHARO_JIT_TOP
     bool sistaCompile = false;                     // PHARO_SISTA_COMPILE
-    bool sistaDispatch = false;                    // PHARO_SISTA_DISPATCH
+    // Sista tier-up dispatch: on by default (Phase 2.3 MVP ships).
+    // Set PHARO_NO_SISTA=1 to opt out; PHARO_SISTA_DISPATCH=1 remains
+    // a no-op that also enables it (backward-compatible).
+    bool sistaDispatch = true;                     // PHARO_SISTA_DISPATCH / opt-out PHARO_NO_SISTA
     bool sistaVerbose = false;                     // PHARO_SISTA_VERBOSE
     bool sistaAllowSends = false;                  // PHARO_SISTA_ALLOW_SENDS
     bool sistaSend0Only = false;                   // PHARO_SISTA_SEND0_ONLY

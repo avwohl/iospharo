@@ -132,7 +132,13 @@ DebugSettings::DebugSettings() {
     jitTraceOop            = envStr("PHARO_JIT_TRACE_OOP");
     jitTop                 = envStr("PHARO_JIT_TOP");
     sistaCompile           = envPresent("PHARO_SISTA_COMPILE");
-    sistaDispatch          = envPresent("PHARO_SISTA_DISPATCH");
+    // Default ON — override to OFF only if PHARO_NO_SISTA is set.
+    // PHARO_SISTA_DISPATCH still forces ON (backward compat).
+    {
+        const bool noSista = envPresent("PHARO_NO_SISTA");
+        const bool explicitOn = envPresent("PHARO_SISTA_DISPATCH");
+        sistaDispatch = explicitOn || !noSista;
+    }
     sistaVerbose           = envPresent("PHARO_SISTA_VERBOSE");
     sistaAllowSends        = envPresent("PHARO_SISTA_ALLOW_SENDS");
     sistaSend0Only         = envPresent("PHARO_SISTA_SEND0_ONLY");

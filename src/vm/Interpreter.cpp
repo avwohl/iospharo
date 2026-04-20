@@ -6723,7 +6723,31 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         continue;  // Send0 bails are safe
                     }
                     if (getenv("PHARO_SISTA_SEND1_ONLY") && isSend1) {
-                        continue;  // diagnostic: allow Send1 only
+                        // Bisection: PHARO_SISTA_SEND1_MAX=N limits
+                        // dispatch to the first N methods containing
+                        // Send1, so we can binary-search which
+                        // specific method triggers the downstream
+                        // DNU cascade.
+                        static size_t send1Count = 0;
+                        static int send1Max = []() {
+                            const char* v = getenv("PHARO_SISTA_SEND1_MAX");
+                            return v ? atoi(v) : -1;
+                        }();
+                        send1Count++;
+                        if (send1Max < 0 || send1Count <= (size_t)send1Max) {
+                            if (send1Max >= 0 && send1Count == (size_t)send1Max) {
+                                fprintf(stderr,
+                                    "[SISTA-S1MAX] dispatching Send1 method #%zu "
+                                    "sel=#%s bc[0..3]=%02x%02x%02x%02x\n",
+                                    send1Count,
+                                    memory_.selectorOf(method).c_str(),
+                                    methodBytes[bytecodeStart],
+                                    bcLen > 1 ? methodBytes[bytecodeStart+1] : 0,
+                                    bcLen > 2 ? methodBytes[bytecodeStart+2] : 0,
+                                    bcLen > 3 ? methodBytes[bytecodeStart+3] : 0);
+                            }
+                            continue;
+                        }
                     }
                     (void)isSend2;
                     hasUnsafeOp = true;
