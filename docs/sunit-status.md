@@ -29,7 +29,7 @@ row; marked `?` until the cog row is populated.
     main   NO_JIT   2026-04-20  34/836    412†     410     0    2     0    0    50m(wd)  2 / ≥?
     main   default  —           —         —        —       —    —     —    —    —        ?
     jit    NO_JIT   2026-04-20  827/836   17057    16467   18   537   23   12   45m(wd)  548
-    jit    default  —           —         —        —       —    —     —    —    —        ?
+    jit    default  2026-04-20  36/836    3410‡    3404    0    0     6    0    1m(sig)  0 / ≥?
 
 `wd` = hit the VM watchdog.  `†` = main NO_JIT is enormously slower per
 test than jit NO_JIT: 50 minutes for 34 classes vs jit's 45 minutes for
@@ -41,6 +41,14 @@ raised to ~20 hours, or a narrower class list.
 Main also requires a `startup.st` workaround to boot headlessly — main's
 `test_load_image` has no `eval` mode, so we inject the fileIn via
 `StartupPreferencesLoader` by writing `/tmp/harness/startup.st`.
+
+`sig` = crashed with SIGSEGV.  jit default SEGFAULTs during SUnit:
+at default `PHARO_JIT_DEFER=4` it crashes at class ~5; at the documented
+safer `PHARO_JIT_DEFER=30` it crashes at class ~37 (`BehaviorTest`).
+Crash signature is identical in both: `[CRASH] PC not in any active
+JIT method (evicted?)`.  Known JIT-method-eviction bug (see session
+summary 2026-04-20 before context compact).  Until fixed, jit default
+cannot complete a full SUnit run.
 
 Numbers above are the parser's count (`scripts/classify-sunit.py`)
 for direct comparability; they differ by a handful from the harness'
@@ -61,6 +69,17 @@ fix on this branch:
     Error  1  DebugPointTest>>testTranscriptDebugPoint (NonInteractiveTranscript>>#contents DNU)
     Error  1  OCClassBuilderTest>>testCreateNormalClassWithTraitComposition (OCCodeError)
     Skip  33  Image-level skips (FFI Platform, Win32, OCCodeReparator, etc.)
+
+## Δcog for jit default — partial run (SIGSEGV, 36/836 classes)
+
+With `PHARO_JIT_DEFER=30`, 36 classes / 3410 tests completed before
+the JIT-evict crash.  **Zero Δcog regressions in those 36 classes**
+(P:3404 + Skip:6 = full parity with cog for the ones tested).  The
+crashed class is `BehaviorTest`.
+
+This is a weaker signal than a full run but encouraging: for the
+prefix the VM could execute under JIT+Sista, no tests regressed vs
+cog.  Need to fix the JIT-evict crash before we can extend this.
 
 ## Δcog for main NO_JIT — partial run (50-min watchdog, 34/836 classes)
 
