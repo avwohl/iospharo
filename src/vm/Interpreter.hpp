@@ -2775,6 +2775,18 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
     visitor(selectors_.class_);
     visitor(selectors_.new_);
     visitor(selectors_.newSize);
+
+#if PHARO_JIT_ENABLED
+    // Restore MAP_JIT to executable for this thread.  Apple Silicon
+    // `pthread_jit_write_protect_np` is a per-thread toggle that affects
+    // every MAP_JIT page; leaving it writable here means JIT entry after
+    // GC faults with SIGBUS (fault_addr == PC in code zone).  The earlier
+    // `makeWritable` in this function must be balanced.
+    if (jitRuntime_.isInitialized()) {
+        jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                            jitRuntime_.codeZone().totalBytes());
+    }
+#endif
 }
 
 } // namespace pharo

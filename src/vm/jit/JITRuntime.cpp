@@ -1656,6 +1656,12 @@ void JITRuntime::flushCaches() {
         }
         m = m->nextInZone;
     }
+    // Restore MAP_JIT executable for this thread (pthread_jit_write_protect
+    // is per-thread and affects the whole region).  Without this any JIT
+    // entry after flushCaches SIGBUS's.
+    if (codeZone_.firstMethod()) {
+        makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
+    }
 }
 
 JITRuntime::T2ICSlot* JITRuntime::allocT2ICSlots(int count) {
@@ -1755,6 +1761,11 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
             if (temp[i].key == 0) continue;
             tier2Insert(temp[i].key, temp[i].func);
         }
+    }
+    // Flip MAP_JIT back to executable for this thread (per-thread toggle;
+    // balances the makeWritable() earlier in this function).
+    if (codeZone_.firstMethod()) {
+        makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
     }
 }
 

@@ -13851,9 +13851,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // Without this, fetchByte() sees stale bytecodeEnd_ from the
             // method that was active BEFORE the J2J chain, hits the
             // ip >= bytecodeEnd_ guard, and returns 0x5C (fake returnTop).
-            {
+            //
+            // Defensive: state.method can be nil if the chain loop's saved
+            // jitMethod was evicted+reallocated between save and
+            // materialize (compiledMethodOop field bytes no longer identify
+            // a live CompiledMethod).  Pin-on-evict (see JITCompiler.cpp)
+            // fixes the common case; this guard catches any residual and
+            // falls back to the outer method's bytecode range.
+            if (state.method.isObject() && state.method.rawBits() != 0) {
                 ObjectHeader* mObj = state.method.asObjectPtr();
                 bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
+            } else {
+                static int warnCount = 0;
+                if (++warnCount <= 5) {
+                    fprintf(stderr, "[JIT] WARN: materialized J2J inner method is nil (warn #%d)\n", warnCount);
+                }
+                // Leave method_/ip_/bytecodeEnd_ as they were — the outer
+                // activation will handle the return path, not this one.
+                j2jMaterialized = false;
             }
         }
     }
