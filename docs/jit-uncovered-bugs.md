@@ -206,7 +206,7 @@ evidence the dispatched store code is one corruption source.
 
 ---
 
-## 11. Sista compile-only (no dispatch) still crashes — **NOT FIXED, asmjit infrastructure**
+## 11. Sista compile-only (no dispatch) crashes — **PARTIAL FIX (de01be1), residual SIGILL**
 
 **Severity**: critical to fix before Sista can ship.
 
@@ -237,13 +237,32 @@ emission.
 - asmjit's `CodeHolder` corrupts register state in a way that
   bleeds into the next T1 JIT activation via the C stack
 
-**Next steps**:
-- Audit asmjit's mmap calls vs our `CodeZone::initialize` mmap
-  and check for adjacency or aliasing
-- Capture the protect mode before/after every Sista compile
-  and the next T1 JIT activation
-- If unfixable, replace asmjit's `JitRuntime` with a custom
-  allocator that uses our existing zone and W^X discipline
+**Partial fix shipped (de01be1)**: replaced `siglongjmp(vmcc->trampoline)`
+with `throw pharo::CallbackComplete{}` + `try/catch` in
+`callbackClosureHandler`.  `setjmp/longjmp` skips C++ destructors —
+that includes asmjit's `ProtectJitReadWriteScope` whose destructor
+flips MAP_JIT W^X back to executable.  C++ exception unwinding runs
+every destructor between throw and catch, including asmjit's.  libffi
+on macOS arm64 has `__compact_unwind` so the exception traverses C
+frames safely.
+
+Net effect: crash signature flipped from SIGSEGV null-deref at #15
+to SIGILL at #45.  One layer fixed; the SIGILL is its own bug —
+**a JIT method runs past its own `codeSize` boundary into the IC
+area where bytes are zero (ARM64 UDF)**.
+
+The other siglongjmp pair — `siglongjmp(reenterInterpreter_)` from
+`enterInterpreterFromCallback` to `interpret()` — is still active.
+Defensive `makeExecutable` at the sigsetjmp landing site (in
+`interpret()`) is in place as a band-aid.  Converting that pair to
+exceptions is the next clean-up.
+
+**Next steps for the residual SIGILL**:
+- Audit `JITCompiler::compile()`'s codeSize accumulation vs the
+  actual emitted byte count.  Each `cc.emit_X(...)` may produce
+  more bytes than the static `stencil.codeSize` records.
+- Verify `findMethodByPC`'s end-of-method bound matches the real
+  emitted footprint.
 
 ---
 
