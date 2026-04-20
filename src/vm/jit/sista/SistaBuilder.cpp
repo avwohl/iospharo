@@ -735,11 +735,11 @@ private:
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
-                std::vector<uint32_t> ops(nArgs + 1);
-                for (uint32_t i = 0; i < nArgs + 1; i++) {
-                    ops[nArgs - i] = stack_.back();
-                    stack_.pop_back();
-                }
+                // Flush entire IR stack (see Send0/1/2 comment) —
+                // the send's rcvr+args are the top nArgs+1 entries,
+                // and earlier values below must reach state.sp too.
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
                 uint64_t lit = (uint64_t)selIdx
                              | ((uint64_t)nArgs      << 16)
                              | ((uint64_t)bailOffset << 24);
@@ -788,11 +788,9 @@ private:
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
-                std::vector<uint32_t> ops(totalOps);
-                for (uint32_t i = 0; i < totalOps; i++) {
-                    ops[totalOps - 1 - i] = stack_.back();
-                    stack_.pop_back();
-                }
+                // Flush entire IR stack (super-send + extras + below).
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
                 uint64_t lit = (uint64_t)selIdx
                              | ((uint64_t)nArgs      << 16)
                              | ((uint64_t)bailOffset << 24);
@@ -819,12 +817,10 @@ private:
                 // Selector literal index encoded as special-selector
                 // marker: we use the opcode as selIdx (unused in the
                 // bail path since the interpreter dispatches via the
-                // bytecode directly).
-                std::vector<uint32_t> ops(nArgs + 1);
-                for (uint32_t i = 0; i < nArgs + 1; i++) {
-                    ops[nArgs - i] = stack_.back();
-                    stack_.pop_back();
-                }
+                // bytecode directly).  Flush entire IR stack so
+                // pre-send values aren't lost (see Send0/1/2 note).
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
                 uint64_t lit = (uint64_t)op
                              | ((uint64_t)nArgs    << 16)
                              | ((uint64_t)bcOffset << 24);
@@ -856,15 +852,28 @@ private:
                 }
                 uint32_t selIdx = op & 0x0F;
 
-                // operands = {rcvr, arg0, arg1, ...}  (stack order bottom-up)
-                std::vector<uint32_t> ops(nArgs + 1);
-                for (uint32_t i = 0; i < nArgs + 1; i++) {
-                    ops[nArgs - i] = stack_.back();
-                    stack_.pop_back();
-                }
+                // Bail flushes the ENTIRE IR stack to state.sp so the
+                // interpreter sees every value simulated-pushed by
+                // compiled code.  Older revisions only emitted the
+                // send's rcvr+args, leaking values below them (e.g.,
+                // `PushReceiver PushTemp Send0 Send1 ...` at the
+                // first Send0 left `self` in a virtual register that
+                // never reached state.sp, and the next Send1 in the
+                // interpreter's run popped garbage).  The stackSize
+                // field encodes the total pushes — nArgs is the send
+                // arg count (what sendSelector pops); any extras
+                // below them are caller-frame values the interpreter
+                // will consume via later bytecodes.
+                uint32_t stackSize = static_cast<uint32_t>(stack_.size());
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
                 uint64_t lit = static_cast<uint64_t>(selIdx)
-                             | (static_cast<uint64_t>(nArgs)    << 16)
-                             | (static_cast<uint64_t>(bcOffset) << 24);
+                             | (static_cast<uint64_t>(nArgs)      << 16)
+                             | (static_cast<uint64_t>(bcOffset)   << 24);
+                (void)stackSize;  // nArgs suffices for sendSelector;
+                                  // extras come from total push count
+                                  // vs operands.size() on the lowerer
+                                  // side (operands pushed in order).
                 out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
                 return LiftResult::kOk;
@@ -905,11 +914,9 @@ private:
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
-                std::vector<uint32_t> ops(nArgs + 1);
-                for (uint32_t i = 0; i < nArgs + 1; i++) {
-                    ops[nArgs - i] = stack_.back();
-                    stack_.pop_back();
-                }
+                // Flush entire IR stack (see Send0/1/2 note).
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
                 uint64_t lit = (uint64_t)op
                              | ((uint64_t)nArgs    << 16)
                              | ((uint64_t)bcOffset << 24);

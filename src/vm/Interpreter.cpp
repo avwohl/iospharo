@@ -6705,54 +6705,31 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                                    && op <= jit::SistaV1::Send1Last);
                 const bool isSend2 = (op >= jit::SistaV1::Send2Base
                                    && op <= jit::SistaV1::Send2Last);
-                // Send0 (0x80-0x8F) bails are verified
-                // behavior-preserving end-to-end; admit by default.
-                // Send1/Send2 still diverge downstream despite
-                // Sista's observable outputs being bit-for-bit
-                // correct — stay gated.  PHARO_SISTA_SEND0_ONLY is
-                // retained as a no-op toggle (kept for diagnostic
-                // compatibility; default behavior already matches).
-                if (jit::SistaV1::isSendBytecode(op)
-                 || op == jit::SistaV1::ExtSend
-                 || op == jit::SistaV1::ExtSuperSend
-                 || op == jit::SistaV1::PushFullBlock
-                 || op == jit::SistaV1::PushClosure
-                 || op == jit::SistaV1::PushArray
-                 || op == jit::SistaV1::PushThisContext) {
-                    if (isSend0) {
-                        continue;  // Send0 bails are safe
-                    }
-                    if (getenv("PHARO_SISTA_SEND1_ONLY") && isSend1) {
-                        // Bisection: PHARO_SISTA_SEND1_MAX=N limits
-                        // dispatch to the first N methods containing
-                        // Send1, so we can binary-search which
-                        // specific method triggers the downstream
-                        // DNU cascade.
-                        static size_t send1Count = 0;
-                        static int send1Max = []() {
-                            const char* v = getenv("PHARO_SISTA_SEND1_MAX");
-                            return v ? atoi(v) : -1;
-                        }();
-                        send1Count++;
-                        if (send1Max < 0 || send1Count <= (size_t)send1Max) {
-                            if (send1Max >= 0 && send1Count == (size_t)send1Max) {
-                                fprintf(stderr,
-                                    "[SISTA-S1MAX] dispatching Send1 method #%zu "
-                                    "sel=#%s bc[0..3]=%02x%02x%02x%02x\n",
-                                    send1Count,
-                                    memory_.selectorOf(method).c_str(),
-                                    methodBytes[bytecodeStart],
-                                    bcLen > 1 ? methodBytes[bytecodeStart+1] : 0,
-                                    bcLen > 2 ? methodBytes[bytecodeStart+2] : 0,
-                                    bcLen > 3 ? methodBytes[bytecodeStart+3] : 0);
-                            }
-                            continue;
-                        }
-                    }
-                    (void)isSend2;
+                // Inlined arith (0x60=+, 0x61=-, 0x68=*) runs
+                // TAG-PRESERVING without overflow or type guards —
+                // still gated behind PHARO_SISTA_UNSAFE_ARITH.
+                // Other arith (<, >, =, etc.) bails via
+                // kSendUnspeculated and is now safe (stack flush).
+                if ((op == jit::SistaV1::ArithBase + 0
+                  || op == jit::SistaV1::ArithBase + 1
+                  || op == jit::SistaV1::ArithBase + 8)) {
                     hasUnsafeOp = true;
                     break;
                 }
+                // Generic bail ops (allocate in interpreter) stay
+                // out until Sista is verified end-to-end against
+                // block/array creation.
+                if (op == jit::SistaV1::PushFullBlock
+                 || op == jit::SistaV1::PushClosure
+                 || op == jit::SistaV1::PushArray
+                 || op == jit::SistaV1::PushThisContext) {
+                    hasUnsafeOp = true;
+                    break;
+                }
+                // All other send-bytes (SpecialSend, Send0/1/2,
+                // ExtSend, ExtSuperSend, comparison-arith) bail
+                // cleanly through the fixed lifter.
+                (void)isSend0; (void)isSend1; (void)isSend2;
             }
         }
 
