@@ -123,18 +123,67 @@ testFinalize reads `dict size` directly.  Timing varies by a few
 bytecodes depending on heap layout, hitting this window sometimes
 but not always.
 
-To ship stable, default is legacy inline.  The `PHARO_FINALIZE_DEFERRED`
-flag remains available for:
-  - Debugging (architectural match to Cog is useful reference)
-  - A future fix that converts the signal delivery to fully
-    deterministic (e.g., running the finalizer drain inline at the
-    interrupt check rather than via P50/P51 scheduling)
+**Native mourn drain (also shipped, also opt-in)**:
 
-The correct next step would likely be: bypass the finalizationProcess
-indirection entirely and drain the mourn queue directly inside
-`backwardBranchInterruptCheck` (no process switching).  That removes
-the P50/P51 race but requires careful thought about re-entry and
-mourn-error handling.
+`drainMournQueueNatively()` reimplements `WKA>>mourn` +
+`Dictionary>>removeKey:ifAbsent:` + `fixCollisionsFrom:` directly
+in C++.  No P50/P51 semaphore/process-switching needed — the drain
+runs synchronously inside `backwardBranchInterruptCheck`.
+
+- Per WKA mourner: look up in `container.array` by identity,
+  nil the slot, decrement `tally`.
+- `fixCollisionsFrom:` uses `identityHash` from the object header
+  for probing.  Correct for Object-keyed dicts (`Object>>hash` ==
+  identityHash by default); approximate for String keys (String's
+  content-based hash can't be replicated in C++ without
+  reimplementing it).  The only user-visible effect is that
+  `includesKey:` lookups on a broken chain can false-negative
+  after mourn — none of the failing tests exercise this.
+
+Eliminating the P50/P51 indirection removed half the race, but the
+remaining non-determinism is the *firing cadence* of the
+backward-branch check itself.  The 60-backward-jump countdown
+sometimes fires inside an assertion (too early), sometimes between
+them (too late or perfectly timed).  Still 1-3 focused-SUnit
+failures varying across runs.
+
+**What's needed for a deterministic fix — Cog's stack-limit trick**:
+
+Cog's `forceInterruptCheck` (cointerp-cpp.c:70373-70393) sets
+`stackLimit = ~0` (all-ones).  The VM's stack-overflow check fires
+at *every* method activation.  Handler examines a `mayContextSwitch`
+flag: false during primitive execution and for a few bytecodes
+after, true at ordinary user-code bytecode boundaries.  When
+`mayContextSwitch` is true AND stackLimit is -1, the interrupt
+check runs — signals semaphores, processes finalization.
+
+This gets the timing right: `Smalltalk garbageCollect` returns,
+primitive-post path has `mayContextSwitch=false` for the pop-result
+bytecode, then user code runs with `mayContextSwitch=true` but
+stack limit gets restored.  The NEXT `forceInterruptCheck` (from
+the next ephemeron firing) re-arms.
+
+Our VM doesn't have stack-limit-based interrupt checks — we use
+bytecode-count periodic checks and heartbeat-driven forceYield.
+To match Cog exactly:
+
+1. Add `stackLimit_` field (writable by heartbeat + GC).
+2. `forceInterruptCheck()` sets `stackLimit_ = UINTPTR_MAX`.
+3. Every `activateMethod` compares stackPointer vs stackLimit
+   (currently we don't — we just reserve space).
+4. Stack-limit trigger: restore normal limit, call handler.
+5. Handler gates on new `mayContextSwitch_` bool — false entering
+   primitives, true restored at bytecode boundaries.
+
+Scope: 300-500 LoC across activateMethod, primitiveSuccess,
+dispatch loop, new handler.  Not this session.
+
+**Current state**:
+- `drainMournQueueNatively` done and correct (modulo String hash).
+- `backwardBranchInterruptCheck` in place.
+- `primitiveFullGC` is Cog-clean under the flag.
+- Missing: stack-limit trigger at activations with mayContextSwitch
+  gate — that's what gets the firing timing deterministic.
 
 Everything else (ObjectTest, ClassDescriptionProtocolsTest, SlotBasicTest,
 SlotMigrationTest, SlotTraitsTest, FIFOQueueTest, and
