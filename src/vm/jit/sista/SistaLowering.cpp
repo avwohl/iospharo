@@ -97,6 +97,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // bug is specifically in JitRuntime's allocator + W^X dance.
     static bool noAdd = getenv("PHARO_SISTA_NO_LOWER_ADD") != nullptr;
     (void)noAdd;
+
+    // (PHARO_SISTA_FRESH_RUNTIME bisect tried — recreates asmjit
+    // JitRuntime per compile.  Result: VM hangs after ~10K steps
+    // because previous runtime's emitted fns are still referenced
+    // from sista::Runtime::cache_ and now point to freed memory.
+    // Removing the gate; not a useful avenue.)
     Compiler cc(&code);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
     Gp state = cc.new_gp64("state");
