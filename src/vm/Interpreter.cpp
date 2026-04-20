@@ -114,9 +114,18 @@ static sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
 // Reset on GC alongside the Sista fn cache.
 static std::unordered_map<uint64_t, uint8_t> sistaGateCache_;
 
+// Per-method consecutive-bail counter.  When a method ExitSends 8
+// times in a row without a single ExitReturn, mark it ineligible
+// so we stop paying the dispatch overhead on it.  Any subsequent
+// successful ExitReturn resets the count (unlikely for bail-only
+// methods, but handles pathological-then-recovered cases).
+static std::unordered_map<uint64_t, uint16_t> sistaBailCounter_;
+static constexpr uint16_t kSistaBailBlacklistThreshold = 8;
+
 void Interpreter::recoverSistaAfterGC() {
     if (sistaRuntimeForGCHook_) sistaRuntimeForGCHook_->reset();
     sistaGateCache_.clear();
+    sistaBailCounter_.clear();
 }
 #endif
 
@@ -6745,16 +6754,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     hasUnsafeOp = true;
                     break;
                 }
-                // Sends bail cleanly via the fixed lifter, but the
-                // per-activation dispatch overhead (state setup +
-                // W^X toggle + asmjit call) swamps the interpreter
-                // cost for methods that mostly bail.  Default to
-                // rejecting all send-bytes so dispatch only admits
-                // methods Sista can actually run to completion
-                // (ExitReturn).  Re-admit bailing methods with
-                // PHARO_SISTA_ALLOW_BAIL=1 for correctness testing
-                // or when Phase 4 inlining makes the bail rare.
-                if (!g_debug.sistaAllowBail) {
+                // Sends bail cleanly via the fixed lifter.
+                // Adaptive runtime blacklist (sistaBailCounter_)
+                // removes methods that bail consecutively, so we
+                // can admit all send-bytes without paying the
+                // dispatch overhead forever on bail-only methods.
+                // PHARO_SISTA_NO_BAIL=1 restores the conservative
+                // scan-reject behavior.
+                if (g_debug.sistaNoBail) {
                     if (jit::SistaV1::isSendBytecode(op)
                      || op == jit::SistaV1::ExtSend
                      || op == jit::SistaV1::ExtSuperSend) {
@@ -6768,8 +6775,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         }
     gateDecided:
 
+        // Runtime blacklist: if this method has bailed via
+        // ExitSend consecutively for > threshold activations,
+        // skip dispatch.  Avoids paying the per-call dispatch
+        // overhead for methods Sista can't meaningfully speed up.
+        bool blacklisted = false;
+        {
+            auto bailIt = sistaBailCounter_.find(gateKey);
+            if (bailIt != sistaBailCounter_.end()
+                && bailIt->second >= kSistaBailBlacklistThreshold) {
+                blacklisted = true;
+            }
+        }
+
         const bool dispatchGateOpen =
-            ipAtBytecodeStart && (!hasUnsafeOp || g_debug.sistaAllowSends);
+            ipAtBytecodeStart
+            && (!hasUnsafeOp || g_debug.sistaAllowSends)
+            && !blacklisted;
         if (fn && g_debug.sistaDispatch && dispatchGateOpen) {
             // Tier-up dispatch.  Set up JITState the same way
             // tryJITActivation does, invoke the Sista function,
@@ -6940,6 +6962,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
                 sistaReturns++;
+                // Reset this method's bail counter — it completed
+                // successfully, so don't blacklist it.
+                sistaBailCounter_.erase(gateKey);
                 // Pop Sista's frame, push return value — caller resumes.
                 if (!popFrame()) {
                     if (benchMode_) {
@@ -6955,6 +6980,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             }
             case jit::ExitSend: {
                 sistaSends++;
+                // Increment this method's consecutive-bail count;
+                // blacklist on threshold.  Only cleared by ExitReturn.
+                uint16_t& cnt = sistaBailCounter_[gateKey];
+                if (cnt < UINT16_MAX) cnt++;
                 // Under verbose mode, log the first few bails with
                 // full context so Send1/Send2 divergence can be
                 // caught against the baseline expectation.
