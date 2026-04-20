@@ -12,6 +12,7 @@
 #include "../Interpreter.hpp"
 #include <cstring>
 #include <cstdio>
+#include <pthread.h>
 
 #if PHARO_JIT_ENABLED
 
@@ -1810,6 +1811,57 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // allocate() will reuse freed space without moving methods
         // (ADRP+LDR relocations in stencils are not position-independent
         // across non-page-aligned moves).
+        //
+        // SAFETY: before evicting, pin any JIT method that is *live* on the
+        // active stack.  Otherwise a native RET from a trampoline/primitive
+        // back into JIT code lands in freelist memory — SIGSEGV with
+        // "PC not in any active JIT method (evicted?)".  Two sources of live
+        // methods:
+        //   (1) J2JSave pool entries — chain-loop return frames.
+        //   (2) Native frame-pointer chain — LRs may be PCs inside JIT code.
+        // Unpinned on exit via the Unpin RAII below.
+        auto pinLiveMethods = [&]() {
+            // (1) J2JSave pool — chain-loop return frames for ongoing J2J
+            // calls.  Every live entry names a jitMethod that we must not
+            // evict (otherwise the chain-loop's resume into it blows up).
+            int live = interp_.j2jPoolLiveCount();
+            const auto* base = interp_.j2jPoolBase();
+            for (int i = 0; i < live; i++) {
+                if (base[i].jitMethod && zone_.contains(base[i].jitMethod)) {
+                    base[i].jitMethod->pinned = true;
+                }
+            }
+            // (2) Native frame-pointer chain — LRs may be PCs inside JIT
+            // code (trampoline return into caller's stencil).  Bounded by
+            // pthread stack, plus a depth cap.
+            pthread_t self = pthread_self();
+            uint8_t* stackTop = static_cast<uint8_t*>(pthread_get_stackaddr_np(self));
+            size_t stackSize = pthread_get_stacksize_np(self);
+            uint8_t* stackBot = stackTop - stackSize;
+            uint64_t* fp = static_cast<uint64_t*>(__builtin_frame_address(0));
+            for (int depth = 0; depth < 256; depth++) {
+                uint8_t* fpB = reinterpret_cast<uint8_t*>(fp);
+                if (fpB + 16 > stackTop || fpB < stackBot) break;
+                // fp[0] = saved caller fp, fp[1] = saved LR (arm64 prologue)
+                uint64_t lr = fp[1];
+                if (lr) {
+                    auto* m = zone_.findMethodByPC(lr);
+                    if (m) m->pinned = true;
+                }
+                uint64_t* next = reinterpret_cast<uint64_t*>(fp[0]);
+                // Caller frame is at a HIGHER address than callee on a
+                // downward-growing stack.  Bail on any inversion or reset.
+                if (!next || next <= fp) break;
+                fp = next;
+            }
+        };
+        struct UnpinAll {
+            CodeZone& z;
+            ~UnpinAll() {
+                for (auto* m = z.firstMethod(); m; m = m->nextInZone) m->pinned = false;
+            }
+        } unpinAll{zone_};
+        pinLiveMethods();
 
         // Collect evicted code ranges during eviction via pre-eviction callback,
         // so we capture ALL evicted methods (both first-pass and second-pass).
@@ -1869,7 +1921,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             jitMethod = zone_.allocate(totalSize, 0);
         }
 
-        // If incremental eviction wasn't enough, full flush as last resort
+        // If incremental eviction wasn't enough, full flush as last resort.
+        // Must still respect pinned methods — skip them and retry allocate.
         if (!jitMethod) {
             static int fullFlushCount = 0;
             if (++fullFlushCount <= 5) {
@@ -1881,11 +1934,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             JITMethod* m = zone_.firstMethod();
             while (m) {
                 JITMethod* next = m->nextInZone;
-                zone_.freeMethod(m);
+                if (!m->pinned) {
+                    uint64_t oop = m->compiledMethodOop;
+                    zone_.freeMethod(m);
+                    methodMap_.remove(oop);
+                }
                 m = next;
             }
-            methodMap_.clear();
-            zone_.compact();
+            // compact() only resets bump pointer when zone is empty of live
+            // methods.  With pinned survivors present, skip compact and let
+            // allocate() use the free list.
+            if (zone_.firstMethod() == nullptr) zone_.compact();
 
             jitMethod = zone_.allocate(totalSize, 0);
             if (!jitMethod) {
@@ -1908,6 +1967,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->tempCount = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
     jitMethod->hasPrimPrologue = hasPrimPrologue;
     jitMethod->isBlock = isFullBlock;
+    jitMethod->pinned = false;  // Eviction safety — pinned transiently during evictLRU
     jitMethod->j2jDepthLimit = 2;  // Start conservative; adaptive logic promotes on clean runs
 
     // Set up IC data pointers for send sites. The IC data lives at the end

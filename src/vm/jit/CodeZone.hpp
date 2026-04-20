@@ -258,11 +258,13 @@ public:
         size_t freed = 0;
         uint32_t threshold = epoch_ > 10 ? epoch_ - 10 : 0;
 
-        // First pass: evict methods older than threshold
+        // First pass: evict methods older than threshold, skipping pinned.
         JITMethod* m = firstMethod_;
         while (m && freed < bytesNeeded) {
             JITMethod* next = m->nextInZone;
-            if (m->state == MethodState::Compiled && m->lastUsedEpoch < threshold) {
+            if (m->state == MethodState::Compiled
+                && !m->pinned
+                && m->lastUsedEpoch < threshold) {
                 if (onPreEvict) onPreEvict(m, ctx2);
                 size_t sz = m->allocationSize();
                 uint64_t oop = freeMethod(m);
@@ -272,12 +274,12 @@ public:
             m = next;
         }
 
-        // Second pass with lower threshold if needed
+        // Second pass with lower threshold if needed, still skipping pinned.
         if (freed < bytesNeeded) {
             m = firstMethod_;
             while (m && freed < bytesNeeded) {
                 JITMethod* next = m->nextInZone;
-                if (m->state == MethodState::Compiled) {
+                if (m->state == MethodState::Compiled && !m->pinned) {
                     if (onPreEvict) onPreEvict(m, ctx2);
                     size_t sz = m->allocationSize();
                     uint64_t oop = freeMethod(m);

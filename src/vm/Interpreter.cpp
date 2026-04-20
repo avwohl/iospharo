@@ -12933,8 +12933,17 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
-    // IC data lives in the MAP_JIT code zone; ensure writable.
+    // IC data lives in the MAP_JIT code zone; ensure writable for the patch.
+    // RAII guard flips the whole zone back to executable on every exit path.
+    // On Apple Silicon pthread_jit_write_protect_np is a per-thread toggle
+    // that affects the ENTIRE MAP_JIT region — leaving it writable here
+    // means this thread cannot execute JIT code on return, causing a
+    // SIGBUS "Fault addr = PC in code zone" as soon as JIT code resumes.
     jit::makeWritable(icData, 1);
+    struct RestoreExec {
+        jit::CodeZone& z;
+        ~RestoreExec() { jit::makeExecutable(z.rawStart(), z.totalBytes()); }
+    } restoreExec{jitRuntime_.codeZone()};
 
     // DEBUG: Selector-based J2J fill skip (PHARO_J2J_SKIP_SELECTORS).
     // Same skip used by upgradeICToJ2J — uses the IC's send-site selector

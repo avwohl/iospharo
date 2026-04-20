@@ -653,6 +653,11 @@ private:
 public:
     void setOriginalImageHeader(const SpurImageHeader& h) { originalImageHeader_ = h; }
     const SpurImageHeader& originalImageHeader() const { return originalImageHeader_; }
+#if PHARO_JIT_ENABLED
+    // Used by JITCompiler eviction: live J2J entries are 0..j2jPoolLiveCount().
+    const J2JSave* j2jPoolBase() const { return j2jPool_.data(); }
+    int j2jPoolLiveCount() const { return j2jPoolCursor_; }
+#endif
 private:
     std::vector<std::string> imageArguments_;  // Command-line args for the image (index 2+)
     std::vector<std::string> vmParameters_;    // VM flags like --headless (negative indices)
