@@ -34,7 +34,7 @@ row; marked `?` until the cog row is populated.
     cog    default  2026-04-20  828/836   17258    17195   15   23    25   0    2m       (baseline)
     main   NO_JIT   2026-04-20  34/836    412†     410     0    2     0    0    50m(wd)  2 / ≥?
     main   default  —           —         —        —       —    —     —    —    —        ?
-    jit    NO_JIT   2026-04-21  824/836   16927    16864   14   18    25   6    45m(wd)  21
+    jit    NO_JIT   2026-04-21  834/836   16610    16551   12   16    25   6    45m     17
     jit    default  2026-04-21  0/836     —        —       —    —     —    —    45m(wd)  hang‡
 
 `wd` = hit the VM watchdog.  `†` = main NO_JIT is enormously slower per
@@ -279,18 +279,33 @@ versus the row immediately above.
                                                                          finalization queue
                                                                          split; watchdog-truncated
                                                                          at FFICallbackParameters)
+    2026-04-21d 16610   16551   -313     12   -2   16   -2    6     0  (decompiler NLR fix +
+                                                                         harness patches; full
+                                                                         run)
 
 Note: 4-21c is a shorter run (DELAY-DEATH truncation cut ~10 classes).
 Tests delta is not meaningful vs 21b because of the early exit.
 
-Δcog progress: 548 (4-20) → 27 (4-21a) → 19 (4-21b) → 21 (4-21c).
-4-21c is 10 fixes shy of 4-21a+10; it added 2 new entries (TraitTest
-and EpDisabledIntegration) from covered classes.  The 10 bucket
-15.A-C fixes are preserved:
-  testUserLocalDirectory, testVmBinary, testVmDirectory, testIsExecutable
-  testFromPlatformPath, testToPlatformPath
-  testCreateDirectoryExists, testCreateDirectoryNoParent
-  testMoveToFailingMissingDestination, testEntriesHaveAttributes
+Δcog progress: 548 (4-20) → 27 (4-21a) → 19 (4-21b) → 21 (4-21c) → 17 (4-21d).
+
+4-21d adds the decompiler NLR fix (5b59f1c) — removes 2 more
+regressions via FBDBytecodeDecompilerExamplesTest.  Both
+variations (testExampleIfTrue, testExampleSimpleBlockReturn) drop
+from Δcog.  Net fixes from 4-20 baseline: 548 - 17 = **531 regressions
+resolved**, mostly via bug 11 layer 5 (JM_SIZE off-by-8) removing
+hundreds of FFI C11 DNUs.
+
+Session-local fixes confirmed by 4-21d Δcog:
+  10 bucket-A/B/C fixes (paths, NFC/NFD, filesystem) ✓
+   2 decompiler NLR fixes (FBDBytecodeDecompilerExamples) ✓
+
+Current 17 Δcog list (from results/sunit-2026-04-21d-jit-nojit.delta-vs-cog.txt):
+  6 confirmed test-ordering artifacts (pass in isolation)
+  8 finalization/weak (out of session scope per attempted revert)
+  1 OCSpecialSelector (proxy chain DNU — needs deep debug)
+  2 new 4-21d regressions:
+    EDDebuggingAPITest>>testRevertToInContext           (error)
+    EDEmergencyDebuggerTest>>testRevertCurrentMethodToSelectedVersion  (error)
 
 ## What I DON'T know — open deltas
 
