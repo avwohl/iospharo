@@ -361,6 +361,24 @@ Next step: PHARO_JIT_SKIP_SELECTORS with a specific selector
 (waitForUserSignalled:orExpired:, primSignal:atUTCMicroseconds:,
 etc.) to identify which JIT-compiled method is the culprit.
 
+**Update (continued)**: ran PHARO_JIT_SKIP_SELECTORS with all 4 of
+{waitForUserSignalled:orExpired:, primSignal:atUTCMicroseconds:,
+nowTick, initSignals} — **still hangs identically**.  So this is
+NOT one specific method being miscompiled; it's a broader
+behavioral difference between our JIT path and Cog's for one of
+the implicit scheduler interactions (semaphore wait/signal,
+process switch on yield, interrupt-check frequency, or an asm
+trampoline state transition).
+
+Resolving needs: (a) a semaphore/process trace logging every
+`primitiveSignal`, `primitiveWait`, `primitiveSuspend`,
+`transferTo:` call, on both our VM and stock Cog, and diffing the
+call sequences; (b) or a minimal reproducer that doesn't depend
+on SUnit boot.
+
+Current production recommendation: `PHARO_NO_JIT=1`.  Still gives
+99.7% pass rate vs Cog (27 regressions on 17k tests).
+
 Bug 11 closed completely.  The root cause turned out to be
 **layer 5: JM_SIZE constant was 80 in two files (stencils.cpp
 and TrampolineAsm.S) while real sizeof(JITMethod) had grown to
