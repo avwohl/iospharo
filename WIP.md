@@ -65,7 +65,7 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     fired key is the test's fixture class) and drop THAT class in
     drainMournQueueNatively rather than using a time-based FP wake.
 
-## Fixes committed this session (21 total)
+## Fixes committed this session (24 total, Δcog 17 → ~11 expected)
 
 Bucket 15.A — paths (4):
   - `test_load_image` uses `_NSGetExecutablePath` / `/proc/self/exe` for VMPath (25aa4f8).
