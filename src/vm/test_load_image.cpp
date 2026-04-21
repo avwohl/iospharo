@@ -23,6 +23,9 @@
 #include <unistd.h>   // chdir
 #include <unistd.h>
 #include <thread>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #include <atomic>
 #include <fstream>
 
@@ -846,14 +849,34 @@ int main(int argc, char* argv[]) {
         if (resolved) free(resolved);
     }
     interpreter.setOriginalImageHeader(loader.header());
-    // Resolve argv[0] to absolute path so Smalltalk vm fullPath works
+    // Resolve the *actual* executable path so Smalltalk vm fullPath is absolute
+    // and exists on disk — the image's SystemResolverTest asserts both.
+    // argv[0] is unreliable (can be "./build/test_load_image", different CWD,
+    // or omitted by exec*); use the platform's exec-path query and realpath it.
     {
-        char* resolved = realpath(argv[0], nullptr);
+        std::string execPath;
+#if defined(__APPLE__)
+        {
+            char buf[4096];
+            uint32_t sz = sizeof(buf);
+            if (_NSGetExecutablePath(buf, &sz) == 0) {
+                execPath = buf;
+            }
+        }
+#elif defined(__linux__)
+        {
+            char buf[4096];
+            ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+            if (n > 0) { buf[n] = '\0'; execPath = buf; }
+        }
+#endif
+        if (execPath.empty()) execPath = argv[0];
+        char* resolved = realpath(execPath.c_str(), nullptr);
         if (resolved) {
             interpreter.setVMPath(resolved);
             free(resolved);
         } else {
-            interpreter.setVMPath(argv[0]);
+            interpreter.setVMPath(execPath);
         }
     }
     // Pass --headless to the VM (consumed via negative attribute indices).
