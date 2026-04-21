@@ -7421,29 +7421,52 @@ void Interpreter::activateBlock(Oop block, int argCount) {
     if (frameDepth_ >= 1 && homeMethodForNLR.isObject() && !homeMethodForNLR.isNil()) {
         size_t homeFrame = SIZE_MAX;  // Default: not found
 
-        // Use the home method we extracted from the CompiledBlock's last literal
+        // Primary home: from the CompiledBlock's last literal (static/lexical home).
+        // Fallback home: the method of the closure's outerContext — needed for the case
+        // where the CompiledBlock is shared between different CompiledMethods (notably
+        // FBDBytecodeDecompiler reuses the original CompiledBlock when regenerating a
+        // method, so the CompiledBlock's last literal points at the ORIGINAL method,
+        // but execution is happening in a frame for the REGENERATED method).  Without
+        // this fallback, NLR from the regenerated method's inner block fails with
+        // BlockCannotReturn because the static home isn't on savedFrames_.
         Oop homeMethodOop = homeMethodForNLR;
+        Oop altHomeMethod = Oop::nil();
+        if (outerContext.isObject() && !outerContext.isNil()) {
+            Oop ocMethod = memory_.fetchPointer(3, outerContext);
+            if (ocMethod.isObject() && !ocMethod.isNil() && ocMethod.rawBits() > 0x10000 &&
+                ocMethod.rawBits() != homeMethodOop.rawBits()) {
+                // Follow outerContext.method's enclosing-code chain to a non-block
+                // CompiledMethod (same walk pattern as the static chain above).
+                Oop walk = ocMethod;
+                int chain = 0;
+                while (walk.isObject() && walk.rawBits() > 0x10000 && chain < 20) {
+                    ObjectHeader* wHdr = walk.asObjectPtr();
+                    if (!wHdr->isCompiledMethod()) break;
+                    Oop wHeader = memory_.fetchPointer(0, walk);
+                    if (!wHeader.isSmallInteger()) break;
+                    int wNumLits = wHeader.asSmallInteger() & 0xFFFF;
+                    if (wNumLits < 1) { altHomeMethod = walk; break; }
+                    Oop wLastLit = memory_.fetchPointer(wNumLits, walk);
+                    bool lastIsCode = wLastLit.isObject() && wLastLit.rawBits() > 0x10000 &&
+                                      wLastLit.asObjectPtr()->isCompiledMethod();
+                    if (!lastIsCode) { altHomeMethod = walk; break; }
+                    walk = wLastLit;
+                    chain++;
+                }
+            }
+        }
 
-        // Walk up the frame stack looking for the frame executing our home method.
-        //
-        // Frame indexing:
-        //   pushFrame saves current state to savedFrames_[old_fd], then increments fd.
-        //   So savedFrames_[X].savedMethod is the method at depth X (saved when entering X+1).
-        //
-        // We search ALL saved frames (0 to fd-1). The topmost (savedFrames_[fd-1]) was just
-        // saved by pushFrame in activateBlock — it's the CALLER's state, not the block's.
-        //
-        // When savedFrames_[X].savedMethod matches homeMethod:
-        //   homeFrame = X
-        //   NLR unwinds: while (fd > X) popFrame → fd = X
-        //   returnValue: if X > 0, popFrame restores savedFrames_[X-1] (caller's caller), fd = X-1
-        //                if X == 0, context-based return via activeContext_ sender chain
         for (size_t i = frameDepth_; i > 0; i--) {
             Oop savedMethod = savedFrames_[i - 1].savedMethod;
 
-            // Check if this saved method matches our home method
+            // Match primary home, then fallback home (for shared CompiledBlocks).
             if (savedMethod.rawBits() == homeMethodOop.rawBits()) {
                 homeFrame = i - 1;
+                break;
+            }
+            if (!altHomeMethod.isNil() && savedMethod.rawBits() == altHomeMethod.rawBits()) {
+                homeFrame = i - 1;
+                homeMethodOop = altHomeMethod;  // use fallback as the canonical home from here on
                 break;
             }
 
