@@ -28461,7 +28461,9 @@ PrimitiveResult Interpreter::primitiveCallbackReturn(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Pop the callback context from our stack
+    // Pop the callback context from our stack and zero the slot so a
+    // second/third FFI callback doesn't inherit stale vmcc pointers.
+    callbackContextStack_[callbackDepth_ - 1] = nullptr;
     callbackDepth_--;
 
     // Set deferred return flag — the nested loop will handle the actual longjmp
