@@ -12127,6 +12127,15 @@ void Interpreter::drainMournQueueNatively() {
             weakArrayClassIndex_ = 0xFFFFFFFF;
         }
     }
+    if (weakValueAssociationClassIndex_ == 0) {
+        Oop cls = memory_.findGlobal(std::string("WeakValueAssociation"));
+        if (cls.isObject() && !cls.isNil()) {
+            weakValueAssociationClassIndex_ = memory_.indexOfClass(cls);
+        }
+        if (weakValueAssociationClassIndex_ == 0) {
+            weakValueAssociationClassIndex_ = 0xFFFFFFFF;
+        }
+    }
 
     Oop nilOop = memory_.nil();
 
@@ -12157,7 +12166,8 @@ void Interpreter::drainMournQueueNatively() {
             weakArraysDropped++;
             continue;
         }
-        if (clsIdx != weakKeyAssociationClassIndex_) {
+        if (clsIdx != weakKeyAssociationClassIndex_ &&
+            clsIdx != weakValueAssociationClassIndex_) {
             // Other non-WKA (ObjectFinalizer, FinalizationRegistryEntry,
             // WeakSubscription, Ephemeron): keep for image-side dispatch.
             keepers.push_back(mourner);
@@ -12167,7 +12177,8 @@ void Interpreter::drainMournQueueNatively() {
         wkaProcessed++;
         if (mournerHdr->slotCount() < 3) continue;
 
-        // WKA layout: slot 0 = key, slot 1 = value, slot 2 = container.
+        // WKA / WVA layout: both are Association subclasses with
+        //   slot 0 = key, slot 1 = value, slot 2 = container.
         Oop container = mournerHdr->slotAt(2);
         if (!container.isObject() || container.rawBits() == nilOop.rawBits()) continue;
         ObjectHeader* dictHdr = container.asObjectPtr();

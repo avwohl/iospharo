@@ -966,6 +966,7 @@ private:
     void drainMournQueueNatively();
     uint32_t weakKeyAssociationClassIndex_ = 0;
     uint32_t weakArrayClassIndex_ = 0;  // Used to drop WeakArray mourners (see drainMournQueueNatively)
+    uint32_t weakValueAssociationClassIndex_ = 0;  // Processed natively like WKA (same Association layout)
 
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).
