@@ -402,6 +402,33 @@ probably either:
 Pinpointing further requires a side-by-side trace against stock
 Cog for the first ~700 XFERs.
 
+**Update**: bisected further in this session:
+
+- `PHARO_JIT_DEFER=999999999` (JIT essentially disabled): runs fast
+  (22M steps/sec vs 1M during hang), **SUnit progresses** (143 classes
+  finished in 170s).  So JIT execution path — not warmup or compile
+  — is what traps the scheduler.
+- Revert of my `codeOffsetForBC >= machineCodeEnd` check: **no
+  effect** on actChain=0 behavior.  That counter has apparently
+  been 0 since before any of my fixes.
+
+JIT-on spends ~6x more wall time per executed bytecode than
+interpreter (measured via PROGRESS step counter), even though the
+chain loop is supposedly taking the fast path.  Combined with the
+deterministic 3-process XFER cycle, the picture looks like:
+
+- Every J2J activation has high per-call overhead (C→JIT→C dance,
+  W^X toggle, IC probe).
+- Even though 75% of J2J activations succeed per `J2J-a` counter,
+  the chain loop never re-enters JIT without bailing.
+- Eventually the scheduler settles into the 3-process cycle
+  because progress per time slice is too small to leave the cycle.
+
+Fixing bug 14 likely needs either (a) reducing per-call overhead
+so JIT is actually faster than interpreter, or (b) finding the
+one specific path that doesn't exist in stock Cog.  Out of
+session scope.
+
 Current production recommendation: `PHARO_NO_JIT=1`.  Still gives
 99.7% pass rate vs Cog (27 regressions on 17k tests).
 
