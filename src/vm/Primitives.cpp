@@ -3594,6 +3594,16 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Wait on a semaphore. If excessSignals > 0, decrement and return.
     // Otherwise suspend current process on the semaphore's wait list.
 
+    // Flush deferred FinalizationSemaphore signal before the current process
+    // potentially suspends.  Without this, testFinalization's
+    // `garbageCollect; waitSemaphore wait` pattern deadlocks: the wait
+    // suspends before activateMethod fires (primitiveWait doesn't go through
+    // a method activation), so FinalizationProcess never wakes.
+    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+        finalizationCheckAfterGC_ = false;
+        signalFinalizationIfNeeded();
+    }
+
     if (stackPointer_ < stackBase_ + argCount + 1) {
         return PrimitiveResult::Failure;
     }
@@ -7311,20 +7321,6 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Finalization signal path depends on PHARO_FINALIZE_DEFERRED:
-    //   - Default (off): signal inline, P50 preempts → drains mourn
-    //     queue before primitive returns.  Diverges from Cog but is
-    //     what our VM has shipped with historically.
-    //   - On: match Cog (cointerp-cpp.c:84895-84927).  No inline
-    //     signal; fullGC already set pendingFinalizationSignals; the
-    //     actual synchronousSignal fires at next backward-branch
-    //     interrupt check.  Lets testClearing observe the pre-finalize
-    //     tally at assertion B.
-    if (!g_debug.finalizeDeferred &&
-        memory_.pendingFinalizationSignals() > 0) {
-        signalFinalizationIfNeeded();
-    }
-
     size_t freeBytes = memory_.freeOldSpaceBytes();
 
     if (Oop::canBeSmallInteger(static_cast<int64_t>(freeBytes))) {
@@ -7333,8 +7329,14 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
     }
 
-    if (!g_debug.finalizeDeferred &&
-        memory_.pendingFinalizationSignals() > 0) {
+    // Arm deferred FinalizationSemaphore signal.  Consumed at the NEXT
+    // non-quick method activation, or at primitiveWait entry, whichever
+    // comes first.  Not fired during the current send's primitive return
+    // — that would preempt testClearing's `dict size` read before it
+    // completes, breaking its pre-drain invariant.  Cog's timing has the
+    // same semantics: signal is queued at fireEphemerons, fires at next
+    // activateMethod's stack-overflow check (via forceInterruptCheck).
+    if (memory_.pendingFinalizationSignals() > 0) {
         finalizationCheckAfterGC_ = true;
     }
 

@@ -1813,11 +1813,11 @@ void Interpreter::interpret() {
             flushMethodCache();
         }
 
-        // -- Finalization one-shot after GC --
-        if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
-            finalizationCheckAfterGC_ = false;
-            signalFinalizationIfNeeded();
-        }
+        // Finalization deferred signal: NOT consumed here.  Fires only at the
+        // NEXT activateMethod entry (after pushing caller's args) or at
+        // primitiveWait entry (for testFinalization's `sema wait` pattern).
+        // Firing here — at every step() — would preempt testClearing's
+        // `dict size` read before its value reached the argument stack.
 
         // -- Timer semaphore (Delay scheduler) --
         checkTimerSemaphore();
@@ -2589,14 +2589,19 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 }
 
 void Interpreter::signalFinalizationIfNeeded() {
-    // Signal the finalization semaphore when GC has queued mourners (dead weak
-    // objects / fired ephemerons). The finalization process wakes up and reads
-    // mourners via primitive 172 (primitiveFetchNextMourner).
+    // Signal the finalization semaphore so FinalizationProcess wakes on its
+    // next scheduling opportunity.  We deliberately do NOT use
+    // synchronousSignal — that would transferTo FP immediately, preempting
+    // the caller mid-primitive.  For the `garbageCollect; sema wait` pattern
+    // (testFinalization), the caller is INSIDE primitiveWait and wants to
+    // complete the wait logic (putting itself on waitSemaphore's list)
+    // BEFORE FP runs.  Preempting here leaves the waiter off the list; the
+    // subsequent waitSemaphore signal has no one to wake.
     //
-    // This is called from step() after GC primitives and periodically.
-    // No priority guard — the Cog VM signals regardless of caller priority.
-    // The woken finalization process (P50) will preempt only if the active
-    // process has lower priority; otherwise it waits in the ready queue.
+    // Instead: move the waiter (if any) from FinalizationSemaphore's wait
+    // list to its priority's ready queue.  No excessSignals++; no transferTo.
+    // Scheduler's next wakeHighestPriority call will pick FP up naturally.
+    // If no waiter, increment excessSignals so a later wait succeeds.
     size_t pending = memory_.pendingFinalizationSignals();
     if (pending <= 0) return;
 
@@ -2605,23 +2610,32 @@ void Interpreter::signalFinalizationIfNeeded() {
     Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
     if (!sema.isObject() || sema == memory_.nil()) return;
 
-    // Track counts for deferred-issue #3 diagnostics (weak-ref/finalization
-    // timing tests race FinalizationProcess wakeup). Accessible via stats.
     finalizationSignalCount_++;
     finalizationPendingTotal_ += pending;
     lastFinalizationSignalTime_ = std::chrono::steady_clock::now();
 
+    Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+    bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
+
     if (g_debug.gcEphDebug) {
-        Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
         Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
-        bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
         fprintf(stderr, "[SIG-FIN] #%zu pending=%zu total=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
                 finalizationSignalCount_, pending, finalizationPendingTotal_,
                 (unsigned long long)sema.rawBits(), (int)hasWaiter,
                 (long long)(excessOop.isSmallInteger() ? excessOop.asSmallInteger() : -1));
     }
 
-    synchronousSignal(sema);
+    if (hasWaiter) {
+        Oop waiter = removeFirstLinkOfList(sema);
+        if (waiter.isObject() && !waiter.isNil()) {
+            putToSleep(waiter);  // ready queue at its priority — no transferTo
+        }
+    } else {
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
+        int64_t excess = excessOop.isSmallInteger() ? excessOop.asSmallInteger() : 0;
+        memory_.storePointer(SemaphoreExcessSignalsIndex, sema,
+                             Oop::fromSmallInteger(excess + 1));
+    }
 }
 
 
@@ -3138,14 +3152,10 @@ bool Interpreter::step() {
         flushMethodCache();
     }
 
-    // Signal finalization promptly after GC. This one-shot flag fires on the step
-    // immediately after a GC primitive (or auto-compact GC), rather than waiting
-    // ~1M bytecodes. Without this, weak dictionary tests fail because the P51
-    // mourning process never gets CPU time before the P40 test asserts dict.size.
-    if (finalizationCheckAfterGC_ && !inExtension_) {
-        finalizationCheckAfterGC_ = false;
-        signalFinalizationIfNeeded();
-    }
+    // Finalization deferred signal: NOT consumed here.  Moved to activateMethod
+    // entry and primitiveWait entry so testClearing's `dict size` read (a quick
+    // primitive returning pre-drain tally) completes before FP preemption
+    // drains WKAs.  See primitiveFullGC.
 
     // Check timer and process pending signals periodically.
     // CRITICAL: Skip process-switch-triggering checks when inExtension_ is true.
@@ -6523,6 +6533,18 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     if (__builtin_expect(g_debug.finalizeDeferred &&
                          memory_.pendingFinalizationSignals() > 0, 0)) {
         drainMournQueueNatively();
+    }
+
+    // Deferred FinalizationSemaphore signal: primitiveFullGC/primitiveIncrementalGC
+    // set `finalizationCheckAfterGC_` instead of signaling immediately.  Fire at
+    // this activateMethod entry — the caller's arguments are already on the
+    // operand stack (evaluated by caller), so any subsequent preemption won't
+    // disturb those values.  This preserves testClearing's invariant that
+    // `dict size` returns pre-drain tally immediately after garbageCollect,
+    // while also waking FinalizationProcess for FinalizationRegistry tests.
+    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+        finalizationCheckAfterGC_ = false;
+        signalFinalizationIfNeeded();
     }
 
     // Set up new method
