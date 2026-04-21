@@ -538,6 +538,10 @@ public:
         return mourner;
     }
 
+    /// Push a mourner back onto the queue (used by drainMournQueueNatively to
+    /// re-queue non-WKA mourners that the C++ drain doesn't handle).
+    void pushMourner(Oop oop) { mournQueue_.push_back(oop); }
+
     /// Check if there are mourners waiting
     bool hasMourners() const { return !mournQueue_.empty(); }
     size_t mournQueueSize() const { return mournQueue_.size(); }
@@ -545,6 +549,7 @@ public:
     /// Get/clear pending finalization signal count
     int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }
     void clearPendingFinalizationSignals() { pendingFinalizationSignals_ = 0; }
+    void bumpPendingFinalizationSignals() { pendingFinalizationSignals_++; }
 
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);

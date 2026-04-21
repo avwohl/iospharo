@@ -12043,14 +12043,21 @@ void Interpreter::drainMournQueueNatively() {
     size_t decremented = 0;
     static int drainLog = 0;
 
+    // Two-pass drain: first pass extracts only WKA mourners we can handle in
+    // C++.  Non-WKA mourners (FinalizationRegistryEntry, custom #mourn
+    // implementations) get re-queued so the image's FinalizationProcess can
+    // dispatch them via primitive 172 once we signal the finalization
+    // semaphore below.  Without this, FinalizationRegistry tests time out
+    // because their entries get popped and silently discarded.
+    std::vector<Oop> nonWkaMourners;
     while (memory_.hasMourners()) {
         processed++;
         Oop mourner = memory_.popMourner();
         if (!mourner.isObject()) continue;
         ObjectHeader* mournerHdr = mourner.asObjectPtr();
         if (mournerHdr->classIndex() != weakKeyAssociationClassIndex_) {
-            // Non-WKA mourner: Object>>mourn is a no-op; matches stock
-            // behavior of dropping from the queue without side effect.
+            // Non-WKA mourner: defer to image-side #mourn dispatch.
+            nonWkaMourners.push_back(mourner);
             continue;
         }
         wkaProcessed++;
@@ -12135,9 +12142,25 @@ void Interpreter::drainMournQueueNatively() {
         }
     }
 
+    // Re-queue any non-WKA mourners we set aside above and signal the
+    // finalization semaphore so the image's FinalizationProcess can call
+    // #mourn on them via primitive 172.
+    if (!nonWkaMourners.empty()) {
+        for (Oop m : nonWkaMourners) {
+            memory_.pushMourner(m);
+        }
+        // Restore the pending-signal counter so signalFinalizationIfNeeded
+        // actually fires (we cleared it at the top of this function).
+        for (size_t i = 0; i < nonWkaMourners.size(); ++i) {
+            memory_.bumpPendingFinalizationSignals();
+        }
+        signalFinalizationIfNeeded();
+    }
+
     if (drainLog++ < 5) {
-        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu dec=%zu\n",
-                drainLog, initialQueueSize, processed, wkaProcessed, decremented);
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu non-wka=%zu dec=%zu\n",
+                drainLog, initialQueueSize, processed, wkaProcessed,
+                nonWkaMourners.size(), decremented);
     }
 }
 

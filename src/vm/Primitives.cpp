@@ -7311,18 +7311,17 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Finalization signal path depends on PHARO_FINALIZE_DEFERRED:
-    //   - Default (off): signal inline, P50 preempts → drains mourn
-    //     queue before primitive returns.  Diverges from Cog but is
-    //     what our VM has shipped with historically.
-    //   - On: match Cog (cointerp-cpp.c:84895-84927).  No inline
-    //     signal; fullGC already set pendingFinalizationSignals; the
-    //     actual synchronousSignal fires at next backward-branch
-    //     interrupt check.  Lets testClearing observe the pre-finalize
-    //     tally at assertion B.
-    if (!g_debug.finalizeDeferred &&
-        memory_.pendingFinalizationSignals() > 0) {
-        signalFinalizationIfNeeded();
+    // Drain the mourn queue and signal FinalizationSemaphore inline.  The
+    // common test pattern is `Smalltalk garbageCollect; waitSemaphore wait` —
+    // the wait suspends the current process before any backward-branch
+    // interrupt check can run, so without an inline drain+signal here the
+    // FinalizationProcess (which fetches mourners via prim 172) never wakes
+    // up and the test deadlocks.  drainMournQueueNatively handles WKA
+    // mourners directly in C++ and re-queues non-WKA mourners
+    // (FinalizationRegistryEntry, etc.) for the image's FinalizationProcess
+    // to process via prim 172, also signaling the semaphore.
+    if (memory_.pendingFinalizationSignals() > 0) {
+        drainMournQueueNatively();
     }
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
@@ -7331,11 +7330,6 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
-    }
-
-    if (!g_debug.finalizeDeferred &&
-        memory_.pendingFinalizationSignals() > 0) {
-        finalizationCheckAfterGC_ = true;
     }
 
     return PrimitiveResult::Success;
