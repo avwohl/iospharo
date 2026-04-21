@@ -34,7 +34,7 @@ row; marked `?` until the cog row is populated.
     cog    default  2026-04-20  828/836   17258    17195   15   23    25   0    2m       (baseline)
     main   NO_JIT   2026-04-20  34/836    412†     410     0    2     0    0    50m(wd)  2 / ≥?
     main   default  —           —         —        —       —    —     —    —    —        ?
-    jit    NO_JIT   2026-04-21  834/836   17048    16987   12   18    25   6    45m(wd)  19
+    jit    NO_JIT   2026-04-21  824/836   16927    16864   14   18    25   6    45m(wd)  21
     jit    default  2026-04-21  0/836     —        —       —    —     —    —    45m(wd)  hang‡
 
 `wd` = hit the VM watchdog.  `†` = main NO_JIT is enormously slower per
@@ -275,16 +275,22 @@ versus the row immediately above.
     2026-04-21b 17048   16987    +7      12   -9   18    +1    6     0  (post-bucket-15 fixes:
                                                                          NFC/NFD, mkdir errno,
                                                                          readdir stat, exec path)
+    2026-04-21c 16927   16864   -123     14   +2   18    0    6     0  (post-revert of
+                                                                         finalization queue
+                                                                         split; watchdog-truncated
+                                                                         at FFICallbackParameters)
 
-"+1 error" from 21a → 21b is from new classes covered (834 vs 825);
-delta-vs-cog file shows the *real* count of regressions per run, not
-the absolute fail/error count.
+Note: 4-21c is a shorter run (DELAY-DEATH truncation cut ~10 classes).
+Tests delta is not meaningful vs 21b because of the early exit.
 
-Δcog progress: 548 (4-20) → 27 (4-21a) → 19 (4-21b).  Of the 27
-2026-04-21a regressions, 11 are now fixed (10 by today's commits +
-testIntegerParameters which dropped off — likely just didn't run in
-this batch).  Three new entries appeared from the +9 newly-covered
-classes (EDEmergencyDebugger 1, TraitTest 2).
+Δcog progress: 548 (4-20) → 27 (4-21a) → 19 (4-21b) → 21 (4-21c).
+4-21c is 10 fixes shy of 4-21a+10; it added 2 new entries (TraitTest
+and EpDisabledIntegration) from covered classes.  The 10 bucket
+15.A-C fixes are preserved:
+  testUserLocalDirectory, testVmBinary, testVmDirectory, testIsExecutable
+  testFromPlatformPath, testToPlatformPath
+  testCreateDirectoryExists, testCreateDirectoryNoParent
+  testMoveToFailingMissingDestination, testEntriesHaveAttributes
 
 ## What I DON'T know — open deltas
 
