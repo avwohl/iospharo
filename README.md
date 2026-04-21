@@ -193,9 +193,10 @@ VM parameters are set in `PharoBridge.swift` when calling `vm_init()`:
 
 Other repos in this collection:
 
+- **[smalltalk80-2026](https://github.com/avwohl/smalltalk80-2026)** — Smalltalk-80 VM implementation of the 1983 Blue Book Xerox virtual image, targeting macOS / Mac Catalyst, iOS, Windows, and Linux.
+- **[validate_smalltalk_image](https://github.com/avwohl/validate_smalltalk_image)** — Standalone validator and export tool for Spur-format Smalltalk image files (heap integrity, SHA-256 manifests, reference graphs).
 - **[pharo-headless-test](https://github.com/avwohl/pharo-headless-test)** — Headless Pharo test runner with a fake GUI; clicks menus, takes screenshots, runs SUnit without a display. Extracted from this project; included here as a submodule at `scripts/pharo-headless-test/`.
 - **[soogle](https://github.com/avwohl/soogle)** — Smalltalk code search engine that indexes packages across Pharo, Squeak, GemStone and more.
-- **[validate_smalltalk_image](https://github.com/avwohl/validate_smalltalk_image)** — Standalone validator and export tool for Spur-format Smalltalk image files (heap integrity, SHA-256 manifests, reference graphs).
 - **[claude-skills](https://github.com/avwohl/claude-skills)** — Open source skills for Claude Code: reusable knowledge and algorithms packaged as `.claude/skills/` markdown files.
 
 ## License
