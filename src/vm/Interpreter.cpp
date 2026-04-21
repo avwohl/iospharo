@@ -6557,18 +6557,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         drainMournQueueNatively();
     }
 
-    // Deferred FinalizationSemaphore signal: primitiveFullGC/primitiveIncrementalGC
-    // set `finalizationCheckAfterGC_` instead of signaling immediately.  Fire at
-    // this activateMethod entry — the caller's arguments are already on the
-    // operand stack (evaluated by caller), so any subsequent preemption won't
-    // disturb those values.  This preserves testClearing's invariant that
-    // `dict size` returns pre-drain tally immediately after garbageCollect,
-    // while also waking FinalizationProcess for FinalizationRegistry tests.
-    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
-        finalizationCheckAfterGC_ = false;
-        signalFinalizationIfNeeded();
-    }
-
     // Set up new method
     method_ = method;
     argCount_ = argCount;
@@ -7327,6 +7315,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     }
     // Otherwise fall through to interpreter execution via the dispatch loop
 #endif
+
+    // Deferred FinalizationSemaphore signal: primitiveFullGC/primitiveIncrementalGC
+    // set `finalizationCheckAfterGC_` instead of signaling immediately.  Fire at
+    // the END of activateMethod — method setup is complete, so if synchronousSignal
+    // transferTo's to FP, the test process's frame state is consistent and can
+    // resume from the beginning of its (newly activated) method body when
+    // scheduled again.
+    //
+    // testClearing invariant: `dict size` is prim 264 (quick) — doesn't go
+    // through activateMethod.  First method activation after garbageCollect
+    // is typically `self assert:equals:` whose args (pre-drain tally) are
+    // already on the operand stack evaluated by caller.  Preemption here
+    // doesn't disturb them.
+    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
+        finalizationCheckAfterGC_ = false;
+        signalFinalizationIfNeeded();
+    }
 }
 
 void Interpreter::activateBlock(Oop block, int argCount) {
