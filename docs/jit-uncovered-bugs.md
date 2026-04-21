@@ -575,8 +575,42 @@ monitor: needs investigation.
 
 This session's `results/sunit-2026-04-21-jit-nojit.txt` is the
 post-layer-5 baseline at Δcog=27 (vs Δcog=548 on 2026-04-20).
-The remaining 27 are triaged but unfixed — each bucket needs
-its own focused session.  Category 15.A is strictly harness
-config (not a VM bug).  Categories 15.B, 15.C are Darwin/fs
-primitives.  15.D-G are real VM behavior but need targeted
-debugging against stock Cog.
+
+### Progress 2026-04-21 (this sub-session): 10 of 27 fixed
+
+Fixed (verified in isolation each — each test now passes on our VM):
+
+  15.A  SystemResolver / DiskFileAttributes (4)
+    testUserLocalDirectory   argv[0] was relative; use _NSGetExecutablePath
+    testVmBinary             same root cause
+    testVmDirectory          same
+    testIsExecutable         same (path didn't exist on disk)
+
+  15.B  NFC/NFD platform path (2)
+    testFromPlatformPath     primitivePlatToStPath now NFD→NFC via CFStringNormalize
+    testToPlatformPath       primitiveStToPlatPath now NFC→NFD via CFStringNormalize
+
+  15.C  Filesystem primitives (4)
+    testCreateDirectoryExists        mkdir failure now FAILs primitive (was false)
+    testCreateDirectoryNoParent      same
+    testMoveToFailingMissingDestination  rename failure now FAILs primitive
+    testEntriesHaveAttributes        primitiveReaddir fstatats each entry now
+
+Triaged wrong in original analysis: 15.A was thought to be
+"harness env — not VM bug"; turned out to be a real VM bug
+(argv[0] resolving to relative path that failed realpath).
+
+### Remaining: 17 of 27
+
+  15.D  FFI callback return-value (3)     — TBD
+  15.E  Finalization/weak registry (8)    — TBD: ephemeron-fires
+                                              but finalizer signal
+                                              doesn't reach the
+                                              FinalizationProcess
+  15.F  Decompiler BlockCannotReturn (3)  — TBD
+  15.G  Process/exec env misc (3)         — TBD
+
+Current session made 10/27 progress; remaining 17 need focused
+debugging per bucket.  Categories 15.E (weak/finalization) is
+plausible one-fix-unlocks-many pattern — worth the next focused
+dive.  Others are independent and likely need separate sessions.
