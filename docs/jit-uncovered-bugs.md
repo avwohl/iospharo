@@ -589,7 +589,7 @@ corrupt them.
 
     FBDBytecodeDecompilerExamplesTest.testExampleIfTrue          ✅ FIXED (5b59f1c)
     FBDBytecodeDecompilerExamplesTest.testExampleSimpleBlockReturn  ✅ FIXED (5b59f1c)
-    OCSpecialSelectorTest.testUnoptimisedValueSpecialSendsMessageCapturesSend  (open)
+    OCSpecialSelectorTest.testUnoptimisedValueSpecialSendsMessageCapturesSend  ✅ FIXED (56b0fb8)
 
 FBD*: FBIRBytecodeDecompiler reuses the original method's CompiledBlock
 as a literal in the regenerated CompiledMethod.  The block's
@@ -600,15 +600,22 @@ savedFrames_ → cannotReturn.  Fix: fall back to the closure's
 outerContext.method when the static home isn't on the stack
 (5b59f1c).
 
-OCSpecialSelectorTest: the test installs an OCCalledMethodProxy as
-BlockClosure>>#value.  The proxy dispatches via #run:with:in: to
-`originalMethod valueWithReceiver:`.  Our harness patch (setup_fake_gui.st)
-adds #selector/#methodClass to the proxy, but the test still fails with
-`ByteSymbol doesNotUnderstand: #receiver:withArguments:executeMethod:`
-somewhere inside the proxy's dispatch chain.  Deeper investigation
-needed — may be a VM-level issue with how we handle primitive 188
-in the recursion OR with how invokeObjectAsMethod interacts with
-the proxy.
+OCSpecialSelectorTest: FIXED 2026-04-21 (56b0fb8).  The test installs
+an OCCalledMethodProxy as BlockClosure>>#value; the proxy forwards via
+`originalMethod valueWithReceiver:arguments:`.  Root cause was in
+`primitiveExecuteMethodArgsArray`: when the nested primitive (prim 207
+primitiveFullClosureValue for the block activation) activated a new
+frame, prim 188 then unconditionally restored `method_` to the
+caller's method, clobbering the block-frame's method reference.
+Subsequent bytecode execution used the wrong method context.
+
+Minimal repro (worked without needing OCCalledMethodProxy at all):
+  `(BlockClosure >> #value) valueWithReceiver: [42] arguments: #()`
+On the pre-fix binary, throws "only integers should be used as
+indices"; post-fix returns 42.
+
+Fix: track frameDepth before the nested `executePrimitive`; only
+restore `method_` if frame depth is unchanged (non-activating prim).
 
 ### 15.G  Process / exec-env — 3
 

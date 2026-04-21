@@ -9,9 +9,10 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21b     19   bucket 15.A-C (paths, NFC/NFD, filesystem)
     2026-04-21c     21   watchdog-truncated rerun
     2026-04-21d     17   + decompiler NLR fix
-    2026-04-21e      ?   + finalization bucket (9 tests)   ← run in flight
+    2026-04-21e     ?    + finalization bucket (9 tests) — run timed out in FFI
+    2026-04-21f     ?    + prim 188 method_ fix           ← run in flight (NO_JIT)
 
-Expected 4-21e Δcog: **≤ 8** (21 fixes committed - 2 already banked in 21d).
+Expected 4-21f Δcog: **≤ 7** (22 fixes committed - 2 already banked in 21d).
 
 ## Fixes committed this session (21 total)
 
@@ -48,6 +49,16 @@ Bucket 15.F — decompiler NLR (2):
     method, so the block's outerCode points at the ORIGINAL method — home lookup
     via static chain would miss the regen's frame.
 
+Bucket 15.F — OCSpecialSelector (1):
+  - `primitiveExecuteMethodArgsArray` (prim 188 3-arg mirror) no longer restores
+    `method_` after a nested primitive that activates a new frame (56b0fb8).
+    Prim 207 (primitiveFullClosureValue for BlockClosure>>value) is the common
+    case.  Minimal repro: `(BlockClosure >> #value) valueWithReceiver: blk
+    arguments: #()` crashed with "only integers should be used as indices"
+    on the old binary; returns the block value with the fix.  This is the
+    OCCalledMethodProxy path that OCSpecialSelectorTest>>testUnoptimised
+    ValueSpecialSendsMessageCapturesSend exercises.
+
 Harness (not a Δcog count, but defensive):
   - `setup_fake_gui.st` patches OCCalledMethodProxy with `#selector` / `#methodClass`
     delegating to `originalMethod`; forces `Symbol selectorTable` to build at
@@ -56,11 +67,9 @@ Harness (not a Δcog count, but defensive):
 ## Known-remaining Δcog entries (likely 6-8)
 
 Real VM bugs:
-  - `OCSpecialSelectorTest>>testUnoptimisedValueSpecialSendsMessageCapturesSend` —
-    literal-index / `receiver_` corruption during prim 188 + OCCalledMethodProxy
-    chain.  Diagnostic shows DNU with nil selector AND nil receiver inside
-    `CompiledMethod>>valueWithReceiver:arguments:`.  Needs interactive bytecode
-    debug; deferred.
+  - ~~OCSpecialSelector~~ FIXED 2026-04-21 (56b0fb8) — prim 188 was
+    restoring `method_` after a child activating prim (207); with the
+    restore disabled for frame-depth-changed cases the full chain works.
 
 Bug-14 family (scheduler):
   - `FFICallbackParametersTest>>testCharacterParameters` — test-ordering
