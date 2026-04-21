@@ -550,15 +550,28 @@ signaled.
 
 ### 15.F  Decompiler + special-selector — 3
 
-    FBDBytecodeDecompilerExamplesTest.testExampleIfTrue        (BlockCannotReturn)
-    FBDBytecodeDecompilerExamplesTest.testExampleSimpleBlockReturn (BlockCannotReturn)
-    OCSpecialSelectorTest.testUnoptimisedValueSpecialSendsMessageCapturesSend
-                                                              (DNU: "new" on nil)
+    FBDBytecodeDecompilerExamplesTest.testExampleIfTrue          ✅ FIXED (5b59f1c)
+    FBDBytecodeDecompilerExamplesTest.testExampleSimpleBlockReturn  ✅ FIXED (5b59f1c)
+    OCSpecialSelectorTest.testUnoptimisedValueSpecialSendsMessageCapturesSend  (open)
 
-`BlockCannotReturn` suggests the test synthesizes a `CompiledMethod`
-and invokes it with `valueWithReceiver:`; our implementation of
-that primitive creates a block whose home context is already
-dead.  Home-context tracking bug, not an interpreter semantics bug.
+FBD*: FBIRBytecodeDecompiler reuses the original method's CompiledBlock
+as a literal in the regenerated CompiledMethod.  The block's
+last-literal (`outerCode`) points at the ORIGINAL method, but the
+regenerated method is what's actually on the call stack.  NLR looks
+up the home by the CompiledBlock's last literal → doesn't find it on
+savedFrames_ → cannotReturn.  Fix: fall back to the closure's
+outerContext.method when the static home isn't on the stack
+(5b59f1c).
+
+OCSpecialSelectorTest: the test installs an OCCalledMethodProxy as
+BlockClosure>>#value.  The proxy dispatches via #run:with:in: to
+`originalMethod valueWithReceiver:`.  Our harness patch (setup_fake_gui.st)
+adds #selector/#methodClass to the proxy, but the test still fails with
+`ByteSymbol doesNotUnderstand: #receiver:withArguments:executeMethod:`
+somewhere inside the proxy's dispatch chain.  Deeper investigation
+needed — may be a VM-level issue with how we handle primitive 188
+in the recursion OR with how invokeObjectAsMethod interacts with
+the proxy.
 
 ### 15.G  Process / exec-env — 3
 
