@@ -332,6 +332,35 @@ to dispatch (via the activate-time gate).  If Sista's compile
 path touches state unsafely (e.g., fills asmjit metadata that
 later mis-routes a semaphore signal), the image stalls.
 
+**Update 2026-04-21**: bisected further.
+
+- `PHARO_NO_SISTA=1` (T1 JIT only, Sista off): **still hangs**
+  identically after 1115 compiles.  So bug is in T1 JIT, not Sista.
+- `PHARO_JIT_SKIP_SELECTORS=idleProcess`: still hangs.  So the
+  idleProcess compile wasn't the trigger either.
+
+Queue diagnosis at hang time shows two processes:
+
+    P10  idleProcess                                  (running idle)
+    P80  DelayMicrosecondTicker>>waitForUserSignalled:orExpired:  (blocked)
+
+`DIAG-TIMER` logs show the microsecond timer was armed, fired,
+and then `timerSem=nil / nextUsec=INT64_MAX` — meaning nothing
+re-armed the timer by calling primitive 242.  Only 3 semaphore
+signals total across the 45-min run, vs thousands in a healthy
+session.
+
+So: JIT's execution of `DelayMicrosecondTicker>>waitForUserSignalled:`
+or adjacent methods is dropping the re-arm path.  Either a
+primitive-242 call gets miscompiled (wrong operands pushed to
+stack), or a conditional branch miscompiles and skips the re-arm
+branch, or something in the ticker's per-iteration state isn't
+being stored correctly.
+
+Next step: PHARO_JIT_SKIP_SELECTORS with a specific selector
+(waitForUserSignalled:orExpired:, primSignal:atUTCMicroseconds:,
+etc.) to identify which JIT-compiled method is the culprit.
+
 Bug 11 closed completely.  The root cause turned out to be
 **layer 5: JM_SIZE constant was 80 in two files (stencils.cpp
 and TrampolineAsm.S) while real sizeof(JITMethod) had grown to
