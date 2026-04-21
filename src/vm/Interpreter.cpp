@@ -9816,8 +9816,10 @@ void Interpreter::transferTo(Oop newProcess) {
     }
 
     static int xferLog = 0;
-    if (xferLog < 50) {
-        xferLog++;
+    xferLog++;
+    // PHARO_XFER_TRACE=1 — log every process switch, for debugging bug 14
+    static bool xferTrace = getenv("PHARO_XFER_TRACE") != nullptr;
+    if (xferLog < 50 || xferTrace) {
         int oldPri = safeProcessPriority(oldProcess);
         int newPri = safeProcessPriority(newProcess);
         fprintf(stderr, "[XFER-%d] old=0x%llx pri=%d -> new=0x%llx pri=%d\n",
