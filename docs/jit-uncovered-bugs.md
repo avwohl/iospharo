@@ -311,12 +311,17 @@ fine) or move at least one out-of-line method into it.
                                 past last bytecode, afa3d6a — was
                                 clamping to sentinel offset that
                                 pointed at the literal pool)
-    Open          11b layer 5  (PC ~225KB past jm in another
-                                method's allocation space — likely
-                                an IC-cached J2J code pointer
-                                pointing into a method's data area,
-                                from a stale entry left by a prior
-                                recompile or IC fill)
+                  11b layer 5  **JM_SIZE was 80, real sizeof(JITMethod)
+                                is 88**.  Hand-coded constants in
+                                stencils.cpp and TrampolineAsm.S
+                                drifted out of sync with the C++
+                                struct.  Every stencil's
+                                `entry = methodHdr + JM_SIZE`
+                                computed methodHdr+80 (= lastUsedEpoch
+                                field) instead of methodHdr+88 (=
+                                codeStart).  Fixed by mirror struct
+                                + sizeof, runtime cross-check, and
+                                stencil regen.  1c3a5a4
 
 Crash floor progression: compile #5 → #15 → #28 → #42 → #45 → #56 → #68.
 Each layer is a real bug; each fix is methodically peeling onion layers.
