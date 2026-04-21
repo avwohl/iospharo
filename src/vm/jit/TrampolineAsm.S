@@ -60,8 +60,14 @@
 #define JM_NUMBYTECODES   30
 #define JM_ARGCOUNT       34   // uint8_t cached from method header
 #define JM_TEMPCOUNT      35
-#define JM_BCTOCODEOFF    76
-#define JM_SIZE           80
+#define JM_BCTOCODEOFF    84   // bcToCodeTableOffset, see JITMethod.hpp
+// JM_SIZE must equal sizeof(JITMethod) (see JITMethod.hpp).
+// CAN'T USE sizeof IN ASSEMBLY — but a C++ runtime check in
+// JITRuntime::initialize() asserts this constant matches sizeof().
+// Bug 11b layer 5: was 80 while real struct grew to 88, causing
+// every `add Xn, methodHdr, #JM_SIZE` to land 8 bytes BEFORE
+// codeStart inside the JITMethod header (lastUsedEpoch field).
+#define JM_SIZE           88
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1
@@ -406,5 +412,15 @@ Ltramp_exit:
     ldp     x21, x22, [sp, #16]
     ldp     x29, x30, [sp], #128
     ret
+
+// Cross-TU sentinel: a uint64_t holding our JM_SIZE constant.
+// JITRuntime::initialize() compares this against sizeof(JITMethod)
+// at startup so the asm constant can never silently drift out of
+// sync with the C++ struct again.  Bug 11b layer 5.
+.data
+.globl SYMBOL(pharo_jit_jm_size_check)
+.p2align 3
+SYMBOL(pharo_jit_jm_size_check):
+    .quad   JM_SIZE
 
 #endif // __aarch64__ && PHARO_JIT_ENABLED

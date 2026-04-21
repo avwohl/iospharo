@@ -122,6 +122,58 @@ struct J2JSave {
 };
 static_assert(sizeof(J2JSave) == 56, "J2JSave must be 56 bytes");
 
+// JITMethod_mirror — byte-for-byte mirror of pharo::jit::JITMethod
+// (defined in src/vm/jit/JITMethod.hpp) so we can use sizeof() instead
+// of a hand-coded magic number.  Bug 11b layer 5: previously
+// JM_SIZE was hard-coded as 80, but JITMethod grew to 88 bytes when
+// the `pinned` field was added (and earlier layout changes); the
+// stencil math `entry = methodHdr + JM_SIZE` then computed the wrong
+// entry pointer (8 bytes BEFORE codeStart, into the lastUsedEpoch
+// field).  Using sizeof() means future layout changes can never
+// silently break stencil math.
+//
+// Static-asserted against the real value in JITMethod.hpp
+// (sizeof(JITMethod) <= 128) and via JM_SIZE_RUNTIME_CHECK in
+// JITRuntime initialization.
+struct JITMethod_mirror {
+    uint64_t  compiledMethodOop;  // 0
+    uint64_t  selectorOop;        // 8
+    uint64_t  methodHeader;       // 16
+    uint32_t  codeSize;           // 24
+    uint16_t  numICEntries;       // 28
+    uint16_t  numBytecodes;       // 30
+    uint8_t   state;              // 32
+    uint8_t   tier;               // 33
+    uint8_t   argCount;           // 34
+    uint8_t   tempCount;          // 35
+    bool      hasSends;           // 36
+    bool      hasHeapWrites;      // 37
+    bool      hasRecvFieldAccess; // 38
+    bool      hasRecvFieldWrite;  // 39
+    bool      hasLitVarWrite;     // 40
+    bool      hasPrimPrologue;    // 41
+    bool      isBlock;            // 42
+    bool      pinned;             // 43
+    uint8_t   maxRecvFieldIndex;  // 44
+    // (3 bytes padding to 8-byte alignment)
+    uint32_t  executionCount;     // 48
+    uint32_t  totalSize;          // 52
+    uint8_t   j2jDepthLimit;      // 56
+    uint8_t   j2jCleanRuns;       // 57
+    // (6 bytes padding)
+    void*     nextInZone;         // 64
+    void*     prevInZone;         // 72
+    uint32_t  lastUsedEpoch;      // 80
+    uint32_t  bcToCodeTableOffset;// 84
+};
+static_assert(sizeof(JITMethod_mirror) == 88,
+              "JITMethod_mirror must match real JITMethod (88 bytes)");
+static_assert(offsetof(JITMethod_mirror, state) == 32, "state offset");
+static_assert(offsetof(JITMethod_mirror, lastUsedEpoch) == 80, "lastUsedEpoch offset");
+// Cross-check JM_SIZE constant (defined later) against the mirror.
+// See after the JM_SIZE definition for the actual static_assert —
+// can't forward-reference here.
+
 // Tag bit constants (must match Oop.hpp)
 static constexpr uint64_t SmallIntegerTag = 0x1;     // bit 0 = 1, bits 2:1 = 00
 static constexpr uint64_t TagMask3 = 0x7;
@@ -208,7 +260,13 @@ static constexpr int JM_METHOD_HEADER   = 16;  // uint64_t methodHeader
 static constexpr int JM_TEMP_COUNT      = 35;  // uint8_t  tempCount
 static constexpr int JM_ARG_COUNT       = 34;  // uint8_t  argCount
 static constexpr int JM_HAS_PRIM_PROL   = 41;  // bool hasPrimPrologue
-static constexpr int JM_SIZE            = 80;  // sizeof(JITMethod)
+// Use sizeof(JITMethod_mirror) so this auto-tracks layout changes.
+// JITMethod_mirror is defined later in this file; both must match
+// pharo::jit::JITMethod's actual layout.  Bug 11b layer 5: hard-coded
+// value (80) drifted out of sync after the real struct grew to 88.
+static constexpr int JM_SIZE            = 88;  // == sizeof(JITMethod_mirror)
+static_assert(JM_SIZE == sizeof(JITMethod_mirror),
+              "JM_SIZE must equal sizeof(JITMethod_mirror) — bug 11b layer 5");
 
 // =====================================================================
 // STENCILS

@@ -20,6 +20,11 @@ using pharo::g_stepNum;
 
 #if PHARO_JIT_ENABLED
 
+// Defined in TrampolineAsm.S — holds the asm-side JM_SIZE constant.
+// JITRuntime::initialize() asserts this matches sizeof(JITMethod).
+extern "C" const uint64_t pharo_jit_jm_size_check;
+static const uint64_t& g_pharo_jit_jm_size_check = pharo_jit_jm_size_check;
+
 namespace pharo {
 }
 
@@ -859,6 +864,18 @@ JITRuntime::~JITRuntime() {
 
 bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     if (initialized_) return true;
+
+    // Bug 11b layer 5 sentinel: hand-coded JM_SIZE in TrampolineAsm.S
+    // (an `.S` file — can't use `sizeof`) MUST equal the real
+    // sizeof(JITMethod).  If layout drifts, every asm trampoline
+    // computes `add Xn, methodHdr, #JM_SIZE` to the wrong address.
+    // Fail loudly at startup instead of crashing later.
+    if (g_pharo_jit_jm_size_check != sizeof(JITMethod)) {
+        fprintf(stderr, "[JIT] FATAL: TrampolineAsm.S JM_SIZE=%llu != sizeof(JITMethod)=%zu — "
+                "stencil math will land outside method code.  Update JM_SIZE in TrampolineAsm.S.\n",
+                (unsigned long long)g_pharo_jit_jm_size_check, sizeof(JITMethod));
+        return false;
+    }
 
     // Initialize code zone
     if (!codeZone_.initialize()) {
