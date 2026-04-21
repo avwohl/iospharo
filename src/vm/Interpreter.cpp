@@ -7328,15 +7328,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // is typically `self assert:equals:` whose args (pre-drain tally) are
     // already on the operand stack evaluated by caller.  Preemption here
     // doesn't disturb them.
-    //
-    // Also fire when pendingFinalizationSignals > 0 (regardless of flag),
-    // so kept-in-mournQueue finalizer mourners (from drainMournQueueNatively's
-    // keep-and-repush path) eventually get consumed by FP.  Without this,
-    // auto-compact GCs (which don't set the flag) leave the queue bouncing
-    // across subsequent activations — the mournQueue anchors class-referencing
-    // finalizers, blocking obsolete-class weak-alone transition.
-    if (__builtin_expect(finalizationCheckAfterGC_ ||
-                         memory_.pendingFinalizationSignals() > 0, 0)) {
+    if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
         finalizationCheckAfterGC_ = false;
         signalFinalizationIfNeeded();
     }
