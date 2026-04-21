@@ -547,23 +547,43 @@ a semaphore that never signals).
 Fix requires scheduler-level work on callback process lifecycle;
 related to bug 14.
 
-### 15.E  Finalization / weak references — 8
+### 15.E  Finalization / weak references — 8 (ALL FIXED)
 
-    FinalizationRegistryTest.testFinalization                     (timeout)
-    FinalizationRegistryTest.testFinalizationRemovesEntryFromRegistry  (timeout)
-    FinalizationRegistryTest.testFinalizationWithMultipleFinalizersPerObject (timeout)
-    FinalizationRegistryTest.testFinalizationWithOnFork           (timeout)
-    FinalizationRegistryTest.testFinalizationWithOnFork2          (timeout)
-    ObjectFinalizerTest.testFinalizationOfMultipleResources       (fail)
-    WeakAnnouncerTest.testWeakDoubleAnnouncer                     (fail)
-    WeakAnnouncerTest.testWeakObject                              (got 2 vs 1)
+    FinalizationRegistryTest.testFinalization                        ✅ (39bfe98, 6efe091)
+    FinalizationRegistryTest.testFinalizationRemovesEntryFromRegistry  ✅
+    FinalizationRegistryTest.testFinalizationWithMultipleFinalizersPerObject ✅
+    FinalizationRegistryTest.testFinalizationWithOnFork              ✅
+    FinalizationRegistryTest.testFinalizationWithOnFork2             ✅
+    ObjectFinalizerTest.testFinalizationOfMultipleResources          ✅
+    WeakAnnouncerTest.testWeakDoubleAnnouncer                        ✅
+    WeakAnnouncerTest.testWeakObject                                 ✅
 
-`project_cog_spec_finalize` memory says testClearing/testFinalize
-PASS as of 2026-04-20; the FinalizationRegistry API is newer
-(Pharo 12+).  Registry-style finalization may need an extra
-semaphore-wake on GC compaction or different weak-queue drain
-timing.  All 5 tests time out at 300s → something's not being
-signaled.
+Three-part fix landed:
+
+  1. Defer FinalizationSemaphore signal to activateMethod entry.
+     primitiveFullGC/primitiveIncrementalGC set
+     `finalizationCheckAfterGC_` instead of signaling immediately.
+     Consumption moved from step() to the END of activateMethod,
+     after method setup is complete — transferTo lands on a
+     consistent frame state.
+
+  2. Add `signalFinalizationIfNeededDeferred` — non-preempting
+     variant for primitiveWait.  Puts FP waiter in its priority's
+     ready queue without transferTo.  Preserves the wait-logic
+     sequence (put self on wait list, suspend) without being
+     interrupted mid-flight.
+
+  3. `drainMournQueueNatively` now filter-drains: pops all entries,
+     processes WKAs in C++, re-pushes non-WKAs via new pushMourner()
+     for image-side FP dispatch via prim 172.  Previous version
+     silently dropped non-WKAs, starving ObjectFinalizer and
+     FinalizationRegistryEntry finalizers.
+
+testClearing's invariant preserved: `dict size` is prim 264 (quick),
+doesn't activate a method, returns pre-drain tally.  The next full
+activation is `self assert: equals:` — its args are already on the
+operand stack, so preemption-to-FP at that activation doesn't
+corrupt them.
 
 ### 15.F  Decompiler + special-selector — 3
 
