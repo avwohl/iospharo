@@ -9,10 +9,19 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21b     19   bucket 15.A-C (paths, NFC/NFD, filesystem)
     2026-04-21c     21   watchdog-truncated rerun
     2026-04-21d     17   + decompiler NLR fix
-    2026-04-21e     ?    + finalization bucket (9 tests) — run timed out in FFI
-    2026-04-21f     ?    + prim 188 method_ fix           ← run in flight (NO_JIT)
+    2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
+    2026-04-21f    ≈60   + prim 188 method_ fix (closes OCSpecial + 2 Traits)
 
-Expected 4-21f Δcog: **≤ 7** (22 fixes committed - 2 already banked in 21d).
+⚠️  **The 4-21e finalization commits caused a major net regression.**
+    8 finalization tests pass, but ~45 Cly/ED tests now DNU with
+    `AnObsoleteSlotTestsClassA` because finalization timing changes
+    delay obsolete-class cleanup.  See memory
+    `project_fin_commits_obsolete_class`.
+
+    Options for next session:
+      (a) revert finalization commits → Δcog ≈ 14 (clean win from prim 188)
+      (b) find specific fin change that delays obsolete-class cleanup
+          and adjust while preserving 8 fin test fixes
 
 ## Fixes committed this session (21 total)
 
