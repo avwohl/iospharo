@@ -10,7 +10,7 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21c     21   watchdog-truncated rerun
     2026-04-21d     17   + decompiler NLR fix
     2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
-    2026-04-21f    ≈60   + prim 188 method_ fix (closes OCSpecial + 2 Traits)
+    2026-04-21f     89   + prim 188 method_ fix (CONFIRMED: closes OCSpecial + 2 Traits)
 
 ⚠️  **The 4-21e finalization commits caused a major net regression.**
     8 finalization tests pass, but ~45 Cly/ED tests now DNU with
