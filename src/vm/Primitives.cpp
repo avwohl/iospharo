@@ -883,10 +883,19 @@ PrimitiveResult Interpreter::primitiveExecuteMethodArgsArray(int argCount) {
     int primIndex = primitiveIndexOf(method);
     if (primIndex > 0) {
         Oop savedMethod = method_;
+        size_t savedFrameDepth = frameDepth_;
         method_ = method;
         auto result = executePrimitive(primIndex, methodNumArgs);
         if (result == PrimitiveResult::Success) {
-            method_ = savedMethod;
+            // If the nested primitive activated a new frame (e.g. prim 207
+            // primitiveFullClosureValue for BlockClosure>>value), method_ now
+            // points at the activated method; restoring would leave the
+            // interpreter reading bytecodes with the wrong method context.
+            // Only restore for non-activating primitives (arithmetic etc.)
+            // that leave the frame depth unchanged.
+            if (frameDepth_ == savedFrameDepth) {
+                method_ = savedMethod;
+            }
             return PrimitiveResult::Success;
         }
         method_ = savedMethod;
