@@ -455,6 +455,8 @@ public:
 
     /// Signal the finalization semaphore if any mourners were queued during GC.
     void signalFinalizationIfNeeded();
+    /// Variant for primitiveWait: non-preempting (puts waiter on ready queue).
+    void signalFinalizationIfNeededDeferred();
 
     /// Check if an object can be made immutable (per Cog VM's canBeImmutable:).
     /// Returns false for contexts, ephemerons, weak objects, semaphores,

@@ -3595,13 +3595,15 @@ PrimitiveResult Interpreter::primitiveWait(int argCount) {
     // Otherwise suspend current process on the semaphore's wait list.
 
     // Flush deferred FinalizationSemaphore signal before the current process
-    // potentially suspends.  Without this, testFinalization's
-    // `garbageCollect; waitSemaphore wait` pattern deadlocks: the wait
-    // suspends before activateMethod fires (primitiveWait doesn't go through
-    // a method activation), so FinalizationProcess never wakes.
+    // potentially suspends.  Use the NON-preempting deferred variant: FP
+    // goes on its ready queue rather than immediately transferring-to.
+    // Otherwise the primitiveWait's own suspension logic (below) would be
+    // interrupted mid-flight and fail to put us on the waitSemaphore's
+    // wait list, so the subsequent `waitSemaphore signal` (from the
+    // finalizer) has no waiter to wake and the test deadlocks.
     if (__builtin_expect(finalizationCheckAfterGC_, 0)) {
         finalizationCheckAfterGC_ = false;
-        signalFinalizationIfNeeded();
+        signalFinalizationIfNeededDeferred();
     }
 
     if (stackPointer_ < stackBase_ + argCount + 1) {

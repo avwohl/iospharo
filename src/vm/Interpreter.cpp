@@ -2589,19 +2589,49 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 }
 
 void Interpreter::signalFinalizationIfNeeded() {
-    // Signal the finalization semaphore so FinalizationProcess wakes on its
-    // next scheduling opportunity.  We deliberately do NOT use
-    // synchronousSignal — that would transferTo FP immediately, preempting
-    // the caller mid-primitive.  For the `garbageCollect; sema wait` pattern
-    // (testFinalization), the caller is INSIDE primitiveWait and wants to
-    // complete the wait logic (putting itself on waitSemaphore's list)
-    // BEFORE FP runs.  Preempting here leaves the waiter off the list; the
-    // subsequent waitSemaphore signal has no one to wake.
+    // Signal FinalizationSemaphore via synchronousSignal, which will
+    // transferTo FP if it has higher priority than the active process.
+    // For the testClearing-style case the caller is mid-activateMethod of
+    // `assert:equals:` — its args (pre-drain tally) are already on the
+    // operand stack, so preemption here doesn't disturb them.
     //
-    // Instead: move the waiter (if any) from FinalizationSemaphore's wait
-    // list to its priority's ready queue.  No excessSignals++; no transferTo.
-    // Scheduler's next wakeHighestPriority call will pick FP up naturally.
-    // If no waiter, increment excessSignals so a later wait succeeds.
+    // For the testFinalization-style case the caller is inside primitiveWait.
+    // primitiveWait must flush this signal AFTER suspending itself on the
+    // waitSemaphore, not before — see primitiveWait for the two-step
+    // sequence.  The top-level convention: if primitiveWait wants to defer,
+    // it calls signalFinalizationIfNeededDeferred() which just queues into
+    // ready without transferTo.
+    size_t pending = memory_.pendingFinalizationSignals();
+    if (pending <= 0) return;
+
+    memory_.clearPendingFinalizationSignals();
+
+    Oop sema = memory_.specialObject(SpecialObjectIndex::TheFinalizationSemaphore);
+    if (!sema.isObject() || sema == memory_.nil()) return;
+
+    finalizationSignalCount_++;
+    finalizationPendingTotal_ += pending;
+    lastFinalizationSignalTime_ = std::chrono::steady_clock::now();
+
+    if (g_debug.gcEphDebug) {
+        Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
+        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
+        bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
+        fprintf(stderr, "[SIG-FIN] #%zu pending=%zu total=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
+                finalizationSignalCount_, pending, finalizationPendingTotal_,
+                (unsigned long long)sema.rawBits(), (int)hasWaiter,
+                (long long)(excessOop.isSmallInteger() ? excessOop.asSmallInteger() : -1));
+    }
+
+    synchronousSignal(sema);
+}
+
+void Interpreter::signalFinalizationIfNeededDeferred() {
+    // Variant for primitiveWait: moves the FinalizationSemaphore waiter to
+    // its priority's ready queue without transferTo.  The caller (primitiveWait)
+    // is about to suspend on its own waitSemaphore; doing synchronousSignal
+    // here would transferTo FP while primitiveWait's own suspension logic is
+    // still mid-flight, corrupting the wait list.
     size_t pending = memory_.pendingFinalizationSignals();
     if (pending <= 0) return;
 
@@ -2617,18 +2647,10 @@ void Interpreter::signalFinalizationIfNeeded() {
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, sema);
     bool hasWaiter = !(firstLink.isNil() || firstLink.rawBits() == memory_.nil().rawBits());
 
-    if (g_debug.gcEphDebug) {
-        Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
-        fprintf(stderr, "[SIG-FIN] #%zu pending=%zu total=%zu sema=0x%llx hasWaiter=%d excess=%lld\n",
-                finalizationSignalCount_, pending, finalizationPendingTotal_,
-                (unsigned long long)sema.rawBits(), (int)hasWaiter,
-                (long long)(excessOop.isSmallInteger() ? excessOop.asSmallInteger() : -1));
-    }
-
     if (hasWaiter) {
         Oop waiter = removeFirstLinkOfList(sema);
         if (waiter.isObject() && !waiter.isNil()) {
-            putToSleep(waiter);  // ready queue at its priority — no transferTo
+            putToSleep(waiter);
         }
     } else {
         Oop excessOop = memory_.fetchPointer(SemaphoreExcessSignalsIndex, sema);
