@@ -11558,17 +11558,26 @@ PrimitiveResult Interpreter::primitiveFileRename(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    int result = rename(oldName.c_str(), newName.c_str());
+    if (rename(oldName.c_str(), newName.c_str()) != 0) {
+        osErrorCode_ = errno;
+        return PrimitiveResult::Failure;
+    }
 
     popN(argCount + 1);
-    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    push(memory_.trueObject());
     return PrimitiveResult::Success;
 }
 
 // ===== DIRECTORY PRIMITIVES =====
 
 // Primitive 122: Create a directory
-// pathString primitiveDirectoryCreate -> boolean
+// pathString primitiveDirectoryCreate -> non-nil on success.
+// The image side (File>>createDirectory:) falls back to `^ nil` when the
+// primitive fails, and DiskStore inspects errno vs the filesystem to pick
+// an appropriate exception (DirectoryExists, DirectoryDoesNotExist,
+// FileExists, etc.).  So on mkdir failure we must FAIL the primitive —
+// returning `false` would let DiskStore think mkdir succeeded and never
+// signal the exception.
 PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
     Oop pathOop = stackTop();
 
@@ -11577,11 +11586,14 @@ PrimitiveResult Interpreter::primitiveDirectoryCreate(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-    // Create directory with rwxr-xr-x permissions
-    int result = mkdir(path.c_str(), 0755);
+    if (mkdir(path.c_str(), 0755) != 0) {
+        // Preserve errno so a future primitiveErrorCode could expose it.
+        osErrorCode_ = errno;
+        return PrimitiveResult::Failure;
+    }
 
     pop();
-    push(result == 0 ? memory_.trueObject() : memory_.falseObject());
+    push(memory_.trueObject());
     return PrimitiveResult::Success;
 }
 
