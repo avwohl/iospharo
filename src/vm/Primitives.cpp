@@ -26480,10 +26480,13 @@ PrimitiveResult Interpreter::primitiveOpendir(int argCount) {
 }
 
 // FileAttributesPlugin>>primitiveReaddir
-// Stack: receiver, dirPointerBytes -> Array({filenameByteArray, attributesOrNil}) or nil (end of dir)
-// Pharo's DiskStore>>directoryAt:nodesDo: expects a 2+ element Array where:
+// Stack: receiver, dirPointerBytes -> Array({filenameByteArray, statAttributesOrNil}) or nil
+// Pharo's DiskStore>>directoryAt:nodesDo: expects a 2-element Array where:
 //   element 1 = filename as ByteArray (UTF-8 encoded)
-//   element 2 = symlink attributes Array or nil
+//   element 2 = pre-populated stat attributes Array (12 slots), or nil if stat fails
+// DiskDirectoryEntry>>statAttributes: the second slot, and testEntriesHaveAttributes
+// asserts the ivar is non-nil — so we must fill it here instead of leaving the
+// image to do a lazy stat-per-entry on access.
 PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
@@ -26519,6 +26522,13 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
         return PrimitiveResult::Success;
     }
 
+    // fstatat against the DIR's fd gives us the stat data without having to
+    // rebuild the full path.  Use AT_SYMLINK_NOFOLLOW so symlinks aren't
+    // chased — matches lstat behavior that FileAttributesPluginUnix uses
+    // when probing directory entries.
+    struct stat st;
+    bool haveStat = (fstatat(dirfd(dir), entry->d_name, &st, AT_SYMLINK_NOFOLLOW) == 0);
+
     // Create ByteArray for the entry name (Pharo expects ByteArray, not String)
     size_t nameLen = strlen(entry->d_name);
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
@@ -26528,22 +26538,102 @@ PrimitiveResult Interpreter::primitiveReaddir(int argCount) {
     if (nameBytes.isNil()) return PrimitiveResult::Failure;
     memcpy(nameBytes.asObjectPtr()->bytes(), entry->d_name, nameLen);
 
-    // GC safety: push nameBytes onto stack so GC can update it during next allocation
+    // GC safety: push nameBytes so it survives subsequent allocations
     push(nameBytes);
 
-    // Create 2-element Array: {filenameByteArray, nil}
+    // Build the 12-slot stat attributes array (matching primitiveFileAttributes layout).
+    // Keep statArray on the operand stack across int64ToOop allocations.
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     if (arrayClass.isNil()) { pop(); return PrimitiveResult::Failure; }
     uint32_t arrayClassIndex = memory_.indexOfClass(arrayClass);
-    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
-    if (resultArray.isNil()) { pop(); return PrimitiveResult::Failure; }
 
-    // Retrieve GC-safe nameBytes from stack
-    nameBytes = stackTop();
-    pop();
+    Oop statArray = memory_.nil();
+    if (haveStat) {
+        Oop newStatArray = memory_.allocateSlots(arrayClassIndex, 12, ObjectFormat::Indexable);
+        if (newStatArray.isNil()) { pop(); return PrimitiveResult::Failure; }
+        push(newStatArray);  // protect
+
+        // Squeak-local time: unix seconds + tm_gmtoff + seconds-from-1901-to-1970
+        static const int64_t squeakEpochDelta = (int64_t)(52*365 + 17*366) * 24 * 60 * 60;
+        auto toSqueakLocal = [&](time_t unixTime) -> int64_t {
+            struct tm local;
+            localtime_r(&unixTime, &local);
+            return static_cast<int64_t>(unixTime) + local.tm_gmtoff + squeakEpochDelta;
+        };
+
+        // Slot 0: readlink target name for symlinks, else nil.
+        if (S_ISLNK(st.st_mode)) {
+            // fstatat doesn't readlink for us; use readlinkat relative to dirfd.
+            char buf[4096];
+            ssize_t n = readlinkat(dirfd(dir), entry->d_name, buf, sizeof(buf));
+            if (n < 0) {
+                newStatArray = stackTop();
+                memory_.storePointer(0, newStatArray, Oop::nil());
+            } else {
+                Oop target = createStringObject(memory_, std::string(buf, (size_t)n));
+                if (target.isNil()) { popN(2); return PrimitiveResult::Failure; }
+                newStatArray = stackTop();
+                memory_.storePointer(0, newStatArray, target);
+            }
+        } else {
+            newStatArray = stackTop();
+            memory_.storePointer(0, newStatArray, Oop::nil());
+        }
+
+        // Slot 1: mode
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_mode);
+          newStatArray = stackTop(); memory_.storePointer(1, newStatArray, v); }
+        // Slot 2: inode
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_ino);
+          newStatArray = stackTop(); memory_.storePointer(2, newStatArray, v); }
+        // Slot 3: device
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_dev);
+          newStatArray = stackTop(); memory_.storePointer(3, newStatArray, v); }
+        // Slot 4: nlink
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_nlink);
+          newStatArray = stackTop(); memory_.storePointer(4, newStatArray, v); }
+        // Slot 5: uid
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_uid);
+          newStatArray = stackTop(); memory_.storePointer(5, newStatArray, v); }
+        // Slot 6: gid
+        { Oop v = int64ToOop(memory_, (int64_t)st.st_gid);
+          newStatArray = stackTop(); memory_.storePointer(6, newStatArray, v); }
+        // Slot 7: size (0 for directories, matching upstream FileAttributesPlugin)
+        { Oop v = int64ToOop(memory_, S_ISDIR(st.st_mode) ? (int64_t)0 : (int64_t)st.st_size);
+          newStatArray = stackTop(); memory_.storePointer(7, newStatArray, v); }
+        // Slot 8: atime
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_atime));
+          newStatArray = stackTop(); memory_.storePointer(8, newStatArray, v); }
+        // Slot 9: mtime
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_mtime));
+          newStatArray = stackTop(); memory_.storePointer(9, newStatArray, v); }
+        // Slot 10: ctime
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_ctime));
+          newStatArray = stackTop(); memory_.storePointer(10, newStatArray, v); }
+        // Slot 11: birthtime (macOS)
+#ifdef __APPLE__
+        { Oop v = int64ToOop(memory_, toSqueakLocal(st.st_birthtimespec.tv_sec));
+          newStatArray = stackTop(); memory_.storePointer(11, newStatArray, v); }
+#else
+        newStatArray = stackTop();
+        memory_.storePointer(11, newStatArray, Oop::nil());
+#endif
+
+        statArray = pop();  // unprotect, still valid
+    }
+
+    // GC safety: protect statArray too across the result-array allocation.
+    push(statArray);
+
+    // Create 2-element Array: {filenameByteArray, statArray}
+    Oop resultArray = memory_.allocateSlots(arrayClassIndex, 2, ObjectFormat::Indexable);
+    if (resultArray.isNil()) { popN(2); return PrimitiveResult::Failure; }
+
+    statArray = pop();
+    nameBytes = pop();
 
     memory_.storePointer(0, resultArray, nameBytes);
-    memory_.storePointer(1, resultArray, memory_.nil());
+    memory_.storePointer(1, resultArray, statArray);
 
     popN(2);  // pop arg + receiver
     push(resultArray);
