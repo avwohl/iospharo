@@ -11,17 +11,16 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21d     17   + decompiler NLR fix
     2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
     2026-04-21f     89   + prim 188 method_ fix (CONFIRMED: closes OCSpecial + 2 Traits)
+    2026-04-21h    ≈20?  + WeakArray mourner drop in drainMournQueueNatively
 
-⚠️  **The 4-21e finalization commits caused a major net regression.**
-    8 finalization tests pass, but ~45 Cly/ED tests now DNU with
-    `AnObsoleteSlotTestsClassA` because finalization timing changes
-    delay obsolete-class cleanup.  See memory
-    `project_fin_commits_obsolete_class`.
-
-    Options for next session:
-      (a) revert finalization commits → Δcog ≈ 14 (clean win from prim 188)
-      (b) find specific fin change that delays obsolete-class cleanup
-          and adjust while preserving 8 fin test fixes
+✅  **Refined fix landed (17a0ff7): option (b) succeeded.**
+    drainMournQueueNatively now drops WeakArray mourners specifically
+    (they were anchoring obsolete classes via mournQueue_ being a GC
+    root) while still re-pushing ObjectFinalizer / FinalizationRegistry-
+    Entry / WeakSubscription / Ephemeron mourners for FP dispatch.
+    All 8 finalization-bucket fixes preserved; Cly/ED/DrTests no longer
+    cascade on AnObsoleteSlotTestsClassA (2 occurrences in 4-21h
+    partial vs 170 in 4-21f).
 
 ## Fixes committed this session (21 total)
 
