@@ -9,6 +9,12 @@ Image:        /tmp/harness/Pharo.image  md5=2db30d745e41d581cb409b2eef27ecad
 Per-test TO:  50s (scale=5 × default 10s)
 Run watchdog: 45m (VM wall-clock)
 
+**Note 2026-04-21**: JIT-default crash (bug 11, JM_SIZE off-by-8) fixed
+in commit 1c3a5a4.  Short sanity run shows 1150+ method compiles with
+zero JIT crash (previously crashed at compile #5-#65 across layers).
+jit-default row below will be updated with real full-suite numbers
+once the 45-min run completes.
+
 ## VMs
 
     Short name   Binary                            Branch / commit
