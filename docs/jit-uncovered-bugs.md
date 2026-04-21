@@ -298,30 +298,24 @@ fine) or move at least one out-of-line method into it.
 
 ## Status summary
 
-    Fixed         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
-    Partial fix   11a (siglongjmp→exception, de01be1)
-                  11b layer 1 (stale MethodMap entries, 2218c99)
-                  11b layer 2 (codeOffsetForBC sentinel + materialize
-                               bails, 2807300)
-                  11b layer 3 (6 bytecodeEnd writes + savedFrame
-                               push null-guarded, a75b0bd)
-                  11b layer 4a (exitMethod null-guard, tryResume
-                                entry sanity check, ba73bbc)
-                  11b layer 4b (refuse compile when branch target
-                                past last bytecode, afa3d6a — was
-                                clamping to sentinel offset that
-                                pointed at the literal pool)
-                  11b layer 5  **JM_SIZE was 80, real sizeof(JITMethod)
-                                is 88**.  Hand-coded constants in
-                                stencils.cpp and TrampolineAsm.S
-                                drifted out of sync with the C++
-                                struct.  Every stencil's
-                                `entry = methodHdr + JM_SIZE`
-                                computed methodHdr+80 (= lastUsedEpoch
-                                field) instead of methodHdr+88 (=
-                                codeStart).  Fixed by mirror struct
-                                + sizeof, runtime cross-check, and
-                                stencil regen.  1c3a5a4
+    Fixed     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
+    Fixed     11a (siglongjmp→exception, de01be1)
+              11b layers 1-5 (see history below)
+    OPEN      none — bug 11 closed
+
+Bug 11 closed completely.  The root cause turned out to be
+**layer 5: JM_SIZE constant was 80 in two files (stencils.cpp
+and TrampolineAsm.S) while real sizeof(JITMethod) had grown to
+88**.  Every stencil's `add Xn, methodHdr, #JM_SIZE` produced
+`methodHdr + 80` (the lastUsedEpoch field) instead of
+`methodHdr + 88` (codeStart).  Net: every BLR target into
+JIT code landed 8 bytes BEFORE the actual code, in the JIT
+header — ARM64 UDF on the zero/data word there.
+
+Layers 1-4 were real defensive bugs (null guards, branch-clamp
+sentinel, eviction-pinning, etc.) that all needed to be fixed
+on the way to layer 5 — the off-by-8 was masked by earlier
+crashes in the chain.
 
 Crash floor progression: compile #5 → #15 → #28 → #42 → #45 → #56 → #68.
 Each layer is a real bug; each fix is methodically peeling onion layers.
