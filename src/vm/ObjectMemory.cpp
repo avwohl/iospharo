@@ -1451,9 +1451,13 @@ GCResult ObjectMemory::scavenge() {
     }
     rememberedSet_.clear();
 
-    // Roots: mourn queue (ephemerons pending finalization hold
-    // their fields alive).
+    // Roots: mourn queues (mourners pending finalization hold their fields
+    // alive).  Both the non-WKA queue (image-side dispatch) and the WKA
+    // queue (C++ drain) need their entries kept alive across GC.
     for (Oop& m : mournQueue_) {
+        visitRoot(m);
+    }
+    for (Oop& m : wkaMournQueue_) {
         visitRoot(m);
     }
 
@@ -2580,8 +2584,11 @@ void ObjectMemory::processWeaklings() {
         }
         if (anyNilled) {
             // Queue weak object as mourner (matches Spur behavior).
-            // WeakFinalizationList detects collected entries this way.
-            mournQueue_.push_back(Oop::fromObject(obj));
+            // Push to wkaMournQueue_ so the C++ drain at backward-branch
+            // checks handles it without exposure to image-side prim 172
+            // (which would call WKA>>mourn → dict tally-- early, breaking
+            // testClearing's "size unchanged after garbageCollect" invariant).
+            wkaMournQueue_.push_back(Oop::fromObject(obj));
             pendingFinalizationSignals_++;
             queuedCount++;
         }

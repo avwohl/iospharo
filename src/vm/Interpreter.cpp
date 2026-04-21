@@ -6521,7 +6521,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // before the first real activation arms the drain — this is
     // the timing Cog's test suite relies on.
     if (__builtin_expect(g_debug.finalizeDeferred &&
-                         memory_.pendingFinalizationSignals() > 0, 0)) {
+                         memory_.hasWkaMourners(), 0)) {
         drainMournQueueNatively();
     }
 
@@ -12004,7 +12004,10 @@ void Interpreter::backwardBranchInterruptCheck() {
     if (--backwardBranchCountdown_ > 0) return;
     backwardBranchCountdown_ = kBackwardBranchCheckReload;
 
-    if (memory_.pendingFinalizationSignals() > 0) {
+    // Drain only when there are WKA mourners to handle in C++.  Non-WKA
+    // mourners (mournQueue_) are dispatched by the image-side
+    // FinalizationProcess via primitive 172 — we do not drain those here.
+    if (memory_.hasWkaMourners()) {
         drainMournQueueNatively();
     }
 }
@@ -12034,30 +12037,27 @@ void Interpreter::drainMournQueueNatively() {
         return;
     }
 
-    memory_.clearPendingFinalizationSignals();
     Oop nilOop = memory_.nil();
 
-    size_t initialQueueSize = memory_.mournQueueSize();
+    size_t initialQueueSize = memory_.wkaMournQueueSize();
     size_t processed = 0;
     size_t wkaProcessed = 0;
     size_t decremented = 0;
     static int drainLog = 0;
 
-    // Two-pass drain: first pass extracts only WKA mourners we can handle in
-    // C++.  Non-WKA mourners (FinalizationRegistryEntry, custom #mourn
-    // implementations) get re-queued so the image's FinalizationProcess can
-    // dispatch them via primitive 172 once we signal the finalization
-    // semaphore below.  Without this, FinalizationRegistry tests time out
-    // because their entries get popped and silently discarded.
-    std::vector<Oop> nonWkaMourners;
-    while (memory_.hasMourners()) {
+    // Walk wkaMournQueue_ — entries are weak-array objects whose dead variable
+    // slots got nilled in processWeaklings.  For WKA-shaped entries (the common
+    // case), find them in their owning dictionary's array, nil the slot,
+    // decrement tally, and fix collisions.  Non-WKA mourners never enter this
+    // queue — they live in mournQueue_ for image-side dispatch via prim 172.
+    while (memory_.hasWkaMourners()) {
         processed++;
-        Oop mourner = memory_.popMourner();
+        Oop mourner = memory_.popWkaMourner();
         if (!mourner.isObject()) continue;
         ObjectHeader* mournerHdr = mourner.asObjectPtr();
         if (mournerHdr->classIndex() != weakKeyAssociationClassIndex_) {
-            // Non-WKA mourner: defer to image-side #mourn dispatch.
-            nonWkaMourners.push_back(mourner);
+            // Non-WKA in WKA queue is unexpected; drop silently to match
+            // historical behavior.
             continue;
         }
         wkaProcessed++;
@@ -12142,25 +12142,9 @@ void Interpreter::drainMournQueueNatively() {
         }
     }
 
-    // Re-queue any non-WKA mourners we set aside above and signal the
-    // finalization semaphore so the image's FinalizationProcess can call
-    // #mourn on them via primitive 172.
-    if (!nonWkaMourners.empty()) {
-        for (Oop m : nonWkaMourners) {
-            memory_.pushMourner(m);
-        }
-        // Restore the pending-signal counter so signalFinalizationIfNeeded
-        // actually fires (we cleared it at the top of this function).
-        for (size_t i = 0; i < nonWkaMourners.size(); ++i) {
-            memory_.bumpPendingFinalizationSignals();
-        }
-        signalFinalizationIfNeeded();
-    }
-
     if (drainLog++ < 5) {
-        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu non-wka=%zu dec=%zu\n",
-                drainLog, initialQueueSize, processed, wkaProcessed,
-                nonWkaMourners.size(), decremented);
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu dec=%zu\n",
+                drainLog, initialQueueSize, processed, wkaProcessed, decremented);
     }
 }
 

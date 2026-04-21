@@ -530,7 +530,11 @@ public:
 
     // ===== FINALIZATION / MOURNING =====
 
-    /// Pop a mourner from the queue (for primitive 172)
+    /// Pop a mourner from the non-WKA queue (for primitive 172).  Image-side
+    /// FinalizationProcess only ever sees non-WKA mourners; WKA mourners are
+    /// drained in C++ at backward-branch checks (see popWkaMourner) to preserve
+    /// testClearing's timing requirement that dict size is unchanged
+    /// immediately after garbageCollect.
     Oop popMourner() {
         if (mournQueue_.empty()) return nilObject_;
         Oop mourner = mournQueue_.back();
@@ -538,18 +542,33 @@ public:
         return mourner;
     }
 
-    /// Push a mourner back onto the queue (used by drainMournQueueNatively to
-    /// re-queue non-WKA mourners that the C++ drain doesn't handle).
+    /// Push a non-WKA mourner (used by drainMournQueueNatively when a mourner
+    /// in the WKA queue turns out not to be a WKA — defensive only).
     void pushMourner(Oop oop) { mournQueue_.push_back(oop); }
 
-    /// Check if there are mourners waiting
+    /// Pop a WKA mourner (for C++ drain).
+    Oop popWkaMourner() {
+        if (wkaMournQueue_.empty()) return nilObject_;
+        Oop mourner = wkaMournQueue_.back();
+        wkaMournQueue_.pop_back();
+        return mourner;
+    }
+
+    /// Push a WKA mourner (called by processWeaklings).
+    void pushWkaMourner(Oop oop) { wkaMournQueue_.push_back(oop); }
+
+    /// Check if there are non-WKA mourners waiting (for primitiveFullGC's
+    /// signal decision and for primitive 172).
     bool hasMourners() const { return !mournQueue_.empty(); }
     size_t mournQueueSize() const { return mournQueue_.size(); }
+
+    /// Check if there are WKA mourners waiting (for backwardBranchInterruptCheck).
+    bool hasWkaMourners() const { return !wkaMournQueue_.empty(); }
+    size_t wkaMournQueueSize() const { return wkaMournQueue_.size(); }
 
     /// Get/clear pending finalization signal count
     int pendingFinalizationSignals() const { return pendingFinalizationSignals_; }
     void clearPendingFinalizationSignals() { pendingFinalizationSignals_ = 0; }
-    void bumpPendingFinalizationSignals() { pendingFinalizationSignals_++; }
 
     /// Register a root for GC (interpreter stack, etc.)
     void addRoot(Oop* root);
@@ -784,7 +803,8 @@ private:
     std::unordered_set<uintptr_t> validObjectStarts_; // Valid object boundaries for mark validation
 
     // Finalization / mourning
-    std::vector<Oop> mournQueue_;              // Objects needing finalization (ephemerons + weak)
+    std::vector<Oop> mournQueue_;              // Non-WKA mourners (image-side prim 172)
+    std::vector<Oop> wkaMournQueue_;           // WKA mourners (C++ drain, deferred)
     int pendingFinalizationSignals_ = 0;       // Count of signals to send post-GC
     size_t ephemeronEncounterCount_ = 0;       // Debug: ephemerons encountered during mark
     size_t ephemeronInactiveCount_ = 0;        // Debug: ephemerons with alive keys

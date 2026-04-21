@@ -637,17 +637,17 @@ PrimitiveResult Interpreter::primitiveDoPrimitiveWithArgs(int argCount) {
 
 PrimitiveResult Interpreter::primitiveFetchNextMourner(int argCount) {
     (void)argCount;
-    if (!memory_.hasMourners()) {
-        primitiveSuccess(memory_.nil());
-        return PrimitiveResult::Success;
-    }
-    Oop mourner = memory_.popMourner();
+    // mournQueue_ holds only non-WKA mourners (FinalizationRegistryEntry, etc.)
+    // WKA mourners live in wkaMournQueue_ and are drained in C++ at
+    // backward-branch checks (preserves testClearing timing invariant).
+    Oop mourner = memory_.hasMourners() ? memory_.popMourner() : memory_.nil();
     if (g_debug.gcEphDebug) {
         if (finalizationSignalCount_ > 0) {
             auto latency = std::chrono::steady_clock::now() - lastFinalizationSignalTime_;
             auto latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(latency).count();
-            fprintf(stderr, "[POP-FIN] signal->pop latency=%lldms (signal #%zu)\n",
-                    (long long)latencyMs, finalizationSignalCount_);
+            fprintf(stderr, "[POP-FIN] signal->pop latency=%lldms (signal #%zu) mourner=%s\n",
+                    (long long)latencyMs, finalizationSignalCount_,
+                    mourner.isNil() ? "nil" : "non-nil");
         }
     }
     primitiveSuccess(mourner);
@@ -7311,17 +7311,16 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
     memory_.fullGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
-    // Drain the mourn queue and signal FinalizationSemaphore inline.  The
-    // common test pattern is `Smalltalk garbageCollect; waitSemaphore wait` —
-    // the wait suspends the current process before any backward-branch
-    // interrupt check can run, so without an inline drain+signal here the
-    // FinalizationProcess (which fetches mourners via prim 172) never wakes
-    // up and the test deadlocks.  drainMournQueueNatively handles WKA
-    // mourners directly in C++ and re-queues non-WKA mourners
-    // (FinalizationRegistryEntry, etc.) for the image's FinalizationProcess
-    // to process via prim 172, also signaling the semaphore.
-    if (memory_.pendingFinalizationSignals() > 0) {
-        drainMournQueueNatively();
+    // Signal FinalizationSemaphore inline if any non-WKA mourners are queued.
+    // mournQueue_ holds only non-WKA mourners (WKAs are routed to
+    // wkaMournQueue_ during processWeaklings).  The wake is needed because
+    // the common test pattern is `garbageCollect; waitSemaphore wait`, which
+    // suspends the current process before any backward-branch check can run
+    // — without an inline signal, FinalizationProcess never wakes and the
+    // test deadlocks.  WKA timing semantics are unaffected because
+    // FinalizationProcess sees no WKAs via primitive 172.
+    if (memory_.hasMourners()) {
+        signalFinalizationIfNeeded();
     }
 
     size_t freeBytes = memory_.freeOldSpaceBytes();
@@ -7330,6 +7329,11 @@ PrimitiveResult Interpreter::primitiveFullGC(int argCount) {
         primitiveSuccess(Oop::fromSmallInteger(static_cast<int64_t>(freeBytes)));
     } else {
         primitiveSuccess(Oop::fromSmallInteger(Oop::smallIntegerMax()));
+    }
+
+    if (!g_debug.finalizeDeferred &&
+        memory_.pendingFinalizationSignals() > 0) {
+        finalizationCheckAfterGC_ = true;
     }
 
     return PrimitiveResult::Success;
