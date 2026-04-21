@@ -301,7 +301,36 @@ fine) or move at least one out-of-line method into it.
     Fixed     1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 13   (12 bugs)
     Fixed     11a (siglongjmp→exception, de01be1)
               11b layers 1-5 (see history below)
-    OPEN      none — bug 11 closed
+    OPEN      14. jit-default deadlocks image idle loop
+
+## 14. jit-default makes image hang in idle — **NEW, OPEN**
+
+After bug 11 was fixed, jit-default SUnit still doesn't complete
+the full run.  The pattern: the VM compiles ~540 methods, then
+the Smalltalk process scheduler parks in `ProcessorScheduler class
+>> idleProcess` — every user process is waiting (e.g., on a
+semaphore or timer) and nothing signals them.  SUnit never runs.
+
+Baseline comparison on the SAME image:
+
+    stock Cog       completes SUnit in 2m
+    jit NO_JIT      completes SUnit in ~45m
+    jit default     idle-hangs after ~540 compiles; SUnit never runs
+
+Our jit-default is therefore changing the scheduler's observable
+behavior vs the interpreter path.  Most likely a Sista-compiled
+method executes with wrong semantics for one of:
+
+- semaphore `signal` / `wait` (misses a signal, or signals wrong
+  semaphore)
+- timer-semaphore arming or firing
+- `forceInterruptCheck` / process switch
+
+Suspect first: Sista hook pre-compiles methods at activation.
+It currently runs pre-compile even for methods it then refuses
+to dispatch (via the activate-time gate).  If Sista's compile
+path touches state unsafely (e.g., fills asmjit metadata that
+later mis-routes a semaphore signal), the image stalls.
 
 Bug 11 closed completely.  The root cause turned out to be
 **layer 5: JM_SIZE constant was 80 in two files (stencils.cpp
