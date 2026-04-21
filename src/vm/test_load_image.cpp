@@ -539,6 +539,129 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                         (long long)(pc - reinterpret_cast<uint64_t>(m->codeStart())));
             } else {
                 fprintf(stderr, "[CRASH] PC not in any active JIT method (evicted?)\n");
+                // Layer-5 diagnostic: scan every JITMethod's IC entries
+                // for slots whose stored J2J entryAddr matches this PC
+                // (or lies within ±64 bytes).  Bug 11b layer 5: a stale
+                // IC J2J cache holds a code address from a previously
+                // compiled-and-rejected (or stale) target, BLR'ing into
+                // its data area.  Print up to 5 matches so we can tell
+                // WHICH IC site / source method holds the bad pointer.
+                using namespace pharo::jit;
+                int matches = 0;
+                JITMethod* m2 = g_jitCodeZone->firstMethod();
+                while (m2 && matches < 5) {
+                    if (m2->numICEntries > 0) {
+                        uint8_t* icStart = m2->codeStart() + m2->codeSize
+                                         - m2->numICEntries * IC_BYTES_PER_SITE;
+                        for (uint32_t i = 0; i < m2->numICEntries && matches < 5; i++) {
+                            uint64_t* slots = reinterpret_cast<uint64_t*>(
+                                icStart + i * IC_BYTES_PER_SITE);
+                            for (uint32_t e = 0; e < IC_ENTRIES_PER_SITE && matches < 5; e++) {
+                                uint64_t extra = slots[e * 3 + 2];
+                                // J2J entries have bit 60 set; low 48 bits = entryAddr
+                                if (extra & (1ULL << 60)) {
+                                    uint64_t addr = extra & 0x0000FFFFFFFFFFFFULL;
+                                    int64_t delta = (int64_t)addr - (int64_t)pc;
+                                    if (delta > -64 && delta < 64) {
+                                        fprintf(stderr,
+                                            "[CRASH] STALE IC J2J: m2=%p ic=%u slot=%u "
+                                            "addr=0x%llx pc-delta=%lld m2_oop=0x%llx\n",
+                                            (void*)m2, i, e,
+                                            (unsigned long long)addr, (long long)delta,
+                                            (unsigned long long)m2->compiledMethodOop);
+                                        matches++;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    m2 = m2->nextInZone;
+                }
+                if (matches == 0) {
+                    fprintf(stderr, "[CRASH] No stale IC entry within ±64B of PC\n");
+                }
+                // Also scan J2J pool entries' resumeAddr field — those are
+                // direct code pointers held in saved chain-loop frames.
+                if (gTestInterpreter) {
+                    int j2jLive = gTestInterpreter->j2jPoolLiveCount();
+                    const auto* base = gTestInterpreter->j2jPoolBase();
+                    int j2jMatches = 0;
+                    for (int i = 0; i < j2jLive && j2jMatches < 5; i++) {
+                        uint64_t ra = (uint64_t)base[i].resumeAddr;
+                        int64_t delta = (int64_t)ra - (int64_t)pc;
+                        if (delta > -64 && delta < 64) {
+                            fprintf(stderr,
+                                "[CRASH] STALE J2J resumeAddr: pool[%d] addr=0x%llx "
+                                "pc-delta=%lld jitMethod=%p\n",
+                                i, (unsigned long long)ra, (long long)delta,
+                                (void*)base[i].jitMethod);
+                            j2jMatches++;
+                        }
+                    }
+                    if (j2jMatches == 0) {
+                        fprintf(stderr,
+                            "[CRASH] No stale J2J resumeAddr within ±64B "
+                            "(scanned %d live entries)\n", j2jLive);
+                    }
+                }
+                // Scan megaCache for stale jitEntry pointers near PC.
+                if (gTestInterpreter) {
+                    auto& jitRT = gTestInterpreter->jitRuntime();
+                    if (jitRT.isInitialized()) {
+                        const MegaCacheEntry* mc = jitRT.megaCache();
+                        int mcMatches = 0;
+                        for (size_t h = 0; h < MegaCacheSize && mcMatches < 5; h++) {
+                            uint64_t ra = mc[h].jitEntry;
+                            if (ra == 0) continue;
+                            int64_t delta = (int64_t)ra - (int64_t)pc;
+                            if (delta > -64 && delta < 64) {
+                                fprintf(stderr,
+                                    "[CRASH] STALE megaCache jitEntry: h=%zu addr=0x%llx "
+                                    "pc-delta=%lld methodBits=0x%llx selectorBits=0x%llx\n",
+                                    h, (unsigned long long)ra, (long long)delta,
+                                    (unsigned long long)mc[h].methodBits,
+                                    (unsigned long long)mc[h].selectorBits);
+                                mcMatches++;
+                            }
+                        }
+                        if (mcMatches == 0) {
+                            fprintf(stderr, "[CRASH] No stale megaCache jitEntry within ±64B\n");
+                        }
+                    }
+                }
+                // Scan ALL JIT methods to find any whose code area
+                // STRADDLES the PC, even if findMethodByPC said no.
+                // (Could be the codeSize field is wrong on the owning
+                // method, or PC is in the post-code data area of an
+                // adjacent method.)
+                {
+                    JITMethod* m3 = g_jitCodeZone->firstMethod();
+                    int over = 0;
+                    while (m3 && over < 5) {
+                        uint64_t s = (uint64_t)m3->codeStart();
+                        uint64_t e = s + m3->codeSize;
+                        // Allocation footprint = JITMethod header + payload
+                        uint64_t hdr = (uint64_t)m3;
+                        uint64_t allocEnd = hdr + sizeof(JITMethod) + m3->codeSize;
+                        if (pc >= hdr && pc < allocEnd) {
+                            fprintf(stderr,
+                                "[CRASH] PC inside method ALLOC: m=%p hdr=0x%llx "
+                                "code=[0x%llx,0x%llx) allocEnd=0x%llx pc-offset=%lld "
+                                "oop=0x%llx codeSize=%u numIC=%u\n",
+                                (void*)m3, (unsigned long long)hdr,
+                                (unsigned long long)s, (unsigned long long)e,
+                                (unsigned long long)allocEnd,
+                                (long long)(pc - s),
+                                (unsigned long long)m3->compiledMethodOop,
+                                m3->codeSize, m3->numICEntries);
+                            over++;
+                        }
+                        m3 = m3->nextInZone;
+                    }
+                    if (over == 0) {
+                        fprintf(stderr, "[CRASH] PC not in any method's allocation footprint either\n");
+                    }
+                }
             }
             auto* lrm = g_jitCodeZone->findMethodByPC(lr);
             if (lrm && lrm != m) {
