@@ -34,8 +34,8 @@ row; marked `?` until the cog row is populated.
     cog    default  2026-04-20  828/836   17258    17195   15   23    25   0    2m       (baseline)
     main   NO_JIT   2026-04-20  34/836    412†     410     0    2     0    0    50m(wd)  2 / ≥?
     main   default  —           —         —        —       —    —     —    —    —        ?
-    jit    NO_JIT   2026-04-20  827/836   17057    16467   18   537   23   12   45m(wd)  548
-    jit    default  2026-04-20  36/836    3410‡    3404    0    0     6    0    1m(sig)  0 / ≥?
+    jit    NO_JIT   2026-04-21  825/836   17049    16980   21   17    25   6    45m(wd)  27
+    jit    default  2026-04-21  0/836     —        —       —    —     —    —    45m(wd)  hang‡
 
 `wd` = hit the VM watchdog.  `†` = main NO_JIT is enormously slower per
 test than jit NO_JIT: 50 minutes for 34 classes vs jit's 45 minutes for
@@ -47,6 +47,12 @@ raised to ~20 hours, or a narrower class list.
 Main also requires a `startup.st` workaround to boot headlessly — main's
 `test_load_image` has no `eval` mode, so we inject the fileIn via
 `StartupPreferencesLoader` by writing `/tmp/harness/startup.st`.
+
+`hang` = image deadlocks in `ProcessorScheduler>>idleProcess` after
+~540 method compiles; SUnit harness never starts.  JIT no longer
+crashes (bug 11 fixed), but jit-default changes scheduler-visible
+behavior vs stock Cog / our NO_JIT path — see `jit-uncovered-bugs.md`
+bug 14 (open).
 
 `sig` = crashed with SIGSEGV/SIGBUS.  jit default SEGFAULTs during
 SUnit.  Two root causes found and partially fixed in commits
