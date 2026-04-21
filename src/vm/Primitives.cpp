@@ -26844,9 +26844,38 @@ PrimitiveResult Interpreter::primitiveFileAttributes(int argCount) {
     return PrimitiveResult::Success;
 }
 
+#if defined(__APPLE__)
+// Convert UTF-8 bytes between Unicode normal forms via CoreFoundation.
+// Returns a fresh std::string holding the normalized UTF-8; empty on failure.
+static std::string normalizeUtf8(const uint8_t* bytes, size_t len,
+                                 CFStringNormalizationForm form) {
+    if (len == 0) return std::string();
+    CFStringRef src = CFStringCreateWithBytes(kCFAllocatorDefault, bytes, (CFIndex)len,
+                                              kCFStringEncodingUTF8, false);
+    if (!src) return std::string();
+    CFMutableStringRef mut = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, src);
+    CFRelease(src);
+    if (!mut) return std::string();
+    CFStringNormalize(mut, form);
+
+    // Get UTF-8 bytes out.
+    CFIndex nchars = CFStringGetLength(mut);
+    CFIndex maxBytes = CFStringGetMaximumSizeForEncoding(nchars, kCFStringEncodingUTF8);
+    std::string out(maxBytes, '\0');
+    CFIndex usedLen = 0;
+    CFRange range = CFRangeMake(0, nchars);
+    CFStringGetBytes(mut, range, kCFStringEncodingUTF8, 0, false,
+                     (UInt8*)out.data(), maxBytes, &usedLen);
+    CFRelease(mut);
+    out.resize((size_t)usedLen);
+    return out;
+}
+#endif
+
 // FileAttributesPlugin>>primitivePlatToStPath
-// Stack: receiver, platformPath -> utf8Path (ByteArray)
-// On macOS/iOS, platform encoding IS UTF-8, so this is an identity transform
+// Stack: receiver, platformPath (ByteArray) -> utf8Path (ByteArray)
+// On Darwin the platform form is NFD; convert to NFC for the image.
+// On Linux / other Unix the platform form is already NFC UTF-8 (identity).
 PrimitiveResult Interpreter::primitivePlatToStPath(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
@@ -26855,18 +26884,33 @@ PrimitiveResult Interpreter::primitivePlatToStPath(int argCount) {
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
     if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
 
-    // On macOS/iOS, platform encoding is UTF-8, so return a copy as ByteArray
     size_t len = memory_.byteSizeOf(pathOop);
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
-    Oop result = memory_.allocateBytes(classIndex, len);
+
+#if defined(__APPLE__)
+    std::string normalized = normalizeUtf8(pathHdr->bytes(), len,
+                                           kCFStringNormalizationFormC);
+    size_t outLen = normalized.empty() ? len : normalized.size();
+    Oop result = memory_.allocateBytes(classIndex, outLen);
     if (result.isNil()) return PrimitiveResult::Failure;
 
-    // Re-read after allocation (GC safety)
     pathOop = stackTop();
     pathHdr = pathOop.asObjectPtr();
 
+    if (normalized.empty()) {
+        memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+    } else {
+        memcpy(result.asObjectPtr()->bytes(), normalized.data(), normalized.size());
+    }
+#else
+    Oop result = memory_.allocateBytes(classIndex, len);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
     memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+#endif
 
     popN(2);
     push(result);
@@ -26874,8 +26918,8 @@ PrimitiveResult Interpreter::primitivePlatToStPath(int argCount) {
 }
 
 // FileAttributesPlugin>>primitiveStToPlatPath
-// Stack: receiver, utf8Path -> platformPath (ByteArray)
-// On macOS/iOS, platform encoding IS UTF-8, so this is an identity transform
+// Stack: receiver, utf8Path (ByteArray) -> platformPath (ByteArray)
+// On Darwin convert NFC to NFD; on other Unix identity.
 PrimitiveResult Interpreter::primitiveStToPlatPath(int argCount) {
     if (argCount != 1) return PrimitiveResult::Failure;
 
@@ -26884,18 +26928,33 @@ PrimitiveResult Interpreter::primitiveStToPlatPath(int argCount) {
     ObjectHeader* pathHdr = pathOop.asObjectPtr();
     if (!pathHdr->isBytesObject()) return PrimitiveResult::Failure;
 
-    // On macOS/iOS, platform encoding is UTF-8, so return a copy as ByteArray
     size_t len = memory_.byteSizeOf(pathOop);
     Oop byteArrayClass = memory_.specialObject(SpecialObjectIndex::ClassByteArray);
     uint32_t classIndex = memory_.indexOfClass(byteArrayClass);
-    Oop result = memory_.allocateBytes(classIndex, len);
+
+#if defined(__APPLE__)
+    std::string normalized = normalizeUtf8(pathHdr->bytes(), len,
+                                           kCFStringNormalizationFormD);
+    size_t outLen = normalized.empty() ? len : normalized.size();
+    Oop result = memory_.allocateBytes(classIndex, outLen);
     if (result.isNil()) return PrimitiveResult::Failure;
 
-    // Re-read after allocation (GC safety)
     pathOop = stackTop();
     pathHdr = pathOop.asObjectPtr();
 
+    if (normalized.empty()) {
+        memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+    } else {
+        memcpy(result.asObjectPtr()->bytes(), normalized.data(), normalized.size());
+    }
+#else
+    Oop result = memory_.allocateBytes(classIndex, len);
+    if (result.isNil()) return PrimitiveResult::Failure;
+
+    pathOop = stackTop();
+    pathHdr = pathOop.asObjectPtr();
     memcpy(result.asObjectPtr()->bytes(), pathHdr->bytes(), len);
+#endif
 
     popN(2);
     push(result);
