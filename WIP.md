@@ -24,11 +24,27 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     re-pushed mourners sometimes bounce across drains without FP
     consuming them.
 
-⚠️  **Reverted (b4a0fea → 7a7510d): signal-when-pending-always at
-    activateMethod end** caused 168 new Ep* test regressions due to
-    over-aggressive preemption disrupting Epicea's change-tracker
-    test sequences.  A gentler wake mechanism for re-pushed mourners
-    is needed; next session.
+⚠️  **Attempted and reverted: gentler FP-wake approaches** for the
+    two remaining AnObsoleteSlotTestsClassA DNUs (ClassQueryTest.test
+    AllCallsOnASymbol + ClySubclassScopeTest.testClassEnumeration...):
+      (b4a0fea, reverted) synchronousSignal at every activateMethod
+         when pending > 0 → 168 Ep* regressions.
+      (4-21k, uncommitted) counter + synchronousSignal every 1000
+         activations → TraitTest regressed 2 tests (testTraitsMethod
+         ClassSanity ERROR, testTraitsUsersSanity FAIL).
+      (4-21l, uncommitted) counter + signalFinalizationIfNeededDeferred
+         every 1000 activations → TraitTest still regressed 1 test.
+    Net: all three approaches trade ~1-2 Trait/Ep regressions for
+    ~2 AnObsolete wins.  Marginal improvement with added complexity.
+
+    Final state: ship 17a0ff7 only.  The remaining 2 AnObsolete DNUs
+    plus the 3 ordering artifacts + ~8 FFI regressions put expected
+    Δcog ≈ 13, down from 4-21d's 17 (net -4 this session).
+
+    Next-session alternative: identify the specific mourner class
+    that anchors AnObsoleteSlotTestsClassA (likely an Ephemeron whose
+    fired key is the test's fixture class) and drop THAT class in
+    drainMournQueueNatively rather than using a time-based FP wake.
 
 ## Fixes committed this session (21 total)
 
