@@ -302,6 +302,7 @@ fine) or move at least one out-of-line method into it.
     Fixed     11a (siglongjmp→exception, de01be1)
               11b layers 1-5 (see history below)
     OPEN      14. jit-default deadlocks image idle loop
+    OPEN      15. 27 jit-NO_JIT Δcog regressions (triaged below)
 
 ## 14. jit-default makes image hang in idle — **NEW, OPEN**
 
@@ -459,3 +460,123 @@ and `PHARO_SISTA_NO_LOWER_SENDS` confirm the corruption is in
 `Lowering::lower`'s asmjit emit path itself; `kSendUnspeculated`
 alone isn't the trigger (NO_LOWER_SENDS still crashes at #99).
 Next bisect: gate kPrim*, kBranch*, kPhi individually.
+
+---
+
+## 15. 27 jit-NO_JIT Δcog regressions — **TRIAGED, NOT ALL FIXED**
+
+Source: `results/sunit-2026-04-21-jit-nojit.delta-vs-cog.txt`.
+These 27 tests pass on stock Cog but fail/error/timeout on jit
+NO_JIT on the same Pharo 13.1 image.  Grouped by likely root cause:
+
+### 15.A  Harness environment-dependent (NOT VM BUGS) — 4
+
+    SystemResolverTest.testUserLocalDirectory      (got .../pharo-local vs expected "build")
+    SystemResolverTest.testVmBinary                (Assertion failed)
+    SystemResolverTest.testVmDirectory             (Assertion failed)
+    DiskFileAttributesTest.testIsExecutable        (FileDoesNotExist: build/test_load_image)
+
+Root cause: the Pharo test suite hardcodes a directory layout
+where the VM binary is at `<image-dir>/build/<binary>` and
+user-local is `<cwd>/pharo-local`.  Stock Cog's `./pharo`
+launcher `cd`'s to a layout matching that pattern; our
+`test_load_image` does not.  Fixable by adjusting the harness
+or by making the VM synthesize matching paths in
+`primitiveVmPath` / `getSystemAttribute`.  Not a VM-correctness
+bug.
+
+### 15.B  Darwin Unicode NFC/NFD path normalization — 2
+
+    DiskFileAttributesTest.testFromPlatformPath    (got 'NFC' vs NFD-encoded '1234žřč')
+    DiskFileAttributesTest.testToPlatformPath      (got NFC bytes vs NFD combining-caron bytes)
+
+Root cause: macOS APFS canonically stores filenames in NFD
+("Apple Modified" NFD).  Pharo expects the VM's Darwin file
+primitives to convert between NFC (image strings) and NFD
+(filesystem) on Darwin.  Stock Cog does this via CFString
+on Darwin; our clean C++ VM doesn't.  Need
+`CFStringNormalize(str, kCFStringNormalizationFormD)` in
+primitives that return platform paths, and Form C when
+reading from image to pass into filesystem APIs.  Likely a
+short focused fix but out of current session scope.
+
+### 15.C  Filesystem primitive details — 4
+
+    DiskFileSystemTest.testCreateDirectoryExists             (Assertion failed)
+    DiskFileSystemTest.testCreateDirectoryNoParent           (Assertion failed)
+    DiskFileSystemTest.testEntriesHaveAttributes             (Assertion failed)
+    DiskFileSystemTest.testMoveToFailingMissingDestination   (Assertion failed)
+
+Probable cause: errno-mapping differences in `primitiveDirectoryCreate`
+and friends, or missing attributes in `primitiveFileAttributes`.
+Not investigated in this session; each will need the stock-Cog
+behavior diffed against ours.
+
+### 15.D  FFI callback parameter marshalling — 3
+
+    FFICallbackParametersTest.testCharacterParameters   (got 1 vs 122)
+    FFICallbackParametersTest.testFloatParameters       (got 3.8e-322 vs 7.0)
+    FFICallbackParametersTest.testIntegerParameters     (timeout 300s)
+
+Image-side reader (TFCallbackInvocation>>arguments) reads
+`argumentsAddress[i]` as a libffi-compatible arg-pointer array,
+so `intregargsp=args; floatregargsp=args` is right for the arg
+path.  `3.8e-322` as bits ≈ a low pointer reinterpreted as
+double → strongly suggests the **return path** (not the arg
+path): the image writes 7.0 into `returnHolder` (vmcc->stackp,
+which we point at libffi's `ret` buffer) but the caller reads
+a different address.  Needs tracing TFCallbackInvocation's
+`writeReturnValue:` against libffi's prep_closure ABI.
+testIntegerParameters timeout suggests the callback never returns
+(callback return path leaks / doesn't throw CallbackComplete).
+
+### 15.E  Finalization / weak references — 8
+
+    FinalizationRegistryTest.testFinalization                     (timeout)
+    FinalizationRegistryTest.testFinalizationRemovesEntryFromRegistry  (timeout)
+    FinalizationRegistryTest.testFinalizationWithMultipleFinalizersPerObject (timeout)
+    FinalizationRegistryTest.testFinalizationWithOnFork           (timeout)
+    FinalizationRegistryTest.testFinalizationWithOnFork2          (timeout)
+    ObjectFinalizerTest.testFinalizationOfMultipleResources       (fail)
+    WeakAnnouncerTest.testWeakDoubleAnnouncer                     (fail)
+    WeakAnnouncerTest.testWeakObject                              (got 2 vs 1)
+
+`project_cog_spec_finalize` memory says testClearing/testFinalize
+PASS as of 2026-04-20; the FinalizationRegistry API is newer
+(Pharo 12+).  Registry-style finalization may need an extra
+semaphore-wake on GC compaction or different weak-queue drain
+timing.  All 5 tests time out at 300s → something's not being
+signaled.
+
+### 15.F  Decompiler + special-selector — 3
+
+    FBDBytecodeDecompilerExamplesTest.testExampleIfTrue        (BlockCannotReturn)
+    FBDBytecodeDecompilerExamplesTest.testExampleSimpleBlockReturn (BlockCannotReturn)
+    OCSpecialSelectorTest.testUnoptimisedValueSpecialSendsMessageCapturesSend
+                                                              (DNU: "new" on nil)
+
+`BlockCannotReturn` suggests the test synthesizes a `CompiledMethod`
+and invokes it with `valueWithReceiver:`; our implementation of
+that primitive creates a block whose home context is already
+dead.  Home-context tracking bug, not an interpreter semantics bug.
+
+### 15.G  Process / exec-env — 3
+
+    ClassQueryTest.testAllCallsOn                                   (got 2 vs 1)
+    ProcessMonitorTestServiceTest.testFailTestWhen...               (should fail)
+    TestExecutionEnvironmentTest.testHandleForkedProcessesByAllServices (fail)
+
+testAllCallsOn: `allCallsOn:` reports one more caller than
+expected — likely a test harness artifact (our runner instance
+counts as a caller of something the test scans for).  Process
+monitor: needs investigation.
+
+### Outcome
+
+This session's `results/sunit-2026-04-21-jit-nojit.txt` is the
+post-layer-5 baseline at Δcog=27 (vs Δcog=548 on 2026-04-20).
+The remaining 27 are triaged but unfixed — each bucket needs
+its own focused session.  Category 15.A is strictly harness
+config (not a VM bug).  Categories 15.B, 15.C are Darwin/fs
+primitives.  15.D-G are real VM behavior but need targeted
+debugging against stock Cog.
