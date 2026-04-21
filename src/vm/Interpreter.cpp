@@ -12106,14 +12106,23 @@ void Interpreter::drainMournQueueNatively() {
         return;
     }
 
-    memory_.clearPendingFinalizationSignals();
     Oop nilOop = memory_.nil();
 
     size_t initialQueueSize = memory_.mournQueueSize();
     size_t processed = 0;
     size_t wkaProcessed = 0;
     size_t decremented = 0;
+    size_t nonWkaKept = 0;
     static int drainLog = 0;
+
+    // Filter-drain: pop every mourner, process WKAs in C++, RE-PUSH non-WKAs
+    // so FinalizationProcess can dispatch them via primitive 172.  Previous
+    // versions dropped non-WKAs silently, which starved ObjectFinalizer /
+    // FinalizationRegistry tests of their mourners and left resources
+    // un-finalized.  Preserve pendingFinalizationSignals when any non-WKA
+    // survived so the subsequent signalFinalizationIfNeeded call wakes FP.
+    std::vector<Oop> keepers;
+    size_t initialPending = memory_.pendingFinalizationSignals();
 
     while (memory_.hasMourners()) {
         processed++;
@@ -12121,8 +12130,9 @@ void Interpreter::drainMournQueueNatively() {
         if (!mourner.isObject()) continue;
         ObjectHeader* mournerHdr = mourner.asObjectPtr();
         if (mournerHdr->classIndex() != weakKeyAssociationClassIndex_) {
-            // Non-WKA mourner: Object>>mourn is a no-op; matches stock
-            // behavior of dropping from the queue without side effect.
+            // Non-WKA mourner: keep for image-side dispatch via prim 172.
+            keepers.push_back(mourner);
+            nonWkaKept++;
             continue;
         }
         wkaProcessed++;
@@ -12207,9 +12217,25 @@ void Interpreter::drainMournQueueNatively() {
         }
     }
 
+    // Re-push non-WKA mourners so FP can dispatch them via prim 172.
+    // If any were kept, preserve pendingFinalizationSignals so the later
+    // activateMethod-entry signal consumption still fires a signal.
+    if (!keepers.empty()) {
+        for (Oop m : keepers) {
+            memory_.pushMourner(m);
+        }
+        // pendingFinalizationSignals was never cleared — we removed the
+        // clearPendingFinalizationSignals() call.  So the signal flag armed
+        // in primitiveFullGC still matters.
+    } else {
+        // Queue fully drained (all were WKAs) — clear pending.
+        memory_.clearPendingFinalizationSignals();
+    }
+
     if (drainLog++ < 5) {
-        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu dec=%zu\n",
-                drainLog, initialQueueSize, processed, wkaProcessed, decremented);
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu nonwka=%zu dec=%zu pending-before=%zu pending-after=%zu\n",
+                drainLog, initialQueueSize, processed, wkaProcessed, nonWkaKept, decremented,
+                initialPending, memory_.pendingFinalizationSignals());
     }
 }
 
