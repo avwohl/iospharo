@@ -2589,16 +2589,21 @@ void Interpreter::synchronousSignal(Oop semaphore) {
 }
 
 void Interpreter::signalFinalizationIfNeeded() {
-    // Signal the finalization semaphore when GC has queued mourners (dead weak
-    // objects / fired ephemerons). The finalization process wakes up and reads
-    // mourners via primitive 172 (primitiveFetchNextMourner).
-    //
-    // This is called from step() after GC primitives and periodically.
-    // No priority guard — the Cog VM signals regardless of caller priority.
-    // The woken finalization process (P50) will preempt only if the active
-    // process has lower priority; otherwise it waits in the ready queue.
+    // Signal the finalization semaphore only when there are non-WKA mourners
+    // queued for image-side dispatch (FinalizationRegistryEntry, etc.).
+    // WKA mourners go through C++ drain at backward-branch checks instead —
+    // the FinalizationProcess waking up unnecessarily would burn cycles
+    // (prim 172 returns nil immediately) and, more importantly, its own
+    // bytecode execution would trigger backward-branch drains that
+    // process WKAs prematurely, breaking testClearing's invariant.
     size_t pending = memory_.pendingFinalizationSignals();
     if (pending <= 0) return;
+    if (!memory_.hasMourners()) {
+        // Pending counter is non-zero only because of WKAs in wkaMournQueue_;
+        // drop the counter without signaling (drain handles WKAs separately).
+        memory_.clearPendingFinalizationSignals();
+        return;
+    }
 
     memory_.clearPendingFinalizationSignals();
 
@@ -12004,12 +12009,14 @@ void Interpreter::backwardBranchInterruptCheck() {
     if (--backwardBranchCountdown_ > 0) return;
     backwardBranchCountdown_ = kBackwardBranchCheckReload;
 
-    // Drain only when there are WKA mourners to handle in C++.  Non-WKA
-    // mourners (mournQueue_) are dispatched by the image-side
-    // FinalizationProcess via primitive 172 — we do not drain those here.
-    if (memory_.hasWkaMourners()) {
-        drainMournQueueNatively();
-    }
+    // Intentionally do NOT drain wkaMournQueue_ here.  Driving it from
+    // backward branches caused testClearing to fail in the full SUnit
+    // run: `Smalltalk garbageCollect; sema wait` triggers the
+    // FinalizationProcess wake-up (for non-WKA mourners), and the
+    // FinalizationProcess's own bytecode loop has backward branches
+    // that would cascade-trigger the WKA drain too eagerly.  Drain
+    // happens at activateMethod entry instead, which preserves the
+    // quick-primitive carve-out (`dict size` returns pre-drain tally).
 }
 
 // ===== NATIVE MOURN DRAIN =====
