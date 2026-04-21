@@ -512,23 +512,40 @@ and friends, or missing attributes in `primitiveFileAttributes`.
 Not investigated in this session; each will need the stock-Cog
 behavior diffed against ours.
 
-### 15.D  FFI callback parameter marshalling — 3
+### 15.D  FFI callback ordering — scheduler cycle (bug-14 family)
 
-    FFICallbackParametersTest.testCharacterParameters   (got 1 vs 122)
-    FFICallbackParametersTest.testFloatParameters       (got 3.8e-322 vs 7.0)
-    FFICallbackParametersTest.testIntegerParameters     (timeout 300s)
+    FFICallbackParametersTest.testCharacterParameters   (test-ordering artifact)
+    FFICallbackParametersTest.testFloatParameters       (hangs after 1st FFI cb)
+    FFICallbackParametersTest.testIntegerParameters     (hangs after 1st FFI cb)
 
-Image-side reader (TFCallbackInvocation>>arguments) reads
-`argumentsAddress[i]` as a libffi-compatible arg-pointer array,
-so `intregargsp=args; floatregargsp=args` is right for the arg
-path.  `3.8e-322` as bits ≈ a low pointer reinterpreted as
-double → strongly suggests the **return path** (not the arg
-path): the image writes 7.0 into `returnHolder` (vmcc->stackp,
-which we point at libffi's `ret` buffer) but the caller reads
-a different address.  Needs tracing TFCallbackInvocation's
-`writeReturnValue:` against libffi's prep_closure ABI.
-testIntegerParameters timeout suggests the callback never returns
-(callback return path leaks / doesn't throw CallbackComplete).
+Each test passes in ISOLATION.  Reverse order (float first, then
+char) also works.  But testChar → testFloat (the sunit alphabetical
+order) HANGS during the second callback's nested interpret loop.
+
+Diagnostic shows the nested loop settling into a 2-process
+ping-pong:
+  priority 60 (TFCallback runner):     ExternalAddress>>to:do:
+  priority 80 (delay ticker):          DelayMicrosecondTicker>>ifNotNil:
+
+Both processes alternate for millions of bytecode steps without
+making progress — classic bug-14 family scheduler deadlock.  The
+callback runner gets preempted by the delay ticker; the delay
+ticker polls and immediately yields; no semaphore signal ever
+frees the callback runner to proceed.
+
+What leaks between tests: after testChar's callback completes,
+its forked callback-handler process (pri 70) stays somewhere in
+the scheduler state — not cleaned up on callback return.  When
+testFloat's callback enters, the scheduler has a residue that
+deadlocks the nested loop.
+
+Not a callback marshalling bug (earlier triage was wrong —
+`3.8e-322 vs 7.0` was actually a hang that the harness reports
+as "Got ... instead of" because the test's assertion waits on
+a semaphore that never signals).
+
+Fix requires scheduler-level work on callback process lifecycle;
+related to bug 14.
 
 ### 15.E  Finalization / weak references — 8
 
