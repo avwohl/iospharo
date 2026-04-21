@@ -12,7 +12,7 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
     2026-04-21f     89   + prim 188 method_ fix (CONFIRMED: closes OCSpecial + 2 Traits)
     2026-04-21h    ≈15?  + WeakArray mourner drop (17a0ff7)
-    2026-04-21o    ≈10?  + WeakValueAssociation native processing (61eef4f)
+    2026-04-21o     11   + WeakValueAssociation native processing (61eef4f)
 
 ✅  **Two-stage finalization fix closes the AnObsolete regression
     completely** while preserving all 8 finalization-bucket fixes:
