@@ -11,18 +11,37 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21d     17   + decompiler NLR fix
     2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
     2026-04-21f     89   + prim 188 method_ fix (CONFIRMED: closes OCSpecial + 2 Traits)
-    2026-04-21h    ≈15?  + WeakArray mourner drop in drainMournQueueNatively (17a0ff7)
+    2026-04-21h    ≈15?  + WeakArray mourner drop (17a0ff7)
+    2026-04-21o    ≈10?  + WeakValueAssociation native processing (61eef4f)
 
-✅  **Main fix landed (17a0ff7): preserves all 8 finalization fixes
-    AND closes the 80-test Cly/ED/DrTests cascade** via drainMourn-
-    QueueNatively dropping WeakArray mourners (they anchored obsolete
-    classes via mournQueue_ being a GC root) while still re-pushing
-    ObjectFinalizer/FRE/WeakSubscription/Ephemeron mourners for FP
-    dispatch.  Two tests still DNU on AnObsoleteSlotTestsClassA
-    (ClassQueryTest.testAllCallsOnASymbol + ClySubclassScope.test
-    ClassEnumerationOverClassWhenConcreteClassScopeIsLocal) because
-    re-pushed mourners sometimes bounce across drains without FP
-    consuming them.
+✅  **Two-stage finalization fix closes the AnObsolete regression
+    completely** while preserving all 8 finalization-bucket fixes:
+      (17a0ff7) drop WeakArray mourners — they anchored obsolete
+                classes via their non-nil slots being strong-refs
+                through the mournQueue_ GC root.
+      (61eef4f) process WeakValueAssociation mourners natively (same
+                Association slot layout as WKA) — cleans the
+                container's backing array + frees the strong key
+                that was anchoring the obsolete class.
+
+    Identified via PHARO_DRAIN_DEBUG diagnostic: on a targeted
+    probe, all ~30 kept non-WKA mourners were WeakValueAssociation
+    instances, and their strong-key slot held the obsolete class.
+
+    Validated in 4-21o partial run at 720 classes:
+      FinalizationRegistryTest     6/6
+      ObjectFinalizerTest          1/1
+      WeakAnnouncerTest            33/34 (1 expectedFailure)
+      WeakValueDictionaryTest      217/217
+      ClyBrowserToolValidityTest   25/25
+      ClySubclassScopeTest         44/44
+      ClyNotebookPageRecyclerTest  8/8
+      EDDebuggingAPITest           27/27
+      EDEmergencyDebuggerTest      36/36
+      DrTestsUITest                16/16
+      AnObsoleteSlotTestsClassA     0 occurrences
+      ClassQueryTest               2/3 (only testAllCallsOn ordering
+                                          artifact fails)
 
 ⚠️  **Attempted and reverted: gentler FP-wake approaches** for the
     two remaining AnObsoleteSlotTestsClassA DNUs (ClassQueryTest.test
