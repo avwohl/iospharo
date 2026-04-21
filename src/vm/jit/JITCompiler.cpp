@@ -727,15 +727,41 @@ bool JITCompiler::patchStencilInstance(
                 fprintf(stderr, "[JIT] Invalid branch target %d\n", bc.branchTarget);
                 return false;
             }
-            // Clamp to end-of-method if branch targets past the last bytecode
+            // bcToBranchOffset.size() == bcLen + 1 (sentinel at bcLen
+            // holds codeSize == end of machine code).  A branch target
+            // of bcLen would jump to codeSize, which is the FIRST byte
+            // of the literal pool — UDF on the zero word.  Bug 11b
+            // layer 4b: previously clamped to bcLen, which produced
+            // exactly that crash.  Reject any branch >= bcLen so the
+            // method falls back to interpreter rather than compile to
+            // unreachable code.
             int target = bc.branchTarget;
-            if (target >= (int)bcToBranchOffset.size()) {
-                target = (int)bcToBranchOffset.size() - 1;
+            if (target >= (int)bcToBranchOffset.size() - 1) {
+                static int rejectCount = 0;
+                if (++rejectCount <= 5) {
+                    fprintf(stderr, "[JIT] Branch target %d past last bytecode "
+                            "(bcLen=%zu) — refusing to compile this method\n",
+                            target, bcToBranchOffset.size() - 1);
+                }
+                return false;
             }
             // Both tables are last-write-wins and point to the real stencil
             // at each bcOffset. Jumps bypass any SimStack fallthrough-flush
             // inserted before the real stencil (see bcToBranchOffset init).
             uint32_t targetOff = bcToBranchOffset[target];
+            // Defense in depth: targetOff must point INTO machine code,
+            // not into literal pool / IC area.  bcToBranchOffset[bcLen]
+            // = codeSize (machine-code end) is the sentinel.
+            const uint32_t mcEnd = bcToBranchOffset.back();
+            if (targetOff >= mcEnd) {
+                static int rejectCount2 = 0;
+                if (++rejectCount2 <= 5) {
+                    fprintf(stderr, "[JIT] Branch offset %u >= machine-code end %u "
+                            "(target bc %d) — refusing to compile\n",
+                            targetOff, mcEnd, target);
+                }
+                return false;
+            }
             uint64_t targetAddr = reinterpret_cast<uint64_t>(codeBase + targetOff);
             if (!patchOne(reloc, targetAddr)) return false;
             break;
