@@ -307,10 +307,16 @@ fine) or move at least one out-of-line method into it.
                                push null-guarded, a75b0bd)
                   11b layer 4a (exitMethod null-guard, tryResume
                                 entry sanity check, ba73bbc)
-    Open          11b layer 4b (after tryResume's BLR succeeds,
-                                a stencil's compiled branch lands
-                                outside the method — JIT codegen,
-                                needs single-step trace tooling)
+                  11b layer 4b (refuse compile when branch target
+                                past last bytecode, afa3d6a — was
+                                clamping to sentinel offset that
+                                pointed at the literal pool)
+    Open          11b layer 5  (PC ~225KB past jm in another
+                                method's allocation space — likely
+                                an IC-cached J2J code pointer
+                                pointing into a method's data area,
+                                from a stale entry left by a prior
+                                recompile or IC fill)
 
 Crash floor progression: compile #5 → #15 → #28 → #42 → #45 → #56 → #68.
 Each layer is a real bug; each fix is methodically peeling onion layers.
