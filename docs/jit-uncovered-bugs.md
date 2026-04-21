@@ -376,6 +376,32 @@ Resolving needs: (a) a semaphore/process trace logging every
 call sequences; (b) or a minimal reproducer that doesn't depend
 on SUnit boot.
 
+**Update (continued, diagnostic `PHARO_XFER_TRACE=1` added in 5381f28)**:
+under jit-default the scheduler settles into an infinite 5-XFER
+cycle between exactly 3 processes:
+
+    p40  (unknown)                            ← SUnit test candidate?
+    p80  DelayMicrosecondTicker               ← delay ticker
+    p60  (unknown, likely UI/worker)
+
+The cycle is deterministic: p40 → p80 → p60 → p80 → p60 → p40 → …
+repeated forever.  None of them yields to the SUnit runner or any
+other process.  They mutually re-signal but produce no net progress.
+
+Under `NO_JIT` the XFERs go to diverse processes and SUnit starts
+normally.  So JIT-mode changes some signal-delivery semantic —
+probably either:
+
+- `signalSemaphoreDirectly` / `synchronousSignal` waking the wrong
+  waiter (e.g., re-waking the last signaler instead of a different
+  queued waiter)
+- `transferTo` putting the caller back on a "ready" queue it
+  shouldn't be on
+- `wakeHighestPriority` picking a non-test priority waiter
+
+Pinpointing further requires a side-by-side trace against stock
+Cog for the first ~700 XFERs.
+
 Current production recommendation: `PHARO_NO_JIT=1`.  Still gives
 99.7% pass rate vs Cog (27 regressions on 17k tests).
 
