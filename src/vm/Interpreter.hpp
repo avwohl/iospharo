@@ -965,6 +965,7 @@ private:
     // race in Pharo's FinalizationProcess.
     void drainMournQueueNatively();
     uint32_t weakKeyAssociationClassIndex_ = 0;
+    uint32_t weakArrayClassIndex_ = 0;  // Used to drop WeakArray mourners (see drainMournQueueNatively)
 
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).

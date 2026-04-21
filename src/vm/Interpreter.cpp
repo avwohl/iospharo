@@ -12088,8 +12088,21 @@ void Interpreter::backwardBranchInterruptCheck() {
 // race: drain runs synchronously within the current process's
 // bytecode dispatch, no semaphore/transferTo involved.
 void Interpreter::drainMournQueueNatively() {
-    // Lazy one-time resolution of the WeakKeyAssociation class index.
-    // Other mourner classes (WeakArray, etc.) are no-op per Object>>mourn.
+    // Lazy one-time resolution of WeakKeyAssociation and WeakArray class indices.
+    // WKA mourners: processed natively (dict cleanup).
+    // WeakArray mourners: dropped (slots already nilled by GC; keeping them in
+    //                     mournQueue_ as a GC root would make their slots'
+    //                     objects strongly-reachable via pointer chase,
+    //                     preventing later objects from becoming weak-alone
+    //                     — specifically, it blocks obsolete-class cleanup
+    //                     because Metaclass's subclasses array is a WeakArray
+    //                     and its mourner-queue presence keeps obsolete
+    //                     classes live across test boundaries).
+    // Other non-WKA mourners (ObjectFinalizer, FinalizationRegistryEntry,
+    //                     WeakSubscription, Ephemeron, etc.): re-pushed for
+    //                     image-side dispatch via primitive 172.  These are
+    //                     small "finalizer" objects that ObjectFinalizerTest,
+    //                     WeakAnnouncerTest, FinalizationRegistryTest rely on.
     if (weakKeyAssociationClassIndex_ == 0) {
         Oop cls = memory_.findGlobal(std::string("WeakKeyAssociation"));
         if (cls.isObject() && !cls.isNil()) {
@@ -12105,6 +12118,15 @@ void Interpreter::drainMournQueueNatively() {
         signalFinalizationIfNeeded();
         return;
     }
+    if (weakArrayClassIndex_ == 0) {
+        Oop cls = memory_.findGlobal(std::string("WeakArray"));
+        if (cls.isObject() && !cls.isNil()) {
+            weakArrayClassIndex_ = memory_.indexOfClass(cls);
+        }
+        if (weakArrayClassIndex_ == 0) {
+            weakArrayClassIndex_ = 0xFFFFFFFF;
+        }
+    }
 
     Oop nilOop = memory_.nil();
 
@@ -12112,15 +12134,12 @@ void Interpreter::drainMournQueueNatively() {
     size_t processed = 0;
     size_t wkaProcessed = 0;
     size_t decremented = 0;
+    size_t weakArraysDropped = 0;
     size_t nonWkaKept = 0;
     static int drainLog = 0;
 
-    // Filter-drain: pop every mourner, process WKAs in C++, RE-PUSH non-WKAs
-    // so FinalizationProcess can dispatch them via primitive 172.  Previous
-    // versions dropped non-WKAs silently, which starved ObjectFinalizer /
-    // FinalizationRegistry tests of their mourners and left resources
-    // un-finalized.  Preserve pendingFinalizationSignals when any non-WKA
-    // survived so the subsequent signalFinalizationIfNeeded call wakes FP.
+    // Filter-drain: process WKAs natively, drop WeakArrays (no-op mourn),
+    // re-push other finalizer mourners for FP to dispatch via prim 172.
     std::vector<Oop> keepers;
     size_t initialPending = memory_.pendingFinalizationSignals();
 
@@ -12129,8 +12148,18 @@ void Interpreter::drainMournQueueNatively() {
         Oop mourner = memory_.popMourner();
         if (!mourner.isObject()) continue;
         ObjectHeader* mournerHdr = mourner.asObjectPtr();
-        if (mournerHdr->classIndex() != weakKeyAssociationClassIndex_) {
-            // Non-WKA mourner: keep for image-side dispatch via prim 172.
+        uint32_t clsIdx = mournerHdr->classIndex();
+        if (clsIdx == weakArrayClassIndex_) {
+            // WeakArray mourner: slots already nilled by GC, no further
+            // action needed.  DO NOT keep — keeping WeakArray in mournQueue_
+            // (a GC root) makes its non-nil slots strongly reachable, which
+            // prevents referenced classes from becoming weak-alone.
+            weakArraysDropped++;
+            continue;
+        }
+        if (clsIdx != weakKeyAssociationClassIndex_) {
+            // Other non-WKA (ObjectFinalizer, FinalizationRegistryEntry,
+            // WeakSubscription, Ephemeron): keep for image-side dispatch.
             keepers.push_back(mourner);
             nonWkaKept++;
             continue;
@@ -12217,24 +12246,27 @@ void Interpreter::drainMournQueueNatively() {
         }
     }
 
-    // Re-push non-WKA mourners so FP can dispatch them via prim 172.
-    // If any were kept, preserve pendingFinalizationSignals so the later
-    // activateMethod-entry signal consumption still fires a signal.
+    // Re-push finalizer mourners (ObjectFinalizer, FinalizationRegistryEntry,
+    // WeakSubscription, Ephemeron, etc.) so FP can dispatch them via prim 172.
+    // If any kept, preserve pendingFinalizationSignals so the
+    // activateMethod-entry signal still fires a signal.  If all drops/WKAs,
+    // clear pending to avoid a spurious signal.
     if (!keepers.empty()) {
         for (Oop m : keepers) {
             memory_.pushMourner(m);
         }
-        // pendingFinalizationSignals was never cleared — we removed the
-        // clearPendingFinalizationSignals() call.  So the signal flag armed
-        // in primitiveFullGC still matters.
+        // pendingFinalizationSignals retained (no clear).  Signal will fire
+        // at next activateMethod-end check, so FP wakes and drains.
     } else {
-        // Queue fully drained (all were WKAs) — clear pending.
+        // Queue fully drained (all WKAs processed natively + all WeakArrays
+        // dropped).  No mourners left for FP to process.
         memory_.clearPendingFinalizationSignals();
     }
 
     if (drainLog++ < 5) {
-        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu nonwka=%zu dec=%zu pending-before=%zu pending-after=%zu\n",
-                drainLog, initialQueueSize, processed, wkaProcessed, nonWkaKept, decremented,
+        fprintf(stderr, "[DRAIN-%d] initial=%zu processed=%zu wka=%zu wkaarr-drop=%zu kept=%zu dec=%zu pending=%zu->%zu\n",
+                drainLog, initialQueueSize, processed, wkaProcessed,
+                weakArraysDropped, nonWkaKept, decremented,
                 initialPending, memory_.pendingFinalizationSignals());
     }
 }

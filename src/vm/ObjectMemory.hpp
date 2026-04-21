@@ -538,8 +538,7 @@ public:
         return mourner;
     }
 
-    /// Push a mourner back onto the queue — used by the C++ WKA drainer to
-    /// preserve non-WKA mourners for the image-side FinalizationProcess.
+    /// Push a mourner back onto the queue (for native-drain re-queue path)
     void pushMourner(Oop mourner) { mournQueue_.push_back(mourner); }
 
     /// Check if there are mourners waiting
