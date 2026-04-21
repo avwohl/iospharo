@@ -111,11 +111,33 @@ Possibly new:
 
 ## Next targets
 
-1. Confirm 4-21e Δcog number via in-flight sunit run.
-2. Bug 14 investigation (FFI scheduler deadlock + jit-default hang share
-   the same root cause).  Cuts 4 Δcog entries + unblocks jit-default.
-3. OCSpecialSelector via interactive lldb; find the exact send that
-   produces nil selector.
+1. **Fix the finalization obsolete-class cleanup delay.** The four
+   finalization commits (39bfe98, 55f68eb, 95b0c03, 6efe091) deferred
+   FinalizationSemaphore signaling to activateMethod/primitiveWait
+   entry.  Net effect: `ObjectFinalizationService` (P50) no longer
+   wakes promptly, and WeakFinalizerItem cleanup of `AnObsolete*`
+   classes is delayed across test boundaries.  The obsolete classes
+   persist in `Metaclass>>subclassesDo:` iteration, poisoning every
+   later test that walks the class hierarchy.
+   Suspect: the `signalFinalizationIfNeededDeferred` non-preempt
+   variant — previously `synchronousSignal` transferTo'd FP
+   immediately, so the finalizer ran at once.  Now FP waits in the
+   ready queue until the scheduler picks it.  Between SlotIntegration
+   tests that's apparently "never."
+   Two possible fixes:
+     (a) keep activateMethod as the signal site but ALSO call
+         signalFinalizationIfNeeded (preempting variant) between
+         test cases — requires harness cooperation.
+     (b) re-enable the preempting signal for primitiveFullGC only
+         when the FP queue is non-empty AFTER the drain (i.e. only
+         when a finalizer was enqueued that needs prompt execution).
+
+2. Bug 14 investigation (FFI scheduler deadlock + jit-default hang
+   share the same root cause).  Cuts 4 Δcog entries + unblocks
+   jit-default.  Deferred — multi-day effort.
+
+3. Check if prim 188 fix also unblocks any other tests (some
+   reflection / DoIt paths use valueWithReceiver:arguments:).
 
 ## Notable decisions / reverts this session
 
