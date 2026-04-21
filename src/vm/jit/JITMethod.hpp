@@ -208,14 +208,16 @@ struct JITMethod {
     // trampoline) treat 0 as "not a valid entry point" and bail to
     // interpreter, so this is a safe centralization of the bound
     // check that was previously duplicated in only some sites.
+    // Reverted to pre-bug-11-layer-2 behavior: return codeSize when
+    // bcOffset is out of range.  The prior "safer" variant (return 0 and
+    // reject off >= machineCodeEnd) broke the chain-loop fast path —
+    // legitimate resumes whose offset was exactly at or just under the
+    // machine-code boundary were being rejected, forcing actChain=0.
+    // All callers already guard `off == 0 || off >= jm->codeSize`, so
+    // the old sentinel returns the correct "bail" signal.
     uint32_t codeOffsetForBC(uint32_t bcOffset) const {
-        if (bcOffset >= numBytecodes) return 0;
-        uint32_t off = bcToCodeTable()[bcOffset];
-        // Sentinel slot at numBytecodes holds codeSize == end of payload.
-        // Any offset that reaches the literal-pool / IC area is unsafe.
-        const uint32_t machineCodeEnd = bcToCodeTable()[numBytecodes];
-        if (off == 0 || off >= machineCodeEnd) return 0;
-        return off;
+        if (bcOffset >= numBytecodes) return codeSize;
+        return bcToCodeTable()[bcOffset];
     }
 
     // Function pointer to compiled code entry point
