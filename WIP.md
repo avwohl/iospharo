@@ -11,16 +11,28 @@ Current focus: pushing Δcog toward zero on the `jit` branch.
     2026-04-21d     17   + decompiler NLR fix
     2026-04-21e     62   + finalization bucket — BUT +45 new Cly/ED regressions
     2026-04-21f     89   + prim 188 method_ fix (CONFIRMED: closes OCSpecial + 2 Traits)
-    2026-04-21h    ≈20?  + WeakArray mourner drop in drainMournQueueNatively
+    2026-04-21h    ≈20?  + WeakArray mourner drop in drainMournQueueNatively (17a0ff7)
+    2026-04-21i    ≈15?  + signal-when-pending > 0 in activateMethod (b4a0fea)
 
-✅  **Refined fix landed (17a0ff7): option (b) succeeded.**
-    drainMournQueueNatively now drops WeakArray mourners specifically
-    (they were anchoring obsolete classes via mournQueue_ being a GC
-    root) while still re-pushing ObjectFinalizer / FinalizationRegistry-
-    Entry / WeakSubscription / Ephemeron mourners for FP dispatch.
-    All 8 finalization-bucket fixes preserved; Cly/ED/DrTests no longer
-    cascade on AnObsoleteSlotTestsClassA (2 occurrences in 4-21h
-    partial vs 170 in 4-21f).
+✅  **Two-stage fix preserves all 8 finalization fixes AND eliminates
+    AnObsoleteSlotTestsClassA leak:**
+    (17a0ff7) drainMournQueueNatively drops WeakArray mourners
+              specifically — they anchored obsolete classes via
+              mournQueue_ being a GC root.  WKAs still processed
+              natively; ObjectFinalizer/FRE/WeakSubscription/Ephemeron
+              mourners still re-pushed for FP dispatch.
+    (b4a0fea) activateMethod fires signalFinalizationIfNeeded whenever
+              pending > 0, not just when finalizationCheckAfterGC_ is
+              set — so FP consumes re-pushed mourners promptly even
+              after auto-compact GCs.
+
+    Validated in 4-21i partial run at 791 classes:
+      All 8 fin tests pass
+      ClyBrowserToolValidityTest  25/25 (was 26 regs in 4-21e)
+      ClySubclassScopeTest        44/44 (was 1 reg in 4-21e)
+      ClassQueryTest              2/3   (only the ordering artifact fails)
+      DTTestCoverageTest          11/11
+      AnObsoleteSlotTestsClassA   0 occurrences (vs 170 in 4-21f)
 
 ## Fixes committed this session (21 total)
 
