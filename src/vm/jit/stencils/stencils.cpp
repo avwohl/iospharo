@@ -554,9 +554,19 @@ extern "C" void stencil_returnTop(JITState* s) {
     // Bug-14 diagnostic (event=5): log whenever retVal (TOS) is a
     // SmallInt at returnTop.  Pinpoints where SmI flows up from the
     // class on: → instance on: chain.
+    // Round 15: also fire for Array (classIndex=51) and ByteArray
+    // (classIndex=56) retVals — catches the Array-instead-of-Stream
+    // family of bugs.
     if ((retVal.bits & 1) != 0) {
         _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
                            (uint64_t)(uintptr_t)s->jitMethod);
+    } else if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
+        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
+        uint32_t cIdx = hdr & 0x3FFFFF;
+        if (cIdx == 51 || cIdx == 56) {
+            _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
+                               (uint64_t)(uintptr_t)s->jitMethod);
+        }
     }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
@@ -569,11 +579,19 @@ extern "C" void stencil_returnTop(JITState* s) {
 extern "C" void stencil_returnReceiver(JITState* s) {
     Oop retVal = s->receiver;
     // Bug-14 diagnostic (event=4): log whenever s->receiver is a
-    // SmallInt at returnReceiver.  That's the exact moment class
-    // on:'s retVal corruption is visible.  Gated by PHARO_B5_TRACE.
+    // SmallInt at returnReceiver.  Round 15: also fire for Array
+    // (classIndex=51) and ByteArray (classIndex=56) receivers —
+    // catches the Array-instead-of-Stream family.
     if ((retVal.bits & 1) != 0) {
         _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
                            (uint64_t)(uintptr_t)s->jitMethod);
+    } else if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
+        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
+        uint32_t cIdx = hdr & 0x3FFFFF;
+        if (cIdx == 51 || cIdx == 56) {
+            _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
+                               (uint64_t)(uintptr_t)s->jitMethod);
+        }
     }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
@@ -3790,9 +3808,17 @@ extern "C" void stencil_returnTop_1(JITState* s) {
     // Bug-14 diagnostic (event=5): log SmI on TOS at returnTop_1.
     // Removed from SIMSTACK_STENCILS so the trace call's register
     // spill is tolerated.
+    // Round 15: also fire for Array/ByteArray retVals.
     if ((retVal.bits & 1) != 0) {
         _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
                            (uint64_t)(uintptr_t)s->jitMethod);
+    } else if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
+        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
+        uint32_t cIdx = hdr & 0x3FFFFF;
+        if (cIdx == 51 || cIdx == 56) {
+            _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
+                               (uint64_t)(uintptr_t)s->jitMethod);
+        }
     }
     J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
@@ -3818,11 +3844,17 @@ extern "C" void stencil_returnTop_E(JITState* s) {
 extern "C" void stencil_returnReceiver_1(JITState* s) {
     Oop retVal = s->receiver;
     // Bug-14 diagnostic (event=4): log SmI receiver at returnReceiver_1.
-    // Removed from SIMSTACK_STENCILS so the trace call's register
-    // spill is tolerated.
+    // Round 15: also fire for Array/ByteArray receivers.
     if ((retVal.bits & 1) != 0) {
         _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
                            (uint64_t)(uintptr_t)s->jitMethod);
+    } else if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
+        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
+        uint32_t cIdx = hdr & 0x3FFFFF;
+        if (cIdx == 51 || cIdx == 56) {
+            _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
+                               (uint64_t)(uintptr_t)s->jitMethod);
+        }
     }
     J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;

@@ -15124,6 +15124,45 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
                         }
 
+                        // Post-bug-14 diagnostic: general retVal-mismatch detector.
+                        // For #on: and #readStream callees, retVal should be
+                        // an object of their "expected" class (a stream).  If
+                        // we get a raw receiver/arg back (Array, String, etc.)
+                        // that's a symptom of the receiver-slot corruption
+                        // being chased in round 14+.  Logs once per (cls,sel,
+                        // retCls) combo to avoid spam.
+                        if (g_debug.b5Trace && state.exitReason == jit::ExitReturn) {
+                            std::string calleeSel = memory_.selectorOf(chainTarget);
+                            if (calleeSel == "on:" || calleeSel == "readStream") {
+                                Oop rv = state.returnValue;
+                                std::string retCls = rv.isSmallInteger() ? "SmI"
+                                    : rv.isObject() && rv.rawBits() >= 0x10000
+                                        ? memory_.classNameOf(rv).c_str()
+                                        : "other";
+                                // Array/SmallInteger/String as retVal from on:
+                                // or readStream is highly suspicious.
+                                bool suspicious =
+                                    retCls == "Array" || retCls == "SmI" ||
+                                    retCls == "ByteArray" || retCls == "ByteString" ||
+                                    retCls == "String";
+                                if (suspicious) {
+                                    static size_t badCount = 0;
+                                    badCount++;
+                                    if (badCount <= 20) {
+                                        std::string calleeCls =
+                                            classNameOfMethod(chainTarget);
+                                        fprintf(stderr, "[B5-BADRET] #%zu sel=#%s cls=%s "
+                                                "retVal=0x%llx(%s) — receiver-slot corruption "
+                                                "likely\n",
+                                                badCount, calleeSel.c_str(),
+                                                calleeCls.c_str(),
+                                                (unsigned long long)rv.rawBits(),
+                                                retCls.c_str());
+                                    }
+                                }
+                            }
+                        }
+
                         if (__builtin_expect(
                                 state.exitReason == jit::ExitReturn, 1)) {
                             // === FAST PATH: callee returned ===
