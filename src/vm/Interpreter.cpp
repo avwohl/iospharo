@@ -13883,7 +13883,15 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (!jitRuntime_.isInitialized()) return false;
-    static bool noJit = g_debug.noJit;
+    // Match initializeJIT's gate: PHARO_NO_JIT=0 means "JIT on",
+    // so noJit only blocks when the env var is set to a non-"0" value.
+    // Without this, compiles happen but activations are silently disabled
+    // when PHARO_NO_JIT=0 is set, which is confusing during bug-hunting.
+    static const bool noJit = []() {
+        if (!g_debug.noJit) return false;
+        const char* v = std::getenv("PHARO_NO_JIT");
+        return !(v && v[0] == '0');
+    }();
     if (noJit) return false;
     jitActivations_++;
 
