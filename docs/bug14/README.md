@@ -901,6 +901,88 @@ Then:
    working case.  If retVal is SmI 6 in the bug, trace upward to
    find where s->receiver was corrupted.
 
+### 2026-04-22 (round 6) — `state.receiver` correct at SAVE; corrupted later
+
+Extended `[B5-EXIT]` to log `state.receiver` and `[B5] SAVE` to log
+the caller's `state.receiver` at save time.  The bug window view:
+
+    [JIT] Compiled method #108 0x30046b3f8 'on:'     ← instance on:
+                                                      just compiled
+    [B5] #1192 SAVE sp=0x240 depth=0 nArgs=0
+                rcvr=0x30386c3b8(ReadStream)     ← RECEIVER IS VALID
+                callerCM=instance on:
+                cls=PositionableStream sel=#on:
+    [B5-EXIT] #619 ExitReturn sp=0x228 j2jDepth=0
+                retVal=0x31 (SmI 6)              ← BUG — SmI 6
+                receiver=0x300024ee8(ReadStream class) ← class on:'s
+                                                       (correct)
+                method=class on: (0x300469fd0)
+
+So at instance on:'s SAVE, `state.receiver` = a valid ReadStream
+instance.  By the time class on:'s activation exits, `retVal` is
+SmI 6.  The chain of reasoning:
+
+  - class on:'s returnTop reads TOS → returned value.
+  - Trampoline wrote `retVal` (= state.returnValue) to class on:'s
+    sp[-2] slot when popping.
+  - state.returnValue was set by **instance on:'s returnReceiver
+    bail path**: `s->returnValue = s->receiver`.
+  - Therefore instance on:'s `s->receiver` was SmI 6 at its
+    returnReceiver bytecode, even though it was a valid ReadStream
+    at the save slightly earlier.
+
+### What instance on: does between the save and returnReceiver
+
+    36: specialSend #size   (1-arg: aCollection size)
+    37: PopStoreRecvVar 2   (readLimit := size)
+    38: pushZero
+    39: PopStoreRecvVar 1   (position := 0)
+    40: pushReceiver
+    41: Send0 #reset
+    42: Pop
+    43: returnReceiver      ← s->returnValue = s->receiver here
+
+The SAVE at #1192 (nArgs=0) could be for byte 36's size send OR
+byte 41's reset send (both 0-arg).  No companion trace event tells
+us which.  Either way, `state.receiver` should remain pointing at
+the ReadStream instance throughout — `PopStoreRcvVar`, `pushReceiver`,
+`Pop`, and return stencils don't rewrite `state.receiver`.
+
+Only the stencil J2J direct-call sets/restores `state.receiver`
+(save at call-site → restore on return via _sv->receiver).  If that
+restoration picks up a bad value, `state.receiver` becomes SmI 6.
+
+### Why the ASM trampoline hides this
+
+PHARO_ASM_TRAMPOLINE=ON uses `pharo_jit_j2j_trampoline` — a
+hand-written ARM64 trampoline that handles ExitSendCached →
+ExitJ2JCall conversion, the J2J call, AND the J2J-return in
+assembly.  My new `[B5-TRAMP-CALL]` log (C++ trampoline's J2J-call
+setup) fires ZERO times — the ASM path bypasses it entirely.
+
+The most likely suspect: the ASM trampoline's J2J-call setup
+sequence stores/restores state.receiver in a way that, under
+specific conditions (fresh compile of instance on: while class on:
+is active), leaves it corrupted.
+
+### Concrete next step (round 7)
+
+1. **Instrument the ASM trampoline**: add a single stub call from
+   `src/vm/jit/TrampolineAsm.S` into a C helper that logs
+   state.receiver + state.sp[-(nArgs+1)] at each J2J-call entry
+   AND each J2J-return restore.  This is the only path not yet
+   visible.
+2. Alternatively, disable **only** the ASM trampoline for instance
+   on: / class on: and let the C++ trampoline run those (via
+   per-method gate, if one exists).  Compare behavior.
+3. Or: instrument stencils.cpp's `J2J_INLINE_RETURN_IMPL` bail path
+   to dump `s->receiver`, `retVal`, `_sv->receiver`, `_sv->sp`,
+   `_sv->sendArgCount` — regenerate via
+   `python3 scripts/extract_stencils.py` and rebuild.  Regen is
+   documented and straightforward; it just wasn't done yet.
+
+Reference log: `/tmp/bug14-saverecv.log` (SAVE now shows rcvr).
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

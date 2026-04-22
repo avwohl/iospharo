@@ -13944,6 +13944,29 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 Oop calleeRecv = state.sp[-(nArgs + 1)];
                 Oop* fp = state.sp - (nArgs + 1);
 
+                // Bug-14 diagnostic: log every trampoline J2J-call setup with
+                // callee method + its receiver + args.  Rate-limited.
+                if (g_debug.b5Trace) {
+                    static size_t cTcall = 0;
+                    cTcall++;
+                    if (cTcall <= 3000) {
+                        std::string ccls = classNameOfMethod(targetMethod);
+                        std::string csel = memory_.selectorOf(targetMethod);
+                        std::string rkind = calleeRecv.isSmallInteger() ? "SmI"
+                            : calleeRecv.isObject()
+                              ? memory_.classNameOf(calleeRecv).c_str()
+                              : "other";
+                        fprintf(stderr, "[B5-TRAMP-CALL] #%zu nArgs=%d "
+                                        "calleeRecv=0x%llx(%s) "
+                                        "callee=0x%llx cls=%s sel=#%s\n",
+                                cTcall, nArgs,
+                                (unsigned long long)calleeRecv.rawBits(),
+                                rkind.c_str(),
+                                (unsigned long long)targetMethod.rawBits(),
+                                ccls.c_str(), csel.c_str());
+                    }
+                }
+
                 state.receiver = calleeRecv;
                 state.tempBase = fp + 1;
                 // Note: state.exitReason is NOT cleared here. Stencils only
@@ -14352,13 +14375,24 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
                         bcOff = (long long)(state.ip - bcBase);
                     }
+                    // Also log state.receiver — at a returnReceiver bail,
+                    // retVal should equal state.receiver.  If state.receiver
+                    // itself is a SmallInt, we know the receiver was
+                    // corrupted (not the stack-slot math).
+                    std::string rcvrKind = state.receiver.isSmallInteger() ? "SmI"
+                        : state.receiver.isObject()
+                          ? memory_.classNameOf(state.receiver).c_str()
+                          : "other";
                     fprintf(stderr, "[B5-EXIT] #%zu ExitReturn sp=%p ip=%p bcOff=%lld "
                                     "j2jDepth=%d retVal=0x%llx "
+                                    "receiver=0x%llx(%s) "
                                     "chainCallDepth=%d localFrameDepth=%zu "
                                     "method=0x%llx cls=%s sel=#%s\n",
                             count, state.sp, state.ip, bcOff,
                             state.j2jDepth,
                             (unsigned long long)state.returnValue.rawBits(),
+                            (unsigned long long)state.receiver.rawBits(),
+                            rcvrKind.c_str(),
                             (int)chainCallDepth, frameDepth_,
                             (unsigned long long)state.method.rawBits(),
                             mcls.c_str(), msel.c_str());

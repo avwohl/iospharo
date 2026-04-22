@@ -185,10 +185,19 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
             sel = state->interp->memory().selectorOf(cm);
             cls = state->interp->classNameOfMethod(cm);
         }
+        // Also log state.receiver (caller's self at save time) — useful
+        // for tracking down the bug-14 corrupted-receiver chain.
+        std::string rcvrKind = state->receiver.isSmallInteger() ? "SmI"
+            : state->receiver.isObject()
+              ? state->interp->memory().classNameOf(state->receiver).c_str()
+              : "other";
         fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d "
-                        "nArgs=%llu callerCM=0x%llx cls=%s sel=#%s\n",
+                        "nArgs=%llu rcvr=0x%llx(%s) "
+                        "callerCM=0x%llx cls=%s sel=#%s\n",
                 count, state->sp, state->j2jDepth,
                 (unsigned long long)nArgs,
+                (unsigned long long)state->receiver.rawBits(),
+                rcvrKind.c_str(),
                 (unsigned long long)callerCM,
                 cls.empty() ? "?" : cls.c_str(),
                 sel.c_str());
