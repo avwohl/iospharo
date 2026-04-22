@@ -1,0 +1,6 @@
+# 4 tests pass on cog but not on sunit-2026-04-22b-ours
+# columns: status	class	selector
+fail	ProcessMonitorTestServiceTest	testFailTestWhenBackgroundProcessWasFailedDuringFinalTryToFinishItAtTestCompletionTime
+fail	RecursionStopperTest	testThreadSafe
+fail	TestExecutionEnvironmentTest	testHandleForkedProcessesByAllServices
+fail	TraitTest	testTraitsUsersSanity
