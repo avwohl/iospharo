@@ -433,6 +433,37 @@ stock `pharo eval --save` fileIn of `run_sunit_tests.st`,
 eval'ing just `(IntegerTest selector: #testNthRootTruncated)
 runCase` — 318 events in 60s, >95% from `returnValue+3292`.
 
+**Follow-up 2026-04-22 (same day)**: bounded the NLR kill-walk by
+the home-depth recorded in the reachability check (tried capping
+at `homeDepth + 2` instead of the existing `safety < 200`
+backstop).  Had **zero measurable effect**: walk-length
+distribution was byte-identical before/after (56 walks, lengths
+1–28, max 28).  That means the 28-context walks are legitimately
+reaching their homeCtx; the NLR isn't overshooting — so the
+scheduler-process termination cascade is NOT downstream of the
+kill-walk.  Code change reverted; tripwire + docs retained.
+
+Next bisect angle: the p80 process that terminates (e.g., ctx
+0x3034b9dc0 in the latest trace) shows up in the tripwire log
+only as an `oldSender` of some *other* context's NLR-kill event,
+never as the `ctx` whose sender got nil'd.  So its sender field
+was nil at the moment of TERM via a path that doesn't go through
+`storePointer(0, ctx, nil)`.  Candidate paths:
+- Created with nil sender (fork semantics) then its top method
+  genuinely returned off the top
+- Fast-path slot write bypassing storePointer (check for
+  `slotAtPut` or direct `slots()[0] = ...` in JIT stencils or
+  the image-load path)
+- GC compaction wrote zero to the slot in error
+
+The one-general-walker design still wants to land eventually —
+it's the right shape for keeping inline-frame semantics consistent
+across `findNextHandlerContext`, `findNextUnwindContextUpTo:`,
+the kill-walks, and the image-side `Context>>sender`.  But it
+won't fix bug 14 in isolation because the kill-walk isn't the
+hot spot.  Unblock future work: find the path that writes nil to
+p80's top-context sender without going through storePointer.
+
 **Update (continued, diagnostic `PHARO_XFER_TRACE=1` added in 5381f28)**:
 under jit-default the scheduler settles into an infinite 5-XFER
 cycle between exactly 3 processes:
