@@ -7128,6 +7128,39 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             Oop* savedFP = framePointer_;
             Oop savedMethod = method_;
             size_t savedFrameDepth = frameDepth_;
+            // Snapshot frame temp slots (args + locals) — log any
+            // slot Sista writes.  Only active with PHARO_SISTA_TEMP_WATCH=1.
+            static const bool tempWatch =
+                getenv("PHARO_SISTA_TEMP_WATCH") != nullptr;
+            // Snapshot stack slots BELOW current stackPointer — those
+            // belong to the caller's frame.  Sista must not write there.
+            static const bool stackWatch =
+                getenv("PHARO_SISTA_STACK_WATCH") != nullptr;
+            Oop savedBelowSp[16];
+            if (stackWatch) {
+                for (int k = 0; k < 16; k++) {
+                    Oop* p = stackPointer_ - 1 - k;
+                    if (p >= stackBase_) savedBelowSp[k] = *p;
+                    else                 savedBelowSp[k] = Oop::fromRawBits(0);
+                }
+            }
+            // Compute temp count from method header.
+            Oop savedTemps[64];
+            int numTempsWatch = 0;
+            if (tempWatch) {
+                ObjectHeader* mh = method.asObjectPtr();
+                Oop hdr = mh->slots()[0];
+                if (hdr.isSmallInteger()) {
+                    int64_t hb = hdr.asSmallInteger();
+                    int nArgs  = (int)((hb >> 24) & 0x0F);
+                    int nTemps = (int)((hb >> 18) & 0x3F);
+                    numTempsWatch = std::min(nTemps, 64);
+                    (void)nArgs;
+                    for (int k = 0; k < numTempsWatch; k++) {
+                        savedTemps[k] = *(framePointer_ + 1 + k);
+                    }
+                }
+            }
             fn(&sstate);
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
@@ -7150,6 +7183,42 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     (unsigned long long)savedMethod.rawBits(),
                     (unsigned long long)method_.rawBits(),
                     savedFrameDepth, frameDepth_);
+            }
+            // Stack-below-SP check: Sista must not write to caller's
+            // frame slots below stackPointer_.  Most bugs flagged here
+            // would be lowering bugs writing to sp[-N] instead of sp[N].
+            if (stackWatch) {
+                for (int k = 0; k < 16; k++) {
+                    Oop* p = stackPointer_ - 1 - k;
+                    if (p < stackBase_) break;
+                    if (p->rawBits() != savedBelowSp[k].rawBits()) {
+                        fprintf(stderr,
+                            "[SISTA-BELOW-SP] sel=#%s slot=-%d "
+                            "was=0x%llx now=0x%llx\n",
+                            memory_.selectorOf(method).c_str(), k+1,
+                            (unsigned long long)savedBelowSp[k].rawBits(),
+                            (unsigned long long)p->rawBits());
+                    }
+                }
+            }
+            // Log every temp slot Sista wrote (via kStoreTemp).
+            if (tempWatch && numTempsWatch > 0) {
+                for (int k = 0; k < numTempsWatch; k++) {
+                    Oop now = *(framePointer_ + 1 + k);
+                    if (now.rawBits() != savedTemps[k].rawBits()) {
+                        fprintf(stderr,
+                            "[SISTA-TEMP-WRITE] sel=#%s slot=%d "
+                            "was=0x%llx now=0x%llx exit=%d bailOp=0x%02x\n",
+                            memory_.selectorOf(method).c_str(), k,
+                            (unsigned long long)savedTemps[k].rawBits(),
+                            (unsigned long long)now.rawBits(),
+                            (int)sstate.exitReason,
+                            (sstate.exitReason == jit::ExitSend
+                             && sstate.ip >= methodBytes + bytecodeStart
+                             && sstate.ip < methodBytes + totalBytes)
+                                ? (unsigned)*sstate.ip : 0);
+                    }
+                }
             }
 
             // Ring-buffer record — cheap, always-on.  Dumped on DNU.
