@@ -13976,6 +13976,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.sp[-(save.sendArgCount + 1)] = retVal;
                 state.sp -= save.sendArgCount;
 
+                // Bug-14 diagnostic: log every trampoline J2J-return —
+                // method being returned TO (caller), nArgs popped, retVal,
+                // restored sp, whether resume is valid.
+                if (g_debug.b5Trace) {
+                    static size_t cTramp = 0;
+                    cTramp++;
+                    if (cTramp <= 2500) {
+                        auto* savedJM = save.jitMethod;
+                        uint64_t callerOop = savedJM
+                            ? savedJM->compiledMethodOop : 0;
+                        Oop callerOop_ = Oop::fromRawBits(callerOop);
+                        std::string cls = callerOop
+                            ? classNameOfMethod(callerOop_) : "?";
+                        std::string sel = callerOop
+                            ? memory_.selectorOf(callerOop_) : "?";
+                        fprintf(stderr, "[B5-TRAMP-RET] #%zu sp=%p retVal=0x%llx "
+                                        "nArgsPopped=%d resumeAddr=%p "
+                                        "localFrameDepth=%zu "
+                                        "callerCM=0x%llx cls=%s sel=#%s\n",
+                                cTramp, state.sp,
+                                (unsigned long long)retVal.rawBits(),
+                                (int)save.sendArgCount, save.resumeAddr,
+                                frameDepth_,
+                                (unsigned long long)callerOop,
+                                cls.c_str(), sel.c_str());
+                    }
+                }
+
                 // Resume caller's JIT at bytecode after send (precomputed on call path)
                 if (__builtin_expect(save.resumeAddr == nullptr, 0)) {
                     state.ip = save.ip;  // interpreter needs post-send IP

@@ -628,6 +628,91 @@ path, instrument `Interpreter::returnFromMethod` (or whichever
 interpreter-side handler runs `returnReceiver` at byte 43) and look
 for divergence.
 
+### 2026-04-22 (round 3) — [B5-TRAMP-RET] dead end, ASM trampoline is opaque
+
+Added a `[B5-TRAMP-RET]` log inside the C++ trampoline's
+`j2jDepth > 0` return branch (Interpreter.cpp:13948).
+
+When rerun with PHARO_ASM_TRAMPOLINE=ON (default): **zero
+[B5-TRAMP-RET] events** — the ASM version handles the whole trampoline
+in hand-written assembly, so the C++ log is unreachable.
+Instrumenting the ASM trampoline requires editing
+`src/vm/jit/TrampolineAsm.S` (not yet attempted).
+
+When rerun with PHARO_ASM_TRAMPOLINE=OFF (C++ fallback): 8 events
+fire but none for `PositionableStream>>on:` (instance) — reset IS
+seen returning via this path (for its inner `max:` call), plus a
+handful of other methods, but instance on: is conspicuously absent.
+
+Crucially, with the C++ trampoline: **0 atEnd-DNUs fire** — but the
+VM still hangs (idle process loop, ~110k steps in 60s).  Different
+failure mode.  Either a second bug lives behind the ASM trampoline,
+or both trampolines hit the same bug but manifest differently.
+
+### What the B5 SAVE events actually show
+
+Instance on: (oop 0x30046b3f8) DOES emit SAVE events as a caller —
+at various depths (0, 1, … seen depth=1 at event #1419 of this
+run).  So instance on: definitely runs JIT and dispatches sends
+via the stencil J2J direct-call path.
+
+At the exact bug site:
+
+    #1195 SAVE depth=0 nArgs=0 cls=PositionableStream sel=#on:   ← on:'s save for reset
+    #1196 SAVE depth=0 nArgs=1 cls=WriteStream sel=#reset        ← reset's save for max:
+    #1197 RET   retVal=SmI 100                                    ← max: returning to reset
+    #1198 TAIL  resumeAddr=reset bc[3] = PopStoreRecvVar 2
+
+#1196's depth=0 (pre-inc) means reset enters at state.j2jDepth=0 —
+NOT inherited from instance on:'s save.  That means either:
+  (a) reset was NOT reached via stencil J2J direct-call from on:
+      (some other code path reset state.j2jDepth between the save
+       at #1195 and reset's entry), or
+  (b) the SAVE at #1195 was NOT followed by the corresponding
+      depth++ — i.e., the stencil bailed between the trace and the
+      increment.  Stencil code doesn't appear to have such a bail,
+      but worth double-checking.
+
+### Post-popFrame [B5-RESUME] log
+
+I added a log inside the tryJITActivation main-switch
+`chainCallDepth==0` branch (after popFrame + push) that shows the
+interpreter state handed back to the caller.  For both normal and
+buggy reset exits:
+
+    stackPointer_=<x>, framePointer_=<y>, sp-fp=3
+    method_=instance-on:, ip=bcOff=9 (byte 42 = Pop)
+
+Identical structure between cases.  So reset → on: transition is
+clean.
+
+### New most-likely bug location
+
+Instance on: runs the JIT's stencil code, but its `self reset` send
+results in *tryJITActivation(reset)* (not stencil J2J direct-call,
+judging by the ExitReturn switch firing).  That means on:'s send
+bailed out to interpreter or to a helper that then used
+activateMethod + tryJITActivation.
+
+After tryJITActivation(reset) returns true, interpreter dispatch
+continues at on:'s byte 42 (Pop) as **interpreter bytecode**,
+then byte 43 (returnReceiver) as interpreter.  That calls
+`Interpreter::returnValue(receiver_)`, which pops on:'s frame and
+then invokes `tryJITResumeInCaller()` at line 4809 to re-enter
+JIT in the caller.
+
+That re-enter path is the most likely bug site now.  Concrete
+probe for next session:
+
+  1. Log every entry to `tryJITResumeInCaller` when called from
+     instance on:'s returnReceiver.  Capture sp, fp, method, ip,
+     state to be restored into JIT.
+  2. Compare working-case vs buggy-case values.  Look for a slot
+     mismatch or stale ip.
+  3. If tryJITResumeInCaller looks clean, walk forward — log the
+     next few bytecodes executed by WriteStream>>on: (the caller)
+     until a SmallInt appears where an object should.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
