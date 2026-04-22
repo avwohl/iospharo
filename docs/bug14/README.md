@@ -1265,6 +1265,61 @@ Hypothesis (d) is worth investigating in round 11.
    the return-path entry, bracketed by save/restore of caller-
    saved registers.  Simpler than instrumenting many ASM points.
 
+### 2026-04-22 (round 11) — ASM tramp Ltramp_return is DEAD CODE in bug path
+
+Added `[B5-TRAMP-RET-ASM]` event=6 via a C helper called from
+`Ltramp_return` at the TOP of the return path in TrampolineAsm.S.
+No register save/restore needed because caller-saved regs x0-x18
+aren't live at Ltramp_return entry (flow just fell through from
+Ltramp_loop's dispatch).
+
+Result: **0 TRAMP-RET-ASM events** across the entire reproducer
+run — the ASM trampoline's return path is NEVER traversed.
+
+Mechanistically: `Ltramp_return` fires only when the stencil exits
+with `EXIT_RETURN` AND the trampoline's local j2jDepth > 0 (i.e.,
+the trampoline itself pushed a save via `Ltramp_call`).  In this
+bug, ALL class on: → instance on: → size/reset transitions go
+through the stencil J2J direct-call path (incrementing
+state.j2jDepth, bypassing the trampoline's j2jStack).  When the
+chain pops back to state.j2jDepth=0 and bails with EXIT_RETURN,
+the trampoline sees local j2jDepth=0 and exits directly via
+Ltramp_exit — never hitting Ltramp_return.
+
+**So hypothesis (d) (ASM trampoline writing wrong retVal) is
+falsified.**
+
+### Remaining options
+
+The corruption happens at the stencil level:
+
+  (a) resumeAddr corruption between SAVE (#1538, logged as correct
+      bc[4]=0x10ccd39d4) and the later J2J_INLINE_RETURN's read.
+  (e) Stack-slot aliasing — instance on:'s writes accidentally
+      land on class on:'s sp[-2].
+
+For (a): we'd need to see the resumeAddr READ at J2J_INLINE_RETURN
+time (vs the SAVE time I already logged).  The NO_TRACE variant
+doesn't emit event=3 TAIL, so we can't directly see it.  Could:
+  - Add an event=3-equivalent to J2J_INLINE_RETURN_NO_TRACE (one
+    more stencil edit + regen).
+  - OR instrument the J2J_INLINE_RETURN macro globally to always
+    emit the event (remove the NO_TRACE variant entirely).
+
+For (e): inspect the bytecode stencils for PopStoreRecvVar and
+look at where they write.  They should write to receiver slots
+(heap), not stack.  Verifiable by reading the stencil source.
+
+### Concrete next step (round 12)
+
+1. Make `J2J_INLINE_RETURN_NO_TRACE` also emit event=3 (TAIL) so
+   we see the resumeAddr used on every J2J return, including the
+   NO_TRACE paths.  This DOES require stencil regen.
+2. Run reproducer.  Compare the resumeAddr at the J2J return of
+   size (expected: bc[4] = 0x10ccd39d4 per #1538 SAVE) with the
+   actual value at return time.  If they differ, we have the
+   smoking gun for resumeAddr corruption.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

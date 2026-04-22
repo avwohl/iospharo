@@ -160,6 +160,15 @@ Ltramp_loop:
 
 // ======== Return path ========
 Ltramp_return:
+    // Bug-14 diagnostic: log retVal + popped save before we pop.
+    // Caller-saved regs x0-x18 aren't live at Ltramp_return entry (the
+    // loop-dispatch branch just landed here), so BL is safe to issue
+    // without any reg save/restore.  Our pinned state (x21-x28) is
+    // preserved by ABI.
+    mov     x0, x21
+    sub     x1, x23, #JSV_SIZE        // &save (what we're about to pop)
+    bl      SYMBOL(pharo_jit_b5_tramp_ret)
+
     add     x26, x26, #1              // localReturns++
     sub     x23, x23, #JSV_SIZE       // pop save slot; now points to just-popped
     sub     x24, x24, #1              // localFrameDepth--

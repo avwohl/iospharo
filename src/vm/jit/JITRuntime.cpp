@@ -270,6 +270,39 @@ extern "C" void jit_rt_return(JITState* state) {
     (void)state;
 }
 
+// Bug-14 diagnostic: called from the ASM trampoline's return path
+// (TrampolineAsm.S, Ltramp_return) right before the save is popped.
+// Logs the retVal being written + the popped save's key fields.
+// Rate-limited and gated by PHARO_B5_TRACE.
+extern "C" void pharo_jit_b5_tramp_ret(JITState* state, Interpreter::J2JSave* save) {
+    if (!g_debug.b5Trace) return;
+    static size_t count = 0;
+    count++;
+    if (count > 3000) return;
+    Oop retVal = state->returnValue;
+    std::string kind = retVal.isSmallInteger() ? "SmI"
+        : retVal.isObject() && state->interp
+            ? state->interp->memory().classNameOf(retVal).c_str()
+            : "other";
+    // Decode the caller's method (save->jitMethod->compiledMethodOop).
+    uint64_t cmOop = 0;
+    std::string cls = "?", sel = "?";
+    if (save->jitMethod && state->interp) {
+        cmOop = save->jitMethod->compiledMethodOop;
+        if (cmOop > 0x10000) {
+            Oop cm = Oop::fromRawBits(cmOop);
+            sel = state->interp->memory().selectorOf(cm);
+            cls = state->interp->classNameOfMethod(cm);
+        }
+    }
+    fprintf(stderr, "[B5-TRAMP-RET-ASM] #%zu retVal=0x%llx(%s) "
+                    "save.sp=%p save.nArgs=%d save.resume=%p "
+                    "callerCM=0x%llx cls=%s sel=#%s\n",
+            count, (unsigned long long)retVal.rawBits(), kind.c_str(),
+            save->sp, (int)save->sendArgCount, save->resumeAddr,
+            (unsigned long long)cmOop, cls.c_str(), sel.c_str());
+}
+
 extern "C" void jit_rt_arith_overflow(JITState* state) {
     // Arithmetic overflow: restore entry SP and re-execute the whole method.
     // The interpreter will handle LargeInteger arithmetic.
