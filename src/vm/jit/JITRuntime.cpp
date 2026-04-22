@@ -191,13 +191,22 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
             : state->receiver.isObject()
               ? state->interp->memory().classNameOf(state->receiver).c_str()
               : "other";
+        // The stencil emits this trace BEFORE bumping j2jSaveCursor, so the
+        // freshly-written save slot sits at the current cursor.  Read its
+        // resumeAddr so we can correlate against bcToCodeTable entries.
+        void* savedResume = nullptr;
+        if (state->j2jSaveCursor) {
+            Interpreter::J2JSave* sv = reinterpret_cast<Interpreter::J2JSave*>(
+                state->j2jSaveCursor);
+            savedResume = sv->resumeAddr;
+        }
         fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d "
-                        "nArgs=%llu rcvr=0x%llx(%s) "
+                        "nArgs=%llu rcvr=0x%llx(%s) resume=%p "
                         "callerCM=0x%llx cls=%s sel=#%s\n",
                 count, state->sp, state->j2jDepth,
                 (unsigned long long)nArgs,
                 (unsigned long long)state->receiver.rawBits(),
-                rcvrKind.c_str(),
+                rcvrKind.c_str(), savedResume,
                 (unsigned long long)callerCM,
                 cls.empty() ? "?" : cls.c_str(),
                 sel.c_str());

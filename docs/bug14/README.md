@@ -1129,6 +1129,90 @@ with TOS=SmI 6:
 
 Stencil diagnostics remain in place behind PHARO_B5_TRACE.
 
+### 2026-04-22 (round 9) — primitive-prologue hypothesis + resume pin
+
+Extended `[B5] SAVE` event=1 handler to read and log
+`_save->resumeAddr` from the freshly-written j2jSaveCursor slot.
+Combined with `PHARO_JIT_DUMP_SEL=on:` which prints instance on:'s
+bcToCodeTable, we get exact bytecode-level correlation:
+
+    [B5] #1538 SAVE sp=0x240 depth=0 nArgs=0
+                    rcvr=ReadStream resume=0x10ccd39d4
+                    callerCM=instance on:
+
+    instance on: bcToCodeTable:
+      bc[0]=code+0      pushTemp 0 (aCollection)        byte 33
+      bc[1]=code+32     PopStoreRecvVar 0 (collection)  byte 34
+      bc[2]=code+64     pushTemp 0                      byte 35
+      bc[3]=code+96     sendJ2J #size                   byte 36  ← the send
+      bc[4]=code+2236   PopStoreRecvVar 2 (readLimit)   byte 37
+      ...
+
+`resume=0x10ccd39d4 = code+2236 = bc[4]`, so the SAVE is for
+`instance on:`'s bc[3] = `#size` send at byte 36.  This **pinpoints
+the failing send**: instance on: calls `#size` via stencil J2J
+direct-call.  Its resume after the send is byte 37's
+PopStoreRecvVar 2 stencil.
+
+### Primitive-prologue hypothesis
+
+Examined `stencil_primSize` (src/vm/jit/stencils/stencils.cpp:2464):
+
+    extern "C" void stencil_primSize(JITState* s) {
+        Oop rcvr = s->receiver;
+        // ... compute size ...
+        s->returnValue.bits = (size << 3) | 1;  // SmallInteger
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+    }
+
+**The primitive stencil exits with EXIT_RETURN directly, bypassing
+`J2J_INLINE_RETURN`.**  `J2J_INLINE_RETURN` is what pops
+`state.j2jSaveCursor` and decrements `state.j2jDepth`.  Without it,
+the stencil-side save stack is left with an un-popped entry when
+the primitive completes.
+
+Meanwhile, the ASM trampoline catches `ExitReturn` and pops from
+**its own** `j2jStack` (a separate memory region from
+`state.j2jSaveCursor`).  So the two save stacks desynchronize:
+trampoline pops class on:'s save thinking the (true) callee
+`instance on:` returned, but the stencil's save for `#size` is
+still there unpopped.  Trampoline writes retVal (=SmI 6 from size)
+to **class on:'s** sp[-2] and resumes class on:'s returnTop —
+which returns SmI 6.
+
+### Falsified variant
+
+Bisected with `JIT_EXCLUDE_OOP=<size method oops>`:
+
+    JIT_EXCLUDE_OOP=0x300336bd0                    (ArrayedCollection>>size)     → 3 DNUs
+    JIT_EXCLUDE_OOP=<all five sizes>                                              → 3 DNUs
+
+So it is NOT specifically any single `#size` method.  Either the
+actual triggering primitive is a different one (the trampoline
+could have converted via a different dispatch path), or the bug is
+not exactly as hypothesized.  The pattern
+"SAVE → (nothing traced) → class on:'s returnTop with SmI" is
+still mechanistically clear, but the specific primitive identity
+eludes exclusion-based bisection.
+
+### Concrete next step (round 10)
+
+1. **Add stencil traces to ALL primitive stencils** (primSize,
+   primAdd, primSub, primClass, primAt, primAtPut, etc.) at their
+   EXIT_RETURN point.  This catches whichever primitive actually
+   fires with state.j2jDepth > 0.
+2. **Or**: add a trace at `stencil_primSize` etc. that fires when
+   `state.j2jDepth > 0` at exit-time (anomalous — primitive
+   stencil exiting while a stencil-side save is still on the
+   cursor).  That's the specific bug signature.
+3. **Or**: fix the bug directly — add a J2J-aware exit to primitive
+   stencils: if `state.j2jDepth > 0`, pop the save and tail-call
+   the resume address (like `J2J_INLINE_RETURN` does).  This would
+   synchronize the two save stacks.
+
+Reference log: `/tmp/bug14-resume.log` (SAVE now shows resumeAddr).
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
