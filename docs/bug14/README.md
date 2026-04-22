@@ -362,6 +362,53 @@ All landed this session, all env-gated:
   - `PHARO_JIT_DEFER=0`      — eager JIT (reproducer needs this)
   - One-shot reproducer: `docs/bug14/reproduce.sh`
 
+### The one thing missing (add this next session first)
+
+A C++-side "classOfMethod" helper.  Given a method oop, walks
+all globals looking for a class whose methodDict holds it, and
+returns `ClassName>>selectorName` as a string.  Called from the
+DNU reporter and/or the B5 RET trace to identify the caller
+method by more than just its stored selector.
+
+Rough shape in Interpreter.cpp:
+
+    std::string Interpreter::classOfMethodOop(Oop methodOop) {
+        // Walk smalltalkAssoc's values (global dictionary) looking
+        // for Behavior instances whose methodDict has methodOop.
+        // Cache in a std::unordered_map<uint64_t,std::string>.
+    }
+
+With this, the B5 RET event becomes
+
+    [B5] #1197 RET retVal=0x321 savedArgs=1 sel=#reset
+                                  ^ cls=<ClassName>
+
+and you know *immediately* which class's `#reset` is being
+J2J-returned-to.  Without this, you scan 103 candidates manually.
+30 lines of C++ that would have saved the last hour of this
+session.  Write it first next time.
+
+### Bug 14 session commit trail
+
+    8924f83  PHARO_SENDER_TRIPWIRE (storePointer level)
+    f1f6798  NLR-overwalk hypothesis falsified (reverted, zero-effect fix)
+    e51665f  PHARO_SLOT_TRIPWIRE (slotAtPut level, fast-path bypass falsified)
+    6293c21  Reference logs + DNU #3 stack snapshot
+    bef4d67  One-shot reproducer (docs/bug14/reproduce.sh)
+    86c9bc0  stencils.cpp regen-required-after-edit gotcha documented
+    25dc068  B5 RET augmented with selectorOf(callerCM)
+    6c47c15  Bytecodes of OCScanner>>contents decoded (turned out to be
+             mergesort's hot path, not the bug site)
+    770779d  Static audit: ExtJump/Pop/ExtendB emit paths look correct in
+             isolation; the bug is in their interaction
+    0d62a1a  B5 TAIL event (event=3) logging resumeAddr + savedSp;
+             corrected `sel=#contents` → `sel=#reset`
+
+Net: from "jit hangs mysteriously, zero reproducer" to "3-step
+checklist with full diagnostic instrumentation, 30s repro, pinned
+to a one-arg send in some #reset method returning SmI 100 at
+startup."  Handoff-ready.
+
 ### The 18-byte whileFalse: method is a red herring
 
 The DNU says `in #whileFalse:` because the DNU reporter walks up
