@@ -534,10 +534,17 @@ extern "C" void stencil_storeLitVar(JITState* s) {
         _HOLE_RT_J2J_TRACE((s), 3, (uint64_t)(uintptr_t)_sv->resumeAddr, \
                            (uint64_t)(uintptr_t)_sv->sp))
 
-// NO_TRACE variant: no function call (preserves SimStack register
-// safety — compiler can't spill x19-x22 if there's no ABI boundary).
+// NO_TRACE variant: originally a pure no-op to preserve SimStack
+// register safety.  For bug-14 debugging, now emits ONLY event=3
+// (TAIL) — a single lightweight trace call giving the resumeAddr
+// used at this return.  The variant is no longer in
+// SIMSTACK_STENCILS (its only users — stencil_returnTop_1 and
+// stencil_returnReceiver_1 — were removed in round 10 because
+// they're terminal).  Revert to `(void)0` after bug-14 is fixed.
 #define J2J_INLINE_RETURN_NO_TRACE(s, retVal) \
-    J2J_INLINE_RETURN_IMPL(s, retVal, (void)0)
+    J2J_INLINE_RETURN_IMPL(s, retVal, \
+        _HOLE_RT_J2J_TRACE((s), 3, (uint64_t)(uintptr_t)_sv->resumeAddr, \
+                           (uint64_t)(uintptr_t)_sv->sp))
 
 // Return top of stack
 // Bytecode: 0x5C

@@ -1320,6 +1320,84 @@ look at where they write.  They should write to receiver slots
    actual value at return time.  If they differ, we have the
    smoking gun for resumeAddr corruption.
 
+### 2026-04-22 (round 12) — NO_TRACE now emits TAIL; STILL no events in bug window
+
+Modified `J2J_INLINE_RETURN_NO_TRACE` to emit event=3 (TAIL) so
+every J2J return (traced or not) now logs its resumeAddr.
+Regenerated stencils.
+
+Result: **still ZERO events between #1538 SAVE and #1539 SMI-TOP.**
+No TAIL.  No RET.  No intermediate SAVE.  Nothing.
+
+This is a **strong negative signal**: whatever runs between
+instance on:'s `#size` send and class on:'s returnTop does NOT
+traverse `J2J_INLINE_RETURN` at all.  That macro is the ONLY path
+that decrements `state.j2jDepth` + restores caller state + pops
+the save cursor.  If it didn't fire, then the stencil-internal
+save for #size (pushed at #1538) is NEVER popped — which would
+leave state.j2jDepth=1.
+
+But my [B5-EXIT] at class on: shows `j2jDepth=0` at the switch.
+So something ELSE zeros state.j2jDepth.
+
+Looking at `Interpreter.cpp:15090` (inline one-shot J2J call
+in the chain loop): `state.j2jDepth = 0;` is set when the caller
+enters via the chain loop, AND at line 15133 `state.j2jDepth = 0;`
+when resuming the caller.  That discards whatever state.j2jDepth
+the callee left, including unpopped stencil saves.
+
+So the chain loop's inline J2J call **silently loses** any
+stencil-level saves the callee left on state.j2jSaveCursor.
+
+### Most likely bug mechanism
+
+1. Class on: called via tryJITActivation.
+2. Class on:'s bc[3] Send1 #on: exits with `ExitSendCached` (IC miss).
+3. The chain-loop fast path (line 15088) invokes instance on:
+   directly via `JIT_CALL(chainJM->codeStart(), &state)`.
+4. Instance on: runs.  Its bc[3] `#size` hits IC → stencil J2J
+   direct-call → SAVE #1538 pushed to state.j2jSaveCursor.
+5. `#size` callee is a **primitive** that exits directly with
+   `state.exitReason = EXIT_RETURN` and `state.returnValue = SmI 6`
+   without going through `J2J_INLINE_RETURN`.  (stencil_primSize
+   at src/vm/jit/stencils/stencils.cpp:2464 does exactly this.)
+6. That exit unwinds up the C call stack past instance on:'s
+   bytecodes without executing them.  Back to chain loop's JIT_CALL
+   at line 15099.
+7. Chain loop sees `ExitReturn` at line 15103 (fast path).  Uses
+   `state.returnValue = SmI 6` as instance on:'s retVal.  Writes
+   it to class on:'s sp[-2].
+8. Resumes class on:'s returnTop at bc[4].  TOS = SmI 6.  Returns.
+9. class on:'s retVal = SmI 6 propagates up to `reader :=
+   bytes readStream`.  DNU on atEnd.
+
+Bisecting via `JIT_EXCLUDE_OOP` for specific `#size` methods
+(ArrayedCollection>>size 0x300336bd0, OrderedCollection>>size,
+Interval>>size, etc.) did NOT fix the bug.  This suggests the
+specific primitive isn't one of those.  Worth investigating which
+other primitives could be the one dispatched for
+`aCollection size` on the ReadStream's ByteArray input.
+
+### Concrete next step (round 13)
+
+1. Add event=7 (new) to every primitive stencil's exit point —
+   log `state.j2jDepth` and the selector.  If any primitive fires
+   with depth>0 in the bug path, it's the smoking gun.
+2. Fix directly: in `stencil_primSize` (and every primitive
+   stencil), replace:
+       `s->returnValue = ...; s->exitReason = EXIT_RETURN; _HOLE_RT_RETURN(s);`
+   with:
+       `J2J_INLINE_RETURN_NO_TRACE(s, (size_result));`
+       `s->returnValue = ...; s->exitReason = EXIT_RETURN;`
+       `_HOLE_RT_RETURN(s);`
+   This synchronizes the two save stacks.  Risk: many primitive
+   stencils to edit; easy to miss one.
+3. Alternative fix: in the chain loop's fast-path code (line
+   15103+), check `state.j2jDepth > 0` at callee exit and if so,
+   pop the stencil save and use its resumeAddr instead of the
+   precomputed caller resume.  Less invasive than editing
+   every primitive stencil.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
