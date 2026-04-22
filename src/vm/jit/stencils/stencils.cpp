@@ -522,12 +522,17 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 // For return events, extra1 = retVal.bits, extra2 packs
 // callerCM (low 48) | sendArgCount (bits 48-55) | savedSp reduced to
 // offset-from-cursor (bits 56-63 — just a sanity tag).
+// Also emit event=3 with extra1=resumeAddr, extra2=(uintptr_t)_sv->sp
+// so the handler can correlate the J2J return's tail-call target and
+// caller-sp with the subsequent DNU in the bug-14 investigation.
 #define J2J_INLINE_RETURN(s, retVal) \
     J2J_INLINE_RETURN_IMPL(s, retVal, \
         _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, \
                            (uint64_t)(*(uint64_t*)((uint8_t*)(_sv->jitMethod) + \
                                                     JM_COMPILED_METHOD)) | \
-                           ((uint64_t)_sv->sendArgCount << 48)))
+                           ((uint64_t)_sv->sendArgCount << 48)); \
+        _HOLE_RT_J2J_TRACE((s), 3, (uint64_t)(uintptr_t)_sv->resumeAddr, \
+                           (uint64_t)(uintptr_t)_sv->sp))
 
 // NO_TRACE variant: no function call (preserves SimStack register
 // safety — compiler can't spill x19-x22 if there's no ABI boundary).
@@ -3723,11 +3728,15 @@ extern "C" void stencil_returnTop_1(JITState* s) {
     _HOLE_RT_RETURN(s);
 }
 
-// E: return TOS from memory (same as base stencil)
+// E: return TOS from memory (same as base stencil).
+// Temporarily using traced variant for bug-14 diagnosis — state=0
+// entry means x19-x22 are dead so the B5-trace call's register
+// spill doesn't violate SimStack safety.  Revert to NO_TRACE after
+// the bug is fixed.
 extern "C" void stencil_returnTop_E(JITState* s) {
     s->sp--;
     Oop retVal = *(s->sp);
-    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+    J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);

@@ -98,6 +98,9 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
     static bool trace = g_debug.b5Trace;
     if (!trace) return;
+    // Raw entry log so we can see if the stencil ever calls us with event=3.
+    static size_t entryCount = 0;
+    entryCount++;
     // Always record to ring; filter only controls live stderr print.
     g_b5Count++;
     B5Event& slot = g_b5Ring[g_b5Head];
@@ -192,6 +195,12 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                 (unsigned long long)extra1,
                 (unsigned long long)callerCM, (unsigned long long)nArgs,
                 sel.c_str());
+    } else if (event == 3) {
+        // Diagnostic event added 2026-04-22 to chase bug 14:
+        // extra1 = resumeAddr (the tail-call target after J2J return)
+        // extra2 = _sv->sp    (caller's sp captured at save time)
+        fprintf(stderr, "[B5] #%zu TAIL resumeAddr=0x%llx savedSp=0x%llx\n",
+                count, (unsigned long long)extra1, (unsigned long long)extra2);
     } else {
         fprintf(stderr, "[B5] #%zu evt=%llu e1=0x%llx e2=0x%llx\n",
                 count, (unsigned long long)event,

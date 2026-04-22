@@ -302,28 +302,65 @@ something in the interaction must be off — possibly:
    That looks right — Pop lands one entry *before* the nop for
    ExtendB.
 
-### The actual next step (next session)
+### 2026-04-22 final — B5 event=3 TAIL trace landed
 
-The audit didn't find the bug by static reading.  To actually
-catch it, add a printf to `J2J_INLINE_RETURN_IMPL` in
-`src/vm/jit/stencils/stencils.cpp` logging:
-  - retVal
-  - _sv->sp
-  - _sv->sendArgCount
-  - _sv->resumeAddr (the tail-call target)
+Done this session: added a second `_HOLE_RT_J2J_TRACE` call with
+event=3 inside `J2J_INLINE_RETURN` that logs `_sv->resumeAddr`
+and `_sv->sp`.  Updated `jit_rt_j2j_trace` in JITRuntime.cpp to
+dispatch event=3 as a new `[B5] #N TAIL resumeAddr=... savedSp=...`
+line.  Changed `stencil_returnTop_E` (the state=0-entry return
+stencil used in the hot path) from `J2J_INLINE_RETURN_NO_TRACE`
+to the traced variant — state=0 means x19-x22 are dead so the
+B5-trace register spill is safe there.  Regenerated stencils
+via `python3 scripts/extract_stencils.py` and rebuilt.
 
-**Critical**: must then regenerate
-`src/vm/jit/generated_stencils_arm64.hpp` via
-`python3 scripts/extract_stencils.py` before rebuilding, otherwise
-the compiled VM runs stale stencils and the printf never fires.
-(Verified during this session: fprintf in the non-stencil C++
-return path at `Interpreter.cpp:12685` logs zero events — all
-J2J returns go through the stencil path, not the C++ trampoline.)
+With the trace live, the immediate LIVE events preceding DNU #1
+(the first atEnd-DNU in the reproducer) are:
 
-Once the printf fires in the reproducer, correlate the
-resumeAddr values against the JIT method's compiled code addresses
-(available from `JITMethod` metadata) to confirm it points at
-the Pop stencil entry.  If it doesn't — there's the bug.
+    [B5] #1197 RET  sp=0x...288 depth=0 retVal=0x321 callerCM=0x30046cf68 savedArgs=1 sel=#reset
+    [B5] #1198 TAIL resumeAddr=0x107f24354 savedSp=0x...288
+
+**Correction to prior analysis**: earlier I said the caller
+was `#contents`.  That was reading the ring-dump format (which
+uses `callerCM=%llx` without `sel=`).  The live event=2 trace
+with selector lookup shows `sel=#reset` — not `#contents`.
+Method oop is 0x30046cf68, method's class has a `#reset`
+selector, returns SmI 100 from a 1-arg send inside its body.
+
+Plausible candidate: something like `PositionableStream>>reset`
+or a fresh-scanner reset that includes an `^ counter + 1` or
+similar 1-arg arithmetic.  The retVal 0x321 = SmI 100 is
+consistent with an integer arithmetic result.
+
+### Concrete next step (updated)
+
+1. Identify which class's `#reset` method has JIT oop 0x30046cf68
+   (note: oop varies per image download — in a fresh reproducer
+   run, use the `sel=#reset callerCM=<oop>` from the *first*
+   DNU-preceding RET).  Likely reading: `PositionableStream>>reset`,
+   `OCScanner>>reset`, or some scanner-family reset.
+2. Dump its bytecodes + literals like we did for
+   `OCScanner>>contents` earlier.
+3. Find the 1-arg send inside `#reset` whose callee returns
+   SmI 100 in the reproducer.
+4. Correlate `#1198 TAIL resumeAddr=0x107f24354` against the JIT
+   method's compiled code range (`JITMethod::codeStart` .. `codeEnd`)
+   from `jitRuntime_.methodMap()`.  That tells you exactly
+   which bytecode offset inside `#reset` the tail-call jumps to
+   — compare with where the post-send Pop should be.
+5. If `resumeAddr` points *past* the Pop, that's the bug —
+   one-off in the `RESUME_ADDR` hole computation.
+
+### Current diagnostic toolkit
+
+All landed this session, all env-gated:
+  - `PHARO_SENDER_TRIPWIRE=1` — storePointer-level sender nil writes
+  - `PHARO_SLOT_TRIPWIRE=1`  — slotAtPut-level, catches fast-path writes
+  - `PHARO_B5_TRACE=1`       — SAVE / RET (with sel) / TAIL events for J2J
+  - `PHARO_B5_MAX=N`         — raise trace event cap (default 800)
+  - `PHARO_B5_FOCUS=0xHHH,...` — filter trace to specific caller oops
+  - `PHARO_JIT_DEFER=0`      — eager JIT (reproducer needs this)
+  - One-shot reproducer: `docs/bug14/reproduce.sh`
 
 ### The 18-byte whileFalse: method is a red herring
 
