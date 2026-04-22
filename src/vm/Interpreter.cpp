@@ -8659,6 +8659,12 @@ Oop Interpreter::methodDictOf(Oop classOop) const {
     return memory_.fetchPointerUnchecked(1, classOop);
 }
 
+std::string Interpreter::classNameOfMethod(Oop method) const {
+    Oop cls = methodClassOf(method);
+    if (!cls.isObject() || cls.isNil()) return "?";
+    return memory_.nameOfClass(cls);
+}
+
 Oop Interpreter::methodClassOf(Oop method) const {
     // Get the class that defines this CompiledMethod by reading the last literal.
     // In Pharo, the last literal is an Association/ClassBinding whose value (slot 1)

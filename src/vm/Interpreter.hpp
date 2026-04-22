@@ -1220,6 +1220,11 @@ public:
     /// Available regardless of JIT — used by super-send paths.
     Oop methodClassOf(Oop method) const;
 
+    /// Return "ClassName" for a compiled method oop, using methodClassOf +
+    /// ObjectMemory::nameOfClass.  Returns "?" when the method's class
+    /// binding can't be resolved.  Diagnostic use only (B5/DNU traces).
+    std::string classNameOfMethod(Oop method) const;
+
 private:
 
     // ===== BYTECODE DISPATCH =====

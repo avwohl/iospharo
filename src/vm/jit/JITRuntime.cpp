@@ -178,22 +178,37 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (count <= skipEarly) return;
     if (count - skipEarly > maxEvents) return;
     if (event == 1) {
+        std::string sel;
+        std::string cls;
+        if (state->interp && callerCM > 0x10000) {
+            Oop cm = Oop::fromRawBits(callerCM);
+            sel = state->interp->memory().selectorOf(cm);
+            cls = state->interp->classNameOfMethod(cm);
+        }
         fprintf(stderr, "[B5] #%zu SAVE sp=%p depth=%d "
-                        "nArgs=%llu callerCM=0x%llx\n",
+                        "nArgs=%llu callerCM=0x%llx cls=%s sel=#%s\n",
                 count, state->sp, state->j2jDepth,
                 (unsigned long long)nArgs,
-                (unsigned long long)callerCM);
+                (unsigned long long)callerCM,
+                cls.empty() ? "?" : cls.c_str(),
+                sel.c_str());
     } else if (event == 2) {
-        // Lookup selector name of callerCM so the trace is human-readable.
+        // Lookup selector + defining class of callerCM so the trace tells
+        // you `ClassName>>selector` directly, no manual bisection needed.
         std::string sel;
+        std::string cls;
         if (state->interp && callerCM > 0x10000) {
-            sel = state->interp->memory().selectorOf(Oop::fromRawBits(callerCM));
+            Oop cm = Oop::fromRawBits(callerCM);
+            sel = state->interp->memory().selectorOf(cm);
+            cls = state->interp->classNameOfMethod(cm);
         }
         fprintf(stderr, "[B5] #%zu RET  sp=%p depth=%d "
-                        "retVal=0x%llx callerCM=0x%llx savedArgs=%llu sel=#%s\n",
+                        "retVal=0x%llx callerCM=0x%llx savedArgs=%llu "
+                        "cls=%s sel=#%s\n",
                 count, state->sp, state->j2jDepth,
                 (unsigned long long)extra1,
                 (unsigned long long)callerCM, (unsigned long long)nArgs,
+                cls.empty() ? "?" : cls.c_str(),
                 sel.c_str());
     } else if (event == 3) {
         // Diagnostic event added 2026-04-22 to chase bug 14:

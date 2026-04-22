@@ -2380,6 +2380,18 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 fprintf(stderr, "  bc[%d] op=0x%02X -> %s (operand=%d, branch=%d)\n",
                         d.bcOffset, d.opcode, st.name, d.operand, d.branchTarget);
             }
+            if (isEnvDump) {
+                const uint8_t* cs = jitMethod->codeStart();
+                fprintf(stderr, "[JIT-DUMP]   codeStart=%p codeSize=%u numBytecodes=%u "
+                                "bcToCodeTableOffset=%u\n",
+                        cs, jitMethod->codeSize, jitMethod->numBytecodes,
+                        jitMethod->bcToCodeTableOffset);
+                const uint32_t* t = jitMethod->bcToCodeTable();
+                for (uint32_t b = 0; b <= jitMethod->numBytecodes; b++) {
+                    fprintf(stderr, "[JIT-DUMP]   bc[%u] -> code+%u = %p\n",
+                            b, t[b], (const void*)(cs + t[b]));
+                }
+            }
         }
     }
 

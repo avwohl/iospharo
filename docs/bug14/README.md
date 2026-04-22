@@ -420,6 +420,121 @@ reporter following `nlrHomeMethod_`.  Don't disassemble the
 18-byte whileFalse: — it's dead code.  Focus on the 26-byte
 `OCScanner>>contents` body above.
 
+### 2026-04-22 handoff follow-up — method identified, resumeAddr CORRECT
+
+New diagnostics landed this turn:
+
+- `Interpreter::classNameOfMethod(Oop)` — thin wrapper over
+  existing `methodClassOf` + `ObjectMemory::nameOfClass`.  No
+  cache (B5 rate-limited; would require GC invalidation hook).
+- B5 SAVE and RET events now include `cls=<ClassName> sel=#<sel>`
+  directly in the log — eliminates the per-oop manual bisection.
+- `PHARO_JIT_DUMP_SEL=<sel>` now also prints `codeStart`,
+  `codeSize`, and the full `bcToCodeTable` so `TAIL resumeAddr`
+  can be correlated exactly against bytecode entry points.
+
+**Identity of the mystery `#reset` method: `WriteStream>>reset`**
+(class binding via new classNameOfMethod, not OCScanner or
+PositionableStream as prior guesses).  Source:
+
+    reset
+        "Refer to the comment in PositionableStream|reset."
+        readLimit := readLimit max: position.
+        position := 0
+
+Bytecodes (initialPC=33..endPC=39, 7 bytes):
+
+    33: 0x02  pushRcvrVar 2       (readLimit)
+    34: 0x01  pushRcvrVar 1       (position)
+    35: 0x90  Send1 lit[0]=#max:       ← the J2J send
+    36: 0xCA  PopStoreRecvVar 2   (readLimit := ...)
+    37: 0x50  pushZero
+    38: 0xC9  PopStoreRecvVar 1   (position := 0)
+    39: 0x58  returnReceiver      (^ self)
+
+**Candidate (b) from the earlier analysis is FALSIFIED.**  With
+bc[3]→code+2300, the B5 trace shows the tail-call after max: returns:
+
+    [B5] #1197 RET  retVal=0x321 sel=#reset            (max: returning SmI 100)
+    [B5] #1198 TAIL resumeAddr=0x10a810354 savedSp=0x717a8e288
+
+and `bc[3] -> code+2300 = 0x10a810354` — an **exact match**.  The
+J2J return resumes at byte 36 (PopStoreRecvVar 2), which is the
+correct bytecode to consume the stack top.  So the resume math is
+right, the Pop stencil is selected (not skipped), and the return
+retVal lands at the right place.
+
+### What's now missing — reset's *own* return path
+
+Between `[B5] #1198 TAIL` and the `[DNU-STACK] atEnd` report,
+there is **zero** B5 trace activity.  Reset's `bc[6]=returnReceiver`
+uses `stencil_returnReceiver` (verified from JIT-DUMP), which
+invokes `J2J_INLINE_RETURN` and *should* emit event=2 + event=3.
+It doesn't fire.
+
+Most plausible explanation: `j2jDepth` is already 0 when reset's
+`returnReceiver` runs.  Every SAVE and RET in the trace shows
+`depth=0`, suggesting each JIT activation starts its own J2J
+stack (depth resets to 0 at entry).  Under that model:
+
+    - Interpreter → JIT enters reset at depth=0
+    - reset saves for max:       → depth 0 → 1
+    - max: returns               → depth 1 → 0 (RET #1197 shows depth=0)
+    - reset's returnReceiver     → depth=0 → J2J_INLINE_RETURN's
+      `if (j2jDepth > 0)` guard FAILS → falls through to bail:
+          s->exitReason = EXIT_RETURN;
+      → **no event=2/event=3 trace**, returns control to C++
+
+So reset's J2J path ends cleanly; control lands in the C++
+interpreter, which is supposed to complete the return to reset's
+caller (PositionableStream instance-side `on:`).  The bug is
+somewhere in **that transition** — between JIT exit and the
+interpreter's continuation of `on:`'s next bytecode.
+
+### Caller chain preceding the DNU
+
+    #1192 SAVE nArgs=0 cls=PositionableStream sel=#on: (instance)
+    #1193 SAVE nArgs=1 cls=String class sel=#new:
+    #1194 SAVE nArgs=1 cls=PositionableStream class sel=#on:
+    #1195 SAVE nArgs=0 cls=PositionableStream sel=#on: (instance)
+    #1196 SAVE nArgs=1 cls=WriteStream sel=#reset       ← reset→max:
+    #1197 RET  retVal=0x321 cls=WriteStream sel=#reset  ← max:→reset
+    #1198 TAIL resumeAddr=0x10a810354                   ← reset bc[3]
+
+After reset returns cleanly (via C++ bail), control rejoins
+`PositionableStream>>on:` mid-body.  That's where the stack
+corruption must be happening — the bug is downstream of reset.
+
+### Concrete next step (updated again)
+
+1. Prove or disprove the depth=0 hypothesis: instrument
+   `J2J_INLINE_RETURN` to log depth-pre-decrement.  Regenerate
+   stencils.  If reset's returnReceiver bails (depth=0), we confirm
+   the transition point.
+2. At the moment reset's `stencil_returnReceiver` exits with
+   `EXIT_RETURN`, log `sp`, `returnValue`, and the interpreter's
+   next action.  Specifically: does the interpreter resume `on:`
+   at the right bytecode offset, with the right receiver+sp?
+3. Dump `PositionableStream>>on:` (instance-side) bytecodes.  The
+   stack slot that eventually becomes the atEnd receiver lives
+   inside that method's body.
+4. If the bug is in the JIT→interpreter transition (the "exit
+   path" when J2J depth hits 0), compare against the cleaner
+   `PHARO_NO_JIT=1` run to see where the paths diverge.
+
+### Handoff-ready diagnostics (all env-gated, all landed)
+
+  - `PHARO_B5_TRACE=1` + `PHARO_B5_MAX=N` — J2J events with cls+sel
+  - `PHARO_JIT_DUMP_SEL=reset[,other]` — compiled-method decode
+    + **codeStart / bcToCodeTable** (new) per BC
+  - `PHARO_SLOT_TRIPWIRE=1` — slot-0 nil writes on context shapes
+  - `PHARO_SENDER_TRIPWIRE=1` — storePointer-level sender nils
+  - `PHARO_JIT_DEFER=0` — eager JIT (required for reproducer)
+
+Reference logs saved this turn:
+- `/tmp/bug14-save.log` — JIT on with B5+DUMP_SEL=reset, full data
+- `/tmp/bug14-dump.log` — earlier variant, pre-SAVE-enrichment
+
 ## Related commits
 
 - `8924f83` — `PHARO_SENDER_TRIPWIRE` (storePointer-level)
