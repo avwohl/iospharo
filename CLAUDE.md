@@ -140,23 +140,44 @@ Xcode's "Check XCFramework Freshness" build phase auto-runs
 
 ## Running Pharo test suites
 
-Custom VM: use `eval` mode — our VM writes a `startup.st` next to the image
-which `StartupPreferencesLoader` auto-loads. Avoids stock Pharo's `eval --save`
-(observed to silently no-op in this env) and SessionManager handler-chain
-issues.
+Both VMs run the SAME harness — the whole point of a baseline is that Cog and
+our VM execute the identical Smalltalk.  A divergent harness makes per-test
+differences (e.g. `ClassQueryTest>>testAllCallsOn` counting senders in the
+harness's own literal pool) a harness artefact rather than a real Δcog.
+
+Two-step flow (stock Pharo preps the image, either VM then runs it):
 
     cd /tmp && mkdir -p harness && cd harness && \
       curl -sL https://get.pharo.org/64/130+vm | bash
-    ./build/test_load_image /tmp/harness/Pharo.image eval \
-      "'scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn. \
-       (Smalltalk globals at: #SUnitRunner) runAllTests"
+
+    # 1. prep image: install SUnitRunner + SessionManager startup handler.
+    #    Stock Pharo's `eval --save` works (prior "silent no-op" was a
+    #    stray leftover startup.st in CWD, not a Pharo bug).
+    /tmp/harness/pharo /tmp/harness/Pharo.image eval --save \
+      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
+
+    # 2. stage the external test-class list.  The list is in-repo so
+    #    test-class names are NOT literals in the compiled runAllTests
+    #    method — keeps `testAllCallsOn` honest.
+    cp scripts/pharo-headless-test/test_classes.txt /tmp/sunit_test_classes.txt
+
+    # 3. run: no eval args.  SessionManager fires SUnitRunner>>startUp:
+    #    on resume, which calls runAllTests and writes
+    #    /tmp/sunit_test_results.txt + /tmp/sunit_test_detail.txt.
+    ./build/test_load_image /tmp/harness/Pharo.image      # custom VM
+    /tmp/harness/pharo /tmp/harness/Pharo.image           # stock-Cog baseline
+
     cat /tmp/sunit_test_results.txt
 
-For Spec presenter tests, inject `setup_fake_gui.st` BEFORE the runner — it
-installs `MorphicUIManager`, `Display`, `WorldMorph`, and a `FakeGUI` helper
-(see `scripts/pharo-headless-test/setup_fake_gui.st`). Without it, ~350 Spec
-tests fail with "receiver of activate is nil"; with it, 94.6% pass rate on
-64 GUI classes.
+Filters (optional):
+- `/tmp/sunit_class_names.txt` — one class name per line to run just those.
+- `/tmp/sunit_batch.txt` — `<start> <end>` indices into the full list.
+
+For Spec presenter tests, inject `setup_fake_gui.st` into the prep step
+BEFORE the runner — it installs `MorphicUIManager`, `Display`, `WorldMorph`,
+and a `FakeGUI` helper (see `scripts/pharo-headless-test/setup_fake_gui.st`).
+Without it, ~350 Spec tests fail with "receiver of activate is nil";
+with it, 94.6% pass rate on 64 GUI classes.
 
     scripts/pharo-headless-test/   submodule: https://github.com/avwohl/pharo-headless-test
     docs/test-results.md           compatibility analysis
