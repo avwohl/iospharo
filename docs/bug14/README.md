@@ -164,11 +164,95 @@ Disassemble `OCScanner>>contents` and compare:
    pop-stencil emit, or a jump-back-target arithmetic bug that
    lands the IP 1 byte past the pop
 
-The 18-byte `whileFalse:` bytecodes dumped earlier are for the
-OUTER whileFalse: method (which becomes the caller when
-`whileFalse:` isn't inlined).  For `OCScanner>>contents` we need
-that method's bytecodes too — it's the inner `[ body ]` block
-that's likely the site of the JIT-compile bug.
+### OCScanner>>contents bytecodes (captured 2026-04-22)
+
+size=90, initialPC=65, numArgs=0, numTemps=1.  All bytecodes
+decoded:
+
+    65: 0x10 pushLitVar 0        (Array class)
+    66: 0x21 pushLitConst 1      (50)
+    67: 0x7D specialSend new:    (Array new: 50)
+    68: 0x82 send lit[3]=writeStream   (→ WriteStream)
+    69: 0xD0 popIntoTemp 0       (contentsStream := ...)
+
+    ;; Loop header @70 — the compiler inlined the whileFalse:
+    70: 0x4C pushReceiver        (self)
+    71: 0x75 specialSend atEnd
+    72: 0xEE ExtJumpTrue +9      (if atEnd, exit loop to @83)
+
+    ;; Loop body @74
+    74: 0x40 pushTemp 0          (contentsStream)
+    75: 0x4C pushReceiver        (self)
+    76: 0x73 specialSend next    (returns SmallInt byte)
+    77: 0x74 specialSend nextPut: (1 arg — THE J2J CALL, returns arg)
+    78: 0xD8 Pop                 (discard result)
+    79: 0xE1 ExtendB 0xFF        (-1 extended signed byte for jump)
+    80: 0xFF operand
+    81: 0xED ExtJump 0xF3        (computed: (-1 << 8) | 0xF3 = -13)
+    82: 0xF3 operand             (target = 83 + (-13) = 70 ← loop head)
+
+    ;; After loop @83
+    83: 0x40 pushTemp 0          (contentsStream)
+    84: 0x83 send lit[4]=contents (→ the Array-as-content)
+    85: 0x5C returnTop
+
+Literals: `{#Array→Array, 50, #writeStream, #contents, #whileFalse:,
+#contents, #OCScanner→OCScanner}`.  (The `#whileFalse:` literal
+survived as an artifact of the compiler's inlining — it's never
+dispatched but the literal entry sticks.)
+
+### Where the bug is hiding in here
+
+Everything hinges on the four bytecodes @77–@82:
+
+    77: 0x74  specialSend nextPut:  (1 arg — J2J call)
+    78: 0xD8  Pop                   (discard nextPut:'s result)
+    79: 0xE1  ExtendB 0xFF
+    80: 0xFF
+    81: 0xED  ExtJump 0xF3
+    82: 0xF3
+
+After the J2J return from @77 writes retVal at `sp[-(1+1)] = sp[-2]`
+and sets `sp -= 1`, the caller's stack top is the SmallInt byte.
+The Pop @78 must decrement sp by 1 to discard it, then the
+ExtendB+ExtJump must jump back to @70.  If any of:
+
+  (a) the JIT peephole-fuses nextPut:+Pop into a "call and
+      discard" opcode that gets the math wrong (the retVal
+      landing slot isn't adjusted for the fused Pop)
+  (b) the Pop stencil doesn't fire after a J2J resume
+      (resumeAddr points past it, skipping the sp decrement)
+  (c) the ExtJump target computation lands 1 byte off (at @71
+      instead of @70, skipping the pushReceiver so the atEnd
+      send reads the stale SmallInt as receiver)
+
+… the bug reproduces exactly as observed: SmallInteger shows up
+as `atEnd`'s receiver, DNU fires, cascade terminates scheduler
+processes.
+
+### Where to look
+
+- `JITCompiler.cpp` emit paths for `SpecialSend nextPut:`, `Pop`,
+  `ExtendB`, and `ExtJump` — specifically the SimStack / peephole
+  layer that merges adjacent opcodes.
+- Search for whether `nextPut:` has an inline fast-path stencil
+  (`stencil_primAtPut` or `stencil_sendInlineSetter`) whose retVal
+  accounting doesn't match the J2J return path.
+- Check `_HOLE_BRANCH_TARGET` arithmetic when the branch origin
+  includes an `ExtendB` prefix.  The jump target is computed
+  against the IP after the last byte of the jump opcode;
+  accidentally using IP after `ExtendB`'s operand could shift by 1.
+
+### The 18-byte whileFalse: method is a red herring
+
+The DNU says `in #whileFalse:` because the DNU reporter walks up
+the *context* chain looking for a method name.  But the loop is
+compiler-inlined inside `OCScanner>>contents`; there's no actual
+`whileFalse:` activation.  The `method_` field being reported as
+`BlockClosure>>whileFalse:` is either stale JIT state or the
+reporter following `nlrHomeMethod_`.  Don't disassemble the
+18-byte whileFalse: — it's dead code.  Focus on the 26-byte
+`OCScanner>>contents` body above.
 
 ## Related commits
 
