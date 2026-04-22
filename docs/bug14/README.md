@@ -1456,6 +1456,55 @@ before the direct exit.  That would make the chain-loop fix in
 this commit unnecessary.  Deferred for now since the current fix
 is mechanically straightforward and catches all leak shapes.
 
+### 2026-04-22 (round 14) — PRINCIPLED FIX at source
+
+Applied `J2J_INLINE_RETURN_NO_TRACE` to every primitive stencil
+in `src/vm/jit/stencils/stencils.cpp` before its direct
+EXIT_RETURN.  Pattern transformation:
+
+  Before:                                After:
+    s->returnValue = result;               Oop retVal = result;
+    s->exitReason = EXIT_RETURN;           J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+    _HOLE_RT_RETURN(s);                    s->returnValue = retVal;
+    return;                                s->exitReason = EXIT_RETURN;
+                                           _HOLE_RT_RETURN(s);
+                                           return;
+
+20 primitive stencils updated:
+    primAdd, primSub, primLessThan, primGreaterThan,
+    primLessEqual, primGreaterEqual, primEqual, primNotEqual,
+    primMul, primQuo, primMod, primDiv, primBitAnd, primBitOr,
+    primBitShift, primIdentical, primAt (2 paths),
+    primAtPut (2 paths), primSize.
+
+Regenerated stencils via `python3 scripts/extract_stencils.py`.
+
+### Fix verification
+
+    reproduce.sh JIT run: atEnd-DNU events = 0       ✓
+    reproduce.sh JIT run: TERM-P events    = 0       ✓
+    reproduce.sh NO_JIT run: unchanged               ✓
+    [B5-LEAK] events                       = 0       ✓  (no leaks)
+
+With the primitive fix in place, the chain-loop unwind loop
+from round 13 became unnecessary — removed.  The diagnostic
+`[B5-LEAK]` stays as a regression guard: if a primitive ever
+exits without `J2J_INLINE_RETURN_NO_TRACE` again, it'll fire.
+
+### Bug 14 — CLOSED
+
+Root cause: primitive stencils set `state.returnValue` and
+`state.exitReason = EXIT_RETURN` directly, bypassing
+`J2J_INLINE_RETURN` and leaving unpopped stencil saves on
+`state.j2jSaveCursor`.  The chain-loop fast path then used
+the inner primitive's result as the outer caller's retVal.
+
+Fix: every primitive stencil now pops its save via
+`J2J_INLINE_RETURN_NO_TRACE` before setting EXIT_RETURN.  The
+macro's `if (s->j2jDepth > 0)` guard means the pop+tail-call
+only happens when there's a save to handle; otherwise it's a
+no-op (the normal exit path fires).
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

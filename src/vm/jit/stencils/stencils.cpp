@@ -2108,7 +2108,9 @@ extern "C" void stencil_primAdd(JITState* s) {
         int64_t b = asSmallInteger(arg);
         int64_t result = a + b;
         if (canBeSmallInt(result)) {
-            s->returnValue = fromSmallInteger(result);
+            Oop retVal = fromSmallInteger(result);
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
             s->exitReason = EXIT_RETURN;
             _HOLE_RT_RETURN(s);
             return;
@@ -2126,7 +2128,9 @@ extern "C" void stencil_primSub(JITState* s) {
         int64_t b = asSmallInteger(arg);
         int64_t result = a - b;
         if (canBeSmallInt(result)) {
-            s->returnValue = fromSmallInteger(result);
+            Oop retVal = fromSmallInteger(result);
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
             s->exitReason = EXIT_RETURN;
             _HOLE_RT_RETURN(s);
             return;
@@ -2142,7 +2146,9 @@ extern "C" void stencil_primLessThan(JITState* s) {
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
         int64_t a = asSmallInteger(rcvr);
         int64_t b = asSmallInteger(arg);
-        s->returnValue = (a < b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (a < b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2157,7 +2163,9 @@ extern "C" void stencil_primGreaterThan(JITState* s) {
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
         int64_t a = asSmallInteger(rcvr);
         int64_t b = asSmallInteger(arg);
-        s->returnValue = (a > b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (a > b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2172,7 +2180,9 @@ extern "C" void stencil_primLessEqual(JITState* s) {
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
         int64_t a = asSmallInteger(rcvr);
         int64_t b = asSmallInteger(arg);
-        s->returnValue = (a <= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (a <= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2187,7 +2197,9 @@ extern "C" void stencil_primGreaterEqual(JITState* s) {
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
         int64_t a = asSmallInteger(rcvr);
         int64_t b = asSmallInteger(arg);
-        s->returnValue = (a >= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (a >= b) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2200,7 +2212,9 @@ extern "C" void stencil_primEqual(JITState* s) {
     Oop rcvr = s->receiver;
     Oop arg = s->tempBase[0];
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
-        s->returnValue = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2213,7 +2227,9 @@ extern "C" void stencil_primNotEqual(JITState* s) {
     Oop rcvr = s->receiver;
     Oop arg = s->tempBase[0];
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
-        s->returnValue = (rcvr.bits != arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        Oop retVal = (rcvr.bits != arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2231,7 +2247,9 @@ extern "C" void stencil_primMul(JITState* s) {
         // Use __int128 to detect overflow
         __int128 result = (__int128)a * (__int128)b;
         if (result >= SmallIntMin && result <= SmallIntMax) {
-            s->returnValue = fromSmallInteger((int64_t)result);
+            Oop retVal = fromSmallInteger((int64_t)result);
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
             s->exitReason = EXIT_RETURN;
             _HOLE_RT_RETURN(s);
             return;
@@ -2250,7 +2268,9 @@ extern "C" void stencil_primQuo(JITState* s) {
         if (b != 0 && (a % b) == 0) {
             int64_t result = a / b;
             if (canBeSmallInt(result)) {
-                s->returnValue = fromSmallInteger(result);
+                Oop retVal = fromSmallInteger(result);
+                J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+                s->returnValue = retVal;
                 s->exitReason = EXIT_RETURN;
                 _HOLE_RT_RETURN(s);
                 return;
@@ -2271,7 +2291,9 @@ extern "C" void stencil_primMod(JITState* s) {
             int64_t result = a % b;
             // Smalltalk mod: result has same sign as divisor
             if (result != 0 && ((result ^ b) < 0)) result += b;
-            s->returnValue = fromSmallInteger(result);
+            Oop retVal = fromSmallInteger(result);
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
             s->exitReason = EXIT_RETURN;
             _HOLE_RT_RETURN(s);
             return;
@@ -2292,7 +2314,9 @@ extern "C" void stencil_primDiv(JITState* s) {
             int64_t result = a / b;
             if ((a % b != 0) && ((a ^ b) < 0)) result--;
             if (canBeSmallInt(result)) {
-                s->returnValue = fromSmallInteger(result);
+                Oop retVal = fromSmallInteger(result);
+                J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+                s->returnValue = retVal;
                 s->exitReason = EXIT_RETURN;
                 _HOLE_RT_RETURN(s);
                 return;
@@ -2308,7 +2332,10 @@ extern "C" void stencil_primBitAnd(JITState* s) {
     Oop arg = s->tempBase[0];
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
         // Bit ops on tagged values: (a & b) preserves SmallInteger tag
-        s->returnValue.bits = rcvr.bits & arg.bits;
+        Oop retVal;
+        retVal.bits = rcvr.bits & arg.bits;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2321,7 +2348,10 @@ extern "C" void stencil_primBitOr(JITState* s) {
     Oop rcvr = s->receiver;
     Oop arg = s->tempBase[0];
     if (isSmallInteger(rcvr) && isSmallInteger(arg)) {
-        s->returnValue.bits = rcvr.bits | arg.bits;
+        Oop retVal;
+        retVal.bits = rcvr.bits | arg.bits;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2346,7 +2376,9 @@ extern "C" void stencil_primBitShift(JITState* s) {
             if (shift <= -64) result = (value < 0) ? -1 : 0;
             else result = value >> (-shift);
         }
-        s->returnValue = fromSmallInteger(result);
+        Oop retVal = fromSmallInteger(result);
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2359,7 +2391,9 @@ fail:
 extern "C" void stencil_primIdentical(JITState* s) {
     Oop rcvr = s->receiver;
     Oop arg = s->tempBase[0];
-    s->returnValue = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+    Oop retVal = (rcvr.bits == arg.bits) ? *(Oop*)&_HOLE_TRUE_OOP : *(Oop*)&_HOLE_FALSE_OOP;
+    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
@@ -2396,7 +2430,9 @@ extern "C" void stencil_primAt(JITState* s) {
         // Format 2: Indexable (Array, no fixed fields) — read Oop slot
         if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
         Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
-        s->returnValue = slots[i - 1];
+        Oop retVal = slots[i - 1];
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2409,7 +2445,10 @@ extern "C" void stencil_primAt(JITState* s) {
         uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
         uint8_t byte = bytes[i - 1];
         // Return as SmallInteger: (value << 3) | 1
-        s->returnValue.bits = ((uint64_t)byte << 3) | 1;
+        Oop retVal;
+        retVal.bits = ((uint64_t)byte << 3) | 1;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
@@ -2443,6 +2482,7 @@ extern "C" void stencil_primAtPut(JITState* s) {
         if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
         Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
         slots[i - 1] = val;
+        J2J_INLINE_RETURN_NO_TRACE(s, val);
         s->returnValue = val;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
@@ -2457,6 +2497,7 @@ extern "C" void stencil_primAtPut(JITState* s) {
         if (i < 1 || (uint64_t)i > byteSize) { _HOLE_CONTINUE(s); return; }
         uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
         bytes[i - 1] = (uint8_t)byteVal;
+        J2J_INLINE_RETURN_NO_TRACE(s, val);
         s->returnValue = val;
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
@@ -2486,7 +2527,10 @@ extern "C" void stencil_primSize(JITState* s) {
     } else {
         _HOLE_CONTINUE(s); return;
     }
-    s->returnValue.bits = (size << 3) | 1;  // SmallInteger encoding
+    Oop retVal;
+    retVal.bits = (size << 3) | 1;  // SmallInteger encoding
+    J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+    s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
     _HOLE_RT_RETURN(s);
 }
