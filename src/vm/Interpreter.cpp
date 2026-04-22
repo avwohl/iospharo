@@ -12832,10 +12832,15 @@ void Interpreter::tryJITResumeInCaller() {
                 if (c12791 <= 2500) {
                     std::string mcls = classNameOfMethod(state.method);
                     std::string msel = memory_.selectorOf(state.method);
-                    fprintf(stderr, "[B5-EXIT-tryResume] #%zu sp=%p retVal=0x%llx "
+                    Oop rv = state.returnValue;
+                    std::string rvKind = rv.isSmallInteger() ? "SmI"
+                        : rv.isObject() && rv.rawBits() >= 0x10000
+                            ? memory_.classNameOf(rv).c_str()
+                            : "other";
+                    fprintf(stderr, "[B5-EXIT-tryResume] #%zu sp=%p retVal=0x%llx(%s) "
                                     "localFrameDepth=%zu method=0x%llx cls=%s sel=#%s\n",
                             c12791, state.sp,
-                            (unsigned long long)state.returnValue.rawBits(),
+                            (unsigned long long)rv.rawBits(), rvKind.c_str(),
                             frameDepth_,
                             (unsigned long long)state.method.rawBits(),
                             mcls.c_str(), msel.c_str());
