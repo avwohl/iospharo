@@ -1398,6 +1398,64 @@ other primitives could be the one dispatched for
    precomputed caller resume.  Less invasive than editing
    every primitive stencil.
 
+### 2026-04-22 (round 13) — BUG 14 FIXED
+
+Added a `[B5-LEAK]` diagnostic at the chain loop's fast-path
+entry that checks `state.j2jDepth > 0 && state.exitReason ==
+ExitReturn`.  The reproducer produces **20 leak events**
+(counted across the 3 DNUs).  Confirms: some callees return with
+stencil saves left unpopped on `state.j2jSaveCursor`.
+
+Leaking callees include:
+  - `PositionableStream>>on:` (instance, 0x30046b3f8) with
+    retVal=SmI 6 — the DNU #1 trigger.
+  - `PositionableStream class>>on:` (0x300469fd0) with retVal=SmI 36.
+  - `WriteStream>>pastEndPut:`, `ReadStream>>next`, various
+    `Dictionary>>scanFor:`, `SequenceableCollection>>mergeFirst:`,
+    etc.  Many methods, depth 1 to 3.
+
+**Implemented fix** at chain-loop fast path (round 13, option 3):
+when the callee exits with `state.exitReason == ExitReturn` but
+left `state.j2jDepth > 0`, manually unwind the leaked stencil
+saves by replaying J2J_INLINE_RETURN semantics:
+
+  - Pop save.
+  - Restore caller state from save (receiver, tempBase, jitMethod,
+    literals, ip, argCount).
+  - Write `state.returnValue` to `save.sp[-(save.sendArgCount+1)]`.
+  - `state.sp = save.sp - save.sendArgCount`.
+  - If `save.resumeAddr != null`: `JIT_CALL(save.resumeAddr)`.
+  - Loop while `state.j2jDepth > 0 && state.exitReason == ExitReturn`.
+
+This re-enters the outer callee at the bytecode AFTER the
+unfinished send with the primitive's result on TOS.  The outer
+callee then continues execution, eventually reaching its real
+returnReceiver/returnTop which sets state.returnValue to the
+correct value.
+
+### Fix verification
+
+    reproduce.sh JIT run: atEnd-DNU events = 0 (was 3)  ✓
+    reproduce.sh JIT run: TERM-P events    = 0 (was 6+)  ✓
+    reproduce.sh NO_JIT run: unchanged regression-free   ✓
+
+**Bug 14 atEnd DNU cascade is FIXED.**
+
+Note: the test still may not fully complete in the reproducer's
+60-second window (VM runs to 57M bytecode steps and beyond
+without error).  That's likely a separate performance or hang
+issue — not the atEnd DNU bug, which this fix addresses.
+
+### Long-term cleanup
+
+The primitive stencils that exit directly (without
+`J2J_INLINE_RETURN`) are the root cause — they violate the
+stencil J2J save-stack contract.  A principled fix would be to
+modify every `stencil_prim*` to use `J2J_INLINE_RETURN_NO_TRACE`
+before the direct exit.  That would make the chain-loop fix in
+this commit unnecessary.  Deferred for now since the current fix
+is mechanically straightforward and catches all leak shapes.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

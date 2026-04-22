@@ -15100,6 +15100,76 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
 
+                        // Bug-14 diagnostic: chain-loop fast path entry — if
+                        // state.j2jDepth > 0 here, the callee left stencil
+                        // saves unpopped (likely a primitive prologue
+                        // bypassing J2J_INLINE_RETURN).  That's the bug
+                        // signature.
+                        if (g_debug.b5Trace && state.exitReason == jit::ExitReturn
+                            && state.j2jDepth > 0) {
+                            static size_t leakCount = 0;
+                            leakCount++;
+                            if (leakCount <= 500) {
+                                std::string calleeCls = classNameOfMethod(chainTarget);
+                                std::string calleeSel = memory_.selectorOf(chainTarget);
+                                fprintf(stderr, "[B5-LEAK] #%zu callee=0x%llx cls=%s sel=#%s "
+                                                "returned with stencil state.j2jDepth=%d, "
+                                                "retVal=0x%llx (unwinding via fix)\n",
+                                        leakCount,
+                                        (unsigned long long)chainTarget.rawBits(),
+                                        calleeCls.c_str(), calleeSel.c_str(),
+                                        state.j2jDepth,
+                                        (unsigned long long)state.returnValue.rawBits());
+                            }
+                        }
+
+                        // Bug-14 fix: if the callee left stencil saves
+                        // unpopped (primitive prologue exited without
+                        // J2J_INLINE_RETURN), manually unwind them now.
+                        // For each save, pop it and rerun the J2J return
+                        // semantics: write retVal to save.sp[-(nArgs+1)],
+                        // then JIT_CALL save.resumeAddr.  That re-enters
+                        // the callee at the bytecode AFTER the unfinished
+                        // send with the primitive's result on TOS, so the
+                        // caller continues normally and eventually sets
+                        // state.returnValue to its TRUE retVal.
+                        while (state.exitReason == jit::ExitReturn
+                               && state.j2jDepth > 0) {
+                            state.j2jDepth--;
+                            state.j2jSaveCursor -= sizeof(J2JSave);
+                            J2JSave* sv = reinterpret_cast<J2JSave*>(
+                                state.j2jSaveCursor);
+                            Oop retVal = state.returnValue;
+
+                            // Restore caller state from the save.
+                            state.receiver = sv->receiver;
+                            state.tempBase = sv->tempBase;
+                            jit::JITMethod* svJM = sv->jitMethod;
+                            state.jitMethod = svJM;
+                            if (svJM) {
+                                state.literals = reinterpret_cast<Oop*>(svJM->literals());
+                                state.argCount = svJM->argCount;
+                                state.ip = svJM->bcStart();
+                            }
+
+                            // Write retVal into caller's stack slot and
+                            // adjust sp (matches J2J_INLINE_RETURN's write).
+                            sv->sp[-(sv->sendArgCount + 1)] = retVal;
+                            state.sp = sv->sp - sv->sendArgCount;
+
+                            if (sv->resumeAddr == nullptr) {
+                                // Null resume: bail out of the unwind loop.
+                                state.ip = sv->ip;
+                                break;
+                            }
+                            // Tail-call the resume (re-enters caller
+                            // bytecode).  Caller may itself return via
+                            // ExitReturn — loop continues.
+                            state.exitReason = jit::ExitNone;
+                            JIT_CALL(sv->resumeAddr, &state);
+                            chargeJITBytecodes(state);
+                        }
+
                         if (__builtin_expect(
                                 state.exitReason == jit::ExitReturn, 1)) {
                             // === FAST PATH: callee returned ===
