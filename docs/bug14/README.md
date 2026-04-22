@@ -243,6 +243,88 @@ processes.
   against the IP after the last byte of the jump opcode;
   accidentally using IP after `ExtendB`'s operand could shift by 1.
 
+### 2026-04-22 late — JIT emit audit findings
+
+Audited the emit paths in JITCompiler.cpp line-by-line against
+this specific bytecode sequence.  What looks *correct* so far:
+
+- **ExtJump target** (line 398-404): `branchTarget = i + 2 +
+  offset` where i = ExtJump's 0-indexed position.  For our
+  method, i=80, offset = 0xF3 + (extB=-1 << 8) = -13, target =
+  69 (0-indexed) = 70 (1-indexed, the loop header).  ✓
+- **ExtendB sign-extension** (line 296-307): when the operand's
+  high bit is set, ORs in `0xFFFFFF00` to sign-extend.  Our
+  0xFF correctly becomes -1.  ✓
+- **Special sends** (`nextPut:`, `next`, `atEnd` at 0x70-0x7F)
+  all map to `stencil_send` — the same code path as literal
+  sends.  No peephole specialization.  So candidate (a)
+  (nextPut:/Pop fusion) is unlikely because there's no fusion.
+- **Pop emit**: at entry state 0 (after send barrier), emits
+  `stencil_pop_E`, which is literally `s->sp--; _HOLE_CONTINUE(s);`
+  — a single sp decrement.  No way this is wrong in isolation.
+- **J2J_INLINE_RETURN tail-call to resumeAddr** (line 509-512):
+  `if (_resume != 0) ((void(*)(JITState*))_resume)(s); return;`
+  — tail-calls next stencil.  resumeAddr was saved from
+  `RESUME_ADDR` hole at save time, which resolves to the next
+  stencil's entry per JITCompiler line 789-799.  That's Pop_E.
+- **Send barrier state math**: send is a barrier → flush to
+  state=0 before send.  State stays 0 after send (retVal lands
+  in memory).  Pop at state=0 → stencil_pop_E ✓.
+- **Branch target entry flush** (line 984): `if
+  (isBranchTarget[i] && state != 0) insertFlush`.  Loop header
+  is a branch target, will be entered with state=0.  ✓
+
+So candidates (a), (b), and (c) all *look* wired correctly in
+isolation.  The bug still reproduces deterministically, so
+something in the interaction must be off — possibly:
+
+1. State mismatch at branch-target *entry* if the backward
+   branch source flushed differently than the emit assumes.
+2. `resumeAddr` being wired to the wrong stencil when the
+   bytecode after a send is itself part of an extend-prefix
+   sequence.  For OCScanner>>contents, the bytecode immediately
+   after `nextPut:` (@77) is `Pop` (@78), but two bytes later
+   is `ExtendB` (@79).  If the JIT somehow targets the stencil
+   for the *2nd* bytecode-after-send instead of the 1st, we'd
+   skip Pop and resume at ExtendB — which is a nop stencil.
+   The ExtJump back would then fire, SmallInt stays on stack.
+3. `decodeBytecodes` emitting a `stencil_nop` for ExtendB that
+   runs *before* Pop, reordering the sequence.  At line 303-305,
+   ExtendB's `bc.stencilIdx` is `stencil_nop` — meaning each
+   `DecodedBC` for ExtendB gets emitted as a nop.  The real
+   work of ExtendB is in the extB accumulator at *decode* time,
+   consumed by the following bytecode's emit.  Sequence in
+   `decoded[]` after decode-pass of bytecodes 77..82:
+        #N+0: send nextPut:  (stencil_send)
+        #N+1: pop            (stencil_pop)
+        #N+2: extendB        (stencil_nop, bcLength=2)
+        #N+3: extJump        (stencil_jumpBack, branchTarget=69)
+   That looks right — Pop lands one entry *before* the nop for
+   ExtendB.
+
+### The actual next step (next session)
+
+The audit didn't find the bug by static reading.  To actually
+catch it, add a printf to `J2J_INLINE_RETURN_IMPL` in
+`src/vm/jit/stencils/stencils.cpp` logging:
+  - retVal
+  - _sv->sp
+  - _sv->sendArgCount
+  - _sv->resumeAddr (the tail-call target)
+
+**Critical**: must then regenerate
+`src/vm/jit/generated_stencils_arm64.hpp` via
+`python3 scripts/extract_stencils.py` before rebuilding, otherwise
+the compiled VM runs stale stencils and the printf never fires.
+(Verified during this session: fprintf in the non-stencil C++
+return path at `Interpreter.cpp:12685` logs zero events — all
+J2J returns go through the stencil path, not the C++ trampoline.)
+
+Once the printf fires in the reproducer, correlate the
+resumeAddr values against the JIT method's compiled code addresses
+(available from `JITMethod` metadata) to confirm it points at
+the Pop stencil entry.  If it doesn't — there's the bug.
+
 ### The 18-byte whileFalse: method is a red herring
 
 The DNU says `in #whileFalse:` because the DNU reporter walks up
