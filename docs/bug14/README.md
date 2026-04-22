@@ -983,6 +983,68 @@ is active), leaves it corrupted.
 
 Reference log: `/tmp/bug14-saverecv.log` (SAVE now shows rcvr).
 
+### 2026-04-22 (round 7) — stencil-regen blocker discovered
+
+Attempted to add a diagnostic event=4 trace to `stencil_returnReceiver`
+(logging when `s->receiver` is SmallInt).  `python3
+scripts/extract_stencils.py` failed BOTH with and without my edit:
+
+    [3/4] Verifying SimStack register safety...
+    ERROR: SimStack stencils have compiler-generated x19-x22 save/restore!
+      stencil_returnTop_E @ offset 0: STP/LDP with x22/x21
+      stencil_returnTop_E @ offset 4: STP/LDP with x20/x19
+      (etc.)
+
+**This is pre-existing in the current tree** — the 0d62a1a commit
+switched `stencil_returnTop_E` to the traced `J2J_INLINE_RETURN`
+variant, which now exceeds the compiler's caller-saved register
+budget.  The generated stencils files haven't been regenerated
+since then (timestamped 05:22, stencils.cpp 05:23).  They still
+work because the code was compiled BEFORE hitting the added
+verification threshold on some earlier compiler pass.
+
+Consequence: the current tree **cannot regenerate stencils**
+until `stencil_returnTop_E` is simplified (e.g., move TRACE outside
+the hot path, or revert to NO_TRACE with an alternate diagnostic
+mechanism).  That's a cleanup task separate from the bug itself.
+
+### C++-trampoline retest (round 7)
+
+Rebuilt with `-DPHARO_ASM_TRAMPOLINE=OFF` and reran reproducer.
+Result: 0 atEnd DNUs, but VM hangs in idle after only ~88k
+bytecode steps (ASM tramp: ~100k before DNU but then many more
+during recovery, eventually hitting the atEnd site multiple
+times).
+
+So **both trampolines break the repro, differently**:
+  - ASM: produces atEnd DNU cascade (what we've been chasing).
+  - C++: hangs much earlier without DNU.
+
+Either (a) there are two distinct bugs, or (b) one bug manifests
+differently because C++ tramp path bails earlier (say, at an
+ExitSendCached that ASM converts).  Both block bug-14 progress.
+
+Restored `PHARO_ASM_TRAMPOLINE=ON` (the default) for subsequent
+debugging — that's the failure mode we understand and have
+instrumented.
+
+### Concrete next step (round 8)
+
+1. **Fix `stencil_returnTop_E`** so `extract_stencils.py` regen
+   succeeds.  The simplest fix: make its `J2J_INLINE_RETURN` call
+   through a noinline `__attribute__((naked))` helper so the
+   compiler doesn't spill x19-x22 in the main function body.  Or
+   manually split it into two functions: one for the if-branch
+   and one for the fall-through.  Once regen works, all stencil
+   changes become tractable.
+2. **Then** add the bug-14 diagnostic to `J2J_INLINE_RETURN`'s bail
+   path (log s->receiver, _sv->receiver, retVal, depth).
+3. **Alternative**: directly modify the ASM trampoline
+   (`src/vm/jit/TrampolineAsm.S`) to add a single `bl` instruction
+   calling a C helper at the J2J-return restore point
+   (after `str x9, [x21, #JS_RECEIVER]` at line 178).  Need to
+   save/restore x0-x18 before/after; careful ABI work.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
