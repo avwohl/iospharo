@@ -6974,10 +6974,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         if (loggedMethods_.insert(gateKey).second) {
                             fprintf(stderr,
                                 "[SISTA-HAS-REMOTE-TEMP] method=0x%llx "
-                                "sel=#%s op=0x%02x offset=%zu\n",
+                                "sel=#%s op=0x%02x offset=%zu bcLen=%zu bc=[",
                                 (unsigned long long)gateKey,
                                 memory_.selectorOf(method).c_str(),
-                                (unsigned)op, i);
+                                (unsigned)op, i, bcLen);
+                            for (size_t j = 0; j < std::min(bcLen, (size_t)64); j++) {
+                                fprintf(stderr, " %02x",
+                                    methodBytes[bytecodeStart + j]);
+                                if (j == i) fprintf(stderr, "|");
+                            }
+                            fprintf(stderr, "]\n");
                         }
                     }
                 }
@@ -7115,9 +7121,36 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // state left behind by asmjit-internal bookkeeping).
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
+            // Sanity-check invariants across Sista dispatch — the
+            // interpreter-owned frame state must not mutate during
+            // asmjit-generated code.  Failure = ABI/callee-save bug.
+            Oop savedReceiver = receiver_;
+            Oop* savedFP = framePointer_;
+            Oop savedMethod = method_;
+            size_t savedFrameDepth = frameDepth_;
             fn(&sstate);
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
+            if (__builtin_expect(
+                    savedReceiver.rawBits() != receiver_.rawBits()
+                    || savedFP != framePointer_
+                    || savedMethod.rawBits() != method_.rawBits()
+                    || savedFrameDepth != frameDepth_, 0)) {
+                fprintf(stderr,
+                    "[SISTA-CORRUPT] sel=#%s: frame state mutated "
+                    "by fn(&sstate)\n"
+                    "  rcvr:  was=0x%llx now=0x%llx\n"
+                    "  fp:    was=%p now=%p\n"
+                    "  method:was=0x%llx now=0x%llx\n"
+                    "  fdepth:was=%zu now=%zu\n",
+                    memory_.selectorOf(method).c_str(),
+                    (unsigned long long)savedReceiver.rawBits(),
+                    (unsigned long long)receiver_.rawBits(),
+                    (void*)savedFP, (void*)framePointer_,
+                    (unsigned long long)savedMethod.rawBits(),
+                    (unsigned long long)method_.rawBits(),
+                    savedFrameDepth, frameDepth_);
+            }
 
             // Ring-buffer record — cheap, always-on.  Dumped on DNU.
             {
