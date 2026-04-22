@@ -418,6 +418,16 @@ in `memory/project_b5_j2j_onchain.md`.
 **Mitigation:** default `PHARO_JIT_DEFER=4s` sidesteps it.  Only
 impacts `PHARO_JIT_DEFER=0`, which isn't a supported default.
 
+**2026-04-22 finding**: In the Pharo 13.1 clean-image eval repro
+(`PHARO_JIT_DEFER=0 ... eval "42 printString"`), the `#atEnd on
+Array in parseFields:structure:` DNU disappears completely at
+`PHARO_JIT_DEFER=5` (5 ms) or higher.  Under DEFER=0 it appears
+deterministically once per run.  This is consistent with the
+hypothesis that the DNU is a *consequence* of Morphic preempting
+the startup process mid-`fields readStream`, not an independent
+miscompile.  The JIT runs correctly when given ~5ms head-start to
+let the startup process get past this code path.  So A2 ⊆ A1.
+
 ---
 
 ## B. Code state in-tree — experimental / opt-in
