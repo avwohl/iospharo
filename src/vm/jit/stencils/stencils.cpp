@@ -3736,6 +3736,13 @@ extern "C" void stencil_returnTop_1(JITState* s) {
     asm volatile("mov %0, x19" : "=r"(tos));
     Oop retVal;
     retVal.bits = tos;
+    // Bug-14 diagnostic (event=5): log SmI on TOS at returnTop_1.
+    // Removed from SIMSTACK_STENCILS so the trace call's register
+    // spill is tolerated.
+    if ((retVal.bits & 1) != 0) {
+        _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
+    }
     J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
@@ -3759,6 +3766,13 @@ extern "C" void stencil_returnTop_E(JITState* s) {
 // Return receiver with state 1 (discard x19, return self)
 extern "C" void stencil_returnReceiver_1(JITState* s) {
     Oop retVal = s->receiver;
+    // Bug-14 diagnostic (event=4): log SmI receiver at returnReceiver_1.
+    // Removed from SIMSTACK_STENCILS so the trace call's register
+    // spill is tolerated.
+    if ((retVal.bits & 1) != 0) {
+        _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
+    }
     J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;

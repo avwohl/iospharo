@@ -1213,6 +1213,58 @@ eludes exclusion-based bisection.
 
 Reference log: `/tmp/bug14-resume.log` (SAVE now shows resumeAddr).
 
+### 2026-04-22 (round 10) — _1 return variants instrumented, (c) falsified
+
+Added `[B5-SMI-RCVR]` event=4 to `stencil_returnReceiver_1` AND
+`[B5-SMI-TOP]` event=5 to `stencil_returnTop_1` — the NO_TRACE
+SimStack state-1 variants previously bypassed.  Also removed both
+from SIMSTACK_STENCILS (they're terminal: x19-x22 don't need to
+be preserved after a return).  Regenerated stencils.
+
+Result: **still 0 SMI-RCVR events before DNU #1**.  Instance on:'s
+returnReceiver (either base or _1) never returns a SmI.  So
+**option (c) from round 9 is falsified**: the bug is NOT that
+instance on:'s returnReceiver returns SmI 6.
+
+Instance on: is returning a **valid** ReadStream instance.  The
+trampoline writes that valid instance to class on:'s sp[-2].  Yet
+class on:'s returnTop reads SmI 6 from TOS.  Somewhere between the
+trampoline's write and class on:'s returnTop read, the slot gets
+overwritten with SmI 6.
+
+There are ZERO bytecodes between class on:'s bc[3] (Send1 #on:)
+and bc[4] (returnTop) — no intervening stencil logically runs in
+class on:'s code path to overwrite the slot.  So EITHER:
+
+  - (d) The trampoline itself is writing the wrong value (the SmI
+    from an INNER callee, not instance on:'s actual retVal).
+    Perhaps the ASM trampoline's local j2jDepth is out of sync
+    with stencil's state.j2jDepth, causing it to pop a later save
+    and use the INNER callee's retVal for class on:'s slot write.
+  - (e) Something WRITES TO THAT SLOT via an aliased pointer —
+    maybe instance on:'s stack overlaps class on:'s slot due to
+    the way tempBase is set up.  Inspection showed that
+    instance on:'s tempBase = class on:'s aCollection-slot (intentional
+    for arg passing), but instance on:'s writes are to receiver
+    slots (heap) and its own temp[0] (aCollection) — not class
+    on:'s instance slot at sp[-2].
+
+Hypothesis (d) is worth investigating in round 11.
+
+### Concrete next step (round 11)
+
+1. Add a trace in the ASM trampoline's **return path** — after the
+   pop/restore (line 178 `str x9, [x21, #JS_RECEIVER]`), BEFORE the
+   retVal-write (line 206 `str x17, [x16]`).  Log the popped save's
+   fields: sp, receiver, tempBase, resumeAddr, sendArgCount.  We
+   can compare these to the SAVE event's data to check if they
+   match (single save pushed, single save popped).
+2. If the save's sendArgCount differs from the original (e.g.,
+   popped at different level), we have the smoking gun.
+3. Alternative: add a C helper called from the ASM trampoline at
+   the return-path entry, bracketed by save/restore of caller-
+   saved registers.  Simpler than instrumenting many ASM points.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
