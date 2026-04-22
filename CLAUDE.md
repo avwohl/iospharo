@@ -140,36 +140,36 @@ Xcode's "Check XCFramework Freshness" build phase auto-runs
 
 ## Running Pharo test suites
 
-Both VMs run the SAME harness — the whole point of a baseline is that Cog and
-our VM execute the identical Smalltalk.  A divergent harness makes per-test
-differences (e.g. `ClassQueryTest>>testAllCallsOn` counting senders in the
-harness's own literal pool) a harness artefact rather than a real Δcog.
-
-Two-step flow (stock Pharo preps the image, either VM then runs it):
+Each VM has its own runner script (the elaborate fork/watchdog/Delay
+machinery in `run_sunit_tests.st` is designed around our VM's failure
+modes and hangs every test on stock Cog with TIMEOUT(prim-stuck)).
+Fairness comes from the shared external class list — neither runner's
+source has test-class symbols as literals, so
+`ClassQueryTest>>testAllCallsOn` counts the same senders on both VMs.
 
     cd /tmp && mkdir -p harness && cd harness && \
       curl -sL https://get.pharo.org/64/130+vm | bash
 
-    # 1. prep image: install SUnitRunner + SessionManager startup handler.
-    #    Stock Pharo's `eval --save` works (prior "silent no-op" was a
-    #    stray leftover startup.st in CWD, not a Pharo bug).
-    /tmp/harness/pharo /tmp/harness/Pharo.image eval --save \
-      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
-
-    # 2. stage the external test-class list.  The list is in-repo so
-    #    test-class names are NOT literals in the compiled runAllTests
-    #    method — keeps `testAllCallsOn` honest.
+    # stage the external test-class list for both runners
     cp scripts/pharo-headless-test/test_classes.txt /tmp/sunit_test_classes.txt
 
-    # 3. run: no eval args.  SessionManager fires SUnitRunner>>startUp:
-    #    on resume, which calls runAllTests and writes
-    #    /tmp/sunit_test_results.txt + /tmp/sunit_test_detail.txt.
-    ./build/test_load_image /tmp/harness/Pharo.image      # custom VM
-    /tmp/harness/pharo /tmp/harness/Pharo.image           # stock-Cog baseline
+    # --- custom VM ---
+    # prep: install SUnitRunner + SessionManager startup handler
+    /tmp/harness/pharo /tmp/harness/Pharo.image eval --save \
+      "'$PWD/scripts/pharo-headless-test/run_sunit_tests.st' asFileReference fileIn"
+    # run: no eval args — SessionManager fires SUnitRunner>>startUp: on resume
+    ./build/test_load_image /tmp/harness/Pharo.image
+
+    # --- stock-Cog baseline (separate image, run_sunit_cog.st executes inline) ---
+    /tmp/harness/pharo /tmp/harness/Pharo.image eval \
+      "'$PWD/scripts/pharo-headless-test/run_sunit_cog.st' asFileReference fileIn"
 
     cat /tmp/sunit_test_results.txt
 
-Filters (optional):
+Both write the same `/tmp/sunit_test_results.txt` + `/tmp/sunit_test_detail.txt`
+format, so `scripts/classify-sunit.py cog.txt ours.txt` produces the Δcog diff.
+
+Filters for the custom-VM runner (optional):
 - `/tmp/sunit_class_names.txt` — one class name per line to run just those.
 - `/tmp/sunit_batch.txt` — `<start> <end>` indices into the full list.
 
