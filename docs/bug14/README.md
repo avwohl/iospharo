@@ -535,6 +535,111 @@ Reference logs saved this turn:
 - `/tmp/bug14-save.log` — JIT on with B5+DUMP_SEL=reset, full data
 - `/tmp/bug14-dump.log` — earlier variant, pre-SAVE-enrichment
 
+### 2026-04-22 (round 2) — reset's exit is CLEAN, bug is further downstream
+
+Added C++-side instrumentation (`PHARO_B5_TRACE=1` also gates these
+now):
+
+- `[B5-EXIT]` at tryJITActivation's ExitReturn switch (line 14237)
+- `[B5-EXIT-tryResume]` at tryResume's ExitReturn switch (line 12791)
+- `[B5-EXIT-materialized]` at materialized-J2J ExitReturn (line 14088)
+- `[B5-RESUME]` after popFrame+push in main switch — shows the
+  interpreter state handed back to the caller.
+
+Also captured `PositionableStream>>on:` bytecodes (initialPC=33..43):
+
+    33 pushTemp 0       ← aCollection
+    34 PopStoreRecvVar 0 (collection := aCollection)
+    35 pushTemp 0
+    36 specialSend #size
+    37 PopStoreRecvVar 2 (readLimit := size)
+    38 pushZero
+    39 PopStoreRecvVar 1 (position := 0)
+    40 pushReceiver
+    41 Send0 lit[0]=#reset        ← THE CALL TO RESET
+    42 Pop                        (discard reset's retVal)
+    43 returnReceiver             (^ self)
+
+### What the new events show
+
+**Reset's normal exit** (pre-DNU, many times per run):
+
+    [B5-EXIT]   #1 sp=0x1c0 ip=0x…f90 bcOff=0 j2jDepth=0 retVal=<obj>
+                chainCallDepth=0 localFrameDepth=21 method=0x30046cf68
+                cls=WriteStream sel=#reset
+    [B5-RESUME] #1 stackPointer_=0x1c0 framePointer_=0x1a8 sp-fp=3
+                method_=0x30046b3f8 rcvrCls=WriteStream sel=#on:
+                ip=0x30046b429 bcOff=9 (next bc=0xd8=Pop)
+
+**Reset's buggy exit** (exactly before DNU #1):
+
+    [B5-EXIT]   #620 sp=0x278 ip=0x…f90 bcOff=0 j2jDepth=0 retVal=<obj>
+                chainCallDepth=0 localFrameDepth=33 method=0x30046cf68
+                cls=WriteStream sel=#reset
+    [B5-RESUME] #563 stackPointer_=0x278 framePointer_=0x260 sp-fp=3
+                method_=0x30046b3f8 rcvrCls=WriteStream sel=#on:
+                ip=0x30046b429 bcOff=9 (next bc=0xd8=Pop)
+
+**Both look structurally identical** — same sp-fp delta (3 slots),
+same resume IP (bcOff=9 = byte 42 = Pop), same receiver class, same
+method.  Only the absolute addresses and frameDepth differ (buggy is
+12 frames deeper — consistent with the deep utf8Decoded chain).
+
+### What's missing from the logs
+
+Instance `PositionableStream>>on:` (method oop 0x30046b3f8) appears
+*only* in B5-RESUME events — it has **zero** JIT-exit events in
+any of the three switches I instrumented.  Plausibilities:
+
+  a) on:'s execution continues via the chain loop inline (no switch
+     reached), and on:'s return becomes embedded in the inner
+     trampoline's J2J-return path at line 13932 of Interpreter.cpp
+     (not yet instrumented).
+  b) on: gets handed back to the interpreter's main bytecode loop
+     after the send (so its Pop + returnReceiver run via interpreter,
+     not JIT), and returnReceiver's interpreter handler is where the
+     corruption slips in.
+  c) on: never reaches `returnReceiver` — some intermediate operation
+     throws/aborts first.
+
+Class-side `PositionableStream class>>on:` (0x300469fd0) DOES exit
+via `[B5-EXIT-tryResume]`, confirming the outer tryResume path is
+active. Instance on: doesn't — it's in some other execution path.
+
+### Falsified this round
+
+- Reset's J2J return math is wrong — falsified. sp=0x278 matches
+  on:'s save.sp exactly, confirming reset's stencil properly
+  restored caller sp.
+- popFrame restores on: to a bad state — falsified. Post-popFrame
+  state is structurally identical between working and buggy cases.
+- Pop stencil gets skipped by the resumeAddr — falsified. on:
+  resumes at bcOff=9 (the Pop bytecode) in both cases.
+
+### Concrete next step (updated again)
+
+Instrument line 13932 — the tryJITActivation C++ trampoline's J2J
+return branch.  That's the likely path where instance on:'s exit
+becomes invisible to the other switches.  Log the method being
+returned from (instance on:?) and what sp/ip it's resuming the
+caller at.  If on: IS returning via this path, compare the working
+vs buggy post-resume state there.  If on: is NOT returning via this
+path, instrument `Interpreter::returnFromMethod` (or whichever
+interpreter-side handler runs `returnReceiver` at byte 43) and look
+for divergence.
+
+### Diagnostics this round (env-gated, all landed)
+
+  - `PHARO_B5_TRACE=1` now also triggers:
+    - `[B5-EXIT]` at main tryJITActivation ExitReturn (14237)
+    - `[B5-EXIT-tryResume]` at tryResume ExitReturn (12791)
+    - `[B5-EXIT-materialized]` at materialized J2J ExitReturn (14088)
+    - `[B5-RESUME]` after popFrame + push retVal
+  - `PHARO_JIT_DUMP_SEL=<sel>` — prints codeStart + bcToCodeTable
+
+Reference log: `/tmp/bug14-exit4.log` — reproducer with all three
+[B5-EXIT] variants.
+
 ## Related commits
 
 - `8924f83` — `PHARO_SENDER_TRIPWIRE` (storePointer-level)

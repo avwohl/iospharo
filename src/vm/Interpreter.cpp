@@ -12789,6 +12789,22 @@ void Interpreter::tryJITResumeInCaller() {
 
         switch (state.exitReason) {
         case jit::ExitReturn:
+            // Bug-14 diagnostic (tryResume path)
+            if (g_debug.b5Trace) {
+                static size_t c12791 = 0;
+                c12791++;
+                if (c12791 <= 2500) {
+                    std::string mcls = classNameOfMethod(state.method);
+                    std::string msel = memory_.selectorOf(state.method);
+                    fprintf(stderr, "[B5-EXIT-tryResume] #%zu sp=%p retVal=0x%llx "
+                                    "localFrameDepth=%zu method=0x%llx cls=%s sel=#%s\n",
+                            c12791, state.sp,
+                            (unsigned long long)state.returnValue.rawBits(),
+                            frameDepth_,
+                            (unsigned long long)state.method.rawBits(),
+                            mcls.c_str(), msel.c_str());
+                }
+            }
             // JIT completed the rest of the method and returned.
             if (!popFrame()) {
                 // fd=0: no C++ frames left. Follow context sender chain.
@@ -14086,6 +14102,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         // Handle the exit reason that caused the J2J trampoline to bail.
         switch (state.exitReason) {
         case jit::ExitReturn:
+            // Bug-14 diagnostic (materialized J2J exit)
+            if (g_debug.b5Trace) {
+                static size_t c14088 = 0;
+                c14088++;
+                if (c14088 <= 2500) {
+                    std::string mcls = classNameOfMethod(state.method);
+                    std::string msel = memory_.selectorOf(state.method);
+                    fprintf(stderr, "[B5-EXIT-materialized] #%zu sp=%p retVal=0x%llx "
+                                    "localFrameDepth=%zu method=0x%llx cls=%s sel=#%s\n",
+                            c14088, state.sp,
+                            (unsigned long long)state.returnValue.rawBits(),
+                            frameDepth_,
+                            (unsigned long long)state.method.rawBits(),
+                            mcls.c_str(), msel.c_str());
+                }
+            }
             // Innermost J2J frame returned — pop one materialized frame
             if (!popFrame()) {
                 if (benchMode_) { handleBenchComplete(state.returnValue); return true; }
@@ -14235,6 +14267,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         bool ipAlreadyAdvanced = false;  // ExitJ2JCall: stencil already advanced IP past send
         switch (state.exitReason) {
         case jit::ExitReturn: {
+            // Bug-14 diagnostic: PHARO_B5_TRACE=1 logs where JIT landed on
+            // every ExitReturn — sp/retVal/chainCallDepth/localFrameDepth
+            // plus caller-method identity so we can pinpoint the transition
+            // from reset's bail → interpreter resume.  Rate-limited.
+            if (g_debug.b5Trace) {
+                static size_t count = 0;
+                count++;
+                if (count <= 2500) {
+                    std::string mcls = classNameOfMethod(state.method);
+                    std::string msel = memory_.selectorOf(state.method);
+                    // Compute bc offset of state.ip relative to method start,
+                    // so we can tell which bytecode the exit came from.
+                    long long bcOff = -1;
+                    if (state.method.isObject() && state.ip) {
+                        ObjectHeader* mo = state.method.asObjectPtr();
+                        Oop hdr = mo->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
+                        bcOff = (long long)(state.ip - bcBase);
+                    }
+                    fprintf(stderr, "[B5-EXIT] #%zu ExitReturn sp=%p ip=%p bcOff=%lld "
+                                    "j2jDepth=%d retVal=0x%llx "
+                                    "chainCallDepth=%d localFrameDepth=%zu "
+                                    "method=0x%llx cls=%s sel=#%s\n",
+                            count, state.sp, state.ip, bcOff,
+                            state.j2jDepth,
+                            (unsigned long long)state.returnValue.rawBits(),
+                            (int)chainCallDepth, frameDepth_,
+                            (unsigned long long)state.method.rawBits(),
+                            mcls.c_str(), msel.c_str());
+                }
+            }
             if (chainCallDepth > 0) {
                 // Inline callee returned — pop frame, resume caller in JIT
                 popFrame();
@@ -14376,6 +14441,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             lastJitReturn_.frameDepth = frameDepth_;
             lastJitReturn_.wasResume = false;
             push(state.returnValue);
+            // Bug-14 diagnostic: print the interpreter state we just set
+            // up for the caller (post-popFrame, post-push).  Compare to
+            // the pre-popFrame state.sp for reset's exit to pinpoint the
+            // bogus-sp case.
+            if (g_debug.b5Trace) {
+                static size_t count2 = 0;
+                count2++;
+                if (count2 <= 2500) {
+                    std::string mcls = memory_.classNameOf(receiver_);
+                    std::string msel = memory_.selectorOf(method_);
+                    long long bcOff = -1;
+                    if (method_.isObject() && instructionPointer_) {
+                        ObjectHeader* mo = method_.asObjectPtr();
+                        Oop hdr = mo->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
+                        bcOff = (long long)(instructionPointer_ - bcBase);
+                    }
+                    long long spFromFP = framePointer_
+                        ? (long long)(stackPointer_ - framePointer_) : -1;
+                    fprintf(stderr, "[B5-RESUME] #%zu post-pop stackPointer_=%p "
+                                    "framePointer_=%p sp-fp=%lld "
+                                    "method_=0x%llx rcvrCls=%s sel=#%s "
+                                    "ip=%p bcOff=%lld (next bc=0x%02x)\n",
+                            count2, (void*)stackPointer_, (void*)framePointer_,
+                            spFromFP,
+                            (unsigned long long)method_.rawBits(),
+                            mcls.c_str(), msel.c_str(),
+                            (void*)instructionPointer_, bcOff,
+                            instructionPointer_ ? *instructionPointer_ : 0);
+                }
+            }
             return true;
         }
 
