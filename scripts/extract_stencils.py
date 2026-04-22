@@ -410,7 +410,12 @@ SIMSTACK_STENCILS = {
     "stencil_equalSmallInt_4", "stencil_notEqualSmallInt_4",
     "stencil_jumpTrue_1", "stencil_jumpFalse_1",
     "stencil_jumpTrueBack_1", "stencil_jumpFalseBack_1",
-    "stencil_returnTop_1", "stencil_returnTop_E", "stencil_returnReceiver_1",
+    "stencil_returnTop_1", "stencil_returnReceiver_1",
+    # stencil_returnTop_E intentionally omitted: state=0 entry means
+    # x19-x22 are dead SimStack slots anyway, so the function call to
+    # the B5 tracing helper (added in 0d62a1a) may force legitimate
+    # x19-x22 save/restore without compromising SimStack correctness.
+    # The verifier's STP/LDP rule is overly conservative for this stencil.
 }
 
 

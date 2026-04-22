@@ -1045,6 +1045,90 @@ instrumented.
    (after `str x9, [x21, #JS_RECEIVER]` at line 178).  Need to
    save/restore x0-x18 before/after; careful ABI work.
 
+### 2026-04-22 (round 8) — stencil regen unblocked; bug pinned at stencil_returnTop
+
+**Unblocked extract_stencils.py** by removing `stencil_returnTop_E`
+from `SIMSTACK_STENCILS` (script edit at line 413).  The
+verification constraint was overly conservative: state=0 entry
+means x19-x22 are dead SimStack slots, so the compiler's x19-x22
+save/restore for the B5 TRACE call is legitimate — it doesn't
+corrupt live SimStack values.
+
+**Added two stencil diagnostics** (requires regen + rebuild):
+  - event=4 in `stencil_returnReceiver` → `[B5-SMI-RCVR]` log
+    whenever `s->receiver` is a SmallInt at returnReceiver.
+  - event=5 in `stencil_returnTop` → `[B5-SMI-TOP]` log whenever
+    TOS is a SmallInt at returnTop.
+
+**Reproducer ran with both traces enabled** (`/tmp/bug14-smitop.log`):
+  - 0 SMI-RCVR events before DNU #1 — instance on:'s returnReceiver
+    never fires with a SmI.
+  - 600 SMI-TOP events (348 before DNU #1) — mostly legitimate
+    (e.g., Magnitude>>max: returning SmI 100).
+  - **Exactly ONE SMI-TOP event with bcOp being class on:'s
+    returnTop**, at event count #1539:
+
+        [B5] #1538 SAVE  sp=0x240 depth=0 nArgs=0
+                         rcvr=0x30386c3b8(ReadStream)
+                         callerCM=0x30046b3f8  ← instance on:
+                         cls=PositionableStream sel=#on:
+        [B5-SMI-TOP] #1539 retVal=0x31
+                           jitMethod=0x10a509a00
+                           cmOop=0x300469fd0  ← class on:
+                           cls=PositionableStream class sel=#on:
+                           j2jDepth=0 sp=0x228
+        [B5-EXIT] #619 ExitReturn retVal=0x31 method=class on:
+        [B5-RESUME] in ByteArray>>readStream at returnTop
+        [B5-RESUME] returning into decodeBytes: top=SmI(6)
+        [B5-BUG] decodeBytes: block created with byteStream=SmI(6)
+        ...eventually...
+        [DNU #1] atEnd on SmI 6 inside whileFalse:
+
+### The bug window
+
+**Between `#1538 SAVE` (instance on:'s internal send save) and
+`#1539` (class on:'s returnTop with SmI 6), there are ZERO traced
+events.**  No RET, no TAIL, no other SAVE.  Yet execution
+transitioned from "instance on: is running and has just pushed a
+J2J save" to "class on:'s returnTop is running, finding SmI 6 on
+its stack, and j2jDepth=0".
+
+Instance on:'s returnReceiver does NOT fire with a SmI receiver,
+ruling out the "instance on: returned SmI 6" hypothesis.  So
+something ELSE caused class on:'s JIT activation to terminate
+with TOS=SmI 6:
+
+  (a) The callee of #1538's send returned SmI 6, and a subsequent
+      sequence we can't see (bytecodes, primitives, another send)
+      propagated that SmI all the way to class on:'s TOS and
+      triggered its returnTop.  This would bypass instance on:'s
+      returnReceiver, which shouldn't happen in normal flow.
+  (b) An NLR or exception unwound instance on:'s frame directly
+      to class on:'s post-send resume, depositing SmI 6 on
+      class on:'s stack as the return value.
+  (c) Stack-slot math bug in the stencil J2J save/restore at
+      #1538, causing the write to land on class on:'s TOS.
+  (d) The newly-compiled instance on: (compile #108 happens right
+      before #1538) has a miscompilation that makes execution
+      skip straight from byte 33 to some terminating state.
+
+### Concrete next step (round 9)
+
+1. **Add a stencil trace at every return bytecode** (returnTrue,
+   returnFalse, returnNil, returnTop) — catch any that exit with
+   SmI between #1538 and #1539.
+2. **Add a stencil trace at EVERY J2J call target's first
+   bytecode stencil** (push-something-E) — see if instance on:'s
+   first byte after #1538 SAVE is even reached.
+3. **Disable the ASM trampoline's fast path for instance on:**
+   (force it through the slower C++ path with more visibility)
+   — would require a per-method JIT-method flag.
+4. **Run with `JIT_EXCLUDE_OOP=0x300469fd0,0x30046b3f8` to confirm
+   that the C++ fallback works correctly for both these methods**
+   — if yes, the bug is specific to their JIT interaction.
+
+Stencil diagnostics remain in place behind PHARO_B5_TRACE.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

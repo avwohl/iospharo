@@ -544,6 +544,13 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 extern "C" void stencil_returnTop(JITState* s) {
     s->sp--;
     Oop retVal = *(s->sp);
+    // Bug-14 diagnostic (event=5): log whenever retVal (TOS) is a
+    // SmallInt at returnTop.  Pinpoints where SmI flows up from the
+    // class on: → instance on: chain.
+    if ((retVal.bits & 1) != 0) {
+        _HOLE_RT_J2J_TRACE(s, 5, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
+    }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
@@ -554,6 +561,13 @@ extern "C" void stencil_returnTop(JITState* s) {
 // Bytecode: 0x58
 extern "C" void stencil_returnReceiver(JITState* s) {
     Oop retVal = s->receiver;
+    // Bug-14 diagnostic (event=4): log whenever s->receiver is a
+    // SmallInt at returnReceiver.  That's the exact moment class
+    // on:'s retVal corruption is visible.  Gated by PHARO_B5_TRACE.
+    if ((retVal.bits & 1) != 0) {
+        _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
+    }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;

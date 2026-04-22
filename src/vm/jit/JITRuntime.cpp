@@ -225,6 +225,30 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
         // extra2 = _sv->sp    (caller's sp captured at save time)
         fprintf(stderr, "[B5] #%zu TAIL resumeAddr=0x%llx savedSp=0x%llx\n",
                 count, (unsigned long long)extra1, (unsigned long long)extra2);
+    } else if (event == 4 || event == 5) {
+        // Bug-14 event=4: returnReceiver detected SmallInt receiver.
+        // Bug-14 event=5: returnTop detected SmallInt on TOS.
+        // extra1 = retVal.bits (SmallInt)
+        // extra2 = (uintptr_t)s->jitMethod
+        uint64_t jmRaw = extra2;
+        uint64_t cmOop = 0;
+        std::string cls = "?", sel = "?";
+        if (jmRaw && state->interp) {
+            cmOop = *(uint64_t*)(uintptr_t)jmRaw;
+            if (cmOop > 0x10000) {
+                Oop cm = Oop::fromRawBits(cmOop);
+                sel = state->interp->memory().selectorOf(cm);
+                cls = state->interp->classNameOfMethod(cm);
+            }
+        }
+        const char* tag = (event == 4) ? "RCVR" : "TOP";
+        fprintf(stderr, "[B5-SMI-%s] #%zu retVal=0x%llx "
+                        "jitMethod=0x%llx cmOop=0x%llx cls=%s sel=#%s "
+                        "j2jDepth=%d sp=%p\n",
+                tag, count, (unsigned long long)extra1,
+                (unsigned long long)jmRaw, (unsigned long long)cmOop,
+                cls.c_str(), sel.c_str(),
+                state->j2jDepth, state->sp);
     } else {
         fprintf(stderr, "[B5] #%zu evt=%llu e1=0x%llx e2=0x%llx\n",
                 count, (unsigned long long)event,
