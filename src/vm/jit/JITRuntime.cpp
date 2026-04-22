@@ -181,11 +181,17 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                 (unsigned long long)nArgs,
                 (unsigned long long)callerCM);
     } else if (event == 2) {
+        // Lookup selector name of callerCM so the trace is human-readable.
+        std::string sel;
+        if (state->interp && callerCM > 0x10000) {
+            sel = state->interp->memory().selectorOf(Oop::fromRawBits(callerCM));
+        }
         fprintf(stderr, "[B5] #%zu RET  sp=%p depth=%d "
-                        "retVal=0x%llx callerCM=0x%llx savedArgs=%llu\n",
+                        "retVal=0x%llx callerCM=0x%llx savedArgs=%llu sel=#%s\n",
                 count, state->sp, state->j2jDepth,
                 (unsigned long long)extra1,
-                (unsigned long long)callerCM, (unsigned long long)nArgs);
+                (unsigned long long)callerCM, (unsigned long long)nArgs,
+                sel.c_str());
     } else {
         fprintf(stderr, "[B5] #%zu evt=%llu e1=0x%llx e2=0x%llx\n",
                 count, (unsigned long long)event,

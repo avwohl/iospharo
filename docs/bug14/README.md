@@ -112,6 +112,64 @@ which control-flow path gets hit first.  Method IDs (like
 `method=#on:(0x300469fd0)`) are stable within a run but change
 across fresh image downloads because hash varies.
 
+### 2026-04-22 late — B5 trace nails the root-cause method pattern
+
+Enabled `PHARO_B5_TRACE=1` (existing infra at
+`JITRuntime.cpp:97 jit_rt_j2j_trace`) and extended the RET event
+logger with `selectorOf(callerCM)` lookup.  Reproducer produced:
+
+    [B5] #107  RET depth=0 retVal=0x31 (SmI  6) callerCM=0x30046cca0 savedArgs=1 sel=#contents
+    [B5] #350  RET depth=0 retVal=0x31 (SmI  6) callerCM=0x30046cca0 savedArgs=1 sel=#contents
+    [B5] #1800 RET depth=0 retVal=0x129 (SmI 37) callerCM=0x30046cca0 savedArgs=1 sel=#contents
+
+**retVal values match DNU receivers exactly** (SmI 6, SmI 37).
+All 3 problematic returns are for method `#contents` with
+`savedArgs=1`.  The prime suspect for which class:
+
+    OCScanner>>contents
+        | contentsStream |
+        contentsStream := (Array new: 50) writeStream.
+        [ self atEnd ]
+          whileFalse: [ contentsStream nextPut: self next ].
+        ^ contentsStream contents
+
+This method has the exact signature:
+- `[ self atEnd ] whileFalse: [ ... ]` loop — matches "in #whileFalse:"
+- 1-arg send: `contentsStream nextPut: self next` — matches savedArgs=1
+- `self next` returns a byte (SmallInteger) — matches retVal tag=1
+
+### Hypothesis / fix target
+
+The loop-body bytecode sequence is:
+    push contentsStream
+    push self
+    send #next       → SmallInt byte on stack
+    send #nextPut:   → returns the SmallInt (its arg)
+    pop              → discard loop-body result
+    jump back to loop header
+
+After the `nextPut:` J2J return, retVal = SmallInt byte lands at
+`sp[-(nArgs+1)] = sp[-2]`.  If the subsequent `pop` doesn't fire
+correctly (miscompiled or elided by the JIT's jump-back
+optimization), the SmallInt stays on the stack.  Next iteration
+pushes `self` for the `atEnd` send, but the stack slot computed
+as receiver is the leftover SmallInt.
+
+### Concrete next step
+
+Disassemble `OCScanner>>contents` and compare:
+1. Bytecode layout, particularly the `pop`/`jump` sequence after
+   the nextPut: send
+2. JIT-emitted code for the same offsets — look for missing
+   pop-stencil emit, or a jump-back-target arithmetic bug that
+   lands the IP 1 byte past the pop
+
+The 18-byte `whileFalse:` bytecodes dumped earlier are for the
+OUTER whileFalse: method (which becomes the caller when
+`whileFalse:` isn't inlined).  For `OCScanner>>contents` we need
+that method's bytecodes too — it's the inner `[ body ]` block
+that's likely the site of the JIT-compile bug.
+
 ## Related commits
 
 - `8924f83` — `PHARO_SENDER_TRIPWIRE` (storePointer-level)
