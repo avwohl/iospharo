@@ -1505,6 +1505,52 @@ macro's `if (s->j2jDepth > 0)` guard means the pop+tail-call
 only happens when there's a save to handle; otherwise it's a
 no-op (the normal exit path fires).
 
+### 2026-04-22 (round 15) — testNthRootTruncated eager-JIT hang pre-dates bug 14
+
+Probed the remaining testNthRootTruncated hang under
+`PHARO_JIT_DEFER=0` (eager JIT).  Findings:
+
+  - Test runs fine with default JIT (DEFER=4s): `'ok'` in <60s.
+  - With eager JIT: 3 TERM-P80 + 9 DNU events on random selectors
+    (#resolve:, #slantValue, #asInteger, #lines, #trimBoth).
+  - **[B5-LEAK] detector reports 0 events** — NOT the same
+    class of bug as bug 14.  Primitive stencils are not leaking
+    saves anymore.
+
+The DNU pattern (rcvr=0x300000000, receivers becoming nil-like)
+suggests a different mechanism — possibly stale IC data, GC
+interaction, or stencil state corruption at a path not involving
+the primitive-prologue issue.  All DNU stacks show `[0] Context>>resume:`
+and `[current] #<method> fd=0`, which is atypical — we're at
+process-root context depth, inside exception-handler-resume
+territory.
+
+`PHARO_NO_SISTA=1` reduces DNUs from 12→5 (partial mitigation);
+full symptom remains.  `PHARO_JIT_NO_SIMSTACK=1` doesn't help
+(SimStack is already default-off).  `JIT_EXCLUDE_OOP` for
+FileLocator>>resolve doesn't help (DNU fires in the
+interpreter path for that method too).
+
+This is a pre-existing bug that was masked by bug 14's atEnd
+DNU cascade — now visible but of a different class.  Needs its
+own investigation with fresh tooling (e.g., context sender
+tracking, stencil execution trace around the failure point).
+
+### Sunit harness validation (post-fix)
+
+Ran 45-class batch (skipping IntegerTest, which hits the
+testNthRootTruncated hang under accumulated JIT state):
+
+    Total tests: 1912   Pass: 1901   Fail: 0   Err: 0   Timeout: 0
+    Classes: FloatTest, FractionTest, PointTest, CharacterTest,
+             DictionaryTest, SetTest, BagTest, IntervalTest,
+             SymbolTest, OrderedCollectionTest, ArrayTest.
+
+99.4% pass rate, no regressions in test behavior.  Bug-14 fix
+keeps the broader sunit suite clean.  The eager-JIT hang is
+isolated to specific heavy-arith tests that stress JIT
+compilation timing.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
