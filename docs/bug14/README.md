@@ -864,6 +864,43 @@ Three hypotheses for how class on:'s retVal ended up as SmI 6:
    class on:'s JIT code.  Then try excluding instance on:
    (0x30046b3f8) and reset (0x30046cf68) individually.
 
+### 2026-04-22 bisection result
+
+    JIT_EXCLUDE_OOP=<class on:>    → 0 DNUs (test progresses)  ✓
+    JIT_EXCLUDE_OOP=<instance on:> → 0 DNUs (test progresses)  ✓
+    JIT_EXCLUDE_OOP=<reset>        → 3 DNUs (bug persists)      ✗
+
+The bug requires BOTH class on: AND instance on: to be JIT-compiled.
+Excluding either from JIT prevents the corruption.  Reset is NOT
+involved — it's collateral noise in the trace.
+
+**So the bug is in the J2J transition from class on: → instance on:**
+(stencil J2J direct-call path, or the paired J2J_INLINE_RETURN on
+the way back).  Most likely site: the send stencil at class on:'s
+bc[3] (Send1 #on:) or instance on:'s returnReceiver
+J2J_INLINE_RETURN.
+
+Neither reset's max: J2J nor ByteArray>>readStream is necessary —
+this is a direct class-on: ↔ instance-on: pair.
+
+### Concrete next step (round 6, updated)
+
+Since only these two methods + their J2J dance matters, a minimal
+stress test is feasible.  In a throwaway Smalltalk eval, call
+`PositionableStream class>>on:` many times with freshly-JIT'd
+code and watch for the first time retVal isn't an instance.  If
+that repros, isolate to a ~50-line reproducer that doesn't need
+the whole sunit harness.
+
+Then:
+1. Instrument J2J_INLINE_RETURN's bail path (regen stencils) to
+   log retVal + s->receiver + _sv fields — with only these two
+   methods in play, events will be far fewer and easier to diff
+   against a working call.
+2. Compare instance on:'s returnReceiver in the bug case vs a
+   working case.  If retVal is SmI 6 in the bug, trace upward to
+   find where s->receiver was corrupted.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
