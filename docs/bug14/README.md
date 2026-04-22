@@ -56,20 +56,61 @@ the stream-receiver slot.
 
 ## Next debugging step
 
-1. Disassemble JIT-compiled method 0x3003f8158 (BlockClosure>>
-   whileFalse:) — the method ID is reproducible across runs of
-   the same image.  Compare bytecode layout with what the
-   JIT emitted.
-2. Instrument the return stencils (`stencil_returnTop`,
-   `stencil_returnReceiver`, J2J_INLINE_RETURN macro) to log
-   the stack-slot write offset.  The bug is likely in
-   J2J_INLINE_RETURN line 506:
-   `_sv->sp[-(_nArgs + 1)] = retVal;` — if `_nArgs` is captured
-   with the wrong value at J2JSave time, the retVal lands in
-   a wrong slot.
-3. Or check the `whileFalse:` primitive (272) path — if the JIT
-   specializes whileFalse: via a primitive stencil, check that
-   stencil's stack arithmetic.
+**IMPORTANT gotcha discovered 2026-04-22**: `src/vm/jit/stencils/stencils.cpp`
+is NOT linked into the VM.  It's compiled separately by
+`scripts/extract_stencils.py` and the raw machine code is copied
+into `generated_stencils.hpp` as byte arrays.  Adding a printf to
+stencils.cpp and rebuilding the VM does nothing — you also need to
+rerun `python3 scripts/extract_stencils.py` after editing.  The
+stencil build doesn't happen automatically; check the memory note
+"Regenerate stencils after C++ changes".
+
+Verified during this session: instrumenting the *C++-side* J2J
+return path at `Interpreter.cpp:12685`
+(`state.sp[-(save.sendArgCount + 1)] = retVal;`) produced **zero
+events** under the reproducer.  That means all 3 problem returns
+go through the **pure stencil path**, not the trampoline bail.
+Instrumentation has to land inside the stencil code (requires
+regen) or at the boundary where the stencil exits back to C++.
+
+### Three targets, now ordered by tractability
+
+1. **Instrument the return stencils themselves, THEN regen.**
+   Edit `J2J_INLINE_RETURN_IMPL` in `src/vm/jit/stencils/stencils.cpp`
+   to log `_sv->sp`, `_nArgs`, and the old/new value at the write
+   slot. Run `python3 scripts/extract_stencils.py`.  Rebuild.  Run
+   `docs/bug14/reproduce.sh`.  Grep for the 3 atEnd DNU events
+   and the J2J-RET events immediately preceding each — find the
+   return whose `retVal` matches the next DNU's `rcvr` or whose
+   write-offset is wrong.
+2. **Disassemble JIT-compiled method `BlockClosure>>whileFalse:`**
+   (oop varies per run but selector is stable, numArgs=1,
+   numTemps=1, 18 bytecodes starting at PC 41).  Bytecodes from
+   this session's dump:
+        41: 4C   42: 79   43: C1   44: 4F   45: B5   46: 40
+        47: 79   48: D8   49: 4C   50: 40   51: 90   52: D8
+        53: 5B   54: 00   55: 00   56: 3C   57: 1C   58: 6C
+   Literals: {#whileFalse:, #ifFalse:, #whileFalse:,
+   #BlockClosure->BlockClosure}.  Source:
+        whileFalse: aBlock
+          self value ifFalse: [ aBlock value. self whileFalse: aBlock ].
+          ^ nil
+   The DNU consistently fires in this method after a return from
+   `#on:`, so the corrupted bytecode is somewhere in this 18-byte
+   sequence.
+3. **Prim 272 (`whileFalse`) specialization** — check `stencils.cpp`
+   for any primitive-272 handling; if present, its stack arithmetic
+   is the likely culprit.
+
+### Stability across runs
+
+Re-ran reproducer 2026-04-22 04:40: 3 DNUs identical in shape,
+receivers this time 6, 6, 36 (vs. first run 6, 0, 37 — same class
+of loop-counter values, different specific numbers).  Pattern is
+deterministic but the exact clobbering value varies based on
+which control-flow path gets hit first.  Method IDs (like
+`method=#on:(0x300469fd0)`) are stable within a run but change
+across fresh image downloads because hash varies.
 
 ## Related commits
 
