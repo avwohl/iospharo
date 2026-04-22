@@ -786,6 +786,84 @@ value.
 
 Reference log: `/tmp/bug14-resumecaller.log`
 
+### 2026-04-22 (round 5) — BUG LOCATED: class on: returns SmI 6 from JIT
+
+Ran the reproducer with the full [B5-EXIT]/[B5-RESUME-CALLER] suite.
+The critical transition right before DNU #1:
+
+    [B5] #1192 SAVE sp=0x240 nArgs=0 callerCM=instance on:       ← instance on:'s save for reset
+    [B5-EXIT] #619 ExitReturn sp=0x228 retVal=0x31 fd=29
+              method=class on: (0x300469fd0)
+              cls=PositionableStream class sel=#on:
+    [B5-RESUME] #562 method_=ByteArray>>readStream bcOff=3
+              (next bc=0x5c=returnTop)
+    [B5-RESUME] returning into decodeBytes: top=0x31 (SmallInt)
+
+**`PositionableStream class>>on:` exits with retVal=SmI 6** — that
+is the bug.  Then:
+  1. readStream's returnTop returns SmI 6 (from class on:).
+  2. decodeBytes: stores SmI 6 into `reader := bytes readStream`.
+  3. Existing B5-BUG instrumentation at Interpreter.cpp:8892 dumps
+     the block's copied values: `temp[1] = 0x31 SmI`.
+  4. `[reader atEnd]` whileFalse: sends atEnd to SmI 6 → DNU.
+
+### Class on: bytecodes and resume points
+
+    methodOop=0x300469fd0 numLits=4 source=^ self basicNew on: aCollection
+    41: 0x4C  pushReceiver (class)
+    42: 0x80  Send0 lit[0]=#basicNew  → new ReadStream instance on TOS
+    43: 0x40  pushTemp 0 (aCollection)
+    44: 0x91  Send1 lit[1]=#on:       → initialized instance on TOS
+    45: 0x5C  returnTop               → returns TOS
+
+    JIT code layout (codeStart=0x…9d8, codeSize=5136):
+    bc[0] pushReceiver     → code+0
+    bc[1] sendJ2J #basicNew → code+16
+    bc[2] pushTemp          → code+2156
+    bc[3] sendJ2J #on:      → code+2188
+    bc[4] returnTop         → code+4328
+
+state.ip at [B5-EXIT] is bcOff=0 because the C++/ASM trampoline
+resets state.ip = savedJM->bcStart() when popping — so that field
+isn't diagnostic at exit time.  Instead look at retVal.
+
+### The open question
+
+Between the stencil SAVE for reset (#1192) and class on:'s ExitReturn
+(#619), there are **zero J2J trace events** — no TAIL, no RET for
+reset, no other save/return.  That means reset's return path (the
+stencil's J2J_INLINE_RETURN) either didn't fire the trace, or the
+ASM trampoline is doing the whole pop+resume loop opaquely.
+
+Three hypotheses for how class on:'s retVal ended up as SmI 6:
+
+  (a) Instance on:'s `returnReceiver` stencil returns `s->receiver`,
+      but `s->receiver` got overwritten to SmI 6 somewhere
+      (perhaps during reset's max: J2J restoration).
+  (b) Class on:'s returnTop stencil reads from the wrong stack slot
+      — its expected TOS was the initialized instance (written by
+      instance on:'s J2J restoration at `_sv->sp[-2] = retVal`),
+      but a miscomputed offset reads SmI 6 from an adjacent slot.
+  (c) An NLR or exception unwound through the chain and picked up
+      a transient SmI 6 (e.g., the value of `readLimit` set during
+      instance on:) as the return value.
+
+### Concrete next step (round 6)
+
+1. Add a log INSIDE `J2J_INLINE_RETURN`'s bail path (stencils.cpp)
+   that prints `s->receiver`, `retVal`, `_sv->receiver`, `_sv->sp`,
+   `_sv->sendArgCount` right before setting exitReason=EXIT_RETURN.
+   Since this requires regenerating stencils
+   (`python3 scripts/extract_stencils.py`), start here.
+2. If hypothesis (a) is right, the bail will show s->receiver=SmI 6.
+   If (b), the restore is fine but returnTop picks a bad slot —
+   add a log at the returnTop stencil.  If (c), we'll see an NLR
+   event.
+3. ALSO: run the same repro with `JIT_EXCLUDE_OOP=0x300469fd0`
+   (exclude class on: from JIT) — if bug disappears, it IS in
+   class on:'s JIT code.  Then try excluding instance on:
+   (0x30046b3f8) and reset (0x30046cf68) individually.
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:
