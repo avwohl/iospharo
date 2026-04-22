@@ -122,10 +122,68 @@ static std::unordered_map<uint64_t, uint8_t> sistaGateCache_;
 static std::unordered_map<uint64_t, uint16_t> sistaBailCounter_;
 static constexpr uint16_t kSistaBailBlacklistThreshold = 8;
 
+// Forward decl — defined after sistaRing_ struct.
+static void sistaRingDump(const char* tag, class Interpreter* interp);
+
+// Fixed-size ring of recent Sista dispatches — dumped when a DNU
+// fires so the correlation between a bad Sista bail/return and the
+// downstream DNU is visible without global tracing.
+struct SistaRingEntry {
+    uint64_t methodBits;
+    uint64_t receiverBits;
+    uint64_t retOrTopBits;   // sstate.returnValue (ret) or top-of-sp (send)
+    uint32_t exitReason;     // jit::ExitReturn / jit::ExitSend / other
+    uint16_t sendArgCount;
+    uint8_t  bailOp;         // the bc at sstate.ip (0 for ExitReturn)
+    int8_t   spDelta;        // sstate.sp - stackPointer_ (clamped)
+};
+static constexpr size_t kSistaRingSize = 32;
+static SistaRingEntry sistaRing_[kSistaRingSize] = {};
+static size_t sistaRingHead_ = 0;
+static uint64_t sistaRingSeq_ = 0;
+
 void Interpreter::recoverSistaAfterGC() {
     if (sistaRuntimeForGCHook_) sistaRuntimeForGCHook_->reset();
     sistaGateCache_.clear();
     sistaBailCounter_.clear();
+    for (size_t i = 0; i < kSistaRingSize; i++) sistaRing_[i] = {};
+}
+
+// Dump the Sista ring buffer — called from the DNU logging site to
+// correlate the DNU with recent Sista dispatches.
+static void sistaRingDump(const char* tag, Interpreter* interp) {
+    if (sistaRingSeq_ == 0) return;  // Sista never dispatched
+    size_t count = std::min<uint64_t>(sistaRingSeq_, kSistaRingSize);
+    size_t start = sistaRingSeq_ > kSistaRingSize
+                       ? sistaRingHead_
+                       : 0;
+    fprintf(stderr, "[SISTA-RING] tag=%s seq=%llu count=%zu:\n",
+            tag ? tag : "(null)",
+            (unsigned long long)sistaRingSeq_, count);
+    for (size_t i = 0; i < count; i++) {
+        size_t idx = (start + i) % kSistaRingSize;
+        const SistaRingEntry& e = sistaRing_[idx];
+        Oop mO = Oop::fromRawBits(e.methodBits);
+        std::string sel = interp
+                              ? interp->memory().selectorOf(mO)
+                              : std::string("?");
+        const char* rsn =
+            e.exitReason == (uint32_t)jit::ExitReturn     ? "RET"  :
+            e.exitReason == (uint32_t)jit::ExitSend       ? "SEND" :
+            e.exitReason == (uint32_t)jit::ExitSendCached ? "SENDC":
+            e.exitReason == (uint32_t)jit::ExitJ2JCall    ? "J2J"  :
+            e.exitReason == (uint32_t)jit::ExitYield      ? "YLD"  :
+            e.exitReason == (uint32_t)jit::ExitStackOverflow ? "OVF":
+            e.exitReason == (uint32_t)jit::ExitNone       ? "NONE" :
+            "???";
+        fprintf(stderr, "  [%zu] #%-28s %-5s rcvr=0x%llx ret/top=0x%llx "
+                        "bailOp=0x%02x argc=%u spΔ=%d\n",
+                i, sel.c_str(), rsn,
+                (unsigned long long)e.receiverBits,
+                (unsigned long long)e.retOrTopBits,
+                (unsigned)e.bailOp, (unsigned)e.sendArgCount,
+                (int)e.spDelta);
+    }
 }
 #endif
 
@@ -6986,6 +7044,34 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
 
+            // Ring-buffer record — cheap, always-on.  Dumped on DNU.
+            {
+                SistaRingEntry& e = sistaRing_[sistaRingHead_];
+                e.methodBits   = method.rawBits();
+                e.receiverBits = receiver_.rawBits();
+                e.exitReason   = (uint32_t)sstate.exitReason;
+                e.sendArgCount = (uint16_t)sstate.sendArgCount;
+                if (sstate.exitReason == jit::ExitReturn) {
+                    e.retOrTopBits = sstate.returnValue.rawBits();
+                    e.bailOp = 0;
+                } else {
+                    ptrdiff_t delta = sstate.sp - stackPointer_;
+                    e.retOrTopBits = (delta > 0)
+                        ? sstate.sp[-1].rawBits()
+                        : 0;
+                    uint8_t* bcEnd = methodBytes + totalBytes;
+                    e.bailOp = (sstate.ip >= methodBytes + bytecodeStart
+                                && sstate.ip < bcEnd)
+                                  ? *sstate.ip : 0;
+                }
+                ptrdiff_t d = sstate.sp - stackPointer_;
+                if (d > 127) d = 127;
+                if (d < -128) d = -128;
+                e.spDelta = (int8_t)d;
+                sistaRingHead_ = (sistaRingHead_ + 1) % kSistaRingSize;
+                sistaRingSeq_++;
+            }
+
             dispatched++;
             // Charge the periodic-check machinery for bytecodes
             // Sista executed silently — without this, checkCountdown_
@@ -8304,6 +8390,10 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 }
                 // B5 diagnostic: dump last J2J save/return ring buffer.
                 pharo_jit_b5_dump_ring(selName.c_str());
+#if PHARO_JIT_ENABLED
+                // Correlate DNU with recent Sista dispatches.
+                sistaRingDump(selName.c_str(), this);
+#endif
             }
             Oop rcvr = stackValue(argCount);
             Oop currentProc = getActiveProcess();
