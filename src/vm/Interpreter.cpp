@@ -6942,6 +6942,81 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // the full IR stack, and the adaptive bail-blacklist
                 // culls them if they over-bail.  Let them through.
                 //
+                // DIAG gate (PHARO_SISTA_NO_FULLBLOCK=1): exclude
+                // methods with PushFullBlock to test whether those
+                // bails are the source of image-startup DNU cascades.
+                if (getenv("PHARO_SISTA_NO_FULLBLOCK")) {
+                    if (op == jit::SistaV1::PushFullBlock
+                     || op == jit::SistaV1::PushClosure) {
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
+                // DIAG gate (PHARO_SISTA_NO_REMOTE_TEMP=1): exclude
+                // methods that access closure-captured temp vectors
+                // (PushTempAtInVec / StoreTempInVec / PopStoreTempInVec).
+                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP")) {
+                    if (op == jit::SistaV1::PushTempAtInVec
+                     || op == 0xFC
+                     || op == 0xFD) {
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
+                // DIAG: log methods with remote-temp ops on first
+                // admission.  Tells us which methods the
+                // NO_REMOTE_TEMP fix excludes.
+                if (getenv("PHARO_SISTA_LOG_REMOTE_TEMP")) {
+                    if (op == jit::SistaV1::PushTempAtInVec
+                     || op == 0xFC
+                     || op == 0xFD) {
+                        static std::unordered_set<uint64_t> loggedMethods_;
+                        if (loggedMethods_.insert(gateKey).second) {
+                            fprintf(stderr,
+                                "[SISTA-HAS-REMOTE-TEMP] method=0x%llx "
+                                "sel=#%s op=0x%02x offset=%zu\n",
+                                (unsigned long long)gateKey,
+                                memory_.selectorOf(method).c_str(),
+                                (unsigned)op, i);
+                        }
+                    }
+                }
+                // Finer-grained: only block READS (no effect on state)
+                // versus only block WRITES (store side).
+                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP_READ")) {
+                    if (op == jit::SistaV1::PushTempAtInVec) {
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
+                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP_WRITE")) {
+                    if (op == 0xFC || op == 0xFD) {
+                        hasUnsafeOp = true;
+                        break;
+                    }
+                }
+                // By-selector exclusion — PHARO_SISTA_EXCLUDE_SELS
+                // is a comma-separated list of selector names;
+                // matching methods get rejected from dispatch.
+                if (const char* excl = getenv("PHARO_SISTA_EXCLUDE_SELS")) {
+                    static const std::string excludeList = excl;
+                    std::string sel = memory_.selectorOf(method);
+                    size_t start = 0;
+                    while (start < excludeList.size()) {
+                        size_t comma = excludeList.find(',', start);
+                        std::string token = excludeList.substr(
+                            start, comma == std::string::npos
+                                       ? std::string::npos : comma - start);
+                        if (!token.empty() && sel == token) {
+                            hasUnsafeOp = true;
+                            break;
+                        }
+                        if (comma == std::string::npos) break;
+                        start = comma + 1;
+                    }
+                    if (hasUnsafeOp) break;
+                }
+                //
                 // InstVar-store bytecodes bypass the immutability
                 // check in Sista's kStoreInstVar lowering (a direct
                 // `str val, [recv+8+N*8]` without the
