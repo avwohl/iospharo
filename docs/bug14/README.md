@@ -713,6 +713,79 @@ probe for next session:
      next few bytecodes executed by WriteStream>>on: (the caller)
      until a SmallInt appears where an object should.
 
+### 2026-04-22 (round 4) — every chain link works; bug is in the body of `decodeBytes:to:`
+
+Added `[B5-RESUME-CALLER]` at tryJITResumeInCaller entry.  New
+view of the full chain preceding DNU #1:
+
+    [B5-EXIT]   reset → on: sp=0x278  retVal=WriteStream fd=33
+    [B5-RESUME] at instance on: bcOff=9 (byte 42 = Pop)
+    [B5-RESUME-CALLER] WS>>on: bcOff=4 nextBC=Pop
+                       top=0x30386d230(WriteStream)
+    [B5-EXIT-tryResume] WS>>on:  retVal=WriteStream fd=31
+    [B5-EXIT-tryResume] PositionableStream class>>on:
+                       retVal=WriteStream fd=30
+    [DNU #1 atEnd on SmI 6]
+
+So: **every link in the class on: → WS>>on: → PS>>on: → reset →
+max: chain works correctly.** retVal is WriteStream all the way up.
+tryJITResumeInCaller lands at the right bytecode in every frame.
+
+### Where the bug actually lives
+
+Looking at the DNU call stack:
+
+    [current] #whileFalse: fd=30
+    [29] String class>>new:streamContents:
+    [28] String class>>streamContents:
+    [27] ZnUTF8Encoder>>decodeBytes:
+    [26] ByteArray>>decodeWith:
+    [25] ByteArray>>utf8Decoded
+
+The `#whileFalse:` loop is inside ZnUTF8Encoder>>decodeBytes:to:
+(the helper), roughly:
+
+    decodeBytes: bytes to: stream
+        | reader |
+        reader := bytes readStream.
+        [reader atEnd] whileFalse: [
+            stream nextPut: (self nextCodePointFromStream: reader) ]
+
+The failing send is `reader atEnd` where reader = SmI 6.
+
+**The WriteStream we so carefully built is innocent** — that's
+`stream` in this method.  The corrupted variable is `reader`, which
+holds the result of `bytes readStream`.  `bytes readStream`
+internally creates a ReadStream via `ReadStream on: bytes`, going
+through the SAME class `on:` → instance `on:` → reset chain we've
+been tracing.  So the `reader` assignment might be the one getting
+corrupted — not the one we've been observing.
+
+`lastJitReturn` at DNU:
+    method=#on:(class on:) retVal=0x30386d230 (WriteStream) fd=29 (resume)
+
+So the most recent JIT return was class on: returning a WriteStream
+— but that WriteStream is presumably `stream`, not `reader`.  The
+`reader` assignment happened earlier and may have produced a bad
+value.
+
+### Concrete next step (round 5)
+
+1. The bug likely fires on the `reader := bytes readStream`
+   initialization — a similar PositionableStream on: chain but for
+   a ReadStream.  Grep the B5 events for an earlier on:-chain that
+   produces a non-object retVal at fd ~26-30.
+2. OR add a DNU-site probe: dump temps from the current frame
+   (reader, stream, aBlock, etc.) when the atEnd-DNU fires, along
+   with the BYTECODE offset in the current method.  That tells us
+   WHICH temp slot holds the SmI 6 and whether it was always corrupted
+   or corrupted mid-loop.
+3. OR run with `PHARO_JIT_DEFER=5` or similar to delay JIT
+   compilation past the problem path — if the bug disappears, it
+   confirms JIT-exit corruption; if it remains, it's deeper.
+
+Reference log: `/tmp/bug14-resumecaller.log`
+
 ### Diagnostics this round (env-gated, all landed)
 
   - `PHARO_B5_TRACE=1` now also triggers:

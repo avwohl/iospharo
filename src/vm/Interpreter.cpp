@@ -12336,6 +12336,42 @@ void Interpreter::tryJITResumeInCaller() {
     if (inJITResume_) return;  // Prevent re-entrancy from returnValue or tryJITActivation
     inJITResume_ = true;
 
+    // Bug-14 diagnostic: log each invocation with caller method, retVal
+    // on stack top, and next bc.  Rate-limited.
+    if (g_debug.b5Trace && method_.isObject() && method_.rawBits() >= 0x10000) {
+        static size_t cResume = 0;
+        cResume++;
+        if (cResume <= 2500) {
+            std::string mcls = classNameOfMethod(method_);
+            std::string msel = memory_.selectorOf(method_);
+            long long bcOff = -1;
+            uint8_t nextBC = 0;
+            if (instructionPointer_) {
+                ObjectHeader* mo = method_.asObjectPtr();
+                Oop hdr = mo->slots()[0];
+                int nLit = hdr.isSmallInteger()
+                    ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
+                bcOff = (long long)(instructionPointer_ - bcBase);
+                nextBC = *instructionPointer_;
+            }
+            long long spFromFP = framePointer_
+                ? (long long)(stackPointer_ - framePointer_) : -1;
+            Oop top = (stackPointer_ > framePointer_)
+                ? stackPointer_[-1] : Oop::fromRawBits(0);
+            std::string topKind = top.isSmallInteger() ? "SmI"
+                : top.isObject() ? memory_.classNameOf(top).c_str()
+                : "other";
+            fprintf(stderr, "[B5-RESUME-CALLER] #%zu sp-fp=%lld bcOff=%lld "
+                            "nextBC=0x%02x top=0x%llx(%s) "
+                            "cls=%s sel=#%s method_=0x%llx\n",
+                    cResume, spFromFP, bcOff, nextBC,
+                    (unsigned long long)top.rawBits(), topKind.c_str(),
+                    mcls.c_str(), msel.c_str(),
+                    (unsigned long long)method_.rawBits());
+        }
+    }
+
     int resumeIter = 0;
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
