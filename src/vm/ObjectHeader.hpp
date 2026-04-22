@@ -361,8 +361,27 @@ public:
     /// Set slot at index.
     void slotAtPut(size_t index, Oop value) {
         assert(index < slotCount());
+        // PHARO_SLOT_TRIPWIRE=1: catch context sender writes at the lowest
+        // level, including fast-path writes that bypass ObjectMemory::storePointer
+        // (e.g., JIT stencil inline setters, primitive direct writes).
+        // Off by default; one getenv at first call, cached in static bool.
+        if (__builtin_expect(slot_tripwire_enabled(), 0)) {
+            if (index == 0 && value.isNil() && slotCount() >= 6) {
+                Oop oldSender = slots()[0];
+                Oop maybeMethod = slots()[3];
+                if (!oldSender.isNil() && oldSender.rawBits() != 0 &&
+                    (maybeMethod.rawBits() & 7) == 0 &&
+                    maybeMethod.rawBits() > 0x10000) {
+                    slot_tripwire_fire(this, oldSender, maybeMethod);
+                }
+            }
+        }
         slots()[index] = value;
     }
+
+    // Declared out-of-line to keep the header lean and avoid <cstdio> here.
+    static bool slot_tripwire_enabled();
+    static void slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oop method);
 
     // ===== BYTE ACCESS (for byte objects) =====
 

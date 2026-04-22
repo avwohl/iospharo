@@ -464,6 +464,45 @@ won't fix bug 14 in isolation because the kill-walk isn't the
 hot spot.  Unblock future work: find the path that writes nil to
 p80's top-context sender without going through storePointer.
 
+**Actual root cause (2026-04-22, same day, after more tripwire
+work)**: `PHARO_SLOT_TRIPWIRE` extended to `ObjectHeader::slotAtPut`
+(commit TBD) caught *every* slot-0 nil-write including fast-path
+writes — still zero events for the terminated p80 context's own
+sender.  So: its sender was never zeroed.  It was *created* with
+a nil sender (the top of some process), and the process
+legitimately ended when its top method returned / threw.
+
+The JIT vs. NO_JIT diff revealed what actually happens.  Under
+JIT there are **three DNU events with SmallInteger receivers**;
+under NO_JIT: zero.
+
+    #1: #atEnd DNU, rcvr=0x31 (SmallInteger 6) in #whileFalse:
+        lastJitReturn: method=#on:(...) retVal=<proper-object> fd=29
+    #2: #atEnd DNU, rcvr=0x1  (SmallInteger 0) in #parseFields:structure:
+        lastJitReturn: method=#new(...) retVal=<proper-object> fd=17
+    #3: #atEnd DNU, rcvr=0x129 (SmallInteger 37) in #whileFalse:
+
+The JIT return *value* is correct in every case (proper objects
+flowing back from `on:` / `new`).  The caller's **receiver stack
+slot gets overwritten with an unrelated SmallInteger** — 6, 0,
+and 37 look like loop-counter values.  Then the outer `whileFalse:`
+/ `parseFields:` sends `#atEnd` to that SmallInteger and hits a
+DNU deep inside scheduler startup (at fd=29-30).  DNU propagates
+as an uncaught error, unwinds past the scheduler process's top
+block, process legitimately terminates with nil sender — which
+matches the "TERM-P80 top context has nil sender that was never
+written by storePointer/slotAtPut" observation.
+
+So the *cascade* is downstream of this JIT stack-slot corruption.
+Bug 14 = JIT return path writes to the wrong stack slot (likely
+the receiver slot) when returning from sends like `on:` or `new`
+that the JIT has specialized paths for.  Fix belongs in the
+stencil return path's slot arithmetic — probably off-by-one or
+failure to account for arg-count correctly on return from
+closure-style sends.  Next session: instrument the JIT return
+stencils to log which stack slot they write into and compare
+against the Smalltalk spec's expectation.
+
 **Update (continued, diagnostic `PHARO_XFER_TRACE=1` added in 5381f28)**:
 under jit-default the scheduler settles into an infinite 5-XFER
 cycle between exactly 3 processes:

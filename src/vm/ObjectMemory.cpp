@@ -3198,6 +3198,23 @@ void ObjectMemory::copyAndUnmark() {
     oldSpaceFree_ = toFinger;
 }
 
+// Low-level tripwire for bug-14 diagnosis.  Declared in ObjectHeader.hpp,
+// defined here so the header stays free of <cstdio>.  Fires for every
+// slotAtPut(0, nil) on a context-shaped object, including fast-path writes
+// that bypass ObjectMemory::storePointer.  Enabled by PHARO_SLOT_TRIPWIRE=1.
+bool ObjectHeader::slot_tripwire_enabled() {
+    static bool enabled = getenv("PHARO_SLOT_TRIPWIRE") != nullptr;
+    return enabled;
+}
+
+void ObjectHeader::slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oop method) {
+    fprintf(stderr, "[SLOT-TRIPWIRE] ctx=0x%llx oldSender=0x%llx method=0x%llx slots=%zu\n",
+            (unsigned long long)reinterpret_cast<uintptr_t>(hdr),
+            (unsigned long long)oldSender.rawBits(),
+            (unsigned long long)method.rawBits(),
+            (size_t)hdr->slotCount());
+}
+
 void ObjectMemory::rebuildFreeListAfterCompact() {
     clearFreeLists();
 
