@@ -923,6 +923,28 @@ void ObjectMemory::storePointer(size_t index, Oop obj, Oop value) {
         rememberObject(obj);
     }
 
+    // PHARO_SENDER_TRIPWIRE=1: diagnose NLR-over-walk under JIT (bug 14 family).
+    // Logs every write that nils a context's sender slot (slot 0) when the
+    // object currently has a non-nil slot 0 and context-shaped slot 3.
+    // Normal NLR walks 2-5 contexts; walks of 20+ indicate the NLR escaped
+    // its home context and is running into scheduler / sibling-process
+    // contexts, which causes the cascade where 6 processes all end up with
+    // sender=nil and then terminate.  See docs/jit-uncovered-bugs.md bug 14.
+    static bool tripwire = getenv("PHARO_SENDER_TRIPWIRE") != nullptr;
+    if (tripwire && index == 0 && value.isNil() && header->slotCount() >= 6) {
+        Oop oldSender = header->slots()[0];
+        Oop maybeMethod = header->slots()[3];
+        if (!oldSender.isNil() && oldSender.rawBits() != 0 &&
+            maybeMethod.isObject() && maybeMethod.rawBits() > 0x10000) {
+            fprintf(stderr, "[SENDER-NIL] ctx=0x%llx oldSender=0x%llx "
+                            "method=0x%llx slots=%zu\n",
+                    (unsigned long long)obj.rawBits(),
+                    (unsigned long long)oldSender.rawBits(),
+                    (unsigned long long)maybeMethod.rawBits(),
+                    (size_t)header->slotCount());
+        }
+    }
+
     header->slotAtPut(index, value);
 }
 

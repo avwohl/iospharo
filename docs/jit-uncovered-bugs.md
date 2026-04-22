@@ -377,6 +377,62 @@ Resolving needs: (a) a semaphore/process trace logging every
 call sequences; (b) or a minimal reproducer that doesn't depend
 on SUnit boot.
 
+**Update 2026-04-22**: Bug 14 reproduced in 60s under
+`PHARO_JIT_DEFER=0` running *only*
+`(IntegerTest selector: #testNthRootTruncated) runCase` — no harness,
+no fork, no scheduler instrumentation.  The previous-session diagnosis
+("5-XFER p40/p80/p60 cycle") was a downstream symptom; the actual
+cycle at steady state is 2-XFER p10/p80 between the idle process and
+the DelayMicrosecondTicker — every *other* process in the scheduler
+has been terminated.
+
+XFER trace + `PHARO_SENDER_TRIPWIRE=1` (new in this session) shows:
+
+- 318 `storePointer(0, ctx, nil)` calls inside 60s of JIT execution
+- All come from `returnValue+3292` — one of the NLR-unwinding
+  "kill intermediate contexts from current to homeCtx" loops at
+  `Interpreter.cpp:4383/4415/4460`
+- Grouped as 56 distinct NLR walks.  Chain-length distribution:
+      length 1-6: 49 walks  (normal)
+      length 7-9: 2 walks
+      length 13:  2 walks
+      length 18:  1 walk
+      length 23:  1 walk
+      length 28:  1 walk   ← one NLR killed 28 contexts in a row
+- Inside the cascade window, six terminated processes all show
+  `Sender chain length: 1 (terminated=nil)`: p40 test,
+  p40 ensure-block, two p80 scheduler processes (`basicAt:`,
+  `ensure:`), p79 scheduler (`basicAt:`), p60 watchdog (`offset`)
+  — all at fd=0 with sender=nil, running unrelated methods.  Six
+  unrelated processes don't coincidentally reach process-top at the
+  same moment; the over-long NLR walk ran into their top contexts
+  and nil'd them.
+
+Hypothesis: the NLR-kill loops at 4383 / 4415 stop on
+`c.rawBits() == nextEnsureCtx.rawBits()` (the next ensure:) or
+`c.rawBits() == homeCtx.rawBits()` (NLR target).  Under JIT, either
+(a) `homeCtx` resolves to a context that's *above* the current
+process's suspendedContext because the JIT's inline frames weren't
+all materialized before the NLR started, so the walk runs off the
+top of the process's context chain into scheduler contexts, or
+(b) an inline context reuses a heap-context oop that legitimately
+belongs to a sibling process, making `homeCtx` point into a
+different process's chain.
+
+Next step: when tripwire fires on a walk of length ≥ 10, dump the
+current `activeProcess`, the NLR's `homeMethod`, and whether any
+oop in the walk is equal to another process's `suspendedContext` in
+Processor's quiescent queues.  That distinguishes (a) vs (b) and
+points at the fix (either force materialization before NLR, or
+gate the walk on "still in current process's chain").
+
+Diagnostic infra (`PHARO_SENDER_TRIPWIRE`) landed this session;
+off by default.  Reproducer: fresh Pharo 13.1 image, prep with
+stock `pharo eval --save` fileIn of `run_sunit_tests.st`,
+`PHARO_JIT_DEFER=0 PHARO_SENDER_TRIPWIRE=1 build/test_load_image`
+eval'ing just `(IntegerTest selector: #testNthRootTruncated)
+runCase` — 318 events in 60s, >95% from `returnValue+3292`.
+
 **Update (continued, diagnostic `PHARO_XFER_TRACE=1` added in 5381f28)**:
 under jit-default the scheduler settles into an infinite 5-XFER
 cycle between exactly 3 processes:
