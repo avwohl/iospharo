@@ -345,28 +345,35 @@ public:
                         frameDepth_);
             }
         }
-        // Detect a corrupted stackPointer_ pointing far outside BOTH the
-        // C++ stack array AND any plausible heap frame slot.  Tracking
-        // A3: under JIT, after many activations and GCs, stackPointer_
-        // sometimes points at 0x48d... (Smalltalk heap address) after a
-        // frame materialize→freed cycle.  The normal ">= end" check
+        // Detect a corrupted stackPointer_ pointing outside both the C++
+        // stack array AND any known Smalltalk heap region.  Tracking A3:
+        // under JIT, after many activations and GCs, stackPointer_
+        // sometimes points at an address that's neither the C++ array
+        // nor a live Smalltalk heap region.  The ">= end" check below
         // wouldn't catch this because the address isn't contiguous with
         // the C++ array.
         {
-            intptr_t spAddr = reinterpret_cast<intptr_t>(stackPointer_);
-            intptr_t arrBase = reinterpret_cast<intptr_t>(stack_.data());
-            intptr_t arrEnd = arrBase + (intptr_t)MaxStackDepth * (intptr_t)sizeof(Oop);
-            bool inArr = (spAddr >= arrBase && spAddr < arrEnd);
-            // Heap frames materialize into Smalltalk Contexts; those live
-            // in oldSpace/eden.  If sp is neither in our C++ array nor in
-            // a plausible Smalltalk heap range, it's corrupt.
-            bool plausibleHeap = (spAddr >= 0x300000000LL && spAddr < 0x400000000LL);
-            if (__builtin_expect(!inArr && !plausibleHeap, 0)) {
-                fprintf(stderr, "[VM] push() with CORRUPT stackPointer_=0x%llx "
-                        "(not in stack_[%p..%p) and not in plausible heap range) "
+            uint8_t* spB = reinterpret_cast<uint8_t*>(stackPointer_);
+            uint8_t* arrBase = reinterpret_cast<uint8_t*>(stack_.data());
+            uint8_t* arrEnd = arrBase + MaxStackDepth * sizeof(Oop);
+            bool inArr = (spB >= arrBase && spB < arrEnd);
+            bool inHeap = false;
+            if (memory_.isInitialized()) {
+                uint8_t* os = memory_.oldSpaceStart();
+                uint8_t* oe = memory_.oldSpaceEnd();
+                uint8_t* ns = memory_.newSpaceStart();
+                uint8_t* ne = memory_.newSpaceEnd();
+                uint8_t* ps = memory_.permSpaceStart();
+                uint8_t* pe = memory_.permSpaceEnd();
+                inHeap = (spB >= os && spB < oe) ||
+                         (spB >= ns && spB < ne) ||
+                         (spB >= ps && spB < pe);
+            }
+            if (__builtin_expect(!inArr && !inHeap, 0)) {
+                fprintf(stderr, "[VM] push() with CORRUPT stackPointer_=%p "
+                        "(not in stack_[%p..%p) and not in any heap region) "
                         "fd=%zu method=#%s\n",
-                        (unsigned long long)spAddr,
-                        (void*)arrBase, (void*)arrEnd,
+                        (void*)spB, (void*)arrBase, (void*)arrEnd,
                         frameDepth_,
                         memory_.selectorOf(method_).c_str());
                 stopVM("Corrupt stackPointer_ in push()");
