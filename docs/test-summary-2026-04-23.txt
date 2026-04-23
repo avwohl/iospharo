@@ -163,6 +163,13 @@ OpalCompiler — all code paths that exercise JIT-heavy send patterns:
     ProcessMonitorTestServiceTest     F=1 (was PASS in NO_JIT)
     TestExecutionEnvironmentTest      F=1 (was PASS in NO_JIT)
 
+All three involve Process+timing+preemption.  Deterministic
+repro in BlockClosureValueWithinTest>>testValueWithinTimingBasicMilliseconds:
+a 1-second Delay wrapped in valueWithinMilliseconds: 100 runs the
+full 1000ms under JIT instead of being interrupted.  Likely the
+same root cause — Process/Semaphore preemption doesn't work under
+JIT.  See memory project_jit_valuewithin_timeout.md.
+
 ### Reproducing across both modes
 
     ProcessTerminateBugTest       F=1 (timing flake; also in NO_JIT batch)
