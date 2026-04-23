@@ -411,6 +411,31 @@ correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
 via `PHARO_BENCH` which bypasses the startup.st path entirely, so
 the default path is unaffected.
 
+### A1d. FFICallbackTest qsort tests hang — callback handler returns but loop stalls (2026-04-23)
+
+`FFICallbackTest>>testCqsort` and `>>testCqsortWithByteArray` hang under
+`PHARO_NO_JIT=1 PHARO_NO_SISTA=1` after 20s (timeout).  With
+`PHARO_CALLBACK_DEBUG=1`:
+
+- Callback infrastructure works: register → enter → return → complete
+  exception unwind all fire cleanly (3 complete round-trips observed).
+- After the callbacks: 2444+ identical `[FFI-CALL] funcPtr=0x104410860
+  cif->nargs=1 rtype=10` events in a tight loop, same argument slot,
+  before the timeout hits.  Could be:
+    - Smalltalk post-callback loop we should short-circuit.
+    - The image's `asArray` or `free` path stuck in ExternalArray
+      marshalling.
+    - A missing wakeup after the last callback, leaving something
+      waiting on a semaphore that'll never signal.
+
+All other FFI tests pass on NO_JIT: FFICalloutTest 6/6,
+FFIExternalStructureTest 12/12, FFICalloutAPITest 18/18,
+AthensCairoMatrixTest 17/17, etc.  Callback registration/invocation
+is *functional* — only the specific qsort-round-trip test hangs.
+
+Low priority.  Shipped callback path works for interactive uses
+(asmjit WebKit callbacks, Morphic event dispatch, etc.).
+
 ### A1b. FFI `invokeFunction:withArguments:` receiver corruption under JIT
 
 **2026-04-22 update**: Original note referenced `EventSensor>>pollEvent:`
