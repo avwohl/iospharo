@@ -128,13 +128,53 @@ CharacterTest runs alone — reproduces only after 7 prior classes
 share the image.  Batch-mode JIT regression is a state-accumulation
 bug, not a per-test correctness issue.
 
+## Full JIT-mode per-class isolation baseline (565 classes)
+
+Ran every class in its own fresh-image VM invocation, 180s timeout
+each, default JIT settings.  The aggregate:
+
+    Classes attempted:      565
+    Classes with tests run: 518
+    Classes timed out:       19
+    Tests passed:         11849  (99.96% of tests that ran)
+    Tests failed:             4
+    Tests errored:            1
+    Tests skipped:           27
+
+### JIT-specific timeouts (19 classes)
+
+These classes pass under NO_JIT but hang or exceed 180s under JIT.
+Most involve class/metaclass introspection, weak references, or the
+OpalCompiler — all code paths that exercise JIT-heavy send patterns:
+
+  Introspection: ProtoObjectTest, BehaviorTest, ClassHierarchyTest,
+                 SuperVariableTest, ClassAnnotationTest, ClassQueryTest
+  Weak refs:     WeakKeyDictionaryTest, WeakIdentityKeyDictionaryTest
+  Crypto:        SHA256Test
+  Compiler:      OCParserTest, OCSimpleFormatterTest
+  RG backend:    RGReadOnlyImageBackendTest
+  Traits (7):    TraitPureBehaviorTest, TraitTest, TraitCompositionTest,
+                 ClassTraitTest, TraitPrecedenceCompositionTest,
+                 TraitWithConflictsTest, TraitMethodDescriptionTest
+
+### JIT-only failures (3 new)
+
+    BlockClosureValueWithinTest       F=1 (was PASS in NO_JIT)
+    ProcessMonitorTestServiceTest     F=1 (was PASS in NO_JIT)
+    TestExecutionEnvironmentTest      F=1 (was PASS in NO_JIT)
+
+### Reproducing across both modes
+
+    ProcessTerminateBugTest       F=1 (timing flake; also in NO_JIT batch)
+    OCClassBuilderTest            E=1 (image-level missing trait)
+
 ## Bottom line
 
   - Interpreter-only (NO_JIT): zero correctness issues in 23695 tests.
-  - JIT-mode (isolation): zero correctness issues in 807+700 tests.
-  - JIT-mode (shared-image batch): accumulates a compiler/WriteStream
-    byte-store corruption around class 8; needs a per-class image
-    reset to measure reliably.
+  - JIT-mode (isolation, 565 classes): 99.96% pass rate with 3 new
+    JIT-only failures (Block/Process/TestExecutionEnvironment) and
+    19 JIT-only timeouts concentrated in introspection/weak-ref/
+    compiler/trait code.
 
 Corrected aggregate:
 
