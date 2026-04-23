@@ -916,13 +916,19 @@ changes; image-side issues to propose upstream.
    noSelBits 0 but introduced a flaky SIGSEGV — reverted bfa20e7.
    A narrower retry (preserve only for MethodState::Compiled; also
    skip invalidated methods in forEachRoot) was WORSE (2/5 SIGSEGV)
-   and reverted without commit.  So invalidation isn't the primary
-   source of stale slot-18 oops.  The real source is elsewhere — a
-   concurrent IC patch, a recompilation overlap, or an IC-write
-   path not covered by forEachRoot.  Next attempt must FIRST add
-   instrumentation logging each stale oop location before trying
-   another preservation scheme — preservation without knowing the
-   staleness source just keeps shipping regressions.
+   and reverted without commit.
+
+   Diagnostic (PHARO_JIT_STALE_LOG=1, added 407966f) validates every
+   slot-18 oop at GC-recovery for isValidPointer + sane classIndex.
+   Initial run (ArrayTest+ClassQueryTest, 2 GCs, 370+518 sites):
+   **zero stale oops**.  So staleness is NOT the crash source.  The
+   earlier "edge cases leaving stale selector oops" comment in
+   JITRuntime.cpp is either wrong or describes a subtler condition.
+
+   Crash source is unknown — x24 at crash contains a packed value
+   like 0xff082680ff072680 being derefed as a pointer inside JIT
+   machine code.  Needs per-crash lldb analysis of the specific JIT
+   method + instruction + register flow, not steady-state validation.
    Memory: `project_jit_timeouts_are_slowness.md`.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
