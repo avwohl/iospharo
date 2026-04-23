@@ -879,5 +879,28 @@ changes; image-side issues to propose upstream.
    benefit since Pharo inlines `to:do:` / `whileTrue:` at compile
    time.
 
+3. **Megamorphic-dispatch perf regression** (2026-04-23).
+   Heap-walking tests (ProtoObjectTest, BehaviorTest, WeakKey*Test,
+   SHA256Test, Trait*Test, ClassQuery/Hierarchy/Annotation — 19
+   classes total) time out under default JIT but pass under
+   NO_JIT.  Same-image A/B:
+     PHARO_NO_JIT=1           15/15 pass  (ProtoObjectTest)
+     PHARO_JIT_DEFER=9999     15/15 pass  (JIT enabled, no compiles)
+     default JIT              12/17 done at timeout
+   So compiled methods are the slowdown.  Profile shows
+   `#pointsTo:` is called 297K times; IC hit rate is 78% (vs 97%
+   on non-heap-walk workloads).  256K of 1.5M sends take the slow
+   noSelBits path because `recoverAfterGC` memsets each IC site
+   (zeroing slot 18 / selectorBits).  Attempted fix 88dd186
+   (zero only slots 0-17, keep slot 18) got IC hit 97.5% /
+   noSelBits 0 but introduced a flaky SIGSEGV — reverted bfa20e7.
+   forEachRoot has edge cases (evicted/recompiled methods) where
+   slot 18 ends up stale; preserving it gets a wrong-selector
+   megacache hit → wrong method body → JIT crashes dereffing a
+   bogus value.  Next fix path: per-site "was-visited-by-forEachRoot-
+   this-cycle" tracking, or switch to a PIC that recomputes
+   selector bits on each miss.  Memory:
+   `project_jit_timeouts_are_slowness.md`.
+
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.
