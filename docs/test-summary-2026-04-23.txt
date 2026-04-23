@@ -122,3 +122,20 @@ Additional errors found:
 The test categories that dominate our VM: Collection (~3500 tests),
 Stream (~200), Date/Time (~300), Weak (~700), Slot (~55), FFI (~100).
 All pass cleanly except the documented edge cases.
+
+## Re-analysis: the 2 "errors" are interpreter timeouts
+
+Investigated both "err" entries:
+  - BehaviorTest>>#testAllReferencesTo: TestTookTooMuchTime (SUnit's
+    5s defaultTimeLimit).  SystemNavigation walks all methods in the
+    image — dog-slow under pure interp, <1s under JIT.
+  - SHA256Test>>#testFips180Example3: same TestTookTooMuchTime
+    pattern; crypto iteration too slow under interp.
+
+Both would pass under JIT (per-class isolated mode) given enough time.
+Neither is a VM correctness bug — they're the same A00-family
+interpreter-speed issue documented in docs/deferred.md A00.
+
+Real VM-issue failure count (excluding expected DeprecationTest and
+interpreter-speed timeouts):
+  ProcessTerminateBugTest>>#testTerminationDuringUnwind  — investigate
