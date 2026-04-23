@@ -345,6 +345,34 @@ public:
                         frameDepth_);
             }
         }
+        // Detect a corrupted stackPointer_ pointing far outside BOTH the
+        // C++ stack array AND any plausible heap frame slot.  Tracking
+        // A3: under JIT, after many activations and GCs, stackPointer_
+        // sometimes points at 0x48d... (Smalltalk heap address) after a
+        // frame materialize→freed cycle.  The normal ">= end" check
+        // wouldn't catch this because the address isn't contiguous with
+        // the C++ array.
+        {
+            intptr_t spAddr = reinterpret_cast<intptr_t>(stackPointer_);
+            intptr_t arrBase = reinterpret_cast<intptr_t>(stack_.data());
+            intptr_t arrEnd = arrBase + (intptr_t)MaxStackDepth * (intptr_t)sizeof(Oop);
+            bool inArr = (spAddr >= arrBase && spAddr < arrEnd);
+            // Heap frames materialize into Smalltalk Contexts; those live
+            // in oldSpace/eden.  If sp is neither in our C++ array nor in
+            // a plausible Smalltalk heap range, it's corrupt.
+            bool plausibleHeap = (spAddr >= 0x300000000LL && spAddr < 0x400000000LL);
+            if (__builtin_expect(!inArr && !plausibleHeap, 0)) {
+                fprintf(stderr, "[VM] push() with CORRUPT stackPointer_=0x%llx "
+                        "(not in stack_[%p..%p) and not in plausible heap range) "
+                        "fd=%zu method=#%s\n",
+                        (unsigned long long)spAddr,
+                        (void*)arrBase, (void*)arrEnd,
+                        frameDepth_,
+                        memory_.selectorOf(method_).c_str());
+                stopVM("Corrupt stackPointer_ in push()");
+                return;
+            }
+        }
         if (__builtin_expect(stackPointer_ >= stack_.data() + MaxStackDepth, 0)) {
             fprintf(stderr, "[VM] Stack overflow! fd=%zu method=#%s rcvr=0x%llx sp_offset=%lld\n",
                     frameDepth_, memory_.selectorOf(method_).c_str(),
