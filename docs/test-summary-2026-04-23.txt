@@ -1,0 +1,44 @@
+Test-suite pass rates — 2026-04-23
+
+First 20 test classes, PHARO_NO_JIT=1, on: Deprecation do: [:e | e resume]:
+
+    Class                       ran    passed   err  fail  skip
+    SortedCollectionTest        287    287      0    0     0
+    IdentitySetTest             176    176      0    0     0
+    SmallIntegerTest             29     29      0    0     0
+    IntegerTest                  80     80      0    0     3
+    FloatTest                    74     74      0    0     1
+    FractionTest                 32     32      0    0     0
+    PointTest                    36     36      0    0     0
+    CharacterTest                19     19      0    0     0
+    DictionaryTest              205    205      0    0     0
+    SetTest                     174    174      0    0     0
+    BagTest                     168    168      0    0     0
+    IntervalTest                260    260      0    0     0
+    SymbolTest                  268    268      0    0     0
+    OrderedCollectionTest       351    351      0    0     0
+    ArrayTest                   TIMEOUT (>300s under interp)
+    StringTest                  438    438      0    0     0
+    HeapTest                    148    148      0    0     0
+    BlockClosureTest             48     48      0    0     2
+    ContextTest                  34     34      0    0     0
+    ExceptionTest                47     47      0    0     0
+
+    Total (19 of 20 classes)   2874   2874      0    0     6
+
+Under JIT (default DEFER=4s), per-class isolated:
+
+    SortedCollectionTest        287    287      0    0     0
+    IdentitySetTest             176    176      0    0     0
+    SmallIntegerTest             29     29      0    0     0  (trait test inc.)
+    FractionTest                 32     32      0    0     0
+    PointTest                    36     36      0    0     0
+    DictionaryTest              205    205      0    0     0
+    SetTest                     174    174      0    0     0
+
+    Subtotal                    939    939      0    0     0
+
+Blocked under JIT (tracked as A4):
+  IntegerTest, FloatTest, CharacterTest
+  (173 tests all pass under NO_JIT; JIT cumulative-IC state corrupts
+   exception NLR path ~40 tests in)
