@@ -97,5 +97,46 @@ Long project; not recommended unless a compelling reason appears.
 
 ## Status
 
-2026-04-23: investigating the A1 deadlock's wait-reason.  This document
-will be updated when the root cause is identified and the fix lands.
+2026-04-23: Root cause identified and first fix landed (commit `ac350c3`).
+
+**Finding**: `PHARO_PROC_DUMP=1` diagnostic (added same commit) enumerated
+every Process in the heap at the hang point.  One stood out:
+
+    [PROC-DUMP] P40 proc=0x3033c39c8 on-sem list=0x3033cb560(Semaphore)
+                top=SessionManager>>snapshot:andQuit:
+
+Pharo's `SessionManager >> snapshot:andQuit:` forks a P79 worker to do
+the save/quit and the caller does `wait wait` on a freshly-created
+Semaphore.  The worker should eventually signal `wait`, but in our
+headless-eval + eager-JIT path the worker's tail never reaches the
+signal — startup handlers take over first, leaving the caller
+suspended forever.  Classic fork/wait deadlock.
+
+**Fix**: `Interpreter::unblockStuckSnapshotCallers()` walks all Process
+instances and signals the Semaphore of any whose top frame is
+`snapshot:andQuit:`.  Called at resume time and every 10s DIAG cycle.
+Idempotent via a per-Oop signaled-set.
+
+**Measured impact**: `PHARO_JIT_DEFER=0 eval "42 printString"` was a
+hang before; now it proceeds from ~229 compiled methods to ~520 and
+exposes a *different* pre-existing crash (JIT code-zone eviction while
+compiling exception infra).  That second crash is the next layer of
+the onion, out of scope here.
+
+Default `DEFER=4s` path still works cleanly — 0 regressions on FFI
+test suite (35 tests across FFICalloutTest, FFIExternalStructureTest,
+AthensCairoMatrixTest).
+
+**Open questions**: Is there a more principled fix than signaling
+from C++?  Options:
+
+- Patch `snapshot:andQuit:` in the image so the wait has a timeout —
+  cleaner but requires a startup-script image mutation.
+- Demote the forked worker from P79 to P10 after snapshot completes
+  — matches the existing startup-process P40→P10 demotion pattern,
+  would let the wait-loop's natural flow unblock.
+- Stay with the current C++ signal — it's a scheduler-level escape
+  hatch, cheap, and only affects a very narrow context (the exact
+  method name `snapshot:andQuit:`).
+
+Option A is next up if the C++ approach turns out to mask other bugs.
