@@ -168,9 +168,32 @@ Next-session candidates:
 1. Add a tracer to materializeFrameStack that logs whenever a frame
    has a nil sender.  Should never happen mid-chain.
 2. Run a single SmallIntegerTest test at a time under JIT — which
-   specific testX method triggers the exception flow?
+   specific testX method triggers the exception flow?  **DONE**:
+   crash is in `testTraitExplicitRequirementMethodsMustBeImplementedInTheClassOrInASuperclass`.
+   This test PASSES in isolation.  Under JIT after SC+IS+first 60
+   SmallIntegerTest tests, it SIGSEGVs in `Interpreter::push + 80`
+   (fp=0x16d698de0, x8=0x48d... — Smalltalk stackPointer_ out of
+   range).  So: Smalltalk-stack corruption accumulates across tests
+   and the trait test's complex method-dictionary walk tips it over.
 3. Compare the sender-chain length/integrity just before and just
    after a JIT exit-resume cycle.
+
+### Running numbers (2026-04-23, commits fc98ee1–959d5f3)
+
+Under default JIT, with error handler around `buildSuite run`:
+  SortedCollectionTest:  287 ran / 287 passed / 0 err
+  IdentitySetTest:       176 ran / 176 passed / 0 err
+  SmallIntegerTest (partial): ~60 tests pass, then SIGSEGV in
+                        Interpreter::push (Smalltalk-stack corruption)
+                        on `testTraitExplicit...`
+
+Under `JIT_EXCLUDE=resume:through:`: TERM-via-resume:through: message
+stops, but the suite still doesn't complete past the 3rd class.
+
+The SmallIntegerTest crash specifically involves trait method lookup
+under accumulated JIT state.  Root cause is likely a stale IC entry
+for a trait method's send site, or a corrupt SimStack tracking after
+many JIT activations.
 
 ### Original summary
 
