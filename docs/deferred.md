@@ -178,7 +178,30 @@ Next-session candidates:
 3. Compare the sender-chain length/integrity just before and just
    after a JIT exit-resume cycle.
 
-### Running numbers (2026-04-23, commits fc98ee1–959d5f3)
+### 2026-04-23 further narrowing
+
+Test body: `self assertValidLintRule: ReExplicitRequirementMethodsRule new` —
+runs an RB lint rule walking class/trait method dictionaries.
+Metaprogramming-heavy.
+
+SmallIntegerTest WITHOUT the Trait tests (filtered by selector substring)
+completes cleanly under JIT.  So the regression is specifically in the
+combination of:
+  1. ~300+ JIT-compiled methods accumulated
+  2. Trait-method-dictionary walking code path
+  3. Exception flow (lint rule assertion uses signaling)
+
+Added push() sanity check (commit b1a983f) that traps
+`stackPointer_ out of [stack_ array, 0x300000000..0x400000000]`
+with a stopVM message instead of raw SIGSEGV.  This changes the failure
+symptom from SIGSEGV to graceful VM stop in some paths, which is an
+improvement even before the root cause is fixed.
+
+`tryJITResumeInCaller+6880` becomes a second TERM trigger in some runs
+(trait test → error → debugger opens → debugger process chain
+terminates).
+
+### Running numbers (2026-04-23, commits fc98ee1–b1a983f)
 
 Under default JIT, with error handler around `buildSuite run`:
   SortedCollectionTest:  287 ran / 287 passed / 0 err
