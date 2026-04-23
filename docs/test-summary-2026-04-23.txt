@@ -192,6 +192,24 @@ classes.  JIT correctness matches interpreter correctness exactly.
     JIT-only failures all turn out to be cold-start or image-state
     artifacts reproducing equally under NO_JIT.
 
+## JIT performance regression on heap-walking workloads
+
+Cross-check with same 180s budget and ArrayTest warmup:
+
+    ProtoObjectTest  NO_JIT  15/15 pass  <180s
+    ProtoObjectTest  JIT     12+ tests run, timeout
+
+JIT is slower than interpreter on these tests.  Profile (from
+earlier run): IC 91.5% hits, 71K noSelBits misses, 12K polymorphic
+misses.  Heap walks (testPointersTo, testNextObject) hit megamorphic
+dispatch through objects of every class.  JIT compile cost +
+PIC-miss overhead exceeds the per-instruction savings.
+
+This is a performance item, not a correctness item.  Same pattern
+likely applies to the other 18 JIT "timeouts" — introspection,
+trait composition, and crypto all exercise megamorphic send sites
+at high volume.
+
 Corrected aggregate:
 
     Classes with tests run:  555 of 565
