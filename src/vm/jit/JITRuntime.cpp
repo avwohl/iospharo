@@ -1892,7 +1892,21 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
                         }
                     }
                 }
-                std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
+                // DIAGNOSTIC MODE PHARO_JIT_KEEP_ICS=1: preserve slot 18
+                // (selectorBits) to study the flaky crash symptom.
+                // Don't merge this in; it causes 1/3 crashes.
+                static bool keepICs = []() {
+                    const char* v = std::getenv("PHARO_JIT_KEEP_ICS");
+                    return v && v[0] == '1';
+                }();
+                if (keepICs) {
+                    constexpr size_t entriesBytes = IC_SELBITS_SLOT * sizeof(uint64_t);
+                    for (uint32_t i = 0; i < m->numICEntries; i++) {
+                        std::memset(icStart + i * IC_BYTES_PER_SITE, 0, entriesBytes);
+                    }
+                } else {
+                    std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
+                }
             }
             m = m->nextInZone;
         }
