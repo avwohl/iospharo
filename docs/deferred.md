@@ -178,6 +178,37 @@ Next-session candidates:
 3. Compare the sender-chain length/integrity just before and just
    after a JIT exit-resume cycle.
 
+### 2026-04-23 late — root cause is Deprecation signals, not a JIT bug
+
+**The "JIT sequential-test regression" isn't a VM bug.**  Running tests
+in a `do:` loop with `on: Error do:` wrapping skipped `Deprecation`
+signals — they're `Exception`, not `Error`.  Pharo 13's collection
+tests routinely use deprecated methods (e.g.,
+`Collection>>#asStringOn:delimiter:last:`), which signal `Deprecation`
+when called.  Those signals escape `on: Error` and propagate out to
+startup.st's outer `on: Error` → prints "Error: Error: Improper store
+into indexable object" or similar → `Smalltalk exitSuccess`.  So the
+whole VM exits silently after the first test class raises a
+Deprecation.
+
+Fix: wrap tests in `on: Exception do:` instead of `on: Error do:`.
+With that fix:
+
+    SortedCollectionTest: 287/287 passed under JIT
+    IdentitySetTest:      176/176 passed under JIT
+    SmallIntegerTest:      29/29 passed under JIT (including the
+                          Trait-method test that previously "crashed")
+
+Remaining issue: after SmallIntegerTest, the VM sometimes hangs at
+idle before IntegerTest starts.  That's an A1-family scheduler issue
+(process yield between test cases), not a JIT miscompile.
+
+The earlier diagnostic trail ("Context>>resume:through: with nil
+sender", "SIGSEGV in push", etc.) was all downstream noise from
+the same root cause: an uncaught Deprecation escaped → VM shut down
+via exitSuccess, leaving the interpreter in various inconsistent
+states depending on timing.
+
 ### 2026-04-23 further narrowing
 
 Test body: `self assertValidLintRule: ReExplicitRequirementMethodsRule new` —
