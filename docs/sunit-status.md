@@ -37,7 +37,8 @@ row; marked `?` until the cog row is populated.
     jit    NO_JIT   2026-04-21  834/836   16610    16551   12   16    25   6    45m     17
     jit    default  2026-04-21  0/836     —        —       —    —     —    —    45m(wd)  hang‡
     jit    NO_JIT   2026-04-23  555/565§  23696    23695   3    1     48   0    1h       (see test-summary-2026-04-23.txt)
-    jit    default  2026-04-23  518/565§  11881    11849   4    1     27   19   95m      (per-class isolation)
+    jit    default  2026-04-23  518/565§  11881    11849   4    1     27   19   95m      (per-class isolation run 1)
+    jit    default  2026-04-23  518/565§  11881    11850   3    1     27   20   134m     (per-class isolation run 2; within run-to-run noise)
 
 `§` = 2026-04-23 runs used a smaller curated class list (565 vs
 earlier 836) and per-class-isolation methodology (fresh VM per
