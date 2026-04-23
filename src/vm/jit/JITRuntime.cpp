@@ -1830,25 +1830,16 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     // forEachRoot visits IC slots, but there are edge cases (recompiled
     // methods, timing between patch and GC) where oops go stale.
     // Flushing is cheap — ICs re-fill on the next few misses.
-    //
-    // 2026-04-23: preserve icData[18] (selectorBits).  The selector
-    // slot is compile-time constant and doesn't go stale — it's just
-    // the selector's oop bits.  Zeroing it forced every post-GC miss
-    // onto the slow noSelBits path (256K/1.5M sends in ProtoObjectTest).
-    // Zero only the 6 entry slots (bytes 0..143), keep selBits at 144.
     {
         JITMethod* m = codeZone_.firstMethod();
         if (m) {
             makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
         }
-        constexpr size_t entriesBytes = IC_SELBITS_SLOT * sizeof(uint64_t);  // 144
         while (m) {
             if (m->numICEntries > 0) {
                 uint8_t* icStart = m->codeStart() + m->codeSize
                                  - m->numICEntries * IC_BYTES_PER_SITE;
-                for (uint32_t i = 0; i < m->numICEntries; i++) {
-                    std::memset(icStart + i * IC_BYTES_PER_SITE, 0, entriesBytes);
-                }
+                std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
             }
             m = m->nextInZone;
         }
