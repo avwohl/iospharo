@@ -139,3 +139,34 @@ interpreter-speed issue documented in docs/deferred.md A00.
 Real VM-issue failure count (excluding expected DeprecationTest and
 interpreter-speed timeouts):
   ProcessTerminateBugTest>>#testTerminationDuringUnwind  — investigate
+
+## Final aggregate — classes 1-177
+
+    Classes ran:     165 of 177 (12 interpreter timeouts)
+    Tests ran:      7781
+    Passed:         7777 (99.95%)
+    Errors:            2  (both TestTookTooMuchTime — interp speed)
+    Failures:          2  (1 expected Deprecation artifact, 1 real)
+    Skipped:          11
+
+Real VM-issue failure count: 1
+  ProcessTerminateBugTest>>#testTerminationDuringUnwind
+    — our primitiveTerminateTo: nils sender chain bluntly, doesn't
+      run `ensure:` unwind blocks before terminating.  Stock Cog's
+      Process>>terminate walks unwind blocks first.  Needs a proper
+      reimplementation (in Smalltalk, not VM primitive).
+
+## Summary
+
+The clean C++ VM passes **7777 of 7781 tests across 165 SUnit classes**
+under pure interpreter mode — a 99.95% pass rate.  The 4 non-passing
+tests decompose to:
+  - 2 interpreter-speed timeouts (JIT would pass them)
+  - 1 expected artifact from the Deprecation-resume wrapper
+  - 1 real bug (process-termination unwind ordering)
+
+12 additional classes couldn't be measured due to interpreter
+timeouts: ArrayTest, ClassDescriptionTest, WordArrayTest,
+ChunkReadStreamTest, MultiByteBinaryOrTextStreamTest,
+VeryDeepCopyTest, CompiledMethodTest, EventManagerTest, AnnouncerTest,
+and several others.  Stock Cog runs each in <1s.
