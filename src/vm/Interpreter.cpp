@@ -9530,9 +9530,21 @@ void Interpreter::terminateCurrentProcess() {
     {
         Oop proc = getActiveProcess();
         Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
-        // If high-priority process terminates, dump extended context
-        if (pri.isSmallInteger() && pri.asSmallInteger() >= 60) {
-            fprintf(stderr, "[TERM-P%lld] HIGH PRIORITY PROCESS TERMINATING!\n", pri.asSmallInteger());
+        // Dump extended context for high-priority processes OR for
+        // resume:through: / ensure:-family terminations at any priority
+        // (those indicate an exception/NLR walk hit the top of the
+        // sender chain — usually a real bug, not a normal exit).
+        std::string termSel = memory_.selectorOf(method_);
+        bool highPri = (pri.isSmallInteger() && pri.asSmallInteger() >= 60);
+        bool exceptionalTerm = (termSel == "resume:through:" ||
+                                termSel == "return:through:" ||
+                                termSel == "cannotReturn:" ||
+                                termSel == "ensure:" ||
+                                termSel == "aboutToReturn:through:");
+        if (highPri || exceptionalTerm) {
+            fprintf(stderr, "[TERM-P%lld] PROCESS TERMINATING via #%s\n",
+                    pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
+                    termSel.c_str());
             // Walk the context chain to find the original error
             if (activeContext_.isObject() && !activeContext_.isNil()) {
                 Oop ctx = activeContext_;
