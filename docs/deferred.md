@@ -295,6 +295,40 @@ bisect because ISOLATED each test works.
 Mitigation: run tests with `PHARO_NO_JIT=1` (slow but correct), or run
 one-at-a-time from shell.
 
+## A4. IntegerTest/FloatTest/CharacterTest hang under JIT (2026-04-23)
+
+All three pass 100% under `PHARO_NO_JIT=1`:
+    IntegerTest    80/80
+    FloatTest      74/74
+    CharacterTest  19/19
+
+All three hang under default JIT (120s timeout) when run in isolation.
+Traced: **same `Context>>resume:through: sender=nil` TERM pattern as
+the original A3 investigation**.  The symptom surfaced again even
+after A3's Deprecation-handling fix because IntegerTest has its own
+exception-raising paths that aren't Deprecation.
+
+Running per-test: ~40 IntegerTests pass before the hang.  The specific
+failing test varies run-to-run (sometimes `testIsAbstract`, sometimes
+`testFactorial`, etc.) — suggests a non-deterministic cumulative IC
+state bug, not a specific method miscompile.
+
+Inside the JIT hang, observed errors (rotating):
+  - `Context>>resume:through: sender=nil terminate`
+  - `#invokeFunction:withArguments: not understood by rcvr=nil`
+  - `Instances of Error class are not indexable`
+
+These are downstream symptoms of corrupted frame/IC state after ~1000
+method compiles + heavy exception-handling traffic.
+
+Low-value to debug further without a reliable repro.  Workaround for
+suite runs: `PHARO_NO_JIT=1` for IntegerTest/FloatTest/CharacterTest.
+Most other test classes work under JIT.
+
+Root cause likely shared with original A3 — the JIT-compiled exception
+unwind path doesn't preserve frame state correctly, and the corruption
+slowly accumulates until a specific test sequence tips it over.
+
 ## A0. weak-ref GC: testClearing — **RESOLVED** (2026-04-20)
 
 Both `WeakKeyDictionaryTest>>testClearing` and
