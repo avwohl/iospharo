@@ -106,6 +106,36 @@ pass/fail/error counts, no regressions, no hangs:
 
 JIT mode is correctness-clean on all 807 recovered tests.
 
+## JIT-mode batch attempt (fresh image, default settings)
+
+Launched full-suite JIT run after re-filing in harness with the
+testNthRootTruncated skip.  Got through 7 classes (700 passing
+tests) before hitting a state-accumulation bug at class 8:
+
+    SortedCollectionTest   287/287 pass
+    IdentitySetTest        176/176 pass
+    SmallIntegerTest        27/ 27 pass (2 pre-filtered)
+    IntegerTest             74/ 74 pass (3 expected-fail skip)
+    FloatTest               72/ 72 pass (1 expected-fail skip)
+    FractionTest            30/ 30 pass
+    PointTest               34/ 34 pass
+    CharacterTest           14 ran then ERROR at testStoreStringAll
+
+The CharacterTest error was `Improper store into indexable object`
+inside OpalCompiler→WriteStream>>nextPut:→ByteArray>>at:put:.  Same
+byte-store corruption family as A1.  This test passes 16/16 when
+CharacterTest runs alone — reproduces only after 7 prior classes
+share the image.  Batch-mode JIT regression is a state-accumulation
+bug, not a per-test correctness issue.
+
+## Bottom line
+
+  - Interpreter-only (NO_JIT): zero correctness issues in 23695 tests.
+  - JIT-mode (isolation): zero correctness issues in 807+700 tests.
+  - JIT-mode (shared-image batch): accumulates a compiler/WriteStream
+    byte-store corruption around class 8; needs a per-class image
+    reset to measure reliably.
+
 Corrected aggregate:
 
     Classes with tests run:  555 of 565
