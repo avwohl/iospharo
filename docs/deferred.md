@@ -9,7 +9,26 @@ live in `git log` and `memory/*.md` — not here.
 
 ---
 
-## A0a. FFI `C11 class >> #current` DNU cascade — **VM REGRESSION** (2026-04-20)
+## A0a. FFI `C11 class >> #current` DNU cascade — **APPEARS FIXED** (2026-04-22)
+
+Rechecked 2026-04-22 under `PHARO_NO_JIT=1 PHARO_NO_SISTA=1`.  Direct
+`buildSuite run` on the specific classes originally reporting errors:
+
+    DiskFileSystemTest:      59 ran / 59 passed / 0 errors  (was 59 err)
+    AthensCairoMatrixTest:   17 ran / 17 passed / 0 errors  (was 17 err)
+    AthensCairoPDFSurfaceTest: 4 ran /  4 passed / 0 errors  (was  4 err)
+    CairoLibraryTest:         1 ran /  1 passed / 0 errors  (was  1 err)
+    TraitCompositionTest → AthensCairoMatrixTest (sequenced): 13+17/30, 0 errors
+    7 FFI/Traits/Cairo mixed batch: 77 ran / 77 passed / 0 errors
+    40-class harness batch:  981 ran / 981 passed / 0 errors / 0 fail
+
+No `C11 class >> #current` DNU observed in any run.  Something between
+2026-04-20 and today's `fe086ee` resolved it — likely one of the
+intermediate finalization / class-migration / obsolete-class fixes
+(17a0ff7, 61eef4f, cafe6a2).  Leaving this section in history as a
+regression marker; no active investigation.
+
+### Original regression note (2026-04-20)
 
 Full SUnit run 2026-04-20 (`PHARO_NO_JIT=1 PHARO_NO_SISTA=1`) shows
 454 errors with identical signature:
