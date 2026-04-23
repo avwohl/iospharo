@@ -42,3 +42,66 @@ Blocked under JIT (tracked as A4):
   IntegerTest, FloatTest, CharacterTest
   (173 tests all pass under NO_JIT; JIT cumulative-IC state corrupts
    exception NLR path ~40 tests in)
+
+## Extended NO_JIT baseline (classes 21-60)
+
+Classes 21-40 (BecomeTest..ClassDescriptionTest):
+
+    BecomeTest                    8     8    0    0    0
+    BooleanTest                   5     5    0    0    0
+    TrueTest                     17    17    0    0    0
+    FalseTest                    17    17    0    0    0
+    ProtoObjectTest              17    17    0    0    0
+    ObjectTest                   28    28    0    0    0
+    UndefinedObjectTest          19    19    0    0    0
+    SemaphoreTest                18    18    0    0    0
+    RecursionStopperTest          4     4    0    0    0
+    LocalRecursionStopperTest     4     4    0    0    0
+    LargePositiveIntegerTest     19    19    0    0    0
+    LargeNegativeIntegerTest     15    15    0    0    0
+    IntegerDigitLogicTest         7     7    0    0    0
+    NumberTest                   23    23    0    0    0
+    MagnitudeTest                 7     7    0    0    0
+    ScaledDecimalTest            36    36    0    0    0
+    BehaviorTest                 45    44    1    0    0  testAllReferencesTo
+    CompiledCodeTest             32    32    0    0    0
+    CompiledBlockTest             2     2    0    0    0
+    ClassDescriptionTest         TIMEOUT
+
+    Subtotal (19 ran)           323   322    1    0    0
+
+Classes 41-60 (ClassHierarchyTest..StackTest):
+
+    ClassHierarchyTest            3     3    0    0    0
+    MetaClassTest                 3     3    0    0    0
+    BasicBehaviorClassMetaclassTest 9   9    0    0    0
+    PragmaTest                   10    10    0    0    0
+    ProcessTerminateBugTest      12    11    0    1    0  testTerminationDuringUnwind
+    ProcessSpecificTest           8     8    0    0    0
+    MonitorTest                   3     3    0    0    0
+    DelayTest                     5     5    0    0    0
+    DeprecationTest               2     1    0    1    0  testTransformingDeprecation
+    MessageNotUnderstoodTest      2     2    0    0    0
+    WeakMessageSendTest          11    11    0    0    0
+    AllocationTest                4     4    0    0    0
+    ObjectLayoutTest              1     1    0    0    0
+    DependentsArrayTest           1     1    0    0    0
+    SharedPoolTest                6     6    0    0    0
+    SlotTraitsTest                8     8    0    0    0
+    LinkedListTest              255   255    0    0    0
+    OrderedDictionaryTest        67    67    0    0    0
+    IdentityDictionaryTest      206   206    0    0    0
+    StackTest                    13    13    0    0    0
+
+    Subtotal (20 ran)           629   627    0    2    0
+
+## Grand total (classes 1-60 under NO_JIT)
+
+    Ran classes: 58 of 60 (2 timeouts: ArrayTest, ClassDescriptionTest)
+    Tests:      3826 ran, 3823 pass (99.92%), 1 err, 2 fail, 6 skip
+
+  Errors (1):
+    BehaviorTest>>#testAllReferencesTo
+  Failures (2):
+    ProcessTerminateBugTest>>#testTerminationDuringUnwind
+    DeprecationTest>>#testTransformingDeprecation (expected — we resume all Deprecations)
