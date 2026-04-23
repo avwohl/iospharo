@@ -1105,6 +1105,7 @@ bool ObjectMemory::patchClassMethodToReturnSelf(Oop classObj, const char* select
 
 std::string ObjectMemory::nameOfClass(Oop classObj) const {
     if (!classObj.isObject()) return "?";
+    if (!isValidPointer(classObj)) return "?(invalid)";
     ObjectHeader* clsHdr = classObj.asObjectPtr();
     size_t clsSlots = clsHdr->slotCount();
 
@@ -1113,6 +1114,7 @@ std::string ObjectMemory::nameOfClass(Oop classObj) const {
         // Metaclass — get thisClass from slot 5, then name from slot 6
         Oop thisClass = clsHdr->slotAt(5);
         if (!thisClass.isObject()) return "?";
+        if (!isValidPointer(thisClass)) return "?(invalid-tc)";
         ObjectHeader* tcHdr = thisClass.asObjectPtr();
         if (tcHdr->slotCount() < 7) return "?";
         nameOop = tcHdr->slotAt(6);
@@ -1121,6 +1123,12 @@ std::string ObjectMemory::nameOfClass(Oop classObj) const {
     } else {
         return "?";
     }
+
+    // Validate name oop before dereferencing — the field may hold a stale/
+    // bogus pointer, especially for classes that have been replaced or
+    // compacted.  oopToString will dereference unconditionally.
+    if (!nameOop.isObject()) return "?";
+    if (!isValidPointer(nameOop)) return "?(invalid-name)";
 
     std::string name = oopToString(nameOop);
     if (name.empty()) return "?";

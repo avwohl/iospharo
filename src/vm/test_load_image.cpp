@@ -530,6 +530,9 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
         }
         fprintf(stderr, "\n");
 #if PHARO_JIT_ENABLED
+        // Classify PC: is it in JIT code, our binary, or a system library?
+        Dl_info pcInfo;
+        bool haveDl = (dladdr(reinterpret_cast<void*>(pc), &pcInfo) != 0);
         // Look up JIT method containing the crash PC
         if (g_jitCodeZone) {
             auto* m = g_jitCodeZone->findMethodByPC(pc);
@@ -540,8 +543,24 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                         (void*)m->codeStart(), m->codeSize,
                         m->numBytecodes, m->numICEntries,
                         (long long)(pc - reinterpret_cast<uint64_t>(m->codeStart())));
+            } else if (haveDl && pcInfo.dli_sname) {
+                // PC is in a resolved C++ or system-library symbol.  NOT a JIT
+                // eviction crash — almost certainly a fault dereferencing a bad
+                // pointer from a register.  The old "evicted?" message here was
+                // misleading.
+                fprintf(stderr, "[CRASH] PC in C symbol: %s + %lld (fname=%s)\n",
+                        pcInfo.dli_sname,
+                        (long long)(pc - reinterpret_cast<uint64_t>(pcInfo.dli_saddr)),
+                        pcInfo.dli_fname ? pcInfo.dli_fname : "?");
+                fprintf(stderr,
+                        "[CRASH] This is not a JIT-eviction crash — a C function "
+                        "is dereferencing a bad pointer (check fault addr vs "
+                        "register values above).\n");
             } else {
-                fprintf(stderr, "[CRASH] PC not in any active JIT method (evicted?)\n");
+                fprintf(stderr, "[CRASH] PC not in any active JIT method and "
+                        "not in a named C symbol%s\n",
+                        haveDl && pcInfo.dli_fname ?
+                            " (image-only address)" : " (unmapped?)");
                 // Layer-5 diagnostic: scan every JITMethod's IC entries
                 // for slots whose stored J2J entryAddr matches this PC
                 // (or lies within ±64 bytes).  Bug 11b layer 5: a stale
