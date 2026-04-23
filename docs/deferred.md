@@ -135,6 +135,45 @@ interpreter (e.g., quickening hot sends) narrows the gap.
 
 ## A3. JIT sequential-test regression — hang after ~3 test classes (2026-04-23)
 
+### 2026-04-23 session update
+
+Extended [TERM] diagnostic (commit 1c93cc1) revealed:
+
+    [TERM-P40] PROCESS TERMINATING via #resume:through:
+    [TERM-P40]   ctx[0]: Context>>resume:through: (ctx=0x306717100 sender=nil)
+    [TERM-P40] Sender chain length: 1 (terminated=nil)
+
+i.e., during the 3rd test's execution, an exception unwind path calls
+`Context>>resume:through:` on a context whose sender is nil — no chain
+to walk.  The VM's terminate-on-top-of-chain logic correctly fires,
+which terminates the eval process → VM exits without running tests 4+.
+
+Partial mitigation: `JIT_EXCLUDE=resume:through:` prevents that specific
+method from being JIT-compiled.  The [TERM-P40] message stops, but the
+test still doesn't complete (different failure mode — eval process
+still stops but now silently).
+
+Possible root causes:
+- JIT-compiled `Context>>resume:through:` materializes a frame with
+  its sender missing or nilled out.  resume: walks up sender chain,
+  finds nil, returns.
+- Test framework's exception flow (e.g., `TestCase>>executeShould:`
+  inBlock:)  relies on a specific context layout that JIT's SimStack
+  or chain-loop optimization doesn't preserve correctly.
+- Accumulated stale IC entries after ~1000 compiled methods point
+  to evicted targets, and the retry path synthesizes a context that
+  lacks a proper sender.
+
+Next-session candidates:
+1. Add a tracer to materializeFrameStack that logs whenever a frame
+   has a nil sender.  Should never happen mid-chain.
+2. Run a single SmallIntegerTest test at a time under JIT — which
+   specific testX method triggers the exception flow?
+3. Compare the sender-chain length/integrity just before and just
+   after a JIT exit-resume cycle.
+
+### Original summary
+
 Under default JIT (DEFER=4s), running test classes in sequence via an eval
 `do:` loop:
   - Test 1 (SortedCollectionTest): 287/287 passes (JIT compiles ~120 methods)
