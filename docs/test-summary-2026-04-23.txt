@@ -67,6 +67,22 @@ bugs.  ArrayTest, ClassDescriptionTest, EventManagerTest etc. each
 pass <1s on stock Cog; our pure interpreter is ~50x slower so they
 hit SUnit's 5s watchdog.
 
+## Isolation re-test of the NO_JIT_TIMEOUT classes
+
+Three of the 25 timeouts were re-run alone (single-class filter,
+fresh VM invocation per class):
+
+    ArrayTest             323/323 pass
+    ClassDescriptionTest   27/ 27 pass
+    AnnouncerTest          29/ 29 pass
+
+Three for three.  The batch-mode timeouts are image-state artifacts
+(fragmented heap, orphan Processes/Semaphores, SessionManager state)
+that accumulate over hundreds of classes and only hit specific later
+classes.  So the 22888/22896 figure is a lower bound — most of the
+25 timed-out classes would pass if the harness reset image state
+between classes.
+
 ## History within this session (2026-04-23)
 
 Starting point: VM crashed on any SUnit suite startup (SIGSEGV in
