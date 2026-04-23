@@ -93,6 +93,19 @@ Batch-mode timeouts are image-state artifacts (fragmented heap,
 orphan Processes/Semaphores, SessionManager state) that accumulate
 over hundreds of classes.
 
+## JIT-mode cross-check (same 15 classes, default JIT on)
+
+Every one of the 15 passed **identically** under default JIT — same
+pass/fail/error counts, no regressions, no hangs:
+
+    ArrayTest 323/323, ClassDescriptionTest 27/27, CompiledMethodTest 73/73,
+    EventManagerTest 23/23, LocaleChangedTest 1/1, NaturalLanguageTranslatorTest 2/2,
+    AnnouncerTest 29/29, TextTest 35/35, OCProgramNodeTest 120/121 (1 skip),
+    OCParseTreeSearcherTest 46/46, OCPatternParserTest 8/8, OCEvaluationTest 3/3,
+    DateAndTimeLeapTest 43/43, DateAndTimeUnixEpochTest 63/63, StepThroughTest 11/11
+
+JIT mode is correctness-clean on all 807 recovered tests.
+
 Corrected aggregate:
 
     Classes with tests run:  555 of 565
