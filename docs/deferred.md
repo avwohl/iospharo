@@ -411,30 +411,53 @@ correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
 via `PHARO_BENCH` which bypasses the startup.st path entirely, so
 the default path is unaffected.
 
-### A1d. FFICallbackTest qsort tests hang — callback handler returns but loop stalls (2026-04-23)
+### A1d. FFICallbackTest qsort tests slow under pure interpreter (2026-04-23)
 
-`FFICallbackTest>>testCqsort` and `>>testCqsortWithByteArray` hang under
-`PHARO_NO_JIT=1 PHARO_NO_SISTA=1` after 20s (timeout).  With
-`PHARO_CALLBACK_DEBUG=1`:
+`FFICallbackTest>>testCqsort` and `>>testCqsortWithByteArray` do NOT
+complete within 30s under `PHARO_NO_JIT=1 PHARO_NO_SISTA=1`.  Not a
+hang — progress continues at ~2.6M steps/sec (normal interp speed).
+Simply needs more steps than the test harness allows.
 
-- Callback infrastructure works: register → enter → return → complete
-  exception unwind all fire cleanly (3 complete round-trips observed).
-- After the callbacks: 2444+ identical `[FFI-CALL] funcPtr=0x104410860
-  cif->nargs=1 rtype=10` events in a tight loop, same argument slot,
-  before the timeout hits.  Could be:
-    - Smalltalk post-callback loop we should short-circuit.
-    - The image's `asArray` or `free` path stuck in ExternalArray
-      marshalling.
-    - A missing wakeup after the last callback, leaving something
-      waiting on a semaphore that'll never signal.
+**Root cause (2026-04-23 investigation)**: Default
+`TFCallbackForkRunStrategy` creates a NEW Process per callback
+invocation via `forkAt: Processor highIOPriority - 1`.  Each
+Process creation walks through:
+  `valueUnpreemptively` → `priority:` → `interpriorityYield:` →
+  `fork` → `newProcess` → `forContext:priority:` → `priority:`
+…and that entire chain runs ~30M interpreter bytecodes per callback
+invocation (measured via `PHARO_CALLBACK_DEBUG=1`).  For qsort of
+19 elements doing ~60 comparisons, that's ~1.8 BILLION bytecodes =
+minutes of pure-interp execution.
+
+Tried patching `TFCallback>>runStrategy` to use
+`TFCallbackSameProcessRunStrategy uniqueInstance` — the strategy
+patch takes effect (verified: `cb backendCallback runStrategy class`
+= `TFCallbackSameProcessRunStrategy`), but that class's
+`executeCallback:on:` only uses the cheap persistent-process path
+when the worker is in `waitForever`; after the first invocation the
+worker is in `executeCallback:`, so subsequent calls fall back to
+`super executeCallback:` = fork again.  Net: no measurable speedup.
+
+**Mitigation**: Under default JIT (`PHARO_JIT_DEFER=4s`), the fork
+chain is JIT-compiled and runs ~30× faster, so the test completes
+in reasonable time.  Under `PHARO_NO_JIT=1` the test needs a longer
+timeout (120s+) or should be skipped.
+
+**Callback infrastructure itself works correctly** — confirmed via
+direct `FFICallback signature:block:` invocation of a single
+callback, and via `CALLBACK-HANDLER enter` / `CALLBACK-RETURN`
+round-trips in the test.  The issue is purely perf from the image's
+chosen dispatch strategy.
 
 All other FFI tests pass on NO_JIT: FFICalloutTest 6/6,
 FFIExternalStructureTest 12/12, FFICalloutAPITest 18/18,
-AthensCairoMatrixTest 17/17, etc.  Callback registration/invocation
-is *functional* — only the specific qsort-round-trip test hangs.
+AthensCairoMatrixTest 17/17, etc.
 
-Low priority.  Shipped callback path works for interactive uses
-(asmjit WebKit callbacks, Morphic event dispatch, etc.).
+Low priority.  Production callback paths (asmjit WebKit, Morphic
+event dispatch) don't hit the qsort-style many-call-in-tight-loop
+pattern.  Upstream candidate: `TFCallbackSameProcessRunStrategy`
+should reuse the persistent process across successive calls instead
+of falling back to fork after the first one.
 
 ### A1b. FFI `invokeFunction:withArguments:` receiver corruption under JIT
 
