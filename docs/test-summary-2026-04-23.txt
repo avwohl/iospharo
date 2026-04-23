@@ -178,6 +178,11 @@ comparing JIT vs NO_JIT shows they are NOT JIT-specific:
 Net: **zero JIT-specific correctness regressions** across 565
 classes.  JIT correctness matches interpreter correctness exactly.
 
+Final check: the valueWithinMilliseconds 1000→100 timeout case
+runs correctly in eval mode under BOTH JIT (107ms) and NO_JIT
+(105ms).  The SUnit "first-test" failure was a harness startup
+timing artifact, not a VM-level issue.
+
 ### Reproducing across both modes
 
     ProcessTerminateBugTest       F=1 (timing flake; also in NO_JIT batch)
