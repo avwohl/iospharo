@@ -325,6 +325,25 @@ Low-value to debug further without a reliable repro.  Workaround for
 suite runs: `PHARO_NO_JIT=1` for IntegerTest/FloatTest/CharacterTest.
 Most other test classes work under JIT.
 
+### 2026-04-23 deeper narrowing
+
+Stack trace leading to the resume:through: TERM shows
+`CurrentExecutionEnvironment class>>activate:for:` — the SUnit test-
+framework wrapper that sets up TestExecutionEnvironment around each
+test via `^ ... ensure: [...]`.  So the JIT bug is in the ensure:-
+unwind path specifically, and triggers after sufficient accumulated
+IC state + specific test flow.
+
+`ensure:` compiles to a block closure with its own NLR.  When the
+test finishes normally, `ensure:` returns, the cleanup block runs,
+then the outer method returns.  Under JIT with heavy state, the
+return path walks the sender chain via `resume:through:` and hits
+a context whose sender is unexpectedly nil.
+
+**Candidate fix**: exclude `ensure:` / `activate:for:` / Context
+NLR methods from JIT.  Would degrade perf but may unblock.  Worth
+trying in a future session.
+
 Root cause likely shared with original A3 — the JIT-compiled exception
 unwind path doesn't preserve frame state correctly, and the corruption
 slowly accumulates until a specific test sequence tips it over.
