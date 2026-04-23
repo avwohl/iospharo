@@ -1835,13 +1835,71 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         if (m) {
             makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
         }
+        // Diagnostic: PHARO_JIT_STALE_LOG=1 logs each stale slot-18 oop
+        // at GC-recovery time.  Helps identify which IC writes aren't
+        // visited by forEachRoot (Task #41 staleness-source hunt).
+        static bool staleLog = []() {
+            const char* v = std::getenv("PHARO_JIT_STALE_LOG");
+            return v && v[0] == '1';
+        }();
+        size_t totalSites = 0, staleSlot18 = 0, staleEntries = 0;
         while (m) {
             if (m->numICEntries > 0) {
                 uint8_t* icStart = m->codeStart() + m->codeSize
                                  - m->numICEntries * IC_BYTES_PER_SITE;
+                if (staleLog && interp_) {
+                    for (uint32_t i = 0; i < m->numICEntries; i++) {
+                        uint64_t* slots = reinterpret_cast<uint64_t*>(
+                            icStart + i * IC_BYTES_PER_SITE);
+                        totalSites++;
+                        uint64_t selBits = slots[IC_SELBITS_SLOT];
+                        if (selBits != 0) {
+                            Oop sel = Oop::fromRawBits(selBits);
+                            if (!interp_->memory().isValidPointer(sel)) {
+                                staleSlot18++;
+                                fprintf(stderr,
+                                    "[STALE-SELBITS] m=%p oop=0x%llx state=%d "
+                                    "site=%u/%u selBits=0x%llx (not-in-heap)\n",
+                                    (void*)m,
+                                    (unsigned long long)m->compiledMethodOop,
+                                    (int)m->state, i, m->numICEntries,
+                                    (unsigned long long)selBits);
+                            } else {
+                                // In-heap check: is it still a Symbol?
+                                uint32_t ci = sel.asObjectPtr()->classIndex();
+                                // Symbol classIndex varies but should be stable
+                                // across runs; we just check for wildly
+                                // different (0 or huge) as a sanity.
+                                if (ci == 0 || ci > 100000) {
+                                    staleSlot18++;
+                                    fprintf(stderr,
+                                        "[STALE-SELBITS-CI] m=%p oop=0x%llx "
+                                        "state=%d site=%u/%u selBits=0x%llx "
+                                        "classIndex=%u\n",
+                                        (void*)m,
+                                        (unsigned long long)m->compiledMethodOop,
+                                        (int)m->state, i, m->numICEntries,
+                                        (unsigned long long)selBits, ci);
+                                }
+                            }
+                        }
+                        uint64_t methBits0 = slots[1];
+                        if (methBits0 != 0) {
+                            Oop meth = Oop::fromRawBits(methBits0);
+                            if (!interp_->memory().isValidPointer(meth)) {
+                                staleEntries++;
+                            }
+                        }
+                    }
+                }
                 std::memset(icStart, 0, m->numICEntries * IC_BYTES_PER_SITE);
             }
             m = m->nextInZone;
+        }
+        if (staleLog && totalSites > 0) {
+            fprintf(stderr,
+                "[STALE-SUMMARY] sites=%zu staleSlot18=%zu staleEntries=%zu\n",
+                totalSites, staleSlot18, staleEntries);
         }
     }
     // Clear mega cache: keyed by selectorBits which changed.
