@@ -232,7 +232,28 @@ improvement even before the root cause is fixed.
 (trait test → error → debugger opens → debugger process chain
 terminates).
 
-### Running numbers (2026-04-23, commits fc98ee1–b1a983f)
+### Per-class JIT numbers (2026-04-23, after commit 86abdef)
+
+With `on: Deprecation do: [:e | e resume]` wrapping + fresh VM per class:
+
+    SortedCollectionTest    287/287 pass (0 err, 0 fail, 0 skip)
+    IdentitySetTest         176/176 pass
+    SmallIntegerTest         29/ 29 pass (includes the Trait test!)
+    FractionTest             32/ 32 pass
+    PointTest                36/ 36 pass
+    DictionaryTest          205/205 pass
+    SetTest                 174/174 pass
+    IntegerTest             TIMEOUT (1053 methods compiled in 120s, hang)
+    FloatTest               (not re-measured post-fix)
+    CharacterTest           (not re-measured post-fix)
+
+Total first 7 classes under JIT: **939/939 passed, 0 errors.**
+
+IntegerTest hang is a separate cumulative-state issue — different from
+A3 (which turned out to be Deprecation handling).  Probably A1-family
+scheduler between tests or an IntegerTest-specific trait-like pattern.
+
+### Original summary — running numbers
 
 Under default JIT, with error handler around `buildSuite run`:
   SortedCollectionTest:  287 ran / 287 passed / 0 err
