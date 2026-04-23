@@ -529,6 +529,18 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
             fprintf(stderr, "%s0x%08x ", i == 0 ? ">>>" : "", pcInsn[i]);
         }
         fprintf(stderr, "\n");
+        // Wider window: 32 instructions back, 8 forward — gives enough
+        // context to trace where a register (e.g. x24) is loaded.
+        fprintf(stderr, "[CRASH] Wide insn window PC-128..PC+32:\n");
+        for (int i = -32; i <= 8; i++) {
+            if ((i + 32) % 4 == 0)
+                fprintf(stderr, "[CRASH]  %+4d: ", i);
+            fprintf(stderr, "%s0x%08x%s",
+                    i == 0 ? ">>>" : " ",
+                    pcInsn[i],
+                    ((i + 32) % 4 == 3) ? "\n" : "");
+        }
+        fprintf(stderr, "\n");
 #if PHARO_JIT_ENABLED
         // Classify PC: is it in JIT code, our binary, or a system library?
         Dl_info pcInfo;
