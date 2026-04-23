@@ -348,6 +348,35 @@ Root cause likely shared with original A3 — the JIT-compiled exception
 unwind path doesn't preserve frame state correctly, and the corruption
 slowly accumulates until a specific test sequence tips it over.
 
+### 2026-04-23 later: killing SDL event loop doesn't unblock A4
+
+Tested by running
+  `[OSSDL2Driver current shutDown: true.
+    OSSDL2Driver current eventLoopProcess ifNotNil: [:p | p terminate]] on: Error do: [:e | ].`
+at start of eval, then running IntegerTest.  Result: still hangs at
+120s timeout.  No `invokeFunction:withArguments:` DNU this time — so
+we successfully suppressed the A1b-family trigger.  But the TERM
+still fires via `Context>>resume:through: sender=nil` →
+`activate:for: ensure:` path.
+
+So A4 has TWO orthogonal triggers under JIT:
+  1. A1b — FFI nil pointer in Morphic's pollEvent: (suppressed by
+     shutting down SDL, but a test still hits other `ffiCall:` sites
+     with the same bug).
+  2. Exception/ensure: NLR walk hitting nil sender — separate JIT bug
+     in the NLR path that doesn't need A1b to trigger; just some
+     other exception flow in a test (IntegerTest has exception tests
+     of its own).
+
+Either alone would need deep JIT investigation.  Both together make
+A4 very hard to make progress on without significant JIT refactor.
+
+**Pragmatic way forward**: IntegerTest, FloatTest, CharacterTest are
+numeric/primitive test classes that stock Cog runs in <1s each.
+These are small enough that a future pass can run them per-class in
+a fresh VM (NO_JIT), merging numbers with the JIT-able classes.
+This hybrid would give a full-suite count.
+
 ## A0. weak-ref GC: testClearing — **RESOLVED** (2026-04-20)
 
 Both `WeakKeyDictionaryTest>>testClearing` and
