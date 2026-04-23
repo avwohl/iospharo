@@ -453,6 +453,12 @@ public:
     /// If the woken process has higher priority, preempts the active process.
     void synchronousSignal(Oop semaphore);
 
+    /// Walk all Process instances and signal the Semaphore of any process
+    /// blocked in SessionManager>>snapshot:andQuit:.  Called at resume time
+    /// and periodically from handleForceYield to break a fork/wait deadlock
+    /// that our headless eval path can trigger.  See docs/fixed_priority_workarounds.md.
+    void unblockStuckSnapshotCallers();
+
     /// Signal the finalization semaphore if any mourners were queued during GC.
     void signalFinalizationIfNeeded();
     /// Variant for primitiveWait: non-preempting (puts waiter on ready queue).

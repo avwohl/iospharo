@@ -32,6 +32,7 @@
 #include <thread>
 #include <chrono>
 #include <set>
+#include <unordered_set>
 #include <vector>
 #include <algorithm>
 #include <atomic>
@@ -457,6 +458,13 @@ bool Interpreter::initialize() {
     if (activeProcess.isObject() && !activeProcess.isNil()) {
         memory_.storePointer(1, activeProcess, memory_.nil());  // slot 1 = suspendedContext
     }
+
+    // Snapshot-resume deadlock cleanup — see unblockStuckSnapshotCallers()
+    // for the rationale.  Called both here (once on resume to clear any
+    // residual from the saved image) and periodically from handleForceYield
+    // (to catch callers that arise post-resume when startup.st triggers
+    // exitSuccess → snapshot:andQuit:).
+    unblockStuckSnapshotCallers();
 
     // In headless mode, boost the startup process to timingPriority (80).
     // Session handlers may fork processes at timingPriority (80) — e.g.,
@@ -2313,6 +2321,90 @@ void Interpreter::handleForceYield() {
             } catch (...) {
                 fprintf(stderr, "[DIAG-QUEUE] (enumeration failed)\n");
             }
+
+            // Every DIAG cycle (10s), unblock any process stuck in
+            // SessionManager>>snapshot:andQuit: on a dead Semaphore.  This is
+            // the safety-net for the headless-eval deadlock — see
+            // unblockStuckSnapshotCallers() and docs/fixed_priority_workarounds.md.
+            try {
+                unblockStuckSnapshotCallers();
+            } catch (...) {
+                fprintf(stderr, "[UNBLOCK-SNAPSHOT] (failed)\n");
+            }
+
+            // PHARO_PROC_DUMP=1 — full enumeration of every Process
+            // instance in the heap, including those waiting on
+            // Semaphores (invisible to the scheduler-queue walk above).
+            // Needed to diagnose deadlocks where a higher-priority
+            // process is blocked on a semaphore that nobody signals.
+            static bool procDumpInit = false;
+            static bool procDump = false;
+            if (!procDumpInit) {
+                procDumpInit = true;
+                procDump = std::getenv("PHARO_PROC_DUMP") != nullptr;
+            }
+            if (procDump) {
+                try {
+                    Oop active = getActiveProcess();
+                    uint32_t processClsIdx = 0;
+                    if (active.isObject() && active.rawBits() > 0x10000) {
+                        processClsIdx = active.asObjectPtr()->classIndex();
+                    }
+                    fprintf(stderr, "[PROC-DUMP] active=0x%llx cls=%u (Process class)\n",
+                            (unsigned long long)active.rawBits(), processClsIdx);
+                    size_t procCount = 0;
+                    Oop nilO = memory_.nil();
+                    Oop o = memory_.firstObject();
+                    while (o.isObject() && o.rawBits() != 0) {
+                        ObjectHeader* h = o.asObjectPtr();
+                        if (h->classIndex() == processClsIdx && processClsIdx != 0) {
+                            procCount++;
+                            Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, o);
+                            int prio = prioOop.isSmallInteger() ?
+                                (int)prioOop.asSmallInteger() : -1;
+                            Oop myList = memory_.fetchPointer(ProcessMyListIndex, o);
+                            const char* state;
+                            std::string listCls = "?";
+                            if (!myList.isObject() || myList.rawBits() == nilO.rawBits()) {
+                                state = (o.rawBits() == active.rawBits())
+                                    ? "ACTIVE" : "terminated/running";
+                            } else {
+                                listCls = memory_.classNameOf(myList);
+                                if (listCls == "Semaphore") state = "on-sem";
+                                else if (listCls == "ProcessList" || listCls == "LinkedList")
+                                    state = "ready";
+                                else state = "on-list";
+                            }
+                            // Decode suspended-context top frame
+                            std::string topSel = "(nil)";
+                            std::string topCls = "?";
+                            Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, o);
+                            if (susp.isObject() && susp.rawBits() != nilO.rawBits() &&
+                                memory_.isValidPointer(susp)) {
+                                Oop mth = memory_.fetchPointer(3, susp);
+                                if (mth.isObject() && mth.rawBits() != nilO.rawBits() &&
+                                    memory_.isValidPointer(mth))
+                                    topSel = memory_.selectorOf(mth);
+                                Oop rcvr = memory_.fetchPointer(5, susp);
+                                if (rcvr.isObject() && rcvr.rawBits() != nilO.rawBits() &&
+                                    memory_.isValidPointer(rcvr))
+                                    topCls = memory_.classNameOf(rcvr);
+                                else if (rcvr.isSmallInteger()) topCls = "SmallInteger";
+                                else if (rcvr.isNil()) topCls = "nil";
+                            }
+                            fprintf(stderr, "[PROC-DUMP] P%d proc=0x%llx %s list=0x%llx(%s) top=%s>>%s\n",
+                                    prio, (unsigned long long)o.rawBits(), state,
+                                    (unsigned long long)myList.rawBits(), listCls.c_str(),
+                                    topCls.c_str(), topSel.c_str());
+                        }
+                        o = memory_.objectAfter(o);
+                        if (procCount > 256) break;  // safety cap
+                    }
+                    fprintf(stderr, "[PROC-DUMP] total=%zu\n", procCount);
+                } catch (...) {
+                    fprintf(stderr, "[PROC-DUMP] (enumeration failed)\n");
+                }
+            }
         }
     }
 
@@ -2577,6 +2669,82 @@ void Interpreter::checkTimerSemaphore() {
         timerWasArmed_ = false;
         schedulerDeathLogged_ = false;
         synchronousSignal(semaphore);
+    }
+}
+
+void Interpreter::unblockStuckSnapshotCallers() {
+    // Pharo's `SessionManager >> snapshot:andQuit:` forks a P79 worker that
+    // does the actual save/quit, and the caller does `wait wait` on a fresh
+    // Semaphore.  In a normal run the worker eventually calls `wait signal`
+    // after the snapshot primitive, unblocking the caller.
+    //
+    // In our headless-eval + eager-JIT (PHARO_JIT_DEFER=0) path we've seen
+    // the worker's chain not reach `wait signal`: the worker becomes the
+    // new active process, startup handlers fire, control never returns to
+    // the fork-block tail.  Net effect: the caller stays suspended
+    // forever on a Semaphore nobody signals — the eval runs, 'result'
+    // gets printed... and then the VM spins indefinitely.
+    //
+    // Since we just loaded the image (or are headless-exiting), the
+    // snapshot either already happened or doesn't matter.  Signaling
+    // the caller's wait Semaphore unblocks it so it returns from
+    // `snapshot:andQuit:` and the exit path completes (primitiveQuit
+    // eventually fires, setting running_=false, loop exits).
+    //
+    // Safe because:
+    //   1. We only signal Semaphores, not scheduler ready queues.
+    //   2. We only touch processes whose top-frame is exactly
+    //      `snapshot:andQuit:` — a very narrow window.
+    //   3. `synchronousSignal` is idempotent: if the waiter has already
+    //      been processed it's a no-op.
+    //
+    // Idempotency guard: once we've signaled a process-oop we remember it,
+    // so we don't re-signal on every DIAG cycle.
+    static std::unordered_set<uint64_t> alreadySignaled;
+
+    Oop active = getActiveProcess();
+    uint32_t processClsIdx = 0;
+    if (active.isObject() && active.rawBits() > 0x10000) {
+        processClsIdx = active.asObjectPtr()->classIndex();
+    }
+    if (processClsIdx == 0) return;
+
+    Oop nilO = memory_.nil();
+    Oop o = memory_.firstObject();
+    int scanned = 0;
+    while (o.isObject() && o.rawBits() != 0) {
+        ObjectHeader* h = o.asObjectPtr();
+        if (h->classIndex() == processClsIdx) {
+            uint64_t procBits = o.rawBits();
+            if (alreadySignaled.find(procBits) == alreadySignaled.end()) {
+                Oop myList = memory_.fetchPointer(ProcessMyListIndex, o);
+                Oop susp = memory_.fetchPointer(ProcessSuspendedContextIndex, o);
+                if (myList.isObject() && myList.rawBits() != nilO.rawBits() &&
+                    susp.isObject() && susp.rawBits() != nilO.rawBits() &&
+                    memory_.isValidPointer(myList) &&
+                    memory_.isValidPointer(susp)) {
+                    std::string listCls = memory_.classNameOf(myList);
+                    if (listCls == "Semaphore") {
+                        Oop mth = memory_.fetchPointer(3, susp);
+                        if (mth.isObject() && mth.rawBits() != nilO.rawBits() &&
+                            memory_.isValidPointer(mth)) {
+                            std::string sel = memory_.selectorOf(mth);
+                            if (sel == "snapshot:andQuit:") {
+                                fprintf(stderr,
+                                        "[UNBLOCK-SNAPSHOT] signal sem=0x%llx "
+                                        "for stuck proc=0x%llx\n",
+                                        (unsigned long long)myList.rawBits(),
+                                        (unsigned long long)procBits);
+                                synchronousSignal(myList);
+                                alreadySignaled.insert(procBits);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        o = memory_.objectAfter(o);
+        if (++scanned > 10000) break;  // safety cap
     }
 }
 
