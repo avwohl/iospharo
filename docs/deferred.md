@@ -133,6 +133,31 @@ Next steps: JIT optimization work.  The Sista Phase 4 monomorphic
 inliner is the intended fix; shorter term, any perf win on the
 interpreter (e.g., quickening hot sends) narrows the gap.
 
+## A3. JIT sequential-test regression — hang after ~3 test classes (2026-04-23)
+
+Under default JIT (DEFER=4s), running test classes in sequence via an eval
+`do:` loop:
+  - Test 1 (SortedCollectionTest): 287/287 passes (JIT compiles ~120 methods)
+  - Test 2 (IdentitySetTest): 176/176 passes (JIT at ~240 methods)
+  - Test 3 (SmallIntegerTest): HANGS (infinite loop or deadlock)
+
+Each test class in ISOLATION passes 100% under JIT.  The regression is
+**cumulative state across tests** — JIT-compiled methods from tests 1+2
+introduce a miscompile or stale IC entry that breaks test 3.
+
+**Pre-fix** (before commit fc98ee1), these runs SIGSEGV'd instead of hanging
+— the crash was `ObjectMemory::nameOfClass` dereferencing a corrupted
+class-name oop.  Guarding that deref made the VM survivable; what's
+actually happening in the heap (some Metaclass.thisClass.slot-6 holds
+a bogus pointer) is the underlying corruption that's still unfixed.
+
+Possibly related: A2 (B5 cold-IC DNU cascade at DEFER=0), because both
+involve JIT state accumulation across test sequences.  Difficult to
+bisect because ISOLATED each test works.
+
+Mitigation: run tests with `PHARO_NO_JIT=1` (slow but correct), or run
+one-at-a-time from shell.
+
 ## A0. weak-ref GC: testClearing — **RESOLVED** (2026-04-20)
 
 Both `WeakKeyDictionaryTest>>testClearing` and
