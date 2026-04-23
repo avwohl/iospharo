@@ -81,10 +81,27 @@ the rewrite may install different literals on our VM.
   compilation, JIT deopt, or FFI dynamic-recompile) introduces the
   C11 literal.
 
-## A0b. Other stock-Cog-passing error buckets from 2026-04-20 full run
+## A0b. Other stock-Cog-passing error buckets — **APPEARS FIXED** (2026-04-22)
 
-Same day also saw these bucketed DNUs and other errors that need
-the same stock-Cog cross-check:
+Rechecked 2026-04-22 under `PHARO_NO_JIT=1 PHARO_NO_SISTA=1`.  Direct
+`buildSuite run` on 8 classes from the original bucket:
+
+    EpApplyTest:                28 ran / 28 passed / 0 err  (was 28 err)
+    EpRevertTest:               23 ran / 23 passed / 0 err  (was 23 err)
+    EpCodeChangeIntegrationTest: 32 ran / 32 passed / 0 err  (was 32 err)
+    EpApplyPreviewerTest:       40 ran / 40 passed / 0 err  (was 40 err)
+    ClyBrowserToolValidityTest: 25 ran / 25 passed / 0 err  (was 25 err)
+    ClapHelloTest:               7 ran /  7 passed / 0 err / 1 skipped (was 8 err)
+    CompletionEngineTest:       51 ran / 51 passed / 0 err  (was 12 err)
+    CoCompletionEngineTest:     65 ran / 65 passed / 0 err  (was 24 err)
+    FLPlatformTest:             MISSING (class not in image)
+
+TOTAL: 271 ran / 271 passed / 0 errors / 0 failures.  These 8 classes
+accounted for ~212 of the original 454 A0b-like errors, so the bucket is
+at least mostly cleared.  Closed alongside A0a; same intermediate
+class-migration / finalization fixes likely did it.
+
+### Original bucket (2026-04-20)
 
     92  MessageNotUnderstood: receiver of "packageName" is nil
     59  MessageNotUnderstood: receiver of "select:thenDo:" is nil
@@ -93,10 +110,6 @@ the same stock-Cog cross-check:
     12  Error: Wrapper query should include single subquery
     12  Error: Can't find the requested origin
      8  MessageNotUnderstood: receiver of "close" is nil
-
-Given A0a's finding that VERY similar-looking "image infra" errors
-were actually VM regressions, we should not assume these pass on
-stock until verified.
 
 ## A00. `StringTest>>testSelect` — fails via timeout (interpreter-speed)
 
