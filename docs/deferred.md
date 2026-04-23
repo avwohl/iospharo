@@ -925,11 +925,19 @@ changes; image-side issues to propose upstream.
    earlier "edge cases leaving stale selector oops" comment in
    JITRuntime.cpp is either wrong or describes a subtler condition.
 
-   Crash source is unknown — x24 at crash contains a packed value
-   like 0xff082680ff072680 being derefed as a pointer inside JIT
-   machine code.  Needs per-crash lldb analysis of the specific JIT
-   method + instruction + register flow, not steady-state validation.
-   Memory: `project_jit_timeouts_are_slowness.md`.
+   Crash-signature capture (PHARO_JIT_KEEP_ICS=1, gated in c48c1d3):
+     Always the SAME method oop=0x3003b5660 (codeSize=7920, numIC=3)
+     Always offset 2444, instruction `ldr x10, [x24]`
+     x24 value pattern: two 32-bit values packed into u64, differing
+     by exactly 0x10000 (e.g. 0xff080880ff070880, 0xff082680ff072680)
+   The packed-u32 pattern suggests something writes this location as
+   two adjacent 32-bit stores, and the preservation fix keeps that
+   transient state across GC.  Next session: disassemble method
+   0x3003b5660 around offset 2444, trace back where x24 is set, find
+   the u32-pair write-site in the stencil pipeline, determine whether
+   forEachRoot visits that location as an Oop (it probably doesn't,
+   since the writes are raw u32s).  Memory:
+   `project_jit_timeouts_are_slowness.md`.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.
