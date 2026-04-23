@@ -914,13 +914,16 @@ changes; image-side issues to propose upstream.
    (zeroing slot 18 / selectorBits).  Attempted fix 88dd186
    (zero only slots 0-17, keep slot 18) got IC hit 97.5% /
    noSelBits 0 but introduced a flaky SIGSEGV — reverted bfa20e7.
-   forEachRoot has edge cases (evicted/recompiled methods) where
-   slot 18 ends up stale; preserving it gets a wrong-selector
-   megacache hit → wrong method body → JIT crashes dereffing a
-   bogus value.  Next fix path: per-site "was-visited-by-forEachRoot-
-   this-cycle" tracking, or switch to a PIC that recomputes
-   selector bits on each miss.  Memory:
-   `project_jit_timeouts_are_slowness.md`.
+   A narrower retry (preserve only for MethodState::Compiled; also
+   skip invalidated methods in forEachRoot) was WORSE (2/5 SIGSEGV)
+   and reverted without commit.  So invalidation isn't the primary
+   source of stale slot-18 oops.  The real source is elsewhere — a
+   concurrent IC patch, a recompilation overlap, or an IC-write
+   path not covered by forEachRoot.  Next attempt must FIRST add
+   instrumentation logging each stale oop location before trying
+   another preservation scheme — preservation without knowing the
+   staleness source just keeps shipping regressions.
+   Memory: `project_jit_timeouts_are_slowness.md`.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.
