@@ -928,16 +928,37 @@ changes; image-side issues to propose upstream.
    Crash-signature capture (PHARO_JIT_KEEP_ICS=1, gated in c48c1d3):
      Always the SAME method oop=0x3003b5660 (codeSize=7920, numIC=3)
      Always offset 2444, instruction `ldr x10, [x24]`
-     x24 value pattern: two 32-bit values packed into u64, differing
-     by exactly 0x10000 (e.g. 0xff080880ff070880, 0xff082680ff072680)
-   The packed-u32 pattern suggests something writes this location as
-   two adjacent 32-bit stores, and the preservation fix keeps that
-   transient state across GC.  Next session: disassemble method
-   0x3003b5660 around offset 2444, trace back where x24 is set, find
-   the u32-pair write-site in the stencil pipeline, determine whether
-   forEachRoot visits that location as an Oop (it probably doesn't,
-   since the writes are raw u32s).  Memory:
-   `project_jit_timeouts_are_slowness.md`.
+     x24 holds raw bytes from a Smalltalk Symbol/String (different
+     bytes per run: `0xff080880ff070880`, `0x73696874206e6920` =
+     ASCII " in this", etc).
+   With wider crash disasm (cd69377), the ldr loading x24 is at
+   PC-32: `ldr x24, [x8, x27, lsl #3]`.  That's an index-computed
+   load (x8 base + x27*8 offset).  Combined with the symbol-bytes
+   value pattern, the conclusion is:
+
+   **The JIT IC probe code reads slot 18 (selector Oop) as if it
+   were one of the 6 entry slots' cached method pointers, then
+   dereferences the Symbol's character data and crashes on the
+   derefed bytes.**
+
+   With default code (memset-all), slot 18 is 0 post-GC and the
+   probe's cbz null-check skips the crashing ldr.  With
+   PHARO_JIT_KEEP_ICS=1, slot 18 retains its selector Oop and the
+   cbz falls through to ldr.
+
+   So safe preservation needs EITHER:
+     (a) Stencil-code changes so the IC probe bounds-checks its
+         entry index and never reads slot 18 as an entry.
+     (b) A separate storage location for selectorBits (out-of-band
+         from the IC site), which the probe code never touches.
+
+   Option (b) is mechanically simpler — add a parallel array
+   `selBitsArray[numICEntries]` to JITMethod (or in its data
+   allocation), populate at compile time alongside icSlots[18],
+   update via forEachRoot, and consult it in the megacache-probe
+   fallback path.  Then the IC memset can clear slot 18 safely
+   (no-op cost) while the array preserves the live selector bits.
+   Memory: `project_jit_timeouts_are_slowness.md`.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.
