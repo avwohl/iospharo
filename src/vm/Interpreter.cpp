@@ -13921,8 +13921,33 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (traceThis) {
         traceCalls++;
         if (traceCalls <= 20 || (traceCalls & 0xFFF) == 0) {
-            fprintf(stderr, "[JIT-TRACE] CALL #%zu (ret=%zu nc=%zu) argCount=%d\n",
-                    traceCalls, traceRets, traceNoCompile, argCount);
+            // Dump receiver and arg for hang-debugging.
+            Oop receiverOop = stackValue(argCount);
+            Oop arg0 = argCount > 0 ? stackValue(argCount - 1) : Oop::nil();
+            std::string rcls = "?";
+            if (receiverOop.isObject() && receiverOop.rawBits() > 0x10000) {
+                rcls = memory_.classNameOf(receiverOop);
+            } else if (receiverOop.isSmallInteger()) {
+                rcls = "SmallInt";
+            }
+            // For WriteStream, slots 0=collection, 1=position, 3=writeLimit.
+            // Log them so we can see if position/writeLimit advance.
+            int64_t pos = -1, wl = -1;
+            if (receiverOop.isObject() && receiverOop.rawBits() > 0x10000) {
+                ObjectHeader* h = receiverOop.asObjectPtr();
+                if (h->slotCount() >= 4) {
+                    Oop p = memory_.fetchPointer(1, receiverOop);
+                    Oop w = memory_.fetchPointer(3, receiverOop);
+                    if (p.isSmallInteger()) pos = p.asSmallInteger();
+                    if (w.isSmallInteger()) wl = w.asSmallInteger();
+                }
+            }
+            fprintf(stderr, "[JIT-TRACE] CALL #%zu (ret=%zu nc=%zu) "
+                    "rcvr=%s(0x%llx) pos=%lld wl=%lld arg0=0x%llx\n",
+                    traceCalls, traceRets, traceNoCompile, rcls.c_str(),
+                    (unsigned long long)receiverOop.rawBits(),
+                    (long long)pos, (long long)wl,
+                    (unsigned long long)arg0.rawBits());
         }
     }
     struct TraceRetGuard {
