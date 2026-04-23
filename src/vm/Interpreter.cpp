@@ -2583,8 +2583,17 @@ void Interpreter::checkTimerSemaphore() {
 void Interpreter::synchronousSignal(Oop semaphore) {
     Oop firstLink = memory_.fetchPointer(LinkedListFirstLinkIndex, semaphore);
 
+    // PHARO_SEM_SIGNAL_TRACE=1 — log every synchronousSignal with a waiter.
+    // Default logs first 50 only; flag raises to 5000 for scheduler-hang
+    // investigations where the first 50 are consumed by normal startup.
+    static bool semTraceInit = false;
+    static int signalLogCap = 50;
+    if (!semTraceInit) {
+        semTraceInit = true;
+        if (std::getenv("PHARO_SEM_SIGNAL_TRACE")) signalLogCap = 5000;
+    }
     static int signalLog = 0;
-    if (signalLog < 50) {
+    if (signalLog < signalLogCap) {
         signalLog++;
         Oop activeProcess = getActiveProcess();
         int activePri = safeProcessPriority(activeProcess);
