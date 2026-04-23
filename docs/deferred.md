@@ -412,12 +412,32 @@ via `PHARO_BENCH` which bypasses the startup.st path entirely, so
 the default path is unaffected.
 
 ### A1b. FFI `invokeFunction:withArguments:` receiver corruption under JIT
-Under JIT with any defer setting, `EventSensor>>pollEvent:` triggers
-DNU `#invokeFunction:withArguments: not understood by rcvr=0x300000000
-class=nil` — the FFI function-pointer oop arrives as a sentinel/nil
-at the call site.  This is the same "0x300000000 sentinel" pattern
-as A1c; likely a JIT spill/reload bug around the FFI send.  Not the
-"FFI is incomplete" — the function pointer is *lost*.
+
+**2026-04-22 update**: Original note referenced `EventSensor>>pollEvent:`
+but that class no longer exists in the current Pharo 13.1 image.  The
+current reproducer:
+
+    FFICalloutAPITest>>testByteArrayToExternalAddress
+      NO_JIT=1:        583 ms, 0 errors
+      DEFER=100+:      ~650 ms, 0 errors (JIT hasn't kicked in yet)
+      default (no DEFER / auto 4s): HANGS
+      DEFER=0:         HANGS
+
+Bisection against `JIT_MAX_COMPILE` pinpoints compile #13 as the
+trigger (MAX=12 → pass, MAX=13 → hang).  Compile #13 =
+`WriteStream>>nextPut:` at oop `0x30046ce80`.  This is the **same
+method and same compile-number** as the A1 eval-hang bisection —
+so A1b is not a distinct FFI bug, it's A1 observed through a
+different entry path.
+
+Stale original text preserved for history:
+
+> Under JIT with any defer setting, `EventSensor>>pollEvent:` triggers
+> DNU `#invokeFunction:withArguments: not understood by rcvr=0x300000000
+> class=nil` — the FFI function-pointer oop arrives as a sentinel/nil
+> at the call site.  This is the same "0x300000000 sentinel" pattern
+> as A1c; likely a JIT spill/reload bug around the FFI send.  Not the
+> "FFI is incomplete" — the function pointer is *lost*.
 
 ### A1c. `forkAt:` sentinel — RESOLVED 2026-04-19 (was scheduler starvation)
 The watchdog's `testProcess suspend` DNU with `rcvr=0x300000000` was
