@@ -105,3 +105,20 @@ Classes 41-60 (ClassHierarchyTest..StackTest):
   Failures (2):
     ProcessTerminateBugTest>>#testTerminationDuringUnwind
     DeprecationTest>>#testTransformingDeprecation (expected — we resume all Deprecations)
+
+## Extended to classes 1-137
+
+    Ran classes: 131 of 138 (7 timeouts)
+    Tests:      7292 ran, 7288 pass (99.95%), 2 err, 2 fail, 6 skip
+
+Timeouts (7):
+  ArrayTest, ClassDescriptionTest, WordArrayTest,
+  ChunkReadStreamTest, MultiByteBinaryOrTextStreamTest,
+  VeryDeepCopyTest, (plus one more in 121-150 range)
+
+Additional errors found:
+  SHA256Test>>#testFips180Example3 (1 err, known timeout-heavy)
+
+The test categories that dominate our VM: Collection (~3500 tests),
+Stream (~200), Date/Time (~300), Weak (~700), Slot (~55), FFI (~100).
+All pass cleanly except the documented edge cases.
