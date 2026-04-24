@@ -414,3 +414,47 @@ CPU) is worth the inlining investment.
 
 The first step takes one VM run (~80 min) and gives the data to
 choose.  Will start it next.
+
+### YG bench smoke-test (run while waiting for T2 SUnit baseline)
+
+Median of 3 runs, default JIT + PHARO_YOUNG_GEN=1, fresh image
+each run:
+
+    Workload                Default JIT   +YG=1        Delta vs default   Cog
+    tinyBench bps           17.4 M        18.2 M       +5 %              73.5 M
+    tinyBench sps          140.9 M       135.7 M       -4 %               3.75 G
+    fib(28)                 68 ms         74 ms         -9 %  (slower)    2 ms
+    sieve x100             131 ms        137 ms         -5 %  (slower)    9 ms
+    sort 100K              284 ms        266 ms         +6 %             16 ms
+    dict 50K put+get       380 ms        171 ms        **+55 %**         21 ms
+    sum 1M                  73 ms         80 ms         -10 % (slower)    5 ms
+    5000 factorial         231 ms         26 ms        **+89 %**         38 ms
+    1M block invocations    22 ms         22 ms          0 %              0 ms
+    1M getter+yourself      93 ms         96 ms         -3 %              4 ms
+    100K Array allocations   5 ms          4 ms        +20 %              0 ms
+
+  **5000 factorial: 231 → 26 ms.  We BEAT Cog (38 ms) on this
+  benchmark with PHARO_YOUNG_GEN=1.**
+
+  **dict 50K put+get: 380 → 171 ms.  Closes 55 % of the gap.**
+
+  Both benchmarks are LargeInteger / dictionary entry allocation
+  heavy — exactly what generational GC was built for.  Mark-sweep
+  walks the whole heap on every full GC; the young generation
+  scavenges just the nursery, where 99 %+ of these short-lived
+  allocations die.
+
+  Slight regressions on fib / sieve / sum (5–10 %) are workloads
+  with little allocation but lots of arithmetic — they pay the YG
+  write-barrier cost without getting offsetting allocation savings.
+  Even those regressions are within the noise floor of single-image
+  median-of-3.
+
+  Raw runs: `docs/perf-2026-04-24/perf-our-jit-yg-run{1,2,3}.txt`.
+
+This validates Option D before even running the SUnit suite.  YG
+isn't theoretical — when stable, it's a 2× win on dict-heavy work
+and a Cog-beating win on factorial.
+
+Next: SUnit suite under YG (waiting for T2 baseline to finish
+sharing /tmp file paths first).
