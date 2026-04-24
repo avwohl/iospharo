@@ -538,5 +538,117 @@ ran the bench under PHARO_T2=1 + PHARO_YOUNG_GEN=1, median of 3
   is paid for; the leaf-method coverage just doesn't intersect
   with the bench hot spots.
 
-Next: SUnit suite under YG (waiting for T2 baseline to finish
-sharing /tmp file paths first).
+### SUnit suite under PHARO_YOUNG_GEN=1: ONE new failure
+
+Ran the full 565-class per-class isolation suite (180 s each)
+with PHARO_YOUNG_GEN=1.  Results saved to
+`docs/jit-baseline-2026-04-24-yg.txt`.
+
+                           Default JIT       PHARO_YOUNG_GEN=1
+    Classes attempted:     565               565
+    Classes ran tests:     539               539
+    Classes ok:            535               534   (-1)
+    Classes no-tests:      26                26
+    Classes fail:          3                 4    (+1)
+    Classes error:         1                 1
+    Classes timeout:       0                 0
+    Classes crash:         0                 0
+    Tests passed:          12665             12663 (-2)
+    Tests failed:          3                 4    (+1)
+    Tests errored:         1                 1
+    Wall clock:            4697 s (78 m)     4641 s (77 m)
+
+The single new failure:
+
+  548 TraitTest>>testTraitsUsersSanity  FAIL
+
+  Source:
+    Smalltalk allClassesAndTraits do: [:each |
+      self assert: (each traits allSatisfy: [:t | t traitUsers includes: each])].
+    Smalltalk globals allTraits do: [:each |
+      self assert: (each traitUsers allSatisfy: [:b | b traits includes: each])].
+
+  Walks every class+trait pairing and checks the bidirectional
+  integrity of `Trait>>users` (an `IdentitySet`).  YG fails one
+  pairing — most likely a remembered-set / write-barrier gap
+  where adding a tenured class to an `IdentitySet` slot doesn't
+  re-hash on YG promotion, leaving the slot inconsistent.
+
+  This is the *exact* class of bug YG stabilization needs to
+  catch.  Concrete reproducer + good error signature → easy
+  to bisect.
+
+Other 4 non-ok classes are the same 4 we've seen everywhere
+(image bug, cold-start, two harness flakes).  ZERO new
+crashes, ZERO new timeouts, ZERO new errors.
+
+**Verdict: well within the ±10 threshold.  Option D is real.**
+
+  - Correctness gap: 1 known failure with a clear repro, in a
+    test that itself documents a "bug 443" pattern.  Likely a
+    write-barrier / IdentitySet rehash issue.  ~1-3 days to
+    bisect once we focus.
+  - Plus the pre-existing testClearing weak-ref issue noted in
+    the YG memory entry (separate workstream — not in our
+    test_classes.txt list).
+
+So the realistic Option D time budget shrinks: not "~2 weeks"
+but **2-5 days for the IdentitySet/users fix + testClearing
+weak-ref fix + smoke-test default-on rollout**.
+
+## Decision
+
+Going with **Option D**.  Reasoning:
+
+  1. YG ships a 2-9× win on allocation-heavy benchmarks today,
+     beats Cog on factorial.  GC samples cut in half.
+  2. Correctness gap is one IdentitySet test + one weak-ref
+     test, both with clear repros.  Days, not weeks.
+  3. Phase 4 inlining is 7-11 weeks with high deopt risk for
+     a smaller share of real-app wall clock (active-execution
+     dispatch is 80% of THAT phase, but GC is 64% of idle
+     phase — and idle phase is the bulk of real iOS use).
+  4. Option B (T2 expansion) is now ruled out by data: T2
+     today is correctness-clean and perf-neutral.  Expanding
+     it to non-leaf methods risks correctness for unproven
+     perf gains.
+
+## Concrete next steps (this/next session)
+
+  1. **Bisect TraitTest>>testTraitsUsersSanity under YG.**
+     One failing test, deterministic, walks every class.
+     Add a `PHARO_YG_REHASH_TRACE=1` diagnostic and look for
+     IdentitySet slot inconsistency after scavenge.
+     Estimate: 1 day.
+  2. **Bisect testClearing weak-ref failure under YG.**
+     Per memory `project_younggen_gc_wip.md`, this is the
+     other known blocker.  Estimate: 1-2 days.
+  3. **YG smoke test against the bench suite + a 30-min real
+     macOS Catalyst session.**  Confirm no obvious user-visible
+     issues (browser opens, code completes, debugger steps).
+     Estimate: half day.
+  4. **Default-on `PHARO_YOUNG_GEN=1`.**  Add `PHARO_NO_YG=1`
+     opt-out symmetrical to `PHARO_NO_SISTA`.  Run full SUnit
+     once more to confirm clean.  Estimate: half day.
+  5. **Profile real macOS Catalyst Pharo IDE under default-on
+     YG.**  Compare top hot spots to today's idle profile.
+     Confirms whether the 64% fullGC drops to <20% as
+     predicted by the bench data.  Estimate: half day.
+
+Total: **~4 days end-to-end** to validated YG-on-by-default
+on master.  Compare to Phase 4 inlining at 7-11 weeks.
+
+## What about T2 / Phase 4 / iOS deployment?
+
+Re-prioritize after Option D ships:
+
+  - **iOS deployment (D1)**: now the next obvious lever.  YG
+    addresses the GC cost; iOS deployment ships the actual
+    product.  Days-weeks.
+  - **Phase 4 inlining**: deferred until we re-profile *with*
+    YG on.  If active-dispatch drops below 50% of real-app
+    wall clock once GC cost is fixed, Phase 4 may not be
+    worth the 7-11 weeks.  Re-measure first.
+  - **T2 expansion (Option B)**: stays opt-in until we have
+    a use case (e.g., a specific hot method that T2 could
+    cover but T1 misses).  No work scheduled.
