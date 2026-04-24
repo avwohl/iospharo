@@ -225,6 +225,21 @@ The earlier 23695 NO_JIT count was from batch mode running more
 tests per class than fit in a per-class 180s budget — not
 comparable to the JIT isolation methodology.
 
+## JIT vs NO_JIT perf measurement (2026-04-24)
+
+Simple eval-mode benchmarks:
+
+    Workload                             JIT eager    NO_JIT    speedup
+    100M iteration arithmetic loop       4415 ms      4467 ms   1%
+    fib(30) recursive send-heavy         198 ms       213 ms    7%
+
+The small wins reflect our stencil-based JIT: T1 tier uses the
+same template stencils as the interpreter, so code-gen is similar.
+Savings come from inline method prologues, IC hit paths, and
+inlined primitives.  Larger wins would need T2 (asmjit) default-on
+(currently opt-in via PHARO_T2=1), bigger ICs (>6 entries), or
+method inlining — all non-trivial architectural work.
+
 ## JIT performance regression on heap-walking workloads
 
 Cross-check with same 180s budget and ArrayTest warmup:
