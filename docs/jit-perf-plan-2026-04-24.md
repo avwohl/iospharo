@@ -270,3 +270,147 @@ data needed to choose A/B/C honestly.
     evidence those gates are correctness-clean today.
   - Pretend this week's correctness work was perf work.  It
     wasn't, and the perf numbers reflect that.
+
+---
+
+# What the profile actually showed (appended 2026-04-24, same day)
+
+Captured three macOS `sample` traces against `./build/test_load_image`,
+all with default JIT + Sista, on a fresh Pharo 13 image:
+
+  - `docs/perf-2026-04-24/profile-idle.txt` — 60 s, image idling
+    after startup (Morphic / display loop).  46 548 main-thread
+    samples.
+  - `docs/perf-2026-04-24/profile-bench.txt` — 20 s, capturing
+    PharoBenchmarkRunner end-to-end (which includes Delay-paced
+    pauses between bench methods).  5 346 main-thread samples.
+  - `docs/perf-2026-04-24/profile-active.txt` — 50 s of a hot
+    loop (compile + dictionary build + sort + benchFib(24)).
+    44 607 main-thread samples in `Interpreter::interpret()`.
+
+## Top hotspots — idle Pharo IDE (no user code running)
+
+    Symbol                                          Samples   % of main
+    pharo::ObjectMemory::fullGC                     29 678    63.8 %
+      pharo::ObjectMemory::scanPointerFields         7 275    15.6 %
+      pharo::ObjectMemory::markAndTrace              6 696    14.4 %
+        std::unordered_set::find (mark-set lookup)   3 304     7.1 %
+      __bzero (clearing freed memory)                6 272    13.5 %
+      _xzm_free (libsystem_malloc free)              1 947     4.2 %
+    pharo::Interpreter::sendSelector                       –     (rest)
+    pharo::ObjectMemory::storePointer                 1 648     3.5 %
+    Top primitive: primitiveExternalCall                838     1.8 %  (mostly SDL2 FFI)
+
+  **Headline: an idle Pharo IDE spends 64 % of CPU in fullGC.**
+  Not in dispatch.  Not in primitives.  In the mark-sweep collector.
+
+  The mark phase walks every pointer slot of every reachable
+  object, looking each oop up in a `std::unordered_set` to test
+  whether it's already marked.  The sweep phase clears freed
+  memory with `__bzero`.  Both are O(heap size) per collection
+  cycle, and the collection cycle fires constantly because
+  Morphic allocates aggressively.
+
+## Top hotspots — active hot loop
+
+    Symbol                                          Samples   % of interpret
+    pharo::Interpreter::interpret                   44 607   100  %
+      pharo::Interpreter::sendSelector              17 593    39.4 %
+      pharo::Interpreter::activateMethod            10 343    23.2 %
+      pharo::Interpreter::push                       6 157    13.8 %
+      pharo::ObjectMemory::fullGC                    3 487     7.8 %
+      pharo::Interpreter::executePrimitive           2 618     5.9 %
+      pharo::Interpreter::returnFromMethod           2 272     5.1 %
+      pharo::Interpreter::returnValue                1 519     3.4 %
+      pharo::Interpreter::dispatchBytecode             893     2.0 %
+      pharo::Interpreter::patchJITICAfterSend          871     2.0 %
+      pharo::sista::Runtime::compile                   647     1.5 %
+      pharo::jit::JITRuntime::noteMethodEntry          548     1.2 %
+    Top primitive: primitiveExternalCall                 825     1.8 %
+
+  **Headline: under active code the dispatch path** (sendSelector
+  + activateMethod + push + dispatchBytecode + returnFromMethod +
+  returnValue + executePrimitive) **eats 76 % of CPU.  GC drops
+  to 8 %.**
+
+  Sista compile is doing real work (1.5 %) but the resulting
+  compiled code only eliminates a tiny fraction of dispatch
+  cost — Sista today dispatches leaf + Send0 methods only, so
+  most sends still go through the full sendSelector path.
+
+## Top primitives across the active sample
+
+    825   primitiveExternalCall            (mostly SDL2 / FFI)
+    331   primitiveFullClosureValue        (block evaluation)
+    267   primitiveStringCompareWith
+    180   primitiveAt
+    148   primitiveAtPut
+    117   primitiveSize
+     69   primitiveStringReplace
+     44   primitiveStringHashInitialHash
+     44   primitiveNewWithArg
+     29   primitiveNew
+
+  No single primitive is hot enough to be worth a targeted
+  rewrite.  primitiveExternalCall covers all FFI — improving SDL2
+  / iOS-platform FFI dispatch could help, but most of its time
+  is inside the C function being called, not in the prim itself.
+
+## What this means for A/B/C
+
+The *idle profile* refutes the inlining plan's "primitives
+dominate, JIT is ~5 % of real-app time" hypothesis.  The bigger
+chunk is GC, not primitives.
+
+The *active profile* confirms dispatch dominates execution of
+real Smalltalk code — but the relevant "real Smalltalk code" in
+an iOS IDE is small bursts (open a Browser, select a class,
+render method list) interleaved with long idle periods (waiting
+for user input, showing the world).
+
+So both A and C are partial answers:
+
+  - **C alone (ship iOS, accept perf)** leaves the 64 % GC cost
+    on the table.  An iOS app that drops 64 % of its CPU into
+    fullGC will heat the device, drain battery, and feel
+    sluggish in scrolling.
+  - **A alone (Phase 4 inlining)** addresses dispatch but does
+    nothing for the idle GC cost.  Phase 4 is also 7–11 weeks
+    with high deopt risk before any user-visible benefit.
+
+A third answer becomes obvious from the data:
+
+### Option D (NEW): Generational GC first, inlining later
+
+  - Generational GC infrastructure exists (`PHARO_YOUNG_GEN`,
+    off by default).  Per memory entry
+    `project_younggen_gc_wip.md`, "PHARO_YOUNG_GEN=1 works"
+    but `testClearing` has weak-ref issues unrelated to YG.
+  - Time to default-on:  **~2 weeks** of stabilization (the
+    code is built; bugs need bisection).  Estimated 3–10×
+    improvement on idle-image GC overhead based on standard
+    generational hit rates (most allocations die young).
+  - Risk: medium.  Generational GC has subtle interaction with
+    write barriers; we already store-point-trace.  Most
+    failures are deterministic enough to catch in SUnit.
+  - Then revisit Option A for the dispatch hot path.
+
+This is the data-supported recommendation.  Pivot from "inlining
+in 7-11 weeks" to "stabilize PHARO_YOUNG_GEN in ~2 weeks", then
+re-profile and decide whether dispatch (now ≥80 % of remaining
+CPU) is worth the inlining investment.
+
+## Concrete next step (this afternoon)
+
+  1. Run the SUnit per-class isolation suite with PHARO_YOUNG_GEN=1
+     to see what's actually broken under it today.  Compare to
+     today's 12665 / 0 timeouts baseline.
+  2. If correctness is close (within ±10 failures), bisect those
+     and start the 2-week stabilization.
+  3. If correctness is far off (>50 new failures), reconsider:
+     it may be cheaper to attack the GC hot path with bitmap-mark
+     and a freelist that doesn't bzero (skip the `__bzero` 13.5 %
+     cost) than to stabilize the existing YG code.
+
+The first step takes one VM run (~80 min) and gives the data to
+choose.  Will start it next.
