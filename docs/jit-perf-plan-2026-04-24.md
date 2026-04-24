@@ -456,5 +456,30 @@ This validates Option D before even running the SUnit suite.  YG
 isn't theoretical — when stable, it's a 2× win on dict-heavy work
 and a Cog-beating win on factorial.
 
+### Sampled YG bench — confirms GC really drops
+
+Re-sampled the same bench under YG=1 (20 s sample,
+`docs/perf-2026-04-24/profile-yg-bench.txt`):
+
+    Symbol                          Default JIT bench   YG=1 bench   Delta
+    pharo::ObjectMemory::fullGC     729 samples         291 samples  -60 %
+    pharo::ObjectMemory::scanPointerFields  182          80          -56 %
+    pharo::ObjectMemory::markAndTrace       176          75          -57 %
+    pharo::ObjectMemory::scavenge             0          74          NEW
+    pharo::ObjectMemory::storePointer    1 648          25          -98 %
+
+  Total GC samples: 729 (default) → 365 (YG) = **GC time
+  cut nearly in half**.
+
+  storePointer drop is the biggest signal: under mark-sweep the
+  store-pointer path traces every write for cycle detection;
+  under YG the write barrier only adds an entry to the
+  remembered-set when an old object points at a new one — most
+  stores skip it entirely.
+
+  This is the direct mechanistic confirmation: the bench wins
+  aren't measurement noise, they're the GC code path actually
+  doing less work.
+
 Next: SUnit suite under YG (waiting for T2 baseline to finish
 sharing /tmp file paths first).
