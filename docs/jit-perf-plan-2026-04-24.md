@@ -481,6 +481,37 @@ Re-sampled the same bench under YG=1 (20 s sample,
   aren't measurement noise, they're the GC code path actually
   doing less work.
 
+### SUnit suite under PHARO_T2=1: identical to default JIT
+
+Ran the full 565-class per-class isolation suite (180 s each)
+with PHARO_T2=1.  Results saved to
+`docs/jit-baseline-2026-04-24-t2.txt`.
+
+                           Default JIT       PHARO_T2=1
+    Classes attempted:     565               565
+    Classes ran tests:     539               539
+    Classes ok:            535               535
+    Classes no-tests:      26                26
+    Classes fail:          3                 3
+    Classes error:         1                 1
+    Classes timeout:       0                 0
+    Tests passed:          12665             12664   (-1, SHA256Test 10→9)
+    Tests failed:          3                 3
+    Tests errored:         1                 1
+    Wall clock:            4697 s (78 m)     4671 s (78 m)
+
+Same 4 non-ok classes (OCClassBuilderTest image bug,
+BlockClosureValueWithinTest cold-start, ProcessMonitor +
+TestExecutionEnvironment).  Same wall-clock within 1 %.
+
+**T2 is correctness-clean and perf-neutral.**  Not a regression,
+not a win.  This means we *could* default-on `PHARO_T2=1`
+without breaking anything — but there's no reason to, since it
+also doesn't help.  The asmjit infrastructure stays paid-for
+but inert until either (a) we extend T2 coverage past leaf
+methods, or (b) future work needs a real x86/arm64 emitter
+beyond stencils.
+
 ### YG + T2 combined: same as YG alone
 
 While the SUnit-under-T2 baseline runs (uses /tmp/sunit_*),
