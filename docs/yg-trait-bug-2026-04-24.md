@@ -1,12 +1,39 @@
 # YG TraitTest>>testTraitsUsersSanity Failure — 2026-04-24
 
-## Summary
+**STATUS: FIXED** — root cause was a class-table identity-hash collision in
+`ObjectMemory::generateHash()`.  Fix landed in commit (this one).
+Harness skip reverted.  Test passes 54/54 under both default JIT and
+PHARO_YOUNG_GEN=1.
 
-Under `PHARO_YOUNG_GEN=1`, running `TraitTest` via the SUnit harness leaves
-`ConstantBlockClosure` (and likely other system classes) with stale obsolete
-trait composition references.  `testTraitsUsersSanity` then fails because
-the trait→users IdentitySet doesn't include `ConstantBlockClosure`, while
-`ConstantBlockClosure.traits` lists those obsolete traits.
+## Root cause
+
+In Spur, a class's identity-hash field IS its index in the class table.
+Our `generateHash()` was producing 22-bit random hashes for any object
+that asked for one (via `identityHashOf`).  When a young test metaclass
+(`TTT23 classTrait` in this case) was created and identity-hashed, the
+LCG happened to produce hash `924672` — already in use as
+ConstantBlockClosure's metaclass index.  The next call to
+`registerClass` clobbered `classTable_[924672] = TTT23 classTrait`, so
+all subsequent `classOf:` lookups for ConstantBlockClosure returned
+TTT23 classTrait.
+
+The image-side test then read `ConstantBlockClosure traits` and got
+`TTT23 classTrait`'s composition — TaSequence(AnObsoleteTTT3,
+AnObsoleteTTT2) — even though no Smalltalk code had ever called
+`traitComposition:` on ConstantBlockClosure's metaclass.
+
+The fix: `generateHash()` now skips hash values whose class-table slot
+is already occupied by a class.  Skip rate is ~0.12 % at ~5000 classes
+out of 4M slots — negligible.
+
+Why YG-specific: under default JIT, no eden allocation; classes go to
+old space directly.  Under YG, `lastHash_` advances differently
+because scavenge runs invoke `identityHashOf` on additional objects
+(forwarding-map keys, etc.), shifting the LCG state.  Different
+sequence of hashes → different collision pattern.  The collision is
+ALWAYS possible (architectural), just much more likely under YG.
+
+## Original symptom (preserved for history)
 
 ## Reproduction
 

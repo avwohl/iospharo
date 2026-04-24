@@ -1336,12 +1336,32 @@ void ObjectMemory::ensureIdentityHash(Oop obj) {
 uint32_t ObjectMemory::generateHash() {
     // Use D.H. Lehmer's linear congruential generator (same as official Pharo VM)
     // lastHash = lastHash * 16807 (which is 7^5)
-    // Adding top bits gives better spread
+    // Adding top bits gives better spread.
+    //
+    // CLASS-INDEX COLLISION AVOIDANCE (2026-04-24): in Spur, a class's
+    // identity-hash field IS its class table index.  If `generateHash()`
+    // returns a value that's already a class index, and the receiving
+    // object later becomes a class (via Behavior subclass:..., trait
+    // composition, anonymous class creation, etc.), `registerClass` would
+    // clobber the existing class table entry, aliasing the two classes.
+    //
+    // Symptom we hit: under PHARO_YOUNG_GEN=1, a young anonymous test
+    // metaclass (TraitTest's `TTT23 classTrait`) got hash 924672 — same
+    // as ConstantBlockClosure's metaclass — and the registerClass overwrite
+    // made `ConstantBlockClosure class` resolve to TTT23 classTrait.  Then
+    // `ConstantBlockClosure traits` returned TTT23's trait composition.
+    //
+    // Fix: skip slots that are currently occupied by a class.  With
+    // ~5000 classes in a fresh Pharo image and 4M-slot class table, the
+    // skip rate is ~0.12 % — negligible.
     uint32_t hash;
     do {
         lastHash_ = (lastHash_ * 16807) & 0xFFFFFFFF;
         hash = (lastHash_ + (lastHash_ >> 4)) & 0x3FFFFF;  // 22-bit hash
-    } while (hash == 0);  // 0 means unhashed, so regenerate
+    } while (hash == 0
+             || (hash < classTable_.size()
+                 && classTable_[hash].isObject()
+                 && !classTable_[hash].isNil()));
     return hash;
 }
 
