@@ -24,29 +24,46 @@ Per-class non-ok detail: /tmp/jit-baseline-2026-04-24.detail.txt
     Tests skipped:      29                     29
     Wall clock:         4637s (77m 17s)        4697s (78m 17s)   (+60s, +1.3%)
 
-## What is still broken — 4 classes, all pre-existing, none JIT-specific
+## What is still broken — 4 classes, none JIT-specific, but 3 are VM bugs
+
+Cross-checked the 4 non-ok classes against stock Cog 13 (fresh image,
+run_sunit_cog.st, 50 s per-test timeout):
+
+                                Cog                  Our VM (JIT)
+  OCClassBuilderTest            P=25 F=0 E=1 S=0     P=25 F=0 E=1 S=0
+  BlockClosureValueWithinTest   P=5  F=0 E=0 S=0     P=4  F=1 E=0 S=0
+  ProcessMonitorTestServiceTest P=44 F=0 E=0 S=3     P=43 F=1 E=0 S=3
+  TestExecutionEnvironmentTest  P=38 F=0 E=0 S=0     P=37 F=1 E=0 S=0
+                                ----------------     ----------------
+  TOTAL                         P=112 F=0 E=1 S=3    P=109 F=3 E=1 S=3
+
+Per-class verdicts:
 
   281 OCClassBuilderTest                         P=25  F=0  E=1  S=0
         testCreateNormalClassWithTraitComposition — image bug.  Test
         references trait `TAsStringCommaAndDelimiterTest` which is not
         defined in this Pharo 13 image.  Compiler correctly emits an
-        `OCCodeError: Undeclared variable`.  Upstream image, not VM.
+        `OCCodeError: Undeclared variable`.  Cog reproduces the EXACT
+        same error.  Confirmed: upstream image, not VM.
 
   398 BlockClosureValueWithinTest                P=4   F=1  E=0  S=0
-        testValueWithinTimingBasicMilliseconds — cold-start timing
-        artifact.  Fails the FIRST test of a fresh image whether
-        JIT or NO_JIT; passes when any other class warms the VM
-        first.  Not a JIT bug.
+        testValueWithinTimingBasicMilliseconds — VM-level miss (Cog
+        passes).  Not JIT-specific (also fails under our NO_JIT in
+        cold-start position) but our VM fails it where Cog doesn't.
+        Likely Delay/scheduler timing precision under our harness's
+        instrumented run loop.
 
   503 ProcessMonitorTestServiceTest              P=43  F=1  E=0  S=3
-        testFailTestWhenBackgroundProcessWasFailedDuringFinal
-        TryToFinishItAtTestCompletionTime — fails under BOTH JIT
-        and NO_JIT with warmup; batch-mode NO_JIT only masked it
-        via state accumulation.  Pre-existing harness behavior.
+        testFailTestWhenBackgroundProcess…AtTestCompletionTime — VM
+        bug (Cog passes 44, we pass 43).  Fails under both JIT and
+        NO_JIT — process-monitoring/forked-process handling differs
+        from Cog's semantics.  Not JIT, not harness — real VM diff.
 
   507 TestExecutionEnvironmentTest               P=37  F=1  E=0  S=0
-        testHandleForkedProcessesByAllServices — same family as
-        ProcessMonitorTestServiceTest; fails under both modes.
+        testHandleForkedProcessesByAllServices — VM bug (Cog passes
+        38, we pass 37).  Same family as ProcessMonitorTestService:
+        forked-process accounting / TestExecutionEnvironment
+        cleanup ordering differs from Cog.  Real VM diff.
 
 ## What changed vs 04-23
 
@@ -60,12 +77,18 @@ Per-class non-ok detail: /tmp/jit-baseline-2026-04-24.detail.txt
 ## JIT correctness
 
   - 12665 / 12669 = 99.97% pass.
-  - Zero JIT-specific failures.  Every non-passing class also
-    fails (or has the same image-level bug) under NO_JIT.
+  - Zero JIT-specific failures.  Every non-passing test also
+    fails (or has the same image-level bug) under our NO_JIT.
   - Zero timeouts.  Task #41 fix (commit f69734f, side-channel
     selectorBits array surviving GC memset) continues to hold
     across all 19 previously-timing-out classes (heap-walk
     introspection, weak refs, traits, crypto, OpalCompiler).
+  - 3 of the 4 non-ok tests are real VM-vs-Cog deltas (Cog
+    passes them).  They are NOT JIT regressions — same behavior
+    under NO_JIT — but they ARE behavioral diffs the VM should
+    eventually close.  All 3 are in the
+    Process/TestExecutionEnvironment/Delay area, not the JIT
+    surface.
 
 ## JIT performance
 
@@ -85,6 +108,12 @@ Per-class non-ok detail: /tmp/jit-baseline-2026-04-24.detail.txt
 
   Rerunning the full per-class JIT suite on 2026-04-24 reproduces
   the 04-23 baseline exactly: 12665 tests pass, 0 timeouts, same
-  4 pre-existing non-ok classes (1 image bug, 1 cold-start
-  artifact, 2 harness flakes).  Zero VM correctness regressions.
+  4 pre-existing non-ok classes.  Zero VM correctness regressions.
   JIT remains stable.
+
+  Cog cross-check: of the 4 non-ok classes, 1 reproduces on Cog
+  (image bug), 3 are VM-vs-Cog deltas in the Process / Delay /
+  TestExecutionEnvironment area.  None are JIT-related (all 3
+  reproduce under our NO_JIT too) — they're pre-existing
+  scheduler/process-handling behavioral diffs unrelated to the
+  recent JIT fixes.

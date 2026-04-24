@@ -1,0 +1,149 @@
+=== Stock Cog SUnit run ===
+Classes to run: 4
+Per-test timeout: 0:00:00:50
+Image: /private/tmp/cog-check/Pharo.image
+Started: 2026-04-24T09:52:25.048423-04:00
+
+=== OCClassBuilderTest ===
+  RUN: testCreateEphemeronClassNamed
+  RUN: testCreateEphemeronClassWithAll
+  RUN: testCreateImmediateClassNamed
+  RUN: testCreateImmediateClassWithAll
+  RUN: testCreateNilSubclass
+  RUN: testCreateNormalClassNamed
+  RUN: testCreateNormalClassSuperClass
+  RUN: testCreateNormalClassWithClassVariable
+  RUN: testCreateNormalClassWithIV
+  RUN: testCreateNormalClassWithPackage
+  RUN: testCreateNormalClassWithSharedPools
+  RUN: testCreateNormalClassWithTrait
+  RUN: testCreateNormalClassWithTraitComposition
+  ERROR: testCreateNormalClassWithTraitComposition (OCCodeError: Undeclared variable)
+  RUN: testCreateTraitUsingAnotherSingleTrait
+  RUN: testCreateTraitUsingAnotherTraitComposition
+  RUN: testCreateTraitWithoutOtherTraits
+  RUN: testCreateVariableByteClassNamed
+  RUN: testCreateVariableByteClassWithAll
+  RUN: testCreateVariableClassNamed
+  RUN: testCreateVariableClassWithAll
+  RUN: testCreateVariableWordClassNamed
+  RUN: testCreateVariableWordClassWithAll
+  RUN: testCreateWeakClassNamed
+  RUN: testCreateWeakClassWithAll
+  RUN: testDefaultResolve
+  RUN: testUseUndefinedClass
+Total: 26 P:25 F:0 E:1 S:0
+
+=== BlockClosureValueWithinTest ===
+  RUN: testValueWithinNonLocalReturnDoesNotTimeout
+  RUN: testValueWithinTimingBasicMilliseconds
+  RUN: testValueWithinTimingNestedInnerMilliseconds
+  RUN: testValueWithinTimingNestedOutertestValueWithinTimingBasicMilliseconds
+  RUN: testValueWithinTimingRepeatMilliseconds
+Total: 5 P:5 F:0 E:0 S:0
+
+=== ProcessMonitorTestServiceTest ===
+  RUN: testAllowRunningBackgroundProcessesToFinish
+  RUN: testAllowRunningBackgroundProcessesToFinishButFailTestIfItCant
+  RUN: testAlwaysPassBackgroundHalt
+  SKIP: testAlwaysPassBackgroundHalt ()
+  RUN: testCleanUpShouldNotTerminateAllFailedProcessesWhenSuchTerminationIsDisabled
+  RUN: testCleanUpShouldNotTerminateAllRunningProcessesWhenSuchTerminationIsDisabled
+  RUN: testCleanUpShouldRestoreDefaultFailingLogicForRunningProcessesCase
+  RUN: testCleanUpShouldRestoreProcessTerminationLogic
+  RUN: testCleanUpShouldRestoreSuspensionLogic
+  RUN: testCleanUpShouldRevertServiceToBeEnabledByDefault
+  RUN: testCleanUpShouldTerminateAllFailedProcesses
+  RUN: testCleanUpShouldTerminateAllRunningProcesses
+  RUN: testDisableRunningProcessesCleanupWhenPassBackgroundFailures
+  RUN: testDoesNotRaiseForkedProcessFailureWhenFailuresWerePassedAndMainProcessAlsoFails
+  RUN: testDoesNotRaiseForkedProcessFailureWhenFailuresWerePassedAndProcessCompletes
+  SKIP: testDoesNotRaiseForkedProcessFailureWhenFailuresWerePassedAndProcessCompletes ()
+  RUN: testDoesNotRaiseForkedProcessFailureWhenThereWasOnlyMainProcessFailure
+  RUN: testDoesNotRaiseLeftRunningProcessWhenItAllowsThemToBe
+  RUN: testDoesNotRaiseLeftRunningProcessWhenProcessWasOnlyCreated
+  RUN: testDoesNotRaiseLeftRunningProcessWhenThereWasMainProcessFailure
+  RUN: testFailTestWhenBackgroundFailureWasPassedButMainProcessCompletesSuccessfully
+  RUN: testFailTestWhenBackgroundProcessWasFailedDuringFinalTryToFinishItAtTestCompletionTime
+  RUN: testFailTestWhenItIsCompletedWithBackgroundFailures
+  RUN: testFailTestWhenItIsCompletedWithBackgroundFailuresAndRunningProcesses
+  RUN: testFailTestWhenItIsCompletedWithRunningProcesses
+  RUN: testGettingBackgroundFailuresFromEnvironment
+  RUN: testGettingFailuresFromEnvironment
+  RUN: testGettingForkedProcessesFromEnvironment
+  RUN: testGettingServiceFromEnvironment
+  RUN: testGettingServiceFromTestCase
+  RUN: testHasDefaultFailingStrategyForRunningProcesses
+  RUN: testHasDefaultTerminationStrategyForRunningProcesses
+  RUN: testHasEmptyForkedProcessesByDefault
+  RUN: testHasEmptySuspendedBackgroundFailuresByDefault
+  RUN: testIgnoreDirtyTestErrors
+  RUN: testIsEnabledByDefault
+  RUN: testIsMainTestProcessFailed
+  RUN: testIsTestProcessFailed
+  RUN: testPassBackgroundFailuresWhenSuspensionLogicIsDisabled
+  SKIP: testPassBackgroundFailuresWhenSuspensionLogicIsDisabled ()
+  RUN: testRecordMainTestProcessError
+  RUN: testRecordMainTestProcessUnhandledError
+  RUN: testResumeFailedProcessWhenItFailsTestWithUnhandledError
+  RUN: testResumeFailedProcessesWhenHaltIsSignaled
+  RUN: testResumeFailedProcessesWhenHaltIsSignaledInBackground
+  RUN: testResumeFailedProcessesWhenTestFailureIsUnhandled
+  RUN: testShouldSuspendBackgroundFailuresByDefault
+  RUN: testStoreAllForkedProcesses
+  RUN: testSuspendBackgroundError
+  RUN: testSuspendBackgroundWarning
+Total: 47 P:44 F:0 E:0 S:3
+
+=== TestExecutionEnvironmentTest ===
+  RUN: testActivationShouldRegisterDefaultServices
+  RUN: testActivationShouldSetUpMainTestProcess
+  RUN: testActivationShouldStartWatchDog
+  RUN: testCleanUpAlsoDisabledTestServices
+  RUN: testCleanUpShouldRevertServiceToBeEnabledByDefault
+  RUN: testCleanUpTestServicesAfterFailedTest
+  RUN: testCleanUpTestServicesAfterSucceedTest
+  RUN: testCleanUpTestServicesAfterTerminatedTest
+  RUN: testDeactivation
+  RUN: testDisableGivenServiceWhenItExists
+  RUN: testDisableGivenServiceWhenItIsNotRegistered
+  RUN: testDoesNotCleanUpTestServicesUntilTestErrorIsNotHandled
+  RUN: testDoesNotNotifyTestServicesAboutTerminatedTest
+  RUN: testEnableGivenServiceWhenItExists
+  RUN: testEnableGivenServiceWhenItIsNotRegistered
+  RUN: testEnableGivenServiceWithConfigurationBlock
+  RUN: testFindService
+  RUN: testGettingEnvironmentFromTestCase
+  RUN: testHandleForkedProcessesByAllServices
+  RUN: testHasEmptyServicesByDefault
+  RUN: testIgnoreLongTestWhenItIsSuspendedAsUnderDebug
+  RUN: testIgnoreWatchDogProcessAsForkedOne
+  RUN: testIsEnabledByDefault
+  RUN: testIsMainTestProcess
+  RUN: testIsMainTestProcessActive
+  RUN: testIsMainTestProcessFailed
+  RUN: testNotifyOnlyEnabledTestServices
+  RUN: testNotifyTestServicesAboutCompletedFailedTest
+  RUN: testNotifyTestServicesAboutCompletedTest
+  RUN: testNotifyTestServicesAboutHalt
+  RUN: testNotifyTestServicesAboutUnhandledError
+  RUN: testNotifyTestServicesAboutWarning
+  RUN: testRegisteredServiceShouldBeBoundToEnvironment
+  RUN: testResetWatchDogTimeoutBetweenFailedTests
+  RUN: testResetWatchDogTimeoutBetweenTests
+  RUN: testRunningTest
+  RUN: testRunningTestShouldSetDefaultTimeLimit
+  RUN: testRunningTooLongTest
+Total: 38 P:38 F:0 E:0 S:0
+
+
+=== BATCH TOTAL ===
+Classes: 4
+Pass: 112
+Fail: 0
+Error: 1
+Skip: 3
+Total: 116
+Finished: 2026-04-24T09:52:25.863174-04:00
+
+=== BATCH COMPLETE ===
