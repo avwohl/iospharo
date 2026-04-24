@@ -145,7 +145,15 @@ DebugSettings::DebugSettings() {
     sistaUnsafeArith       = envPresent("PHARO_SISTA_UNSAFE_ARITH");
     sistaAllowBail         = envPresent("PHARO_SISTA_ALLOW_BAIL");
     sistaNoBail            = envPresent("PHARO_SISTA_NO_BAIL");
-    youngGenEnabled        = envPresent("PHARO_YOUNG_GEN");
+    // Generational GC default ON (2026-04-24).  Bench wins 2-9x on
+    // allocation-heavy workloads (factorial 231→26ms beats Cog).
+    // Cuts fullGC samples ~50%.  Override to OFF only if PHARO_NO_YG is
+    // set; PHARO_YOUNG_GEN=1 still forces ON for backward compat.
+    {
+        const bool noYG = envPresent("PHARO_NO_YG") || envPresent("PHARO_NO_YOUNGGEN");
+        const bool explicitOn = envPresent("PHARO_YOUNG_GEN");
+        youngGenEnabled = explicitOn || !noYG;
+    }
     ygNoScavenge           = envPresent("PHARO_YG_NO_SCAVENGE");
     finalizeDeferred       = !envPresent("PHARO_INLINE_FINALIZE");
 }

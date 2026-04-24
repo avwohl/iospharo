@@ -107,9 +107,11 @@ struct DebugSettings {
     bool sistaAllowBail = false;                   // PHARO_SISTA_ALLOW_BAIL (deprecated — now default)
     bool sistaNoBail = false;                      // PHARO_SISTA_NO_BAIL (restore conservative gate)
 
-    // Generational GC (eden + scavenge).  PHARO_YOUNG_GEN=1 enables
-    // eden allocation; full GC auto-scavenges before compact.
-    bool youngGenEnabled = false;                  // PHARO_YOUNG_GEN
+    // Generational GC (eden + scavenge).  Default ON (2026-04-24)
+    // after class-table identity-hash collision fix.  Bench wins
+    // 2-9x on allocation-heavy workloads (factorial beats Cog).
+    // Set PHARO_NO_YG=1 to opt out; PHARO_YOUNG_GEN=1 forces ON.
+    bool youngGenEnabled = true;                   // PHARO_YOUNG_GEN / opt-out PHARO_NO_YG
     // Skip the per-safe-point scavenge trigger.  Pre-compact scavenge
     // still runs inside fullGC.  Useful for isolating scavenge
     // cadence from correctness.
