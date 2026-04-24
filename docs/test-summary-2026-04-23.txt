@@ -131,22 +131,23 @@ bug, not a per-test correctness issue.
 ## Full JIT-mode per-class isolation baseline (565 classes)
 
 Ran every class in its own fresh-image VM invocation, 180s timeout
-each, default JIT settings.  Two back-to-back runs:
+each, default JIT settings.  Three runs across the day:
 
-    Run 1 (mid-afternoon):     518 cls, 11849 pass, 4 fail, 1 err,  95 min
-    Run 2 (late afternoon):    518 cls, 11850 pass, 3 fail, 1 err, 134 min
-                                                                    ^-- wall clock
-The ~1-test deltas are run-to-run timing noise (cold-start sensitive
-tests drift between pass and fail).  Aggregate (Run 2):
+    Run 1 (mid-afternoon,  pre-Task#41 fix):  518 cls, 11849 pass, 4 fail, 1 err, 19 timeout,  95 min
+    Run 2 (late afternoon, pre-Task#41 fix):  518 cls, 11850 pass, 3 fail, 1 err, 20 timeout, 134 min
+    Run 3 (evening,       post-Task#41 fix):  539 cls, 12664 pass, 3 fail, 1 err,  0 timeout,  77 min
+
+The Task #41 fix (commit f69734f, side-channel selectorBits array)
+unblocked all 19-20 previously-timing-out classes.  Run 3 aggregate:
 
     Classes attempted:      565
-    Classes with tests run: 518
-    Classes timed out:       20  (19-20 across runs)
-    Tests passed:         11850  (99.97% of tests that ran)
-    Tests failed:             3
-    Tests errored:            1
-    Tests skipped:           27
-    Wall clock:           8040s  (2h 14min)
+    Classes with tests run: 539  (+21 over pre-fix; all the ex-timeouts)
+    Classes timed out:        0
+    Tests passed:         12664  (+814 over pre-fix; 99.97% of tests that ran)
+    Tests failed:             3  (same as pre-fix — harness/image artifacts)
+    Tests errored:            1  (same as pre-fix — image missing trait)
+    Tests skipped:           29
+    Wall clock:           4637s  (77 min — 1h faster than pre-fix runs)
 
 ### JIT-specific timeouts (19 classes)
 
@@ -198,11 +199,13 @@ timing artifact, not a VM-level issue.
 ## Bottom line
 
   - Interpreter-only (NO_JIT): zero correctness issues in 23695 tests.
-  - JIT-mode (isolation, 565 classes): zero correctness regressions
-    vs NO_JIT.  19 "timeouts" are slowness (heap walks, crypto, trait
-    composition) not hangs.  Three classes initially flagged as
-    JIT-only failures all turn out to be cold-start or image-state
-    artifacts reproducing equally under NO_JIT.
+  - JIT-mode (isolation, 565 classes, post-Task#41 fix): 12664 pass
+    / 0 timeouts / 3 fail / 1 err.  Task #41 resolved by adding a
+    side-channel selectorBits array that survives GC memset — all
+    19 previously-timing-out classes (heap walks, traits, crypto)
+    now pass.  Three classes initially flagged as JIT-only failures
+    all turn out to be cold-start or image-state artifacts
+    reproducing equally under NO_JIT.
 
 ## JIT performance regression on heap-walking workloads
 
