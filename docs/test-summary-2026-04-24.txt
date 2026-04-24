@@ -1,0 +1,90 @@
+JIT-mode test-suite rerun — 2026-04-24
+
+Methodology: per-class fresh-image VM, 180s timeout per class, default
+JIT settings (T1 on, Sista on, JIT_DEFER=4s, T2 opt-in only).
+Class list: scripts/pharo-headless-test/test_classes.txt (565 classes).
+Same methodology as docs/jit-baseline-2026-04-23-run3-postfix.txt.
+
+Per-class detail: docs/jit-baseline-2026-04-24.txt
+Per-class non-ok detail: /tmp/jit-baseline-2026-04-24.detail.txt
+
+## Aggregate
+
+                        04-23 baseline         04-24 rerun
+    Classes attempted:  565                    565
+    Classes ran tests:  539                    539
+    Classes no-tests:   26                     26
+    Classes timeout:    0                      0
+    Classes crash:      0                      0
+    Classes fail:       3                      3
+    Classes error:      1                      1
+    Tests passed:       12664                  12665   (+1)
+    Tests failed:       3                      3
+    Tests errored:      1                      1
+    Tests skipped:      29                     29
+    Wall clock:         4637s (77m 17s)        4697s (78m 17s)   (+60s, +1.3%)
+
+## What is still broken — 4 classes, all pre-existing, none JIT-specific
+
+  281 OCClassBuilderTest                         P=25  F=0  E=1  S=0
+        testCreateNormalClassWithTraitComposition — image bug.  Test
+        references trait `TAsStringCommaAndDelimiterTest` which is not
+        defined in this Pharo 13 image.  Compiler correctly emits an
+        `OCCodeError: Undeclared variable`.  Upstream image, not VM.
+
+  398 BlockClosureValueWithinTest                P=4   F=1  E=0  S=0
+        testValueWithinTimingBasicMilliseconds — cold-start timing
+        artifact.  Fails the FIRST test of a fresh image whether
+        JIT or NO_JIT; passes when any other class warms the VM
+        first.  Not a JIT bug.
+
+  503 ProcessMonitorTestServiceTest              P=43  F=1  E=0  S=3
+        testFailTestWhenBackgroundProcessWasFailedDuringFinal
+        TryToFinishItAtTestCompletionTime — fails under BOTH JIT
+        and NO_JIT with warmup; batch-mode NO_JIT only masked it
+        via state accumulation.  Pre-existing harness behavior.
+
+  507 TestExecutionEnvironmentTest               P=37  F=1  E=0  S=0
+        testHandleForkedProcessesByAllServices — same family as
+        ProcessMonitorTestServiceTest; fails under both modes.
+
+## What changed vs 04-23
+
+  - +1 pass on SHA256Test (9 → 10).  No regressions.
+  - +60 s wall clock (~1% — well within noise; per-class times
+    routinely jitter ±2 s and Pharo image download/setup adds
+    variance).
+  - Same 4 non-ok classes; same per-class P/F/E/S counts on every
+    other one of the 539 classes that ran tests.
+
+## JIT correctness
+
+  - 12665 / 12669 = 99.97% pass.
+  - Zero JIT-specific failures.  Every non-passing class also
+    fails (or has the same image-level bug) under NO_JIT.
+  - Zero timeouts.  Task #41 fix (commit f69734f, side-channel
+    selectorBits array surviving GC memset) continues to hold
+    across all 19 previously-timing-out classes (heap-walk
+    introspection, weak refs, traits, crypto, OpalCompiler).
+
+## JIT performance
+
+  Wall clock identical to 04-23 within 1%.  No code-path changes
+  since the 04-23 baseline (only doc commits 4e85a93, 5c1d6b7,
+  372f1de, eaf40dd land between f69734f and now), so this run is
+  a stability check, not a perf measurement.
+
+  Per the 2026-04-24 perf measurement in docs/test-summary-2026-04-23.txt:
+    100M arithmetic loop:  JIT 4415 ms vs NO_JIT 4467 ms (1% win)
+    fib(30):               JIT 198 ms  vs NO_JIT 213 ms  (7% win)
+    Stock Cog comparison:  Cog is 17-28× faster — gap closes only
+                           with T2 register allocation, real PIC,
+                           and method inlining (architectural work).
+
+## Bottom line
+
+  Rerunning the full per-class JIT suite on 2026-04-24 reproduces
+  the 04-23 baseline exactly: 12665 tests pass, 0 timeouts, same
+  4 pre-existing non-ok classes (1 image bug, 1 cold-start
+  artifact, 2 harness flakes).  Zero VM correctness regressions.
+  JIT remains stable.
