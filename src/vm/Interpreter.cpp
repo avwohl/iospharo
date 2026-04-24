@@ -15095,9 +15095,32 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
 
             // Get selector: from IC data (Tier 1) or cachedTarget (Tier 2).
+            // Task #41: if icDataPtr[18] is zero (post-GC memset), fall back
+            // to the JIT method's side-channel selBits array which survives
+            // GC.  Warm-IC cases pay no overhead — they read slot 18 as
+            // before.  The side-array is only consulted when the primary
+            // slot is 0, which happens right after GC until the IC rewarms.
             Oop sendSel;
             if (state.icDataPtr) {
-                sendSel = Oop::fromRawBits(state.icDataPtr[18]);
+                uint64_t selBits = state.icDataPtr[18];
+                if (selBits == 0) {
+                    if (auto* jm = jitRuntime_.methodMap().lookup(state.method.rawBits())) {
+                        if (jm->numICEntries > 0) {
+                            uint8_t* icStart = jm->codeStart() + jm->codeSize
+                                             - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                            ptrdiff_t offset = reinterpret_cast<uint8_t*>(state.icDataPtr) - icStart;
+                            if (offset >= 0 && (offset % jit::IC_BYTES_PER_SITE) == 0) {
+                                uint32_t siteIdx = static_cast<uint32_t>(offset / jit::IC_BYTES_PER_SITE);
+                                if (siteIdx < jm->numICEntries) {
+                                    if (uint64_t* sba = jm->selBitsArray()) {
+                                        selBits = sba[siteIdx];
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                sendSel = Oop::fromRawBits(selBits);
             } else {
                 // Inline stencil bail or Tier 2 (MIR) exits — selector in cachedTarget.
                 sendSel = state.cachedTarget;

@@ -2770,6 +2770,18 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
                         visitor(sOop);
                     }
                 }
+                // Task #41: side-channel selBits array.  Each u64 is a
+                // selector Oop that needs GC update so the megacache miss
+                // path sees live pointers after compaction.
+                uint64_t* sba = m->selBitsArray();
+                if (sba) {
+                    for (uint32_t i = 0; i < m->numICEntries; i++) {
+                        if (sba[i] != 0) {
+                            Oop& sOop = *reinterpret_cast<Oop*>(&sba[i]);
+                            visitor(sOop);
+                        }
+                    }
+                }
             }
             m = m->nextInZone;
         }

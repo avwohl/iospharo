@@ -1818,7 +1818,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // holds J2J info: high byte = kind (0x80=getter, 0x40=setter), low 32
     // bits = slot index. When kind != 0, the send stencil inlines the field
     // access directly, bypassing the C++ boundary crossing entirely.
-    uint32_t icDataOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+    // Task #41: side-channel selBits array, one u64 per send site.
+    // Placed BEFORE IC data (not after) so the invariant
+    // `icStart = codeStart + codeSize - numICEntries*IC_BYTES_PER_SITE`
+    // stays true for all callers.  Accessed via JITMethod::selBitsArray().
+    uint32_t selBitsArrayOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+    uint32_t selBitsArraySize = numSendSites * sizeof(uint64_t);
+    uint32_t icDataOffset = selBitsArrayOffset + selBitsArraySize;
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     uint32_t totalSize = icDataOffset + icDataSize;
 
@@ -1986,6 +1992,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->codeSize = totalSize;
     jitMethod->numBytecodes = static_cast<uint16_t>(bcLen);
     jitMethod->numICEntries = numSendSites;
+    // Task #41: side-channel selBits array offset (0 if no send sites).
+    jitMethod->selBitsArrayOffset = numSendSites > 0 ? selBitsArrayOffset : 0;
     jitMethod->tier = 1;
 
     // Extract arg/temp counts from header
@@ -2056,6 +2064,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 }
                 uint64_t* icSlots = reinterpret_cast<uint64_t*>(icBase);
                 icSlots[18] = selectorBits;
+                // Task #41: also store in side-channel array.  Survives GC
+                // memset of IC slots, so the megacache miss path has a
+                // stable selector even when icSlots[18] has been zeroed.
+                if (uint64_t* sba = jitMethod->selBitsArray()) {
+                    sba[sendIdx] = selectorBits;
+                }
 
                 // A3 DIAG: count compile-time selBits=0 vs non-zero.
                 static size_t compileSelZero = 0, compileSelNonZero = 0;

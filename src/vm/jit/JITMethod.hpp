@@ -166,6 +166,16 @@ struct JITMethod {
     // --- Re-entry table ---
     uint32_t  bcToCodeTableOffset; // Offset from codeStart() to uint32_t[numBytecodes+1] table
 
+    // --- Side-channel selectorBits ---
+    // Task #41 (2026-04-23): out-of-band copy of each IC site's selector
+    // Oop.  Lives after the IC data in the same allocation.  At IC miss,
+    // the megacache lookup reads from here instead of icSlots[18] — which
+    // is memset to zero on GC by recoverAfterGC for stencil-probe safety.
+    // forEachRoot visits this array so the Oops are updated across GC.
+    // Offset from codeStart() to uint64_t[numICEntries] array.  Zero if
+    // the method has no send sites.
+    uint32_t  selBitsArrayOffset;
+
     // --- Accessors ---
 
     // Pointer to the start of machine code (immediately after header)
@@ -184,6 +194,18 @@ struct JITMethod {
 
     const ICEntry* icEntries() const {
         return reinterpret_cast<const ICEntry*>(codeStart() + codeSize);
+    }
+
+    // Pointer to the side-channel selectorBits array (Task #41).
+    // numICEntries u64 slots; entry i is the selector Oop bits for IC site i.
+    uint64_t* selBitsArray() {
+        if (selBitsArrayOffset == 0) return nullptr;
+        return reinterpret_cast<uint64_t*>(codeStart() + selBitsArrayOffset);
+    }
+
+    const uint64_t* selBitsArray() const {
+        if (selBitsArrayOffset == 0) return nullptr;
+        return reinterpret_cast<const uint64_t*>(codeStart() + selBitsArrayOffset);
     }
 
     // Pointer to the bcToCode re-entry table

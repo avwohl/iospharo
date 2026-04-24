@@ -604,6 +604,26 @@ extern "C" int jit_rt_ic_miss(
     constexpr int JM_STATE_OFFSET = 32;
 
     uint64_t selectorBits = icData[18];
+    // Task #41: icData[18] is memset to zero on GC (stencil-probe safety —
+    // the stencil IC loop derefs it as part of entry-slot iteration).
+    // Recover the selector from the JIT method's side-channel array so the
+    // megacache lookup doesn't bail out on every post-GC miss.  Don't
+    // write the recovered value back into slot 18 — that would make the
+    // stencil's null-check fall through to a crashing deref.
+    if (selectorBits == 0 && s->jitMethod && s->jitMethod->numICEntries > 0) {
+        JITMethod* jm = s->jitMethod;
+        uint8_t* icStart = jm->codeStart() + jm->codeSize
+                         - jm->numICEntries * IC_BYTES_PER_SITE;
+        ptrdiff_t offset = reinterpret_cast<uint8_t*>(icData) - icStart;
+        if (offset >= 0 && (offset % IC_BYTES_PER_SITE) == 0) {
+            uint32_t siteIdx = static_cast<uint32_t>(offset / IC_BYTES_PER_SITE);
+            if (siteIdx < jm->numICEntries) {
+                if (uint64_t* sba = jm->selBitsArray()) {
+                    selectorBits = sba[siteIdx];
+                }
+            }
+        }
+    }
     JITRuntime* jr = s->interp ? &s->interp->jitRuntime() : nullptr;
     if (selectorBits != 0 && jr) {
         MegaCacheEntry* cache = jr->megaCache();
