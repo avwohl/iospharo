@@ -207,26 +207,32 @@ Per `docs/sista-inlining-plan.md` "Alternative: don't do this":
 
 ---
 
-## Recommendation
+## Recommendation — DECIDED
 
-**Profile a real iOS workload before committing to Option A.**
+**This week: collect the data needed to choose A/B/C honestly.
+Next week: pick one, with evidence.**
 
-Before paying 7–11 weeks for monomorphic inlining, instrument an
-actual Pharo IDE session on macOS Catalyst (which is the closest
-proxy to iOS today) and measure where wall time actually goes.
-Hypothesis from the inlining plan: 90 %+ in primitives, JIT
-matters for the remaining ~5–10 %.
+We are *not* spinning up Phase 4 inlining, defaulting on PHARO_T2,
+or pivoting away from JIT work — until the four data-collection
+tasks below complete and we know which decision the numbers
+support.  Speculative architecture choices are how the 5–7 month
+estimate becomes 12.
 
-If the profile confirms primitives dominate → **Option C**.  Ship
-iOS, improve primitives where they hurt, JIT stays where it is.
+The single concrete deliverable for this week is a one-page memo
+(append to this file) titled **"What the profile actually
+showed"**, listing:
 
-If the profile shows interpreter dispatch as the hot spot → **Option
-B** as a 3–6-week down-payment, then re-measure before committing
-to Phase 4.
+  1. Top-10 wall-clock hotspots from a 5-min real Pharo IDE
+     session under our VM.
+  2. Whether PHARO_T2=1 regresses, matches, or improves the
+     565-class SUnit baseline.
+  3. The single-paragraph A/B/C choice the data supports, with
+     the next-week milestone for that choice.
 
-If interpreter dispatch dominates AND Option B doesn't move the
-needle → **Option A**.  Commit to the 7–11-week plan with the
-random-deopt tester gate.
+Bias going in: I expect the profile to show primitives + Sista
+bail-and-resume churn dominating, pointing to **C** with a small
+down-payment of T2 stability work.  But the bias is not the
+decision — the data is.
 
 ---
 
