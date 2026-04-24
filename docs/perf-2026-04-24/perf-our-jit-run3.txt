@@ -1,0 +1,36 @@
+VM Performance Benchmarks
+========================
+Date: 2026-04-24T10:04:50.312056-04:00
+Image: Pharo-13.1.0+SNAPSHOT.build.732.sha.e84a2d15c798f5f7da482f14dcc7fb488b9aedbc (64 Bit)
+
+--- tinyBenchmarks ---
+17408123 bytecodes/sec; 140208395 sends/sec
+
+--- fibonacci(28) ---
+fib(28) = 65 ms
+
+--- sieve(100) ---
+sieve x100 = 131 ms (1028 primes)
+
+--- sort(100K) ---
+sort 100K = 292 ms
+
+--- dict(50K) ---
+dict 50K put+get = 409 ms
+
+--- sum(1M) ---
+sum 1M = 72 ms (sum=500000500000)
+
+--- factorial(5K) ---
+5000 factorial = 215 ms
+
+--- block(1M) ---
+1M blocks = 22 ms
+
+--- instVar(1M) ---
+1M getter+yourself = 93 ms
+
+--- create(100K) ---
+100K allocations = 4 ms
+
+DONE

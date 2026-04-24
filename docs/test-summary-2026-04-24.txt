@@ -92,17 +92,58 @@ Per-class verdicts:
 
 ## JIT performance
 
-  Wall clock identical to 04-23 within 1%.  No code-path changes
-  since the 04-23 baseline (only doc commits 4e85a93, 5c1d6b7,
-  372f1de, eaf40dd land between f69734f and now), so this run is
-  a stability check, not a perf measurement.
+  Wall clock for the suite identical to 04-23 within 1%.  No
+  code-path changes since the 04-23 baseline (only doc commits
+  4e85a93, 5c1d6b7, 372f1de, eaf40dd land between f69734f and
+  now), so this is a stability check.
 
-  Per the 2026-04-24 perf measurement in docs/test-summary-2026-04-23.txt:
-    100M arithmetic loop:  JIT 4415 ms vs NO_JIT 4467 ms (1% win)
-    fib(30):               JIT 198 ms  vs NO_JIT 213 ms  (7% win)
-    Stock Cog comparison:  Cog is 17-28× faster — gap closes only
-                           with T2 register allocation, real PIC,
-                           and method inlining (architectural work).
+  Dedicated benchmark sweep (scripts/run_benchmarks.{sh,st},
+  median of 3 runs each, fresh prepped Pharo 13 image, M-series
+  arm64, 2026-04-24):
+
+    Workload                   Cog       Our JIT   NO_JIT      JIT vs NJ   Cog vs JIT
+    tinyBench bytecodes/sec    73.5 M    17.4 M    17.7 M      -1.8%       4.2× faster
+    tinyBench sends/sec         3.75 G   140.9 M   137.3 M     +2.6%      26.6× faster
+    fib(28)                     2 ms     68 ms     72 ms       +5.6%      34.0×
+    sieve x100 (1028 primes)    9 ms    131 ms    139 ms       +5.8%      14.6×
+    sort 100K                  16 ms    284 ms    267 ms       -6.4% *    17.8×
+    dict 50K put+get           21 ms    380 ms    390 ms       +2.6%      18.1×
+    sum 1M                      5 ms     73 ms     81 ms       +9.9%      14.6×
+    5000 factorial             38 ms    231 ms    236 ms       +2.1%       6.1×
+    1M block invocations        0 ms     22 ms     22 ms        0%        too small
+    1M getter+yourself          4 ms     93 ms     93 ms        0%        23.3×
+    100K Array allocations      0 ms      5 ms      5 ms        0%        too small
+
+      JIT vs NJ:    positive % = JIT faster than our NO_JIT
+      Cog vs JIT:   ratio of (our JIT time) / (Cog time)
+      *             sort 100K: JIT slower than NO_JIT.  Heap-walk-
+                    heavy workload — JIT compile cost + PIC misses
+                    on polymorphic comparison sends overruns the
+                    per-bytecode savings.  Same pattern as
+                    ProtoObjectTest etc. in the SUnit suite.
+
+  ### What this confirms
+
+  - JIT helps modestly (+2 to +10 %) on send-heavy or
+    primitive-light workloads where the inline IC + JITted
+    prologue earn back their cost (fib, sieve, sum, dict).
+  - JIT breaks even (±0 %) on workloads dominated by primitives
+    (allocation, getter+yourself, block-only loops).
+  - JIT hurts (-6 %) on heap-walking / megamorphic workloads
+    (sort comparison sends are polymorphic across the heap).
+  - Cog is **4–34× faster** across the board.  The gap is
+    largest on send-heavy IC-friendly code (fib 34×, sends/sec
+    27×, getter 23×) — exactly the territory where Cog's full
+    JIT, register allocation, and method inlining pay off.
+    Smallest on LargeInteger-heavy work (factorial 6×) where the
+    primitive does the heavy lifting in both VMs.
+  - Closing the Cog gap requires architectural work: method
+    inlining (Sista phase 4+), register allocator in T2, true
+    PIC with code patching, shrinking stencils from ~460 B/bc
+    to Cog-comparable ~80 B/bc.  Incremental T1 tuning won't
+    move the 17–34× headline.
+
+  Raw perf data: /tmp/perf-{cog,our-jit,our-nojit}{,-run2,-run3}.txt
 
 ## Bottom line
 
