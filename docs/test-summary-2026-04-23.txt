@@ -229,7 +229,7 @@ comparable to the JIT isolation methodology.
 
 Simple eval-mode benchmarks:
 
-    Workload                             JIT eager    NO_JIT    speedup
+    Workload                             JIT eager    NO_JIT    our-JIT speedup
     100M iteration arithmetic loop       4415 ms      4467 ms   1%
     fib(30) recursive send-heavy         198 ms       213 ms    7%
 
@@ -237,8 +237,22 @@ The small wins reflect our stencil-based JIT: T1 tier uses the
 same template stencils as the interpreter, so code-gen is similar.
 Savings come from inline method prologues, IC hit paths, and
 inlined primitives.  Larger wins would need T2 (asmjit) default-on
-(currently opt-in via PHARO_T2=1), bigger ICs (>6 entries), or
-method inlining — all non-trivial architectural work.
+(currently opt-in via PHARO_T2=1 but measured 17% slower on fib
+due to per-send overhead), bigger ICs (>6 entries), or method
+inlining — all non-trivial architectural work.
+
+## Stock-Cog absolute comparison (2026-04-24)
+
+    Workload           Stock Cog   Our JIT eager   slowdown vs Cog
+    fib(30)            7 ms         196 ms         28×
+    100M arithmetic    258 ms       4415 ms        17×
+
+Cog's JIT is 17-28× faster than ours on these benchmarks.  Our
+current "JIT vs interpreter" gap (1-7%) is small because both
+tiers are slow compared to Cog.  Real optimization opportunity
+is porting established Cog techniques (register allocation,
+inlining, true PIC with runtime code patching) rather than
+incremental tuning of the current stencil-based T1.
 
 ## JIT performance regression on heap-walking workloads
 
