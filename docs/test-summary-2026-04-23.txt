@@ -207,6 +207,24 @@ timing artifact, not a VM-level issue.
     all turn out to be cold-start or image-state artifacts
     reproducing equally under NO_JIT.
 
+## Apples-to-apples: NO_JIT vs JIT (both per-class isolation)
+
+Same methodology — per-class fresh VM, 180s each, 565 classes:
+
+    Mode     Cls   Pass     Fail  Err  Skip  Timeout  Wall
+    NO_JIT   539   12664    3     1    29    0        78 min
+    JIT      539   12664    3     1    29    0        77 min
+
+**Exactly the same numbers**, same 4 non-passing classes
+(OCClassBuilderTest, BlockClosureValueWithinTest,
+ProcessMonitorTestServiceTest, TestExecutionEnvironmentTest — all
+pre-existing harness/image artifacts, not VM bugs).  JIT wins by
+15 seconds (noise-level).
+
+The earlier 23695 NO_JIT count was from batch mode running more
+tests per class than fit in a per-class 180s budget — not
+comparable to the JIT isolation methodology.
+
 ## JIT performance regression on heap-walking workloads
 
 Cross-check with same 180s budget and ArrayTest warmup:
