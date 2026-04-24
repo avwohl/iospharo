@@ -481,5 +481,31 @@ Re-sampled the same bench under YG=1 (20 s sample,
   aren't measurement noise, they're the GC code path actually
   doing less work.
 
+### YG + T2 combined: same as YG alone
+
+While the SUnit-under-T2 baseline runs (uses /tmp/sunit_*),
+ran the bench under PHARO_T2=1 + PHARO_YOUNG_GEN=1, median of 3
+(`docs/perf-2026-04-24/perf-our-jit-yg-t2-run{1,2,3}.txt`):
+
+    Workload                YG=1 alone   YG=1 + T2=1
+    fib(28)                 74 ms        76 ms
+    sieve x100             137 ms       140 ms
+    sort 100K              266 ms       265 ms
+    dict 50K put+get       171 ms       173 ms
+    sum 1M                  80 ms        85 ms
+    5000 factorial          26 ms        27 ms
+    1M block invocations    22 ms        22 ms
+    1M getter+yourself      96 ms        92 ms
+
+  Within ±5 % on every workload.  T2 adds nothing on top of YG
+  for this bench set — same conclusion as T2 alone vs default
+  JIT.
+
+  Implication for the architecture: T2 is dead weight at the
+  moment.  Disabling it (PHARO_T2 stays off by default) costs
+  nothing.  Enabling it gains nothing.  The asmjit infrastructure
+  is paid for; the leaf-method coverage just doesn't intersect
+  with the bench hot spots.
+
 Next: SUnit suite under YG (waiting for T2 baseline to finish
 sharing /tmp file paths first).
