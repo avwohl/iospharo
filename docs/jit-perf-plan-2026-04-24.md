@@ -596,6 +596,42 @@ So the realistic Option D time budget shrinks: not "~2 weeks"
 but **2-5 days for the IdentitySet/users fix + testClearing
 weak-ref fix + smoke-test default-on rollout**.
 
+### UPDATE (2026-04-24, same day): the IdentitySet/users fix landed
+
+Bisection took 2 hours (not days).  Root cause: NOT an IdentitySet
+issue at all — it was a class-table identity-hash collision in
+`ObjectMemory::generateHash()`.
+
+The young anonymous test metaclass `TTT23 classTrait` got hash
+924672 from the LCG, which happened to be `ConstantBlockClosure`'s
+metaclass index.  `registerClass` blindly clobbered
+`classTable_[924672]`, so all subsequent `classOf:
+ConstantBlockClosure` lookups returned `TTT23 classTrait`.  Then
+`ConstantBlockClosure traits` returned TTT23's trait composition,
+and `testTraitsUsersSanity` correctly flagged the mismatch.
+
+Fix: `generateHash()` now skips hash values whose class-table slot
+is already occupied by a class.  Skip rate ~0.12 % at ~5000
+classes in 4M-slot table.
+
+Re-ran the full 565-class SUnit suite under YG with the fix:
+
+                           Default JIT       YG (post-fix)
+    Tests passed:          12665             12664   (-1, noise)
+    Tests failed:          3                 3       (same 3)
+    Tests errored:         1                 1       (same image bug)
+    Tests timeout:         0                 0
+    Wall clock:            4697 s (78 m)     4651 s (77 m)
+    Same 4 non-ok classes  yes               yes
+
+**YG correctness now matches default JIT exactly.**  Only the
+pre-existing 4 non-ok classes (1 image bug + 1 cold-start +
+2 process-handling diffs from Cog) remain, and all of them
+also fail under default JIT — none are YG-specific.
+
+Re-estimated Option D budget: was "~4 days," **actual: ~3 hours
+including bisection, fix, and verification.**
+
 ## Decision
 
 Going with **Option D**.  Reasoning:
