@@ -148,6 +148,15 @@ int main() {
               "no framepoints for send-free method");
     }
 
+    // kPrimIdentityEq metadata: produces oop, may not call back
+    check(OpInfo::producesOop(Op::kPrimIdentityEq),
+          "kPrimIdentityEq produces an Oop");
+    check(!OpInfo::mayCallBack(Op::kPrimIdentityEq),
+          "kPrimIdentityEq has no deopt path");
+    check(std::string(OpInfo::name(Op::kPrimIdentityEq))
+          == "prim_identity_eq",
+          "kPrimIdentityEq names correctly");
+
     // Integer>>yourself ≡ [PushReceiver, ReturnTop]
     {
         Method lifted;

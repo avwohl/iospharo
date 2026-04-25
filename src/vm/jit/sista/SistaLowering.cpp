@@ -264,6 +264,32 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kPrimIdentityEq: {
+                // Phase 4 inline of #==: compare a's bits to b's bits,
+                // result is trueOop if equal, else falseOop.  No tag
+                // check, no deopt — `==` semantics are "compare object
+                // identity" regardless of operand types.
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp trueOop = cc.new_gp64("true");
+                Gp falseOop = cc.new_gp64("false");
+                cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                Gp dst = cc.new_gp64("eq");
+                cc.cmp(ita->second, itb->second);
+                cc.csel(dst, trueOop, falseOop, asmjit::a64::CondCode::kEQ);
+                regFor[v.id] = dst;
+                break;
+            }
+
             case Op::kPrimAddInt:
             case Op::kPrimSubInt:
             case Op::kPrimMulInt: {

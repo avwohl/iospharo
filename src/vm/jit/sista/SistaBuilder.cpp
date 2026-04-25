@@ -111,6 +111,14 @@ public:
         inlineableSelectorMask_ = mask;
     }
 
+    // Phase 4 POC #2: bitmap of literal indices for #== (universal
+    // identity-equality semantics).  Send1 to a literal in this
+    // bitmap is replaced with kPrimIdentityEq.  Gated behind
+    // PHARO_SISTA_INLINE_IDENTITY_EQ=1.
+    void setIdentityEqSelectorBitmap(uint16_t mask) {
+        identityEqSelectorMask_ = mask;
+    }
+
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pass 1: identify block boundaries --------------------------
         //
@@ -884,6 +892,24 @@ private:
                     continue;
                 }
 
+                // Phase 4 POC #2: inline #== as identity comparison.
+                // Only for Send1 (#== takes 1 arg).  Pop a, b; emit
+                // kPrimIdentityEq; push result.  Universal semantics
+                // — `==` is identity for all classes, no override.
+                // Gated behind PHARO_SISTA_INLINE_IDENTITY_EQ=1.
+                if (nArgs == 1 && selIdx < 16
+                    && (identityEqSelectorMask_ & (1u << selIdx))) {
+                    uint32_t b_op = stack_.back(); stack_.pop_back();
+                    uint32_t a_op = stack_.back(); stack_.pop_back();
+                    uint32_t v = out_.newValue(currentBlock_,
+                                                Op::kPrimIdentityEq,
+                                                Type::kOopBool,
+                                                /*operands=*/{a_op, b_op});
+                    stack_.push_back(v);
+                    ip++;
+                    continue;
+                }
+
                 // Bail flushes the ENTIRE IR stack to state.sp so the
                 // interpreter sees every value simulated-pushed by
                 // compiled code.  Older revisions only emitted the
@@ -1271,6 +1297,8 @@ private:
     const uint8_t*         specialSendArgCount_ = nullptr;
     // Phase 4 POC: bitmap of literals[0..15] that hold #yourself.
     uint16_t               inlineableSelectorMask_ = 0;
+    // Phase 4 POC #2: bitmap of literals[0..15] that hold #==.
+    uint16_t               identityEqSelectorMask_ = 0;
 };
 
 }  // namespace
@@ -1346,21 +1374,28 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     // unsafe for any class that overrides #yourself; class-hierarchy
     // analysis lands later (Phase 7).
     uint16_t inlineableMask = 0;
+    uint16_t identityEqMask = 0;
     static const bool inlineYourself =
         std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
-    if (inlineYourself) {
+    static const bool inlineIdentityEq =
+        std::getenv("PHARO_SISTA_INLINE_IDENTITY_EQ") != nullptr;
+    if (inlineYourself || inlineIdentityEq) {
         const uint32_t scanLimit = std::min(numLiterals, 16u);
         for (uint32_t i = 0; i < scanLimit; i++) {
             Oop lit = out.literals[i];
             if (!lit.isObject()) continue;
             ObjectHeader* litHdr = lit.asObjectPtr();
-            // Symbols / Strings have byte-format slots.  #yourself is
-            // 8 bytes; check size + content.
             size_t bs = litHdr->byteSize();
-            if (bs != 8) continue;
             const uint8_t* bytes = litHdr->bytes();
-            if (std::memcmp(bytes, "yourself", 8) == 0) {
+            if (inlineYourself && bs == 8
+                && std::memcmp(bytes, "yourself", 8) == 0) {
                 inlineableMask |= (1u << i);
+            }
+            // #== is 2 bytes ("==").  Symbols are stored verbatim;
+            // we just compare the raw bytes.
+            if (inlineIdentityEq && bs == 2
+                && std::memcmp(bytes, "==", 2) == 0) {
+                identityEqMask |= (1u << i);
             }
         }
     }
@@ -1368,6 +1403,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
     if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
+    if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
     return l.run(failedAtBytecode);
 }
 
