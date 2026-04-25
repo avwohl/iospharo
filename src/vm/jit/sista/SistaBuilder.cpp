@@ -1598,6 +1598,95 @@ private:
                 inlineLit = v1.literal;
                 inlineOps.push_back(recvId);
             }
+            // 3-value (self ivar) foo: kLoadReceiver + kLoadInstVar +
+            // kSendUnspeculated(ivar).  Send terminates lifting so no
+            // trailing kReturn.  Inline: outer guard on caller's recv,
+            // load ivar, INNER guard on the ivar's class (different
+            // class → must guard separately), then inline inner const-
+            // return body.
+            else if (v1.op == Op::kLoadInstVar
+                  && v1.operands.size() == 1 && v1.operands[0] == v0.id
+                  && v2.op == Op::kSendUnspeculated
+                  && !v2.operands.empty() && v2.operands[0] == v1.id) {
+                if (!g_hintProvider) return false;
+                uint32_t innerNArgs = (uint32_t)((v2.literal >> 16) & 0xFF);
+                uint32_t innerBcOff = (uint32_t)(v2.literal >> 24);
+                if (innerNArgs != 0) return false;  // self-send only
+                std::vector<InlineHint> innerHints =
+                    g_hintProvider(calleeOop);
+                const InlineHint* innerHit = nullptr;
+                for (const auto& ih : innerHints) {
+                    if (ih.bcOffset == innerBcOff) {
+                        innerHit = &ih; break;
+                    }
+                }
+                if (!innerHit) return false;
+                if (innerHit->targetMethod == 0) return false;
+                if ((innerHit->targetMethod & 0x7) != 0) return false;
+                if (innerHit->targetMethod < 0x10000) return false;
+                Method innerIR;
+                uint32_t innerFailedAt = UINT32_MAX;
+                Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
+                g_calleeLiftDepth++;
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
+                g_calleeLiftDepth--;
+                if (ir != LiftResult::kOk) return false;
+                if (innerIR.values.size() != 2) return false;
+                const Value& iv0 = innerIR.values[0];
+                const Value& iv1 = innerIR.values[1];
+                if (iv1.op != Op::kReturn) return false;
+                if (iv1.operands.size() != 1
+                    || iv1.operands[0] != iv0.id) return false;
+                Op  innerInlineOp;
+                Type innerInlineTy;
+                uint64_t innerInlineLit = 0;
+                switch (iv0.op) {
+                case Op::kLoadTrueOop:  innerInlineOp = Op::kLoadTrueOop;
+                                        innerInlineTy = Type::kOopBool; break;
+                case Op::kLoadFalseOop: innerInlineOp = Op::kLoadFalseOop;
+                                        innerInlineTy = Type::kOopBool; break;
+                case Op::kConstantOop:  innerInlineOp = Op::kConstantOop;
+                                        innerInlineTy = Type::kOop;
+                                        innerInlineLit = iv0.literal; break;
+                default: return false;
+                }
+                // Emit: outer guard, load ivar, inner guard on ivar.
+                std::vector<uint32_t> outerGuardOps;
+                outerGuardOps.reserve(stack_.size() + 1);
+                outerGuardOps.push_back(recvId);
+                for (uint32_t s : stack_) outerGuardOps.push_back(s);
+                uint64_t outerGuardLit = (hit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(outerGuardOps), outerGuardLit);
+                uint32_t ivarId = out_.newValue(currentBlock_,
+                                                 Op::kLoadInstVar,
+                                                 Type::kOop,
+                                                 /*operands=*/{recvId},
+                                                 /*literal=*/v1.literal);
+                std::vector<uint32_t> innerGuardOps;
+                innerGuardOps.reserve(stack_.size() + 1);
+                innerGuardOps.push_back(ivarId);
+                for (uint32_t s : stack_) innerGuardOps.push_back(s);
+                uint64_t innerGuardLit = (innerHit->classOop & 0x3FFFFFu)
+                                       | (static_cast<uint64_t>(bcOffset) << 32);
+                out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                              std::move(innerGuardOps), innerGuardLit);
+                uint32_t innerInlineId = out_.newValue(currentBlock_,
+                                                        innerInlineOp,
+                                                        innerInlineTy,
+                                                        {}, innerInlineLit);
+                for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                stack_.push_back(innerInlineId);
+                g_inlinesEmitted++;
+                g_totalHintsConsumed++;
+                return true;
+            }
             // 3-value chain: kLoadReceiver + kSendUnspeculated(v0)
             //                + kReturn(v1).  Recursively inline the
             //                inner self-send when its target is also
