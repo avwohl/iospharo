@@ -14,6 +14,7 @@
 #include "../../ObjectMemory.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -82,6 +83,17 @@ static inline size_t instructionSize(uint8_t op) {
     return 1;
 }
 
+// Phase 4 Step 1 cumulative counters.  Declared before LinearLifter so
+// the lifter's recordFramepoint() can reference them.  Survive across
+// Builder::build() invocations within a process.
+static uint64_t g_totalSendsLifted      = 0;
+static uint64_t g_totalMonomorphicHints = 0;
+static uint64_t g_totalHintsConsumed    = 0;
+
+// Hint pointer set by buildWithHints() and consumed by build() when
+// constructing LinearLifter.  Single-threaded; static suffices.
+static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
+
 class LinearLifter {
 public:
     LinearLifter(const uint8_t* bc, size_t len,
@@ -129,6 +141,11 @@ public:
     // before each kPrimAddInt etc.  Lets the unsafe-arith gate
     // lift safely (non-SmallInt operands deopt to interpreter).
     void setTypeCheckArith(bool v) { typeCheckArith_ = v; }
+
+    // Phase 4 Step 1: profile-guided inline hints from T1 IC.
+    void setInlineHints(const std::vector<InlineHint>* hints) {
+        inlineHints_ = hints;
+    }
 
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pass 1: identify block boundaries --------------------------
@@ -1357,15 +1374,23 @@ private:
     // deopt site.  Today every kSendUnspeculated emission calls this
     // immediately after newValue.  The framepoint records the
     // information needed to bail/deopt back to the interpreter.
+    //
+    // Also tracks Phase 4 inline-hint matches as a side effect.
     void recordFramepoint(uint32_t valueId, uint32_t bcOffset) {
         out_.framepoints.push_back({
             valueId,
             static_cast<uint16_t>(bcOffset),
-            // Copy the operand list (which IS the simulated stack
-            // bottom→top at this point — that's how the existing
-            // ExitSend bail mechanism transfers it to the interpreter).
             out_.values[valueId].operands,
         });
+        g_totalSendsLifted++;
+        if (inlineHints_) {
+            for (const auto& h : *inlineHints_) {
+                if (h.bcOffset == bcOffset) {
+                    g_totalHintsConsumed++;
+                    break;
+                }
+            }
+        }
     }
 
 private:
@@ -1392,6 +1417,8 @@ private:
     uint16_t               identityNeqSelectorMask_ = 0;
     // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
     bool                   typeCheckArith_ = false;
+    // Phase 4 Step 1: profile-guided inline hints (or nullptr).
+    const std::vector<InlineHint>* inlineHints_ = nullptr;
 };
 
 }  // namespace
@@ -1506,7 +1533,43 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
     if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
     if (typeCheckArith) l.setTypeCheckArith(true);
+    if (g_currentBuildHints) {
+        l.setInlineHints(g_currentBuildHints);
+    }
     return l.run(failedAtBytecode);
+}
+
+// Phase 4 Step 1: profile-guided wrapper.  Sets a thread-local hint
+// pointer that the main build() picks up when constructing
+// LinearLifter, then invokes the regular build path.
+LiftResult Builder::buildWithHints(Oop compiledMethod, ObjectMemory& memory,
+                                    Method& out,
+                                    const std::vector<InlineHint>* hints,
+                                    uint32_t* failedAtBytecode) {
+    if (hints) {
+        g_totalMonomorphicHints += hints->size();
+    }
+    g_currentBuildHints = hints;
+    LiftResult r = build(compiledMethod, memory, out, failedAtBytecode);
+    g_currentBuildHints = nullptr;
+    return r;
+}
+
+// Phase 4 Step 1 stats accessors.
+uint64_t Builder::totalSendsLifted()      { return g_totalSendsLifted; }
+uint64_t Builder::totalMonomorphicHints() { return g_totalMonomorphicHints; }
+uint64_t Builder::totalHintsConsumed()    { return g_totalHintsConsumed; }
+void Builder::resetInlineHintStats() {
+    g_totalSendsLifted = 0;
+    g_totalMonomorphicHints = 0;
+    g_totalHintsConsumed = 0;
+}
+void Builder::dumpInlineHintStats() {
+    std::fprintf(stderr,
+        "[SISTA-INLINE] sends-lifted=%llu hints-provided=%llu hints-consumed=%llu\n",
+        (unsigned long long)g_totalSendsLifted,
+        (unsigned long long)g_totalMonomorphicHints,
+        (unsigned long long)g_totalHintsConsumed);
 }
 
 }  // namespace sista

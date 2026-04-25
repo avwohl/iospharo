@@ -55,6 +55,26 @@ public:
                                       uint32_t numTemps,
                                       Method& out,
                                       uint32_t* failedAtBytecode = nullptr);
+
+    // Phase 4 Step 1: profile-guided inline hints.  When non-null,
+    // tells the lifter which send sites are monomorphic (per T1 IC
+    // observation).  Today the lifter only counts matches via the
+    // inline-hint stats; future steps will use them to splice
+    // callee IR.  Caller-owned, must outlive the build call.
+    static LiftResult buildWithHints(Oop compiledMethod,
+                                      ObjectMemory& memory,
+                                      Method& out,
+                                      const std::vector<InlineHint>* hints,
+                                      uint32_t* failedAtBytecode = nullptr);
+
+    // Cumulative inline-hint statistics across all builds.
+    // dumpInlineHintStats() writes them to stderr.  Counters
+    // are zeroed by resetInlineHintStats().
+    static uint64_t totalSendsLifted();
+    static uint64_t totalMonomorphicHints();
+    static uint64_t totalHintsConsumed();
+    static void resetInlineHintStats();
+    static void dumpInlineHintStats();
 };
 
 }  // namespace sista

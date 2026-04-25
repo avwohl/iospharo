@@ -187,6 +187,23 @@ struct Block {
 // SistaLowering (and optionally transformed by SistaInliner / peephole
 // passes in between).
 
+// ===== InlineHint =====
+//
+// Phase 4 Step 1: profile-guided inlining.  T1's inline cache (IC)
+// records (receiver class, target method) per send site after warmup.
+// Sista queries this at compile time to identify monomorphic sites
+// that are candidates for inlining.  Each hint maps a source
+// bytecode offset to the IC's observed class + method.
+//
+// Today (this commit): hints are plumbed but not USED — Builder
+// just records how many sends would be candidates.  Step 2 lifts
+// the callee, Step 3 splices it, Step 4 adds heuristics.
+struct InlineHint {
+    uint16_t bcOffset;       // Source bytecode position of the send
+    uint64_t classOop;       // Observed receiver class (raw bits)
+    uint64_t targetMethod;   // Resolved CompiledMethod oop (raw bits)
+};
+
 // ===== Framepoint =====
 //
 // PHASE 3 deopt infrastructure (started 2026-04-24).  At every
