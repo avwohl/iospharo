@@ -121,6 +121,17 @@ static int g_calleeLiftDepth = 0;
 // at VM startup by the Interpreter; nullptr disables recursive inlining.
 static Builder::HintProvider g_hintProvider;
 
+// RAII saver: temporarily clear g_currentBuildHints across a nested
+// build so the inner build doesn't apply OUTER caller hints to its
+// own bcOffsets (which refer to a different bytecode stream).
+struct ClearOuterHints {
+    const std::vector<InlineHint>* saved;
+    ClearOuterHints() : saved(g_currentBuildHints) {
+        g_currentBuildHints = nullptr;
+    }
+    ~ClearOuterHints() { g_currentBuildHints = saved; }
+};
+
 class LinearLifter {
 public:
     LinearLifter(const uint8_t* bc, size_t len,
@@ -1451,8 +1462,12 @@ private:
         uint32_t calleeFailedAt = UINT32_MAX;
         Oop calleeOop = Oop::fromRawBits(hit->targetMethod);
         g_calleeLiftDepth++;
-        LiftResult cr = Builder::build(calleeOop,
-            *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+        LiftResult cr;
+        {
+            ClearOuterHints g;
+            cr = Builder::build(calleeOop,
+                *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+        }
         g_calleeLiftDepth--;
         if (cr != LiftResult::kOk) return false;
 
@@ -1520,8 +1535,12 @@ private:
                 uint32_t innerFailedAt = UINT32_MAX;
                 Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
                 g_calleeLiftDepth++;
-                LiftResult ir = Builder::build(innerOop,
-                    *g_currentBuildMemory, innerIR, &innerFailedAt);
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
                 g_calleeLiftDepth--;
                 if (ir != LiftResult::kOk) return false;
                 if (innerIR.values.size() == 2) {
@@ -1616,8 +1635,12 @@ private:
                 uint32_t innerFailedAt = UINT32_MAX;
                 Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
                 g_calleeLiftDepth++;
-                LiftResult ir = Builder::build(innerOop,
-                    *g_currentBuildMemory, innerIR, &innerFailedAt);
+                LiftResult ir;
+                {
+                    ClearOuterHints g;
+                    ir = Builder::build(innerOop,
+                        *g_currentBuildMemory, innerIR, &innerFailedAt);
+                }
                 g_calleeLiftDepth--;
                 if (ir != LiftResult::kOk) return false;
                 // Inner pattern: accept either 2-value const-return
@@ -1722,8 +1745,12 @@ private:
             Method calleeIR;
             uint32_t calleeFailedAt = UINT32_MAX;
             Oop calleeOop = Oop::fromRawBits(h.targetMethod);
-            LiftResult cr = Builder::build(calleeOop,
-                *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+            LiftResult cr;
+            {
+                ClearOuterHints g;
+                cr = Builder::build(calleeOop,
+                    *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+            }
             g_calleeLiftDepth--;
             if (cr == LiftResult::kOk) {
                 g_calleeLiftSuccess++;
