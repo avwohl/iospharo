@@ -99,7 +99,9 @@ enum class Op : uint8_t {
     kPrimLtInt,           // operands: a, b                          -> OopBool
     kPrimLeInt,           // operands: a, b                          -> OopBool
     kPrimGtInt,           // operands: a, b                          -> OopBool
+    kPrimGeInt,           // operands: a, b                          -> OopBool
     kPrimEqInt,           // operands: a, b                          -> OopBool
+    kPrimNeqInt,          // operands: a, b                          -> OopBool
     kPrimTagCheckInt,     // operand: value; deopts if not SmallInt  -> OopSmallInt
     kPrimIdentityEq,      // operands: a, b (any Oops); cmp identity -> OopBool
                           // Result is trueOop if a == b (raw bits), else falseOop.

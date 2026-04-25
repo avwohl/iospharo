@@ -264,6 +264,55 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kPrimLtInt:
+            case Op::kPrimLeInt:
+            case Op::kPrimGtInt:
+            case Op::kPrimGeInt:
+            case Op::kPrimEqInt:
+            case Op::kPrimNeqInt: {
+                // SmallInt comparison.  Tagged-int representation
+                // preserves signed ordering (tag is +1 in low 3
+                // bits; multiplication by 8 from value-to-encoded
+                // doesn't change order).  No tag check, no overflow
+                // — same Phase 2 caveat as kPrimAddInt: caller
+                // must supply SmallInt operands.  Same env-var gate.
+                static bool noArith =
+                    getenv("PHARO_SISTA_NO_LOWER_ARITH") != nullptr;
+                if (noArith) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp trueOop = cc.new_gp64("true");
+                Gp falseOop = cc.new_gp64("false");
+                cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                Gp dst = cc.new_gp64("intcmp");
+                cc.cmp(ita->second, itb->second);
+                using namespace asmjit::a64;
+                CondCode cond;
+                switch (v.op) {
+                  case Op::kPrimLtInt:  cond = CondCode::kLT; break;
+                  case Op::kPrimLeInt:  cond = CondCode::kLE; break;
+                  case Op::kPrimGtInt:  cond = CondCode::kGT; break;
+                  case Op::kPrimGeInt:  cond = CondCode::kGE; break;
+                  case Op::kPrimEqInt:  cond = CondCode::kEQ; break;
+                  case Op::kPrimNeqInt: cond = CondCode::kNE; break;
+                  default: cond = CondCode::kEQ; break;
+                }
+                cc.csel(dst, trueOop, falseOop, cond);
+                regFor[v.id] = dst;
+                break;
+            }
             case Op::kPrimIdentityEq:
             case Op::kPrimIdentityNeq: {
                 // Phase 4 inline of #== / #~~: compare a's bits to b's

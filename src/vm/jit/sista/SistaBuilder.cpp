@@ -959,6 +959,12 @@ private:
             // SmallInt operands.  No class guard or overflow check
             // yet; safety lands with Phase 3 deopt.  Tests today
             // ensure operands are small positive SmallInts.
+            //
+            // Arithmetic (+ - *) produces a SmallInt result; comparisons
+            // (< <= > >= = ~=) produce a boolean.  Both share the
+            // unsafe-arith gate in Interpreter.cpp's Sista dispatch
+            // path — a method with any of these opcodes is excluded
+            // from Sista dispatch unless PHARO_SISTA_UNSAFE_ARITH=1.
             if (op == jit::SistaV1::ArithBase + 0    // + (0x60)
                 || op == jit::SistaV1::ArithBase + 1 // - (0x61)
                 || op == jit::SistaV1::ArithBase + 8 // * (0x68)
@@ -974,6 +980,32 @@ private:
                 if (op == jit::SistaV1::ArithBase + 8) primOp = Op::kPrimMulInt;
                 uint32_t v = out_.newValue(currentBlock_, primOp,
                                             Type::kOopSmallInt,
+                                            /*operands=*/{a, b});
+                stack_.push_back(v);
+                ip++;
+                continue;
+            }
+            // SmallInt comparisons 0x62-0x67: < <= > >= = ~=
+            if (op >= jit::SistaV1::ArithBase + 2
+                && op <= jit::SistaV1::ArithBase + 7) {
+                if (stack_.size() < 2) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t b = stack_.back(); stack_.pop_back();
+                uint32_t a = stack_.back(); stack_.pop_back();
+                Op primOp;
+                switch (op - jit::SistaV1::ArithBase) {
+                  case 2: primOp = Op::kPrimLtInt;  break;  // <
+                  case 3: primOp = Op::kPrimGtInt;  break;  // >
+                  case 4: primOp = Op::kPrimLeInt;  break;  // <=
+                  case 5: primOp = Op::kPrimGeInt;  break;  // >=
+                  case 6: primOp = Op::kPrimEqInt;  break;  // =
+                  case 7: primOp = Op::kPrimNeqInt; break;  // ~=
+                  default: primOp = Op::kPrimEqInt; break;
+                }
+                uint32_t v = out_.newValue(currentBlock_, primOp,
+                                            Type::kOopBool,
                                             /*operands=*/{a, b});
                 stack_.push_back(v);
                 ip++;

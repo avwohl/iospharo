@@ -7069,9 +7069,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // by a malformed tagged value).  Gate off by
                 // default; re-admit when Phase 3 deopt lands.
                 if (g_debug.sistaUnsafeArith) {
+                    // + - * (inlined arith) and < <= > >= = ~=
+                    // (inlined SmallInt comparison) all use
+                    // tagged-int operations without runtime type
+                    // guards.  Same admission policy.
                     if (op == jit::SistaV1::ArithBase + 0   // +
                      || op == jit::SistaV1::ArithBase + 1   // -
-                     || op == jit::SistaV1::ArithBase + 8) {// *
+                     || op == jit::SistaV1::ArithBase + 8   // *
+                     || (op >= jit::SistaV1::ArithBase + 2
+                         && op <= jit::SistaV1::ArithBase + 7)) {
                         continue;
                     }
                 }
@@ -7102,14 +7108,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                                    && op <= jit::SistaV1::Send1Last);
                 const bool isSend2 = (op >= jit::SistaV1::Send2Base
                                    && op <= jit::SistaV1::Send2Last);
-                // Inlined arith (0x60=+, 0x61=-, 0x68=*) runs
-                // TAG-PRESERVING without overflow or type guards —
-                // still gated behind PHARO_SISTA_UNSAFE_ARITH.
-                // Other arith (<, >, =, etc.) bails via
-                // kSendUnspeculated and is now safe (stack flush).
+                // Inlined arith (0x60=+, 0x61=-, 0x68=*) and
+                // SmallInt comparisons (0x62-0x67) run TAG-PRESERVING
+                // without overflow or type guards — still gated
+                // behind PHARO_SISTA_UNSAFE_ARITH.
                 if ((op == jit::SistaV1::ArithBase + 0
                   || op == jit::SistaV1::ArithBase + 1
-                  || op == jit::SistaV1::ArithBase + 8)) {
+                  || op == jit::SistaV1::ArithBase + 8
+                  || (op >= jit::SistaV1::ArithBase + 2
+                      && op <= jit::SistaV1::ArithBase + 7))) {
                     hasUnsafeOp = true;
                     break;
                 }
