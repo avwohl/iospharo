@@ -44,10 +44,7 @@ set(VM_SOURCES
     src/vm/plugins/SoundPlugin.cpp
     src/vm/plugins/MIDIPlugin.cpp
     src/platform/EventQueue.cpp
-    src/platform/PlatformBridge.cpp
-    src/platform/iOSBridge.cpp
     src/platform/MotionData.cpp
-    src/vm/ObjCExceptionGuard.m
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp
@@ -101,6 +98,25 @@ list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library")
 set(ASMJIT_TEST OFF CACHE BOOL "Skip asmjit's own test suite")
 add_subdirectory(third_party/asmjit EXCLUDE_FROM_ALL)
+
+# Per-platform implementation files.  Each function declared in
+# src/platform/Platform.hpp has exactly ONE definition per target;
+# CMake selects the right .cpp here.  See docs/platform-port-design.md.
+if(APPLE)
+    list(APPEND VM_SOURCES
+        src/platform/apple_shared.cpp
+        src/platform/PlatformBridge.cpp
+        src/platform/iOSBridge.cpp
+        src/vm/ObjCExceptionGuard.m
+    )
+    if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        list(APPEND VM_SOURCES src/platform/ios.cpp)
+    else()
+        list(APPEND VM_SOURCES src/platform/mac.cpp)
+    endif()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    list(APPEND VM_SOURCES src/platform/linux.cpp)
+endif()
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 target_link_libraries(PharoVMCore asmjit::asmjit)
