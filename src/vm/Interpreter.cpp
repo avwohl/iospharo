@@ -13862,7 +13862,14 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // The stencil does a method map lookup to find the block's JIT code
         // and does a J2J call directly, avoiding executePrimitive/activateBlock.
         if (primIdx == 207 || primIdx == 209) {
-            extra |= (1ULL << 59);  // BLOCK_VALUE_BIT
+            // PHARO_NO_BLOCK_BIT=1: omit the BLOCK_VALUE_BIT to force
+            // the stencil's slow path.  Used to A/B test whether the
+            // fast path is actually taken in benchmarks.
+            static const bool noBlockBit =
+                std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
+            if (!noBlockBit) {
+                extra |= (1ULL << 59);  // BLOCK_VALUE_BIT
+            }
         }
     }
 
