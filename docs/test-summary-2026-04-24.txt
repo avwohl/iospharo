@@ -1,5 +1,14 @@
 JIT-mode test-suite rerun — 2026-04-24
 
+NOTE (late 2026-04-24): defaults shifted mid-day.  The numbers in
+this file's "04-24 rerun" column reflect default JIT *with YG off*
+(the morning baseline).  The actual current defaults — after commits
+0ca2b58 (class-table hash collision fix) and 3b37bd2 (YG default-on)
+— are summarized in `docs/jit-baseline-2026-04-24-yg-default.txt`:
+12664 pass / 0 timeout / same 4 deterministic non-ok classes
++ 1 known timing flake (ProcessTerminateBugTest, passes 12/12 in
+isolation).  Net: matches default JIT.
+
 Methodology: per-class fresh-image VM, 180s timeout per class, default
 JIT settings (T1 on, Sista on, JIT_DEFER=4s, T2 opt-in only).
 Class list: scripts/pharo-headless-test/test_classes.txt (565 classes).

@@ -40,27 +40,25 @@ the state after 2026-04-17 session.
   fires for methods T1 couldn't compile (excluded classes,
   primitive-only, etc.).  Opt out via PHARO_T2_REPLACE=1.
 
-**Default config (verified 2026-04-24):** T1 JIT on, T2 off,
-SimStack off, Sista dispatch on, generational GC off,
-JIT_DEFER 4s headless.  Empirically (`docs/jit-perf-plan-2026-04-24.md`),
-flipping `PHARO_T2=1` plus every `PHARO_T2_*` sub-flag changes the
-benchmark numbers by less than ±5% — T2 today only emits ARM64 for
-leaf methods (~5-15% of candidates), all prim-dominated already.
+**Default config (verified 2026-04-24, late):** T1 JIT on, T2 off,
+SimStack off, Sista dispatch on, **generational GC ON**
+(PHARO_NO_YG=1 to opt out), JIT_DEFER 4s headless.  Empirically
+(`docs/jit-perf-plan-2026-04-24.md`), flipping `PHARO_T2=1` plus
+every `PHARO_T2_*` sub-flag changes the benchmark numbers by less
+than ±5% — T2 today only emits ARM64 for leaf methods (~5-15% of
+candidates), all prim-dominated already.
 
 **Profile data (2026-04-24, `docs/perf-2026-04-24/profile-*.txt`)**
-shows the real bottleneck depends on workload:
+showed two distinct bottlenecks:
 
-  - Idle Pharo IDE:      **64% in pharo::ObjectMemory::fullGC**.
-                         Not bytecode dispatch — generational GC
-                         (PHARO_YOUNG_GEN, off by default) is the
-                         lever for this case.
+  - Idle Pharo IDE:      **was 64% in pharo::ObjectMemory::fullGC**
+                         under YG=off.  Generational GC default-on
+                         (commit 3b37bd2) addresses this.
+                         Re-profile pending.
   - Active dispatch:     ~80% in sendSelector + activateMethod +
                          push + return paths.  Method inlining
-                         (Sista Phase 4, queued) is the lever
-                         for this case.
-
-Both levers matter for a real iOS Pharo IDE.  Neither is enabled
-by default today.
+                         (Sista Phase 4, queued) is the remaining
+                         lever after YG ships.
 
 **asmjit T2 coverage (~5-15% of candidates depending on workload):**
 
