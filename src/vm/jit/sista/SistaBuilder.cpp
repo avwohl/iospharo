@@ -90,9 +90,26 @@ static uint64_t g_totalSendsLifted      = 0;
 static uint64_t g_totalMonomorphicHints = 0;
 static uint64_t g_totalHintsConsumed    = 0;
 
+// Phase 4 Step 2 counters: probe-lift the callee at each consumed hint
+// and report whether Sista's lifter can actually handle its bytecode.
+// No IR is spliced — these are pure observability for prioritizing
+// Step 3 splicing work.
+static uint64_t g_calleeLiftAttempts    = 0;
+static uint64_t g_calleeLiftSuccess     = 0;
+static uint64_t g_calleeBytecodesLifted = 0;
+
 // Hint pointer set by buildWithHints() and consumed by build() when
 // constructing LinearLifter.  Single-threaded; static suffices.
 static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
+
+// Memory pointer set by buildWithHints() so recordFramepoint can probe-lift
+// callees referenced by inline hints.  Single-threaded; static suffices.
+static ObjectMemory* g_currentBuildMemory = nullptr;
+
+// Recursion guard: probe-lifting a callee re-enters Builder::build, which
+// re-enters recordFramepoint via its own sends.  Without a guard the
+// counters explode geometrically and the build wedges.
+static int g_calleeLiftDepth = 0;
 
 class LinearLifter {
 public:
@@ -1383,13 +1400,52 @@ private:
             out_.values[valueId].operands,
         });
         g_totalSendsLifted++;
-        if (inlineHints_) {
-            for (const auto& h : *inlineHints_) {
-                if (h.bcOffset == bcOffset) {
-                    g_totalHintsConsumed++;
-                    break;
+        if (!inlineHints_) return;
+        for (const auto& h : *inlineHints_) {
+            if (h.bcOffset != bcOffset) continue;
+            g_totalHintsConsumed++;
+            // Phase 4 Step 2: probe-lift the callee for measurement.
+            // Skip if memory not available, recursion deep, or hint
+            // missing a target.  Only attempt when the targetMethod
+            // looks like a tagged Oop (immediates have low bits set).
+            if (g_currentBuildMemory == nullptr) break;
+            if (g_calleeLiftDepth >= 1) break;
+            if (h.targetMethod == 0) break;
+            // h.targetMethod comes from T1 IC slot 1 — that slot
+            // holds a CompiledMethod Oop only for the J2J path; for
+            // inlined getters/setters/returns-self it's a flag-encoded
+            // value, not an Oop.  Reject anything that isn't a
+            // plausible heap object Oop (low bits clear, address-like).
+            if ((h.targetMethod & 0x7) != 0) break;
+            if (h.targetMethod < 0x10000) break;
+            g_calleeLiftAttempts++;
+            g_calleeLiftDepth++;
+            Method calleeIR;
+            uint32_t calleeFailedAt = UINT32_MAX;
+            Oop calleeOop = Oop::fromRawBits(h.targetMethod);
+            LiftResult cr = Builder::build(calleeOop,
+                *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+            g_calleeLiftDepth--;
+            if (cr == LiftResult::kOk) {
+                g_calleeLiftSuccess++;
+                g_calleeBytecodesLifted += calleeIR.values.size();
+            } else if (std::getenv("PHARO_SISTA_INLINE_DBG")) {
+                static int dbgCount = 0;
+                if (dbgCount++ < 16) {
+                    int fmt = -1;
+                    int isObj = calleeOop.isObject() ? 1 : 0;
+                    if (isObj) {
+                        fmt = (int)calleeOop.asObjectPtr()->format();
+                    }
+                    std::fprintf(stderr,
+                        "[SISTA-CALLEE-FAIL] result=%d failedAt=%u "
+                        "target=0x%llx isObj=%d fmt=%d\n",
+                        (int)cr, calleeFailedAt,
+                        (unsigned long long)h.targetMethod,
+                        isObj, fmt);
                 }
             }
+            break;
         }
     }
 
@@ -1550,8 +1606,10 @@ LiftResult Builder::buildWithHints(Oop compiledMethod, ObjectMemory& memory,
         g_totalMonomorphicHints += hints->size();
     }
     g_currentBuildHints = hints;
+    g_currentBuildMemory = &memory;
     LiftResult r = build(compiledMethod, memory, out, failedAtBytecode);
     g_currentBuildHints = nullptr;
+    g_currentBuildMemory = nullptr;
     return r;
 }
 
@@ -1563,13 +1621,20 @@ void Builder::resetInlineHintStats() {
     g_totalSendsLifted = 0;
     g_totalMonomorphicHints = 0;
     g_totalHintsConsumed = 0;
+    g_calleeLiftAttempts = 0;
+    g_calleeLiftSuccess = 0;
+    g_calleeBytecodesLifted = 0;
 }
 void Builder::dumpInlineHintStats() {
     std::fprintf(stderr,
-        "[SISTA-INLINE] sends-lifted=%llu hints-provided=%llu hints-consumed=%llu\n",
+        "[SISTA-INLINE] sends-lifted=%llu hints-provided=%llu hints-consumed=%llu "
+        "callees-attempted=%llu callees-lifted=%llu callee-values=%llu\n",
         (unsigned long long)g_totalSendsLifted,
         (unsigned long long)g_totalMonomorphicHints,
-        (unsigned long long)g_totalHintsConsumed);
+        (unsigned long long)g_totalHintsConsumed,
+        (unsigned long long)g_calleeLiftAttempts,
+        (unsigned long long)g_calleeLiftSuccess,
+        (unsigned long long)g_calleeBytecodesLifted);
 }
 
 }  // namespace sista

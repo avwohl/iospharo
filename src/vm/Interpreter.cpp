@@ -7032,14 +7032,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             const auto* sendBCs = jitRuntime_.compiler()
                 ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
                 : nullptr;
-            uint32_t bcToCodeTableSize =
-                (jm->numBytecodes + 1) * sizeof(uint32_t);
-            uint32_t icDataOff =
-                (jm->bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+            // IC data lives at the END of the method's payload, mirroring
+            // the canonical formula in JITRuntime::recoverAfterGC.
+            const uint8_t* icStart =
+                jm->codeStart() + jm->codeSize
+                - jm->numICEntries * jit::IC_BYTES_PER_SITE;
             for (uint16_t sendIdx = 0; sendIdx < jm->numICEntries; ++sendIdx) {
                 const uint8_t* icBase =
-                    jm->codeStart() + icDataOff
-                    + sendIdx * jit::IC_BYTES_PER_SITE;
+                    icStart + sendIdx * jit::IC_BYTES_PER_SITE;
                 const uint64_t* ic =
                     reinterpret_cast<const uint64_t*>(icBase);
                 uint64_t classKey0 = ic[0];
