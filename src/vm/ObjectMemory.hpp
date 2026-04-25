@@ -714,16 +714,22 @@ private:
 
     // Class table.
     //
-    // TODO (2026-04-25): the table is a flat 4M-slot vector indexed
-    // by 22-bit class hash.  This wastes ~32 MB for ~5K classes
-    // and forces the generateHash() collision-avoidance dance that
-    // landed in commit 0ca2b58.  When we revisit the class table:
-    //   - Consider replacing with std::unordered_map<uint32_t, Oop>
-    //     (~5K entries, ~120 KB).
-    //   - Or std::vector<Oop> sized to nextClassIndex_ + headroom
-    //     (sequential indices instead of hash-driven).
-    //   - Either way removes the need for generateHash() to skip
-    //     occupied slots.
+    // 4M-slot vector indexed by class's 22-bit identity hash
+    // (Spur convention: classIndex == identityHash).  Wastes ~32 MB
+    // for ~5K real classes (0.12 % density) but the alternatives are
+    // all worse on the hot read path:
+    //
+    //   - std::unordered_map<uint32_t, Oop>: ~120 KB but classAtIndex
+    //     becomes hash+bucket-walk vs single indexed load — 5-10×
+    //     slower on the hot dispatch path.
+    //   - Sequential-index vector: would force renumbering classes
+    //     post-load, breaking image-side IdentitySets keyed by hash.
+    //   - Sparse paged vector (1024-slot pages allocated on demand):
+    //     viable, ~80 KB, +1 indirection.  Only worth it if 32 MB
+    //     becomes a deployment constraint (it doesn't on Mac).
+    //
+    // See `docs/class-table-container-analysis.md` for the full
+    // tradeoff analysis.  Decision (2026-04-25): keep current.
     std::vector<Oop> classTable_;
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
 
