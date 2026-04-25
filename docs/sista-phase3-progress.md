@@ -122,11 +122,52 @@ Branch state at end of session:
   - YG default-on shipped (3b37bd2)
   - Framepoint capture infrastructure (9fb8698)
   - Framepoint tests (36f3e7d)
-  - 23 commits ahead of origin/jit pre-push, all pushed
+  - iOS framing dropped (a67f6a4)
+  - All pushed to origin/jit
+
+## Findings on the path to Phase 4
+
+Investigated whether the simpler "lift unsafe-arith gate" path
+gives a real perf win without full Phase 4.  **Answer: no.**
+
+Measured PHARO_SISTA_UNSAFE_ARITH=1 on TraitTest + bench:
+  - TraitTest: 54/54 pass (no regression)
+  - fib(28): 75 ms (vs 74 ms baseline) — within noise
+  - sieve x100: 136 ms (vs 137 ms baseline)
+
+The bench is send-heavy, not pure-arith.  Even when Sista
+admits + - *, the methods STILL bail at the first send.
+Methods that benefit from inlined arith without sends are rare
+(some math primitives).  Removing the unsafe-arith gate would
+risk silent miscompiles for ~zero perf win.
+
+So the real Phase 4 deliverable IS method inlining, not arith
+inlining.  No shortcut.
 
 ## Next concrete next step
 
-Step 2 (lowering-time landing pad emission) is the lightest of
-the remaining Phase 3 work and unblocks Phase 4.  Estimated 1
-focused session.  Will need to decide between option (a) side
-table vs option (b) in-line emission first.
+The hard part of Phase 4 — splicing a callee method's IR into
+the caller's at a send site — needs:
+
+  1. A way to determine the callee's class statically (Phase 1
+     of plan: query T1 IC tables; or speculative inlining
+     based on observed bytecode patterns)
+  2. Lift the callee's bytecode to IR (Builder already does
+     this for the entry method; refactor to handle nested)
+  3. Splice the callee IR with kGuardClass bracketing
+  4. Deopt landing pad: jump back to outer kSendUnspeculated
+  5. Heuristics: callee size limit, recursion check
+
+Estimated 4-6 weeks of focused work just for this piece.
+Phase 3 step 2 (deopt infrastructure that the inlining needs)
+is interlocked with this — easier to design them together than
+independently.
+
+**Recommendation for next session:** spend 1 session on a
+focused PROOF-OF-CONCEPT inline of ONE specific callee
+(e.g., `Object>>yourself` — universally `^ self`, simplest
+possible target).  Hardcode the receiver-class detection.
+Goal: end-to-end working inline with deopt landing pad.
+
+That validates the architecture before committing to the
+full T1-IC-query infrastructure.
