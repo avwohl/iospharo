@@ -1,6 +1,13 @@
-# PharoVM - Clean C++ VM for macOS and iOS
+# PharoVM - Clean C++ VM for macOS, iOS, and Linux
 cmake_minimum_required(VERSION 3.20)
-project(PharoVM LANGUAGES C CXX OBJC ASM)
+
+# OBJC language is Apple-only.  On Linux we drop it from the LANGUAGES
+# list since there's no Objective-C compiler on a typical Linux host.
+if(APPLE OR CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+    project(PharoVM LANGUAGES C CXX OBJC ASM)
+else()
+    project(PharoVM LANGUAGES C CXX ASM)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -8,21 +15,23 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Crypto build option — controls DSAPrims, SqueakSSL, and bundled OpenSSL
 option(PHARO_WITH_CRYPTO "Include cryptographic libraries (DSAPrims, SqueakSSL, OpenSSL)" ON)
 
-# Detect platform for xcframework slice selection
+# Detect platform for xcframework slice selection (Apple builds only)
 # FORCE_XCFRAMEWORK_PLATFORM can be set externally (e.g., for Mac Catalyst builds
 # where cmake configures for iOS but xcodebuild targets macabi)
-if(FORCE_XCFRAMEWORK_PLATFORM)
-    set(XCFRAMEWORK_PLATFORM "${FORCE_XCFRAMEWORK_PLATFORM}")
-elseif(CMAKE_C_FLAGS MATCHES "macabi" OR CMAKE_CXX_FLAGS MATCHES "macabi")
-    set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-maccatalyst")
-elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
-    if(CMAKE_OSX_SYSROOT MATCHES "Simulator")
-        set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-simulator")
+if(APPLE)
+    if(FORCE_XCFRAMEWORK_PLATFORM)
+        set(XCFRAMEWORK_PLATFORM "${FORCE_XCFRAMEWORK_PLATFORM}")
+    elseif(CMAKE_C_FLAGS MATCHES "macabi" OR CMAKE_CXX_FLAGS MATCHES "macabi")
+        set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-maccatalyst")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "iOS")
+        if(CMAKE_OSX_SYSROOT MATCHES "Simulator")
+            set(XCFRAMEWORK_PLATFORM "ios-arm64_x86_64-simulator")
+        else()
+            set(XCFRAMEWORK_PLATFORM "ios-arm64")
+        endif()
     else()
-        set(XCFRAMEWORK_PLATFORM "ios-arm64")
+        set(XCFRAMEWORK_PLATFORM "macos-arm64_x86_64")
     endif()
-else()
-    set(XCFRAMEWORK_PLATFORM "macos-arm64_x86_64")
 endif()
 
 message(STATUS "Building for platform: ${CMAKE_SYSTEM_NAME}")
@@ -36,13 +45,10 @@ set(VM_SOURCES
     src/vm/ImageLoader.cpp
     src/vm/ImageWriter.cpp
     src/vm/Interpreter.cpp
-    src/vm/WorldRenderer.cpp
     src/vm/Primitives.cpp
     src/vm/FFI.cpp
     src/vm/InterpreterProxy.cpp
     src/vm/plugins/SocketPlugin.cpp
-    src/vm/plugins/SoundPlugin.cpp
-    src/vm/plugins/MIDIPlugin.cpp
     src/platform/EventQueue.cpp
     src/platform/MotionData.cpp
     src/vm/jit/CodeZone.cpp
@@ -108,6 +114,12 @@ if(APPLE)
         src/platform/PlatformBridge.cpp
         src/platform/iOSBridge.cpp
         src/vm/ObjCExceptionGuard.m
+        # Apple-specific framework callers — depend on CoreText,
+        # CoreGraphics, CoreAudio, CoreMIDI.  No Linux equivalents
+        # yet (will need ALSA / freetype / cairo direct bindings).
+        src/vm/WorldRenderer.cpp
+        src/vm/plugins/SoundPlugin.cpp
+        src/vm/plugins/MIDIPlugin.cpp
     )
     if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
         list(APPEND VM_SOURCES src/platform/ios.cpp)
@@ -116,6 +128,8 @@ if(APPLE)
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     list(APPEND VM_SOURCES src/platform/linux.cpp)
+    # WorldRenderer / SoundPlugin / MIDIPlugin not yet ported to Linux —
+    # they need ALSA, cairo, etc.  Headless / SUnit doesn't need them.
 endif()
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})
@@ -152,7 +166,7 @@ else()
     target_compile_definitions(PharoVMCore PUBLIC PHARO_WITH_CRYPTO=0)
 endif()
 
-# Include directories - use platform-appropriate xcframework slice
+# Include directories
 target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm
     ${CMAKE_SOURCE_DIR}/src/vm/jit
@@ -160,9 +174,15 @@ target_include_directories(PharoVMCore PUBLIC
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/jpeg
     ${CMAKE_SOURCE_DIR}/src/vm/plugins/testlib
     ${CMAKE_SOURCE_DIR}/src/platform
-    ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
-    ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
 )
+# Apple builds: SDL2 + libffi headers from prebuilt xcframeworks.
+# Linux: use system pkg-config (added later in this file).
+if(APPLE)
+    target_include_directories(PharoVMCore PUBLIC
+        ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
+        ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/Headers
+    )
+endif()
 
 target_compile_options(PharoVMCore PRIVATE
     -Wall -Wextra -Wno-unused-parameter
@@ -202,19 +222,39 @@ if(PHARO_WITH_CRYPTO)
     )
 endif()
 
-# Link SDL2 static library with force_load to ensure all symbols are available for dlsym
-set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
-if(EXISTS ${SDL2_LIBRARY})
-    # Force load all symbols from SDL2 so they're available via dlsym at runtime
-    target_link_libraries(PharoVMCore "-Wl,-force_load,${SDL2_LIBRARY}")
-    message(STATUS "Using SDL2 (force_load): ${SDL2_LIBRARY}")
-endif()
+if(APPLE)
+    # Link SDL2 static library with force_load to ensure all symbols are available for dlsym
+    set(SDL2_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/SDL2.xcframework/${XCFRAMEWORK_PLATFORM}/libSDL2.a)
+    if(EXISTS ${SDL2_LIBRARY})
+        # Force load all symbols from SDL2 so they're available via dlsym at runtime
+        target_link_libraries(PharoVMCore "-Wl,-force_load,${SDL2_LIBRARY}")
+        message(STATUS "Using SDL2 (force_load): ${SDL2_LIBRARY}")
+    endif()
 
-# Link libffi static library
-set(LIBFFI_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/libffi.a)
-if(EXISTS ${LIBFFI_LIBRARY})
-    target_link_libraries(PharoVMCore ${LIBFFI_LIBRARY})
-    message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
+    # Link libffi static library
+    set(LIBFFI_LIBRARY ${CMAKE_SOURCE_DIR}/Frameworks/libffi.xcframework/${XCFRAMEWORK_PLATFORM}/libffi.a)
+    if(EXISTS ${LIBFFI_LIBRARY})
+        target_link_libraries(PharoVMCore ${LIBFFI_LIBRARY})
+        message(STATUS "Using libffi: ${LIBFFI_LIBRARY}")
+    endif()
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    # Linux: SDL2 + libffi via pkg-config (system packages).
+    # Headless builds don't actually need SDL2 — leave it optional.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(LIBFFI REQUIRED libffi)
+    target_include_directories(PharoVMCore PUBLIC ${LIBFFI_INCLUDE_DIRS})
+    target_link_libraries(PharoVMCore ${LIBFFI_LIBRARIES})
+    message(STATUS "Using libffi from pkg-config: ${LIBFFI_LIBRARIES}")
+    pkg_check_modules(SDL2 sdl2)
+    if(SDL2_FOUND)
+        target_include_directories(PharoVMCore PUBLIC ${SDL2_INCLUDE_DIRS})
+        target_link_libraries(PharoVMCore ${SDL2_LIBRARIES})
+        message(STATUS "Using SDL2 from pkg-config: ${SDL2_LIBRARIES}")
+    else()
+        message(STATUS "SDL2 not found; building without GUI support")
+    endif()
+    # Linux requires explicit pthread + dl for dlopen / mutex / etc.
+    target_link_libraries(PharoVMCore pthread dl m)
 endif()
 
 # Platform-specific frameworks
@@ -267,35 +307,40 @@ if(APPLE)
     endif()
 endif()
 
-# Third-party xcframeworks for iOS (built by scripts/build-third-party.sh)
-# Each entry: xcframework_name:library_filename
-foreach(LIB_ENTRY cairo:libcairo.a freetype:libfreetype.a pixman:libpixman-1.a harfbuzz:libharfbuzz.a libpng16:libpng16.a)
-    string(REPLACE ":" ";" LIB_PARTS ${LIB_ENTRY})
-    list(GET LIB_PARTS 0 XCF_NAME)
-    list(GET LIB_PARTS 1 LIB_FILE)
-    set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/${LIB_FILE})
-    if(EXISTS ${LIB_XCF})
-        target_link_libraries(PharoVMCore ${LIB_XCF})
-        message(STATUS "Using ${XCF_NAME}: ${LIB_XCF}")
-    endif()
-endforeach()
-
-# Crypto xcframeworks (conditional)
-if(PHARO_WITH_CRYPTO)
-    foreach(LIB_NAME ssl crypto ssh2 git2)
-        set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/lib${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+# Third-party xcframeworks (Apple builds only — Linux uses system pkgs)
+if(APPLE)
+    foreach(LIB_ENTRY cairo:libcairo.a freetype:libfreetype.a pixman:libpixman-1.a harfbuzz:libharfbuzz.a libpng16:libpng16.a)
+        string(REPLACE ":" ";" LIB_PARTS ${LIB_ENTRY})
+        list(GET LIB_PARTS 0 XCF_NAME)
+        list(GET LIB_PARTS 1 LIB_FILE)
+        set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/${XCF_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/${LIB_FILE})
         if(EXISTS ${LIB_XCF})
             target_link_libraries(PharoVMCore ${LIB_XCF})
-            message(STATUS "Using lib${LIB_NAME}: ${LIB_XCF}")
+            message(STATUS "Using ${XCF_NAME}: ${LIB_XCF}")
         endif()
     endforeach()
+
+    # Crypto xcframeworks (conditional, Apple-only for now)
+    if(PHARO_WITH_CRYPTO)
+        foreach(LIB_NAME ssl crypto ssh2 git2)
+            set(LIB_XCF ${CMAKE_SOURCE_DIR}/Frameworks/lib${LIB_NAME}.xcframework/${XCFRAMEWORK_PLATFORM}/lib${LIB_NAME}.a)
+            if(EXISTS ${LIB_XCF})
+                target_link_libraries(PharoVMCore ${LIB_XCF})
+                message(STATUS "Using lib${LIB_NAME}: ${LIB_XCF}")
+            endif()
+        endforeach()
+    endif()
 endif()
 
 # Test executables (macOS only)
 if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     add_executable(test_load_image src/vm/test_load_image.cpp)
     target_link_libraries(test_load_image PharoVMCore)
-    # Force export testlib symbols so they're available via dlsym
+    # Force export testlib symbols so they're available via dlsym.
+    # The `-Wl,-u,SYM` syntax is Mach-O (Apple ld); Linux ld uses
+    # `--undefined=SYM` (also accepts -u SYM).  Apple-only for now —
+    # Linux test runs that don't exercise FFI callbacks won't notice.
+    if(APPLE)
     target_link_options(test_load_image PRIVATE
         -Wl,-u,_singleCallToCallback
         -Wl,-u,_callbackInALoop
@@ -324,15 +369,18 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
         -Wl,-u,_simple_callback_f_pointer
         -Wl,-u,_simple_callback_f_size_t
     )
+    endif()  # APPLE for test_load_image link options
 
     add_executable(test_class_table src/vm/test_class_table.cpp)
     target_link_libraries(test_class_table PharoVMCore)
 
-    add_executable(test_platform src/platform/test_platform.cpp)
-    target_link_libraries(test_platform PharoVMCore)
+    if(APPLE)
+        add_executable(test_platform src/platform/test_platform.cpp)
+        target_link_libraries(test_platform PharoVMCore)
 
-    add_executable(test_ios_bridge src/platform/test_ios_bridge.cpp)
-    target_link_libraries(test_ios_bridge PharoVMCore)
+        add_executable(test_ios_bridge src/platform/test_ios_bridge.cpp)
+        target_link_libraries(test_ios_bridge PharoVMCore)
+    endif()
 
     # Sista IR self-test (Phase 2 of docs/sista-inlining-plan.md).
     # Keeps the IR compile-able while the rest of the optimizer is
