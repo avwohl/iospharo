@@ -7008,25 +7008,71 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         attempts++;
         // Phase 4 Step 1: build inline hints from T1's IC info.
         // Pass them to Sista so it can identify monomorphic send
-        // sites — today only for measurement (counters), not yet
-        // for IR transformation.
+        // sites.  Today only used for the inline-hint stat counters;
+        // Step 2 will use them for actual IR splicing.
+        //
+        // PHARO_SISTA_AFTER_T1=1: defer Sista compile until T1 has
+        // compiled the method.  Without this, Sista runs on first
+        // activation and the IC table is always empty (T1 hasn't
+        // hit its compile threshold yet), so hints are never present.
+        //
+        // IC layout note: the ICEntry struct in JITMethod.hpp is sized
+        // for IC bookkeeping but its `kind`/`bytecodeOffset` fields are
+        // not populated by the runtime.  The actual IC data lives in
+        // the flat `[key0,method0,extra0,key1,...]` block past the
+        // bcToCode table.  We read it directly here.  bcOffset comes
+        // from the compiler's send-site map, indexed by send-site
+        // ordinal.  classKey0 is a classIndex (GC-stable Spur key),
+        // not an Oop — Phase 4 Step 2 will treat it as such.
+        static const bool sistaAfterT1 =
+            std::getenv("PHARO_SISTA_AFTER_T1") != nullptr;
         std::vector<sista::InlineHint> inlineHints;
-        if (auto* jm = jitRuntime_.methodMap().lookup(method.rawBits())) {
-            const auto* ic = jm->icEntries();
-            for (size_t i = 0; i < jm->numICEntries; ++i) {
-                if (ic[i].kind == jit::ICEntry::Kind::Monomorphic
-                    && ic[i].numEntries == 1) {
-                    inlineHints.push_back({
-                        ic[i].bytecodeOffset,
-                        ic[i].slots[0].classOop,
-                        ic[i].slots[0].targetAddr,
-                    });
+        auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+        if (jm && jm->numICEntries > 0) {
+            const auto* sendBCs = jitRuntime_.compiler()
+                ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
+                : nullptr;
+            uint32_t bcToCodeTableSize =
+                (jm->numBytecodes + 1) * sizeof(uint32_t);
+            uint32_t icDataOff =
+                (jm->bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+            for (uint16_t sendIdx = 0; sendIdx < jm->numICEntries; ++sendIdx) {
+                const uint8_t* icBase =
+                    jm->codeStart() + icDataOff
+                    + sendIdx * jit::IC_BYTES_PER_SITE;
+                const uint64_t* ic =
+                    reinterpret_cast<const uint64_t*>(icBase);
+                uint64_t classKey0 = ic[0];
+                uint64_t method0   = ic[1];
+                uint64_t classKey1 = ic[3];
+                if (classKey0 != 0 && classKey1 == 0) {
+                    uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
+                        ? (*sendBCs)[sendIdx] : UINT16_MAX;
+                    if (bcOff != UINT16_MAX) {
+                        inlineHints.push_back({bcOff, classKey0, method0});
+                    }
                 }
             }
+        }
+        if (sistaAfterT1 && !jm) {
+            // No T1 entry yet — let T1 warm up first.  Skip Sista
+            // for this activation; fall through to the regular T1
+            // path below (must NOT return — that would skip
+            // tryJITActivation too).
+            goto past_sista_block;
         }
         sista::Lowering::CompiledFn fn = sista->compile(method, memory_,
             inlineHints.empty() ? nullptr : &inlineHints);
         if (fn) hits++;
+        // Optional inline-hint observability: PHARO_SISTA_INLINE_STATS=1
+        // dumps cumulative counters every 100 compile attempts to stderr.
+        // Used to size Phase 4 work — if hints-consumed is tiny vs
+        // sends-lifted, monomorphic inlining isn't worth the complexity.
+        static const bool dumpInlineStats =
+            std::getenv("PHARO_SISTA_INLINE_STATS") != nullptr;
+        if (dumpInlineStats && (attempts % 100) == 0) {
+            sista::Builder::dumpInlineHintStats();
+        }
         // Defensive: asmjit's compile internally uses RAII W^X scopes;
         // if any path leaks the writable state on this thread, the next
         // T1 JIT activation crashes SIGBUS.  Force back to executable.
@@ -7773,6 +7819,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 dispatched, sistaReturns, sistaSends, sistaUnknown);
         }
     }
+past_sista_block:
 
     // Try JIT execution. If it handles the method, it pops the frame
     // and pushes the return value — the dispatch loop continues with
