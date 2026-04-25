@@ -165,11 +165,14 @@ struct JITMethod_mirror {
     void*     prevInZone;         // 72
     uint32_t  lastUsedEpoch;      // 80
     uint32_t  bcToCodeTableOffset;// 84
+    uint32_t  selBitsArrayOffset; // 88  (Task #41 — out-of-band selectorBits)
+    // (4 bytes padding to 8-byte alignment → total 96)
 };
-static_assert(sizeof(JITMethod_mirror) == 88,
-              "JITMethod_mirror must match real JITMethod (88 bytes)");
+static_assert(sizeof(JITMethod_mirror) == 96,
+              "JITMethod_mirror must match real JITMethod (96 bytes)");
 static_assert(offsetof(JITMethod_mirror, state) == 32, "state offset");
 static_assert(offsetof(JITMethod_mirror, lastUsedEpoch) == 80, "lastUsedEpoch offset");
+static_assert(offsetof(JITMethod_mirror, selBitsArrayOffset) == 88, "selBitsArrayOffset offset");
 // Cross-check JM_SIZE constant (defined later) against the mirror.
 // See after the JM_SIZE definition for the actual static_assert —
 // can't forward-reference here.
@@ -263,8 +266,9 @@ static constexpr int JM_HAS_PRIM_PROL   = 41;  // bool hasPrimPrologue
 // Use sizeof(JITMethod_mirror) so this auto-tracks layout changes.
 // JITMethod_mirror is defined later in this file; both must match
 // pharo::jit::JITMethod's actual layout.  Bug 11b layer 5: hard-coded
-// value (80) drifted out of sync after the real struct grew to 88.
-static constexpr int JM_SIZE            = 88;  // == sizeof(JITMethod_mirror)
+// value (80) drifted out of sync after the real struct grew.
+// Bumped to 96 (Task #41) when selBitsArrayOffset was added.
+static constexpr int JM_SIZE            = 96;  // == sizeof(JITMethod_mirror)
 static_assert(JM_SIZE == sizeof(JITMethod_mirror),
               "JM_SIZE must equal sizeof(JITMethod_mirror) — bug 11b layer 5");
 

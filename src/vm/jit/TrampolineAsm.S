@@ -67,7 +67,8 @@
 // Bug 11b layer 5: was 80 while real struct grew to 88, causing
 // every `add Xn, methodHdr, #JM_SIZE` to land 8 bytes BEFORE
 // codeStart inside the JITMethod header (lastUsedEpoch field).
-#define JM_SIZE           88
+// Bumped to 96 (Task #41) when selBitsArrayOffset was added.
+#define JM_SIZE           96
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1
@@ -293,7 +294,7 @@ Ltramp_call:
     cmp     x10, x12
     b.hs    Lresume_oob
     ldr     w14, [x6, #JM_BCTOCODEOFF]     // bcToCodeTableOffset (u32)
-    add     x15, x6, #JM_SIZE              // codeStart = callerJM + 80
+    add     x15, x6, #JM_SIZE              // codeStart = callerJM + JM_SIZE
     add     x15, x15, x14                  // bcToCodeTable pointer
     ldr     w12, [x15, x10, lsl #2]        // codeOff = table[bcOffset]
     b       Lresume_check
