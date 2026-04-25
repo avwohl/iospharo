@@ -12611,6 +12611,8 @@ void Interpreter::initializeJIT() {
     ::g_jitCodeZone = &jitRuntime_.codeZone();
 }
 
+#endif // PHARO_JIT_ENABLED — finalization helpers below run regardless
+
 void Interpreter::backwardBranchInterruptCheck() {
     if (!g_debug.finalizeDeferred) return;
 
@@ -12822,6 +12824,8 @@ void Interpreter::drainMournQueueNatively() {
                 initialPending, memory_.pendingFinalizationSignals());
     }
 }
+
+#if PHARO_JIT_ENABLED  // re-open: tryOSRAtBackwardJump and below are JIT-only
 
 void Interpreter::tryOSRAtBackwardJump() {
     if (g_debug.noOSR) return;

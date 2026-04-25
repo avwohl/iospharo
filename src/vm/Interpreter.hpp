@@ -992,12 +992,15 @@ private:
     // On-stack replacement: at interpreter backward jumps, check if the
     // current method is JIT-compiled and transfer execution to JIT.
     void tryOSRAtBackwardJump();
+#endif  // PHARO_JIT_ENABLED — finalization helpers below run regardless
 
     // Cog-spec interrupt check fired at backward branches.  Matches
     // cointerp-cpp.c:12236-12260 (backwardJumpCountByte mechanism).
     // Delivers pending finalization signals at a bytecode-safe point.
     // Under PHARO_FINALIZE_DEFERRED, drains the mourn queue natively
     // (bypassing P50/P51 FinalizationProcess) for deterministic timing.
+    // Defined regardless of JIT — bytecode dispatch in Interpreter.cpp
+    // calls this on every backward branch.
     void backwardBranchInterruptCheck();
 
     // Drain mournQueue_ synchronously in C++ by reimplementing
@@ -1009,6 +1012,7 @@ private:
     uint32_t weakKeyAssociationClassIndex_ = 0;
     uint32_t weakArrayClassIndex_ = 0;  // Used to drop WeakArray mourners (see drainMournQueueNatively)
     uint32_t weakValueAssociationClassIndex_ = 0;  // Processed natively like WKA (same Association layout)
+#if PHARO_JIT_ENABLED  // re-open: tryJITResumeInCaller and below are JIT-only
 
     // After a send returns, try to re-enter JIT execution in the caller.
     // Called from returnValue() after push(result).
@@ -1078,9 +1082,12 @@ private:
 
     // Matches Cog's `backwardJumpCountByte` — interrupt check fires
     // when this hits 0 (every ~60 backward jumps).  Only consulted
-    // when PHARO_FINALIZE_DEFERRED is set.
+    // when PHARO_FINALIZE_DEFERRED is set.  Used by
+    // backwardBranchInterruptCheck regardless of JIT.
+#endif  // PHARO_JIT_ENABLED — countdown is JIT-independent
     int backwardBranchCountdown_ = 0;
     static constexpr int kBackwardBranchCheckReload = 60;
+#if PHARO_JIT_ENABLED  // re-open: remaining JIT-only fields below
 
     // Last JIT return tracker — for diagnosing wrong-value DNUs.
     // Updated on every ExitReturn from JIT. Checked in DNU handler.
