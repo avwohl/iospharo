@@ -83,6 +83,26 @@ plus ~5 cycles of stack save/restore.
    methodMap lookup (~25 cycles) when the cached pointer matches
    the receiver's compiledBlock slot.
 
+   **Prototype attempted (reverted):** stored the cached entry in
+   `icData[17]` (last entry's extra slot, unused for monomorphic
+   sites) and added a fast-path read in the stencil's BLOCK_VALUE
+   branch.  Two issues prevented a measurable win:
+
+     - At IC-patch time the inner block hasn't yet been JIT-compiled,
+       so the cache is stored as zero.  Logged "BLK-CACHE-MISS"
+       entries confirmed this for the bench's hot blocks.
+     - Stencil-side write-back of the cache after a successful
+       methodMap lookup didn't change perf either, suggesting the
+       write either doesn't land (W^X on Apple Silicon — IC area is
+       in the JIT code zone, executable-only on the running thread
+       after `makeExecutable`) or the next-call fast-path read still
+       sees 0.
+
+   The right shape needs a separate writable side-table per JITMethod
+   (mirror of the Task #41 `selBitsArray`), not the W^X-protected IC
+   data area.  Larger refactor than fits in a single iteration but
+   the design is now clear.
+
 2. **Specialize the no-capture block stencil** — `[:x | x + 1]` has
    no captured values, so the `numCopied` loop is wasted bookkeeping.
    A `stencil_blockValueNoCapture1Arg` variant could be ~20% smaller.
