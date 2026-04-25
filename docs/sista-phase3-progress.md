@@ -255,3 +255,97 @@ Order of attack for next sessions:
 
 (A) is half a day, (B) is 1-2 days, (C) is several days.
 Total: ~1 week to a meaningful Phase 4 perf delivery.
+
+## Phase 4 — Monomorphic inlining (Steps 1-3 DONE 2026-04-24)
+
+### Step 1 — Plumb T1 IC into Sista (DONE)
+
+Commits: `58b3738` (1a — `vector<InlineHint>` parameter on
+`Builder::buildWithHints`), `3ccf001` (1c — read T1's flat IC
+layout instead of the inert ICEntry struct fields), `b382981`
+(critical fix: bump `JM_SIZE` to 96 — JIT was failing to init).
+
+Hint extraction lives in `Interpreter::activateMethod`'s Sista
+hook.  Reads T1's flat `[key,method,extra]*6+selBits` layout from
+`codeStart + codeSize - numICEntries*IC_BYTES_PER_SITE`, filters
+to monomorphic sites (key0 ≠ 0 && key1 == 0), and pairs each
+entry's site-ordinal with the bcOffset from
+`JITCompiler::getSendSiteBCOffsets`.
+
+The ICEntry struct's `kind`/`bytecodeOffset` fields are inert
+allocator bookkeeping — no runtime path writes them.  See
+`memory/reference_t1_ic_layout.md`.
+
+Two gates added to feed Sista good data:
+
+  - `PHARO_SISTA_AFTER_T1=1` defers Sista compile until
+    `methodMap.lookup(method)` returns a JITMethod.
+  - `PHARO_SISTA_T1_WARMUP=N` (default 100) further requires
+    `jm->executionCount >= N` so the IC table has time to fill.
+
+In an OrderedCollectionTest run with both gates and `DEFER=0`:
+
+    sends-lifted=82  hints-provided=49  hints-consumed=20
+
+i.e. 24% of Sista send sites have a usable monomorphic hint.
+
+### Step 2 — Probe-lift callees (DONE)
+
+Commit: `5c60ddd`.  At each consumed hint, recursively call
+`Builder::build` on the cached CompiledMethod oop and report
+whether the lifter handles its bytecode.  Pure measurement —
+no IR is spliced.
+
+Counters (in `[SISTA-INLINE]` dump): `callees-attempted`,
+`callees-lifted`, `callee-values`.  Recursion guard caps depth
+at 1.  Same OrderedCollectionTest workload showed 18 / 18
+liftable, ~3 IR values per callee on average.
+
+### Step 3 — Splice with class guard (DONE)
+
+Commits: `b477c44` (initial 2-value patterns), `84aca6c`
+(extended to 3-value getter).
+
+`kGuardClass` lowering added to `SistaLowering.cpp`:
+
+  - tag-check receiver (immediate → deopt)
+  - load `classIndex` from header, compare against expected
+    (22 bits)
+  - on miss: push simulated stack to interp.sp, set ip=bcOffset,
+    `state.exitReason=ExitSend`, return — same shape as
+    `kPrimTagCheckInt`'s deopt path
+
+Builder helper `tryInlineConstReturn` recognizes two callee
+shapes and substitutes `kGuardClass + load`:
+
+    2-value: kLoad{TrueOop,FalseOop,Receiver,ConstantOop} + kReturn
+    3-value: kLoadReceiver + kLoadInstVar(v0,N) + kReturn
+
+The second is semantically equivalent to T1's IC inline-getter
+fast-path, minus the IC probe overhead.
+
+Gated behind `PHARO_SISTA_INLINE_CONST=1`.  In the same workload
+2 inlines fire per compile cycle — coverage is narrow because
+the OrderedCollectionTest hot callees don't match either pattern
+(most end with an inner `send`, not a `kReturn`).
+
+### Step 4 — Heuristics (DONE — patterns ARE the heuristic)
+
+The current "inline if shape matches the recognizer" rule is
+itself a conservative heuristic — anything richer (cost models,
+splice-budget caps, receiver-class polymorphism trees) is
+premature without first widening the pattern recognizer to cover
+self-send chains, multi-bytecode arith, and recursive inlining
+of self-receiver method calls.
+
+### What's left for a real Phase 4 perf delivery
+
+  - Recursive inlining: most candidates end with `kSendUnspeculated`
+    on `self.someMessage` whose own callee IS inlineable.  Until
+    we splice those, the recognizer fires on too small a fraction.
+  - Multi-block callees: the lifter emits a synthetic exit block
+    even for 2-value shapes; future patterns (with branches) need
+    block-renumbering during splicing.
+  - Default-on requires soak time on the deopt path under load.
+    `PHARO_SISTA_INLINE_CONST=1` stays opt-in.
+
