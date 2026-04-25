@@ -127,9 +127,22 @@ if(APPLE)
         list(APPEND VM_SOURCES src/platform/mac.cpp)
     endif()
 elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    list(APPEND VM_SOURCES src/platform/linux.cpp)
-    # WorldRenderer / SoundPlugin / MIDIPlugin not yet ported to Linux —
-    # they need ALSA, cairo, etc.  Headless / SUnit doesn't need them.
+    list(APPEND VM_SOURCES
+        src/platform/linux.cpp
+        # WorldRenderer needs CoreText/CoreGraphics for glyph rasterization;
+        # the Linux stub satisfies the linker (Interpreter.cpp constructs a
+        # WorldRenderer member) without pulling in Apple frameworks.  When
+        # a real Linux renderer is added, replace this with a freetype/cairo
+        # impl that lives next to the Apple impl (one TU per platform per
+        # design doc).
+        src/vm/WorldRenderer_linux_stub.cpp
+        # SoundPlugin.cpp / MIDIPlugin.cpp already have non-Apple stubs
+        # (`#else` branch returning failure).  Compiling them here keeps
+        # Primitives.cpp linkable; future Linux audio/MIDI will replace
+        # the stubs with ALSA/JACK + ALSA-MIDI.
+        src/vm/plugins/SoundPlugin.cpp
+        src/vm/plugins/MIDIPlugin.cpp
+    )
 endif()
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})

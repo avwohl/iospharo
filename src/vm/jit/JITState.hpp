@@ -195,9 +195,13 @@ typedef void (*StencilFunc)(JITState*);
     ); \
 } while(0)
 #else
+// NOTE: must fully qualify ::pharo::jit::JITState — this macro is invoked
+// from member functions of pharo::Interpreter (Interpreter.cpp), where
+// `JITState` is not visible without the qualifier.  The arm64 branch
+// above sidesteps the issue by not naming the type in its asm wrapper.
 #define JIT_CALL(entry_ptr, state_ptr) do { \
     _JIT_CALL_PRE(); \
-    ((void(*)(JITState*))(entry_ptr))(state_ptr); \
+    ((void(*)(::pharo::jit::JITState*))(entry_ptr))(state_ptr); \
 } while(0)
 #endif
 

@@ -16,6 +16,7 @@
 #include "SistaLowering.hpp"
 #include "SistaRuntime.hpp"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <iostream>

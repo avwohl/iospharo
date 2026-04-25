@@ -202,7 +202,7 @@ class Interpreter {
     // Allow j2j_call to access private interpreter state directly.
     // Only needed when JIT is compiled in.
 #if PHARO_JIT_ENABLED
-    friend void ::jit_rt_j2j_call(jit::JITState* state);
+    friend void ::jit_rt_j2j_call(::pharo::jit::JITState* state);
 #endif
 public:
     explicit Interpreter(ObjectMemory& memory);

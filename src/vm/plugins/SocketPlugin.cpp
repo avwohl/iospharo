@@ -7,9 +7,11 @@
  */
 
 #include "SocketPlugin.h"
+#include <algorithm>
 #include <arpa/inet.h>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>

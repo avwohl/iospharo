@@ -36,6 +36,7 @@ extern "C" void soundSetSignalFunc(void (*fn)(int));
 #include <cstdlib>
 #include <dlfcn.h>
 #include <dirent.h>
+#include <fcntl.h>
 #if __APPLE__
 #include <CoreFoundation/CoreFoundation.h>
 // CoreFoundation pulls in objc headers which define nil as a macro

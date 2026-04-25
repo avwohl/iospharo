@@ -45,6 +45,7 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <limits>
 
 namespace pharo {

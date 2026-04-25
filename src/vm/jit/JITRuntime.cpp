@@ -22,8 +22,12 @@ using pharo::g_stepNum;
 
 // Defined in TrampolineAsm.S — holds the asm-side JM_SIZE constant.
 // JITRuntime::initialize() asserts this matches sizeof(JITMethod).
+// TrampolineAsm.S is arm64-only; on other architectures the asm trampoline
+// is not used, so we skip the check.
+#if defined(__aarch64__)
 extern "C" const uint64_t pharo_jit_jm_size_check;
 static const uint64_t& g_pharo_jit_jm_size_check = pharo_jit_jm_size_check;
+#endif
 
 namespace pharo {
 }
@@ -995,12 +999,14 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // sizeof(JITMethod).  If layout drifts, every asm trampoline
     // computes `add Xn, methodHdr, #JM_SIZE` to the wrong address.
     // Fail loudly at startup instead of crashing later.
+#if defined(__aarch64__)
     if (g_pharo_jit_jm_size_check != sizeof(JITMethod)) {
         fprintf(stderr, "[JIT] FATAL: TrampolineAsm.S JM_SIZE=%llu != sizeof(JITMethod)=%zu — "
                 "stencil math will land outside method code.  Update JM_SIZE in TrampolineAsm.S.\n",
                 (unsigned long long)g_pharo_jit_jm_size_check, sizeof(JITMethod));
         return false;
     }
+#endif
 
     // Initialize code zone
     if (!codeZone_.initialize()) {

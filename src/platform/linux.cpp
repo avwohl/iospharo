@@ -16,10 +16,26 @@
  */
 
 #include "Platform.hpp"
+#include "DisplaySurface.hpp"
 
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cstring>
+
+// =====================================================================
+// Headless Linux stubs for symbols normally provided by the iOS / Catalyst
+// host app (PlatformBridge.cpp).  test_load_image runs entirely without a
+// display, clipboard, or IME — these stubs let it link.
+// =====================================================================
+
+namespace pharo {
+DisplaySurface* gDisplaySurface = nullptr;
+}
+
+extern "C" const char* vm_getClipboardText(void) { return ""; }
+extern "C" void vm_setClipboardText(const char* /*text*/) {}
+extern "C" void vm_startTextInput(void) {}
+extern "C" void vm_stopTextInput(void) {}
 
 namespace pharo {
 namespace platform {
