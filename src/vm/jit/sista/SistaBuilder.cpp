@@ -1450,40 +1450,54 @@ private:
         g_calleeLiftDepth--;
         if (cr != LiftResult::kOk) return false;
 
-        // Pattern: exactly 2 values, second is kReturn of the first;
-        // first must be a constant load.  Block count is irrelevant
-        // (the lifter often emits a synthetic exit block); what
-        // matters is that no IR ops other than load+return exist.
-        if (calleeIR.values.size() != 2) return false;
-        const Value& v0 = calleeIR.values[0];
-        const Value& v1 = calleeIR.values[1];
-        if (v1.op != Op::kReturn) return false;
-        if (v1.operands.size() != 1 || v1.operands[0] != v0.id) return false;
-
-        Op constOp;
-        Type constTy;
-        uint64_t constLit = 0;
-        switch (v0.op) {
-        case Op::kLoadTrueOop:  constOp = Op::kLoadTrueOop;  constTy = Type::kOopBool; break;
-        case Op::kLoadFalseOop: constOp = Op::kLoadFalseOop; constTy = Type::kOopBool; break;
-        case Op::kConstantOop:  constOp = Op::kConstantOop;  constTy = Type::kOop;
-                                 constLit = v0.literal; break;
-        // kLoadReceiver in callee returns the CALLEE's receiver — that
-        // IS the caller's receiver for a Send0 (no args, rcvr at top
-        // of stack before send).  Substitute the receiver value.
-        case Op::kLoadReceiver: {
-            // For nArgs > 0, callee's receiver is `stack_[size-nArgs-1]`,
-            // which is the caller's receiver value.  We re-emit it as
-            // a kLoadReceiver in caller — semantically identical.
-            constOp = Op::kLoadReceiver;
-            constTy = Type::kOop;
-            break;
-        }
-        default: return false;  // Other ops would need real splicing
-        }
-
-        // Receiver value is at stack_[size - nArgs - 1].
+        // Receiver value at stack_[size - nArgs - 1] — used by
+        // kLoadReceiver substitution and kGuardClass.
         uint32_t recvId = stack_[stack_.size() - nArgs - 1];
+
+        // Two recognized shapes:
+        //
+        //   2 values: kLoad{TrueOop,FalseOop,ConstantOop,Receiver}
+        //             + kReturn → inlined value is the load output.
+        //
+        //   3 values: kLoadReceiver + kLoadInstVar(v0, ivarIdx)
+        //             + kReturn → inlined value is a new
+        //             kLoadInstVar(callerRecv, ivarIdx).  Same
+        //             effect T1's IC inline-getter fast-path
+        //             produces, minus the IC probe overhead.
+        Op   inlineOp;
+        Type inlineTy;
+        uint64_t inlineLit = 0;
+        std::vector<uint32_t> inlineOps;
+
+        if (calleeIR.values.size() == 2) {
+            const Value& v0 = calleeIR.values[0];
+            const Value& v1 = calleeIR.values[1];
+            if (v1.op != Op::kReturn) return false;
+            if (v1.operands.size() != 1 || v1.operands[0] != v0.id) return false;
+            switch (v0.op) {
+            case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;  inlineTy = Type::kOopBool; break;
+            case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop; inlineTy = Type::kOopBool; break;
+            case Op::kConstantOop:  inlineOp = Op::kConstantOop;  inlineTy = Type::kOop;
+                                     inlineLit = v0.literal; break;
+            case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver; inlineTy = Type::kOop; break;
+            default: return false;
+            }
+        } else if (calleeIR.values.size() == 3) {
+            const Value& v0 = calleeIR.values[0];
+            const Value& v1 = calleeIR.values[1];
+            const Value& v2 = calleeIR.values[2];
+            if (v0.op != Op::kLoadReceiver) return false;
+            if (v1.op != Op::kLoadInstVar) return false;
+            if (v1.operands.size() != 1 || v1.operands[0] != v0.id) return false;
+            if (v2.op != Op::kReturn) return false;
+            if (v2.operands.size() != 1 || v2.operands[0] != v1.id) return false;
+            inlineOp = Op::kLoadInstVar;
+            inlineTy = Type::kOop;
+            inlineLit = v1.literal;
+            inlineOps.push_back(recvId);
+        } else {
+            return false;
+        }
 
         // Emit kGuardClass.  Operands: receiver, then full simulated
         // stack (so deopt can re-push everything for the interpreter).
@@ -1497,13 +1511,14 @@ private:
         out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                       std::move(guardOps), guardLit);
 
-        // Emit the constant load that replaces the call result.
-        uint32_t constId = out_.newValue(currentBlock_, constOp,
-                                          constTy, {}, constLit);
+        // Emit the inlined value.
+        uint32_t inlineId = out_.newValue(currentBlock_, inlineOp,
+                                           inlineTy, std::move(inlineOps),
+                                           inlineLit);
 
         // Pop rcvr+args, push the inlined value.
         for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-        stack_.push_back(constId);
+        stack_.push_back(inlineId);
 
         g_inlinesEmitted++;
         g_totalHintsConsumed++;
