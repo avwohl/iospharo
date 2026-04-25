@@ -129,6 +129,45 @@ side-table or on the CompiledBlock itself.
 Without that, the per-call cost stays at ~44 ns (vs Cog's ~2 ns)
 and block-heavy workloads stay 22x slower.
 
+### Update: tested and reverted
+
+Implemented the two-tier counter (`noteBlockEntry` with threshold
+200, separate `blockCountMap_`).  At threshold 200, 115 inner
+blocks compiled (vs 1024 with threshold 2).  IC hit rate 58% vs
+99% baseline.  But block(500K) still 28-33 ms — same or slightly
+worse than the 22-24 ms baseline.
+
+So compiling the inner block doesn't fix block(500K).  The bench
+is stuck at the per-call cost, regardless of whether the inner
+block is JIT'd.
+
+Also tested enabling J2J save stack in `tryJITResumeInCaller`
+(was nulled by design, with comment "caused severe slowdowns").
+With it enabled, no perf gain on block(500K) — the comment was
+right.
+
+### Conclusion
+
+Every attempted micro-fix to close the block-dispatch gap either
+has no effect or makes things worse.  The per-call cost is
+architectural — Cog uses different mechanisms (stack-based
+contexts, native call/return, no IC probes for inlined block
+dispatch) that aren't shimmable onto the current stencil
+infrastructure without major rewriting.
+
+For realistic perf wins on the current architecture:
+
+  - **More Sista inlining patterns.**  The Phase 4 work (already
+    shipped, gated by PHARO_SISTA_INLINE_CONST=1) eliminates
+    sends entirely at inlined sites.  Broader pattern coverage
+    (recursive chains, multi-bytecode arith returns, larger
+    callees) would close the gap on real workloads more than
+    micro-optimizing the existing send path.
+  - **Accept the ~10x gap on send-heavy code** as a known limit
+    of the current copy-and-patch stencil approach until a major
+    redesign (or migration to a different JIT backend) is
+    feasible.
+
 ### Original target list (ordered by leverage)
 
 1. **Cache the compiledBlock JIT entry per IC site** — for hot
