@@ -7006,7 +7006,26 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             banner = true;
         }
         attempts++;
-        sista::Lowering::CompiledFn fn = sista->compile(method, memory_);
+        // Phase 4 Step 1: build inline hints from T1's IC info.
+        // Pass them to Sista so it can identify monomorphic send
+        // sites — today only for measurement (counters), not yet
+        // for IR transformation.
+        std::vector<sista::InlineHint> inlineHints;
+        if (auto* jm = jitRuntime_.methodMap().lookup(method.rawBits())) {
+            const auto* ic = jm->icEntries();
+            for (size_t i = 0; i < jm->numICEntries; ++i) {
+                if (ic[i].kind == jit::ICEntry::Kind::Monomorphic
+                    && ic[i].numEntries == 1) {
+                    inlineHints.push_back({
+                        ic[i].bytecodeOffset,
+                        ic[i].slots[0].classOop,
+                        ic[i].slots[0].targetAddr,
+                    });
+                }
+            }
+        }
+        sista::Lowering::CompiledFn fn = sista->compile(method, memory_,
+            inlineHints.empty() ? nullptr : &inlineHints);
         if (fn) hits++;
         // Defensive: asmjit's compile internally uses RAII W^X scopes;
         // if any path leaks the writable state on this thread, the next

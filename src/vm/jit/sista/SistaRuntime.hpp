@@ -50,7 +50,11 @@ public:
     //
     // The result is cached by raw oop bits.  Callers must call reset()
     // after a GC compaction — see GC SAFETY note in the header comment.
-    Lowering::CompiledFn compile(Oop method, ObjectMemory& memory);
+    //
+    // Optional `hints` (Phase 4 Step 1): inline hints from T1 IC.
+    // Caller-owned, must outlive the call.
+    Lowering::CompiledFn compile(Oop method, ObjectMemory& memory,
+                                  const std::vector<InlineHint>* hints = nullptr);
 
     // Clear the method→function cache.  Call this after a GC
     // compaction, since raw oop bits become unstable.  The cached

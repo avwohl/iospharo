@@ -7,16 +7,20 @@
 namespace pharo {
 namespace sista {
 
-Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory) {
+Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
+                                       const std::vector<InlineHint>* hints) {
     // Cache hit?
     uint64_t key = method.rawBits();
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second;
 
-    // Lift bytecode → IR.
+    // Lift bytecode → IR.  Use buildWithHints when hints are present
+    // so Sista can identify monomorphic sites for Phase 4 inlining.
     Method m;
     uint32_t failedBc = UINT32_MAX;
-    LiftResult r = Builder::build(method, memory, m, &failedBc);
+    LiftResult r = hints
+        ? Builder::buildWithHints(method, memory, m, hints, &failedBc)
+        : Builder::build(method, memory, m, &failedBc);
     if (r != LiftResult::kOk) {
         cache_[key] = nullptr;  // negative cache
         return nullptr;
