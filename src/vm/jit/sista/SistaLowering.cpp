@@ -264,11 +264,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
-            case Op::kPrimIdentityEq: {
-                // Phase 4 inline of #==: compare a's bits to b's bits,
-                // result is trueOop if equal, else falseOop.  No tag
-                // check, no deopt — `==` semantics are "compare object
-                // identity" regardless of operand types.
+            case Op::kPrimIdentityEq:
+            case Op::kPrimIdentityNeq: {
+                // Phase 4 inline of #== / #~~: compare a's bits to b's
+                // bits, result is trueOop if matching the op's
+                // condition, else falseOop.  No tag check, no deopt —
+                // identity semantics are universal across all classes.
                 if (v.operands.size() != 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
@@ -283,9 +284,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp falseOop = cc.new_gp64("false");
                 cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
                 cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
-                Gp dst = cc.new_gp64("eq");
+                Gp dst = cc.new_gp64("idcmp");
                 cc.cmp(ita->second, itb->second);
-                cc.csel(dst, trueOop, falseOop, asmjit::a64::CondCode::kEQ);
+                if (v.op == Op::kPrimIdentityEq) {
+                    cc.csel(dst, trueOop, falseOop, asmjit::a64::CondCode::kEQ);
+                } else {  // kPrimIdentityNeq
+                    cc.csel(dst, trueOop, falseOop, asmjit::a64::CondCode::kNE);
+                }
                 regFor[v.id] = dst;
                 break;
             }

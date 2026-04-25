@@ -104,6 +104,8 @@ enum class Op : uint8_t {
     kPrimIdentityEq,      // operands: a, b (any Oops); cmp identity -> OopBool
                           // Result is trueOop if a == b (raw bits), else falseOop.
                           // Used by Phase 4 inline of #== (universal semantics).
+    kPrimIdentityNeq,     // operands: a, b; like kPrimIdentityEq but negated
+                          // (trueOop if a != b).  Phase 4 inline of #~~.
 
     // --- Blocks ---
     kBlockCreate,         // operands: compiled-block, outer-context, copied-values...

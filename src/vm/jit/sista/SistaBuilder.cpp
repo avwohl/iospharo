@@ -119,6 +119,12 @@ public:
         identityEqSelectorMask_ = mask;
     }
 
+    // Phase 4 POC #3: bitmap of literal indices for #~~ (identity
+    // inequality).  Same gate as #== via PHARO_SISTA_INLINE_IDENTITY_EQ.
+    void setIdentityNeqSelectorBitmap(uint16_t mask) {
+        identityNeqSelectorMask_ = mask;
+    }
+
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pass 1: identify block boundaries --------------------------
         //
@@ -892,22 +898,33 @@ private:
                     continue;
                 }
 
-                // Phase 4 POC #2: inline #== as identity comparison.
-                // Only for Send1 (#== takes 1 arg).  Pop a, b; emit
-                // kPrimIdentityEq; push result.  Universal semantics
-                // — `==` is identity for all classes, no override.
-                // Gated behind PHARO_SISTA_INLINE_IDENTITY_EQ=1.
-                if (nArgs == 1 && selIdx < 16
-                    && (identityEqSelectorMask_ & (1u << selIdx))) {
-                    uint32_t b_op = stack_.back(); stack_.pop_back();
-                    uint32_t a_op = stack_.back(); stack_.pop_back();
-                    uint32_t v = out_.newValue(currentBlock_,
-                                                Op::kPrimIdentityEq,
-                                                Type::kOopBool,
-                                                /*operands=*/{a_op, b_op});
-                    stack_.push_back(v);
-                    ip++;
-                    continue;
+                // Phase 4 POC #2/#3: inline #== / #~~ as identity
+                // comparison.  Only for Send1 (both take 1 arg).
+                // Pop a, b; emit kPrimIdentityEq/Neq; push result.
+                // Universal semantics — never overridden in
+                // well-behaved code.  Gated behind
+                // PHARO_SISTA_INLINE_IDENTITY_EQ=1.
+                if (nArgs == 1 && selIdx < 16) {
+                    Op identityOp = Op::kPrimIdentityEq;
+                    bool isIdentity = false;
+                    if (identityEqSelectorMask_ & (1u << selIdx)) {
+                        identityOp = Op::kPrimIdentityEq;
+                        isIdentity = true;
+                    } else if (identityNeqSelectorMask_ & (1u << selIdx)) {
+                        identityOp = Op::kPrimIdentityNeq;
+                        isIdentity = true;
+                    }
+                    if (isIdentity) {
+                        uint32_t b_op = stack_.back(); stack_.pop_back();
+                        uint32_t a_op = stack_.back(); stack_.pop_back();
+                        uint32_t v = out_.newValue(currentBlock_,
+                                                    identityOp,
+                                                    Type::kOopBool,
+                                                    /*operands=*/{a_op, b_op});
+                        stack_.push_back(v);
+                        ip++;
+                        continue;
+                    }
                 }
 
                 // Bail flushes the ENTIRE IR stack to state.sp so the
@@ -1299,6 +1316,8 @@ private:
     uint16_t               inlineableSelectorMask_ = 0;
     // Phase 4 POC #2: bitmap of literals[0..15] that hold #==.
     uint16_t               identityEqSelectorMask_ = 0;
+    // Phase 4 POC #3: bitmap of literals[0..15] that hold #~~.
+    uint16_t               identityNeqSelectorMask_ = 0;
 };
 
 }  // namespace
@@ -1375,6 +1394,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     // analysis lands later (Phase 7).
     uint16_t inlineableMask = 0;
     uint16_t identityEqMask = 0;
+    uint16_t identityNeqMask = 0;
     static const bool inlineYourself =
         std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
     static const bool inlineIdentityEq =
@@ -1391,11 +1411,14 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
                 && std::memcmp(bytes, "yourself", 8) == 0) {
                 inlineableMask |= (1u << i);
             }
-            // #== is 2 bytes ("==").  Symbols are stored verbatim;
-            // we just compare the raw bytes.
-            if (inlineIdentityEq && bs == 2
-                && std::memcmp(bytes, "==", 2) == 0) {
-                identityEqMask |= (1u << i);
+            // #== / #~~ are 2 bytes each.  Symbols stored verbatim;
+            // compare raw bytes.  Same env gate covers both.
+            if (inlineIdentityEq && bs == 2) {
+                if (std::memcmp(bytes, "==", 2) == 0) {
+                    identityEqMask |= (1u << i);
+                } else if (std::memcmp(bytes, "~~", 2) == 0) {
+                    identityNeqMask |= (1u << i);
+                }
             }
         }
     }
@@ -1404,6 +1427,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
     if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
+    if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
     return l.run(failedAtBytecode);
 }
 
