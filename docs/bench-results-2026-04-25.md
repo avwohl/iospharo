@@ -155,6 +155,37 @@ contexts, native call/return, no IC probes for inlined block
 dispatch) that aren't shimmable onto the current stencil
 infrastructure without major rewriting.
 
+### T2 asmjit codegen comparison
+
+The Tier 2 asmjit-based codegen (`Tier2Compiler`) already exists
+and supports the bench's bytecode set (pushes, returns, arith,
+stores, jumps, plus send via `jit_t2_send` runtime helper).
+
+Bench numbers with all T2 features enabled (`PHARO_T2=1
+PHARO_T2_REPLACE=1 PHARO_T2_A1=1`):
+
+```
+                  T1 (default)  T2 (full)
+  fib(28)         19 ms         19 ms
+  fib(32)         132 ms        135 ms
+  sum(1M)         13 ms         13 ms
+  block(500K)    86 ms          86 ms
+  pointX(500K)   5 ms           5 ms
+  create(100K)   7 ms           7 ms
+  dict(10K)      46 ms          46 ms
+```
+
+Same numbers across the board.  The asmjit codegen approach isn't
+the bottleneck — the bottleneck is the runtime send path
+(`jit_t2_send` / `tryJITResumeInCaller` / IC probes / W^X flips),
+which both T1 and T2 share.
+
+**Implication:** "build a real codegen in asmjit" doesn't close
+the gap.  The real codegen is already there.  What needs rebuilding
+is the runtime send path itself — IC layout, W^X scheme, frame
+setup, and the resume-vs-stay-in-JIT decision tree.  That's a
+multi-week rework, not a single-feature commit.
+
 For realistic perf wins on the current architecture:
 
   - **More Sista inlining patterns.**  The Phase 4 work (already
