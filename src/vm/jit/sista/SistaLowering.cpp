@@ -444,9 +444,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   a - b → correct tagged result is a - b + 1
                 //   a * b → untag a (>> 3), multiply by b's value
                 //           (also untagged), re-tag ((result << 3) | 1)
-                // Phase 2 omits overflow / non-SmallInt checks —
-                // caller must supply SmallInt inputs within safe range.
-                if (v.operands.size() != 2) {
+                //
+                // PHASE 3 OVERFLOW DETECTION: when v.operands.size()
+                // > 2, the trailing operands are a deopt-stack
+                // snapshot and v.literal is the bcOffset to deopt to.
+                // After tagged add/sub, check that bits 62, 63 of
+                // the result match (no SmallInt overflow); on miss
+                // bail to the interpreter at the source bytecode.
+                // Mul still has no overflow detection (TODO).
+                if (v.operands.size() < 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -474,6 +480,66 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.lsl(dst, prod, Imm(3));
                     cc.orr(dst, dst, Imm(1));
                 }
+
+                // Overflow detection (add/sub only when deopt info present).
+                if (v.operands.size() > 2
+                    && (v.op == Op::kPrimAddInt
+                     || v.op == Op::kPrimSubInt)) {
+                    using namespace asmjit::a64;
+                    // Tagged result valid SmallInt iff bit 62 == bit 63
+                    // (otherwise the value won't sign-extend to the
+                    // 60-bit SmallInt range).  Test via:
+                    //   ovcheck = (dst << 1) ^ dst
+                    //   if ovcheck bit 63 set → bits 62, 63 differ → overflow
+                    Gp ovcheck = cc.new_gp64("ovcheck");
+                    Gp shifted = cc.new_gp64("ovshift");
+                    cc.lsl(shifted, dst, Imm(1));
+                    cc.eor(ovcheck, shifted, dst);
+
+                    Label missLabel = cc.new_label();
+                    Label contLabel = cc.new_label();
+                    cc.tbnz(ovcheck, Imm(63), missLabel);
+                    cc.b(contLabel);
+
+                    // Miss: same deopt sequence as kPrimTagCheckInt.
+                    cc.bind(missLabel);
+                    uint32_t bcOffset = static_cast<uint32_t>(v.literal);
+                    Gp sp = cc.new_gp64("ovsp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    for (size_t opIdx = 2; opIdx < v.operands.size(); opIdx++) {
+                        auto opIt = regFor.find(v.operands[opIdx]);
+                        if (opIt == regFor.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.str(opIt->second,
+                               ptr(sp, static_cast<int>(opIdx - 2) * 8));
+                    }
+                    size_t numStackOps = v.operands.size() - 2;
+                    if (numStackOps > 0) {
+                        cc.add(sp, sp, Imm(static_cast<int>(numStackOps) * 8));
+                    }
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("ovip");
+                    if (bytecodeBase) {
+                        uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                       + bcOffset;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOffset));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp zero64 = cc.new_gp64("ovzero");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exit = cc.new_gp32("ovexit");
+                    cc.mov(exit, Imm(EXIT_SEND));
+                    cc.str(exit, ptr(state, OFF_EXIT));
+                    cc.ret();
+
+                    cc.bind(contLabel);
+                }
+
                 regFor[v.id] = dst;
                 break;
             }
