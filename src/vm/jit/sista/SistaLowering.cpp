@@ -463,6 +463,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
                 Gp dst = cc.new_gp64("arith");
+                // Track whether the IR op carries deopt info (operands.size > 2).
+                // Mul uses asr (not lsr) to correctly handle negative SmallInts.
+                Gp mulProd64;  // For mul overflow path: holds untagged 60-bit product
                 if (v.op == Op::kPrimAddInt) {
                     cc.add(dst, ita->second, itb->second);
                     cc.sub(dst, dst, Imm(1));
@@ -470,36 +473,73 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.sub(dst, ita->second, itb->second);
                     cc.add(dst, dst, Imm(1));
                 } else {
-                    // Multiply: untag both operands, multiply, re-tag.
+                    // Multiply: untag both operands (asr — signed shift —
+                    // for negatives), multiply, re-tag.
                     Gp au = cc.new_gp64("au");
                     Gp bu = cc.new_gp64("bu");
-                    cc.lsr(au, ita->second, Imm(3));
-                    cc.lsr(bu, itb->second, Imm(3));
+                    cc.asr(au, ita->second, Imm(3));
+                    cc.asr(bu, itb->second, Imm(3));
                     Gp prod = cc.new_gp64("prod");
                     cc.mul(prod, au, bu);
+                    mulProd64 = prod;  // share with overflow check
                     cc.lsl(dst, prod, Imm(3));
                     cc.orr(dst, dst, Imm(1));
+                    // Overflow check requires smulh too (full 128-bit
+                    // product).  Saved for the deopt block below.
                 }
 
-                // Overflow detection (add/sub only when deopt info present).
-                if (v.operands.size() > 2
-                    && (v.op == Op::kPrimAddInt
-                     || v.op == Op::kPrimSubInt)) {
+                // Overflow detection (when deopt info present).
+                // Add/sub use the bit-62/63-mismatch trick on the
+                // tagged result.  Mul needs the full 128-bit product
+                // (smulh) to verify the value fits in 60-bit signed.
+                if (v.operands.size() > 2) {
                     using namespace asmjit::a64;
-                    // Tagged result valid SmallInt iff bit 62 == bit 63
-                    // (otherwise the value won't sign-extend to the
-                    // 60-bit SmallInt range).  Test via:
-                    //   ovcheck = (dst << 1) ^ dst
-                    //   if ovcheck bit 63 set → bits 62, 63 differ → overflow
-                    Gp ovcheck = cc.new_gp64("ovcheck");
-                    Gp shifted = cc.new_gp64("ovshift");
-                    cc.lsl(shifted, dst, Imm(1));
-                    cc.eor(ovcheck, shifted, dst);
-
                     Label missLabel = cc.new_label();
                     Label contLabel = cc.new_label();
-                    cc.tbnz(ovcheck, Imm(63), missLabel);
-                    cc.b(contLabel);
+
+                    if (v.op == Op::kPrimMulInt) {
+                        // Mul overflow: full product must fit in
+                        // 60-bit signed (range [-2^59, 2^59-1]).
+                        // 1. Compute high 64 bits via smulh.
+                        // 2. The full 128-bit product fits in 60-bit
+                        //    signed iff smulh equals (low asr 59) —
+                        //    i.e., bits 60..127 all equal bit 59.
+                        // Need au and bu in scope; recompute since
+                        // they were locally scoped above.
+                        Gp au = cc.new_gp64("ovau");
+                        Gp bu = cc.new_gp64("ovbu");
+                        cc.asr(au, ita->second, Imm(3));
+                        cc.asr(bu, itb->second, Imm(3));
+                        Gp high = cc.new_gp64("ovhigh");
+                        cc.smulh(high, au, bu);
+                        // expected high = sign-extension of bit 59 of mulProd64
+                        Gp expected = cc.new_gp64("ovexp");
+                        cc.asr(expected, mulProd64, Imm(59));
+                        cc.cmp(high, expected);
+                        cc.b_ne(missLabel);
+                        // Also check: bits 60-63 of mulProd64 all
+                        // equal bit 59 (they're in the same word).
+                        // Otherwise smulh check passes but bits 60-63
+                        // hold value bits.
+                        Gp shifted2 = cc.new_gp64("ovsh2");
+                        cc.lsl(shifted2, mulProd64, Imm(4));
+                        cc.asr(shifted2, shifted2, Imm(4));
+                        cc.cmp(shifted2, mulProd64);
+                        cc.b_ne(missLabel);
+                        cc.b(contLabel);
+                    } else {
+                        // Add/sub: bit-62/63 mismatch on tagged result.
+                        // Tagged SmallInt valid iff bit 62 == bit 63.
+                        //   ovcheck = (dst << 1) ^ dst
+                        //   bit 63 of ovcheck = (dst[63] ^ dst[62])
+                        //   tbnz on bit 63 → mismatch → overflow
+                        Gp ovcheck = cc.new_gp64("ovcheck");
+                        Gp shifted = cc.new_gp64("ovshift");
+                        cc.lsl(shifted, dst, Imm(1));
+                        cc.eor(ovcheck, shifted, dst);
+                        cc.tbnz(ovcheck, Imm(63), missLabel);
+                        cc.b(contLabel);
+                    }
 
                     // Miss: same deopt sequence as kPrimTagCheckInt.
                     cc.bind(missLabel);

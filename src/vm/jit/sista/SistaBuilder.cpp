@@ -1027,17 +1027,17 @@ private:
                     resultType = Type::kOopBool;
                 }
 
-                // For Add/Sub under typeCheckArith_, attach the deopt
-                // stack so lowering can emit overflow detection +
-                // bail.  Layout: operands = [a, b, ...deoptStack],
-                // literal = bcOffset.  Mul has no overflow detection
-                // yet; comparisons can't overflow; so only Add/Sub
-                // get the deopt info.
+                // Under typeCheckArith_, attach deopt-stack so
+                // lowering emits overflow detection + bail.
+                // Layout: operands = [a, b, ...deoptStack],
+                // literal = bcOffset.  Comparisons can't overflow;
+                // arith add/sub/mul all get deopt info.
                 std::vector<uint32_t> arithOperands{a, b};
                 uint64_t arithLiteral = 0;
                 if (typeCheckArith_
                     && (primOp == Op::kPrimAddInt
-                     || primOp == Op::kPrimSubInt)) {
+                     || primOp == Op::kPrimSubInt
+                     || primOp == Op::kPrimMulInt)) {
                     arithOperands.insert(arithOperands.end(),
                                           deoptStack.begin(),
                                           deoptStack.end());
