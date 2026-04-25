@@ -98,6 +98,10 @@ static uint64_t g_calleeLiftAttempts    = 0;
 static uint64_t g_calleeLiftSuccess     = 0;
 static uint64_t g_calleeBytecodesLifted = 0;
 
+// Phase 4 Step 3 counters: actual inlines emitted (kGuardClass +
+// substituted constant) replacing kSendUnspeculated.
+static uint64_t g_inlinesEmitted        = 0;
+
 // Hint pointer set by buildWithHints() and consumed by build() when
 // constructing LinearLifter.  Single-threaded; static suffices.
 static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
@@ -966,6 +970,21 @@ private:
                     }
                 }
 
+                // Phase 4 Step 3: monomorphic-inline const-return
+                // callees.  When the IC hint at this bcOffset matches
+                // a callee whose IR is exactly `kLoad{True,False,Recv}
+                // / kConstantOop` followed by `kReturn`, replace the
+                // send with kGuardClass + the constant load.  Caller's
+                // stack effect: pop nArgs+1, push 1 (the constant).
+                // Lifter keeps going through subsequent bytecodes.
+                //
+                // Gated behind PHARO_SISTA_INLINE_CONST=1 until we have
+                // soak time on the deopt path under load.
+                if (tryInlineConstReturn(nArgs, bcOffset)) {
+                    ip++;
+                    continue;
+                }
+
                 // Bail flushes the ENTIRE IR stack to state.sp so the
                 // interpreter sees every value simulated-pushed by
                 // compiled code.  Older revisions only emitted the
@@ -1393,6 +1412,104 @@ private:
     // information needed to bail/deopt back to the interpreter.
     //
     // Also tracks Phase 4 inline-hint matches as a side effect.
+    // Phase 4 Step 3: try to inline a monomorphic send whose callee
+    // is a const-return method (`^ true`, `^ false`, `^ self`,
+    // `^ <literal>`).  Returns true if inlined; the caller must pop
+    // nArgs+1 from the simulated stack and continue lifting.
+    //
+    // Pattern recognition is intentionally conservative — only the 2-
+    // value `kLoadXxx kReturn` shape is accepted, and only when
+    // there's exactly one block with both values in it.  Anything more
+    // complex still bails to the unspeculated send.
+    bool tryInlineConstReturn(uint32_t nArgs, uint32_t bcOffset) {
+        if (!inlineHints_) return false;
+        static const bool inlineConst =
+            std::getenv("PHARO_SISTA_INLINE_CONST") != nullptr;
+        if (!inlineConst) return false;
+        if (g_currentBuildMemory == nullptr) return false;
+        if (g_calleeLiftDepth >= 1) return false;
+        if (stack_.size() < nArgs + 1) return false;
+
+        const InlineHint* hit = nullptr;
+        for (const auto& h : *inlineHints_) {
+            if (h.bcOffset == bcOffset) { hit = &h; break; }
+        }
+        if (!hit) return false;
+        if (hit->classOop == 0 || hit->targetMethod == 0) return false;
+        if ((hit->targetMethod & 0x7) != 0) return false;
+        if (hit->targetMethod < 0x10000) return false;
+
+        // Probe-lift the callee.  Same recursion guard as the
+        // measurement-only path in recordFramepoint.
+        Method calleeIR;
+        uint32_t calleeFailedAt = UINT32_MAX;
+        Oop calleeOop = Oop::fromRawBits(hit->targetMethod);
+        g_calleeLiftDepth++;
+        LiftResult cr = Builder::build(calleeOop,
+            *g_currentBuildMemory, calleeIR, &calleeFailedAt);
+        g_calleeLiftDepth--;
+        if (cr != LiftResult::kOk) return false;
+
+        // Pattern: exactly 2 values, second is kReturn of the first;
+        // first must be a constant load.  Block count is irrelevant
+        // (the lifter often emits a synthetic exit block); what
+        // matters is that no IR ops other than load+return exist.
+        if (calleeIR.values.size() != 2) return false;
+        const Value& v0 = calleeIR.values[0];
+        const Value& v1 = calleeIR.values[1];
+        if (v1.op != Op::kReturn) return false;
+        if (v1.operands.size() != 1 || v1.operands[0] != v0.id) return false;
+
+        Op constOp;
+        Type constTy;
+        uint64_t constLit = 0;
+        switch (v0.op) {
+        case Op::kLoadTrueOop:  constOp = Op::kLoadTrueOop;  constTy = Type::kOopBool; break;
+        case Op::kLoadFalseOop: constOp = Op::kLoadFalseOop; constTy = Type::kOopBool; break;
+        case Op::kConstantOop:  constOp = Op::kConstantOop;  constTy = Type::kOop;
+                                 constLit = v0.literal; break;
+        // kLoadReceiver in callee returns the CALLEE's receiver — that
+        // IS the caller's receiver for a Send0 (no args, rcvr at top
+        // of stack before send).  Substitute the receiver value.
+        case Op::kLoadReceiver: {
+            // For nArgs > 0, callee's receiver is `stack_[size-nArgs-1]`,
+            // which is the caller's receiver value.  We re-emit it as
+            // a kLoadReceiver in caller — semantically identical.
+            constOp = Op::kLoadReceiver;
+            constTy = Type::kOop;
+            break;
+        }
+        default: return false;  // Other ops would need real splicing
+        }
+
+        // Receiver value is at stack_[size - nArgs - 1].
+        uint32_t recvId = stack_[stack_.size() - nArgs - 1];
+
+        // Emit kGuardClass.  Operands: receiver, then full simulated
+        // stack (so deopt can re-push everything for the interpreter).
+        // Literal: lo32 = expectedClassIdx, hi32 = bcOffset.
+        std::vector<uint32_t> guardOps;
+        guardOps.reserve(stack_.size() + 1);
+        guardOps.push_back(recvId);
+        for (uint32_t s : stack_) guardOps.push_back(s);
+        uint64_t guardLit = (hit->classOop & 0x3FFFFFu)
+                          | (static_cast<uint64_t>(bcOffset) << 32);
+        out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                      std::move(guardOps), guardLit);
+
+        // Emit the constant load that replaces the call result.
+        uint32_t constId = out_.newValue(currentBlock_, constOp,
+                                          constTy, {}, constLit);
+
+        // Pop rcvr+args, push the inlined value.
+        for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+        stack_.push_back(constId);
+
+        g_inlinesEmitted++;
+        g_totalHintsConsumed++;
+        return true;
+    }
+
     void recordFramepoint(uint32_t valueId, uint32_t bcOffset) {
         out_.framepoints.push_back({
             valueId,
@@ -1639,17 +1756,20 @@ void Builder::resetInlineHintStats() {
     g_calleeLiftAttempts = 0;
     g_calleeLiftSuccess = 0;
     g_calleeBytecodesLifted = 0;
+    g_inlinesEmitted = 0;
 }
 void Builder::dumpInlineHintStats() {
     std::fprintf(stderr,
         "[SISTA-INLINE] sends-lifted=%llu hints-provided=%llu hints-consumed=%llu "
-        "callees-attempted=%llu callees-lifted=%llu callee-values=%llu\n",
+        "callees-attempted=%llu callees-lifted=%llu callee-values=%llu "
+        "inlines-emitted=%llu\n",
         (unsigned long long)g_totalSendsLifted,
         (unsigned long long)g_totalMonomorphicHints,
         (unsigned long long)g_totalHintsConsumed,
         (unsigned long long)g_calleeLiftAttempts,
         (unsigned long long)g_calleeLiftSuccess,
-        (unsigned long long)g_calleeBytecodesLifted);
+        (unsigned long long)g_calleeBytecodesLifted,
+        (unsigned long long)g_inlinesEmitted);
 }
 
 }  // namespace sista

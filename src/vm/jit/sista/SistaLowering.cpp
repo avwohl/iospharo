@@ -349,6 +349,96 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kGuardClass: {
+                // Phase 4 monomorphic-inline guard: receiver's
+                // classIndex must match the inlined target's expected
+                // class.  On miss, deopt to interpreter at the source
+                // bytecode (the unspeculated send re-runs).
+                //
+                // operand[0]      = receiver value
+                // operand[1..N]   = simulated stack at deopt point
+                // literal lo32    = expectedClassIndex (22 bits used)
+                // literal hi32    = bcOffset to deopt to
+                if (v.operands.empty()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                using namespace asmjit::a64;
+                Label missLabel = cc.new_label();
+                Label contLabel = cc.new_label();
+
+                uint32_t expectedIdx = static_cast<uint32_t>(v.literal & 0x3FFFFF);
+                uint32_t bcOffset = static_cast<uint32_t>(v.literal >> 32);
+
+                // Tag check: immediates have low 3 bits != 0; we only
+                // guard object receivers.  Non-object → deopt.
+                Gp tagBits = cc.new_gp64("tag");
+                cc.and_(tagBits, itRcv->second, Imm(7));
+                cc.cmp(tagBits, Imm(0));
+                cc.b_ne(missLabel);
+
+                // ldr header word from receiver
+                Gp hdr = cc.new_gp64("hdr");
+                cc.ldr(hdr, ptr(itRcv->second, 0));
+                Gp idx = cc.new_gp64("idx");
+                cc.and_(idx, hdr, Imm(0x3FFFFF));
+                Gp expected = cc.new_gp64("exp");
+                cc.mov(expected, Imm((uint64_t)expectedIdx));
+                cc.cmp(idx, expected);
+                cc.b_eq(contLabel);
+
+                // -- Miss: deopt sequence (mirrors kPrimTagCheckInt).
+                cc.bind(missLabel);
+
+                // Push operand[1..N] to interp stack.
+                Gp sp = cc.new_gp64("sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 1; opIdx < v.operands.size(); opIdx++) {
+                    auto opIt = regFor.find(v.operands[opIdx]);
+                    if (opIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(opIt->second,
+                           ptr(sp, static_cast<int>(opIdx - 1) * 8));
+                }
+                size_t numStackOps = v.operands.size() - 1;
+                if (numStackOps > 0) {
+                    cc.add(sp, sp, Imm(static_cast<int>(numStackOps) * 8));
+                }
+                cc.str(sp, ptr(state, OFF_SP));
+
+                Gp ipReg = cc.new_gp64("ip");
+                if (bytecodeBase) {
+                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                   + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
+                cc.str(ipReg, ptr(state, OFF_IP));
+
+                Gp zero64 = cc.new_gp64("zero");
+                cc.mov(zero64, Imm(0));
+                cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+
+                Gp exit = cc.new_gp32("exit");
+                cc.mov(exit, Imm(EXIT_SEND));
+                cc.str(exit, ptr(state, OFF_EXIT));
+                cc.ret();
+
+                // -- Hit: receiver passthrough.
+                cc.bind(contLabel);
+                regFor[v.id] = itRcv->second;
+                break;
+            }
+
             case Op::kPrimLtInt:
             case Op::kPrimLeInt:
             case Op::kPrimGtInt:
