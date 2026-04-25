@@ -14,8 +14,11 @@ Key paths:
 
 ## Hard rules
 
-- Never use markdown tables. Use indented columns or bullets — fixed-width font
-  is assumed.
+- Never draw tables using markdown table syntax or `|` (pipe) characters in
+  console output — they don't copy/paste cleanly into email. Use space-aligned
+  columns inside a code block (fixed-width font is assumed). Other markdown is
+  fine: headings, lists, blockquotes, code blocks, links, .md files. The rule
+  is narrowly about table-drawing, not a ban on markdown or on the pipe char.
 - Never use raw hex like `0x23` for opcodes or other constants. Use named
   constants (`SistaV1::PushReceiver`, `SistaV1::isSendBytecode(op)`).
 - Never skip hooks (`--no-verify`), force-push to main, or run destructive git

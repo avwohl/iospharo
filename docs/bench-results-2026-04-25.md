@@ -37,20 +37,66 @@ warmup threshold.
 
 ## What to optimize next, ranked by impact
 
-1. **Block-dispatch fast path in JIT** — biggest single gap.  87x
-   slower than Cog, and JIT is somehow worse than the interpreter
-   here.  Either the block-value stencil bails frequently, or the
-   J2J trampoline overhead per iteration dominates.  Diagnostics:
-   add a counter for "block stencil entered" vs "block stencil
-   bailed to interp" in stencil_sendJ2J's BLOCK_VALUE_BIT branch.
+### Refined investigation (after deeper look)
 
-2. **Send overhead in fib** — 8-10x gap on pure send recursion.
-   Likely a per-send fixed cost (frame setup, IC probe).
+The original "block dispatch fast path is bypassed" framing was
+wrong.  Tracing showed:
 
-3. **Dict / Create / Sum** — 13-50x slower on hot loops with
-   inline arith and ivar access.  pointX(500K) is only 5x slower
-   so the gap depends heavily on what's inside the loop.
+  - The stencil's `BLOCK_VALUE_BIT` branch IS taken on every iteration
+    (the IC patch path sets the bit; `j2jTotalCalls` counter confirms
+    61M successful entries during the bench run).
+  - The J2J return path is `J2J_INLINE_RETURN` in `stencils.cpp:484`,
+    not the `Interpreter.cpp:13238` chain loop.  The chain loop is
+    in fact dead code by default (`PHARO_RESUME_J2J=0`); the 1/61M
+    counter only counts chain-loop returns and was misleading.
+  - Block-only bench in isolation: 22-24 ms per 500K iterations =
+    44 ns/call.  fib(28) at 19 ms / ~514K recursive calls =
+    37 ns/call.  Per-call cost is essentially identical between
+    block dispatch and method send — so the issue isn't
+    block-specific.
 
-The existing INLINE_CONST work (15+ commits this session) is in the
-noise on these benches.  Without fixing the block-dispatch slowdown
-it can't show up.
+### Real bottleneck: per-call setup cost
+
+Cog dispatches each `value:`/method send in ~2 ns (~6 cycles); my
+VM takes 37-44 ns (~120 cycles).  The ~115-cycle gap per call
+breaks down approximately into:
+
+  ic-probe + bit-decode               ~10 cycles
+  6-probe methodMap lookup            ~25 cycles  (most-common pattern)
+  state validation (cmp/branch chain) ~15 cycles
+  J2JSave write (8 fields × 8 bytes)  ~20 cycles
+  callee state setup (writes)         ~25 cycles
+  capture-copy loop (often 0 iters)   ~5 cycles
+  tail-call indirect branch           ~5 cycles
+  return: J2J_INLINE_RETURN           ~30 cycles
+
+Cog presumably collapses most of this into a single direct branch
+plus ~5 cycles of stack save/restore.
+
+### Concrete optimization targets, ranked
+
+1. **Cache the compiledBlock JIT entry per IC site** — for hot
+   block sites, the receiver class is constant but the
+   compiledBlock is also effectively constant (one closure object
+   reused across iterations).  Add a per-site shadow slot that
+   stores the compiledBlock's JIT entry pointer.  Cuts the 6-probe
+   methodMap lookup (~25 cycles) when the cached pointer matches
+   the receiver's compiledBlock slot.
+
+2. **Specialize the no-capture block stencil** — `[:x | x + 1]` has
+   no captured values, so the `numCopied` loop is wasted bookkeeping.
+   A `stencil_blockValueNoCapture1Arg` variant could be ~20% smaller.
+
+3. **Shrink J2JSave** — currently 8 fields × 8 bytes = 64 B.  The
+   `resumeAddr` and `jitMethod` may be derivable from the caller's
+   compile-time-known PC; if so, writing them on every call is
+   redundant.
+
+4. **Push-then-call vs argument-stack-frame** — every call writes
+   nArgs+1 stack slots that the callee then re-reads.  An ABI that
+   passes the first 1-2 args in registers would skip those memory
+   trips.
+
+The existing INLINE_CONST Phase 4 work is in the noise on these
+benches because it only fires on a tiny pattern (3-5 sites per
+compile).  Closing the per-call gap is the high-leverage path.
