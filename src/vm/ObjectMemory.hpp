@@ -712,7 +712,18 @@ private:
     uint8_t* edenFree_ = nullptr;       // Next allocation in eden
     uint8_t* survivorStart_ = nullptr;
 
-    // Class table
+    // Class table.
+    //
+    // TODO (2026-04-25): the table is a flat 4M-slot vector indexed
+    // by 22-bit class hash.  This wastes ~32 MB for ~5K classes
+    // and forces the generateHash() collision-avoidance dance that
+    // landed in commit 0ca2b58.  When we revisit the class table:
+    //   - Consider replacing with std::unordered_map<uint32_t, Oop>
+    //     (~5K entries, ~120 KB).
+    //   - Or std::vector<Oop> sized to nextClassIndex_ + headroom
+    //     (sequential indices instead of hash-driven).
+    //   - Either way removes the need for generateHash() to skip
+    //     occupied slots.
     std::vector<Oop> classTable_;
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
 
