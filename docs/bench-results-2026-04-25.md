@@ -75,6 +75,62 @@ plus ~5 cycles of stack save/restore.
 
 ### Concrete optimization targets, ranked
 
+### Profiling deep-dive (`sample` mid-bench)
+
+A 4-second `sample` taken mid-bench (long version of block(500K),
+5000 outer iters) shows:
+
+  - 2230 / 3114 samples in `Interpreter::returnValue`
+  - 2046 / 3114 samples in `tryJITResumeInCaller`
+  - **1733 / 3114 (55%) in `pthread_jit_write_protect_np`**
+
+Every `value:` call exits JIT to the interpreter, calls
+`returnValue` → `tryJITResumeInCaller` → `JITRuntime::tryResume`
+which does 3 W^X flips per call.  500K iterations × 3 flips per
+call adds up.
+
+### Why each call exits JIT
+
+The inner block `[:x | x + 1]` is **not JIT-compiled**, so the
+stencil's BLOCK_VALUE_BIT branch's methodMap lookup returns null,
+falls through to the slow path, and exits to the interpreter.
+
+The interpreter activates the block via `primitiveBlockValue` →
+`activateBlock`, runs the body, returns.  `returnValue` →
+`tryJITResumeInCaller` re-enters JIT in the bench's caller.
+
+The interpreter never bumps the inner block's JIT compile counter.
+Tested: adding `noteMethodEntry(slot1)` to `primitiveBlockValue`
+caused a **compile explosion** (85 → 1024 methods compiled), IC
+hit rate collapsed from 99% → 19%, and bench got SLOWER (24 → 33
+ms).  The default CompileThreshold=2 is too aggressive for blocks.
+
+Counter-experiment: also tested W^X removal (`PHARO_NO_WX_RESUME=1`
+gates the makeWritable/makeExecutable calls in tryResume).  No
+perf improvement.  So either W^X is cheaper than its sample cost
+suggests (the syscall is fast but counted heavily by sample), or
+the bench's per-iteration cost is in something else inside
+tryResume (methodMap lookup, validations, state setup).
+
+### What actually needs fixing
+
+For the JIT to stay in JIT through the bench's inner loop:
+
+  - The inner block must be JIT-compiled, AND
+  - The compile heuristic must NOT compile every cold block-of-
+    block (which causes the IC churn observed above).
+
+A two-tier counter design seems right: per-block call counter
+that only triggers `noteMethodEntry` after N (say 1000) actual
+block calls, separate from the method-level threshold of 2.
+Implemented as a u32 field on the BlockClosure-receiver
+side-table or on the CompiledBlock itself.
+
+Without that, the per-call cost stays at ~44 ns (vs Cog's ~2 ns)
+and block-heavy workloads stay 22x slower.
+
+### Original target list (ordered by leverage)
+
 1. **Cache the compiledBlock JIT entry per IC site** — for hot
    block sites, the receiver class is constant but the
    compiledBlock is also effectively constant (one closure object
