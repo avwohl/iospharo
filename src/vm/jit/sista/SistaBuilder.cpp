@@ -13,6 +13,9 @@
 #include "../SistaV1.hpp"
 #include "../../ObjectMemory.hpp"
 
+#include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <map>
 #include <set>
 #include <vector>
@@ -94,6 +97,18 @@ public:
     // array).  When null, SpecialSend bails as unsupported.
     void setSpecialSendArgCounts(const uint8_t* argCounts) {
         specialSendArgCount_ = argCounts;
+    }
+
+    // Phase 4 PROOF-OF-CONCEPT: bitmap of literal indices for
+    // selectors that we statically inline as no-op (receiver stays
+    // on stack).  Today: only #yourself.  Limit: 16 because Send0
+    // / Send1 / Send2 opcodes only use literal indices 0-15.
+    // Set bit N => literals[N] == #yourself.
+    // Set ONLY when PHARO_SISTA_INLINE_YOURSELF=1.  Unsafe for any
+    // class that overrides #yourself; gated behind env var until
+    // class-hierarchy invalidation lands (Phase 7).
+    void setInlineableSelectorBitmap(uint16_t mask) {
+        inlineableSelectorMask_ = mask;
     }
 
     LiftResult run(uint32_t* failedAtBytecode) {
@@ -856,6 +871,19 @@ private:
                 }
                 uint32_t selIdx = op & 0x0F;
 
+                // Phase 4 POC: inline #yourself as no-op.  Only for
+                // Send0 (yourself takes no args).  Receiver stays on
+                // simulated stack as the result.  Unsafe if rcvr's
+                // class overrides #yourself; gated behind
+                // PHARO_SISTA_INLINE_YOURSELF=1.
+                if (nArgs == 0 && selIdx < 16
+                    && (inlineableSelectorMask_ & (1u << selIdx))) {
+                    // No IR change — receiver was on stack_ already
+                    // and that's the correct result of yourself.
+                    ip++;
+                    continue;
+                }
+
                 // Bail flushes the ENTIRE IR stack to state.sp so the
                 // interpreter sees every value simulated-pushed by
                 // compiled code.  Older revisions only emitted the
@@ -1241,6 +1269,8 @@ private:
     size_t                 currentInstrStart_ = 0;
     // Arg counts for SpecialSend opcodes 0x70-0x7F (if known).
     const uint8_t*         specialSendArgCount_ = nullptr;
+    // Phase 4 POC: bitmap of literals[0..15] that hold #yourself.
+    uint16_t               inlineableSelectorMask_ = 0;
 };
 
 }  // namespace
@@ -1310,8 +1340,34 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     uint8_t ssArgCounts[16];
     bool haveSS = readSpecialSelectorArgCounts(memory, ssArgCounts);
 
+    // Phase 4 POC: scan first 16 literals for #yourself.  Send0 / Send1
+    // / Send2 use 4-bit literal indices (0-15), so this bitmap is
+    // sufficient.  Behind PHARO_SISTA_INLINE_YOURSELF=1 because it is
+    // unsafe for any class that overrides #yourself; class-hierarchy
+    // analysis lands later (Phase 7).
+    uint16_t inlineableMask = 0;
+    static const bool inlineYourself =
+        std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
+    if (inlineYourself) {
+        const uint32_t scanLimit = std::min(numLiterals, 16u);
+        for (uint32_t i = 0; i < scanLimit; i++) {
+            Oop lit = out.literals[i];
+            if (!lit.isObject()) continue;
+            ObjectHeader* litHdr = lit.asObjectPtr();
+            // Symbols / Strings have byte-format slots.  #yourself is
+            // 8 bytes; check size + content.
+            size_t bs = litHdr->byteSize();
+            if (bs != 8) continue;
+            const uint8_t* bytes = litHdr->bytes();
+            if (std::memcmp(bytes, "yourself", 8) == 0) {
+                inlineableMask |= (1u << i);
+            }
+        }
+    }
+
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
+    if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
     return l.run(failedAtBytecode);
 }
 
