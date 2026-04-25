@@ -188,22 +188,14 @@ Without inlining, push T2 to cover more bytecode patterns:
   - Caveat:         Doesn't change the architectural ceiling.
                     Stencils still ~460 B/bc; cache pressure stays.
 
-### Option C: Pivot to iOS deployment, accept current perf
+### ~~Option C~~ (REMOVED 2026-04-24, late)
 
-Per `docs/sista-inlining-plan.md` "Alternative: don't do this":
-
-  - Most of an iOS Pharo IDE's wall-clock time is in primitives
-    (Morphic drawing, text layout, UTF-8 encode/decode) that run
-    at C speed regardless of JIT.
-  - A 30× arith-bench gap likely translates to ~5 % of real-app
-    wall-clock time.
-  - Outstanding D1 work (iOS device deployment, signing, App
-    Store packaging) is a much shorter path to a usable product.
-
-  - Time:           Days–weeks for iOS finishing.
-  - Expected gain:  Zero perf, but ships the actual product.
-  - Risk:           Low.  Mostly known unknowns (provisioning,
-                    code signing, App Store rules).
+Earlier drafts of this plan included a "pivot to iOS deployment"
+option lifted from `docs/sista-inlining-plan.md`'s "Alternative:
+don't do this" section.  That framing was incorrect — this VM
+targets **macOS** (Catalyst), not iOS.  iOS deployment is not on
+the roadmap, so there is no Option C.  The choice is between
+Option A (Phase 4 inlining) and Option B (narrow T2 expansion).
 
 ---
 
@@ -353,32 +345,25 @@ all with default JIT + Sista, on a fresh Pharo 13 image:
 
   No single primitive is hot enough to be worth a targeted
   rewrite.  primitiveExternalCall covers all FFI — improving SDL2
-  / iOS-platform FFI dispatch could help, but most of its time
-  is inside the C function being called, not in the prim itself.
+  FFI dispatch could help, but most of its time is inside the C
+  function being called, not in the prim itself.
 
-## What this means for A/B/C
+## What this means for A/B
 
 The *idle profile* refutes the inlining plan's "primitives
 dominate, JIT is ~5 % of real-app time" hypothesis.  The bigger
 chunk is GC, not primitives.
 
 The *active profile* confirms dispatch dominates execution of
-real Smalltalk code — but the relevant "real Smalltalk code" in
-an iOS IDE is small bursts (open a Browser, select a class,
-render method list) interleaved with long idle periods (waiting
-for user input, showing the world).
+real Smalltalk code — bursts of activity (open a Browser, select
+a class, render method list) interleaved with long idle periods
+(waiting for user input, showing the world).
 
-So both A and C are partial answers:
-
-  - **C alone (ship iOS, accept perf)** leaves the 64 % GC cost
-    on the table.  An iOS app that drops 64 % of its CPU into
-    fullGC will heat the device, drain battery, and feel
-    sluggish in scrolling.
   - **A alone (Phase 4 inlining)** addresses dispatch but does
     nothing for the idle GC cost.  Phase 4 is also 7–11 weeks
     with high deopt risk before any user-visible benefit.
 
-A third answer becomes obvious from the data:
+A second answer becomes obvious from the data:
 
 ### Option D (NEW): Generational GC first, inlining later
 
@@ -669,7 +654,7 @@ Going with **Option D**.  Reasoning:
   3. Phase 4 inlining is 7-11 weeks with high deopt risk for
      a smaller share of real-app wall clock (active-execution
      dispatch is 80% of THAT phase, but GC is 64% of idle
-     phase — and idle phase is the bulk of real iOS use).
+     phase).
   4. Option B (T2 expansion) is now ruled out by data: T2
      today is correctness-clean and perf-neutral.  Expanding
      it to non-leaf methods risks correctness for unproven
@@ -686,31 +671,28 @@ Going with **Option D**.  Reasoning:
      Per memory `project_younggen_gc_wip.md`, this is the
      other known blocker.  Estimate: 1-2 days.
   3. **YG smoke test against the bench suite + a 30-min real
-     macOS Catalyst session.**  Confirm no obvious user-visible
+     Pharo IDE session.**  Confirm no obvious user-visible
      issues (browser opens, code completes, debugger steps).
      Estimate: half day.
   4. **Default-on `PHARO_YOUNG_GEN=1`.**  Add `PHARO_NO_YG=1`
      opt-out symmetrical to `PHARO_NO_SISTA`.  Run full SUnit
      once more to confirm clean.  Estimate: half day.
-  5. **Profile real macOS Catalyst Pharo IDE under default-on
-     YG.**  Compare top hot spots to today's idle profile.
-     Confirms whether the 64% fullGC drops to <20% as
-     predicted by the bench data.  Estimate: half day.
+  5. **Profile real Pharo IDE session under default-on YG.**
+     Compare top hot spots to today's idle profile.  Confirms
+     whether the 64% fullGC drops to <20% as predicted by the
+     bench data.  Estimate: half day.
 
 Total: **~4 days end-to-end** to validated YG-on-by-default
 on master.  Compare to Phase 4 inlining at 7-11 weeks.
 
-## What about T2 / Phase 4 / iOS deployment?
+## What about T2 / Phase 4?
 
 Re-prioritize after Option D ships:
 
-  - **iOS deployment (D1)**: now the next obvious lever.  YG
-    addresses the GC cost; iOS deployment ships the actual
-    product.  Days-weeks.
-  - **Phase 4 inlining**: deferred until we re-profile *with*
-    YG on.  If active-dispatch drops below 50% of real-app
-    wall clock once GC cost is fixed, Phase 4 may not be
-    worth the 7-11 weeks.  Re-measure first.
+  - **Phase 4 inlining**: now the obvious next lever.  YG
+    addresses idle GC cost (which was 64% of CPU); active-code
+    perf is now bounded by dispatch (80%+ of active-CPU).
+    Phase 4 inlining is the lever for that.  7-11 weeks.
   - **T2 expansion (Option B)**: stays opt-in until we have
     a use case (e.g., a specific hot method that T2 could
     cover but T1 misses).  No work scheduled.

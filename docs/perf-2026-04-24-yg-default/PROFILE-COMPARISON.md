@@ -71,9 +71,10 @@ biggest remaining lever for active-execution code, and there's
 nothing analogous for idle (which is dominated by intentional
 `primitiveRelinquishProcessor` sleep).
 
-**Recommendation update**: option D fully shipped, GC is solved
-for both idle and active workloads.  Next decision is genuinely
-between Option A (Phase 4 inlining) and Option C (iOS deployment),
-and the bias should be C (ship the product) unless real-world
-profiling shows that dispatch-bound hot spots in actual user
-workflows are big enough to justify 7–11 weeks of inlining work.
+**Recommendation update**: Option D fully shipped, GC is solved
+for both idle and active workloads.  Next lever is Option A
+(Phase 4 monomorphic inlining) — addresses the dispatch path
+that now dominates active execution.  7–11 weeks of work,
+expected 3–5× on send-heavy benchmarks.  Phase 3 step 1
+(framepoint capture) shipped same day; remaining 12 steps
+detailed in `docs/sista-phase3-progress.md`.
