@@ -373,24 +373,44 @@ Oop ObjectMemory::classOf(Oop obj) const {
 
 uint32_t ObjectMemory::registerClass(Oop classOop) {
     // In Spur, if the class already has an identity hash, that IS its class
-    // table index. Use it rather than assigning a new sequential index.
+    // table index.  Use it rather than assigning a new sequential index.
+    //
+    // Also track classOf(classOop)'s index in knownMetaclassIndices_ so
+    // identityHashOf() can later detect class instances by checking their
+    // class field — letting us route class hashing through registerClass
+    // (sequential) instead of generateHash() (random).
+    uint32_t assignedIdx = 0;
     if (classOop.isObject()) {
         ObjectHeader* hdr = classOop.asObjectPtr();
         uint32_t hash = hdr->identityHash();
         if (hash != 0 && hash < classTable_.size()) {
             classTable_[hash] = classOop;
-            return hash;
+            assignedIdx = hash;
+        } else {
+            // No hash yet — assign new index and set the hash to match
+            uint32_t index = nextClassIndex_++;
+            if (index < classTable_.size()) {
+                classTable_[index] = classOop;
+                hdr->setIdentityHash(index);
+            }
+            assignedIdx = index;
         }
-    }
-    // No hash yet — assign new index and set the hash to match
-    uint32_t index = nextClassIndex_++;
-    if (index < classTable_.size()) {
-        classTable_[index] = classOop;
-        if (classOop.isObject()) {
-            classOop.asObjectPtr()->setIdentityHash(index);
+        // Track metaclass: classOf(classOop) is the class of this class,
+        // i.e., its metaclass.  Future identityHashOf() calls on instances
+        // of this metaclass will know they're class instances.
+        uint32_t metaIdx = hdr->classIndex();
+        if (metaIdx != 0) {
+            knownMetaclassIndices_.insert(metaIdx);
         }
+    } else {
+        // Non-object passed (shouldn't happen in normal flow) — fall through
+        uint32_t index = nextClassIndex_++;
+        if (index < classTable_.size()) {
+            classTable_[index] = classOop;
+        }
+        assignedIdx = index;
     }
-    return index;
+    return assignedIdx;
 }
 
 uint32_t ObjectMemory::indexOfClass(Oop classOop) const {
@@ -1322,10 +1342,27 @@ uint32_t ObjectMemory::identityHashOf(Oop obj) {
 
     ObjectHeader* header = obj.asObjectPtr();
     uint32_t hash = header->identityHash();
-    if (hash == 0) {
-        hash = generateHash();
-        header->setIdentityHash(hash);
+    if (hash != 0) return hash;
+
+    // Class-instance detection: if obj's class is a known metaclass,
+    // obj is itself a class.  Route through registerClass() for
+    // sequential index allocation (Spur convention) rather than
+    // generating a random hash that could collide with an existing
+    // class's table index.
+    //
+    // knownMetaclassIndices_ is populated by registerClass() each
+    // time a class is registered — it adds classOf(thatClass)'s
+    // index, building up the set of "things whose instances are
+    // classes".  Bootstrapped during image load.
+    uint32_t objClassIdx = header->classIndex();
+    if (objClassIdx != 0
+        && knownMetaclassIndices_.count(objClassIdx) > 0) {
+        return registerClass(obj);
     }
+
+    // Non-class object — assign a random hash via LCG.
+    hash = generateHash();
+    header->setIdentityHash(hash);
     return hash;
 }
 
@@ -1338,22 +1375,14 @@ uint32_t ObjectMemory::generateHash() {
     // lastHash = lastHash * 16807 (which is 7^5)
     // Adding top bits gives better spread.
     //
-    // CLASS-INDEX COLLISION AVOIDANCE (2026-04-24): in Spur, a class's
-    // identity-hash field IS its class table index.  If `generateHash()`
-    // returns a value that's already a class index, and the receiving
-    // object later becomes a class (via Behavior subclass:..., trait
-    // composition, anonymous class creation, etc.), `registerClass` would
-    // clobber the existing class table entry, aliasing the two classes.
-    //
-    // Symptom we hit: under PHARO_YOUNG_GEN=1, a young anonymous test
-    // metaclass (TraitTest's `TTT23 classTrait`) got hash 924672 — same
-    // as ConstantBlockClosure's metaclass — and the registerClass overwrite
-    // made `ConstantBlockClosure class` resolve to TTT23 classTrait.  Then
-    // `ConstantBlockClosure traits` returned TTT23's trait composition.
-    //
-    // Fix: skip slots that are currently occupied by a class.  With
-    // ~5000 classes in a fresh Pharo image and 4M-slot class table, the
-    // skip rate is ~0.12 % — negligible.
+    // Class detection in identityHashOf() (knownMetaclassIndices_)
+    // routes MOST class objects to registerClass() for sequential
+    // index allocation.  But some metaclass-of-metaclass corner
+    // cases (Trait class, ClassTrait, etc.) may slip through if
+    // their metaclass isn't yet in the set.  Keep the
+    // collision-avoidance dance as defence in depth — at ~0.12 %
+    // skip rate it's negligible perf cost and catches anything
+    // identityHashOf misses.
     uint32_t hash;
     do {
         lastHash_ = (lastHash_ * 16807) & 0xFFFFFFFF;

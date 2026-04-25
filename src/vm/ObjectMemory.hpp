@@ -715,23 +715,27 @@ private:
     // Class table.
     //
     // 4M-slot vector indexed by class's 22-bit identity hash
-    // (Spur convention: classIndex == identityHash).  Wastes ~32 MB
-    // for ~5K real classes (0.12 % density) but the alternatives are
-    // all worse on the hot read path:
+    // (Spur convention: classIndex == identityHash).  Hot reads via
+    // classAtIndex() get one bounds check + one indexed load —
+    // significantly faster than any hash-table alternative.
     //
-    //   - std::unordered_map<uint32_t, Oop>: ~120 KB but classAtIndex
-    //     becomes hash+bucket-walk vs single indexed load — 5-10×
-    //     slower on the hot dispatch path.
-    //   - Sequential-index vector: would force renumbering classes
-    //     post-load, breaking image-side IdentitySets keyed by hash.
-    //   - Sparse paged vector (1024-slot pages allocated on demand):
-    //     viable, ~80 KB, +1 indirection.  Only worth it if 32 MB
-    //     becomes a deployment constraint (it doesn't on Mac).
-    //
-    // See `docs/class-table-container-analysis.md` for the full
-    // tradeoff analysis.  Decision (2026-04-25): keep current.
+    // Class objects' identity hashes are assigned SEQUENTIALLY by
+    // registerClass() (matching Cog's enterIntoClassTable: behaviour);
+    // identityHashOf() detects class objects via knownMetaclassIndices_
+    // and routes them through registerClass() rather than generating
+    // a random LCG hash.  This is the truly correct fix for the
+    // class-vs-non-class hash collision: random hashes are the
+    // bug, not the storage container.  See
+    // `docs/class-table-container-analysis.md`.
     std::vector<Oop> classTable_;
     uint32_t nextClassIndex_ = 1;  // Updated during image loading to be past highest used index
+
+    // Set of class table indices known to be metaclasses (i.e., classes
+    // whose instances are themselves classes).  Populated as classes
+    // are registered: registerClass(C) inserts classOf(C)'s index.
+    // Used by identityHashOf() to detect class instances and route
+    // them to sequential index allocation instead of random LCG hashing.
+    std::unordered_set<uint32_t> knownMetaclassIndices_;
 
     // In-heap class table page Oops (populated during image load).
     // These are the Array objects inside hiddenRootsObj that hold class pointers.
