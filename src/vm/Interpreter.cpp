@@ -7054,12 +7054,28 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
             }
         }
-        if (sistaAfterT1 && !jm) {
+        if (sistaAfterT1) {
             // No T1 entry yet — let T1 warm up first.  Skip Sista
             // for this activation; fall through to the regular T1
             // path below (must NOT return — that would skip
             // tryJITActivation too).
-            goto past_sista_block;
+            //
+            // Even with a T1 entry, hold off until the method has
+            // executed enough times to populate its IC table.
+            // PHARO_SISTA_T1_WARMUP=N (default 100) sets the
+            // threshold.  Without it, Sista compiles the instant T1
+            // finishes — IC table is still empty — and we cache a
+            // useless no-hint result.
+            static const uint32_t t1Warmup = []() {
+                if (const char* v = std::getenv("PHARO_SISTA_T1_WARMUP")) {
+                    int n = atoi(v);
+                    return n > 0 ? (uint32_t)n : 100u;
+                }
+                return 100u;
+            }();
+            if (!jm || jm->executionCount < t1Warmup) {
+                goto past_sista_block;
+            }
         }
         sista::Lowering::CompiledFn fn = sista->compile(method, memory_,
             inlineHints.empty() ? nullptr : &inlineHints);
