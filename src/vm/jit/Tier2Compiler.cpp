@@ -1753,13 +1753,17 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                         }
                     }
                     if (sendIdx < t1Method->numICEntries) {
-                        // T1 allocation layout (mirrors JITCompiler):
-                        //   code → literalPool → bcToCode → icData (tail).
-                        uint32_t bcTableSize =
-                            (t1Method->numBytecodes + 1) * sizeof(uint32_t);
-                        uint32_t icOff =
-                            (t1Method->bcToCodeTableOffset + bcTableSize + 7) & ~7u;
-                        uint8_t* icBase = t1Method->codeStart() + icOff +
+                        // IC data lives at the END of the method's payload,
+                        // mirroring the canonical formula in
+                        // JITRuntime::recoverAfterGC.  The previous
+                        // bcToCodeTableOffset+bcTableSize formula landed
+                        // inside the selBitsArray side-channel (Task #41),
+                        // not the IC area — same bug as fixed in the
+                        // Sista path (Interpreter.cpp:7037).
+                        uint8_t* icStart =
+                            t1Method->codeStart() + t1Method->codeSize
+                            - t1Method->numICEntries * IC_BYTES_PER_SITE;
+                        uint8_t* icBase = icStart +
                                           sendIdx * IC_BYTES_PER_SITE;
                         icAddr = reinterpret_cast<uint64_t>(icBase);
                         // T1 already wrote selectorBits to icBase[18];
