@@ -89,6 +89,65 @@ int main() {
     // ===== Lifter tests =====
     using namespace pharo::jit;
 
+    // Phase 3 framepoint capture: every kSendUnspeculated emission
+    // should produce a Framepoint entry recording (valueId, bcOffset,
+    // stack snapshot).  Verifies infrastructure for monomorphic inlining
+    // deopt landing pads (Phase 4).  Run early (before pre-existing
+    // setter-lower fail) so the framepoint checks always execute.
+    {
+        // Send0 #foo: PushReceiver, Send0(sel-0).
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,                  // 0x4C — bc offset 0
+            (uint8_t)(SistaV1::Send0Base + 0),      // 0x80 — bc offset 1
+            SistaV1::ReturnTop,                     // unreachable
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        check(lifted.framepoints.size() == 1,
+              "1 framepoint for 1 Send0");
+        const auto& fp = lifted.framepoints[0];
+        check(fp.bcOffset == 1, "framepoint bcOffset = Send0 ip (1)");
+        check(fp.stackValueIds.size() == 1,
+              "framepoint stack snapshot has 1 entry (the receiver)");
+        check(lifted.valueAt(fp.valueId).op == Op::kSendUnspeculated,
+              "framepoint valueId points at kSendUnspeculated");
+        std::cout << "--- framepoint Send0: bc=" << (int)fp.bcOffset
+                  << " stack=" << fp.stackValueIds.size()
+                  << " val=" << fp.valueId << "\n";
+    }
+    {
+        // Send1 #bar:: PushReceiver, PushTemp 0, Send1(sel-0).
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,                  // 0x4C — bc 0
+            (uint8_t)(SistaV1::PushTempBase + 0),   // 0x40 — bc 1
+            (uint8_t)(SistaV1::Send1Base + 0),       // 0x90 — bc 2
+            SistaV1::ReturnTop,                      // unreachable
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 1, 0, lifted);
+        check(lifted.framepoints.size() == 1,
+              "1 framepoint for 1 Send1");
+        const auto& fp = lifted.framepoints[0];
+        check(fp.bcOffset == 2, "framepoint bcOffset = Send1 ip (2)");
+        check(fp.stackValueIds.size() == 2,
+              "framepoint stack snapshot = receiver + 1 arg");
+        check(lifted.valueAt(fp.valueId).op == Op::kSendUnspeculated,
+              "framepoint valueId points at kSendUnspeculated");
+        std::cout << "--- framepoint Send1: bc=" << (int)fp.bcOffset
+                  << " stack=" << fp.stackValueIds.size() << "\n";
+    }
+    // Yourself: no Send → no framepoint
+    {
+        Method lifted;
+        const uint8_t bc[] = {
+            SistaV1::PushReceiver,
+            SistaV1::ReturnTop,
+        };
+        Builder::buildFromBytes(bc, sizeof(bc), 0, 0, lifted);
+        check(lifted.framepoints.empty(),
+              "no framepoints for send-free method");
+    }
+
     // Integer>>yourself ≡ [PushReceiver, ReturnTop]
     {
         Method lifted;
