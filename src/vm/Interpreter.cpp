@@ -13,6 +13,7 @@
  */
 
 #include "Interpreter.hpp"
+#include "../platform/Platform.hpp"
 #include "DebugSettings.hpp"
 #include "InterpreterProxy.h"
 #include "FFI.hpp"
@@ -13084,9 +13085,7 @@ void Interpreter::tryJITResumeInCaller() {
                                         MaxJ2JPoolSize - rj2jBase);
 
           if (!noResumeJ2J) {
-#if defined(__APPLE__) && defined(__arm64__)
-            pthread_jit_write_protect_np(1);  // JIT zone executable
-#endif
+            pharo::platform::flipJitToExecutable();
             while (state.exitReason == jit::ExitSendCached ||
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
@@ -13277,9 +13276,7 @@ void Interpreter::tryJITResumeInCaller() {
                 }
             }
 
-#if defined(__APPLE__) && defined(__arm64__)
-            pthread_jit_write_protect_np(0);  // JIT zone writable
-#endif
+            pharo::platform::flipJitToWritable();
           } // !noResumeJ2J
 
             // Reconstruct state.method from state.jitMethod.
@@ -14433,12 +14430,10 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
         // Toggle W^X to executable once for the entire trampoline loop.
         // The loop only reads JIT code (executable) and writes to C stack (always writable).
-#if defined(__APPLE__) && defined(__arm64__)
         if (state.exitReason == jit::ExitJ2JCall ||
             (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
-            pthread_jit_write_protect_np(1);
+            pharo::platform::flipJitToExecutable();
         }
-#endif
 
 #if defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
         // Hand-written ARM64 loop: pins state/save-cursor/counters in
@@ -14691,9 +14686,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 #endif // PHARO_ASM_TRAMPOLINE
         // Toggle back to writable after trampoline loop
-#if defined(__APPLE__) && defined(__arm64__)
-        pthread_jit_write_protect_np(0);
-#endif
+        pharo::platform::flipJitToWritable();
 
         // Merge stencil-managed J2J depth with trampoline-managed depth.
         // Stencils push/pop frames via state.j2jDepth; the trampoline uses
@@ -15054,13 +15047,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
                     state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                     state.yieldCountdown = 1000;
-#if defined(__APPLE__) && defined(__arm64__)
-                    pthread_jit_write_protect_np(1);
-#endif
+                    pharo::platform::flipJitToExecutable();
                     JIT_CALL(callerJM->codeStart() + codeOff, &state);
-#if defined(__APPLE__) && defined(__arm64__)
-                    pthread_jit_write_protect_np(0);
-#endif
+                    pharo::platform::flipJitToWritable();
                 }
                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                 chargeJITBytecodes(state);
@@ -15531,13 +15520,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint32_t codeOff = jm->codeOffsetForBC(bcOffset);
                 if (codeOff == 0 || codeOff >= jm->codeSize) return true;
                 state.jitMethod = jm;
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(1);
-#endif
+                pharo::platform::flipJitToExecutable();
                 JIT_CALL(jm->codeStart() + codeOff, &state);
-#if defined(__APPLE__) && defined(__arm64__)
-                pthread_jit_write_protect_np(0);
-#endif
+                pharo::platform::flipJitToWritable();
             }
             // Charge stencil J2J calls from this segment
             jitJ2JStencilCalls_ += state.j2jTotalCalls;
@@ -15724,9 +15709,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                         // --- Enter callee JIT code ---
                         // W^X → executable (stays exec through fast path)
-#if defined(__APPLE__) && defined(__arm64__)
-                        pthread_jit_write_protect_np(1);
-#endif
+                        pharo::platform::flipJitToExecutable();
                         JIT_CALL(chainJM->codeStart(), &state);
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
@@ -15831,9 +15814,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 state.yieldCountdown = 1000;
                                 // Direct resume — no hash lookup or codeOffsetForBC
                                 JIT_CALL(savedResumeEntry, &state);
-#if defined(__APPLE__) && defined(__arm64__)
-                                pthread_jit_write_protect_np(0);
-#endif
+                                pharo::platform::flipJitToWritable();
                                 jitJ2JActChains_++;
                                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                                 chargeJITBytecodes(state);
@@ -15888,9 +15869,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             }
 
                             // Precompute failed — fall back to tryResume
-#if defined(__APPLE__) && defined(__arm64__)
-                            pthread_jit_write_protect_np(0);
-#endif
+                            pharo::platform::flipJitToWritable();
                             {
                                 ObjectHeader* cMO = savedMethod.asObjectPtr();
                                 Oop hdr = cMO->slots()[0];
@@ -15920,9 +15899,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             continue;
                         }
                         // Not fast path — switch to writable for fallback
-#if defined(__APPLE__) && defined(__arm64__)
-                        pthread_jit_write_protect_np(0);
-#endif
+                        pharo::platform::flipJitToWritable();
 
                         // === FALLBACK: callee exited with non-ExitReturn ===
                         // Push a SavedFrame for the caller so the interpreter

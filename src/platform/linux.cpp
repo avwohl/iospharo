@@ -57,6 +57,9 @@ void flushICache(void* ptr, size_t bytes) {
                             static_cast<char*>(ptr) + bytes);
 }
 
+// flipJitToWritable / flipJitToExecutable are defined inline in
+// Platform.hpp (hot-path: must inline at every call site).
+
 // ===== Cooperative scheduling =====
 
 void relinquishCPU(uint64_t microseconds) {

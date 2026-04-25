@@ -63,6 +63,41 @@ bool makeExecutable(void* ptr, size_t bytes);
 // writing new code before executing it.  No-op on x86_64.
 void flushICache(void* ptr, size_t bytes);
 
+// Per-thread W^X mode toggles WITHOUT a specific region argument.
+// On Apple Silicon these flip the per-thread MSR (region-independent);
+// on Linux they are no-ops.  Use these from VM hot-path sites
+// (Interpreter.cpp post-stencil) where the "region" concept doesn't
+// apply naturally — the JIT zone is global and the flip affects all
+// of it for this thread.
+//
+// Defined inline here (rather than as ordinary function calls in the
+// per-OS .cpp) because they're called from the JIT hot path — 13
+// sites in Interpreter.cpp, plus JIT_CALL_PRE in JITState.hpp.
+// Indirect calls add ~5ns per site × 1.5M iterations of block(500K)
+// bench = ~7ms regression vs inline.  This is the ONE place a
+// platform #ifdef lives in a header — all VM-core sources stay clean.
+}  // namespace platform
+}  // namespace pharo
+
+#if defined(__APPLE__) && defined(__arm64__)
+  #include <pthread.h>
+  namespace pharo { namespace platform {
+    inline void flipJitToWritable()   { pthread_jit_write_protect_np(0); }
+    inline void flipJitToExecutable() { pthread_jit_write_protect_np(1); }
+  }}
+#else
+  namespace pharo { namespace platform {
+    inline void flipJitToWritable()   { /* no-op: RWX on Linux, etc. */ }
+    inline void flipJitToExecutable() { /* no-op */ }
+  }}
+#endif
+
+namespace pharo {
+namespace platform {
+
+// (Placeholder so the closing braces below stay balanced — the inline
+// flip functions are defined above, outside this namespace block.)
+
 // =====================================================================
 // Cooperative scheduling (let host UI breathe)
 // =====================================================================

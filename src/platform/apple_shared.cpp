@@ -63,6 +63,9 @@ void flushICache(void* ptr, size_t bytes) {
     sys_icache_invalidate(ptr, bytes);
 }
 
+// flipJitToWritable / flipJitToExecutable are defined inline in
+// Platform.hpp (hot-path: must inline at every call site).
+
 // ===== Cooperative scheduling (CFRunLoop) =====
 
 void relinquishCPU(uint64_t microseconds) {

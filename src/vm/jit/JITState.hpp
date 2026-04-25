@@ -20,11 +20,9 @@
 
 #include "JITConfig.hpp"
 #include "../Oop.hpp"
+#include "../../platform/Platform.hpp"
 #include <cstdint>
 #include <cstddef>
-#if defined(__APPLE__) && defined(__arm64__)
-#include <pthread.h>
-#endif
 
 #if PHARO_JIT_ENABLED
 
@@ -177,13 +175,9 @@ typedef void (*StencilFunc)(JITState*);
 // JIT_CALL also flips MAP_JIT to executable on Apple Silicon — the per-
 // thread W^X toggle may have been left in writable mode by a prior IC
 // patch, in which case the callee's first instruction would SIGBUS at
-// PC == fault_addr.  pthread_jit_write_protect_np(1) is cheap (one MSR
-// write) and idempotent.
-#if defined(__APPLE__) && defined(__arm64__)
-#define _JIT_CALL_PRE() pthread_jit_write_protect_np(1)
-#else
-#define _JIT_CALL_PRE() ((void)0)
-#endif
+// PC == fault_addr.  pharo::platform::flipJitToExecutable() is a no-op
+// on Linux (RWX always) and one MSR write on Apple Silicon.
+#define _JIT_CALL_PRE() pharo::platform::flipJitToExecutable()
 
 #ifdef __aarch64__
 #define JIT_CALL(entry_ptr, state_ptr) do { \
