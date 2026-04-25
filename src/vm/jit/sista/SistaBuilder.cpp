@@ -112,8 +112,14 @@ static ObjectMemory* g_currentBuildMemory = nullptr;
 
 // Recursion guard: probe-lifting a callee re-enters Builder::build, which
 // re-enters recordFramepoint via its own sends.  Without a guard the
-// counters explode geometrically and the build wedges.
+// counters explode geometrically and the build wedges.  Bumped to 2 to
+// allow one level of recursive inlining (caller → callee → inner callee).
 static int g_calleeLiftDepth = 0;
+
+// Phase 4 Step 5: callback that turns a CompiledMethod oop into its
+// inline-hint vector by reading the JIT runtime's IC table.  Set once
+// at VM startup by the Interpreter; nullptr disables recursive inlining.
+static Builder::HintProvider g_hintProvider;
 
 class LinearLifter {
 public:
@@ -1427,7 +1433,7 @@ private:
             std::getenv("PHARO_SISTA_INLINE_CONST") != nullptr;
         if (!inlineConst) return false;
         if (g_currentBuildMemory == nullptr) return false;
-        if (g_calleeLiftDepth >= 1) return false;
+        if (g_calleeLiftDepth >= 2) return false;
         if (stack_.size() < nArgs + 1) return false;
 
         const InlineHint* hit = nullptr;
@@ -1487,14 +1493,80 @@ private:
             const Value& v1 = calleeIR.values[1];
             const Value& v2 = calleeIR.values[2];
             if (v0.op != Op::kLoadReceiver) return false;
-            if (v1.op != Op::kLoadInstVar) return false;
-            if (v1.operands.size() != 1 || v1.operands[0] != v0.id) return false;
-            if (v2.op != Op::kReturn) return false;
-            if (v2.operands.size() != 1 || v2.operands[0] != v1.id) return false;
-            inlineOp = Op::kLoadInstVar;
-            inlineTy = Type::kOop;
-            inlineLit = v1.literal;
-            inlineOps.push_back(recvId);
+            // 3-value getter: kLoadReceiver + kLoadInstVar + kReturn.
+            if (v1.op == Op::kLoadInstVar
+             && v1.operands.size() == 1 && v1.operands[0] == v0.id
+             && v2.op == Op::kReturn
+             && v2.operands.size() == 1 && v2.operands[0] == v1.id) {
+                inlineOp = Op::kLoadInstVar;
+                inlineTy = Type::kOop;
+                inlineLit = v1.literal;
+                inlineOps.push_back(recvId);
+            }
+            // 3-value chain: kLoadReceiver + kSendUnspeculated(v0)
+            //                + kReturn(v1).  Recursively inline the
+            //                inner self-send when its target is also
+            //                a const-return / getter via the callee's
+            //                own JIT IC.  No inner guard needed: the
+            //                outer guard already proves the receiver
+            //                is hit->classOop, and the inner send's
+            //                receiver IS that same value.
+            else if (v1.op == Op::kSendUnspeculated
+                  && !v1.operands.empty() && v1.operands[0] == v0.id
+                  && v2.op == Op::kReturn
+                  && v2.operands.size() == 1 && v2.operands[0] == v1.id) {
+                if (!g_hintProvider) return false;
+                // The send literal packs (selIdx | nArgs<<16 | bcOffset<<24).
+                uint32_t innerNArgs = (uint32_t)((v1.literal >> 16) & 0xFF);
+                uint32_t innerBcOff = (uint32_t)(v1.literal >> 24);
+                if (innerNArgs != 0) return false;  // self-send only
+                std::vector<InlineHint> innerHints =
+                    g_hintProvider(calleeOop);
+                const InlineHint* innerHit = nullptr;
+                for (const auto& ih : innerHints) {
+                    if (ih.bcOffset == innerBcOff) {
+                        innerHit = &ih; break;
+                    }
+                }
+                if (!innerHit) return false;
+                if (innerHit->targetMethod == 0) return false;
+                if ((innerHit->targetMethod & 0x7) != 0) return false;
+                if (innerHit->targetMethod < 0x10000) return false;
+                // The outer guard proved rcvr is class hit->classOop.
+                // The inner IC observed that same class — sanity-check.
+                if ((innerHit->classOop & 0x3FFFFFu)
+                    != (hit->classOop & 0x3FFFFFu)) return false;
+                Method innerIR;
+                uint32_t innerFailedAt = UINT32_MAX;
+                Oop innerOop = Oop::fromRawBits(innerHit->targetMethod);
+                g_calleeLiftDepth++;
+                LiftResult ir = Builder::build(innerOop,
+                    *g_currentBuildMemory, innerIR, &innerFailedAt);
+                g_calleeLiftDepth--;
+                if (ir != LiftResult::kOk) return false;
+                // Inner pattern must be 2-value const-return.
+                if (innerIR.values.size() != 2) return false;
+                const Value& iv0 = innerIR.values[0];
+                const Value& iv1 = innerIR.values[1];
+                if (iv1.op != Op::kReturn) return false;
+                if (iv1.operands.size() != 1
+                    || iv1.operands[0] != iv0.id) return false;
+                switch (iv0.op) {
+                case Op::kLoadTrueOop:  inlineOp = Op::kLoadTrueOop;
+                                        inlineTy = Type::kOopBool; break;
+                case Op::kLoadFalseOop: inlineOp = Op::kLoadFalseOop;
+                                        inlineTy = Type::kOopBool; break;
+                case Op::kConstantOop:  inlineOp = Op::kConstantOop;
+                                        inlineTy = Type::kOop;
+                                        inlineLit = iv0.literal; break;
+                case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver;
+                                        inlineTy = Type::kOop; break;
+                default: return false;
+                }
+            }
+            else {
+                return false;
+            }
         } else {
             return false;
         }
@@ -1758,6 +1830,10 @@ LiftResult Builder::buildWithHints(Oop compiledMethod, ObjectMemory& memory,
     g_currentBuildHints = nullptr;
     g_currentBuildMemory = nullptr;
     return r;
+}
+
+void Builder::setHintProvider(HintProvider p) {
+    g_hintProvider = std::move(p);
 }
 
 // Phase 4 Step 1 stats accessors.

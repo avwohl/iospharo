@@ -64,6 +64,7 @@
 #include "WorldRenderer.hpp"
 #if PHARO_JIT_ENABLED
 #include "jit/JITRuntime.hpp"
+#include "jit/sista/SistaIR.hpp"
 #endif
 #include <array>
 #include <atomic>
@@ -1020,6 +1021,12 @@ private:
     // Patch the inline cache after the interpreter resolves a send.
     // Called from sendSelector() after method lookup succeeds.
     void patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector);
+
+    // Phase 4 monomorphic inlining: read T1's IC table for this method
+    // and return its monomorphic entries as Sista InlineHints.  Empty
+    // if the method has no JITMethod or no monomorphic IC sites.
+    std::vector<sista::InlineHint>
+    extractInlineHintsForMethod(Oop method);
 
     // Initialize JIT on first use (lazy init after image is loaded)
     void initializeJIT();

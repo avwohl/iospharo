@@ -20,6 +20,7 @@
 #include "jit/Tier2Compiler.hpp"
 #include "jit/SistaV1.hpp"
 #include "jit/sista/SistaRuntime.hpp"
+#include "jit/sista/SistaBuilder.hpp"
 #include "plugins/sqMemoryAccess.h"
 #include "../include/vmCallback.h"
 #include "../platform/DisplaySurface.hpp"
@@ -6992,9 +6993,15 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     if (g_debug.sistaCompile || g_debug.sistaDispatch) {
         // File-scope pointer so recoverJITAfterGC can invalidate the
         // cache — raw oop keys become stale after Spur compaction.
-        static sista::Runtime* sista = []() {
+        static sista::Runtime* sista = [this]() {
             auto* r = new sista::Runtime();
             sistaRuntimeForGCHook_ = r;
+            // Phase 4 Step 5: register the hint provider so the Sista
+            // Builder can fetch a method's monomorphic IC entries
+            // when recursively inlining inner self-sends.
+            sista::Builder::setHintProvider([this](Oop methodOop) {
+                return extractInlineHintsForMethod(methodOop);
+            });
             return r;
         }();
         static size_t attempts = 0, hits = 0;
@@ -7026,34 +7033,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // not an Oop — Phase 4 Step 2 will treat it as such.
         static const bool sistaAfterT1 =
             std::getenv("PHARO_SISTA_AFTER_T1") != nullptr;
-        std::vector<sista::InlineHint> inlineHints;
+        std::vector<sista::InlineHint> inlineHints =
+            extractInlineHintsForMethod(method);
         auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
-        if (jm && jm->numICEntries > 0) {
-            const auto* sendBCs = jitRuntime_.compiler()
-                ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
-                : nullptr;
-            // IC data lives at the END of the method's payload, mirroring
-            // the canonical formula in JITRuntime::recoverAfterGC.
-            const uint8_t* icStart =
-                jm->codeStart() + jm->codeSize
-                - jm->numICEntries * jit::IC_BYTES_PER_SITE;
-            for (uint16_t sendIdx = 0; sendIdx < jm->numICEntries; ++sendIdx) {
-                const uint8_t* icBase =
-                    icStart + sendIdx * jit::IC_BYTES_PER_SITE;
-                const uint64_t* ic =
-                    reinterpret_cast<const uint64_t*>(icBase);
-                uint64_t classKey0 = ic[0];
-                uint64_t method0   = ic[1];
-                uint64_t classKey1 = ic[3];
-                if (classKey0 != 0 && classKey1 == 0) {
-                    uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
-                        ? (*sendBCs)[sendIdx] : UINT16_MAX;
-                    if (bcOff != UINT16_MAX) {
-                        inlineHints.push_back({bcOff, classKey0, method0});
-                    }
-                }
-            }
-        }
         if (sistaAfterT1) {
             // No T1 entry yet — let T1 warm up first.  Skip Sista
             // for this activation; fall through to the regular T1
@@ -13720,6 +13702,36 @@ static uint8_t inlinePrimKind(int primIndex) {
     case 71: return 18;  // new: (basicNew:)
     default: return 0;
     }
+}
+
+std::vector<sista::InlineHint>
+Interpreter::extractInlineHintsForMethod(Oop method) {
+    std::vector<sista::InlineHint> hints;
+    auto* jm = jitRuntime_.methodMap().lookup(method.rawBits());
+    if (!jm || jm->numICEntries == 0) return hints;
+    const auto* sendBCs = jitRuntime_.compiler()
+        ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
+        : nullptr;
+    const uint8_t* icStart =
+        jm->codeStart() + jm->codeSize
+        - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+    for (uint16_t sendIdx = 0; sendIdx < jm->numICEntries; ++sendIdx) {
+        const uint8_t* icBase =
+            icStart + sendIdx * jit::IC_BYTES_PER_SITE;
+        const uint64_t* ic =
+            reinterpret_cast<const uint64_t*>(icBase);
+        uint64_t classKey0 = ic[0];
+        uint64_t method0   = ic[1];
+        uint64_t classKey1 = ic[3];
+        if (classKey0 != 0 && classKey1 == 0) {
+            uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
+                ? (*sendBCs)[sendIdx] : UINT16_MAX;
+            if (bcOff != UINT16_MAX) {
+                hints.push_back({bcOff, classKey0, method0});
+            }
+        }
+    }
+    return hints;
 }
 
 void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop selector) {

@@ -20,6 +20,7 @@
 
 #include "SistaIR.hpp"
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -75,6 +76,18 @@ public:
     static uint64_t totalHintsConsumed();
     static void resetInlineHintStats();
     static void dumpInlineHintStats();
+
+    // Phase 4 Step 5: callback the inliner uses to get inline hints
+    // for an arbitrary CompiledMethod oop.  Callee must extract the
+    // method's JITMethod IC table and turn its monomorphic entries
+    // into InlineHints — same logic the Interpreter applies for the
+    // outer caller, factored out so the Builder can recurse into
+    // inner sends without depending on the JIT runtime directly.
+    //
+    // Set once at VM startup; nullptr disables recursive inlining.
+    using HintProvider =
+        std::function<std::vector<InlineHint>(Oop method)>;
+    static void setHintProvider(HintProvider provider);
 };
 
 }  // namespace sista
