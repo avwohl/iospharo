@@ -171,3 +171,87 @@ Goal: end-to-end working inline with deopt landing pad.
 
 That validates the architecture before committing to the
 full T1-IC-query infrastructure.
+
+## UPDATE (2026-04-24, evening): three POC inlines shipped
+
+Inline POCs landed and validated:
+
+  Commit       Selector        Shape                      Env var
+  -----------  --------------  -------------------------  ------------------------
+  b450e58      #yourself       no-op (skip emission)      PHARO_SISTA_INLINE_YOURSELF
+  35ce72f      #==             cmp + csel(EQ)             PHARO_SISTA_INLINE_IDENTITY_EQ
+  6763554      #~~             cmp + csel(NE)             PHARO_SISTA_INLINE_IDENTITY_EQ
+
+All three opt-in.  Architecture validated for both inline
+shapes (no-op + codegen).
+
+### Full SUnit baseline under PHARO_SISTA_INLINE_YOURSELF=1
++ PHARO_SISTA_INLINE_IDENTITY_EQ=1
+
+`docs/jit-baseline-2026-04-25-inline-poc.txt`:
+
+                       YG-default       Inline POCs (yourself + == + ~~)
+  Tests passed:        12664            12654   (-10 from PragmaTest flake)
+  Tests failed:        3                3
+  Tests errored:       1                1
+  Tests timeout:       0                0
+  Wall clock:          77 m             77 m
+
+The -10 difference is `PragmaTest` reporting "no-tests" in
+this batch (flake — passes 10/10 in isolation under both
+modes).  The +1 fail (`ProcessTerminateBugTest`) from the
+yg-default run did NOT recur this time.  Net: same effective
+non-ok set.
+
+**Inline POCs are correctness-clean across all 565 classes.**
+
+### Bench impact: NEGLIGIBLE on current benchmarks
+
+  Workload                 YG-default   Inline POCs
+  fib(28)                  74 ms        75 ms
+  sieve x100              137 ms       136 ms
+  dict 50K put+get        178 ms       172 ms (+3% maybe)
+  factorial               26 ms        25 ms
+  1M getter+yourself      96 ms        99 ms
+
+`yourself`, `==`, `~~` aren't hot in these microbenchmarks.
+The 1M getter+yourself test does 1M `obj yourself` calls but
+the timesRepeat: loop overhead dominates.
+
+### Decision: keep opt-in
+
+Defaulting these on is unjustified given:
+  1. No measurable perf win in benchmarks
+  2. `yourself` POC has a small correctness risk (any class
+     overriding it would silently miscompile — needs CHA or
+     class guard before default-on)
+  3. `==`/`~~` POC is theoretically safer (universal
+     identity semantics) but no perf benefit to justify the
+     gate flip
+
+The value is **architectural**: the POCs prove Sista can
+do both no-op and codegen-style inlining end-to-end.  When
+the harder cases land (getters with deopt, sends with class
+guards), the patterns established here apply.
+
+### What this teaches about what's next
+
+Real perf wins from inlining need:
+  1. Inline targets that are HOT (not yourself / ==)
+  2. Class info to choose monomorphic candidates
+  3. Deopt landing pads for receiver-class miss
+
+Order of attack for next sessions:
+  A. **Profile selector hotness in real workloads.** Add a
+     send-counter keyed by selector to T1's IC-fill path.
+     Run a representative workload, dump top-N selectors.
+     Picks the right next inline targets.
+  B. **Plumb T1 IC info into Sista compile.** When Sista
+     compiles method M, query T1 for any IC sites in M
+     that are monomorphic.  Use that info for inline
+     decisions.
+  C. **Implement getter inline with class guard** as the
+     first non-trivial codegen inline.
+
+(A) is half a day, (B) is 1-2 days, (C) is several days.
+Total: ~1 week to a meaningful Phase 4 perf delivery.
