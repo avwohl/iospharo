@@ -20,6 +20,7 @@
 
 #include <sys/mman.h>
 #include <unistd.h>
+#include <pthread.h>
 #include <cstring>
 
 // =====================================================================
@@ -75,6 +76,29 @@ void flushICache(void* ptr, size_t bytes) {
 
 // flipJitToWritable / flipJitToExecutable are defined inline in
 // Platform.hpp (hot-path: must inline at every call site).
+
+// ===== Stack bounds =====
+
+bool getStackBounds(uint8_t** top, uint8_t** bot) {
+    // glibc reports the LOW end (base) + size; HIGH end is base + size.
+    pthread_t self = pthread_self();
+    pthread_attr_t attr;
+    *top = nullptr;
+    *bot = nullptr;
+    if (pthread_getattr_np(self, &attr) != 0) return false;
+    void* base = nullptr;
+    size_t size = 0;
+    int ok = pthread_attr_getstack(&attr, &base, &size);
+    pthread_attr_destroy(&attr);
+    if (ok != 0 || !base) return false;
+    *bot = static_cast<uint8_t*>(base);
+    *top = *bot + size;
+    return true;
+}
+
+// jitTrampolineJMSize is defined in src/platform/jit_jmsize_{arm64,other}.cpp
+// (per-arch file selected by CMake) so this OS-specific file stays free
+// of arch ifdefs.
 
 // ===== Cooperative scheduling =====
 

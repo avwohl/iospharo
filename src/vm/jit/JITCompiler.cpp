@@ -1865,31 +1865,15 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             }
             // (2) Native frame-pointer chain — LRs may be PCs inside JIT
             // code (trampoline return into caller's stencil).  Bounded by
-            // pthread stack, plus a depth cap.
-            pthread_t self = pthread_self();
-#if defined(__APPLE__)
-            // Apple: pthread_get_stackaddr_np returns the HIGH end of the
-            // stack (top, since the stack grows downward).
-            uint8_t* stackTop = static_cast<uint8_t*>(pthread_get_stackaddr_np(self));
-            size_t stackSize = pthread_get_stacksize_np(self);
-            uint8_t* stackBot = stackTop - stackSize;
-#else
-            // Linux glibc: pthread_attr_getstack returns the LOW end (base)
-            // of the stack and its size.  Top is base + size.
+            // pthread stack, plus a depth cap.  Apple and Linux report
+            // stack info via different APIs; the platform layer exposes
+            // a uniform getStackBounds(top, bot) so this code stays
+            // ifdef-free.
             uint8_t* stackTop = nullptr;
             uint8_t* stackBot = nullptr;
-            pthread_attr_t attr;
-            if (pthread_getattr_np(self, &attr) == 0) {
-                void* stackBase = nullptr;
-                size_t stackSize = 0;
-                if (pthread_attr_getstack(&attr, &stackBase, &stackSize) == 0) {
-                    stackBot = static_cast<uint8_t*>(stackBase);
-                    stackTop = stackBot + stackSize;
-                }
-                pthread_attr_destroy(&attr);
+            if (!pharo::platform::getStackBounds(&stackTop, &stackBot)) {
+                return;  // can't walk; pin nothing
             }
-            if (!stackTop || !stackBot) return;  // can't walk; pin nothing
-#endif
             uint64_t* fp = static_cast<uint64_t*>(__builtin_frame_address(0));
             for (int depth = 0; depth < 256; depth++) {
                 uint8_t* fpB = reinterpret_cast<uint8_t*>(fp);

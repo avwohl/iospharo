@@ -99,6 +99,34 @@ namespace platform {
 // flip functions are defined above, outside this namespace block.)
 
 // =====================================================================
+// Stack bounds (for native stack-walking, e.g. JITCompiler J2J pinning)
+// =====================================================================
+
+// Fill *top and *bot with the calling thread's stack range.  *top is
+// the HIGH end (where new frames grow downward FROM); *bot is the LOW
+// end (downward growth limit).  Returns false and zeroes both on
+// failure — callers should pin nothing in that case.
+//
+// Per-OS impl: Apple uses pthread_get_stackaddr_np (returns the high
+// end directly); Linux uses pthread_getattr_np + pthread_attr_getstack
+// (returns the low end + size).  Two conventions, same information,
+// hence this thin abstraction in the platform layer.
+bool getStackBounds(uint8_t** top, uint8_t** bot);
+
+// =====================================================================
+// JIT trampoline sentinel
+// =====================================================================
+
+// Sentinel exposed by the per-arch JIT trampoline (TrampolineAsm.S on
+// arm64; trivial constexpr on other archs).  JITRuntime::initialize()
+// asserts this matches sizeof(JITMethod) — if asm-side JM_SIZE drifts
+// from the C++ struct, every trampoline computes wrong field offsets.
+//
+// Defined inline because the value is just a constant; per-arch
+// dispatch happens at compile time without a function call.
+uint64_t jitTrampolineJMSize();
+
+// =====================================================================
 // Cooperative scheduling (let host UI breathe)
 // =====================================================================
 

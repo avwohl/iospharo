@@ -20,14 +20,8 @@ using pharo::g_stepNum;
 
 #if PHARO_JIT_ENABLED
 
-// Defined in TrampolineAsm.S — holds the asm-side JM_SIZE constant.
-// JITRuntime::initialize() asserts this matches sizeof(JITMethod).
-// TrampolineAsm.S is arm64-only; on other architectures the asm trampoline
-// is not used, so we skip the check.
-#if defined(__aarch64__)
-extern "C" const uint64_t pharo_jit_jm_size_check;
-static const uint64_t& g_pharo_jit_jm_size_check = pharo_jit_jm_size_check;
-#endif
+// JIT trampoline JM_SIZE sentinel — arch-specific impl lives in
+// src/platform/jit_jmsize_{arm64,other}.cpp (selected by CMake).
 
 namespace pharo {
 }
@@ -998,15 +992,19 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // (an `.S` file — can't use `sizeof`) MUST equal the real
     // sizeof(JITMethod).  If layout drifts, every asm trampoline
     // computes `add Xn, methodHdr, #JM_SIZE` to the wrong address.
-    // Fail loudly at startup instead of crashing later.
-#if defined(__aarch64__)
-    if (g_pharo_jit_jm_size_check != sizeof(JITMethod)) {
-        fprintf(stderr, "[JIT] FATAL: TrampolineAsm.S JM_SIZE=%llu != sizeof(JITMethod)=%zu — "
-                "stencil math will land outside method code.  Update JM_SIZE in TrampolineAsm.S.\n",
-                (unsigned long long)g_pharo_jit_jm_size_check, sizeof(JITMethod));
-        return false;
+    // Fail loudly at startup instead of crashing later.  On non-arm64
+    // architectures the platform sentinel returns sizeof itself, so
+    // the check is a tautology — but keeping the call site uniform
+    // means there's no arch divergence in VM core.
+    {
+        uint64_t sentinel = pharo::platform::jitTrampolineJMSize();
+        if (sentinel != sizeof(JITMethod)) {
+            fprintf(stderr, "[JIT] FATAL: TrampolineAsm.S JM_SIZE=%llu != sizeof(JITMethod)=%zu — "
+                    "stencil math will land outside method code.  Update JM_SIZE in TrampolineAsm.S.\n",
+                    (unsigned long long)sentinel, sizeof(JITMethod));
+            return false;
+        }
     }
-#endif
 
     // Initialize code zone
     if (!codeZone_.initialize()) {

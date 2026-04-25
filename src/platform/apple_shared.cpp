@@ -66,6 +66,23 @@ void flushICache(void* ptr, size_t bytes) {
 // flipJitToWritable / flipJitToExecutable are defined inline in
 // Platform.hpp (hot-path: must inline at every call site).
 
+// ===== Stack bounds =====
+
+bool getStackBounds(uint8_t** top, uint8_t** bot) {
+    pthread_t self = pthread_self();
+    *top = static_cast<uint8_t*>(pthread_get_stackaddr_np(self));
+    if (*top == nullptr) {
+        *bot = nullptr;
+        return false;
+    }
+    *bot = *top - pthread_get_stacksize_np(self);
+    return true;
+}
+
+// jitTrampolineJMSize is defined in src/platform/jit_jmsize_{arm64,other}.cpp
+// (per-arch file selected by CMake) so this OS-specific file stays free
+// of arch ifdefs.
+
 // ===== Cooperative scheduling (CFRunLoop) =====
 
 void relinquishCPU(uint64_t microseconds) {

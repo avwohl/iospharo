@@ -145,6 +145,15 @@ elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     )
 endif()
 
+# Per-arch helper for the JIT trampoline JM_SIZE sentinel.  Only one of
+# these is linked per build, selected by CMAKE_SYSTEM_PROCESSOR — keeps
+# arch divergence out of the OS-specific platform .cpp files.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+    list(APPEND VM_SOURCES src/platform/jit_jmsize_arm64.cpp)
+else()
+    list(APPEND VM_SOURCES src/platform/jit_jmsize_other.cpp)
+endif()
+
 add_library(PharoVMCore STATIC ${VM_SOURCES})
 target_link_libraries(PharoVMCore asmjit::asmjit)
 
