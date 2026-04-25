@@ -125,6 +125,11 @@ public:
         identityNeqSelectorMask_ = mask;
     }
 
+    // Phase 3 deopt: when set, builder emits kPrimTagCheckInt
+    // before each kPrimAddInt etc.  Lets the unsafe-arith gate
+    // lift safely (non-SmallInt operands deopt to interpreter).
+    void setTypeCheckArith(bool v) { typeCheckArith_ = v; }
+
     LiftResult run(uint32_t* failedAtBytecode) {
         // --- Pass 1: identify block boundaries --------------------------
         //
@@ -956,56 +961,73 @@ private:
             }
 
             // Arith sends 0x60-0x6F — inline the common ones on
-            // SmallInt operands.  No class guard or overflow check
-            // yet; safety lands with Phase 3 deopt.  Tests today
-            // ensure operands are small positive SmallInts.
+            // SmallInt operands.  Phase 3 deopt: when
+            // PHARO_SISTA_INLINE_ARITH=1, emit kPrimTagCheckInt
+            // before each kPrimAddInt etc. so non-SmallInt operands
+            // safely deopt to the interpreter (which re-executes
+            // the original arith bytecode handling all types).
             //
             // Arithmetic (+ - *) produces a SmallInt result; comparisons
-            // (< <= > >= = ~=) produce a boolean.  Both share the
-            // unsafe-arith gate in Interpreter.cpp's Sista dispatch
-            // path — a method with any of these opcodes is excluded
-            // from Sista dispatch unless PHARO_SISTA_UNSAFE_ARITH=1.
-            if (op == jit::SistaV1::ArithBase + 0    // + (0x60)
-                || op == jit::SistaV1::ArithBase + 1 // - (0x61)
-                || op == jit::SistaV1::ArithBase + 8 // * (0x68)
-               ) {
+            // (< <= > >= = ~=) produce a boolean.  Without
+            // PHARO_SISTA_INLINE_ARITH=1, methods with these opcodes
+            // are excluded from Sista dispatch entirely (handled in
+            // Interpreter.cpp).
+            const bool isArith = (op == jit::SistaV1::ArithBase + 0   // +
+                              ||  op == jit::SistaV1::ArithBase + 1   // -
+                              ||  op == jit::SistaV1::ArithBase + 8); // *
+            const bool isArithCmp = (op >= jit::SistaV1::ArithBase + 2
+                                  && op <= jit::SistaV1::ArithBase + 7);
+            if (isArith || isArithCmp) {
                 if (stack_.size() < 2) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
+                // Snapshot deopt stack BEFORE popping operands —
+                // when type check misses, the interpreter resumes
+                // at this bcOffset and expects the original [..., a, b]
+                // on its stack.
+                std::vector<uint32_t> deoptStack = stack_;
+
                 uint32_t b = stack_.back(); stack_.pop_back();
                 uint32_t a = stack_.back(); stack_.pop_back();
-                Op primOp = Op::kPrimAddInt;
-                if (op == jit::SistaV1::ArithBase + 1) primOp = Op::kPrimSubInt;
-                if (op == jit::SistaV1::ArithBase + 8) primOp = Op::kPrimMulInt;
-                uint32_t v = out_.newValue(currentBlock_, primOp,
-                                            Type::kOopSmallInt,
-                                            /*operands=*/{a, b});
-                stack_.push_back(v);
-                ip++;
-                continue;
-            }
-            // SmallInt comparisons 0x62-0x67: < <= > >= = ~=
-            if (op >= jit::SistaV1::ArithBase + 2
-                && op <= jit::SistaV1::ArithBase + 7) {
-                if (stack_.size() < 2) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+
+                // Emit type checks if PHARO_SISTA_INLINE_ARITH=1.
+                // Each check operand[0] = value to test;
+                // operand[1..N] = deopt stack snapshot.
+                if (typeCheckArith_) {
+                    std::vector<uint32_t> checkA{a};
+                    checkA.insert(checkA.end(), deoptStack.begin(), deoptStack.end());
+                    std::vector<uint32_t> checkB{b};
+                    checkB.insert(checkB.end(), deoptStack.begin(), deoptStack.end());
+                    out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
+                                  Type::kOopSmallInt, std::move(checkA),
+                                  /*literal=*/bcOffset);
+                    out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
+                                  Type::kOopSmallInt, std::move(checkB),
+                                  /*literal=*/bcOffset);
                 }
-                uint32_t b = stack_.back(); stack_.pop_back();
-                uint32_t a = stack_.back(); stack_.pop_back();
+
                 Op primOp;
-                switch (op - jit::SistaV1::ArithBase) {
-                  case 2: primOp = Op::kPrimLtInt;  break;  // <
-                  case 3: primOp = Op::kPrimGtInt;  break;  // >
-                  case 4: primOp = Op::kPrimLeInt;  break;  // <=
-                  case 5: primOp = Op::kPrimGeInt;  break;  // >=
-                  case 6: primOp = Op::kPrimEqInt;  break;  // =
-                  case 7: primOp = Op::kPrimNeqInt; break;  // ~=
-                  default: primOp = Op::kPrimEqInt; break;
+                Type resultType;
+                if (isArith) {
+                    primOp = Op::kPrimAddInt;
+                    if (op == jit::SistaV1::ArithBase + 1) primOp = Op::kPrimSubInt;
+                    if (op == jit::SistaV1::ArithBase + 8) primOp = Op::kPrimMulInt;
+                    resultType = Type::kOopSmallInt;
+                } else {  // isArithCmp
+                    switch (op - jit::SistaV1::ArithBase) {
+                      case 2: primOp = Op::kPrimLtInt;  break;  // <
+                      case 3: primOp = Op::kPrimGtInt;  break;  // >
+                      case 4: primOp = Op::kPrimLeInt;  break;  // <=
+                      case 5: primOp = Op::kPrimGeInt;  break;  // >=
+                      case 6: primOp = Op::kPrimEqInt;  break;  // =
+                      case 7: primOp = Op::kPrimNeqInt; break;  // ~=
+                      default: primOp = Op::kPrimEqInt; break;
+                    }
+                    resultType = Type::kOopBool;
                 }
                 uint32_t v = out_.newValue(currentBlock_, primOp,
-                                            Type::kOopBool,
+                                            resultType,
                                             /*operands=*/{a, b});
                 stack_.push_back(v);
                 ip++;
@@ -1350,6 +1372,8 @@ private:
     uint16_t               identityEqSelectorMask_ = 0;
     // Phase 4 POC #3: bitmap of literals[0..15] that hold #~~.
     uint16_t               identityNeqSelectorMask_ = 0;
+    // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
+    bool                   typeCheckArith_ = false;
 };
 
 }  // namespace
@@ -1455,11 +1479,15 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         }
     }
 
+    static const bool typeCheckArith =
+        std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
+
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
     if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
     if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
+    if (typeCheckArith) l.setTypeCheckArith(true);
     return l.run(failedAtBytecode);
 }
 

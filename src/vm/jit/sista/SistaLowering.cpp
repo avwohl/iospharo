@@ -264,6 +264,91 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kPrimTagCheckInt: {
+                // Phase 3 deopt: check operand[0]'s low 3 bits == 1
+                // (SmallInt tag).  On miss, bail to interpreter.
+                // operand[0]      = value to check
+                // operand[1..N]   = simulated stack at deopt point
+                //                   (rebuilt onto interpreter stack
+                //                   so the interpreter can re-execute
+                //                   the source bytecode)
+                // literal         = bcOffset to deopt to
+                //
+                // Output (on hit) = operand[0] passthrough, retyped
+                // OopSmallInt for downstream type-aware ops.
+                if (v.operands.empty()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itVal = regFor.find(v.operands[0]);
+                if (itVal == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                using namespace asmjit::a64;
+                Label missLabel = cc.new_label();
+                Label contLabel = cc.new_label();
+
+                // tst sets condition flags from (val & imm).
+                // imm value = 7; result NZ if any low-3-bit set, but
+                // we want SmallIntTag == 1.  Use AND + cmp instead.
+                Gp tagBits = cc.new_gp64("tagbits");
+                cc.and_(tagBits, itVal->second, Imm(7));
+                cc.cmp(tagBits, Imm(1));
+                cc.b_eq(contLabel);  // SmallInt — proceed
+
+                // -- Miss: emit deopt sequence.  Same shape as
+                //    kSendUnspeculated bail.
+                cc.bind(missLabel);
+                uint32_t bcOffset = static_cast<uint32_t>(v.literal);
+
+                // Push operand[1..N] to interp stack.
+                Gp sp = cc.new_gp64("sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 1; opIdx < v.operands.size(); opIdx++) {
+                    auto opIt = regFor.find(v.operands[opIdx]);
+                    if (opIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(opIt->second,
+                           ptr(sp, static_cast<int>(opIdx - 1) * 8));
+                }
+                size_t numStackOps = v.operands.size() - 1;
+                if (numStackOps > 0) {
+                    cc.add(sp, sp, Imm(static_cast<int>(numStackOps) * 8));
+                }
+                cc.str(sp, ptr(state, OFF_SP));
+
+                // state.ip = bcOffset (or absolute pointer with base)
+                Gp ipReg = cc.new_gp64("ip");
+                if (bytecodeBase) {
+                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                   + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
+                cc.str(ipReg, ptr(state, OFF_IP));
+
+                // state.icDataPtr = 0 (no IC speculation)
+                Gp zero64 = cc.new_gp64("zero64");
+                cc.mov(zero64, Imm(0));
+                cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+
+                // state.exitReason = ExitSend
+                Gp exit = cc.new_gp32("exit");
+                cc.mov(exit, Imm(EXIT_SEND));
+                cc.str(exit, ptr(state, OFF_EXIT));
+                cc.ret();
+
+                // -- Hit: passthrough output = input
+                cc.bind(contLabel);
+                regFor[v.id] = itVal->second;
+                break;
+            }
+
             case Op::kPrimLtInt:
             case Op::kPrimLeInt:
             case Op::kPrimGtInt:

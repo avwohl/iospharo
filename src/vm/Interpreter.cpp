@@ -7068,11 +7068,17 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // cascading DNUs downstream (e.g., #* not understood
                 // by a malformed tagged value).  Gate off by
                 // default; re-admit when Phase 3 deopt lands.
-                if (g_debug.sistaUnsafeArith) {
+                // Phase 3 deopt admission: PHARO_SISTA_INLINE_ARITH=1
+                // makes the builder emit kPrimTagCheckInt before each
+                // arith op, with a deopt landing pad that bails to
+                // the interpreter at the source bytecode on non-SmallInt
+                // operands.  With type checks present, the arith ops
+                // are SAFE under any operand type — admit them.
+                static const bool inlineArith =
+                    std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
+                if (inlineArith || g_debug.sistaUnsafeArith) {
                     // + - * (inlined arith) and < <= > >= = ~=
-                    // (inlined SmallInt comparison) all use
-                    // tagged-int operations without runtime type
-                    // guards.  Same admission policy.
+                    // (inlined SmallInt comparison)
                     if (op == jit::SistaV1::ArithBase + 0   // +
                      || op == jit::SistaV1::ArithBase + 1   // -
                      || op == jit::SistaV1::ArithBase + 8   // *
