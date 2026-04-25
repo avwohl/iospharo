@@ -632,6 +632,32 @@ also fail under default JIT — none are YG-specific.
 Re-estimated Option D budget: was "~4 days," **actual: ~3 hours
 including bisection, fix, and verification.**
 
+### UPDATE 2 (2026-04-24, evening): default-on + weak-ref clean
+
+After the class-table fix, defaulted PHARO_YOUNG_GEN to ON
+(commit `3b37bd2`) with `PHARO_NO_YG=1` opt-out.  Re-ran the full
+565-class SUnit baseline under YG-default
+(`docs/jit-baseline-2026-04-24-yg-default.txt`):
+
+  12664 pass / 0 timeout / 3 fail / 1 err
+  + 1 known timing flake (ProcessTerminateBugTest, 12/12 in
+    isolation per memory `9d68134`)
+
+**Same 4 deterministic non-ok classes as default JIT.**
+
+Verified all 12 weak-ref test classes pass under YG-default —
+1020 tests across WeakKeyDictionary, WeakIdentityKeyDictionary,
+WeakValueDictionary, WeakIdentityValueDictionary, WeakSet,
+WeakIdentitySet, WeakOrderedCollection, WeakAnnouncer,
+WeakMessageSend, CDWeakClassParser, WeakClassVariable, WeakSlot.
+Zero failures.  The earlier "testClearing fail under YG" memory
+entry was stale — fix had landed in commit `cafe6a2`
+(Cog-spec finalization drain via `activateMethod` entry hook).
+
+**Option D status: SHIPPED.**  Remaining items from the plan are
+actually completed too — testClearing was fixed before this
+session even started.
+
 ## Decision
 
 Going with **Option D**.  Reasoning:
