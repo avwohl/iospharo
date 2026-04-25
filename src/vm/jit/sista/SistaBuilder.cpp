@@ -1429,6 +1429,21 @@ private:
             if (cr == LiftResult::kOk) {
                 g_calleeLiftSuccess++;
                 g_calleeBytecodesLifted += calleeIR.values.size();
+                if (std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                    static int dumpCount = 0;
+                    if (dumpCount++ < 8) {
+                        std::fprintf(stderr,
+                            "[SISTA-CALLEE-OK] target=0x%llx values=%zu blocks=%zu",
+                            (unsigned long long)h.targetMethod,
+                            calleeIR.values.size(),
+                            calleeIR.blocks.size());
+                        for (const auto& v : calleeIR.values) {
+                            std::fprintf(stderr, " %s",
+                                OpInfo::name(v.op));
+                        }
+                        std::fprintf(stderr, "\n");
+                    }
+                }
             } else if (std::getenv("PHARO_SISTA_INLINE_DBG")) {
                 static int dbgCount = 0;
                 if (dbgCount++ < 16) {
