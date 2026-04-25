@@ -179,11 +179,40 @@ struct Block {
 // One compiled method's IR.  Constructed by SistaBuilder, consumed by
 // SistaLowering (and optionally transformed by SistaInliner / peephole
 // passes in between).
+
+// ===== Framepoint =====
+//
+// PHASE 3 deopt infrastructure (started 2026-04-24).  At every
+// potential deopt site (currently every kSendUnspeculated; later
+// kGuardClass, kPrimTagCheckInt, etc.), the builder snapshots the
+// interpreter-visible state needed to reconstruct a bail.
+//
+// For monomorphic inlining (Phase 4), the deopt landing pad of an
+// inlined callee will reuse the framepoint of the OUTER send to
+// recover caller-frame state, then re-execute the unspeculated send
+// to re-do the call in the interpreter.
+//
+// Today (Step 1): emitted alongside every kSendUnspeculated; not yet
+// consumed.  Existing ExitSend bail mechanism still drives recovery.
+struct Framepoint {
+    uint32_t valueId;                    // The kSendUnspeculated value
+                                          // this framepoint describes
+    uint16_t bcOffset;                   // Bytecode index to resume at
+    std::vector<uint32_t> stackValueIds; // IR value IDs whose contents
+                                          // form the simulated stack at
+                                          // this point, bottom→top
+    // Future: temp value IDs, IR-value → physical-slot map (post
+    // register allocation).
+};
+
 struct Method {
     Oop compiledMethodOop = Oop::nil(); // Original CompiledMethod
     std::vector<Value> values;           // All values, indexed by id
     std::vector<Block> blocks;           // All blocks, indexed by id
     std::vector<Oop>   literals;         // Cached literal table (GC-tracked)
+    std::vector<Framepoint> framepoints; // Phase 3 deopt info; one per
+                                          // potential deopt site (today
+                                          // = every kSendUnspeculated).
     uint32_t numArgs  = 0;
     uint32_t numTemps = 0;               // Excludes args; just the |...| temps
     uint32_t entryBlock = 0;             // Index into blocks

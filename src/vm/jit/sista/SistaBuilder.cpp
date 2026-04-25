@@ -341,8 +341,9 @@ private:
                 uint64_t lit = 0
                              | ((uint64_t)stackSize << 16)
                              | (bailOffset         << 24);
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, static_cast<uint32_t>(bailOffset));
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
                 (void)instrLen;  // bail consumes the whole instruction
@@ -743,8 +744,9 @@ private:
                 uint64_t lit = (uint64_t)selIdx
                              | ((uint64_t)nArgs      << 16)
                              | ((uint64_t)bailOffset << 24);
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, bailOffset);
                 return LiftResult::kOk;
             }
 
@@ -794,8 +796,9 @@ private:
                 uint64_t lit = (uint64_t)selIdx
                              | ((uint64_t)nArgs      << 16)
                              | ((uint64_t)bailOffset << 24);
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, bailOffset);
                 return LiftResult::kOk;
             }
 
@@ -824,8 +827,9 @@ private:
                 uint64_t lit = (uint64_t)op
                              | ((uint64_t)nArgs    << 16)
                              | ((uint64_t)bcOffset << 24);
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, bcOffset);
                 return LiftResult::kOk;
             }
 
@@ -874,8 +878,9 @@ private:
                                   // extras come from total push count
                                   // vs operands.size() on the lowerer
                                   // side (operands pushed in order).
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, bcOffset);
                 return LiftResult::kOk;
             }
 
@@ -920,8 +925,9 @@ private:
                 uint64_t lit = (uint64_t)op
                              | ((uint64_t)nArgs    << 16)
                              | ((uint64_t)bcOffset << 24);
-                out_.newValue(currentBlock_, Op::kSendUnspeculated,
+                uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
+                recordFramepoint(vid, bcOffset);
                 return LiftResult::kOk;
             }
 
@@ -1202,6 +1208,21 @@ private:
         // Ran out of bytecodes without hitting a terminator — malformed.
         if (failedAtBytecode) *failedAtBytecode = static_cast<uint32_t>(len_);
         return LiftResult::kMalformedMethod;
+    }
+
+    // Phase 3 deopt support: snapshot frame state at a potential
+    // deopt site.  Today every kSendUnspeculated emission calls this
+    // immediately after newValue.  The framepoint records the
+    // information needed to bail/deopt back to the interpreter.
+    void recordFramepoint(uint32_t valueId, uint32_t bcOffset) {
+        out_.framepoints.push_back({
+            valueId,
+            static_cast<uint16_t>(bcOffset),
+            // Copy the operand list (which IS the simulated stack
+            // bottom→top at this point — that's how the existing
+            // ExitSend bail mechanism transfers it to the interpreter).
+            out_.values[valueId].operands,
+        });
     }
 
 private:
