@@ -1309,10 +1309,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "millisecondsUntilTick:",
                         "nowTick",
                         "primSignal:atUTCMicroseconds:",
-                        // SmallInteger>>benchmark — JIT-compiled version
-                        // generates bytecodes that trigger spurious
-                        // SubscriptOutOfBounds when run via chain loop.
-                        // Specifically the inner Sieve loop's array access.
+                        // SmallInteger>>benchmark + benchFib excluded because
+                        // under chain-loop default-on, JIT-compiled versions
+                        // trigger SubscriptOutOfBounds (likely Sieve array
+                        // access off-by-one) and stack-overflow respectively.
+                        // Excluding lets the bench process make progress
+                        // under chain-on (still slower than chain-off but
+                        // doesn't hang).  Real fix is chain-state-corruption
+                        // audit — see project_fib_hang_chainloop.md.
                         "benchmark",
                         "benchFib",
                         // SubscriptOutOfBounds signal-family methods.
