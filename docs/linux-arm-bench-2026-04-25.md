@@ -84,3 +84,24 @@ walker no longer respecting the asm clobbers.
      virtualization overhead.
   4. Run the bench on bare-metal Linux ARM (Pi 5, Graviton) to confirm
      whether Parallels is the issue.
+
+## Pragmatic conclusion
+
+Three things landed cleanly this session:
+
+  - `#ifdef`s eliminated from VM core (every platform-divergent path
+    lives behind `pharo::platform::*`).
+  - Linux build green, 351/351 SUnit passes.
+  - LTO/IPO actually enabled on Linux (CMP0069 was the gotcha).
+
+The W^X performance hypothesis didn't pan out as expected.  Linux
+isn't faster than Mac on the JIT hot path under Parallels — it's
+much slower.  Whether that's Parallels-specific (trap-and-emulate
+overhead on per-thread MSR-equivalent operations) or fundamental to
+the Linux JIT path is the open question.  Bare-metal Linux ARM
+(Pi 5, Graviton) is the next data point that would clarify.
+
+For now, the Linux port is structurally correct (no #ifdefs, builds
+clean, tests pass) but doesn't beat Mac on perf.  The platform
+abstraction work is done; the JIT-perf-on-Linux investigation is its
+own project.
