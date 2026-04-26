@@ -13175,6 +13175,57 @@ void Interpreter::tryJITResumeInCaller() {
 
           if (!noResumeJ2J) {
             // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
+            // PHARO_RJ2J_VALIDATE=1 enables state validation around every
+            // JIT_CALL in the chain loop.  Catches the moment state.
+            // receiver/sp/ip become corrupt — required for tracking down
+            // the chain-loop induced JIT-state corruption that crashes
+            // SDL_Renderer / Transcript-related JIT calls.
+            static bool rj2jValidate = std::getenv("PHARO_RJ2J_VALIDATE") != nullptr;
+            auto validateState = [&](const char* where, jit::JITMethod* expectedJM) {
+                if (!rj2jValidate) return;
+                bool bad = false;
+                const char* badReason = "?";
+                if (state.sp == nullptr || (uint64_t)state.sp < 0x10000) {
+                    bad = true; badReason = "sp_low";
+                }
+                if (state.ip == nullptr || (uint64_t)state.ip < 0x10000) {
+                    bad = true; badReason = "ip_low";
+                }
+                if (state.tempBase == nullptr || (uint64_t)state.tempBase < 0x10000) {
+                    bad = true; badReason = "tempBase_low";
+                }
+                if (state.receiver.rawBits() == 0) {
+                    bad = true; badReason = "receiver_null";
+                }
+                // Receiver should be Object (low 3 bits 000 + high bits set)
+                // OR a tagged immediate (low 3 bits != 000).  receiver_low
+                // here means receiver claims to be an object but addr is in
+                // the 0..0x10000 range — clearly garbage.
+                if ((state.receiver.rawBits() & 0x7) == 0 &&
+                    state.receiver.rawBits() != 0 &&
+                    state.receiver.rawBits() < 0x10000) {
+                    bad = true; badReason = "receiver_bad_obj_addr";
+                }
+                if (expectedJM && state.jitMethod != expectedJM &&
+                    !((uintptr_t)state.jitMethod & 1) /* skip self-recursive marker */) {
+                    bad = true; badReason = "jitMethod_mismatch";
+                }
+                if (bad) {
+                    static int rj2jBadCount = 0;
+                    rj2jBadCount++;
+                    if (rj2jBadCount <= 20) {
+                        fprintf(stderr,
+                                "[RJ2J-BAD] #%d at %s: %s sp=%p ip=%p tempBase=%p "
+                                "receiver=0x%llx jm=%p exit=%d depth=%d\n",
+                                rj2jBadCount, where, badReason,
+                                (void*)state.sp, (void*)state.ip,
+                                (void*)state.tempBase,
+                                (unsigned long long)state.receiver.rawBits(),
+                                (void*)state.jitMethod, state.exitReason,
+                                rj2jDepth);
+                    }
+                }
+            };
             while (state.exitReason == jit::ExitSendCached ||
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
@@ -13342,7 +13393,9 @@ void Interpreter::tryJITResumeInCaller() {
                         }
                     }
 
+                    validateState("pre-J2JCall", calleeJM);
                     JIT_CALL(entryAddr, &state);
+                    validateState("post-J2JCall", nullptr);
 
                 } else {
                     // --- ExitReturn: pop save, re-enter caller ---
@@ -13377,7 +13430,9 @@ void Interpreter::tryJITResumeInCaller() {
                         break;
                     }
 
+                    validateState("pre-Return-resume", save.jitMethod);
                     JIT_CALL(save.resumeAddr, &state);
+                    validateState("post-Return-resume", nullptr);
                 }
 
                 // Charge bytecodes for each trampoline iteration
