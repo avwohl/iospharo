@@ -1080,6 +1080,40 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
     }
 }
 
+void JITRuntime::noteBlockEntry(Oop compiledBlock) {
+    if (!initialized_ || !compiler_) return;
+    static const uint32_t blockThreshold = []() {
+        if (const char* v = std::getenv("PHARO_JIT_BLOCK_THRESHOLD")) {
+            int n = atoi(v);
+            return n > 0 ? (uint32_t)n : 200u;
+        }
+        return 200u;
+    }();
+    uint64_t key = compiledBlock.rawBits();
+    size_t mask = BlockCountMapSize - 1;
+    size_t idx = (key >> 3) & mask;
+    for (size_t probe = 0; probe < 8; probe++) {
+        size_t i = (idx + probe) & mask;
+        CountEntry& e = blockCountMap_[i];
+        if (e.key == key) {
+            if (++e.count == blockThreshold) {
+                // Trigger compile: noteMethodEntry needs CompileThreshold (2)
+                // increments to fire.
+                noteMethodEntry(compiledBlock);
+                noteMethodEntry(compiledBlock);
+            }
+            return;
+        }
+        if (e.key == 0) {
+            e.key = key;
+            e.count = 1;
+            return;
+        }
+    }
+    // Probe budget exhausted — silently skip.  Cold blocks lose their
+    // counter, hot blocks almost always land in the first probe slot.
+}
+
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 

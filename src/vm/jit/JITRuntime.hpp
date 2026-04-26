@@ -64,6 +64,15 @@ public:
     // execution counter and triggers compilation at the threshold.
     void noteMethodEntry(Oop compiledMethod);
 
+    // Per-block call counter, separate from countMap_ so blocks can use
+    // a higher threshold than methods (default 200 vs method's 2).
+    // Without this, inner blocks like [:x | x+1] in a tight loop never
+    // reach the JIT compile threshold (interpreter's activateBlock path
+    // doesn't bump countMap_), forcing every iteration through the
+    // primitive 207 → activateBlock C++ path — 24% of CPU on Pi 5
+    // bench post-findMethodByPC-fix.
+    void noteBlockEntry(Oop compiledBlock);
+
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 
@@ -212,6 +221,11 @@ private:
 
     // Execution count tracking for compilation triggering
     CountEntry countMap_[CountMapSize];
+
+    // Per-block counter — separate so blocks can use a high threshold
+    // (default 200) without affecting method compilation cadence.
+    static constexpr size_t BlockCountMapSize = 4096;
+    CountEntry blockCountMap_[BlockCountMapSize] = {};
 
     // Per-JITMethod bcOffset → SimStack entry state. Keyed by JITMethod*
     // (GC-stable). Used by tryResume to reject resume at register-reading
