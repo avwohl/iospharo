@@ -105,3 +105,52 @@ For now, the Linux port is structurally correct (no #ifdefs, builds
 clean, tests pass) but doesn't beat Mac on perf.  The platform
 abstraction work is done; the JIT-perf-on-Linux investigation is its
 own project.
+
+## Update 2026-04-26 — bare-metal Pi 5 + the real bottleneck
+
+Tested on Raspberry Pi 5 (bare-metal Ubuntu 25.10, ARM64 Cortex-A76,
+4 cores).  block(500K) bench results:
+
+```
+                    JIT off    JIT on        After fix
+  Mac M (native)    26 ms      22-50 ms      same
+  Linux ARM Pi 5    115 ms     1980 ms (!)   134 ms
+  Linux ARM VM      50 ms      1000 ms       not re-tested
+  Stock Cog Linux   —          1 ms          —
+```
+
+`perf` profile on Pi 5 traced 93% of `tryResume` CPU to TWO
+instructions inside `findMethodByPC`: a load of `nextInZone` (28%)
+and the dependent `add` for `codeStart` (64%, IP-skid from the
+load-use stall).  The function was a **linear scan through the
+entire JITMethod linked list** called on every JIT entry as a
+defensive validation:
+
+    JITMethod* entryMethod = codeZone_.findMethodByPC(entry);
+    if (entryMethod != jm) { /* report bug */ }
+
+The check is logically redundant — `methodMap.lookup` already
+verified `jm->compiledMethodOop` matches the lookup key, and
+`entry = jm->codeStart() + codeOffset` is mathematically inside
+`jm` by construction.  It was added defensively for "Bug 11b layer
+4" but the actual scan (~1000 methods × 5M iterations = 5 billion
+link traversals) was 90% of the bench's runtime.
+
+Mac doesn't see this in profiles because W^X flips dominate (55%
+of CPU there) and the linear scan disappears in their shadow.  On
+Linux W^X is free, so the scan becomes the new bottleneck.
+
+**Fix in commit 2d2b4fa**: gate the validation behind
+`PHARO_JIT_VALIDATE_ENTRY=1` so it stays available for diagnosis
+but doesn't run on the hot path.  Result:
+
+  - Pi 5: 1980ms → 134ms (**15x speedup**).
+  - Pi vs Mac ratio: was ~90x slower → now ~3x slower (matches
+    Cortex-A76 vs Apple M-series CPU difference).
+  - 351/351 SUnit still passes on both Mac and Pi.
+
+The W^X hypothesis was right in *spirit* — removing per-call
+overhead does help on Linux — but the dominant overhead turned out
+to be a redundant validation, not the W^X scheme itself.  That
+validation was hidden behind W^X cost on Mac, so we didn't see it
+until profiling on a platform where W^X is free.
