@@ -1089,6 +1089,10 @@ void JITRuntime::noteBlockEntry(Oop compiledBlock) {
         }
         return 200u;
     }();
+    static const bool blockLog =
+        std::getenv("PHARO_BLOCK_LOG") != nullptr;
+    static int totalCalls = 0;
+    if (blockLog) totalCalls++;
     uint64_t key = compiledBlock.rawBits();
     size_t mask = BlockCountMapSize - 1;
     size_t idx = (key >> 3) & mask;
@@ -1097,6 +1101,11 @@ void JITRuntime::noteBlockEntry(Oop compiledBlock) {
         CountEntry& e = blockCountMap_[i];
         if (e.key == key) {
             if (++e.count == blockThreshold) {
+                if (blockLog) {
+                    fprintf(stderr,
+                            "[BLOCK-LOG] threshold hit for compiledBlock=0x%llx (totalCalls=%d)\n",
+                            (unsigned long long)key, totalCalls);
+                }
                 // Trigger compile: noteMethodEntry needs CompileThreshold (2)
                 // increments to fire.
                 noteMethodEntry(compiledBlock);
@@ -1107,6 +1116,11 @@ void JITRuntime::noteBlockEntry(Oop compiledBlock) {
         if (e.key == 0) {
             e.key = key;
             e.count = 1;
+            if (blockLog && totalCalls < 10) {
+                fprintf(stderr,
+                        "[BLOCK-LOG] new compiledBlock=0x%llx (totalCalls=%d)\n",
+                        (unsigned long long)key, totalCalls);
+            }
             return;
         }
     }
