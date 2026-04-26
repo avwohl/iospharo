@@ -4590,6 +4590,25 @@ void Interpreter::returnValue(Oop value) {
             // Get sender of current context BEFORE killing it
             Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
 
+            // PHARO_NLR_NULL_TRACE diag: log NLR ensure-cleanup that nulls
+            // the activeContext_'s sender — this is one of several sites.
+            static bool nlrNullTrace = std::getenv("PHARO_NLR_NULL_TRACE") != nullptr;
+            if (nlrNullTrace) {
+                Oop p = getActiveProcess();
+                Oop pri = p.isObject() ? memory_.fetchPointer(ProcessPriorityIndex, p) : Oop::nil();
+                long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
+                if (pVal >= 60) {
+                    static int n4603 = 0;
+                    n4603++;
+                    if (n4603 <= 30)
+                        fprintf(stderr,
+                                "[NLR-NULL@4603] proc-pri=%ld activeCtx=0x%llx senderWas=0x%llx\n",
+                                pVal,
+                                (unsigned long long)activeContext_.rawBits(),
+                                (unsigned long long)senderOfCurrent.rawBits());
+                }
+            }
+
             // Kill the current context (ensure: is done)
             memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
             memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)

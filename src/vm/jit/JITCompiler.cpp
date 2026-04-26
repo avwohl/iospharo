@@ -1335,6 +1335,28 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
+    // Skip methods that send #ffiCall: — JIT codegen for FFI-using
+    // methods produces code that crashes at offset 2296 when called
+    // via chain loop (consistent across SDL_Renderer, SDL_Surface, etc).
+    // Cheap detection: scan literals for the #ffiCall: symbol.  Real
+    // fix is JIT-aware FFI codegen.  See project_fib_hang_chainloop.md.
+    {
+        for (int li = 1; li <= numLiterals; li++) {
+            Oop lit = methObj->slotAt(li);
+            if (!lit.isObject() || lit.rawBits() < 0x10000) continue;
+            ObjectHeader* litHdr = lit.asObjectPtr();
+            if (!litHdr->isBytesObject()) continue;
+            if (litHdr->byteSize() != 8) continue;  // "ffiCall:" is 8 bytes
+            const char* litBytes = (const char*)litHdr->bytes();
+            if (std::memcmp(litBytes, "ffiCall:", 8) == 0) {
+                compilationsFailed_++;
+                fprintf(stderr, "[JIT] FFI-SKIP method 0x%llx (literal #ffiCall:)\n",
+                        (unsigned long long)compiledMethod.rawBits());
+                return nullptr;
+            }
+        }
+    }
+
     const uint8_t* bytecodes = bytes + bcStart;
 
     // Method-level opt-in heuristic (task #2.6): skip JIT compilation
