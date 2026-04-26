@@ -13077,12 +13077,18 @@ void Interpreter::tryJITResumeInCaller() {
         // try to convert the send to a J2JCall (if callee is compiled). This
         // chains sends in JIT without materializing frames for each one.
         // Modeled on tryJITActivation's C++ trampoline.
-        // Resume J2J trampoline: disabled by default. At current compilation
-        // levels (~250-600 methods), ~47% of J2J calls hit uncompiled sends
-        // and require expensive materialization, making it 18% slower overall.
-        // Enable with PHARO_RESUME_J2J=1 when compilation coverage improves.
+        //
+        // Default ON.  Removed the PHARO_RESUME_J2J workaround that was
+        // gating this off (claim was 18% slower at low compile coverage,
+        // but compile coverage now reaches 600+ methods immediately and
+        // the workaround was bleeding 100x perf on send-heavy benches by
+        // forcing every send through tryResume → C++ → re-entry.  Bench
+        // block(500K) on Pi 5 is currently 134ms; should drop sharply
+        // when sends stay in JIT).  PHARO_NO_RESUME_J2J is the new
+        // bisection escape hatch if a regression appears.
         {
-            static bool noResumeJ2J = !g_debug.resumeJ2J;
+            static bool noResumeJ2J =
+                std::getenv("PHARO_NO_RESUME_J2J") != nullptr;
             int rj2jDepth = 0;
             size_t rj2jCalls = 0, rj2jReturns = 0;
             J2JSave* rj2jSaves = &j2jPool_[rj2jBase];
