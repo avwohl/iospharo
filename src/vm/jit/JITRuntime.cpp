@@ -1676,12 +1676,26 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
                 (void*)entry, bcOffset, codeOffset, (void*)jm);
         return false;
     }
-    JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
-    if (entryMethod != jm) {
-        makeWritable(jm->codeStart(), jm->codeSize);
-        fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
-                (void*)entry, (void*)jm, (void*)entryMethod, bcOffset, codeOffset);
-        return false;
+    // Defensive findMethodByPC scan was 93% of tryResume CPU on Linux ARM
+    // (Pi 5 perf profile, bench3 block(500K)).  The check is redundant:
+    // - methodMap.lookup(compiledMethodOop) above already dereferenced jm
+    //   and verified jm->compiledMethodOop matches the lookup key.
+    // - entry = jm->codeStart() + codeOffset is mathematically inside jm
+    //   by construction.
+    // The scan is paranoia from "Bug 11b layer 4" — keep it available
+    // under PHARO_JIT_VALIDATE_ENTRY=1 for diagnosis when that bug
+    // shape recurs, but skip on the hot path.  Removing it took
+    // block(500K) on Pi 5 from 1980ms → expected 100-200ms.
+    static const bool validateEntry =
+        std::getenv("PHARO_JIT_VALIDATE_ENTRY") != nullptr;
+    if (validateEntry) {
+        JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
+        if (entryMethod != jm) {
+            makeWritable(jm->codeStart(), jm->codeSize);
+            fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
+                    (void*)entry, (void*)jm, (void*)entryMethod, bcOffset, codeOffset);
+            return false;
+        }
     }
 
     entry(&state);
