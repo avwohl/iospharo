@@ -13173,9 +13173,16 @@ void Interpreter::tryJITResumeInCaller() {
         // block(500K) on Pi 5 is currently 134ms; should drop sharply
         // when sends stay in JIT).  PHARO_NO_RESUME_J2J is the new
         // bisection escape hatch if a regression appears.
+        //
+        // 2026-04-26: REVERTED TO DEFAULT-OFF.  Default-on (commit
+        // feba7a0) reproducibly hangs fib(28) — bench process at P79
+        // gets terminated via Context>>resume:through: NLR walk after
+        // the chain stays in JIT for many iterations.  Enable explicitly
+        // with PHARO_RESUME_J2J=1 once the chain-loop frame/save vs.
+        // C++ context-chain coherence bug is fixed.  See
+        // project_fib_hang_chainloop.md for the diagnosis.
         {
-            static bool noResumeJ2J =
-                std::getenv("PHARO_NO_RESUME_J2J") != nullptr;
+            static bool noResumeJ2J = !g_debug.resumeJ2J;
             int rj2jDepth = 0;
             size_t rj2jCalls = 0, rj2jReturns = 0;
             J2JSave* rj2jSaves = &j2jPool_[rj2jBase];
