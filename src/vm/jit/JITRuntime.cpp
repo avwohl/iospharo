@@ -1286,6 +1286,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         // project_fib_hang_chainloop.md investigation 3.
                         "nextHandlerContext",
                         "findNextHandlerContext",
+                        // Context-NLR-walk methods.  JIT-compiled
+                        // versions overshoot the sender chain when
+                        // exception handlers complete, terminating
+                        // the bench process at fd=0.  Exception
+                        // unwind machinery should run interpreter-only.
+                        "resume:through:",
+                        "return:through:",
+                        "terminateTo:",
                         // SubscriptOutOfBounds signal-family methods.
                         // JIT-compiled versions overflow stack when called
                         // via chain loop (each signal call leaves stack
