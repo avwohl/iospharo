@@ -458,6 +458,19 @@ PrimitiveResult Interpreter::primitiveIncrementalGC(int argCount) {
     // Returns the number of bytes of free space after collection
     (void)argCount;
 
+    // Diagnostic: PHARO_GC_LOG=1 logs every prim 131 call so we can see
+    // what's triggering GC during benches.  On Pi 5 perf showed 22% of
+    // CPU in fullGC during block(500K) — surprising since the bench
+    // shouldn't allocate, so something in the image is calling this
+    // prim repeatedly.
+    static const bool gcLog = std::getenv("PHARO_GC_LOG") != nullptr;
+    if (gcLog) {
+        static int count = 0;
+        if (++count <= 100 || (count & 0x3FF) == 0) {
+            fprintf(stderr, "[GC-LOG] primitiveIncrementalGC #%d\n", count);
+        }
+    }
+
     memory_.incrementalGC();
     flushMethodCache();  // Compaction moves objects — stale cache entries cause DNU
 
