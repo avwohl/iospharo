@@ -1531,7 +1531,11 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // Promote hot methods: recompile Tier 1 with IC profiling data.
     // Threshold: 500 executions, tier 1 only, must have send sites.
     // (Tier 2 is now leaf-only, so skip it for methods with sends.)
-    if (jm->stats && jm->stats->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
+    static const uint32_t recompileAt = []() {
+        const char* e = std::getenv("PHARO_RECOMPILE_AT");
+        return (uint32_t)(e ? std::atoi(e) : 500);
+    }();
+    if (jm->stats && jm->stats->executionCount == recompileAt && jm->tier == 1 && jm->numICEntries > 0) {
         if (compiler_) {
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {

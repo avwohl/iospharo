@@ -1717,6 +1717,122 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// Inline block-value (1-arg): specialized fast path for value: sends
+// to FullBlockClosure receivers.  Hoists the BLOCK_VALUE_BIT branch out
+// of stencil_sendJ2J and bakes nArgs=1 as a compile-time constant so the
+// fixed stack offsets fold and the temp-fill loop can be split into a
+// straight-line nil-fill when numCopied==0.
+//
+// OPERAND  = (bcLength << 24) | (1 << 16) | bcOffset    (nArgs hardcoded 1)
+// OPERAND2 = (litIndex << 48) | (expectedClass << 16)
+extern "C" void stencil_sendBlockValue1Arg(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int bcLen = (packed >> 24) & 0xFF;
+    constexpr int nArgs = 1;
+
+    uint64_t packed2 = (uint64_t)(uintptr_t)&_HOLE_OPERAND2;
+    uint64_t expectedClass = (packed2 >> 16) & 0xFFFFFFFF;
+
+    Oop receiver = s->sp[-2];  // nArgs+1 = 2
+    uint64_t tag = receiver.bits & 0x7;
+    if (__builtin_expect(tag == 0 && receiver.bits != 0, 1)) {
+        ObjectHeader* closureObj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        if (__builtin_expect(closureObj->classIndex() == expectedClass, 1)) {
+            // FullBlockClosure: [outerCtx, compiledBlock, numArgs, receiver, ...copied]
+            Oop compiledBlock = closureObj->slotAt(1);
+            if (__builtin_expect((compiledBlock.bits & 0x7) == 0 &&
+                                 compiledBlock.bits >= 0x10000, 1)) {
+                Oop numArgsOop = closureObj->slotAt(2);
+                // closure.numArgs == 1 (SmallInteger encoded as (1<<3)|1 = 9)
+                if (__builtin_expect(numArgsOop.bits == 9, 1)) {
+                    MethodMapShadow* mm = (MethodMapShadow*)s->methodMapPtr;
+                    if (__builtin_expect(mm && mm->entries && mm->capacity > 0, 1)) {
+                        uint64_t mask = mm->capacity - 1;
+                        uint64_t idx = ((compiledBlock.bits >> 3) * MM_HASH_MULT) & mask;
+                        void* blockJM = nullptr;
+                        for (int probe = 0; probe < 6; probe++) {
+                            MethodMapEntry& e = mm->entries[idx];
+                            if (e.key == 0) break;
+                            if (e.key == compiledBlock.bits && e.value) {
+                                uint8_t jmState = *((uint8_t*)e.value + 32);
+                                if (jmState == 1) { blockJM = e.value; break; }
+                            }
+                            idx = (idx + 1) & mask;
+                        }
+                        if (__builtin_expect(blockJM != nullptr, 1)) {
+                            if (__builtin_expect(
+                                (uintptr_t)s->j2jSaveCursor <
+                                (uintptr_t)s->j2jSaveLimit, 1)) {
+                                J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
+                                _save->sp = s->sp;
+                                _save->receiver = s->receiver;
+                                _save->tempBase = s->tempBase;
+                                _save->ip = s->ip + bcOffset + bcLen;
+                                _save->sendArgCount = 1;
+                                _save->resumeAddr = RESUME_ADDR;
+                                _save->jitMethod = s->jitMethod;
+                                s->j2jSaveCursor += sizeof(J2JSave);
+                                s->j2jDepth++;
+                                s->j2jTotalCalls++;
+
+                                Oop blockRecv = closureObj->slotAt(3);
+                                Oop* _fp = s->sp - 2;
+                                s->receiver = blockRecv;
+                                s->tempBase = _fp + 1;
+
+                                ObjectHeader* blockMethObj =
+                                    (ObjectHeader*)compiledBlock.bits;
+                                s->literals = blockMethObj->slots() + 1;
+                                s->jitMethod = blockJM;
+                                s->argCount = 1;
+
+                                uint64_t _mh = *(uint64_t*)((uint8_t*)blockJM
+                                                            + JM_METHOD_HEADER);
+                                int _nl = (int)(_mh & 0x7FFF);
+                                s->ip = (uint8_t*)blockMethObj + 8 + (1 + _nl) * 8;
+
+                                // Temp fill — split loop: copy captured first,
+                                // then nil-fill remainder.  When numCopied==0
+                                // (the common no-capture case) the first loop
+                                // is skipped entirely and the compiler folds.
+                                uint64_t numSlots = closureObj->slotCount();
+                                int numCopied = (numSlots > 4) ? (int)(numSlots - 4) : 0;
+                                uint8_t totalTemps = *((uint8_t*)blockJM + JM_TEMP_COUNT);
+                                Oop _nil = *(Oop*)&_HOLE_NIL_OOP;
+                                int _t = 1;
+                                int _capEnd = 1 + numCopied;
+                                if (_capEnd > (int)totalTemps) _capEnd = (int)totalTemps;
+                                for (; _t < _capEnd; _t++) {
+                                    *(s->sp) = closureObj->slotAt(4 + _t - 1);
+                                    s->sp++;
+                                }
+                                for (; _t < (int)totalTemps; _t++) {
+                                    *(s->sp) = _nil;
+                                    s->sp++;
+                                }
+
+                                uint8_t* _entry = (uint8_t*)blockJM + JM_SIZE;
+                                ((void(*)(JITState*))_entry)(s);
+                                return;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Bail to ExitSend: recover selector from literals (matches inline-getter pattern)
+    int litIndex = (int)(packed2 >> 48);
+    s->cachedTarget = s->literals[litIndex];
+    s->icDataPtr = nullptr;
+    s->sendArgCount = 1;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // ----- REMOTE TEMP STENCILS -----
 //
 // Remote temps are accessed through a temp vector (an Array stored in a local).
