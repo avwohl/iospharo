@@ -1972,10 +1972,19 @@ void Interpreter::interpret() {
         // -- Finalization (periodic, for auto-GC mourners) --
         signalFinalizationIfNeeded();
 
+        // -- Preempt to higher-priority ready process --
+        // Run on EVERY periodic_check, not just every 64K bytecodes.
+        // The 64K cadence let JIT chain loop hold the CPU at lower
+        // priorities (e.g. Morphic at P40) for ~64K bytecodes between
+        // preemption checks, starving higher-priority bench processes
+        // (P79) for hundreds of milliseconds at a time.  Running
+        // checkForPreemption every periodic_check (every ~1024 BC)
+        // keeps the worst-case starvation under ~1ms.
+        // See project_fib_hang_chainloop.md investigation 5+.
+        checkForPreemption();
+
         // === LESS FREQUENT CHECKS (every ~64K bytecodes) ===
         if ((totalSteps & 0xFFFF) == 0) {
-            checkForPreemption();
-
             // Stuck process termination (wall-clock based)
             {
                 Oop currentActive = getActiveProcess();
