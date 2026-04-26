@@ -1287,7 +1287,11 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
     JITMethod* newMethod = compile(compiledMethod, old);
 
     if (newMethod) {
+        // tier is in MAP_JIT — open a tight W window for this single
+        // store.  W^X audit 2026-04-26.
+        makeWritable(newMethod, newMethod->totalSize);
         newMethod->tier = 2;  // Mark as recompiled
+        makeExecutable(newMethod, newMethod->totalSize);
         recompilations_++;
     } else {
         // Recompilation failed — restore old version
@@ -2006,7 +2010,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->hasPrimPrologue = hasPrimPrologue;
     jitMethod->isBlock = isFullBlock;
     jitMethod->pinned = false;  // Eviction safety — pinned transiently during evictLRU
-    jitMethod->j2jDepthLimit = 2;  // Start conservative; adaptive logic promotes on clean runs
+    // Initial j2jDepthLimit lives in the heap-side stats struct (W^X
+    // audit 2026-04-26).  CodeZone::allocate has already alloc'd
+    // jitMethod->stats and zeroed it; bump the depth limit here.
+    if (jitMethod->stats) {
+        jitMethod->stats->j2jDepthLimit = 2;  // Start conservative; adapts up on clean runs
+    }
 
     // Set up IC data pointers for send sites. The IC data lives at the end
     // of the allocation. Each send site gets 152 bytes initialized to zero
@@ -2290,6 +2299,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     // Mark as compiled
     jitMethod->state = MethodState::Compiled;
+
+    // Restore MAP_JIT view to executable for this thread.  CodeZone::
+    // allocate() flipped to W; everything above wrote to MAP_JIT memory;
+    // now we close the W window so the codebase invariant (W^X audit
+    // 2026-04-26: thread is in X mode by default outside narrow write
+    // windows) is preserved.  Without this, the next JIT entry SIGBUSes
+    // because the page is still in W mode.
+    makeExecutable(jitMethod, jitMethod->totalSize);
 
     // Register in method map
     methodMap_.insert(compiledMethod.rawBits(), jitMethod);

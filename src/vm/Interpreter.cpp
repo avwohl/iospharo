@@ -7057,7 +7057,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 return 100u;
             }();
-            if (!jm || jm->executionCount < t1Warmup) {
+            if (!jm || !jm->stats || jm->stats->executionCount < t1Warmup) {
                 goto past_sista_block;
             }
         }
@@ -13096,7 +13096,7 @@ void Interpreter::tryJITResumeInCaller() {
                                         MaxJ2JPoolSize - rj2jBase);
 
           if (!noResumeJ2J) {
-            pharo::platform::flipJitToExecutable();
+            // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
             while (state.exitReason == jit::ExitSendCached ||
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
@@ -13287,7 +13287,10 @@ void Interpreter::tryJITResumeInCaller() {
                 }
             }
 
-            pharo::platform::flipJitToWritable();
+            // Stay in X — W^X audit 2026-04-26.  All JITMethod-field
+            // writes outside this loop now go to the heap stats struct
+            // or into RAII-protected scopes (patchJITICAfterSend,
+            // upgradeICToJ2J).
           } // !noResumeJ2J
 
             // Reconstruct state.method from state.jitMethod.
@@ -13970,6 +13973,16 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     static bool fillEnabled = !g_debug.noICFill;
     if (!j2jEnabled || !icData) return;
 
+    // IC data lives in the MAP_JIT code zone.  Open a W window for the
+    // duration of this function, restored to X on every exit path.
+    // Required by the W^X audit 2026-04-26 default-X invariant — bare
+    // icData[] writes below would SIGBUS without this guard.
+    jit::makeWritable(icData, 19 * sizeof(uint64_t));
+    struct RestoreExec {
+        jit::CodeZone& z;
+        ~RestoreExec() { jit::makeExecutable(z.rawStart(), z.totalBytes()); }
+    } restoreExec{jitRuntime_.codeZone()};
+
     // DEBUG: Selector-based J2J upgrade skip (PHARO_J2J_SKIP_SELECTORS).
     // Lets us bisect which method's J2J upgrade triggers a bug. Note that
     // PHARO_JIT_SKIP_SELECTORS prevents JIT compilation entirely; this only
@@ -14025,6 +14038,10 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             if (primIdx > 0 && primIdx < 200) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
                 if (target && !target->hasPrimPrologue) target = nullptr;
+                // compile() ends in EXECUTABLE mode (per the W^X audit
+                // 2026-04-26 invariant).  Re-open our W window so the
+                // icData[] writes below succeed.
+                jit::makeWritable(icData, 19 * sizeof(uint64_t));
             }
         }
     }
@@ -14439,12 +14456,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         size_t localCalls = 0;
         size_t localReturns = 0;
 
-        // Toggle W^X to executable once for the entire trampoline loop.
-        // The loop only reads JIT code (executable) and writes to C stack (always writable).
-        if (state.exitReason == jit::ExitJ2JCall ||
-            (state.exitReason == jit::ExitReturn && j2jDepth > 0)) {
-            pharo::platform::flipJitToExecutable();
-        }
+        // No flip — codebase invariant (W^X audit 2026-04-26): thread is in X mode.
 
 #if defined(PHARO_ASM_TRAMPOLINE) && defined(__aarch64__)
         // Hand-written ARM64 loop: pins state/save-cursor/counters in
@@ -14696,8 +14708,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // between trampoline sessions.
         }
 #endif // PHARO_ASM_TRAMPOLINE
-        // Toggle back to writable after trampoline loop
-        pharo::platform::flipJitToWritable();
+        // Stay in X — W^X audit 2026-04-26.
 
         // Merge stencil-managed J2J depth with trampoline-managed depth.
         // Stencils push/pop frames via state.j2jDepth; the trampoline uses
@@ -14928,15 +14939,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // depth >= 3 caused while still unlocking deeper J2J for other code.
     auto adaptJ2JDepth = [&](Oop meth, bool bailed) {
         jit::JITMethod* jm = jitRuntime_.methodMap().lookup(meth.rawBits());
-        if (!jm) return;
+        if (!jm || !jm->stats) return;
+        // Writes go to the heap-allocated stats struct (W^X audit
+        // 2026-04-26) — no MAP_JIT writes, no flips needed.  This is
+        // the hot path: ~4.5M calls per bench.
+        jit::JITMethodStats* s = jm->stats;
         if (bailed) {
-            jm->j2jDepthLimit = 2;
-            jm->j2jCleanRuns = 0;
+            s->j2jDepthLimit = 2;
+            s->j2jCleanRuns = 0;
         } else {
-            if (jm->j2jCleanRuns < 255) jm->j2jCleanRuns++;
-            if (jm->j2jCleanRuns >= 8 && jm->j2jDepthLimit < 8) {
-                jm->j2jDepthLimit++;
-                jm->j2jCleanRuns = 0;
+            if (s->j2jCleanRuns < 255) s->j2jCleanRuns++;
+            if (s->j2jCleanRuns >= 8 && s->j2jDepthLimit < 8) {
+                s->j2jDepthLimit++;
+                s->j2jCleanRuns = 0;
             }
         }
     };
@@ -15058,9 +15073,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
                     state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                     state.yieldCountdown = 1000;
-                    pharo::platform::flipJitToExecutable();
+                    // No flips — W^X audit 2026-04-26.
                     JIT_CALL(callerJM->codeStart() + codeOff, &state);
-                    pharo::platform::flipJitToWritable();
                 }
                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                 chargeJITBytecodes(state);
@@ -15531,9 +15545,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 uint32_t codeOff = jm->codeOffsetForBC(bcOffset);
                 if (codeOff == 0 || codeOff >= jm->codeSize) return true;
                 state.jitMethod = jm;
-                pharo::platform::flipJitToExecutable();
+                // No flips — W^X audit 2026-04-26.
                 JIT_CALL(jm->codeStart() + codeOff, &state);
-                pharo::platform::flipJitToWritable();
             }
             // Charge stencil J2J calls from this segment
             jitJ2JStencilCalls_ += state.j2jTotalCalls;
@@ -15719,8 +15732,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.yieldCountdown = 1000;
 
                         // --- Enter callee JIT code ---
-                        // W^X → executable (stays exec through fast path)
-                        pharo::platform::flipJitToExecutable();
+                        // No flip — W^X audit 2026-04-26.
                         JIT_CALL(chainJM->codeStart(), &state);
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
@@ -15823,9 +15835,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 state.j2jSaveCursor = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolBase]);
                                 state.j2jSaveLimit  = reinterpret_cast<uint8_t*>(&j2jPool_[j2jPoolEnd]);
                                 state.yieldCountdown = 1000;
-                                // Direct resume — no hash lookup or codeOffsetForBC
+                                // Direct resume — no hash lookup or codeOffsetForBC.
+                                // Stay in X — W^X audit 2026-04-26.
                                 JIT_CALL(savedResumeEntry, &state);
-                                pharo::platform::flipJitToWritable();
                                 jitJ2JActChains_++;
                                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                                 chargeJITBytecodes(state);
@@ -15879,8 +15891,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 continue;
                             }
 
-                            // Precompute failed — fall back to tryResume
-                            pharo::platform::flipJitToWritable();
+                            // Precompute failed — fall back to tryResume.
+                            // Stay in X — W^X audit 2026-04-26.
                             {
                                 ObjectHeader* cMO = savedMethod.asObjectPtr();
                                 Oop hdr = cMO->slots()[0];
@@ -15909,8 +15921,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             if (checkCountdown_ <= 0) goto jit_loop_exit;
                             continue;
                         }
-                        // Not fast path — switch to writable for fallback
-                        pharo::platform::flipJitToWritable();
+                        // Stay in X — W^X audit 2026-04-26.
 
                         // === FALLBACK: callee exited with non-ExitReturn ===
                         // Push a SavedFrame for the caller so the interpreter
@@ -16101,8 +16112,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // promotes to 8 on clean runs, demotes on bail).
                         {
                             jit::JITMethod* resumeJM = jitRuntime_.methodMap().lookup(method.rawBits());
-                            int depth = (resumeJM && resumeJM->j2jDepthLimit >= 2)
-                                ? resumeJM->j2jDepthLimit : 2;
+                            int depth = (resumeJM && resumeJM->stats &&
+                                         resumeJM->stats->j2jDepthLimit >= 2)
+                                ? resumeJM->stats->j2jDepthLimit : 2;
                             state.j2jSaveCursor = reinterpret_cast<uint8_t*>(j2jStack);
                             state.j2jSaveLimit = reinterpret_cast<uint8_t*>(j2jStack + depth);
                         }

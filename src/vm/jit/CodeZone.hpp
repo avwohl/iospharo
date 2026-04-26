@@ -176,7 +176,11 @@ public:
         method->numICEntries = numICEntries;
         method->totalSize = static_cast<uint32_t>(totalSize);
         method->state = MethodState::Interpreted;
-        method->lastUsedEpoch = epoch_;
+
+        // Allocate the heap-side stats struct.  Lives outside MAP_JIT
+        // so writes don't trigger W^X flips.  See JITMethod.hpp.
+        method->stats = new JITMethodStats{};
+        method->stats->lastUsedEpoch = epoch_;
 
         for (uint16_t i = 0; i < numICEntries; i++) {
             method->icEntries()[i].reset();
@@ -188,17 +192,19 @@ public:
         return method;
     }
 
-    // Finalize a method after code generation: flush icache and mark executable.
-    // Call this after writing all machine code and IC entries.
+    // Finalize a method after code generation: flush icache and restore
+    // the thread's MAP_JIT view to executable.  Call this after writing
+    // all machine code and IC entries.
+    //
+    // Restoring executable here enforces the codebase invariant
+    // (W^X audit 2026-04-26) that the thread is in EXECUTABLE mode
+    // whenever it's outside a narrow write window.
     bool finalize(JITMethod* method) {
         if (!method || !contains(method)) return false;
 
-        // Flush icache for the code region
         flushICache(method->codeStart(), method->codeSize);
-
-        // Mark as compiled
         method->state = MethodState::Compiled;
-
+        makeExecutable(method, method->totalSize);
         return true;
     }
 
@@ -212,6 +218,11 @@ public:
 
         uint64_t methodOop = method->compiledMethodOop;
         size_t size = method->allocationSize();
+
+        // Free the heap-side stats struct.  Set pointer to nullptr so a
+        // double-free or stale pointer is caught immediately.
+        delete method->stats;
+        method->stats = nullptr;
 
         // Unlink from the doubly-linked method list
         if (method->prevInZone)
@@ -240,8 +251,10 @@ public:
     void advanceEpoch() { epoch_++; }
 
     // Touch a method (update its LRU epoch). Call on each entry.
+    // Writes to JITMethodStats (heap-allocated side-table), NOT to
+    // MAP_JIT — no W^X flip needed.  W^X audit 2026-04-26.
     void touch(JITMethod* method) {
-        method->lastUsedEpoch = epoch_;
+        if (method->stats) method->stats->lastUsedEpoch = epoch_;
     }
 
     // Evict the oldest methods until at least `bytesNeeded` are freed.
@@ -264,7 +277,8 @@ public:
             JITMethod* next = m->nextInZone;
             if (m->state == MethodState::Compiled
                 && !m->pinned
-                && m->lastUsedEpoch < threshold) {
+                && m->stats
+                && m->stats->lastUsedEpoch < threshold) {
                 if (onPreEvict) onPreEvict(m, ctx2);
                 size_t sz = m->allocationSize();
                 uint64_t oop = freeMethod(m);

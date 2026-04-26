@@ -1168,7 +1168,7 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             JITMethod* m = codeZone_.firstMethod();
             while (m) {
                 if (m->state == MethodState::Compiled) {
-                    uint32_t c = m->executionCount;
+                    uint32_t c = m->stats ? m->stats->executionCount : 0;
                     if (filled < K) {
                         top[filled++] = {c, m};
                     } else {
@@ -1408,8 +1408,8 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     if (!noT2 && tier2Compiler_ && !tier2Lookup(key) &&
                         !skipCoexist &&
                         (int)tier2Compiler_->methodsCompiled() < t2Limit) {
-                        if (t2Warmup > 0 && jm &&
-                            (int)jm->executionCount < t2Warmup) {
+                        if (t2Warmup > 0 && jm && jm->stats &&
+                            (int)jm->stats->executionCount < t2Warmup) {
                             // Not warm yet — do NOT insert sentinel;
                             // we'll retry on the next activation.
                         } else {
@@ -1451,10 +1451,10 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state) {
 }
 
 bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) {
-    // Ensure code zone is writable before touching JITMethod fields.
-    // Previous JIT execution (J2J trampoline, stencils) may have left the
-    // per-thread W^X state in executable mode.
-    makeWritable(jm->codeStart(), jm->codeSize);
+    // No makeWritable here — all JITMethod-field writes that used to
+    // require a W window were moved to the heap-side JITMethodStats
+    // struct (W^X audit 2026-04-26).  Remaining JITMethod field reads
+    // are safe in either W or X mode.
 
     // Verify method map integrity (cheap, catches GC/rehash bugs)
     if (jm->compiledMethodOop != compiledMethod.rawBits()) {
@@ -1465,14 +1465,18 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         return false;
     }
 
-    // Touch for LRU tracking
-    codeZone_.touch(jm);
-    jm->executionCount++;
+    // Touch for LRU tracking + bump executionCount.  Both writes go to
+    // the heap-allocated JITMethodStats side-table (W^X audit
+    // 2026-04-26), NOT to MAP_JIT — no flips needed.
+    if (jm->stats) {
+        codeZone_.touch(jm);
+        jm->stats->executionCount++;
+    }
 
     // Promote hot methods: recompile Tier 1 with IC profiling data.
     // Threshold: 500 executions, tier 1 only, must have send sites.
     // (Tier 2 is now leaf-only, so skip it for methods with sends.)
-    if (jm->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
+    if (jm->stats && jm->stats->executionCount == 500 && jm->tier == 1 && jm->numICEntries > 0) {
         if (compiler_) {
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
@@ -1540,20 +1544,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         // == bcStart + N → dispatch to post-send label.
         // Set jitMethod so chargeJITBytecodes works for T2 entries.
         state.jitMethod = jm ? jm : methodMap_.lookup(compiledMethod.rawBits());
-        makeExecutable(t2code, 1);
+        // No flips — codebase invariant (W^X audit 2026-04-26): thread
+        // is in EXECUTABLE mode by default.
         ((void(*)(JITState*))t2code)(&state);
-        makeWritable(t2code, 1);
         return true;
     }
 
-    // Toggle W^X to executable for JIT execution.
-    makeExecutable(jm->codeStart(), jm->codeSize);
-
-    // Call the compiled code
+    // No flips — codebase invariant: thread is in X mode.  W^X audit
+    // 2026-04-26.  Stats writes above went to the heap side-table.
     JIT_CALL(jm->codeStart(), &state);
-
-    // Back to writable (for IC patching etc.)
-    makeWritable(jm->codeStart(), jm->codeSize);
 
     return true;
 }
@@ -1584,8 +1583,9 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // leak. Deferred-issues.md #4 (Session 15).
     if (getBcEntryState(jm, bcOffset) != 0) return false;
 
-    // Ensure code zone is writable before touching JITMethod fields.
-    makeWritable(jm->codeStart(), jm->codeSize);
+    // No makeWritable — touch's lastUsedEpoch write is now to the heap
+    // side-table (W^X audit 2026-04-26).  No JITMethod field writes
+    // happen below.
 
     // Look up the code offset for this bytecode offset
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
@@ -1649,16 +1649,14 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         }
     }
 
-    // Toggle W^X to executable for JIT execution.
-    // ICache was flushed during compilation — no need to re-flush on every call.
-    makeExecutable(jm->codeStart(), jm->codeSize);
+    // No flips — codebase invariant (W^X audit 2026-04-26): thread is
+    // in EXECUTABLE mode by default.
 
     // Enter at the specified code offset
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
 
     // Final sp validation just before entry
     if (reinterpret_cast<uint64_t>(state.sp) < 0x10000) {
-        makeWritable(jm->codeStart(), jm->codeSize);
         fprintf(stderr, "[JIT] BUG: sp=%p just before stencil entry (bc=%u code=%u)\n",
                 (void*)state.sp, bcOffset, codeOffset);
         return false;
@@ -1671,7 +1669,6 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // body was never properly populated (zero bytes → ARM64 UDF).
     uint8_t* entryByte = reinterpret_cast<uint8_t*>(entry);
     if (!codeZone_.contains(entryByte)) {
-        makeWritable(jm->codeStart(), jm->codeSize);
         fprintf(stderr, "[JIT] BUG: tryResume entry %p outside code zone (bc=%u code=%u jm=%p)\n",
                 (void*)entry, bcOffset, codeOffset, (void*)jm);
         return false;
@@ -1691,7 +1688,6 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     if (validateEntry) {
         JITMethod* entryMethod = codeZone_.findMethodByPC(reinterpret_cast<uint64_t>(entry));
         if (entryMethod != jm) {
-            makeWritable(jm->codeStart(), jm->codeSize);
             fprintf(stderr, "[JIT] BUG: tryResume entry %p in wrong method (expected jm=%p, got %p) bc=%u code=%u\n",
                     (void*)entry, (void*)jm, (void*)entryMethod, bcOffset, codeOffset);
             return false;
@@ -1699,17 +1695,16 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     }
 
     entry(&state);
-
-    // Back to writable (for IC patching etc.)
-    makeWritable(jm->codeStart(), jm->codeSize);
-
+    // Stay in X — codebase invariant.  W^X audit 2026-04-26.
     return true;
 }
 
 bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state) {
     // Fast resume: caller guarantees jm is the same JITMethod we just exited
-    // from, so we skip method map lookup, IC validation, receiver bounds check,
-    // and LRU touch. Only does bcToCode lookup + W^X + entry.
+    // from, so we skip method map lookup, IC validation, receiver bounds
+    // check, and LRU touch.  No JITMethod-field writes happen here, and
+    // the codebase invariant (W^X audit 2026-04-26) is that the thread
+    // is in EXECUTABLE mode by default — no flips needed.
     if (!jm->isExecutable()) return false;
 
     uint32_t codeOffset = jm->codeOffsetForBC(bcOffset);
@@ -1722,15 +1717,8 @@ bool JITRuntime::tryResumeFast(JITMethod* jm, uint32_t bcOffset, JITState& state
     state.jitMethod = jm;
     state.exitReason = ExitNone;
 
-    // Toggle W^X to executable
-    makeExecutable(jm->codeStart(), jm->codeSize);
-
     StencilFunc entry = reinterpret_cast<StencilFunc>(jm->codeStart() + codeOffset);
     entry(&state);
-
-    // Back to writable
-    makeWritable(jm->codeStart(), jm->codeSize);
-
     return true;
 }
 

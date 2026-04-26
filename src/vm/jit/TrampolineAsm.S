@@ -60,7 +60,7 @@
 #define JM_NUMBYTECODES   30
 #define JM_ARGCOUNT       34   // uint8_t cached from method header
 #define JM_TEMPCOUNT      35
-#define JM_BCTOCODEOFF    84   // bcToCodeTableOffset, see JITMethod.hpp
+#define JM_BCTOCODEOFF    52   // bcToCodeTableOffset, see JITMethod.hpp
 // JM_SIZE must equal sizeof(JITMethod) (see JITMethod.hpp).
 // CAN'T USE sizeof IN ASSEMBLY — but a C++ runtime check in
 // JITRuntime::initialize() asserts this constant matches sizeof().
@@ -68,7 +68,10 @@
 // every `add Xn, methodHdr, #JM_SIZE` to land 8 bytes BEFORE
 // codeStart inside the JITMethod header (lastUsedEpoch field).
 // Bumped to 96 (Task #41) when selBitsArrayOffset was added.
-#define JM_SIZE           96
+// Trimmed to 88 (W^X audit 2026-04-26) when executionCount/
+// lastUsedEpoch/j2jDepthLimit/j2jCleanRuns moved to the
+// heap-side JITMethodStats struct.
+#define JM_SIZE           88
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

@@ -156,23 +156,21 @@ struct JITMethod_mirror {
     bool      pinned;             // 43
     uint8_t   maxRecvFieldIndex;  // 44
     // (3 bytes padding to 8-byte alignment)
-    uint32_t  executionCount;     // 48
-    uint32_t  totalSize;          // 52
-    uint8_t   j2jDepthLimit;      // 56
-    uint8_t   j2jCleanRuns;       // 57
-    // (6 bytes padding)
-    void*     nextInZone;         // 64
-    void*     prevInZone;         // 72
-    uint32_t  lastUsedEpoch;      // 80
-    uint32_t  bcToCodeTableOffset;// 84
-    uint32_t  selBitsArrayOffset; // 88  (Task #41 — out-of-band selectorBits)
-    // (4 bytes padding to 8-byte alignment → total 96)
+    uint32_t  totalSize;          // 48
+    uint32_t  bcToCodeTableOffset; // 52
+    void*     nextInZone;         // 56
+    void*     prevInZone;         // 64
+    uint32_t  selBitsArrayOffset; // 72  (Task #41 — out-of-band selectorBits)
+    uint32_t  _pad_76;            // 76 (padding to 8-byte alignment for stats)
+    void*     stats;              // 80 (W^X audit 2026-04-26 — heap-allocated stats)
+    // total: 88 bytes
 };
-static_assert(sizeof(JITMethod_mirror) == 96,
-              "JITMethod_mirror must match real JITMethod (96 bytes)");
+static_assert(sizeof(JITMethod_mirror) == 88,
+              "JITMethod_mirror must match real JITMethod (88 bytes)");
 static_assert(offsetof(JITMethod_mirror, state) == 32, "state offset");
-static_assert(offsetof(JITMethod_mirror, lastUsedEpoch) == 80, "lastUsedEpoch offset");
-static_assert(offsetof(JITMethod_mirror, selBitsArrayOffset) == 88, "selBitsArrayOffset offset");
+static_assert(offsetof(JITMethod_mirror, totalSize) == 48, "totalSize offset");
+static_assert(offsetof(JITMethod_mirror, selBitsArrayOffset) == 72, "selBitsArrayOffset offset");
+static_assert(offsetof(JITMethod_mirror, stats) == 80, "stats offset");
 // Cross-check JM_SIZE constant (defined later) against the mirror.
 // See after the JM_SIZE definition for the actual static_assert —
 // can't forward-reference here.
@@ -268,7 +266,10 @@ static constexpr int JM_HAS_PRIM_PROL   = 41;  // bool hasPrimPrologue
 // pharo::jit::JITMethod's actual layout.  Bug 11b layer 5: hard-coded
 // value (80) drifted out of sync after the real struct grew.
 // Bumped to 96 (Task #41) when selBitsArrayOffset was added.
-static constexpr int JM_SIZE            = 96;  // == sizeof(JITMethod_mirror)
+// Trimmed to 88 (W^X audit 2026-04-26) when executionCount/lastUsedEpoch/
+// j2jDepthLimit/j2jCleanRuns moved to a heap-allocated JITMethodStats
+// side-table (see JITMethod.hpp), with a `stats` pointer added at the end.
+static constexpr int JM_SIZE            = 88;  // == sizeof(JITMethod_mirror)
 static_assert(JM_SIZE == sizeof(JITMethod_mirror),
               "JM_SIZE must equal sizeof(JITMethod_mirror) — bug 11b layer 5");
 

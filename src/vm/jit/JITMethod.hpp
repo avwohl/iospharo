@@ -110,6 +110,24 @@ static constexpr uint32_t IC_BYTES_PER_SITE   =
 static constexpr uint32_t IC_SELBITS_SLOT     =
     IC_ENTRIES_PER_SITE * 3;                         // slot index of selectorBits
 
+// ===== JIT METHOD STATS (side-table) =====
+//
+// Frequently-mutated per-method counters that USED to live inside JITMethod
+// (in MAP_JIT) but were moved to a heap-allocated side-table on
+// 2026-04-26 so the W^X discipline can move to default-X without
+// per-write APRR flips.  Allocated once per JITMethod by CodeZone::
+// allocate, freed by CodeZone::freeMethod.  Lives in regular heap
+// (always writable) — no W^X management needed.
+struct JITMethodStats {
+    uint32_t executionCount;     // Incremented on each entry (for hot method detection)
+    uint32_t lastUsedEpoch;      // Updated on entry; compared against global epoch for LRU
+    uint8_t  j2jDepthLimit;      // Per-method stencil J2J depth limit (default 2, max 8)
+    uint8_t  j2jCleanRuns;       // Consecutive no-bail stencil re-entries (promotes at 8)
+    uint8_t  reserved1;
+    uint8_t  reserved2;
+};
+static_assert(sizeof(JITMethodStats) == 12, "JITMethodStats layout");
+
 // ===== JIT METHOD HEADER =====
 //
 // Lives at the start of each compiled method's allocation in the code zone.
@@ -148,23 +166,15 @@ struct JITMethod {
     bool        pinned;             // Temporarily protect from eviction (live on stack / j2jPool)
     uint8_t     maxRecvFieldIndex;  // Max receiver slot index accessed (for bounds checking)
 
-    // --- Statistics ---
-    uint32_t  executionCount;     // Incremented on each entry (for hot method detection)
-    uint32_t  totalSize;          // Total allocation size including header + code + IC entries
+    // 3 bytes pad to offset 48
 
-    // --- Adaptive J2J depth ---
-    uint8_t   j2jDepthLimit;     // Per-method stencil J2J depth limit (default 2, max 8)
-    uint8_t   j2jCleanRuns;      // Consecutive no-bail stencil re-entries (promotes at 8)
+    // --- Sizes / offsets ---
+    uint32_t  totalSize;          // Total allocation size including header + code + IC entries
+    uint32_t  bcToCodeTableOffset; // Offset from codeStart() to uint32_t[numBytecodes+1] table
 
     // --- Navigation ---
     JITMethod* nextInZone;        // Next method in code zone (for iteration/compaction)
     JITMethod* prevInZone;        // Previous method in code zone
-
-    // --- LRU eviction ---
-    uint32_t  lastUsedEpoch;      // Updated on entry; compared against global epoch for LRU
-
-    // --- Re-entry table ---
-    uint32_t  bcToCodeTableOffset; // Offset from codeStart() to uint32_t[numBytecodes+1] table
 
     // --- Side-channel selectorBits ---
     // Task #41 (2026-04-23): out-of-band copy of each IC site's selector
@@ -175,6 +185,12 @@ struct JITMethod {
     // Offset from codeStart() to uint64_t[numICEntries] array.  Zero if
     // the method has no send sites.
     uint32_t  selBitsArrayOffset;
+    uint32_t  _pad_76;            // padding to 8-byte alignment for stats pointer
+
+    // --- Mutable stats (side-table) ---
+    // Lives in regular heap so writes don't require W^X flips.
+    // Allocated by CodeZone::allocate, freed by CodeZone::freeMethod.
+    JITMethodStats* stats;
 
     // --- Accessors ---
 

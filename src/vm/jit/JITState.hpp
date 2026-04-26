@@ -172,12 +172,18 @@ typedef void (*StencilFunc)(JITState*);
 // When calling JIT code from C++, we must tell the compiler that x19-x22
 // may be modified, so it saves/restores them around the call.
 //
-// JIT_CALL also flips MAP_JIT to executable on Apple Silicon — the per-
-// thread W^X toggle may have been left in writable mode by a prior IC
-// patch, in which case the callee's first instruction would SIGBUS at
-// PC == fault_addr.  pharo::platform::flipJitToExecutable() is a no-op
-// on Linux (RWX always) and one MSR write on Apple Silicon.
-#define _JIT_CALL_PRE() pharo::platform::flipJitToExecutable()
+// JIT_CALL no longer flips W^X defensively.  The codebase invariant
+// (W^X audit 2026-04-26) is that the thread is in EXECUTABLE mode
+// whenever it is not inside a narrow write window.  Every write window
+// (IC patch via patchJITICAfterSend RAII, IC upgrade via
+// upgradeICToJ2J RAII, JIT compile via CodeZone::allocate+finalize,
+// flushCaches, GC recovery) restores X via RAII or explicit
+// makeExecutable.  Frequently-mutated per-method counters
+// (executionCount, lastUsedEpoch, j2jDepthLimit, j2jCleanRuns) live
+// in a heap-allocated JITMethodStats side-table — writes never
+// touch MAP_JIT, no W flip needed.  Saves one APRR MSR write per
+// JIT entry on Apple Silicon.
+#define _JIT_CALL_PRE() do { } while (0)
 
 #ifdef __aarch64__
 #define JIT_CALL(entry_ptr, state_ptr) do { \
