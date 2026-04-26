@@ -4675,7 +4675,50 @@ void Interpreter::returnValue(Oop value) {
                     if (pastVal > stackPointer_) stackPointer_ = pastVal;
                     return;
                 } else {
-                    // No valid sender — terminate process
+                    // No valid sender — terminate process.  Diagnostic
+                    // (PHARO_TERM_TRACE=1): dump homeCtx info, value
+                    // being NLR'd, and active context's method/receiver
+                    // so we can find what NLR is killing the bench process.
+                    static bool termTrace2 = std::getenv("PHARO_TERM_TRACE") != nullptr;
+                    if (termTrace2) {
+                        Oop proc = getActiveProcess();
+                        Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                        long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
+                        if (pVal >= 60) {
+                            Oop hcMethod = memory_.fetchPointer(3, homeCtx);
+                            std::string hsel = hcMethod.isObject()
+                                ? memory_.selectorOf(hcMethod) : "?";
+                            std::string hcls = "?";
+                            {
+                                Oop hcRecv = memory_.fetchPointer(5, homeCtx);
+                                if (hcRecv.isObject() && hcRecv.rawBits() > 0x10000)
+                                    hcls = memory_.classNameOf(hcRecv);
+                                else if (hcRecv.isSmallInteger()) hcls = "SmI";
+                            }
+                            Oop acMethod = activeContext_.isObject()
+                                ? memory_.fetchPointer(3, activeContext_) : Oop::nil();
+                            std::string asel = acMethod.isObject()
+                                ? memory_.selectorOf(acMethod) : "?";
+                            std::string vcls = "?";
+                            if (value.isSmallInteger()) vcls = "SmI";
+                            else if (value.isObject() && value.rawBits() > 0x10000)
+                                vcls = memory_.classNameOf(value);
+                            fprintf(stderr,
+                                    "[TERM-NLR-P%ld] NLR fd=0: home=#%s rcvr=%s "
+                                    "homeCtx=0x%llx homeSender=0x%llx(%s) "
+                                    "active=#%s value=0x%llx(%s) — terminating\n",
+                                    pVal, hsel.c_str(), hcls.c_str(),
+                                    (unsigned long long)homeCtx.rawBits(),
+                                    (unsigned long long)homeSender.rawBits(),
+                                    homeSender.isNil() ? "nil"
+                                        : !homeSender.isObject() ? "imm"
+                                        : !memory_.isValidPointer(homeSender) ? "INVALID"
+                                        : "?",
+                                    asel.c_str(),
+                                    (unsigned long long)value.rawBits(),
+                                    vcls.c_str());
+                        }
+                    }
                     terminateCurrentProcess();
                     return;
                 }
@@ -4885,7 +4928,42 @@ terminate_process:
         if (frameDepth_ == 0 && activeContext_.isObject() && !activeContext_.isNil()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
             if (sender.isNil() || sender.rawBits() == 0 || sender.rawBits() == memory_.nil().rawBits()) {
-                // Top of process chain — terminate directly
+                // Top of process chain — terminate directly.  Diagnostic
+                // (PHARO_TERM_TRACE=1): if the to-be-terminated process is
+                // at high priority (>= 60), dump value being returned and
+                // active context's method/receiver so we can find what
+                // sent control to the bench's top context prematurely.
+                static bool termTrace = std::getenv("PHARO_TERM_TRACE") != nullptr;
+                if (termTrace) {
+                    Oop proc = getActiveProcess();
+                    Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
+                    long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
+                    if (pVal >= 60) {
+                        Oop methodOop = memory_.fetchPointer(3, activeContext_);
+                        std::string sel = methodOop.isObject()
+                            ? memory_.selectorOf(methodOop) : "?";
+                        Oop recv = memory_.fetchPointer(5, activeContext_);
+                        std::string rcls = recv.isObject() && recv.rawBits() > 0x10000
+                            ? memory_.classNameOf(recv) : "imm";
+                        // value being returned (the NLR/return value)
+                        Oop valOop = value;
+                        std::string vcls = "?";
+                        if (valOop.isSmallInteger()) vcls = "SmI";
+                        else if (valOop.isObject() && valOop.rawBits() > 0x10000)
+                            vcls = memory_.classNameOf(valOop);
+                        fprintf(stderr,
+                                "[TERM-TOP-P%ld] returning value=0x%llx(%s) "
+                                "from active=#%s rcvr=%s ctx=0x%llx — "
+                                "this is the top context (sender=nil), "
+                                "process about to terminate\n",
+                                pVal,
+                                (unsigned long long)valOop.rawBits(),
+                                vcls.c_str(),
+                                sel.c_str(),
+                                rcls.c_str(),
+                                (unsigned long long)activeContext_.rawBits());
+                    }
+                }
                 terminateCurrentProcess();
                 if (tryReschedule()) return;
                 if (bootstrapStartup()) return;
