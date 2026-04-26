@@ -3163,17 +3163,6 @@ PrimitiveResult Interpreter::primitiveBlockValue(int argCount) {
         return PrimitiveResult::Failure;  // Neither startPC nor compiledBlock
     }
 
-#if PHARO_JIT_ENABLED
-    // Drive the inner CompiledBlock toward JIT compilation.  Per-block
-    // counter has a high threshold (default 200) so cold blocks don't
-    // explode the code zone.  When the inner block compiles, the JIT
-    // stencil's BLOCK_VALUE_BIT fast path takes over and skips this
-    // primitive + activateBlock entirely on subsequent calls.
-    if (slot1.isObject()) {
-        jitRuntime_.noteBlockEntry(slot1);
-    }
-#endif
-
     activateBlock(block, argCount);
     return PrimitiveResult::Success;
 }
