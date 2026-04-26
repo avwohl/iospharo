@@ -214,11 +214,21 @@ target_compile_options(PharoVMCore PRIVATE
 # into j2j_call (2ms improvement on fib(28): 19ms → 17ms).
 # Disabled for xcframework builds: xcodebuild -create-xcframework rejects
 # archives containing LLVM bitcode objects from -flto=thin.
+#
+# CMP0069 NEW is required for check_ipo_supported() to actually run on
+# CMake 3.9+; without it the check errors out and IPO is silently
+# skipped.  On Linux this caused tryResume() to NOT inline into
+# tryJITResumeInCaller, making block(500K) 45x slower than it should
+# be (1000ms vs 22ms on Mac).  See docs/linux-port-status.md.
+cmake_policy(SET CMP0069 NEW)
 if(NOT DEFINED PHARO_DISABLE_LTO OR NOT PHARO_DISABLE_LTO)
     include(CheckIPOSupported)
-    check_ipo_supported(RESULT ipo_supported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
     if(ipo_supported)
         set_target_properties(PharoVMCore PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "LTO/IPO: enabled")
+    else()
+        message(STATUS "LTO/IPO: NOT supported (${ipo_error})")
     endif()
 endif()
 
