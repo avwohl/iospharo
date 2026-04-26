@@ -13181,6 +13181,17 @@ void Interpreter::tryJITResumeInCaller() {
             // the chain-loop induced JIT-state corruption that crashes
             // SDL_Renderer / Transcript-related JIT calls.
             static bool rj2jValidate = std::getenv("PHARO_RJ2J_VALIDATE") != nullptr;
+            // Track sp drift across chain iterations.  For a balanced
+            // call/return cycle, sp should net-decrease by sendArgCount
+            // per J2J pair.  If sp grows faster than expected, there's
+            // a leak somewhere — JIT pushing without popping.  This is
+            // the suspected cause of "stopVM Corrupt stackPointer_" in
+            // chain-loop default-on (signal pushes overflow stack end).
+            Oop* spAtChainEntry = state.sp;
+            Oop* spAtLastJ2JCall = nullptr;  // sp recorded just before each JIT_CALL
+            int  spLastNArgs = 0;            // expected pop count for that call
+            const char* spLastSite = "?";
+
             auto validateState = [&](const char* where, jit::JITMethod* expectedJM) {
                 if (!rj2jValidate) return;
                 bool bad = false;
@@ -13197,17 +13208,13 @@ void Interpreter::tryJITResumeInCaller() {
                 if (state.receiver.rawBits() == 0) {
                     bad = true; badReason = "receiver_null";
                 }
-                // Receiver should be Object (low 3 bits 000 + high bits set)
-                // OR a tagged immediate (low 3 bits != 000).  receiver_low
-                // here means receiver claims to be an object but addr is in
-                // the 0..0x10000 range — clearly garbage.
                 if ((state.receiver.rawBits() & 0x7) == 0 &&
                     state.receiver.rawBits() != 0 &&
                     state.receiver.rawBits() < 0x10000) {
                     bad = true; badReason = "receiver_bad_obj_addr";
                 }
                 if (expectedJM && state.jitMethod != expectedJM &&
-                    !((uintptr_t)state.jitMethod & 1) /* skip self-recursive marker */) {
+                    !((uintptr_t)state.jitMethod & 1)) {
                     bad = true; badReason = "jitMethod_mismatch";
                 }
                 if (bad) {
@@ -13216,13 +13223,34 @@ void Interpreter::tryJITResumeInCaller() {
                     if (rj2jBadCount <= 20) {
                         fprintf(stderr,
                                 "[RJ2J-BAD] #%d at %s: %s sp=%p ip=%p tempBase=%p "
-                                "receiver=0x%llx jm=%p exit=%d depth=%d\n",
+                                "receiver=0x%llx jm=%p exit=%d depth=%d sp_drift_from_entry=%lld\n",
                                 rj2jBadCount, where, badReason,
                                 (void*)state.sp, (void*)state.ip,
                                 (void*)state.tempBase,
                                 (unsigned long long)state.receiver.rawBits(),
                                 (void*)state.jitMethod, state.exitReason,
-                                rj2jDepth);
+                                rj2jDepth,
+                                (long long)(state.sp - spAtChainEntry));
+                    }
+                }
+                // SP-drift check: after a J2J-return, sp should equal
+                // spAtLastJ2JCall - spLastNArgs (we pushed args+recv,
+                // got back retval which replaced recv, popped args).
+                if (rj2jValidate && spAtLastJ2JCall &&
+                    std::strcmp(where, "post-Return-resume") == 0) {
+                    long long actual = state.sp - spAtLastJ2JCall;
+                    long long expected = -(long long)spLastNArgs;
+                    if (actual != expected) {
+                        static int spDriftCount = 0;
+                        spDriftCount++;
+                        if (spDriftCount <= 20) {
+                            fprintf(stderr,
+                                    "[RJ2J-SPDRIFT] #%d after %s (last_call_at %s): "
+                                    "actual=%lld expected=%lld diff=%lld nArgs=%d depth=%d\n",
+                                    spDriftCount, where, spLastSite,
+                                    actual, expected, actual - expected,
+                                    spLastNArgs, rj2jDepth);
+                        }
                     }
                 }
             };
@@ -13394,6 +13422,9 @@ void Interpreter::tryJITResumeInCaller() {
                     }
 
                     validateState("pre-J2JCall", calleeJM);
+                    spAtLastJ2JCall = state.sp;
+                    spLastNArgs = nArgs;
+                    spLastSite = "J2JCall";
                     JIT_CALL(entryAddr, &state);
                     validateState("post-J2JCall", nullptr);
 
@@ -13431,6 +13462,9 @@ void Interpreter::tryJITResumeInCaller() {
                     }
 
                     validateState("pre-Return-resume", save.jitMethod);
+                    spAtLastJ2JCall = state.sp;
+                    spLastNArgs = 0;  // resume isn't a call — no args to pop
+                    spLastSite = "Return-resume";
                     JIT_CALL(save.resumeAddr, &state);
                     validateState("post-Return-resume", nullptr);
                 }
