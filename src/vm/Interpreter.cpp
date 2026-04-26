@@ -13184,8 +13184,12 @@ void Interpreter::tryJITResumeInCaller() {
         // when sends stay in JIT).  PHARO_NO_RESUME_J2J is the new
         // bisection escape hatch if a regression appears.
         {
-            static bool noResumeJ2J =
-                std::getenv("PHARO_NO_RESUME_J2J") != nullptr;
+            // Chain loop default-OFF after multiple failed attempts to make
+            // it default-on (see project_fib_hang_chainloop.md).  Opt in
+            // with PHARO_RESUME_J2J=1 — known to hang the bench process
+            // due to context-chain corruption that resume:through:
+            // exclusions etc. don't fully fix.
+            static bool noResumeJ2J = !g_debug.resumeJ2J;
             int rj2jDepth = 0;
             size_t rj2jCalls = 0, rj2jReturns = 0;
             J2JSave* rj2jSaves = &j2jPool_[rj2jBase];
