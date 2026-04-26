@@ -1286,6 +1286,20 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         // project_fib_hang_chainloop.md investigation 3.
                         "nextHandlerContext",
                         "findNextHandlerContext",
+                        // SubscriptOutOfBounds signal-family methods.
+                        // JIT-compiled versions overflow stack when called
+                        // via chain loop (each signal call leaves stack
+                        // unbalanced).  Pending JIT codegen audit; exclude
+                        // for now so chain-on doesn't hit stopVM corrupt sp.
+                        "signalFor:lowerBound:upperBound:",
+                        "signalFor:lowerBound:upperBound:in:",
+                        "errorSubscriptBounds:",
+                        // FFI call — JIT codegen for ffiCall: doesn't
+                        // handle the FFI machinery correctly; crashes at
+                        // a consistent offset (2296) when called via chain.
+                        // Real fix is JIT-aware FFI codegen; for now,
+                        // exclude.
+                        "ffiCall:",
                         nullptr
                     };
                     static const char* ambiguousSelectors[] = {
