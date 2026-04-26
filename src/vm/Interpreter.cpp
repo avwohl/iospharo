@@ -13278,6 +13278,17 @@ void Interpreter::tryJITResumeInCaller() {
                 // switch can't reconstruct safely.
                 if (state.exitReason == jit::ExitReturn &&
                     checkCountdown_ <= 0) {
+                    static size_t bailCount = 0;
+                    bailCount++;
+                    if ((bailCount & 0x3FFF) == 1) {
+                        Oop activeProc = getActiveProcess();
+                        Oop pri = activeProc.isObject()
+                            ? memory_.fetchPointer(ProcessPriorityIndex, activeProc) : Oop::nil();
+                        long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
+                        fprintf(stderr,
+                                "[CHAIN-BAIL] #%zu rj2jDepth=%d ccd=%d active_proc_pri=%ld\n",
+                                bailCount, rj2jDepth, checkCountdown_, pVal);
+                    }
                     break;
                 }
 
