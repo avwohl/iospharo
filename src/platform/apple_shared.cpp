@@ -38,10 +38,20 @@ void freeCodeMemory(void* ptr, size_t bytes) {
 }
 
 // ===== W^X toggle (Apple Silicon: per-thread MSR flip) =====
+//
+// Use the same __asm-renamed declaration as Platform.hpp's inline
+// flip helpers — bypasses the SDK availability annotation that
+// breaks Catalyst (iOS-SDK-targeted) and iOS device builds.  See
+// Platform.hpp for the full rationale.
+
+#if defined(__arm64__)
+extern "C" void pharo_pthread_jit_write_protect_np(int)
+    __asm("_pthread_jit_write_protect_np");
+#endif
 
 bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
 #if defined(__arm64__)
-    pthread_jit_write_protect_np(0);   // 0 = writable
+    pharo_pthread_jit_write_protect_np(0);
     return true;
 #else
     // x86_64 macOS: MAP_JIT not required; use page-level mprotect
@@ -52,7 +62,7 @@ bool makeWritable(void* /*ptr*/, size_t /*bytes*/) {
 
 bool makeExecutable(void* /*ptr*/, size_t /*bytes*/) {
 #if defined(__arm64__)
-    pthread_jit_write_protect_np(1);   // 1 = executable
+    pharo_pthread_jit_write_protect_np(1);
     return true;
 #else
     return true;

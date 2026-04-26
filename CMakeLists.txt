@@ -148,10 +148,17 @@ endif()
 # Per-arch helper for the JIT trampoline JM_SIZE sentinel.  Only one of
 # these is linked per build, selected by CMAKE_SYSTEM_PROCESSOR — keeps
 # arch divergence out of the OS-specific platform .cpp files.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-    list(APPEND VM_SOURCES src/platform/jit_jmsize_arm64.cpp)
-else()
-    list(APPEND VM_SOURCES src/platform/jit_jmsize_other.cpp)
+#
+# Only relevant when JIT is enabled (the helpers reference JITMethod).
+# iOS builds set PHARO_JIT_ENABLED=0 so neither file is needed there.
+# CMake doesn't know the value of PHARO_JIT_ENABLED yet (it's set on
+# the target below), so use the same source-of-truth gate cmake does.
+if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS" OR (DEFINED PHARO_JIT_ENABLED AND PHARO_JIT_ENABLED))
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+        list(APPEND VM_SOURCES src/platform/jit_jmsize_arm64.cpp)
+    else()
+        list(APPEND VM_SOURCES src/platform/jit_jmsize_other.cpp)
+    endif()
 endif()
 
 add_library(PharoVMCore STATIC ${VM_SOURCES})

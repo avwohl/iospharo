@@ -80,10 +80,27 @@ void flushICache(void* ptr, size_t bytes);
 }  // namespace pharo
 
 #if defined(__APPLE__) && defined(__arm64__)
-  #include <pthread.h>
+  // <pthread.h> annotates pthread_jit_write_protect_np with
+  // __attribute__((unavailable)) on iOS-targeted SDKs (which includes
+  // Mac Catalyst, since Catalyst uses the iOS SDK with macabi target).
+  // That's a HARD error, not a warning — pragma diagnostic can't
+  // silence it.
+  //
+  // The symbol IS exported by libpthread at runtime on every Apple
+  // arm64 platform; only the SDK header refuses to declare it
+  // callably.  Redeclare under a different name with __asm() so the
+  // linker resolves to the real symbol while the compiler doesn't
+  // see the availability attribute.
+  //
+  // On iOS device without JIT entitlement this would fault at
+  // runtime, but JIT is disabled there entirely (CMakeLists.txt
+  // sets PHARO_JIT_ENABLED=0 for iOS), so these helpers are never
+  // actually invoked.
+  extern "C" void pharo_pthread_jit_write_protect_np(int)
+      __asm("_pthread_jit_write_protect_np");
   namespace pharo { namespace platform {
-    inline void flipJitToWritable()   { pthread_jit_write_protect_np(0); }
-    inline void flipJitToExecutable() { pthread_jit_write_protect_np(1); }
+    inline void flipJitToWritable()   { pharo_pthread_jit_write_protect_np(0); }
+    inline void flipJitToExecutable() { pharo_pthread_jit_write_protect_np(1); }
   }}
 #else
   namespace pharo { namespace platform {
