@@ -1278,14 +1278,6 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
-                        // Context-walk methods used by exception handler
-                        // search.  When JIT-compiled and entered via the
-                        // chain loop's extended in-JIT time (PHARO_RESUME_J2J=1),
-                        // they SIGSEGV with receiver=SmallInteger because
-                        // the saved context state corrupts mid-chain.  See
-                        // project_fib_hang_chainloop.md investigation 3.
-                        "nextHandlerContext",
-                        "findNextHandlerContext",
                         nullptr
                     };
                     static const char* ambiguousSelectors[] = {

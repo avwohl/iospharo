@@ -13186,29 +13186,6 @@ void Interpreter::tryJITResumeInCaller() {
                    state.exitReason == jit::ExitYield ||
                    (state.exitReason == jit::ExitReturn && rj2jDepth > 0)) {
 
-                // SAFE-POINT BAIL: bail to interpreter when checkCountdown_
-                // expired and chain is at a Return-with-saves boundary.
-                // The post-loop materialize+switch handles this cleanly:
-                // materialize pushes rj2jSaves as savedFrames_, switch's
-                // ExitReturn case pops the topmost saved frame (most
-                // recent caller), pushes state.returnValue (callee's
-                // retval), continues outer loop.  Outer loop's countdown
-                // check breaks, returning to interpreter so periodic_check
-                // can run the scheduler.
-                //
-                // Without this bail, the chain stays in JIT through 100K+
-                // iterations of fib's recursive returns, starving the
-                // bench process at P79 (Morphic at lower priority
-                // dominates).  See project_fib_hang_chainloop.md.
-                //
-                // Bailing only on ExitReturn — Send/SendCached/Yield/
-                // J2JCall have mid-flow state requirements the post-loop
-                // switch can't reconstruct safely.
-                if (state.exitReason == jit::ExitReturn &&
-                    checkCountdown_ <= 0) {
-                    break;
-                }
-
                 // --- ExitYield: charge countdown and re-enter callee ---
                 if (state.exitReason == jit::ExitYield) {
                     jitYieldCount_++;
