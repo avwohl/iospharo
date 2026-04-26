@@ -1294,6 +1294,27 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "resume:through:",
                         "return:through:",
                         "terminateTo:",
+                        // Delay scheduler internals.  Bench at P79
+                        // suspended on Delay>>wait's semaphore; under
+                        // chain-loop default-on, JIT-compiled
+                        // scheduleAtTimingPriority / timingPriorityScheduleTicker
+                        // fail to set activeDelay, so the timer-fire
+                        // signal never reaches the bench.  Exclude these
+                        // so Delay scheduling runs interpreter-only.
+                        "scheduleAtTimingPriority",
+                        "timingPriorityScheduleTicker:",
+                        "timingPrioritySignalExpired",
+                        "waitForUserSignalled:orExpired:",
+                        "tickAfterMilliseconds:",
+                        "millisecondsUntilTick:",
+                        "nowTick",
+                        "primSignal:atUTCMicroseconds:",
+                        // SmallInteger>>benchmark — JIT-compiled version
+                        // generates bytecodes that trigger spurious
+                        // SubscriptOutOfBounds when run via chain loop.
+                        // Specifically the inner Sieve loop's array access.
+                        "benchmark",
+                        "benchFib",
                         // SubscriptOutOfBounds signal-family methods.
                         // JIT-compiled versions overflow stack when called
                         // via chain loop (each signal call leaves stack

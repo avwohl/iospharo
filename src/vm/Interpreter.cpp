@@ -2173,12 +2173,14 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::handleForceYield() {
-    // Periodic diagnostic: log active method every 10 seconds
+    // Periodic diagnostic: default 10s, but PHARO_DIAG_FAST=1 cuts to 1s
+    // for finding suspended high-pri processes during chain-loop hangs.
     {
+        static int diagInterval = std::getenv("PHARO_DIAG_FAST") != nullptr ? 1 : 10;
         static auto lastDiagTime = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastDiagTime).count();
-        if (elapsed >= 10) {
+        if (elapsed >= diagInterval) {
             lastDiagTime = now;
             Oop proc = getActiveProcess();
             Oop prioOop = memory_.fetchPointer(ProcessPriorityIndex, proc);
