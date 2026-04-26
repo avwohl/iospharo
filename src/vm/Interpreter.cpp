@@ -13441,6 +13441,16 @@ void Interpreter::tryJITResumeInCaller() {
                         }
                     }
 
+                    // SAFETY: refuse J2J call if state.sp is too close
+                    // to the stack end.  Reserve 1024 slots of headroom.
+                    // Without this, accumulated drift across many chain
+                    // iterations causes "Corrupt stackPointer_" stopVM.
+                    if ((uintptr_t)state.sp + 1024 * sizeof(Oop) >=
+                        (uintptr_t)(stack_.data() + MaxStackDepth)) {
+                        rj2jDepth--;
+                        state.exitReason = jit::ExitStackOverflow;
+                        break;
+                    }
                     validateState("pre-J2JCall", calleeJM);
                     spAtLastJ2JCall = state.sp;
                     spLastNArgs = nArgs;
