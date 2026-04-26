@@ -3409,15 +3409,6 @@ PrimitiveResult Interpreter::primitiveFullClosureValue(int argCount) {
         return PrimitiveResult::Failure;
     }
 
-#if PHARO_JIT_ENABLED
-    // Drive the inner CompiledBlock toward JIT compilation.  See
-    // JITRuntime::noteBlockEntry comments for the threshold rationale.
-    Oop slot1 = memory_.fetchPointerUnchecked(1, closure);
-    if (slot1.isObject()) {
-        jitRuntime_.noteBlockEntry(slot1);
-    }
-#endif
-
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
 }
@@ -3441,13 +3432,6 @@ PrimitiveResult Interpreter::primitiveFullClosureValueNoContextSwitch(int argCou
     if (closureNumArgs != argCount) {
         return PrimitiveResult::Failure;
     }
-
-#if PHARO_JIT_ENABLED
-    Oop slot1 = memory_.fetchPointerUnchecked(1, closure);
-    if (slot1.isObject()) {
-        jitRuntime_.noteBlockEntry(slot1);
-    }
-#endif
 
     activateBlock(closure, argCount);
     return PrimitiveResult::Success;
