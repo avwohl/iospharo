@@ -1717,6 +1717,107 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// Inline monomorphic J2J: specialized fast path for monomorphic sends
+// to JIT-compiled methods.  Skips the 5-way IC alternative-slot probe
+// and the trivial-method/inline-prim/block-value side branches.  Reads
+// the entry address from icData[2] (extra word) which already has the
+// J2J_ENTRY_BIT + entryAddr packed by the IC patcher.
+//
+// OPERAND  = (bcLength << 24) | (nArgs << 16) | bcOffset
+// OPERAND2 = pointer to IC data (same as sendJ2J)
+//
+// Replaces sendJ2J at recompile time when the IC site is monomorphic
+// AND the resolved method has a J2J entry (target was JIT-compiled).
+// On class mismatch or save-stack-full: bail through ExitSend.
+extern "C" void stencil_sendInlineMonoJ2J(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+    int bcLen = (packed >> 24) & 0xFF;
+
+    uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t lookupKey;
+    uint64_t tag = receiver.bits & 0x7;
+    if (__builtin_expect(tag == 0 && receiver.bits != 0, 1)) {
+        lookupKey = reinterpret_cast<ObjectHeader*>(receiver.bits)->classIndex();
+    } else if (tag != 0) {
+        lookupKey = tag | 0x80000000ULL;
+    } else {
+        // nil receiver
+        s->icDataPtr = icData;
+        s->sendArgCount = nArgs;
+        s->ip = s->ip + bcOffset;
+        s->exitReason = EXIT_SEND;
+        _HOLE_RT_SEND(s);
+        return;
+    }
+
+    if (__builtin_expect(lookupKey == icData[0], 1)) {
+        uint64_t methodBits = icData[1];
+        uint64_t extra = icData[2];
+        uint64_t entryAddr = extra & J2J_ADDR_MASK;
+        if (__builtin_expect((extra & J2J_ENTRY_BIT) && entryAddr != 0, 1)) {
+            if (__builtin_expect(
+                (uintptr_t)s->j2jSaveCursor < (uintptr_t)s->j2jSaveLimit, 1)) {
+                J2JSave* _save = (J2JSave*)s->j2jSaveCursor;
+                _save->sp = s->sp;
+                _save->receiver = s->receiver;
+                _save->tempBase = s->tempBase;
+                _save->ip = s->ip + bcOffset + bcLen;
+                _save->sendArgCount = nArgs;
+                _save->resumeAddr = RESUME_ADDR;
+                uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;
+                void* _callerJM = s->jitMethod;
+                _save->jitMethod = _callerJM;
+                s->j2jSaveCursor += sizeof(J2JSave);
+                s->j2jDepth++;
+                s->j2jTotalCalls++;
+
+                Oop* _fp = s->sp - (nArgs + 1);
+                s->receiver = receiver;
+                s->tempBase = _fp + 1;
+
+                if (_callerJM != (void*)_calleeJM) {
+                    ObjectHeader* _mo = (ObjectHeader*)methodBits;
+                    s->literals = _mo->slots() + 1;
+                    s->argCount = nArgs;
+                    s->jitMethod = (void*)_calleeJM;
+                    uint64_t _ch = _mo->slotAt(0).bits;
+                    int _cnl = (_ch & 1) ? (int)((_ch >> 3) & 0x7FFF) : 0;
+                    s->ip = (uint8_t*)_mo + 8 + (1 + _cnl) * 8;
+                } else {
+                    uint64_t _mh = *(uint64_t*)((uint8_t*)_callerJM
+                                                + JM_METHOD_HEADER);
+                    int _nl = (int)(_mh & 0x7FFF);
+                    uint64_t _cmo = *(uint64_t*)((uint8_t*)_callerJM
+                                                 + JM_COMPILED_METHOD);
+                    s->ip = (uint8_t*)_cmo + (_nl + 2) * 8;
+                }
+                uint8_t _tc = *((uint8_t*)_calleeJM + JM_TEMP_COUNT);
+                if (nArgs < (int)_tc) {
+                    Oop _nil = *(Oop*)&_HOLE_NIL_OOP;
+                    for (int _t = nArgs; _t < (int)_tc; _t++) {
+                        *(s->sp) = _nil;
+                        s->sp++;
+                    }
+                }
+                ((void(*)(JITState*))entryAddr)(s);
+                return;
+            }
+        }
+    }
+
+    // Bail to ExitSend (class mismatch, IC empty, save-stack full,
+    // or target uncompiled)
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // Inline block-value (1-arg): specialized fast path for value: sends
 // to FullBlockClosure receivers.  Hoists the BLOCK_VALUE_BIT branch out
 // of stencil_sendJ2J and bakes nArgs=1 as a compile-time constant so the

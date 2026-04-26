@@ -995,6 +995,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
         case StencilID::stencil_sendInlineSetter:
         case StencilID::stencil_sendInlineReturnsSelf:
         case StencilID::stencil_sendBlockValue1Arg:
+        case StencilID::stencil_sendInlineMonoJ2J:
         case StencilID::stencil_pushBlock:
         case StencilID::stencil_pushArray:
         case StencilID::stencil_pushRemoteTemp:
@@ -1220,9 +1221,13 @@ JITCompiler::getSendSiteBCOffsets(uint64_t compiledMethodBits) const {
 
 void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
     // Compute IC data location in the old method.
-    // Layout: [JITMethod header][code][bcToCode table][IC data]
-    uint32_t bcToCodeTableSize = (oldVersion->numBytecodes + 1) * sizeof(uint32_t);
-    uint32_t icDataOff = (oldVersion->bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
+    // Layout: [JITMethod header][code][literal pool][bcToCode table]
+    //         [selBitsArray][IC data]
+    // Task #41 inserted selBitsArray between bcToCode and IC.  The
+    // ICs sit AT THE END of the allocation:
+    //   icStart = codeStart + codeSize - numICEntries * IC_BYTES_PER_SITE
+    uint32_t icDataOff = oldVersion->codeSize -
+                         oldVersion->numICEntries * IC_BYTES_PER_SITE;
 
     uint16_t sendIdx = 0;
     uint16_t specialized = 0;
@@ -1274,6 +1279,18 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // win on the 1-arg/no-capture hot path.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
+                specialized++;
+            } else if (std::getenv("PHARO_MONOJ2J_SPEC") != nullptr &&
+                       (extra0 & (1ULL << 60)) /* J2J_ENTRY_BIT */ &&
+                       (extra0 & (0x1FULL << 48)) == 0 /* no inline prim */ &&
+                       (extra0 & (1ULL << 59)) == 0 /* not block value */) {
+                // Monomorphic send to a JIT-compiled method.  Replace
+                // the 6-way IC probe in sendJ2J with a single class
+                // check + direct J2J save+tail-call.  Uses the existing
+                // IC table for entry address — same operand2Ptr layout
+                // as sendJ2J.
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMonoJ2J);
+                // Keep operand2Ptr unchanged (already points at IC base)
                 specialized++;
             }
         }
@@ -2250,6 +2267,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         case StencilID::stencil_sendInlineGetter:
         case StencilID::stencil_sendInlineReturnsSelf:
         case StencilID::stencil_sendBlockValue1Arg:
+        case StencilID::stencil_sendInlineMonoJ2J:
             jitMethod->hasSends = true;  // can deopt on class mismatch
             break;
         case StencilID::stencil_sendInlineSetter:
