@@ -1693,6 +1693,23 @@ GCResult ObjectMemory::fullGC(bool skipEphemerons) {
 
     size_t usedBefore = oldSpaceFree_ - oldSpaceStart_;
 
+    // Diagnostic: PHARO_GC_LOG=1 logs every fullGC call.  On Pi 5 perf
+    // showed 51% of bench CPU in fullGC + page-fault overhead from the
+    // mark-bit clear's __memset_zva64.  Need to identify what's
+    // triggering GC during the bench loop.
+    static const bool gcLog = std::getenv("PHARO_GC_LOG") != nullptr;
+    if (gcLog) {
+        static int count = 0;
+        ++count;
+        if (count <= 50 || (count & 0x1F) == 0) {
+            fprintf(stderr, "[GC-LOG] fullGC #%d (used=%zu MB, threshold=%zu MB, skipEph=%d)\n",
+                    count,
+                    (oldSpaceFree_ - oldSpaceStart_) / (1024 * 1024),
+                    (lastCompactedSize_ + gcHeadroom_) / (1024 * 1024),
+                    (int)skipEphemerons);
+        }
+    }
+
     // 1. Convert interpreter IPs to offsets (methods may move)
     if (interpreter_) {
         interpreter_->prepareForGC();
