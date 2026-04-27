@@ -9690,6 +9690,30 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     push(block);
 }
 
+uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
+                                                int litIndex,
+                                                int numCopied,
+                                                int flags) {
+    bool receiverOnStack = ((flags >> 7) & 1) != 0;
+    bool ignoreOuterContext = ((flags >> 6) & 1) != 0;
+
+    // Sync our stackPointer_ from JIT state's sp.  JIT'd code has
+    // pushed numCopied (+ optional receiver) onto state->sp; we move
+    // our stackPointer_ to that position so createFullBlockWithLiteral
+    // pops from the right place.
+    Oop* savedSP = stackPointer_;
+    stackPointer_ = state->sp;
+    createFullBlockWithLiteral(litIndex, numCopied, receiverOnStack,
+                                ignoreOuterContext);
+    // The new block is now on top of stackPointer_.  Pop it off — the
+    // JIT'd caller takes ownership via the return value, not the stack
+    // (so subsequent compiled IR sees a clean stack).
+    Oop block = pop();
+    state->sp = stackPointer_;
+    stackPointer_ = savedSP;
+    return block.rawBits();
+}
+
 void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize) {
     // Sista V1 0xFA: Push Closure (inline block)
     // Create BlockClosure

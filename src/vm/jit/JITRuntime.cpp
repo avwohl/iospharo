@@ -1068,6 +1068,35 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
     return 1;
 }
 
+// Sista runtime helper for kBlockCreate.
+//
+// Called from Sista-compiled code via asmjit cc.invoke.  Mirrors the
+// PushFullBlock interpreter handler — JIT'd code has pushed the
+// block's copied values (and possibly an extra receiver) onto
+// state->sp, then calls this helper.  We trampoline through
+// Interpreter::jitSistaCreateFullBlock which syncs stackPointer_,
+// invokes createFullBlockWithLiteral (allocates, may GC, pops the
+// consumed operands, pushes the new block), then pops the block back
+// off so subsequent compiled IR sees a clean stack.  The block oop is
+// returned to the JIT'd caller via x0/r0.
+//
+// GC safety: the helper synchronizes interp state before the
+// allocation, so the GC walker can find oops on the interp stack.
+// JIT-side register-resident oops aren't walkable — callers of this
+// helper must spill any live oops to interp stack before invoke.
+//
+// Today's use: kBlockCreate's lowering replaces the bail-only path
+// with a real call here, so compiled execution can continue past
+// PushFullBlock instead of exiting to the interpreter.
+extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
+                                                uint64_t litIndex,
+                                                uint64_t numCopied,
+                                                uint64_t flags) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitSistaCreateFullBlock(
+        state, (int)litIndex, (int)numCopied, (int)flags);
+}
+
 extern "C" void jit_rt_j2j_call(JITState* state) {
     // Merged J2J call: push frame, call callee, pop frame in one C++ call.
     //

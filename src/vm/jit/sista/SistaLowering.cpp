@@ -15,6 +15,13 @@
 #include <unordered_map>
 #include <vector>
 
+// Sista runtime helpers called from compiled code via asmjit cc.invoke.
+// Defined in src/vm/jit/JITRuntime.cpp.
+extern "C" uint64_t jit_rt_sista_block_create(void* state,
+                                                uint64_t litIndex,
+                                                uint64_t numCopied,
+                                                uint64_t flags);
+
 namespace pharo {
 namespace sista {
 
@@ -755,28 +762,43 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kBlockCreate: {
-                // B0 scaffolding: today we bail to interpreter at the
-                // PushFullBlock bytecode and let it handle the closure
-                // create + run subsequent bytecodes.  Same runtime
-                // effect as the previous bailToInterpreter call.
+                // Two paths:
                 //
-                // Future B2 (Array do: with literal block) will hook
-                // into the IR at the SistaBuilder layer (recognizing
-                // kBlockCreate immediately followed by a `do:` send
-                // with Array IC) and replace the pair with a counted
-                // at: loop + spliced block body — at which point
-                // kBlockCreate is consumed at lift time and never
-                // reaches lowering.
+                // 1. PHARO_SISTA_BLOCK_HELPER=1 (experimental): call
+                //    jit_rt_sista_block_create via asmjit cc.invoke.
+                //    Compiled execution continues past PushFullBlock —
+                //    block oop is in regFor[v.id] for subsequent IR.
+                //    Currently SIGSEGVs (asmjit invoke-node setup
+                //    incomplete in the Sista function frame); under
+                //    investigation.
                 //
-                // Operand layout matches the kSendUnspeculated bail:
-                // operands are the full IR stack snapshot, lit bits
-                // 32+ hold the bail bcOffset.
-                static bool noSends = getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
+                // 2. Default (B0 scaffolding): bail to interpreter
+                //    at the PushFullBlock bytecode, exactly as the
+                //    pre-B0 generic-bail did.  Same runtime effect
+                //    as kSendUnspeculated.  Used until path 1 is
+                //    proven safe.
+                //
+                // Operand layout (set by SistaBuilder PushFullBlock arm):
+                //   operands[0..N-1] = (optional receiver) + copied values,
+                //                       in interp-stack-bottom-up order
+                // Literal layout:
+                //   bits 0-15  = litIndex
+                //   bits 16-23 = flags  (bit7=recvOnStack, bit6=ignoreOuter)
+                //   bits 24-31 = consumed-count (numCopied + maybe-receiver)
+                //   bits 32+   = bcOffset of the PushFullBlock bytecode.
+                static bool noSends =
+                    getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
                 if (noSends) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                static bool useHelper =
+                    getenv("PHARO_SISTA_BLOCK_HELPER") != nullptr;
+                uint32_t litIndex = (uint32_t)(v.literal & 0xFFFFu);
+                uint32_t flags = (uint32_t)((v.literal >> 16) & 0xFFu);
                 uint64_t bcOffset = v.literal >> 32;
+
+                // Push consumed operands to interp stack.
                 Gp sp = cc.new_gp64("sp");
                 cc.ldr(sp, ptr(state, OFF_SP));
                 for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
@@ -788,12 +810,47 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(it->second,
                            ptr(sp, static_cast<int>(opIdx) * 8));
                 }
-                cc.add(sp, sp, Imm(static_cast<int>(v.operands.size()) * 8));
+                cc.add(sp, sp,
+                       Imm(static_cast<int>(v.operands.size()) * 8));
                 cc.str(sp, ptr(state, OFF_SP));
+
+                if (useHelper) {
+                    // Path 1 — helper invoke.
+                    Gp argLit = cc.new_gp64("blockLitIdx");
+                    cc.mov(argLit, Imm((uint64_t)litIndex));
+                    Gp argFlags = cc.new_gp64("blockFlags");
+                    cc.mov(argFlags, Imm((uint64_t)flags));
+                    Gp argNumCopied = cc.new_gp64("blockNumCopied");
+                    cc.mov(argNumCopied,
+                           Imm((uint64_t)(flags & 0x3Fu)));
+
+                    asmjit::InvokeNode* invokeNode = nullptr;
+                    cc.invoke(asmjit::Out(invokeNode),
+                              asmjit::imm(
+                                  (void*)&jit_rt_sista_block_create),
+                              asmjit::FuncSignature::build<
+                                  uint64_t, void*, uint64_t,
+                                  uint64_t, uint64_t>());
+                    if (!invokeNode) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    invokeNode->set_arg(0, state);
+                    invokeNode->set_arg(1, argLit);
+                    invokeNode->set_arg(2, argNumCopied);
+                    invokeNode->set_arg(3, argFlags);
+                    Gp dst = cc.new_gp64("block");
+                    invokeNode->set_ret(0, dst);
+                    regFor[v.id] = dst;
+                    break;
+                }
+
+                // Path 2 — bail-to-interpreter (default).
                 Gp ipReg = cc.new_gp64("ip");
                 if (bytecodeBase) {
-                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
-                                   + bcOffset;
+                    uintptr_t addr =
+                        reinterpret_cast<uintptr_t>(bytecodeBase)
+                        + bcOffset;
                     cc.mov(ipReg, Imm((uint64_t)addr));
                 } else {
                     cc.mov(ipReg, Imm(bcOffset));

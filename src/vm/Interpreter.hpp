@@ -1267,6 +1267,22 @@ public:
 
     jit::JITRuntime& jitRuntime() { return jitRuntime_; }
 
+    /// Sista runtime helper: create a FullBlockClosure from JIT'd code.
+    ///
+    /// JIT'd code has pushed `numCopied` (and possibly an extra
+    /// receiver) operands onto the interpreter stack, then calls this
+    /// helper.  The helper synchronizes our stackPointer_ to state->sp
+    /// so that createFullBlockWithLiteral pops from the right place,
+    /// invokes it, then pops the resulting block back off (the JIT'd
+    /// caller takes the block via the return value, not the stack).
+    ///
+    /// state->sp is updated to the post-consume top.  Returns the new
+    /// FullBlockClosure as raw oop bits.
+    uint64_t jitSistaCreateFullBlock(jit::JITState* state,
+                                       int litIndex,
+                                       int numCopied,
+                                       int flags);
+
 private:
 #endif
 

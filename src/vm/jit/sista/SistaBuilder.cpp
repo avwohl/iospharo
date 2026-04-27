@@ -632,27 +632,19 @@ private:
                 return LiftResult::kOk;
             };
 
-            // PushFullBlock special-case: emit kBlockCreate so that
-            // future passes (B2 — Array do: with literal block) can
-            // recognize the op shape and choose to inline instead of
-            // bailing.  Behavior today is identical to bailToInterpreter
-            // — lowering of kBlockCreate emits the same bail sequence.
-            // The op arguments encode all info the runtime needs to
-            // build the FullBlockClosure.
+            // PushFullBlock — emit kBlockCreate IR (bail-only path).
             //
-            //   bytes: [PushFullBlock(0xF9), litIndexLo, flags]
-            //   litIndex = (extA << 8) | litIndexLo  (extA already 0
-            //              if no prior ExtendA)
-            //   numCopied        = flags & 0x3F
-            //   receiverOnStack  = (flags >> 7) & 1
-            //   ignoreOuterCtx   = (flags >> 6) & 1
+            // For now kBlockCreate has the same operand layout as
+            // kSendUnspeculated: operands are the FULL IR stack
+            // snapshot at this point (so the bail to interpreter sees
+            // every value compiled code pushed).  The literal encodes
+            // litIndex / flags / stackSize / bcOffset.
             //
-            // Operands: full IR stack (so the bail snapshot is
-            // GC-walkable on the interp side, just like kSendUnspeculated).
-            // The actual block-create inputs (numCopied + maybe-receiver)
-            // are at the top of stack already.
-            // Literal: bits 0-15 = litIndex, 16-23 = flags,
-            //          24-31 = stackSize, 32+ = bcOffset (for bail).
+            // The PHARO_SISTA_BLOCK_HELPER=1 lowering path that calls
+            // jit_rt_sista_block_create is currently SIGSEGV — asmjit
+            // invoke-node setup needs more work in the Sista function
+            // frame.  Default path bails identically to old generic
+            // behavior, so net runtime is unchanged.
             if (op == jit::SistaV1::PushFullBlock) {
                 if (stack_.size() > 255) {
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
@@ -690,9 +682,9 @@ private:
                     if (blockCreates++ < 32) {
                         std::fprintf(stderr,
                             "[SISTA-BLOCKCREATE] bc=%llu litIdx=%u "
-                            "numCopied=%u flags=0x%02x\n",
+                            "numCopied=%u flags=0x%02x stackSize=%u\n",
                             (unsigned long long)bailOffset,
-                            litIndex, numCopied, flags);
+                            litIndex, numCopied, flags, stackSize);
                     }
                 }
                 pendingExtA_ = 0;
