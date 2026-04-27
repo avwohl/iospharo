@@ -1281,6 +1281,28 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
+                        // 2026-04-27 — bench harness fix.  These three
+                        // unblock `runBenchmarks` running to completion
+                        // (was hanging after fib(28) with cryptic DNU
+                        // cascade about CompiledBlock printing).
+                        //
+                        // findElementOrNil: / scanFor: — HashedCollection
+                        // pointer-arithmetic probe; JIT resume into the
+                        // probe loop corrupts state during Transcript's
+                        // worker-process check (cascades into
+                        // SubscriptOutOfBounds inside `at:ifAbsent:`).
+                        //
+                        // primitiveRandomNumber: — Random's class-side
+                        // primitive call; JIT compilation breaks the
+                        // shuffle in sort-100K (different DoubleWordArray
+                        // SubscriptOutOfBounds, but same family of bug).
+                        //
+                        // These are correctness workarounds, not perf
+                        // wins.  Real fix lives in tryResume's bcOffset
+                        // handling for these specific bytecode patterns.
+                        "findElementOrNil:",
+                        "scanFor:",
+                        "primitiveRandomNumber:",
                         nullptr
                     };
                     // Chain-loop-only exclusions: only excluded when
