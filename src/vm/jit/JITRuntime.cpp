@@ -1281,14 +1281,27 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
-                        // 2026-04-27 — sort(100K) bench fix.  Random's
-                        // PCG core (LargeInteger arith on 64-bit state in
-                        // a DoubleWordArray); JIT-compiling corrupts the
-                        // state slot so subsequent shuffles get bogus
-                        // indices.  Bug isn't in resume (no resumes
-                        // observed in trace) — likely codegen for one of
-                        // the >>, *, +, bitAnd:, bitXor: sends on
-                        // LargeIntegers.  Workaround until that's found.
+                        // 2026-04-27 — bench harness fix.  These three
+                        // unblock `runBenchmarks` running to completion
+                        // (was hanging after fib(28) with cryptic DNU
+                        // cascade about CompiledBlock printing).
+                        //
+                        // findElementOrNil: / scanFor: — HashedCollection
+                        // pointer-arithmetic probe; JIT resume into the
+                        // probe loop corrupts state during Transcript's
+                        // worker-process check (cascades into
+                        // SubscriptOutOfBounds inside `at:ifAbsent:`).
+                        //
+                        // primitiveRandomNumber: — Random's class-side
+                        // primitive call; JIT compilation breaks the
+                        // shuffle in sort-100K (different DoubleWordArray
+                        // SubscriptOutOfBounds, but same family of bug).
+                        //
+                        // These are correctness workarounds, not perf
+                        // wins.  Real fix lives in tryResume's bcOffset
+                        // handling for these specific bytecode patterns.
+                        "findElementOrNil:",
+                        "scanFor:",
                         "primitiveRandomNumber:",
                         nullptr
                     };
@@ -1618,31 +1631,6 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     if (!initialized_) return false;
     static bool noResume = g_debug.noResume;
     if (noResume) return false;
-
-    // 2026-04-27 — narrow workaround: refuse resume at bc=5 of
-    // *>>scanFor: only.  bc=5 is the resume point right after the
-    // `<80> send: hash` (Send0Base 0-arg send to literal[0]) at the
-    // start of every hash-table probe (Dictionary, MethodDictionary,
-    // IdentityDictionary, IdentitySet, WeakSet, …).  JIT resume there
-    // corrupts state — manifests in the bench harness as a
-    // SubscriptOutOfBounds cascade after fib(28).  getBcEntryState
-    // reports 0 for the offset (no register dependency), so the
-    // existing _N-stencil safety check doesn't fire.  Cause unknown;
-    // suspect codegen for Send0Base + immediate pushTemp doesn't
-    // restore the return value correctly on cold resume.
-    //
-    // This narrow check keeps the rest of scanFor: JIT-compiled
-    // (critical for dict bench).  Replaces the pre-existing
-    // alwaysExcluded entries for findElementOrNil:/scanFor: which
-    // killed all hash-table perf.
-    {
-        if (interp_ && bcOffset == 5) {
-            std::string sel = interp_->memory().selectorOf(compiledMethod);
-            if (sel == "scanFor:") {
-                return false;
-            }
-        }
-    }
 
     // T2 resume DISABLED: MIR's register allocator spills values to the C
     // stack during normal execution. When resume dispatch jumps to a label
