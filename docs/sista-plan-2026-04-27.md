@@ -79,21 +79,35 @@ sweet spot).
 Goal: `do:` / `to:do:` / `whileTrue:` runs as a tight loop, not as
 a sequence of block invocations.
 
-B1. **Recognize trivial `to:do:` patterns.**  When the receiver of
-    `to:do:` is a hard-coded SmallInt range and the block is
-    a literal CompiledBlock, lift to a counted loop in IR.
-    SistaBuilder gets a peephole that recognizes the bytecode
-    pattern.  Estimate: 2 weeks.
+NOTE (2026-04-27): the original B1 wording assumed `to:do:` shows
+up as a real send to lift.  In Pharo, the compiler macro-inlines
+`to:do:` / `whileTrue:` / `ifTrue:` at BYTECODE level — they're
+already a sequence of branches when the lifter sees them.  So the
+actual remaining work in B-track is:
 
-B2. **Inline `Array do:` and friends.**  Variant of B1 — when
-    receiver class IC says "always Array", lift `do:` to a counted
-    `at:` loop.  Estimate: 1 week (mostly piggybacks on B1).
+- **B0 (NEW, prereq).**  Stop bailing on `PushFullBlock` /
+  `PushClosure`.  Emit `kBlockCreate` in IR instead.  Today the
+  lifter bails to interpreter the moment it sees a block literal,
+  which prevents any block-aware optimization downstream.
+  Estimate: 1 week.
 
-B3. **Inline arbitrary block bodies.**  Generalize: when a block
-    is created and consumed in the same method (no escape), splice
-    its body into the caller's IR.  Removes BlockClosure allocation
-    + activation overhead.  Estimate: 2 weeks; depends on framepoint
-    plumbing from A1.
+- **B1 (revised).**  SSA-promote loop counters lifted from the
+  compiler-inlined `to:do:` pattern: replace
+  `kLoadTemp + kPrimAddInt + kStoreTemp` chains with a phi
+  induction variable.  Shrinks the per-iteration overhead for
+  loops the compiler already emitted.  Bench impact small (the
+  cost is in the inner send, not the counter), but unblocks
+  later passes.  Estimate: 1-2 weeks.
+
+- **B2.**  Inline `Array do:` (and `OrderedCollection do:`).
+  Receiver-class IC says "always Array", block arg is a literal
+  with no copied vals → lift `do:` to a counted `at:` loop with
+  the block body spliced inline.  This is what actually moves
+  sum 1M.  Depends on B0.  Estimate: 2 weeks.
+
+- **B3.**  General non-escaping block inline — block created and
+  consumed in the same method.  Generalizes B2.  Depends on B0
+  + framepoint plumbing.  Estimate: 2 weeks.
 
 Exit criterion: sum 1M within 5× of Cog (today 27×).
 
@@ -146,13 +160,17 @@ Phase 8 work.  Each pass shrinks generated code or removes work:
 ## Critical-path ordering
 
 ```
-A1 (deopt finish, 1 wk)      ←─ blocks A2, B3, C1
+A1 (deopt finish, DONE)
   ↓
-A2 (mono pattern coverage)   ←─ enables A3 default-on
+A2 (mono pattern coverage, DONE — bench impact 0; only 14
+     monomorphic IC hints exist across full bench, hot code
+     lives in block dispatch not leaf sends)
   ↓
-A3 (default-on)              ←─ baseline measure
+A3 (default-on, DONE)
   ↓
-B1+B2 (to:do: / Array do:)   ←─ biggest sum/sieve win
+B0 (stop bailing on PushFullBlock — prereq for any block work)
+  ↓
+B2 (Array do: with literal block) ←─ the actual sum/sieve win
   ↓
 C1 (poly inline)             ←─ dict win
   ↓
