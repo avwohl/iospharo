@@ -1268,15 +1268,14 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++;
-            } else if (std::getenv("PHARO_BLOCK1_SPEC") != nullptr &&
+            } else if (std::getenv("PHARO_NO_BLOCK1_SPEC") == nullptr &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
                 // value: send to a FullBlockClosure receiver — specialize
                 // for nArgs=1.  Stencil hardcodes nArgs and folds the
                 // captured-temp loop into a straight-line nil fill when
-                // numCopied==0.  Gated behind PHARO_BLOCK1_SPEC=1 until
-                // we've validated more workloads — block(500K) shows ~5%
-                // win on the 1-arg/no-capture hot path.
+                // numCopied==0.  Default-on after correctness validation
+                // (2026-04-26).  Set PHARO_NO_BLOCK1_SPEC=1 to disable.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++;
