@@ -774,29 +774,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kBlockCreate: {
-                // Two paths:
+                // Default path: call jit_rt_sista_block_create via
+                // asmjit cc.invoke.  Compiled execution continues
+                // past PushFullBlock — block oop is in regFor[v.id]
+                // for subsequent IR.  Verified end-to-end (commit
+                // c1b813ea trace counter).
                 //
-                // 1. PHARO_SISTA_BLOCK_HELPER=1 (experimental): call
-                //    jit_rt_sista_block_create via asmjit cc.invoke.
-                //    Compiled execution continues past PushFullBlock —
-                //    block oop is in regFor[v.id] for subsequent IR.
-                //    Currently SIGSEGVs (asmjit invoke-node setup
-                //    incomplete in the Sista function frame); under
-                //    investigation.
-                //
-                // 2. Default (B0 scaffolding): bail to interpreter
-                //    at the PushFullBlock bytecode, exactly as the
-                //    pre-B0 generic-bail did.  Same runtime effect
-                //    as kSendUnspeculated.  Used until path 1 is
-                //    proven safe.
+                // PHARO_SISTA_BLOCK_BAIL=1 — bisect: revert to the
+                // pre-Path-3 bail-only path (interpreter handles
+                // PushFullBlock).  Same runtime effect as
+                // kSendUnspeculated.  Kept for diagnostics.
                 //
                 // Operand layout (set by SistaBuilder PushFullBlock arm):
-                //   operands[0..N-1] = (optional receiver) + copied values,
-                //                       in interp-stack-bottom-up order
+                //   operands[0..N-1] = full IR-stack snapshot at bail
                 // Literal layout:
                 //   bits 0-15  = litIndex
                 //   bits 16-23 = flags  (bit7=recvOnStack, bit6=ignoreOuter)
-                //   bits 24-31 = consumed-count (numCopied + maybe-receiver)
+                //   bits 24-31 = stackSize at bail
                 //   bits 32+   = bcOffset of the PushFullBlock bytecode.
                 static bool noSends =
                     getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
@@ -804,8 +798,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                static bool useHelper =
-                    getenv("PHARO_SISTA_BLOCK_HELPER") != nullptr;
+                static bool useBail =
+                    getenv("PHARO_SISTA_BLOCK_BAIL") != nullptr;
+                bool useHelper = !useBail;
                 uint32_t litIndex = (uint32_t)(v.literal & 0xFFFFu);
                 uint32_t flags = (uint32_t)((v.literal >> 16) & 0xFFu);
                 uint64_t bcOffset = v.literal >> 32;
