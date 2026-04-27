@@ -142,6 +142,13 @@ public:
         out_.numTemps = numTemps;
     }
 
+    // For B2 splice's block-body sub-lift.  Passed in by Builder::build
+    // so the peephole has memory access without setting the
+    // process-wide g_currentBuildMemory (which would also enable
+    // probe-lifting in tryInlineConstReturn / recordFramepoint and
+    // add unwanted compile-time overhead).
+    void setMemory(ObjectMemory* memory) { memory_ = memory; }
+
     // If non-null, specialSendArgCount[N] gives the arg count for
     // opcode 0x70+N (SpecialSend index 16+N in Pharo's selectors
     // array).  When null, SpecialSend bails as unsupported.
@@ -318,18 +325,61 @@ public:
                                 hit ? (uint32_t)(hit->classOop & 0x3FFFFFu)
                                     : 0;
 
+                            // Try to sub-lift the block body via Builder.
+                            // If lift succeeds, the block is a splice
+                            // candidate.  Recursion-guarded — block lift
+                            // re-enters Builder::build, which would
+                            // recurse into our peephole and try to
+                            // lift again.  g_calleeLiftDepth gates this.
+                            int blockLiftOk = -1;
+                            int blockIRSize = -1;
+                            int blockIRBlocks = -1;
+                            if (memory_ != nullptr
+                                && g_calleeLiftDepth < 1
+                                && lastFullBlockLitIdx >= 0
+                                && (size_t)lastFullBlockLitIdx
+                                   < out_.literals.size()) {
+                                Oop blockOop =
+                                    out_.literals[lastFullBlockLitIdx];
+                                if (blockOop.isObject()
+                                    && blockOop.rawBits() > 0x10000) {
+                                    Method blockIR;
+                                    uint32_t blockFailedAt = UINT32_MAX;
+                                    g_calleeLiftDepth++;
+                                    LiftResult br;
+                                    {
+                                        ClearOuterHints g;
+                                        br = Builder::build(blockOop,
+                                            *memory_,
+                                            blockIR, &blockFailedAt);
+                                    }
+                                    g_calleeLiftDepth--;
+                                    blockLiftOk = (br == LiftResult::kOk)
+                                                   ? 1 : 0;
+                                    if (blockLiftOk) {
+                                        blockIRSize =
+                                            (int)blockIR.values.size();
+                                        blockIRBlocks =
+                                            (int)blockIR.blocks.size();
+                                    }
+                                }
+                            }
+
                             std::fprintf(stderr,
                                 "[SISTA-DO-PATTERN] doBcOffset=%zu "
                                 "blockLit=%d numCopied=%d rcvOnStack=%d "
                                 "methodLen=%zu blockOop=0x%llx "
                                 "blockNumArgs=%d blockNumTemps=%d "
-                                "blockBcLen=%d icClassIdx=%u hasHint=%d\n",
+                                "blockBcLen=%d icClassIdx=%u hasHint=%d "
+                                "blockLiftOk=%d blockIRValues=%d "
+                                "blockIRBlocks=%d\n",
                                 i, lastFullBlockLitIdx, numCopied,
                                 (int)recvOnStack, len_,
                                 (unsigned long long)blockOopBits,
                                 blockNumArgs, blockNumTemps,
                                 blockBytecodeLen, icClassIdx,
-                                hit ? 1 : 0);
+                                hit ? 1 : 0, blockLiftOk,
+                                blockIRSize, blockIRBlocks);
                         }
                         lastFullBlockEnd = -1;
                     } else {
@@ -2243,6 +2293,9 @@ private:
     bool                   typeCheckArith_ = false;
     // Phase 4 Step 1: profile-guided inline hints (or nullptr).
     const std::vector<InlineHint>* inlineHints_ = nullptr;
+    // B2 splice: ObjectMemory used by the peephole's block sub-lift.
+    // Set by Builder::build so we don't have to use the global.
+    ObjectMemory*          memory_ = nullptr;
 };
 
 }  // namespace
@@ -2352,6 +2405,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
 
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
+    l.setMemory(&memory);
     if (haveSS) l.setSpecialSendArgCounts(ssArgCounts);
     if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
