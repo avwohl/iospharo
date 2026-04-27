@@ -1775,6 +1775,82 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         }
     }
 
+    // PHARO_BC5_DUMP=1: dump tryResume state at every resume site of
+    // a *>>scanFor:.  Used to find which resume corrupts state.
+    {
+        static bool bc5dump = std::getenv("PHARO_BC5_DUMP") != nullptr;
+        static int bc5count = 0;
+        if (bc5dump && interp_ && bc5count < 80) {
+            std::string sel = interp_->memory().selectorOf(compiledMethod);
+            if (sel == "scanFor:") {
+                bc5count++;
+                Oop methodClass = interp_->methodClassOf(compiledMethod);
+                std::string cls = interp_->memory().classNameOf(methodClass);
+                Oop tos = state.sp > state.tempBase
+                    ? state.sp[-1] : Oop::fromRawBits(0);
+                Oop t3 = state.tempBase[3];
+                Oop t5 = state.tempBase[5];
+                auto desc = [&](Oop o) -> std::string {
+                    if (o.isSmallInteger()) {
+                        char buf[64];
+                        snprintf(buf, sizeof(buf), "SmI(%lld)",
+                            (long long)o.asSmallInteger());
+                        return buf;
+                    }
+                    if (o.isNil()) return "nil";
+                    if (o.isObject() && o.rawBits() > 0x10000) {
+                        return interp_->memory().classNameOf(
+                            interp_->memory().classOf(o));
+                    }
+                    char buf[32];
+                    snprintf(buf, sizeof(buf), "raw=0x%llx",
+                        (unsigned long long)o.rawBits());
+                    return buf;
+                };
+                Oop t2 = state.tempBase[2];
+                Oop t4 = state.tempBase[4];
+                fprintf(stderr,
+                    "[BC5-DUMP #%d] %s>>scanFor: bc=%u sp=%p tempBase=%p\n"
+                    "  TOS = 0x%llx %s\n"
+                    "  temp2 (=start) = 0x%llx %s\n"
+                    "  temp3 (=finish) = 0x%llx %s\n"
+                    "  temp4 (=loop limit) = 0x%llx %s\n"
+                    "  temp5 (=loop index) = 0x%llx %s\n",
+                    bc5count, cls.c_str(), bcOffset,
+                    (void*)state.sp, (void*)state.tempBase,
+                    (unsigned long long)tos.rawBits(), desc(tos).c_str(),
+                    (unsigned long long)t2.rawBits(), desc(t2).c_str(),
+                    (unsigned long long)t3.rawBits(), desc(t3).c_str(),
+                    (unsigned long long)t4.rawBits(), desc(t4).c_str(),
+                    (unsigned long long)t5.rawBits(), desc(t5).c_str());
+                // Dump receiver's instVar 1 (= array for HashedCollection)
+                // and its actual slot count vs what temp3 thinks.
+                if (state.receiver.isObject() && state.receiver.rawBits() > 0x10000) {
+                    ObjectHeader* rh = state.receiver.asObjectPtr();
+                    if (rh->slotCount() >= 2) {
+                        Oop arr = rh->slots()[1];
+                        fprintf(stderr,
+                            "  receiver.iv[1] (= array) = 0x%llx %s\n",
+                            (unsigned long long)arr.rawBits(), desc(arr).c_str());
+                        if (arr.isObject() && arr.rawBits() > 0x10000) {
+                            ObjectHeader* ah = arr.asObjectPtr();
+                            fprintf(stderr,
+                                "  array.slotCount = %zu (vs temp3=%s)\n",
+                                ah->slotCount(), desc(t3).c_str());
+                        }
+                    }
+                }
+                // sp-relative dump (a few stack slots below TOS)
+                for (int k = 0; k < 5 && state.sp - k - 1 >= state.tempBase; k++) {
+                    Oop v = state.sp[-(k + 1)];
+                    fprintf(stderr,
+                        "  sp[-%d] = 0x%llx %s\n", k + 1,
+                        (unsigned long long)v.rawBits(), desc(v).c_str());
+                }
+            }
+        }
+    }
+
     entry(&state);
     // Stay in X — codebase invariant.  W^X audit 2026-04-26.
     return true;
