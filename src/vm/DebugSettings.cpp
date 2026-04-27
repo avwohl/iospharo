@@ -119,7 +119,10 @@ DebugSettings::DebugSettings() {
 
     // --- IC specialization opt-outs ---
     noBlock1Spec     = envPresent("PHARO_NO_BLOCK1_SPEC");
-    monoJ2JSpec      = envPresent("PHARO_MONOJ2J_SPEC");
+    noMonoJ2JSpec    = envPresent("PHARO_NO_MONOJ2J_SPEC");
+    // MONOJ2J default-on; opt-out via PHARO_NO_MONOJ2J_SPEC.  Legacy
+    // PHARO_MONOJ2J_SPEC still enables (no-op when default is on).
+    monoJ2JSpec      = !noMonoJ2JSpec;
 
     // --- Strings ---
     benchType              = envStr("PHARO_BENCH");

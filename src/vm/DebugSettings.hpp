@@ -83,10 +83,14 @@ struct DebugSettings {
 
     // --- IC specialization opt-outs (default-on; set to disable) ---
     bool noBlock1Spec = false;        // PHARO_NO_BLOCK1_SPEC
-    // MONOJ2J reverted to opt-in 2026-04-26 — crashes on long fib bench
-    // (SIGSEGV in JIT method with numIC=0).  Suspected memory corruption
-    // path; needs investigation before re-enabling.
-    bool monoJ2JSpec = false;         // PHARO_MONOJ2J_SPEC (opt-in)
+    // MONOJ2J default-on attempt #2 (2026-04-27).  First attempt
+    // (2026-04-26) crashed on long fib with "JIT method numIC=0" —
+    // root cause was the IC-offset bug in applyICSpecialization
+    // (fixed 17c8241).  Post-fix re-test: clean 60s bench, fib(30),
+    // fib(32), no SIGSEGV.  Default ON; PHARO_NO_MONOJ2J_SPEC=1 to
+    // bisect.  ~10% across-the-board win.
+    bool noMonoJ2JSpec = false;       // PHARO_NO_MONOJ2J_SPEC
+    bool monoJ2JSpec = true;          // default-on (post 17c8241)
 
     // --- String-valued.  nullptr if env var unset or empty. ---
     const char* benchType = nullptr;               // PHARO_BENCH (value)
