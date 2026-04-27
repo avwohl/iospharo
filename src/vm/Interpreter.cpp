@@ -6321,6 +6321,29 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         "  receiver: 0x%llx class=%s\n",
                         (unsigned long long)rcvr.rawBits(),
                         memory_.classNameOf(memory_.classOf(rcvr)).c_str());
+                    // For an Exception instance receiver, dump its
+                    // first 4 slots (subscript/lowerBound/upperBound/
+                    // messageText for SubscriptOutOfBounds).
+                    if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        ObjectHeader* rh = rcvr.asObjectPtr();
+                        size_t nSlots = rh->slotCount();
+                        size_t toShow = std::min(nSlots, (size_t)4);
+                        for (size_t si = 0; si < toShow; si++) {
+                            Oop slot = rh->slots()[si];
+                            if (slot.isSmallInteger()) {
+                                fprintf(stderr,
+                                    "  rcvr.slot[%zu] = SmI(%lld)\n", si,
+                                    (long long)slot.asSmallInteger());
+                            } else if (slot.isNil()) {
+                                fprintf(stderr, "  rcvr.slot[%zu] = nil\n", si);
+                            } else if (slot.isObject() && slot.rawBits() > 0x10000) {
+                                std::string cn = memory_.classNameOf(memory_.classOf(slot));
+                                fprintf(stderr,
+                                    "  rcvr.slot[%zu] = 0x%llx (%s)\n", si,
+                                    (unsigned long long)slot.rawBits(), cn.c_str());
+                            }
+                        }
+                    }
                     for (int ai = 0; ai < argCount && ai < 5; ai++) {
                         Oop arg = stackValue(argCount - 1 - ai);
                         std::string argDesc;
