@@ -2810,7 +2810,7 @@ extern "C" void stencil_primAtPut(JITState* s) {
 }
 
 // ----- Primitive 62: Object #size -----
-// Fast path for format 2 (Indexable) and formats 16-23 (byte objects).
+// Returns the indexable-portion size (slotCount minus fixed fields).
 extern "C" void stencil_primSize(JITState* s) {
     Oop rcvr = s->receiver;
     if ((rcvr.bits & 7) != 0 || rcvr.bits < 0x10000) { _HOLE_CONTINUE(s); return; }
@@ -2826,6 +2826,20 @@ extern "C" void stencil_primSize(JITState* s) {
         size = slotCount;
     } else if (fmt >= 16 && fmt <= 23) {
         size = slotCount * 8 - (fmt - 16);
+    } else if (fmt >= 24 && fmt <= 31) {
+        size = slotCount * 8 - (fmt - 24);
+    } else if (fmt == 9) {
+        size = slotCount;
+    } else if (fmt == 3 || fmt == 4 || fmt == 5) {
+        // Need fixedFieldCount from class — use the helper that the
+        // primAt path already plumbed.  We pass i=1 just to satisfy
+        // its interface; we only care about whether it can compute
+        // indexableSize.  Easier: replicate the lookup inline.
+        // (Keep stencil_primSize self-contained — no helper needed.)
+        // Class lookup via specialObject indices is too complex for
+        // a stencil; fall through to bytecode body which has the
+        // proper fallback (uses self basicSize + class spec).
+        _HOLE_CONTINUE(s); return;
     } else {
         _HOLE_CONTINUE(s); return;
     }
