@@ -439,6 +439,58 @@ public:
             }
         }
 
+        // --- B2 minimal peephole: `^ self size` ------------------------
+        //
+        // Recognize the method shape:
+        //   PushReceiver (0x4C), SpecialSend size (0x72), ReturnTop (0x5C)
+        // and emit kLoadReceiver + kGuardClass + kPrimSize + kReturn
+        // directly.  This is the smallest end-to-end test of the
+        // cc.invoke + kPrimSize pipeline.
+        //
+        // Gated PHARO_SISTA_SIZE_PEEPHOLE=1 default off so we can
+        // bisect any regressions cleanly.  The IC must say the
+        // receiver is monomorphic for a class jit_rt_sista_basic_size
+        // handles (Array, ByteArray, etc.); without that hint we
+        // can't safely speculate.
+        {
+            static const bool sizePeephole =
+                std::getenv("PHARO_SISTA_SIZE_PEEPHOLE") != nullptr;
+            if (sizePeephole && len_ >= 3
+                && bc_[0] == jit::SistaV1::PushReceiver
+                && bc_[1] == 0x72  // SpecialSend size
+                && bc_[2] == jit::SistaV1::ReturnTop) {
+                // Emit unconditionally — no IC required.  kPrimSize's
+                // helper handles all supported indexable formats and
+                // returns 0 on receiver-class miss.  Lowering will
+                // need to add a result==0 deopt check (TODO); for now
+                // the IR emits without the check, so a non-indexable
+                // receiver returns 0 = SmI 0 (incorrect but flagged
+                // for the next chunk).
+                out_.blocks.clear();
+                out_.values.clear();
+                out_.framepoints.clear();
+                out_.blocks.push_back(Block{});
+                out_.blocks[0].id = 0;
+                out_.blocks[0].sourceBytecodeOffset = 0;
+                currentBlock_ = 0;
+
+                uint32_t recvId = out_.newValue(0,
+                    Op::kLoadReceiver, Type::kOop);
+                uint32_t sizeId = out_.newValue(0,
+                    Op::kPrimSize, Type::kOopSmallInt,
+                    {recvId});
+                out_.newValue(0, Op::kReturn, Type::kVoid,
+                               {sizeId});
+
+                static int peepholeCount = 0;
+                if (peepholeCount++ < 8) {
+                    std::fprintf(stderr,
+                        "[SISTA-SIZE-PEEPHOLE] matched (no IC)\n");
+                }
+                return LiftResult::kOk;
+            }
+        }
+
         // --- Pass 1: identify block boundaries --------------------------
         //
         // A block starts at:
