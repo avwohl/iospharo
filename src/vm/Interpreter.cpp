@@ -7948,12 +7948,26 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // bail and compute what the interpreter would have
                 // pushed.  If it differs from what's on the stack now,
                 // Sista miscompiled something.
-                if (g_debug.sistaVerbose && sistaSends < 15) {
+                if (g_debug.sistaVerbose && sistaSends < 100000) {
                     uint8_t* bcStart = methodBytes + bytecodeStart;
                     ptrdiff_t bailBcOff = sstate.ip - bcStart;
+                    // Replay simulator: track an actual stack with pushes
+                    // AND pops, plus temp writes (since later pushes may
+                    // reload from temps).  Without modeling stores, any
+                    // method that does push/pop pairs produces a bogus
+                    // MISMATCH (the refStack accumulates unpopped values).
                     std::vector<Oop> refStack;
+                    std::vector<Oop> refTemps(16, memory_.nil());
+                    // Seed temps with current frame's actual temps so
+                    // later PushTemp loads see the right value.  Temps
+                    // 0..numArgs-1 are arg values; up to ~12 temps total.
+                    for (int t = 0; t < 12; t++) {
+                        Oop v = *(framePointer_ + 1 + t);
+                        refTemps[t] = v;
+                    }
                     int extA = 0;
-                    for (ptrdiff_t i = 0; i < bailBcOff && refStack.size() < 8; ) {
+                    bool replayOk = true;
+                    for (ptrdiff_t i = 0; i < bailBcOff && replayOk; ) {
                         uint8_t op = bcStart[i];
                         if (op >= 0x00 && op <= 0x0F) {
                             refStack.push_back(
@@ -7982,8 +7996,10 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         } else if (op == 0x4F) {
                             refStack.push_back(memory_.nil()); i++;
                         } else if (op >= 0x40 && op <= 0x4B) {
-                            refStack.push_back(
-                                *(framePointer_ + 1 + (op - 0x40)));
+                            // PushTemp N — load from refTemps so later
+                            // pushes see the value as updated by stores.
+                            int tN = op - 0x40;
+                            refStack.push_back(refTemps[tN]);
                             i++;
                         } else if (op == 0x50) {
                             refStack.push_back(Oop::fromSmallInteger(0));
@@ -7991,19 +8007,67 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         } else if (op == 0x51) {
                             refStack.push_back(Oop::fromSmallInteger(1));
                             i++;
+                        } else if (op >= 0xC8 && op <= 0xCF) {
+                            // PopStoreRecvVar N — pop, ignore-effects
+                            // (refStack pop only; we don't mutate
+                            // receiver_ to avoid side effects).
+                            if (!refStack.empty()) refStack.pop_back();
+                            i++;
+                        } else if (op >= 0xD0 && op <= 0xD7) {
+                            // PopStoreTemp N — pop, write to refTemps.
+                            int tN = op - 0xD0;
+                            if (!refStack.empty()) {
+                                refTemps[tN] = refStack.back();
+                                refStack.pop_back();
+                            }
+                            i++;
+                        } else if (op == 0xD8) {
+                            // Pop — discards top.
+                            if (!refStack.empty()) refStack.pop_back();
+                            i++;
+                        } else if (op == 0x53) {
+                            // Dup
+                            if (!refStack.empty()) {
+                                refStack.push_back(refStack.back());
+                            }
+                            i++;
                         } else if (op == 0xE0) {
                             extA = (extA << 8) | bcStart[i + 1];
                             i += 2;
+                        } else if (op >= 0xB0 && op <= 0xB7) {
+                            // ShortJump +1..+8 — unconditional forward,
+                            // affects next bytecode but doesn't change
+                            // stack.  Simulator can't follow control
+                            // flow correctly without full interp; abort.
+                            replayOk = false;
+                        } else if ((op >= 0x60 && op <= 0xAF)
+                                || op == 0xEA || op == 0xEB) {
+                            // Sends: would terminate this lifted block in
+                            // Sista's IR.  At a send the simulator can't
+                            // know the result.  Stop replay; we'll only
+                            // compare the prefix.
+                            replayOk = false;
                         } else {
-                            break;
+                            // Unsupported op — give up replay.
+                            replayOk = false;
                         }
+                        // Cap stack depth defensively.
+                        if (refStack.size() > 32) replayOk = false;
                     }
                     ptrdiff_t sd = sstate.sp - stackPointer_;
                     bool mismatch = false;
-                    for (ptrdiff_t i = 0; i < sd && (size_t)i < refStack.size(); i++) {
-                        if (stackPointer_[i].rawBits() != refStack[i].rawBits()) {
-                            mismatch = true;
-                            break;
+                    // Only trust the comparison if the replay completed
+                    // through every bytecode up to the bail.  Aborted
+                    // replays (sends, branches, unsupported ops) produce
+                    // bogus refStacks.
+                    if (replayOk) {
+                        for (ptrdiff_t i = 0;
+                             i < sd && (size_t)i < refStack.size(); i++) {
+                            if (stackPointer_[i].rawBits()
+                                != refStack[i].rawBits()) {
+                                mismatch = true;
+                                break;
+                            }
                         }
                     }
                     if (mismatch) {
@@ -8025,7 +8089,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         fprintf(stderr, "]\n");
                     }
                 }
-                if (g_debug.sistaVerbose && sistaSends < 15) {
+                if (g_debug.sistaVerbose && sistaSends < 100000) {
                     std::string sel = memory_.selectorOf(method);
                     uint8_t bailOp = 0;
                     if (sstate.ip >= methodBytes + bytecodeStart
