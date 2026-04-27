@@ -503,6 +503,63 @@ public:
             sizePeepholeSkip:;
         }
 
+        // --- B2 minimal peephole: `^ self at: i` ----------------------
+        //
+        // Recognize the method shape:
+        //   PushReceiver (0x4C), PushTemp 0 (0x40),
+        //   SpecialSend at: (0x70), ReturnTop (0x5C)
+        // and emit kLoadReceiver + kLoadTemp(0) + kPrimAt + kReturn.
+        //
+        // Same gate logic as the size peephole: only emit when IC at
+        // the at: send (offset 2) has observed at least one class.
+        // Lowering's deopt-on-zero handles non-indexable / OOB / bad
+        // index — bails to the interpreter at the at: send.
+        {
+            static const bool atPeephole =
+                std::getenv("PHARO_SISTA_AT_PEEPHOLE") != nullptr;
+            if (atPeephole && len_ >= 4
+                && bc_[0] == jit::SistaV1::PushReceiver
+                && bc_[1] == 0x40  // PushTemp 0 (the index arg)
+                && bc_[2] == 0x70  // SpecialSend at:
+                && bc_[3] == jit::SistaV1::ReturnTop) {
+                bool hasIC = false;
+                if (inlineHints_) {
+                    for (const auto& h : *inlineHints_) {
+                        if (h.bcOffset == 2) { hasIC = true; break; }
+                    }
+                }
+                if (!hasIC) goto atPeepholeSkip;
+
+                out_.blocks.clear();
+                out_.values.clear();
+                out_.framepoints.clear();
+                out_.blocks.push_back(Block{});
+                out_.blocks[0].id = 0;
+                out_.blocks[0].sourceBytecodeOffset = 0;
+                currentBlock_ = 0;
+
+                uint32_t recvId = out_.newValue(0,
+                    Op::kLoadReceiver, Type::kOop);
+                uint32_t idxId = out_.newValue(0,
+                    Op::kLoadTemp, Type::kOop, /*operands=*/{},
+                    /*literal=*/0);  // temp 0 = the arg
+                uint32_t atId = out_.newValue(0,
+                    Op::kPrimAt, Type::kOop,
+                    {recvId, idxId},
+                    /*literal=*/2);  // bcOffset of at: send
+                out_.newValue(0, Op::kReturn, Type::kVoid,
+                               {atId});
+
+                static int atPeepholeCount = 0;
+                if (atPeepholeCount++ < 8) {
+                    std::fprintf(stderr,
+                        "[SISTA-AT-PEEPHOLE] matched (IC-guided)\n");
+                }
+                return LiftResult::kOk;
+            }
+            atPeepholeSkip:;
+        }
+
         // --- Pass 1: identify block boundaries --------------------------
         //
         // A block starts at:

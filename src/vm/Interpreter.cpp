@@ -7396,6 +7396,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 hasUnsafeOp = false;
                 goto sizePeepholeAdmitted;
             }
+            // PHARO_SISTA_AT_PEEPHOLE=1: same gate exception for
+            // `^ self at: i` shape (4 bytes).  kPrimAt's lowering
+            // deopts on miss too.
+            static const bool atPeephole =
+                std::getenv("PHARO_SISTA_AT_PEEPHOLE") != nullptr;
+            if (atPeephole && bcLen == 4
+                && methodBytes[bytecodeStart + 0] == 0x4C  // PushReceiver
+                && methodBytes[bytecodeStart + 1] == 0x40  // PushTemp 0
+                && methodBytes[bytecodeStart + 2] == 0x70  // SpecialSend at:
+                && methodBytes[bytecodeStart + 3] == 0x5C) { // ReturnTop
+                hasUnsafeOp = false;
+                goto sizePeepholeAdmitted;  // Reuse the bypass.
+            }
             for (size_t i = 0; i < bcLen; i++) {
                 uint8_t op = methodBytes[bytecodeStart + i];
                 // Inlined arith — safe ONLY when operands are

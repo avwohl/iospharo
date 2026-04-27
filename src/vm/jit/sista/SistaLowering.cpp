@@ -857,7 +857,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             case Op::kPrimAt: {
                 // Calls jit_rt_sista_basic_at(state, rcv, idx) via
                 // cc.invoke.  Returns element Oop, or 0 on guard miss
-                // / OOB / non-SmI index — caller deopts on 0 result.
+                // / OOB / non-SmI index — deopts on 0 result.
+                // v.literal carries bcOffset for deopt resume.
                 if (v.operands.size() != 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
@@ -888,6 +889,42 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 invokeNode->set_arg(2, itIdx->second);
                 Gp dst = cc.new_gp64("at");
                 invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero: helper returns 0 on miss.  Push
+                // receiver + index back onto interp stack (the at:
+                // send expects them), bail at source bcOffset.
+                Label noDeopt = cc.new_label();
+                cc.cbnz(dst, noDeopt);
+                {
+                    Gp sp = cc.new_gp64("sp_az");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(itRcv->second, ptr(sp));
+                    cc.str(itIdx->second, ptr(sp, 8));
+                    cc.add(sp, sp, Imm(16));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("ip_az");
+                    uint64_t bcOff = v.literal;
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOff;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOff));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argCount = cc.new_gp32("argc_az");
+                    cc.mov(argCount, Imm(1));  // at: takes 1 arg
+                    cc.str(argCount, ptr(state, OFF_SENDARGCOUNT));
+                    Gp zero64 = cc.new_gp64("zero_az");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("exit_az");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
                 regFor[v.id] = dst;
                 break;
             }
