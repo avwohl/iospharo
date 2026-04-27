@@ -95,8 +95,97 @@ actual remaining work in B-track is:
   (2026-04-27): with `PHARO_SISTA_INLINE_ARITH=1`, 90k+ bails in
   30s, zero miscompiles, image makes only 200K bytecode steps/sec
   (5× slower than pure interpreter).  Estimate: 1-2 weeks.
-  Caveats: helper must handle NLR-out-of-callee, exception
-  propagation, GC during callee.
+
+  **Design sketch:**
+
+  ```cpp
+  // Interpreter.hpp — public method.
+  uint64_t jitSistaCallSend(jit::JITState* state,
+                              uint64_t selBits,
+                              uint64_t nArgs);
+
+  // Interpreter.cpp — implementation.
+  uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
+                                          uint64_t selBits,
+                                          uint64_t nArgs) {
+      Oop* savedSP = stackPointer_;
+      uint8_t* savedIP = instructionPointer_;
+      Oop savedMethod = method_;
+      size_t startFrameDepth = frameDepth_;
+
+      stackPointer_ = state->sp;
+      sendSelector(Oop::fromRawBits(selBits), (int)nArgs);
+
+      // For non-primitive sends, sendSelector pushes a frame.
+      // Drive the interp loop until that frame returns.
+      // For primitive sends that succeed synchronously,
+      // frameDepth_ is already back to start — loop is no-op.
+      while (frameDepth_ > startFrameDepth && running_) {
+          if (!step()) break;
+          // Detect NLR-out-of-our-frame: frameDepth_ went BELOW
+          // startFrameDepth.  Means a block return jumped past us.
+          // Need special handling: signal back to compiled code
+          // that we couldn't return normally.  TBD.
+      }
+
+      Oop result = stackTop();
+      popN(1);
+      state->sp = stackPointer_;
+      stackPointer_ = savedSP;
+      instructionPointer_ = savedIP;
+      method_ = savedMethod;
+      return result.rawBits();
+  }
+
+  // JITRuntime.cpp — extern "C" wrapper.
+  extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
+                                               uint64_t selBits,
+                                               uint64_t nArgs) {
+      if (!state || !state->interp) return 0;
+      return state->interp->jitSistaCallSend(state, selBits, nArgs);
+  }
+
+  // SistaLowering.cpp — replace kSendUnspeculated bail with cc.invoke
+  // pattern (load helper to Gp first; ARM64 blr requires reg).
+  ```
+
+  **Pitfalls to handle:**
+
+  1. **NLR (non-local return).**  A block in the called method may
+     `^` out, popping frames past our `startFrameDepth`.  Detection:
+     `frameDepth_ < startFrameDepth` after step().  Response: return
+     a sentinel from helper (e.g., 0), JIT-side checks and bails to
+     interp at our send bcOffset.  The interp's NLR handling
+     continues past us correctly.
+
+  2. **Process switch during step().**  step() does periodic checks
+     (timer, signals, preemption every 1024 steps).  If a switch
+     happens while we're driving the loop, the new active process
+     runs — and our caller's compiled fn is still on the C stack.
+     Need to defer process switches until our frame returns OR
+     wrap in a non-switch flag.
+
+  3. **GC during called method.**  Allocation in the callee may
+     trigger GC.  JIT-side registers holding Oops become stale.
+     Mitigation: caller spills all live Oops to interp stack before
+     the helper invoke (same pattern as kBlockCreate's full-stack
+     spill).  After the helper, reload from interp stack.  This is
+     expensive — every send becomes a full-stack-spill point.
+
+  4. **Exceptions.**  Smalltalk exceptions are essentially NLR
+     through `signal` chains.  Mitigation: same as NLR — sentinel
+     return + bail.
+
+  5. **step() recursion depth.**  step() may itself trigger more
+     sends (handled inside the called method).  Each recursion
+     adds C stack frames.  For deep nesting (recursive Smalltalk
+     methods), this could overflow the C stack before the
+     Smalltalk stack overflow handler fires.  Mitigation: cap
+     helper recursion depth, bail to interp on overflow.
+
+  Path 3's cc.invoke + the documented helper pattern + Path 3's
+  GC-safety lessons all transfer.  Implementation is a focused
+  multi-day project once these pitfalls are addressed.
 
 - **B0 (prereq for B2).**  Stop bailing on `PushFullBlock` /
   `PushClosure`.  Emit `kBlockCreate` in IR instead.  DONE
