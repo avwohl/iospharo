@@ -2668,7 +2668,12 @@ extern "C" void stencil_primAt(JITState* s) {
     int64_t i = (int64_t)idx.bits >> 3;  // 1-based index
     if (fmt == 2) {
         // Format 2: Indexable (Array, no fixed fields) — read Oop slot
-        if (i < 1 || (uint64_t)i > slotCount) { _HOLE_CONTINUE(s); return; }
+        if (i < 1 || (uint64_t)i > slotCount) {
+            // PHARO_PRIMAT_OOB log via the existing j2jTrace helper
+            // (event=99 = primat-OOB).  Free when PHARO_B5_TRACE off.
+            _HOLE_RT_J2J_TRACE(s, 99, (uint64_t)i, slotCount);
+            _HOLE_CONTINUE(s); return;
+        }
         Oop* slots = reinterpret_cast<Oop*>(rcvr.bits + 8);
         Oop retVal = slots[i - 1];
         J2J_INLINE_RETURN_NO_TRACE(s, retVal);
@@ -2693,7 +2698,30 @@ extern "C" void stencil_primAt(JITState* s) {
         _HOLE_RT_RETURN(s);
         return;
     }
-    // Unsupported format — fall through to bytecodes
+    if (fmt >= 24 && fmt <= 31) {
+        // Formats 24-31: CompiledMethod.  Indexable bytes from start of
+        // object data (literals + bytecodes); byteSize = slotCount * 8
+        // - (fmt - 24).  Mirrors Interpreter::primitiveAt's
+        // isCompiledMethod() branch.
+        // Without this case stencil_primAt fell through for CompiledMethod
+        // receivers, the fallback bytecode body raised
+        // SubscriptOutOfBounds even on valid indices — manifesting as
+        // the bench-after-fib(28) hang.
+        uint64_t byteSize = slotCount * 8 - (fmt - 24);
+        if (i < 1 || (uint64_t)i > byteSize) { _HOLE_CONTINUE(s); return; }
+        uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
+        uint8_t byte = bytes[i - 1];
+        Oop retVal;
+        retVal.bits = ((uint64_t)byte << 3) | 1;
+        J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+        s->returnValue = retVal;
+        s->exitReason = EXIT_RETURN;
+        _HOLE_RT_RETURN(s);
+        return;
+    }
+    // Unsupported format (fmt 3 IndexableWithFixed, weak, etc.) —
+    // fall through to bytecode body, which handles fixed-fields offset
+    // correctly via the standard at: dispatch.
     _HOLE_CONTINUE(s); return;
 }
 

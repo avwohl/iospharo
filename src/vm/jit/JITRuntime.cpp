@@ -94,6 +94,24 @@ extern "C" void jit_b5_dump_ring(const char* tag) {
 // event=2: return.  extra1 = retVal.bits, extra2 = callerCM | args<<48.
 extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
+    // event=99: stencil_primAt OOB fall-through (Array/Byte path).
+    // event=100: stencil_primAt unsupported-format fall-through.
+    // extra1 = 1-based index, extra2 = slotCount or fmt.
+    if (event == 99 || event == 100) {
+        static bool primAtOob = std::getenv("PHARO_PRIMAT_OOB") != nullptr;
+        if (primAtOob) {
+            static int oobCount = 0;
+            if (++oobCount <= 30) {
+                fprintf(stderr,
+                    "[STENCIL-PRIMAT %s #%d] i=%lld %s=%llu\n",
+                    event == 99 ? "OOB" : "BAD-FMT",
+                    oobCount, (long long)extra1,
+                    event == 99 ? "limit" : "fmt",
+                    (unsigned long long)extra2);
+            }
+        }
+        return;
+    }
     static bool trace = g_debug.b5Trace;
     if (!trace) return;
     // Raw entry log so we can see if the stencil ever calls us with event=3.
