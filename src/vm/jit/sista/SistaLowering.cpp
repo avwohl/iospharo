@@ -26,6 +26,9 @@ extern "C" uint64_t jit_rt_sista_basic_size(void* state,
 extern "C" uint64_t jit_rt_sista_basic_at(void* state,
                                             uint64_t rcvBits,
                                             uint64_t idxBits);
+extern "C" uint64_t jit_rt_sista_call_send(void* state,
+                                             uint64_t selBits,
+                                             uint64_t nArgs);
 
 namespace pharo {
 namespace sista {
@@ -694,6 +697,121 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.bind(contLabel);
                 }
 
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kSendCallHelper: {
+                // B-1: invoke jit_rt_sista_call_send via cc.invoke.
+                // Helper does the send synchronously and returns the
+                // result.  On NLR / abnormal exit, helper returns 0
+                // and we deopt to the source bcOffset (interpreter
+                // takes over — its NLR machinery resumes correctly).
+                //
+                // Operand layout: [rcvr, arg0, ..., arg_{n-1}].
+                // Literal: low 32 = selIdx, mid 16 = nArgs,
+                //          high 16 = bcOffset (for deopt resume).
+                if (v.operands.empty()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                uint32_t selIdx   = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                uint32_t nArgs    = (uint32_t)((v.literal >> 32) & 0xFFFFu);
+                uint32_t bcOffset = (uint32_t)((v.literal >> 48) & 0xFFFFu);
+
+                // Push rcvr + args onto interp stack at state->sp.
+                // Helper expects them there to do the send.
+                Gp sp = cc.new_gp64("send_sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
+                    auto opIt = regFor.find(v.operands[opIdx]);
+                    if (opIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(opIt->second,
+                           ptr(sp, static_cast<int>(opIdx) * 8));
+                }
+                cc.add(sp, sp, Imm(static_cast<int>(v.operands.size()) * 8));
+                cc.str(sp, ptr(state, OFF_SP));
+
+                // Resolve selector: state->literals[selIdx].
+                Gp litBase = cc.new_gp64("sendLitBase");
+                Gp selReg  = cc.new_gp64("sendSel");
+                cc.ldr(litBase, ptr(state, OFF_LITERALS));
+                cc.ldr(selReg,
+                       ptr(litBase, static_cast<int>(selIdx) * 8));
+
+                Gp nArgsReg = cc.new_gp64("sendNArgs");
+                cc.mov(nArgsReg, Imm((uint64_t)nArgs));
+
+                // cc.invoke pattern: load helper addr to Gp, call.
+                Gp fnReg = cc.new_gp64("sendHelper");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_call_send));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    std::fprintf(stderr,
+                        "[SISTA-INVOKE-ERR] kSendCallHelper err=%u\n",
+                        (unsigned)invErr);
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, selReg);
+                invokeNode->set_arg(2, nArgsReg);
+                Gp dst = cc.new_gp64("sendResult");
+                invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero: helper returns 0 on NLR / abnormal.
+                // Push the original operands BACK onto interp stack
+                // (helper consumed them) and bail at source bcOffset.
+                Label noDeopt = cc.new_label();
+                cc.cbnz(dst, noDeopt);
+                {
+                    // Restore operands to interp stack.
+                    Gp sp2 = cc.new_gp64("send_sp_dz");
+                    cc.ldr(sp2, ptr(state, OFF_SP));
+                    for (size_t opIdx = 0;
+                         opIdx < v.operands.size(); opIdx++) {
+                        auto opIt = regFor.find(v.operands[opIdx]);
+                        if (opIt == regFor.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.str(opIt->second,
+                               ptr(sp2,
+                                   static_cast<int>(opIdx) * 8));
+                    }
+                    cc.add(sp2, sp2,
+                           Imm(static_cast<int>(v.operands.size()) * 8));
+                    cc.str(sp2, ptr(state, OFF_SP));
+
+                    Gp ipReg = cc.new_gp64("send_ip_dz");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOffset;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOffset));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argCountReg = cc.new_gp32("send_argc_dz");
+                    cc.mov(argCountReg, Imm(nArgs));
+                    cc.str(argCountReg, ptr(state, OFF_SENDARGCOUNT));
+                    Gp zero64 = cc.new_gp64("send_zero_dz");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("send_exit_dz");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
                 regFor[v.id] = dst;
                 break;
             }

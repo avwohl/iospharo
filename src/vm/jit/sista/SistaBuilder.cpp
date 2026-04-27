@@ -1476,28 +1476,56 @@ private:
                 }
 
                 detectDoBlockPattern(nArgs, bcOffset);
-                // Bail flushes the ENTIRE IR stack to state.sp so the
-                // interpreter sees every value simulated-pushed by
-                // compiled code.  Older revisions only emitted the
-                // send's rcvr+args, leaking values below them (e.g.,
-                // `PushReceiver PushTemp Send0 Send1 ...` at the
-                // first Send0 left `self` in a virtual register that
-                // never reached state.sp, and the next Send1 in the
-                // interpreter's run popped garbage).  The stackSize
-                // field encodes the total pushes — nArgs is the send
-                // arg count (what sendSelector pops); any extras
-                // below them are caller-frame values the interpreter
-                // will consume via later bytecodes.
+
+                // B-1: PHARO_SISTA_HELPER_SENDS=1 → emit kSendCallHelper
+                // and continue lifting past the send.  Helper invokes
+                // the send synchronously; result is pushed onto stack_.
+                // On NLR, helper returns 0 → lowering deopts.
+                static const bool helperSends =
+                    std::getenv("PHARO_SISTA_HELPER_SENDS") != nullptr;
+                if (helperSends) {
+                    // Pop only rcvr + args (the send consumes them).
+                    // Other live IR-stack values stay in their
+                    // registers — kSendCallHelper is a producing op,
+                    // not a terminator.
+                    std::vector<uint32_t> sendOps;
+                    sendOps.reserve(nArgs + 1);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        sendOps.push_back(
+                            stack_[stack_.size() - nArgs - 1 + i]);
+                    }
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        stack_.pop_back();
+                    }
+                    // Literal layout: low 32 = selIdx, mid 16 = nArgs,
+                    // high 16 = bcOffset.  Different from kSendUnspeculated
+                    // because we need bcOffset for the deopt-on-NLR path.
+                    uint64_t lit =
+                        static_cast<uint64_t>(selIdx)
+                      | (static_cast<uint64_t>(nArgs)    << 32)
+                      | (static_cast<uint64_t>(bcOffset) << 48);
+                    uint32_t vid = out_.newValue(currentBlock_,
+                                                  Op::kSendCallHelper,
+                                                  Type::kOop,
+                                                  std::move(sendOps),
+                                                  lit);
+                    recordFramepoint(vid, bcOffset);
+                    stack_.push_back(vid);
+                    ip++;
+                    continue;
+                }
+
+                // Default path: bail flushes the ENTIRE IR stack to
+                // state.sp so the interpreter sees every value
+                // simulated-pushed by compiled code.  Compiled
+                // execution ends here.
                 uint32_t stackSize = static_cast<uint32_t>(stack_.size());
                 std::vector<uint32_t> ops(stack_.begin(), stack_.end());
                 stack_.clear();
                 uint64_t lit = static_cast<uint64_t>(selIdx)
                              | (static_cast<uint64_t>(nArgs)      << 16)
                              | (static_cast<uint64_t>(bcOffset)   << 24);
-                (void)stackSize;  // nArgs suffices for sendSelector;
-                                  // extras come from total push count
-                                  // vs operands.size() on the lowerer
-                                  // side (operands pushed in order).
+                (void)stackSize;
                 uint32_t vid = out_.newValue(currentBlock_, Op::kSendUnspeculated,
                                Type::kOop, std::move(ops), lit);
                 recordFramepoint(vid, bcOffset);

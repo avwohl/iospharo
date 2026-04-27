@@ -3430,6 +3430,19 @@ bool Interpreter::step() {
     stepCheckCounter_++;
     bool periodicCheckDue = (stepCheckCounter_ & 0x3FF) == 0;  // every 1024 steps
 
+    // B-1: when driving a synchronous send via jitSistaCallSend, skip
+    // periodic checks (timer/signals/preemption).  Process switches
+    // inside the helper would leave compiled-code-callers stranded on
+    // the C stack while the new active process runs unrelated work.
+    // The send's caller will hit periodic checks again as soon as we
+    // return.  Tested without this gate: ~1M steps/sec, scheduler
+    // dies (timer semaphore never re-armed); with the gate scheduler
+    // stays healthy.
+    if (inSyncSend_) {
+        periodicCheckDue = false;
+        deferredPeriodicCheck_ = false;
+    }
+
     if (periodicCheckDue && inExtension_) {
         // Can't run periodic checks now — defer to next non-extension step.
         // Without this, tight loops whose bytecode count divides evenly into 1024
@@ -9855,6 +9868,106 @@ uint64_t Interpreter::jitSistaBasicAt(jit::JITState* state,
     // Other formats (3/4/5/9/24-31) bail to interpreter for now —
     // less common in `do:` hot paths.
     return 0;
+}
+
+uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
+                                         uint64_t selBits,
+                                         uint64_t nArgs) {
+    // Save caller state.  state->sp/ip/method belong to the JIT'd
+    // method; we'll restore them on return so the caller's compiled
+    // code can continue.
+    Oop* savedSP = stackPointer_;
+    uint8_t* savedIP = instructionPointer_;
+    Oop savedMethod = method_;
+    Oop savedReceiver = receiver_;
+    Oop* savedFP = framePointer_;
+    int savedArgCount = argCount_;
+    Oop savedClosure = closure_;
+    Oop savedHome = homeMethod_;
+    size_t startFrameDepth = frameDepth_;
+
+    // Sync interp stack from JIT state.  After this, sendSelector's
+    // stackValue() / popN() see the right values.
+    stackPointer_ = state->sp;
+
+    // Run the send.  sendSelector resolves + activates the callee.
+    // For a primitive that succeeds synchronously, it pops args and
+    // pushes result without touching frameDepth_.  For a normal
+    // method, it pushes a frame.
+    Oop sel = Oop::fromRawBits(selBits);
+    bool savedInSync = inSyncSend_;
+    inSyncSend_ = true;
+    sendSelector(sel, (int)nArgs);
+
+    // Drive the interp loop until the activated frame returns.
+    // Synchronous-primitive case: frameDepth_ is already back to
+    // startFrameDepth — loop is a no-op.
+    //
+    // CAVEATS (see docs/sista-plan-2026-04-27.md B-1 design notes):
+    //
+    //   - NLR: a block in the callee may `^` past us, popping
+    //     frameDepth_ BELOW startFrameDepth.  We detect that as
+    //     `frameDepth_ < startFrameDepth` and return 0; caller
+    //     deopts to interpreter at the source bcOffset (the
+    //     interpreter's NLR handling continues correctly).
+    //
+    //   - process switch / GC during step() are handled by step()
+    //     itself.  After GC, our local Oop saves (savedMethod,
+    //     savedReceiver, savedClosure, savedHome) are correct
+    //     because compaction updates oop bits in-place; pointers
+    //     to slots (savedFP, savedSP, savedIP) reference stack
+    //     memory which doesn't move.
+    //
+    //   - exceptions: handled like NLR (also frame-popping via
+    //     `^` from a handler block).
+    while (frameDepth_ > startFrameDepth && running_) {
+        if (!step()) {
+            // VM stopped (running_=false set somewhere).
+            inSyncSend_ = savedInSync;
+            stackPointer_ = savedSP;
+            instructionPointer_ = savedIP;
+            method_ = savedMethod;
+            receiver_ = savedReceiver;
+            framePointer_ = savedFP;
+            argCount_ = savedArgCount;
+            closure_ = savedClosure;
+            homeMethod_ = savedHome;
+            return 0;
+        }
+    }
+
+    inSyncSend_ = savedInSync;
+
+    // NLR detection: did the called method (or a block within)
+    // return PAST our frame?
+    if (frameDepth_ < startFrameDepth) {
+        state->sp = stackPointer_;
+        stackPointer_ = savedSP;
+        instructionPointer_ = savedIP;
+        method_ = savedMethod;
+        receiver_ = savedReceiver;
+        framePointer_ = savedFP;
+        argCount_ = savedArgCount;
+        closure_ = savedClosure;
+        homeMethod_ = savedHome;
+        return 0;
+    }
+
+    // Normal return: result on top of interp stack.
+    Oop result = stackTop();
+    popN(1);
+    state->sp = stackPointer_;
+
+    stackPointer_ = savedSP;
+    instructionPointer_ = savedIP;
+    method_ = savedMethod;
+    receiver_ = savedReceiver;
+    framePointer_ = savedFP;
+    argCount_ = savedArgCount;
+    closure_ = savedClosure;
+    homeMethod_ = savedHome;
+
+    return result.rawBits();
 }
 
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,

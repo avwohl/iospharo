@@ -1102,6 +1102,17 @@ extern "C" uint64_t jit_rt_sista_basic_at(JITState* state,
     return state->interp->jitSistaBasicAt(state, rcvBits, idxBits);
 }
 
+// B-1 helper: synchronously invoke a send and return its result.
+// Replaces the old kSendUnspeculated bail-and-exit path so compiled
+// code can continue after sends.  See jitSistaCallSend in
+// Interpreter.cpp for caveats around NLR / process switches / GC.
+extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
+                                             uint64_t selBits,
+                                             uint64_t nArgs) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitSistaCallSend(state, selBits, nArgs);
+}
+
 extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t litIndex,
                                                 uint64_t numCopied,

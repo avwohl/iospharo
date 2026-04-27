@@ -53,6 +53,7 @@ bool producesOop(Op op) {
     case Op::kPrimSize:
     case Op::kPrimAt:
     case Op::kSendUnspeculated:
+    case Op::kSendCallHelper:
     case Op::kGuardClass:
     case Op::kInlineSend:
     case Op::kBlockCreate:
@@ -67,6 +68,7 @@ bool producesOop(Op op) {
 bool mayCallBack(Op op) {
     switch (op) {
     case Op::kSendUnspeculated:
+    case Op::kSendCallHelper:    // helper drives sub-interp loop
     case Op::kGuardClass:       // miss deopts
     case Op::kInlineSend:       // nested send
     case Op::kBlockValue:
@@ -109,6 +111,7 @@ const char* name(Op op) {
     case Op::kReturn:           return "return";
     case Op::kNonLocalReturn:   return "nlr";
     case Op::kSendUnspeculated: return "send";
+    case Op::kSendCallHelper:   return "send_helper";
     case Op::kGuardClass:       return "guard_class";
     case Op::kInlineSend:       return "inline_send";
     case Op::kPrimAddInt:       return "prim_add_int";

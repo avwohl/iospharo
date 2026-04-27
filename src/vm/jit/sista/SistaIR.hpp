@@ -78,6 +78,18 @@ enum class Op : uint8_t {
                           // Fall-through to Tier 1 IC probe via ExitSend —
                           // compiled code exits at the send and the
                           // interpreter resumes the bytecode stream.      -> Oop
+
+    kSendCallHelper,      // operands: rcvr, args...
+                          // literal: low 32 = selector literal index,
+                          //          mid 16 = nArgs,
+                          //          high 16 = bcOffset (for NLR-deopt resume).
+                          // Lowering invokes jit_rt_sista_call_send via
+                          // cc.invoke.  The helper does the send synchronously
+                          // and returns the result; compiled code continues
+                          // past the send.  On NLR / abnormal exit, the
+                          // helper returns 0 and lowering deopts to the
+                          // source bcOffset (interpreter handles NLR).
+                          // Result type: same as kSendUnspeculated.        -> Oop
     kGuardClass,          // operands: receiver, expected-class-key, deopt-target
                           // If receiver.class != expected, call deopt.   -> Oop (same as rcvr, typed as inlined class)
     kInlineSend,          // operands: guard-id, callee-method, args...

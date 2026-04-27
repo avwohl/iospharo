@@ -1046,6 +1046,12 @@ private:
     // Re-entrancy guard for JIT resume chaining
     bool inJITResume_ = false;
 
+    // B-1: set while jitSistaCallSend is driving step() to invoke a
+    // synchronous send.  Causes step() to skip periodic scheduler
+    // activity (timer / signals / preemption) so process switches
+    // don't strand compiled-code callers on the C stack.
+    bool inSyncSend_ = false;
+
     // IC statistics
     size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)
     size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)
@@ -1284,6 +1290,32 @@ public:
     /// Doesn't allocate; safe to call without state sync.
     uint64_t jitSistaBasicAt(jit::JITState* state, uint64_t rcvBits,
                               uint64_t idxBits);
+
+    /// Sista runtime helper: synchronously invoke a send and return
+    /// its result.  This is what makes Sista compiled code able to
+    /// continue past sends instead of bailing.
+    ///
+    /// JIT'd code has pushed receiver + nArgs args onto the interpreter
+    /// stack at state->sp.  This helper:
+    ///   1. Syncs interp stackPointer_ from state->sp.
+    ///   2. Calls sendSelector(sel, nArgs) which activates the method.
+    ///   3. Drives step() in a loop until frameDepth returns to the
+    ///      saved value (the called method has returned).
+    ///   4. Pops the result from the interp stack and returns it.
+    ///   5. Restores caller JIT state (sp, ip, method).
+    ///
+    /// NLR detection: if step() pops frameDepth_ BELOW the saved
+    /// value, a non-local return jumped past our frame.  Returns
+    /// the sentinel `kSistaSendNLR` (= raw bits 0); JIT-side caller
+    /// must check and bail to interpreter at the source bcOffset.
+    /// (TODO: NLR / exception / GC / process-switch handling per
+    ///  the design notes in docs/sista-plan-2026-04-27.md.)
+    ///
+    /// Returns the raw Oop bits of the send's result on success,
+    /// 0 on NLR / abnormal exit (caller must deopt).
+    uint64_t jitSistaCallSend(jit::JITState* state,
+                                uint64_t selBits,
+                                uint64_t nArgs);
 
     /// Sista runtime helper: create a FullBlockClosure from JIT'd code.
     ///
