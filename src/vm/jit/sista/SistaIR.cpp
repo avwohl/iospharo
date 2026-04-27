@@ -50,6 +50,8 @@ bool producesOop(Op op) {
     case Op::kPrimNeqInt:
     case Op::kPrimIdentityEq:
     case Op::kPrimIdentityNeq:
+    case Op::kPrimSize:
+    case Op::kPrimAt:
     case Op::kSendUnspeculated:
     case Op::kGuardClass:
     case Op::kInlineSend:
@@ -121,6 +123,8 @@ const char* name(Op op) {
     case Op::kPrimTagCheckInt:  return "tag_check_int";
     case Op::kPrimIdentityEq:   return "prim_identity_eq";
     case Op::kPrimIdentityNeq:  return "prim_identity_neq";
+    case Op::kPrimSize:         return "prim_size";
+    case Op::kPrimAt:           return "prim_at";
     case Op::kBlockCreate:      return "block_create";
     case Op::kBlockValue:       return "block_value";
     case Op::kPhi:              return "phi";

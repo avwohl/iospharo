@@ -109,6 +109,18 @@ enum class Op : uint8_t {
     kPrimIdentityNeq,     // operands: a, b; like kPrimIdentityEq but negated
                           // (trueOop if a != b).  Phase 4 inline of #~~.
 
+    // --- Indexable primitives (for B2 splice) ---
+    // Lower to runtime-helper calls via cc.invoke; helpers return 0
+    // on receiver-class miss / OOB / non-SmI index — SistaLowering
+    // emits a deopt-bail when the result is 0 (so the interpreter
+    // re-runs the original send, including basicAt:put: and
+    // bounds-error paths).
+    kPrimSize,            // operands: receiver                        -> OopSmallInt
+                          // Returns receiver basicSize as SmI Oop.
+    kPrimAt,              // operands: receiver, index                 -> Oop
+                          // Returns receiver basicAt: index, or
+                          // signals deopt via 0 result.
+
     // --- Blocks ---
     kBlockCreate,         // operands: compiled-block, outer-context, copied-values...
                           // Creates a FullBlockClosure.                    -> Oop

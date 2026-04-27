@@ -21,6 +21,11 @@ extern "C" uint64_t jit_rt_sista_block_create(void* state,
                                                 uint64_t litIndex,
                                                 uint64_t numCopied,
                                                 uint64_t flags);
+extern "C" uint64_t jit_rt_sista_basic_size(void* state,
+                                              uint64_t rcvBits);
+extern "C" uint64_t jit_rt_sista_basic_at(void* state,
+                                            uint64_t rcvBits,
+                                            uint64_t idxBits);
 
 namespace pharo {
 namespace sista {
@@ -771,6 +776,79 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.mov(exit, Imm(EXIT_SEND));
                 cc.str(exit, ptr(state, OFF_EXIT));
                 cc.ret();
+                break;
+            }
+            case Op::kPrimSize: {
+                // Calls jit_rt_sista_basic_size(state, rcv) via cc.invoke.
+                // Returns SmI Oop on success, 0 on guard miss.  Result
+                // 0 → caller emits a deopt-bail (interpreter re-runs
+                // the original send and signals out-of-class).
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp fnReg = cc.new_gp64("sizeHelper");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_basic_size));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    std::fprintf(stderr,
+                        "[SISTA-INVOKE-ERR] kPrimSize err=%u\n",
+                        (unsigned)invErr);
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, itRcv->second);
+                Gp dst = cc.new_gp64("size");
+                invokeNode->set_ret(0, dst);
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kPrimAt: {
+                // Calls jit_rt_sista_basic_at(state, rcv, idx) via
+                // cc.invoke.  Returns element Oop, or 0 on guard miss
+                // / OOB / non-SmI index — caller deopts on 0 result.
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itIdx = regFor.find(v.operands[1]);
+                if (itRcv == regFor.end() || itIdx == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp fnReg = cc.new_gp64("atHelper");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_basic_at));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    std::fprintf(stderr,
+                        "[SISTA-INVOKE-ERR] kPrimAt err=%u\n",
+                        (unsigned)invErr);
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, itRcv->second);
+                invokeNode->set_arg(2, itIdx->second);
+                Gp dst = cc.new_gp64("at");
+                invokeNode->set_ret(0, dst);
+                regFor[v.id] = dst;
                 break;
             }
             case Op::kBlockCreate: {
