@@ -1619,29 +1619,21 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     static bool noResume = g_debug.noResume;
     if (noResume) return false;
 
-    // 2026-04-27 — narrow workaround: refuse resume at bc=5 of
-    // *>>scanFor: only.  bc=5 is the resume point right after the
-    // `<80> send: hash` (Send0Base 0-arg send to literal[0]) at the
-    // start of every hash-table probe (Dictionary, MethodDictionary,
-    // IdentityDictionary, IdentitySet, WeakSet, …).  JIT resume there
-    // corrupts state — manifests in the bench harness as a
-    // SubscriptOutOfBounds cascade after fib(28).  getBcEntryState
-    // reports 0 for the offset (no register dependency), so the
-    // existing _N-stencil safety check doesn't fire.  Cause unknown;
-    // suspect codegen for Send0Base + immediate pushTemp doesn't
-    // restore the return value correctly on cold resume.
+    // 2026-04-27 — refuse resume when the interpreter still has live
+    // J2J chain entries (j2jPoolLiveCount() > 0).  Tracing showed
+    // scanFor: bc=5 entries with j2jPoolLive=32 right before the
+    // bench harness's SubscriptOutOfBounds cascade after fib(28).
+    // Stale chain window left by an earlier J2J chain that didn't
+    // fully unwind; resuming JIT into a method whose subsequent J2J
+    // sends would pop those stale entries thinking they're its own
+    // chain → state corruption.
     //
-    // This narrow check keeps the rest of scanFor: JIT-compiled
-    // (critical for dict bench).  Replaces the pre-existing
-    // alwaysExcluded entries for findElementOrNil:/scanFor: which
-    // killed all hash-table perf.
-    {
-        if (interp_ && bcOffset == 5) {
-            std::string sel = interp_->memory().selectorOf(compiledMethod);
-            if (sel == "scanFor:") {
-                return false;
-            }
-        }
+    // Side benefit: materialize count drops from ~99K to ~12 per
+    // bench run because most resume attempts under chain pressure
+    // are wasted (would bail+materialize anyway).  IC hit rate
+    // stays at 99.8%.
+    if (interp_ && interp_->j2jPoolLiveCount() > 0) {
+        return false;
     }
 
     // T2 resume DISABLED: MIR's register allocator spills values to the C
