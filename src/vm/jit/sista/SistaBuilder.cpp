@@ -334,6 +334,7 @@ public:
                             int blockLiftOk = -1;
                             int blockIRSize = -1;
                             int blockIRBlocks = -1;
+                            int blockSpliceSimple = -1;
                             if (memory_ != nullptr
                                 && g_calleeLiftDepth < 1
                                 && lastFullBlockLitIdx >= 0
@@ -361,6 +362,41 @@ public:
                                             (int)blockIR.values.size();
                                         blockIRBlocks =
                                             (int)blockIR.blocks.size();
+                                        // Splice-eligibility: block body
+                                        // is "simple" if every op is
+                                        // splice-friendly.  No remote
+                                        // temps, no nested kBlockCreate,
+                                        // no kSendUnspeculated, no NLR.
+                                        blockSpliceSimple = 1;
+                                        for (const auto& bv :
+                                             blockIR.values) {
+                                            switch (bv.op) {
+                                            case Op::kLoadReceiver:
+                                            case Op::kLoadTrueOop:
+                                            case Op::kLoadFalseOop:
+                                            case Op::kLoadTemp:
+                                            case Op::kLoadLiteral:
+                                            case Op::kConstantOop:
+                                            case Op::kPhi:
+                                            case Op::kReturn:
+                                            case Op::kPrimAddInt:
+                                            case Op::kPrimSubInt:
+                                            case Op::kPrimMulInt:
+                                            case Op::kPrimLtInt:
+                                            case Op::kPrimLeInt:
+                                            case Op::kPrimGtInt:
+                                            case Op::kPrimGeInt:
+                                            case Op::kPrimEqInt:
+                                            case Op::kPrimNeqInt:
+                                            case Op::kPrimIdentityEq:
+                                            case Op::kPrimIdentityNeq:
+                                                break;
+                                            default:
+                                                blockSpliceSimple = 0;
+                                                break;
+                                            }
+                                            if (!blockSpliceSimple) break;
+                                        }
                                     }
                                 }
                             }
@@ -372,14 +408,15 @@ public:
                                 "blockNumArgs=%d blockNumTemps=%d "
                                 "blockBcLen=%d icClassIdx=%u hasHint=%d "
                                 "blockLiftOk=%d blockIRValues=%d "
-                                "blockIRBlocks=%d\n",
+                                "blockIRBlocks=%d spliceSimple=%d\n",
                                 i, lastFullBlockLitIdx, numCopied,
                                 (int)recvOnStack, len_,
                                 (unsigned long long)blockOopBits,
                                 blockNumArgs, blockNumTemps,
                                 blockBytecodeLen, icClassIdx,
                                 hit ? 1 : 0, blockLiftOk,
-                                blockIRSize, blockIRBlocks);
+                                blockIRSize, blockIRBlocks,
+                                blockSpliceSimple);
                         }
                         lastFullBlockEnd = -1;
                     } else {
