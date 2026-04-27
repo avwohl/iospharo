@@ -1268,7 +1268,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++;
-            } else if (std::getenv("PHARO_NO_BLOCK1_SPEC") == nullptr &&
+            } else if (!g_debug.noBlock1Spec &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
                 // value: send to a FullBlockClosure receiver — specialize
@@ -1279,7 +1279,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++;
-            } else if (std::getenv("PHARO_MONOJ2J_SPEC") != nullptr &&
+            } else if (g_debug.monoJ2JSpec &&
                        (extra0 & (1ULL << 60)) /* J2J_ENTRY_BIT */ &&
                        (extra0 & (0x1FULL << 48)) == 0 /* no inline prim */ &&
                        (extra0 & (1ULL << 59)) == 0 /* not block value */) {

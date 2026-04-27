@@ -79,6 +79,11 @@ struct DebugSettings {
     int fibN = -1;                    // PHARO_FIB_N
     int b5Skip = 0;                   // PHARO_B5_SKIP
     int b5Max = 0;                    // PHARO_B5_MAX
+    int recompileAt = 500;            // PHARO_RECOMPILE_AT — recompile threshold
+
+    // --- IC specialization opt-outs (default-on; set to disable) ---
+    bool noBlock1Spec = false;        // PHARO_NO_BLOCK1_SPEC
+    bool monoJ2JSpec = false;         // PHARO_MONOJ2J_SPEC (opt-in)
 
     // --- String-valued.  nullptr if env var unset or empty. ---
     const char* benchType = nullptr;               // PHARO_BENCH (value)

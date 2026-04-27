@@ -115,6 +115,11 @@ DebugSettings::DebugSettings() {
     fibN             = envInt("PHARO_FIB_N",          -1);
     b5Skip           = envInt("PHARO_B5_SKIP",        0);
     b5Max            = envInt("PHARO_B5_MAX",         0);
+    recompileAt      = envInt("PHARO_RECOMPILE_AT",   500);
+
+    // --- IC specialization opt-outs ---
+    noBlock1Spec     = envPresent("PHARO_NO_BLOCK1_SPEC");
+    monoJ2JSpec      = envPresent("PHARO_MONOJ2J_SPEC");
 
     // --- Strings ---
     benchType              = envStr("PHARO_BENCH");
