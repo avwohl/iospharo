@@ -1502,6 +1502,37 @@ private:
                 case Op::kConstantOop:  inlineOp = Op::kConstantOop;  inlineTy = Type::kOop;
                                          inlineLit = v0.literal; break;
                 case Op::kLoadReceiver: inlineOp = Op::kLoadReceiver; inlineTy = Type::kOop; break;
+                case Op::kLoadTemp: {
+                    // 2-value parameter-passthrough: `^ arg` where the
+                    // method body is `pushTemp N; returnTop`.  Inlined
+                    // value is the caller's arg at index v0.literal.
+                    // Caller's stack at the send-site has rcvr + args
+                    // pushed; arg N is at offset (nArgs-1-N) below TOS,
+                    // i.e. stack_[size-nArgs+N].
+                    uint32_t tempIdx = static_cast<uint32_t>(v0.literal);
+                    if (tempIdx >= nArgs) return false;
+                    if (stack_.size() < nArgs + 1) return false;
+                    inlineOp = Op::kLoadReceiver; // unused — caller-arg substitution
+                    inlineTy = Type::kOop;
+                    // Special handling: the inlined value IS one of the
+                    // caller's stack values.  Skip the normal newValue()
+                    // path and re-use the existing arg id directly.
+                    uint32_t argId = stack_[stack_.size() - nArgs + tempIdx];
+                    // Emit just the guard; result is argId.
+                    std::vector<uint32_t> guardOps;
+                    guardOps.reserve(stack_.size() + 1);
+                    guardOps.push_back(recvId);
+                    for (uint32_t s : stack_) guardOps.push_back(s);
+                    uint64_t guardLit = (hit->classOop & 0x3FFFFFu)
+                                      | (static_cast<uint64_t>(bcOffset) << 32);
+                    out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                                  std::move(guardOps), guardLit);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+                    stack_.push_back(argId);
+                    g_inlinesEmitted++;
+                    g_totalHintsConsumed++;
+                    return true;
+                }
                 default: return false;
                 }
             }
