@@ -2718,7 +2718,7 @@ extern "C" void stencil_primAt(JITState* s) {
         _HOLE_RT_RETURN(s);
         return;
     }
-    if (fmt == 3 || fmt == 4 || fmt == 5) {
+    if (fmt == 3 || fmt == 4 || fmt == 5 || fmt == 9) {
         // IndexableWithFixed / Weak — need class lookup for
         // fixedFieldCount.  Bail to runtime helper which mirrors
         // Interpreter::primitiveAt's pointer-object branch.

@@ -707,6 +707,27 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
                                   uint64_t i, uint64_t* out) {
     if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
     auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint32_t fmt = (uint32_t)rh->format();
+    size_t slotCount = rh->slotCount();
+
+    // fmt 9: Indexable64 (DoubleWordArray, BoxedFloat64).  Each slot
+    // holds one 64-bit word.  If the word fits in a SmallInteger
+    // return inline; otherwise this helper bails (caller falls through
+    // to bytecode body which retries via interpreter).
+    if (fmt == 9) {
+        if (i < 1 || i > slotCount) return 0;
+        if (!s || !s->memory) return 0;
+        pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+        uint64_t bits = mem->fetchWord64((size_t)(i - 1),
+            pharo::Oop::fromRawBits(rcvBits));
+        if (bits <= (uint64_t)pharo::Oop::smallIntegerMax()) {
+            *out = ((uint64_t)bits << 3) | 1;  // SmI tag
+            return 1;
+        }
+        return 0;  // > SmI max — bail (LargePositiveInteger alloc not safe here)
+    }
+
+    // fmt 3/4/5: IndexableWithFixed / Weak.
     uint32_t classIdx = rh->classIndex();
     if (!s || !s->memory) return 0;
     pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
@@ -717,7 +738,6 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     pharo::Oop instSpec = classHdr->slotAt(2);
     if (!instSpec.isSmallInteger()) return 0;
     size_t fixedFields = (size_t)(instSpec.asSmallInteger() & 0xFFFF);
-    size_t slotCount = rh->slotCount();
     if (fixedFields > slotCount) return 0;
     size_t indexableSize = slotCount - fixedFields;
     if (i < 1 || i > indexableSize) return 0;
