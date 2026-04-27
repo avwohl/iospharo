@@ -439,8 +439,64 @@ private:
                 return LiftResult::kOk;
             };
 
-            if (op == jit::SistaV1::PushFullBlock
-             || op == jit::SistaV1::PushClosure
+            // PushFullBlock special-case: emit kBlockCreate so that
+            // future passes (B2 — Array do: with literal block) can
+            // recognize the op shape and choose to inline instead of
+            // bailing.  Behavior today is identical to bailToInterpreter
+            // — lowering of kBlockCreate emits the same bail sequence.
+            // The op arguments encode all info the runtime needs to
+            // build the FullBlockClosure.
+            //
+            //   bytes: [PushFullBlock(0xF9), litIndexLo, flags]
+            //   litIndex = (extA << 8) | litIndexLo  (extA already 0
+            //              if no prior ExtendA)
+            //   numCopied        = flags & 0x3F
+            //   receiverOnStack  = (flags >> 7) & 1
+            //   ignoreOuterCtx   = (flags >> 6) & 1
+            //
+            // Operands: full IR stack (so the bail snapshot is
+            // GC-walkable on the interp side, just like kSendUnspeculated).
+            // The actual block-create inputs (numCopied + maybe-receiver)
+            // are at the top of stack already.
+            // Literal: bits 0-15 = litIndex, 16-23 = flags,
+            //          24-31 = stackSize, 32+ = bcOffset (for bail).
+            if (op == jit::SistaV1::PushFullBlock) {
+                if (stack_.size() > 255) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                if (ip + 2 >= len_) {
+                    if (stack_.empty()) return LiftResult::kOk;
+                    return bailToInterpreter(3);
+                }
+                uint32_t litIndex =
+                    (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
+                uint32_t flags = (uint32_t)bc_[ip + 2];
+                uint32_t numCopied = flags & 0x3Fu;
+                bool receiverOnStack = ((flags >> 7) & 1u) != 0;
+                uint32_t needed = numCopied + (receiverOnStack ? 1u : 0u);
+                if (stack_.size() < needed) {
+                    return bailToInterpreter(3);
+                }
+                uint32_t stackSize = (uint32_t)stack_.size();
+                std::vector<uint32_t> ops(stack_.begin(), stack_.end());
+                stack_.clear();
+                uint64_t bailOffset = (uint64_t)currentInstrStart_;
+                uint64_t lit = ((uint64_t)litIndex      &  0xFFFFu)
+                             | (((uint64_t)flags        &  0xFFu)   << 16)
+                             | (((uint64_t)stackSize    &  0xFFu)   << 24)
+                             |  (bailOffset                          << 32);
+                uint32_t vid = out_.newValue(currentBlock_,
+                               Op::kBlockCreate, Type::kOop,
+                               std::move(ops), lit);
+                recordFramepoint(vid, static_cast<uint32_t>(bailOffset));
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 3;
+                continue;
+            }
+
+            if (op == jit::SistaV1::PushClosure
              || op == jit::SistaV1::PushArray
              || op == jit::SistaV1::PushThisContext) {
                 return bailToInterpreter(instructionSize(op));

@@ -754,6 +754,63 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.ret();
                 break;
             }
+            case Op::kBlockCreate: {
+                // B0 scaffolding: today we bail to interpreter at the
+                // PushFullBlock bytecode and let it handle the closure
+                // create + run subsequent bytecodes.  Same runtime
+                // effect as the previous bailToInterpreter call.
+                //
+                // Future B2 (Array do: with literal block) will hook
+                // into the IR at the SistaBuilder layer (recognizing
+                // kBlockCreate immediately followed by a `do:` send
+                // with Array IC) and replace the pair with a counted
+                // at: loop + spliced block body — at which point
+                // kBlockCreate is consumed at lift time and never
+                // reaches lowering.
+                //
+                // Operand layout matches the kSendUnspeculated bail:
+                // operands are the full IR stack snapshot, lit bits
+                // 32+ hold the bail bcOffset.
+                static bool noSends = getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
+                if (noSends) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                uint64_t bcOffset = v.literal >> 32;
+                Gp sp = cc.new_gp64("sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
+                    auto it = regFor.find(v.operands[opIdx]);
+                    if (it == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(it->second,
+                           ptr(sp, static_cast<int>(opIdx) * 8));
+                }
+                cc.add(sp, sp, Imm(static_cast<int>(v.operands.size()) * 8));
+                cc.str(sp, ptr(state, OFF_SP));
+                Gp ipReg = cc.new_gp64("ip");
+                if (bytecodeBase) {
+                    uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase)
+                                   + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
+                cc.str(ipReg, ptr(state, OFF_IP));
+                Gp argCountReg = cc.new_gp32("argc");
+                cc.mov(argCountReg, Imm(0));
+                cc.str(argCountReg, ptr(state, OFF_SENDARGCOUNT));
+                Gp zero64 = cc.new_gp64("zero64");
+                cc.mov(zero64, Imm(0));
+                cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                Gp exit = cc.new_gp32("exit");
+                cc.mov(exit, Imm(EXIT_SEND));
+                cc.str(exit, ptr(state, OFF_EXIT));
+                cc.ret();
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared
