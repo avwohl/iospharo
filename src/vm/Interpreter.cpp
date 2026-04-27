@@ -6260,6 +6260,128 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 void Interpreter::sendSelector(Oop selector, int argCount) {
     Oop rcvr = stackValue(argCount);
 
+    // PHARO_DETECT_ERRORS=1: catch the moment any "this is an error
+    // being signalled" selector is sent, dump the JIT method + IP +
+    // receiver + recent frame chain.  Pinpoints the JIT codegen
+    // site that produced the bad value or out-of-bounds index.
+    {
+        static bool detect = std::getenv("PHARO_DETECT_ERRORS") != nullptr;
+        static int hits = 0;
+        static int hitLimit = []{
+            const char* v = std::getenv("PHARO_DETECT_ERRORS_LIMIT");
+            return v ? atoi(v) : 30;
+        }();
+        if (detect && hits < hitLimit && selector.isObject() &&
+            selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() < 64) {
+                const char* sb = (const char*)sh->bytes();
+                size_t sz = sh->byteSize();
+                bool errorSel =
+                    (sz == 21 && memcmp(sb, "errorImproperStore:in:", 21) == 0) ||
+                    (sz == 19 && memcmp(sb, "errorSubscriptBounds:", 19) == 0) ||
+                    (sz == 6  && memcmp(sb, "error:", 6) == 0) ||
+                    (sz == 30 && memcmp(sb,
+                        "signalFor:lowerBound:upperBound:", 30) == 0) ||
+                    (sz == 33 && memcmp(sb,
+                        "signalFor:lowerBound:upperBound:in:", 33) == 0) ||
+                    (sz == 17 && memcmp(sb, "signalForException:", 17) == 0);
+                // signal/signal: are also Semaphore methods.  Only
+                // accept them when the receiver class walks up to
+                // Exception via the superclass chain.
+                bool signalSel =
+                    (sz == 6 && memcmp(sb, "signal", 6) == 0) ||
+                    (sz == 7 && memcmp(sb, "signal:", 7) == 0);
+                bool match = errorSel;
+                if (signalSel) {
+                    Oop rcvrClass = memory_.classOf(rcvr);
+                    Oop walker = rcvrClass;
+                    int safety = 30;
+                    while (walker.isObject() && safety-- > 0) {
+                        std::string cname = memory_.classNameOf(walker);
+                        if (cname == "Exception" || cname == "Exception class" ||
+                            cname == "Error" || cname == "Error class") {
+                            match = true;
+                            break;
+                        }
+                        if (cname == "Object" || cname == "ProtoObject" ||
+                            cname == "Behavior" || cname == "nil") break;
+                        // Walk up: superclass slot is at index 0 typically
+                        ObjectHeader* wh = walker.asObjectPtr();
+                        if (!wh || wh->slotCount() < 1) break;
+                        walker = wh->slots()[0];
+                    }
+                }
+                if (match) {
+                    hits++;
+                    fprintf(stderr,
+                        "\n=== [ERROR-DETECT #%d] sel='%.*s' (argc=%d) ===\n",
+                        hits, (int)sz, sb, argCount);
+                    fprintf(stderr,
+                        "  receiver: 0x%llx class=%s\n",
+                        (unsigned long long)rcvr.rawBits(),
+                        memory_.classNameOf(memory_.classOf(rcvr)).c_str());
+                    if (argCount >= 1) {
+                        Oop arg1 = stackValue(argCount - 1);
+                        fprintf(stderr,
+                            "  arg1: 0x%llx class=%s\n",
+                            (unsigned long long)arg1.rawBits(),
+                            memory_.classNameOf(memory_.classOf(arg1)).c_str());
+                        if (arg1.isObject() && arg1.rawBits() > 0x10000) {
+                            ObjectHeader* ah = arg1.asObjectPtr();
+                            if (ah->isBytesObject() && ah->byteSize() < 256) {
+                                fprintf(stderr,
+                                    "  arg1 text: '%.*s'\n",
+                                    (int)ah->byteSize(), (const char*)ah->bytes());
+                            }
+                        }
+                    }
+                    // Calling method + IP
+                    if (method_.isObject() && method_.rawBits() > 0x10000) {
+                        long long bcOff = -1;
+                        if (instructionPointer_) {
+                            ObjectHeader* mh = method_.asObjectPtr();
+                            Oop hdr = mh->slots()[0];
+                            int nLit = hdr.isSmallInteger()
+                                ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            const uint8_t* bcBase =
+                                mh->bytes() + (1 + nLit) * 8;
+                            bcOff = instructionPointer_ - bcBase;
+                        }
+                        std::string mc = classNameOfMethod(method_);
+                        std::string ms = memory_.selectorOf(method_);
+                        bool isJIT = jitRuntime_.methodMap().lookup(
+                            method_.rawBits()) != nullptr;
+                        fprintf(stderr,
+                            "  caller: %s>>%s bcOff=%lld JIT=%s\n",
+                            mc.c_str(), ms.c_str(), bcOff,
+                            isJIT ? "yes" : "no");
+                    }
+                    // Recent frames (up to 10)
+                    fprintf(stderr, "  stack frames (top → bottom):\n");
+                    int dumpedFrames = 0;
+                    for (size_t i = frameDepth_; i > 0 && dumpedFrames < 10; i--) {
+                        SavedFrame& f = savedFrames_[i - 1];
+                        if (f.savedMethod.isObject() &&
+                            f.savedMethod.rawBits() > 0x10000) {
+                            std::string fmc = classNameOfMethod(f.savedMethod);
+                            std::string fms =
+                                memory_.selectorOf(f.savedMethod);
+                            bool fJIT = jitRuntime_.methodMap().lookup(
+                                f.savedMethod.rawBits()) != nullptr;
+                            fprintf(stderr,
+                                "    [%d] %s>>%s JIT=%s\n",
+                                (int)(i - 1), fmc.c_str(), fms.c_str(),
+                                fJIT ? "yes" : "no");
+                            dumpedFrames++;
+                        }
+                    }
+                    fprintf(stderr, "=== end ERROR-DETECT #%d ===\n\n", hits);
+                }
+            }
+        }
+    }
+
     // Selector sanity check: must be a bytes object (Symbol/ByteString)
     if (__builtin_expect(selector.isObject() && selector.rawBits() > 0x10000, 1)) {
         ObjectHeader* selHdr = selector.asObjectPtr();
