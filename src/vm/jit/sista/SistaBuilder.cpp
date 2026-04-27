@@ -186,6 +186,95 @@ public:
     }
 
     LiftResult run(uint32_t* failedAtBytecode) {
+        // --- Pre-pass: bytecode-level pattern detection -----------------
+        //
+        // Scans the method's bytecode for `PushFullBlock + SpecialSend(do:)`.
+        // The IR-level detector (detectDoBlockPattern) misses this on
+        // methods like `runSum` because Sista terminates each lifted
+        // block at the first kSendUnspeculated — methods with earlier
+        // sends never reach the do: site at lift time.  The bytecode
+        // scan finds the pattern regardless of basic-block structure.
+        //
+        // Today: detection only (logs the pattern + IC hint when found).
+        // Future B2 splice work: when matched + IC class is Array, emit
+        // a specialized counted at: loop with the lifted block body
+        // spliced inline, in place of the entire (or post-setup
+        // portion of) method's IR.
+        {
+            static const bool detect =
+                std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
+            if (detect) {
+                static int patternCount = 0;
+                // Find sequences `PushFullBlock(0xF9 _ _) + SpecialSend(do:=0x7B)`.
+                // Other selectors are ignored — `value:`/`value`/etc. ARE
+                // also bench-relevant but do: is the canonical "iterate
+                // a collection" selector and the highest-impact target.
+                size_t i = 0;
+                int lastFullBlockEnd = -1;
+                int lastFullBlockLitIdx = -1;
+                int lastFullBlockFlags = -1;
+                int extA = 0;
+                int extB = 0;
+                while (i < len_) {
+                    uint8_t op = bc_[i];
+                    if (op == jit::SistaV1::ExtendA) {
+                        if (i + 1 >= len_) break;
+                        extA = bc_[i + 1];
+                        i += 2;
+                        continue;
+                    }
+                    if (op == jit::SistaV1::ExtendB) {
+                        if (i + 1 >= len_) break;
+                        extB = (int8_t)bc_[i + 1];
+                        i += 2;
+                        continue;
+                    }
+                    if (op == jit::SistaV1::PushFullBlock) {
+                        if (i + 2 >= len_) break;
+                        lastFullBlockLitIdx = (extA << 8) | bc_[i + 1];
+                        lastFullBlockFlags = bc_[i + 2];
+                        lastFullBlockEnd = (int)(i + 3);
+                        extA = 0;
+                        extB = 0;
+                        i += 3;
+                        continue;
+                    }
+                    // Reset block-tracking on any non-Push that intervenes
+                    // before the send — but only consider the immediate
+                    // [PushFullBlock; specialSend do:] adjacency for now.
+                    if (op == 0x7B  // SpecialSend do:
+                        && lastFullBlockEnd == (int)i) {
+                        if (patternCount++ < 16) {
+                            int numCopied = lastFullBlockFlags & 0x3F;
+                            bool recvOnStack = ((lastFullBlockFlags >> 7) & 1) != 0;
+                            std::fprintf(stderr,
+                                "[SISTA-DO-PATTERN] doBcOffset=%zu "
+                                "blockLit=%d numCopied=%d rcvOnStack=%d "
+                                "methodLen=%zu\n",
+                                i, lastFullBlockLitIdx, numCopied,
+                                (int)recvOnStack, len_);
+                        }
+                        lastFullBlockEnd = -1;
+                    } else {
+                        // Adjacency lost — block was consumed by some
+                        // other op (a store, push, etc.).  Reset.
+                        if (op != jit::SistaV1::ExtendA
+                            && op != jit::SistaV1::ExtendB) {
+                            lastFullBlockEnd = -1;
+                        }
+                    }
+                    extA = 0;
+                    extB = 0;
+                    // Skip the bytecode by its length.  Conservative:
+                    // 1 for normal, 2 for ext2byte, 3 for the f8-fd
+                    // range.  Out-of-range escape opcodes are 1-byte.
+                    if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                    else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                    else i++;
+                }
+            }
+        }
+
         // --- Pass 1: identify block boundaries --------------------------
         //
         // A block starts at:
