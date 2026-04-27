@@ -1093,6 +1093,16 @@ extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t numCopied,
                                                 uint64_t flags) {
     if (!state || !state->interp) return 0;
+    static const bool dbg =
+        std::getenv("PHARO_SISTA_BLOCK_HELPER_TRACE") != nullptr;
+    static size_t calls = 0;
+    calls++;
+    if (dbg && (calls < 8 || (calls & 0xFFF) == 0)) {
+        std::fprintf(stderr,
+            "[SISTA-BLOCK-HELPER] calls=%zu lit=%llu n=%llu fl=0x%llx\n",
+            calls, (unsigned long long)litIndex,
+            (unsigned long long)numCopied, (unsigned long long)flags);
+    }
     return state->interp->jitSistaCreateFullBlock(
         state, (int)litIndex, (int)numCopied, (int)flags);
 }
