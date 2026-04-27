@@ -761,6 +761,36 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     return 1;
 }
 
+// Pointer-object basicAt:put: for fmt 3/4/5.  Returns 1 on success,
+// 0 on OoB / bad receiver / immutable.
+extern "C" int jit_rt_primatput_ptr(JITState* s, uint64_t rcvBits,
+                                     uint64_t i, uint64_t valBits) {
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
+    if (header & (1ULL << 23)) return 0;  // immutable
+
+    if (!s || !s->memory) return 0;
+    pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+    uint32_t classIdx = rh->classIndex();
+    pharo::Oop classOop = mem->classAtIndex(classIdx);
+    if (!classOop.isObject()) return 0;
+    auto* classHdr = classOop.asObjectPtr();
+    if (classHdr->slotCount() < 3) return 0;
+    pharo::Oop instSpec = classHdr->slotAt(2);
+    if (!instSpec.isSmallInteger()) return 0;
+    size_t fixedFields = (size_t)(instSpec.asSmallInteger() & 0xFFFF);
+    size_t slotCount = rh->slotCount();
+    if (fixedFields > slotCount) return 0;
+    size_t indexableSize = slotCount - fixedFields;
+    if (i < 1 || i > indexableSize) return 0;
+    size_t actualSlot = fixedFields + (i - 1);
+    rh->slots()[actualSlot] = pharo::Oop::fromRawBits(valBits);
+    // Note: write barrier for old-to-young pointer might be needed.
+    // For now, defer to GC's full scan.  TODO: emit remember bit.
+    return 1;
+}
+
 // Out-of-line array primitive handler for IC hit path.
 // Called from sendJ2J stencil when primKind >= 14 (at:/at:put:/size).
 // info = (primKind << 8) | nArgs
@@ -1174,6 +1204,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
     helpers.j2jTrace = reinterpret_cast<void*>(&jit_rt_j2j_trace);
     helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
+    helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)

@@ -1217,10 +1217,15 @@ extern "C" int (*_HOLE_RT_IC_MISS)(
     int nArgs, int bcOffset,
     uint64_t* out_extra, uint64_t* out_methodBits);
 
-// Pointer-object basicAt: helper for fmt 3/4/5.  Returns 1 + writes
+// Pointer-object basicAt: helper for fmt 3/4/5/9.  Returns 1 + writes
 // result oop to *out on success, 0 on OoB / bad receiver.
 extern "C" int (*_HOLE_RT_PRIMAT_PTR)(JITState* s, uint64_t rcvBits,
                                        uint64_t i, uint64_t* out);
+
+// Pointer-object basicAt:put: helper for fmt 3/4/5.  Returns 1 on
+// success, 0 on OoB / bad receiver / immutable.
+extern "C" int (*_HOLE_RT_PRIMATPUT_PTR)(JITState* s, uint64_t rcvBits,
+                                          uint64_t i, uint64_t valBits);
 
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
@@ -2787,6 +2792,18 @@ extern "C" void stencil_primAtPut(JITState* s) {
         s->exitReason = EXIT_RETURN;
         _HOLE_RT_RETURN(s);
         return;
+    }
+    if (fmt == 3 || fmt == 4 || fmt == 5) {
+        // IndexableWithFixed / Weak — bail to runtime helper which
+        // mirrors Interpreter::primitiveAtPut's pointer-object branch.
+        // See _HOLE_RT_PRIMATPUT_PTR for the format-specific logic.
+        if (_HOLE_RT_PRIMATPUT_PTR(s, rcvr.bits, (uint64_t)i, val.bits)) {
+            J2J_INLINE_RETURN_NO_TRACE(s, val);
+            s->returnValue = val;
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
     }
     // Unsupported format — fall through to bytecodes
     _HOLE_CONTINUE(s); return;
