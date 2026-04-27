@@ -74,6 +74,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
 
+    // PHARO_SISTA_ASMJIT_LOG=1 — dump asmjit IR + emitted machine
+    // code to stderr.  Useful when diagnosing emit-time failures
+    // (e.g., cc.invoke not generating a `bl` instruction).
+    static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
+        if (getenv("PHARO_SISTA_ASMJIT_LOG"))
+            return new asmjit::FileLogger(stderr);
+        return nullptr;
+    }();
+    if (asmjitLogger) {
+        code.set_logger(asmjitLogger);
+    }
+
     // PHARO_SISTA_NO_LOWER_BODY=1 — bisect: emit a function that
     // immediately returns (just ret), without any IR-driven body.
     // If this still crashes the run, the bug is in asmjit's
@@ -824,14 +836,24 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(argNumCopied,
                            Imm((uint64_t)(flags & 0x3Fu)));
 
+                    // ARM64 `blr` (branch-with-link, register form) needs
+                    // the target in a register — passing an Imm makes
+                    // asmjit silently emit nothing for the call.  Load
+                    // the helper address into a Gp first.
+                    Gp fnReg = cc.new_gp64("blockHelper");
+                    cc.mov(fnReg,
+                           Imm((uint64_t)&jit_rt_sista_block_create));
                     asmjit::InvokeNode* invokeNode = nullptr;
-                    cc.invoke(asmjit::Out(invokeNode),
-                              asmjit::imm(
-                                  (void*)&jit_rt_sista_block_create),
-                              asmjit::FuncSignature::build<
-                                  uint64_t, void*, uint64_t,
-                                  uint64_t, uint64_t>());
-                    if (!invokeNode) {
+                    asmjit::Error invErr = cc.invoke(
+                        asmjit::Out(invokeNode), fnReg,
+                        asmjit::FuncSignature::build<
+                            uint64_t, void*, uint64_t,
+                            uint64_t, uint64_t>());
+                    if (invErr != asmjit::kErrorOk || !invokeNode) {
+                        std::fprintf(stderr,
+                            "[SISTA-INVOKE-ERR] cc.invoke err=%u "
+                            "node=%p\n", (unsigned)invErr,
+                            (void*)invokeNode);
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
                     }
