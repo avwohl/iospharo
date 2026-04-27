@@ -83,6 +83,9 @@ struct DebugSettings {
 
     // --- IC specialization opt-outs (default-on; set to disable) ---
     bool noBlock1Spec = false;        // PHARO_NO_BLOCK1_SPEC
+    // MONOJ2J reverted to opt-in 2026-04-26 — crashes on long fib bench
+    // (SIGSEGV in JIT method with numIC=0).  Suspected memory corruption
+    // path; needs investigation before re-enabling.
     bool monoJ2JSpec = false;         // PHARO_MONOJ2J_SPEC (opt-in)
 
     // --- String-valued.  nullptr if env var unset or empty. ---

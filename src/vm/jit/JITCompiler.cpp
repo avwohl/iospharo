@@ -1287,7 +1287,9 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // the 6-way IC probe in sendJ2J with a single class
                 // check + direct J2J save+tail-call.  Uses the existing
                 // IC table for entry address — same operand2Ptr layout
-                // as sendJ2J.
+                // as sendJ2J.  OPT-IN (PHARO_MONOJ2J_SPEC=1) — default-on
+                // attempt 2026-04-26 caused SIGSEGV on long fib bench;
+                // suspected stale icData[1] (method oop) after GC.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMonoJ2J);
                 // Keep operand2Ptr unchanged (already points at IC base)
                 specialized++;
@@ -1861,10 +1863,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     uint32_t bcToCodeTableOffset = (literalPoolOffset + literalPoolSize + 3) & ~3u;
     uint32_t bcToCodeTableSize = (static_cast<uint32_t>(bcLen) + 1) * sizeof(uint32_t);
 
-    // Count send sites for inline cache data allocation
+    // Count send sites for inline cache data allocation.
+    // sendInlineMonoJ2J also reads icData[0/1/2] from operand2Ptr, so it
+    // needs an IC slot allocated and operand2Ptr populated below.
     uint16_t numSendSites = 0;
     for (auto& bc : decoded) {
-        if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendJ2J)
+        auto sid = static_cast<StencilID>(bc.stencilIdx);
+        if (sid == StencilID::stencil_sendJ2J ||
+            sid == StencilID::stencil_sendInlineMonoJ2J)
             numSendSites++;
     }
 
@@ -2094,7 +2100,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         uint16_t sendIdx = 0;
         for (auto& bc : decoded) {
-            if (static_cast<StencilID>(bc.stencilIdx) == StencilID::stencil_sendJ2J) {
+            auto sid = static_cast<StencilID>(bc.stencilIdx);
+            if (sid == StencilID::stencil_sendJ2J ||
+                sid == StencilID::stencil_sendInlineMonoJ2J) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
                 siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));
