@@ -1481,8 +1481,10 @@ private:
                 // and continue lifting past the send.  Helper invokes
                 // the send synchronously; result is pushed onto stack_.
                 // On NLR, helper returns 0 → lowering deopts.
-                static const bool helperSends =
-                    std::getenv("PHARO_SISTA_HELPER_SENDS") != nullptr;
+                static const bool helperSends = []() {
+                    const char* v = std::getenv("PHARO_SISTA_HELPER_SENDS");
+                    return v && v[0] == '1';
+                }();
                 if (helperSends) {
                     // Pop only rcvr + args (the send consumes them).
                     // Other live IR-stack values stay in their

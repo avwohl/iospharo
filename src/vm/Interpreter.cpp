@@ -9894,62 +9894,24 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     // stackValue() / popN() see the right values.
     stackPointer_ = state->sp;
 
-    // Run the send.  sendSelector resolves + activates the callee.
-    // For a primitive that succeeds synchronously, it pops args and
-    // pushes result without touching frameDepth_.  For a normal
-    // method, it pushes a frame.
+    // Drive step() to run the activated method to completion.
+    // inSyncSend_=true gates step()'s periodic check so process
+    // switches don't reset frameDepth_ underneath us.
+    bool savedInSync = inSyncSend_;
+    inSyncSend_ = true;
+
     Oop sel = Oop::fromRawBits(selBits);
-    // Capture entry process so we can detect when a process switch
-    // brings us back here.  The "send done" condition is:
-    //   activeProcess == entryProcess AND frameDepth_ <= startDepth.
-    // While other processes are running (scheduler switched away),
-    // we just continue stepping — they'll yield eventually and we'll
-    // resume.
-    // Entry-process tracking: we ONLY break out when our process is
-    // active AND frameDepth has returned.  Don't set inSyncSend_ —
-    // that suppresses the scheduler and starves Smalltalk Delay/timer
-    // processes (DELAY-DEATH).  Other processes are free to run while
-    // we're in here.
-    Oop entryProcess = getActiveProcess();
     sendSelector(sel, (int)nArgs);
 
-    // Drive the interp loop until the activated frame returns.
-    // Synchronous-primitive case: frameDepth_ is already back to
-    // startFrameDepth — loop is a no-op.
-    //
-    // CAVEATS (see docs/sista-plan-2026-04-27.md B-1 design notes):
-    //
-    //   - NLR: a block in the callee may `^` past us, popping
-    //     frameDepth_ BELOW startFrameDepth.  We detect that as
-    //     `frameDepth_ < startFrameDepth` and return 0; caller
-    //     deopts to interpreter at the source bcOffset (the
-    //     interpreter's NLR handling continues correctly).
-    //
-    //   - process switch / GC during step() are handled by step()
-    //     itself.  After GC, our local Oop saves (savedMethod,
-    //     savedReceiver, savedClosure, savedHome) are correct
-    //     because compaction updates oop bits in-place; pointers
-    //     to slots (savedFP, savedSP, savedIP) reference stack
-    //     memory which doesn't move.
-    //
-    //   - exceptions: handled like NLR (also frame-popping via
-    //     `^` from a handler block).
-    // Keep stepping until either:
-    //   - VM stopped (return error)
-    //   - The original process is active AND its frameDepth has
-    //     returned to the start (or below — NLR detection happens
-    //     after the loop)
-    // While other processes run, we just keep stepping — they'll
-    // yield and we'll come back.
-    while (running_) {
-        Oop active = getActiveProcess();
-        if (active.rawBits() == entryProcess.rawBits()) {
-            if (frameDepth_ <= startFrameDepth) {
-                break;  // our process returned; exit loop
-            }
-        }
+    // sendSelector either:
+    //   - completed synchronously (primitive): frameDepth_ unchanged,
+    //     result on stack.
+    //   - pushed a frame (normal method): drive step() until that
+    //     frame returns (frameDepth_ back to startFrameDepth) OR
+    //     frame popped past us (NLR) OR VM stops.
+    while (running_ && frameDepth_ > startFrameDepth) {
         if (!step()) {
-            // VM stopped (running_=false set somewhere).
+            inSyncSend_ = savedInSync;
             stackPointer_ = savedSP;
             instructionPointer_ = savedIP;
             method_ = savedMethod;
@@ -9958,13 +9920,16 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
             argCount_ = savedArgCount;
             closure_ = savedClosure;
             homeMethod_ = savedHome;
+            frameDepth_ = startFrameDepth;
             return 0;
         }
     }
 
-    // NLR detection: did the called method (or a block within)
-    // return PAST our frame?
+    inSyncSend_ = savedInSync;
+
     if (frameDepth_ < startFrameDepth) {
+        // NLR through us — restore and bail.  Source bcOffset deopt
+        // by the lowering will let the interp pick up NLR handling.
         state->sp = stackPointer_;
         stackPointer_ = savedSP;
         instructionPointer_ = savedIP;
@@ -9974,10 +9939,12 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
         argCount_ = savedArgCount;
         closure_ = savedClosure;
         homeMethod_ = savedHome;
+        frameDepth_ = startFrameDepth;
         return 0;
     }
 
-    // Normal return: result on top of interp stack.
+    // Normal return: primitive completed.  Result on top of interp
+    // stack.
     Oop result = stackTop();
     popN(1);
     state->sp = stackPointer_;

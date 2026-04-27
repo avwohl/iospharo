@@ -1054,6 +1054,15 @@ private:
     // 0) when depth would exceed the cap.
     int sistaHelperDepth_ = 0;
 
+    // B-1: set true while driving step() inside jitSistaCallSend so
+    // step()'s periodic check skips process-switch-triggering work
+    // (timer, signals, preemption).  Without this, a process switch
+    // mid-helper resets frameDepth_ to 0 and invalidates our saved
+    // pointers.  Cost: Smalltalk Delays don't fire during the
+    // synchronous-send drive.  Acceptable because the helper is
+    // bounded to single-method callees.
+    bool inSyncSend_ = false;
+
     // IC statistics
     size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)
     size_t jitICMisses_ = 0;      // ExitSend exits from sendMono (IC miss or empty)
