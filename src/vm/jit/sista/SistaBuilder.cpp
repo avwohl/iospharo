@@ -459,13 +459,22 @@ public:
                 && bc_[0] == jit::SistaV1::PushReceiver
                 && bc_[1] == 0x72  // SpecialSend size
                 && bc_[2] == jit::SistaV1::ReturnTop) {
-                // Emit unconditionally — no IC required.  kPrimSize's
-                // helper handles all supported indexable formats and
-                // returns 0 on receiver-class miss.  Lowering will
-                // need to add a result==0 deopt check (TODO); for now
-                // the IR emits without the check, so a non-indexable
-                // receiver returns 0 = SmI 0 (incorrect but flagged
-                // for the next chunk).
+                // IC-guided gate: only emit when the IC at the size
+                // send has observed at least one class.  Without an
+                // IC hint, the receiver could be anything — speculating
+                // and paying per-call deopt costs hurts more than the
+                // bail (verified: sort regressed 231→433ms when this
+                // gate was off).  When present, the IC class doesn't
+                // need to match exactly; helper does its own check.
+                // The hint just confirms "this site has actually run
+                // and is hot enough to bother optimizing."
+                bool hasIC = false;
+                if (inlineHints_) {
+                    for (const auto& h : *inlineHints_) {
+                        if (h.bcOffset == 1) { hasIC = true; break; }
+                    }
+                }
+                if (!hasIC) goto sizePeepholeSkip;
                 out_.blocks.clear();
                 out_.values.clear();
                 out_.framepoints.clear();
@@ -487,10 +496,11 @@ public:
                 static int peepholeCount = 0;
                 if (peepholeCount++ < 8) {
                     std::fprintf(stderr,
-                        "[SISTA-SIZE-PEEPHOLE] matched (no IC)\n");
+                        "[SISTA-SIZE-PEEPHOLE] matched (IC-guided)\n");
                 }
                 return LiftResult::kOk;
             }
+            sizePeepholeSkip:;
         }
 
         // --- Pass 1: identify block boundaries --------------------------
