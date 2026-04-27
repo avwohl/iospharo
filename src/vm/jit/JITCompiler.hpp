@@ -94,6 +94,7 @@ public:
         void* newPrim;          // jit_rt_new_prim (out-of-line new/new:)
         void* icMiss;           // jit_rt_ic_miss (out-of-line megacache probe + exit-state)
         void* j2jTrace;         // jit_rt_j2j_trace (B5 diagnostic — logs J2J save/restore)
+        void* primAtPtr;        // jit_rt_primat_ptr (basicAt: for fmt 3/4/5)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }

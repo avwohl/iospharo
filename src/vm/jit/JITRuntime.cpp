@@ -96,18 +96,33 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                                  uint64_t extra1, uint64_t extra2) {
     // event=99: stencil_primAt OOB fall-through (Array/Byte path).
     // event=100: stencil_primAt unsupported-format fall-through.
-    // extra1 = 1-based index, extra2 = slotCount or fmt.
+    //   extra2 layout for event 99: limit/byteSize.
+    //   extra2 layout for event 100: (fmt << 32) | classIdx.
     if (event == 99 || event == 100) {
         static bool primAtOob = std::getenv("PHARO_PRIMAT_OOB") != nullptr;
         if (primAtOob) {
             static int oobCount = 0;
             if (++oobCount <= 30) {
-                fprintf(stderr,
-                    "[STENCIL-PRIMAT %s #%d] i=%lld %s=%llu\n",
-                    event == 99 ? "OOB" : "BAD-FMT",
-                    oobCount, (long long)extra1,
-                    event == 99 ? "limit" : "fmt",
-                    (unsigned long long)extra2);
+                if (event == 99) {
+                    fprintf(stderr,
+                        "[STENCIL-PRIMAT OOB #%d] i=%lld limit=%llu\n",
+                        oobCount, (long long)extra1,
+                        (unsigned long long)extra2);
+                } else {
+                    uint64_t fmt = (extra2 >> 32) & 0xFF;
+                    uint64_t classIdx = extra2 & 0x3FFFFF;
+                    Oop classOop = (state && state->interp)
+                        ? state->interp->memory().classAtIndex((uint32_t)classIdx)
+                        : Oop::nil();
+                    std::string cname = (state && state->interp && classOop.isObject())
+                        ? state->interp->memory().classNameOf(classOop) : "(idx?)";
+                    fprintf(stderr,
+                        "[STENCIL-PRIMAT BAD-FMT #%d] i=%lld fmt=%llu "
+                        "rcvClassIdx=%llu (%s)\n",
+                        oobCount, (long long)extra1,
+                        (unsigned long long)fmt,
+                        (unsigned long long)classIdx, cname.c_str());
+                }
             }
         }
         return;
@@ -682,6 +697,35 @@ extern "C" int jit_rt_ic_miss(
     return 0;
 }
 
+// Pointer-object basicAt: for unhandled stencil_primAt formats
+// (3 IndexableWithFixed, 4 Weak, 5 WeakWithFixed).  Computes
+// fixedFieldCount via the receiver's class, validates the index,
+// returns the slot oop.  Returns 1 on success (out written), 0 on
+// OoB / bad receiver.  Stencil passes JITState* so we can reach
+// memory via state->memory.
+extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
+                                  uint64_t i, uint64_t* out) {
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    auto* rh = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint32_t classIdx = rh->classIndex();
+    if (!s || !s->memory) return 0;
+    pharo::ObjectMemory* mem = static_cast<pharo::ObjectMemory*>(s->memory);
+    pharo::Oop classOop = mem->classAtIndex(classIdx);
+    if (!classOop.isObject()) return 0;
+    auto* classHdr = classOop.asObjectPtr();
+    if (classHdr->slotCount() < 3) return 0;
+    pharo::Oop instSpec = classHdr->slotAt(2);
+    if (!instSpec.isSmallInteger()) return 0;
+    size_t fixedFields = (size_t)(instSpec.asSmallInteger() & 0xFFFF);
+    size_t slotCount = rh->slotCount();
+    if (fixedFields > slotCount) return 0;
+    size_t indexableSize = slotCount - fixedFields;
+    if (i < 1 || i > indexableSize) return 0;
+    size_t actualSlot = fixedFields + (i - 1);
+    *out = rh->slots()[actualSlot].rawBits();
+    return 1;
+}
+
 // Out-of-line array primitive handler for IC hit path.
 // Called from sendJ2J stencil when primKind >= 14 (at:/at:put:/size).
 // info = (primKind << 8) | nArgs
@@ -1094,6 +1138,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
     helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
     helpers.j2jTrace = reinterpret_cast<void*>(&jit_rt_j2j_trace);
+    helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)

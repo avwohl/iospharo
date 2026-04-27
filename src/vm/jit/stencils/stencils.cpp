@@ -1217,6 +1217,11 @@ extern "C" int (*_HOLE_RT_IC_MISS)(
     int nArgs, int bcOffset,
     uint64_t* out_extra, uint64_t* out_methodBits);
 
+// Pointer-object basicAt: helper for fmt 3/4/5.  Returns 1 + writes
+// result oop to *out on success, 0 on OoB / bad receiver.
+extern "C" int (*_HOLE_RT_PRIMAT_PTR)(JITState* s, uint64_t rcvBits,
+                                       uint64_t i, uint64_t* out);
+
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
@@ -2699,14 +2704,8 @@ extern "C" void stencil_primAt(JITState* s) {
         return;
     }
     if (fmt >= 24 && fmt <= 31) {
-        // Formats 24-31: CompiledMethod.  Indexable bytes from start of
-        // object data (literals + bytecodes); byteSize = slotCount * 8
-        // - (fmt - 24).  Mirrors Interpreter::primitiveAt's
-        // isCompiledMethod() branch.
-        // Without this case stencil_primAt fell through for CompiledMethod
-        // receivers, the fallback bytecode body raised
-        // SubscriptOutOfBounds even on valid indices — manifesting as
-        // the bench-after-fib(28) hang.
+        // Formats 24-31: CompiledMethod.  Byte-indexable from start of
+        // object data; byteSize = slotCount * 8 - (fmt - 24).
         uint64_t byteSize = slotCount * 8 - (fmt - 24);
         if (i < 1 || (uint64_t)i > byteSize) { _HOLE_CONTINUE(s); return; }
         uint8_t* bytes = reinterpret_cast<uint8_t*>(rcvr.bits + 8);
@@ -2719,9 +2718,27 @@ extern "C" void stencil_primAt(JITState* s) {
         _HOLE_RT_RETURN(s);
         return;
     }
-    // Unsupported format (fmt 3 IndexableWithFixed, weak, etc.) —
-    // fall through to bytecode body, which handles fixed-fields offset
-    // correctly via the standard at: dispatch.
+    if (fmt == 3 || fmt == 4 || fmt == 5) {
+        // IndexableWithFixed / Weak — need class lookup for
+        // fixedFieldCount.  Bail to runtime helper which mirrors
+        // Interpreter::primitiveAt's pointer-object branch.
+        // Without this, stencil_primAt fell through to basicAt:'s
+        // bytecode body which incorrectly raised SubscriptOutOfBounds
+        // for valid indices on MethodDictionary instances (fmt 3) —
+        // manifesting as the bench-after-fib(28) hang.
+        uint64_t out = 0;
+        if (_HOLE_RT_PRIMAT_PTR(s, rcvr.bits, (uint64_t)i, &out)) {
+            Oop retVal;
+            retVal.bits = out;
+            J2J_INLINE_RETURN_NO_TRACE(s, retVal);
+            s->returnValue = retVal;
+            s->exitReason = EXIT_RETURN;
+            _HOLE_RT_RETURN(s);
+            return;
+        }
+        // Helper says OoB / bad receiver — fall through to bytecode
+        // body, which raises SubscriptOutOfBounds (correct here).
+    }
     _HOLE_CONTINUE(s); return;
 }
 
