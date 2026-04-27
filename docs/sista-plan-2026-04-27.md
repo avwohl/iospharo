@@ -85,11 +85,24 @@ up as a real send to lift.  In Pharo, the compiler macro-inlines
 already a sequence of branches when the lifter sees them.  So the
 actual remaining work in B-track is:
 
-- **B0 (NEW, prereq).**  Stop bailing on `PushFullBlock` /
-  `PushClosure`.  Emit `kBlockCreate` in IR instead.  Today the
-  lifter bails to interpreter the moment it sees a block literal,
-  which prevents any block-aware optimization downstream.
-  Estimate: 1 week.
+- **B-1 (NEW, prereq for everything).**  Helper-based
+  `kSendUnspeculated`: today every send bails to interpreter and
+  exits compiled code.  With Path 3's cc.invoke shipped, sends
+  could become C-helper calls that invoke `sendSelector` and return
+  the result, letting compiled code continue.  Without this, even
+  optimizations that succeed (B0/B2/INLINE_ARITH) are wasted —
+  the method still bails at the first send.  Concrete evidence
+  (2026-04-27): with `PHARO_SISTA_INLINE_ARITH=1`, 90k+ bails in
+  30s, zero miscompiles, image makes only 200K bytecode steps/sec
+  (5× slower than pure interpreter).  Estimate: 1-2 weeks.
+  Caveats: helper must handle NLR-out-of-callee, exception
+  propagation, GC during callee.
+
+- **B0 (prereq for B2).**  Stop bailing on `PushFullBlock` /
+  `PushClosure`.  Emit `kBlockCreate` in IR instead.  DONE
+  (94cf819 + 30fa5e6) — kBlockCreate default-on, helper handles
+  block creation via cc.invoke.  See
+  project_sista_cc_invoke_sigsegv_2026_04_27.md.
 
 - **B1 (revised).**  SSA-promote loop counters lifted from the
   compiler-inlined `to:do:` pattern: replace
