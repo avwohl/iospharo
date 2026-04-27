@@ -1269,7 +1269,10 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 //   2. Ambiguous selectors (also used by Semaphore, etc.) —
                 //      only excluded when the method's class is Exception-related
                 {
-                    static const char* unambiguousSelectors[] = {
+                    // Always-excluded: original exception infrastructure.
+                    // These were already broken before chain-loop work and
+                    // stay excluded regardless of chain mode.
+                    static const char* alwaysExcluded[] = {
                         "signalerContext",
                         "signalForException:",
                         "raiseUnhandledError",
@@ -1278,29 +1281,23 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
-                        // Context-walk methods used by exception handler
-                        // search.  When JIT-compiled and entered via the
-                        // chain loop's extended in-JIT time (PHARO_RESUME_J2J=1),
-                        // they SIGSEGV with receiver=SmallInteger because
-                        // the saved context state corrupts mid-chain.  See
-                        // project_fib_hang_chainloop.md investigation 3.
+                        nullptr
+                    };
+                    // Chain-loop-only exclusions: only excluded when
+                    // PHARO_RESUME_J2J=1 (chain on).  These methods JIT
+                    // fine in chain-off mode (default) and should be
+                    // compiled for perf — chain-loop exposes pre-existing
+                    // codegen bugs (state corruption, stack overflow) that
+                    // need a real fix, not workaround exclusion.
+                    static const char* chainOnlyExcluded[] = {
+                        // Context-walk for exception handler search
                         "nextHandlerContext",
                         "findNextHandlerContext",
-                        // Context-NLR-walk methods.  JIT-compiled
-                        // versions overshoot the sender chain when
-                        // exception handlers complete, terminating
-                        // the bench process at fd=0.  Exception
-                        // unwind machinery should run interpreter-only.
+                        // Context-NLR-walk methods
                         "resume:through:",
                         "return:through:",
                         "terminateTo:",
-                        // Delay scheduler internals.  Bench at P79
-                        // suspended on Delay>>wait's semaphore; under
-                        // chain-loop default-on, JIT-compiled
-                        // scheduleAtTimingPriority / timingPriorityScheduleTicker
-                        // fail to set activeDelay, so the timer-fire
-                        // signal never reaches the bench.  Exclude these
-                        // so Delay scheduling runs interpreter-only.
+                        // Delay scheduler internals
                         "scheduleAtTimingPriority",
                         "timingPriorityScheduleTicker:",
                         "timingPrioritySignalExpired",
@@ -1309,29 +1306,15 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "millisecondsUntilTick:",
                         "nowTick",
                         "primSignal:atUTCMicroseconds:",
-                        // SmallInteger>>benchmark + benchFib excluded because
-                        // under chain-loop default-on, JIT-compiled versions
-                        // trigger SubscriptOutOfBounds (likely Sieve array
-                        // access off-by-one) and stack-overflow respectively.
-                        // Excluding lets the bench process make progress
-                        // under chain-on (still slower than chain-off but
-                        // doesn't hang).  Real fix is chain-state-corruption
-                        // audit — see project_fib_hang_chainloop.md.
+                        // SmallInteger>>benchmark + benchFib — sieve and
+                        // benchFib hot paths (CRITICAL for bench scores).
                         "benchmark",
                         "benchFib",
-                        // SubscriptOutOfBounds signal-family methods.
-                        // JIT-compiled versions overflow stack when called
-                        // via chain loop (each signal call leaves stack
-                        // unbalanced).  Pending JIT codegen audit; exclude
-                        // for now so chain-on doesn't hit stopVM corrupt sp.
+                        // SubscriptOutOfBounds signal-family
                         "signalFor:lowerBound:upperBound:",
                         "signalFor:lowerBound:upperBound:in:",
                         "errorSubscriptBounds:",
-                        // FFI call — JIT codegen for ffiCall: doesn't
-                        // handle the FFI machinery correctly; crashes at
-                        // a consistent offset (2296) when called via chain.
-                        // Real fix is JIT-aware FFI codegen; for now,
-                        // exclude.
+                        // FFI call
                         "ffiCall:",
                         nullptr
                     };
@@ -1350,11 +1333,20 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     };
                     if (interp_) {
                         std::string sel = interp_->memory().selectorOf(compiledMethod);
-                        for (const char** p = unambiguousSelectors; *p; p++) {
+                        for (const char** p = alwaysExcluded; *p; p++) {
                             if (sel == *p) {
                                 fprintf(stderr, "[JIT] AUTO-EXCLUDED exception infra #%s\n",
                                         sel.c_str());
                                 return;
+                            }
+                        }
+                        if (g_debug.resumeJ2J) {
+                            for (const char** p = chainOnlyExcluded; *p; p++) {
+                                if (sel == *p) {
+                                    fprintf(stderr, "[JIT] AUTO-EXCLUDED chain-only #%s\n",
+                                            sel.c_str());
+                                    return;
+                                }
                             }
                         }
                         for (const char** p = ambiguousSelectors; *p; p++) {
