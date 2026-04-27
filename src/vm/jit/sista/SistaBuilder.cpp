@@ -476,9 +476,11 @@ public:
 
                 uint32_t recvId = out_.newValue(0,
                     Op::kLoadReceiver, Type::kOop);
+                // kPrimSize.literal = bcOffset for deopt resume —
+                // the size send is at offset 1 in this 3-byte method.
                 uint32_t sizeId = out_.newValue(0,
                     Op::kPrimSize, Type::kOopSmallInt,
-                    {recvId});
+                    {recvId}, /*literal=*/1);
                 out_.newValue(0, Op::kReturn, Type::kVoid,
                                {sizeId});
 

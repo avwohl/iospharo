@@ -7379,6 +7379,23 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         {
             size_t bcLen = totalBytes > bytecodeStart
                            ? totalBytes - bytecodeStart : 0;
+
+            // PHARO_SISTA_SIZE_PEEPHOLE=1: the size peephole replaces
+            // the SpecialSend(size) with kPrimSize, whose lowering
+            // includes a deopt-on-zero check that bails to the
+            // interpreter at the size send when the helper returns
+            // 0 (non-indexable receiver).  Method's bytecode still
+            // contains 0x72 which would normally mark unsafe;
+            // explicitly admit the recognized shape.
+            static const bool sizePeephole =
+                std::getenv("PHARO_SISTA_SIZE_PEEPHOLE") != nullptr;
+            if (sizePeephole && bcLen == 3
+                && methodBytes[bytecodeStart + 0] == 0x4C
+                && methodBytes[bytecodeStart + 1] == 0x72
+                && methodBytes[bytecodeStart + 2] == 0x5C) {
+                hasUnsafeOp = false;
+                goto sizePeepholeAdmitted;
+            }
             for (size_t i = 0; i < bcLen; i++) {
                 uint8_t op = methodBytes[bytecodeStart + i];
                 // Inlined arith — safe ONLY when operands are
@@ -7566,6 +7583,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 (void)isSend0; (void)isSend1; (void)isSend2;
             }
+        sizePeepholeAdmitted:
             sistaGateCache_[gateKey] = hasUnsafeOp ? 1 : 0;
         }
     gateDecided:

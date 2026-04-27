@@ -780,9 +780,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             }
             case Op::kPrimSize: {
                 // Calls jit_rt_sista_basic_size(state, rcv) via cc.invoke.
-                // Returns SmI Oop on success, 0 on guard miss.  Result
-                // 0 → caller emits a deopt-bail (interpreter re-runs
-                // the original send and signals out-of-class).
+                // Returns SmI Oop on success, 0 on guard miss.  On 0
+                // result, deopts to interpreter at the source bcOffset
+                // (passed via v.literal).
                 if (v.operands.size() != 1) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
@@ -811,6 +811,46 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 invokeNode->set_arg(1, itRcv->second);
                 Gp dst = cc.new_gp64("size");
                 invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero check.  v.literal carries bcOffset to
+                // resume at.  If size == 0, push the receiver back
+                // onto interp stack (since the original send expected
+                // it on top), set state.ip to the source send, set
+                // state.exitReason = ExitSend, and ret.
+                Label noDeopt = cc.new_label();
+                cc.cbnz(dst, noDeopt);  // nonzero → skip deopt
+                {
+                    // Push receiver onto interp stack at state.sp[0],
+                    // bump state.sp by 8.
+                    Gp sp = cc.new_gp64("sp_dz");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(itRcv->second, ptr(sp));
+                    cc.add(sp, sp, Imm(8));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    // state.ip = bcOffset (or absolute address if base).
+                    Gp ipReg = cc.new_gp64("ip_dz");
+                    uint64_t bcOff = v.literal;
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOff;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOff));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argCount = cc.new_gp32("argc_dz");
+                    cc.mov(argCount, Imm(0));
+                    cc.str(argCount, ptr(state, OFF_SENDARGCOUNT));
+                    Gp zero64 = cc.new_gp64("zero_dz");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("exit_dz");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
                 regFor[v.id] = dst;
                 break;
             }
