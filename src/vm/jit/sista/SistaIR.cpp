@@ -58,6 +58,7 @@ bool producesOop(Op op) {
     case Op::kInlineSend:
     case Op::kBlockCreate:
     case Op::kBlockValue:
+    case Op::kCountedLoopDo:
     case Op::kPhi:
         return true;
     default:
@@ -72,6 +73,7 @@ bool mayCallBack(Op op) {
     case Op::kGuardClass:       // miss deopts
     case Op::kInlineSend:       // nested send
     case Op::kBlockValue:
+    case Op::kCountedLoopDo:    // block body may include sends/deopts
     case Op::kPrimTagCheckInt:  // miss deopts
         return true;
     default:
@@ -130,6 +132,7 @@ const char* name(Op op) {
     case Op::kPrimAt:           return "prim_at";
     case Op::kBlockCreate:      return "block_create";
     case Op::kBlockValue:       return "block_value";
+    case Op::kCountedLoopDo:    return "counted_loop_do";
     case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";
     }

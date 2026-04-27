@@ -1158,6 +1158,30 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.ret();
                 break;
             }
+            case Op::kCountedLoopDo: {
+                // B2 splice: counted at: loop with inlined block body.
+                // Stub: refuse to lower for now — caller bails the
+                // whole method's compile, falling back to bytecode
+                // interpretation.  Same effect as if the method had
+                // been gated out, so no regression for methods that
+                // would otherwise compile.
+                //
+                // Real lowering (TODO):
+                //   v_size = call basicSize(rcv)
+                //   v_i = 1
+                //   loop:
+                //     cmp v_i, v_size; b.gt exit
+                //     v_each = call basicAt(rcv, v_i)
+                //     <inlined block body — recursively lower
+                //      m.inlinedBlocks[v.literal]'s IR with
+                //      kLoadTemp(0) → v_each substitution>
+                //     v_i = v_i + 1
+                //     b loop
+                //   exit:
+                //     push rcv  (do: returns receiver)
+                if (failedAtValue) *failedAtValue = v.id;
+                return nullptr;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared

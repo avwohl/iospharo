@@ -18,7 +18,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <map>
+#include <memory>
 #include <set>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace pharo {
@@ -432,6 +435,232 @@ public:
                     // Skip the bytecode by its length.  Conservative:
                     // 1 for normal, 2 for ext2byte, 3 for the f8-fd
                     // range.  Out-of-range escape opcodes are 1-byte.
+                    if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                    else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                    else i++;
+                }
+            }
+        }
+
+        // --- B2 splice pre-pass: identify Array do: candidates ----------
+        //
+        // Same scan as the detector above, but always-on under
+        // PHARO_SISTA_DO_SPLICE=1.  For each PushFullBlock+SpecialSend(do:)
+        // adjacency where:
+        //   - the IC hint at the do: bcOffset says Array receiver
+        //   - the block sub-lifts to splice-simple IR
+        // we sub-lift the block, store its IR into out_.inlinedBlocks,
+        // and record the PushFullBlock's bcOffset → block-IR-slot
+        // mapping in spliceAtPushFullBlock_.  The main lift's
+        // PushFullBlock arm consults this map and emits kCountedLoopDo
+        // when it matches.
+        {
+            static const bool splice =
+                std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+            if (splice && memory_ != nullptr) {
+                size_t i = 0;
+                int lastPushFullBlockEnd = -1;
+                int lastPushFullBlockStart = -1;
+                int lastFullBlockLitIdx = -1;
+                int lastFullBlockFlags = -1;
+                int extA = 0;
+                while (i < len_) {
+                    uint8_t op = bc_[i];
+                    if (op == jit::SistaV1::ExtendA) {
+                        if (i + 1 >= len_) break;
+                        extA = bc_[i + 1];
+                        i += 2;
+                        continue;
+                    }
+                    if (op == jit::SistaV1::ExtendB) {
+                        if (i + 1 >= len_) break;
+                        i += 2;
+                        continue;
+                    }
+                    if (op == jit::SistaV1::PushFullBlock) {
+                        if (i + 2 >= len_) break;
+                        lastPushFullBlockStart = (int)i;
+                        lastFullBlockLitIdx = (extA << 8) | bc_[i + 1];
+                        lastFullBlockFlags = bc_[i + 2];
+                        lastPushFullBlockEnd = (int)(i + 3);
+                        extA = 0;
+                        i += 3;
+                        continue;
+                    }
+                    if (op == 0x7B  // SpecialSend do:
+                        && lastPushFullBlockEnd == (int)i) {
+                        // Found a PushFullBlock+SpecialSend(do:) pair.
+                        // Trace the rejection reason for the first 16
+                        // patterns so we can diagnose 0 candidates.
+                        static int diagCount = 0;
+                        bool diag = (diagCount < 16);
+                        // Check the block's bytecode length sanity, then
+                        // sub-lift.
+                        bool ok = true;
+                        const char* rejectReason = nullptr;
+
+                        // Look up the block's CompiledBlock literal.
+                        Oop blockOop = Oop::nil();
+                        if (lastFullBlockLitIdx < 0
+                            || (size_t)lastFullBlockLitIdx
+                               >= out_.literals.size()) {
+                            ok = false;
+                            rejectReason = "bad litIdx";
+                        } else {
+                            blockOop = out_.literals[lastFullBlockLitIdx];
+                            if (!blockOop.isObject()) {
+                                ok = false;
+                                rejectReason = "block not Object";
+                            }
+                        }
+
+                        // numCopied is the lower 6 bits of flags;
+                        // recv-on-stack is bit 7 (we don't yet handle).
+                        bool receiverOnStack =
+                            ((lastFullBlockFlags >> 7) & 1) != 0;
+                        if (ok && receiverOnStack) {
+                            ok = false;
+                            rejectReason = "recvOnStack";
+                        }
+
+                        // IC hint check is preferred but not required.
+                        // When PHARO_SISTA_DO_SPLICE_NO_HINT=1, we
+                        // splice optimistically and let the lowering's
+                        // runtime class check + deopt-on-miss handle
+                        // non-Array receivers.  When unset, require
+                        // an IC hint that says Array.
+                        static const bool noHintMode = []() {
+                            const char* v = std::getenv(
+                                "PHARO_SISTA_DO_SPLICE_NO_HINT");
+                            return v && v[0] == '1';
+                        }();
+                        const InlineHint* hit = nullptr;
+                        uint32_t hintClassIdx = 0;
+                        if (!noHintMode) {
+                            if (ok && inlineHints_) {
+                                for (const auto& h : *inlineHints_) {
+                                    if (h.bcOffset == (uint32_t)i) {
+                                        hit = &h;
+                                        break;
+                                    }
+                                }
+                                if (!hit) {
+                                    ok = false;
+                                    rejectReason = "no IC hint";
+                                }
+                            } else if (ok && !inlineHints_) {
+                                ok = false;
+                                rejectReason = "no hints provided";
+                            }
+                            if (ok && hit) {
+                                hintClassIdx =
+                                    (uint32_t)(hit->classOop & 0x3FFFFFu);
+                                // 47 = Array's classIdx in standard
+                                // Pharo class table.
+                                if (hintClassIdx != 47) {
+                                    ok = false;
+                                    rejectReason = "non-Array IC class";
+                                }
+                            }
+                        }
+
+                        // Sub-lift the block.  Recursion-guarded
+                        // through the same g_calleeLiftDepth gate the
+                        // detector uses.
+                        std::unique_ptr<Method> blockIR;
+                        if (ok && g_calleeLiftDepth < 1) {
+                            blockIR = std::make_unique<Method>();
+                            g_calleeLiftDepth++;
+                            uint32_t failedBc = UINT32_MAX;
+                            LiftResult r = Builder::build(
+                                blockOop, *memory_, *blockIR, &failedBc);
+                            g_calleeLiftDepth--;
+                            if (r != LiftResult::kOk) {
+                                ok = false;
+                                rejectReason = "block sub-lift failed";
+                            }
+                        } else if (ok) {
+                            ok = false;  // recursion guard
+                            rejectReason = "recursion guard";
+                        }
+
+                        // Splice-simple check: every value in the
+                        // block must be a "splice-friendly" op so the
+                        // lowering can emit it inline without
+                        // reconstructing frame state.
+                        Op rejectedOp = Op::kReturn;
+                        if (ok && blockIR) {
+                            for (const auto& bv : blockIR->values) {
+                                switch (bv.op) {
+                                case Op::kLoadReceiver:
+                                case Op::kLoadTrueOop:
+                                case Op::kLoadFalseOop:
+                                case Op::kLoadTemp:
+                                case Op::kLoadLiteral:
+                                case Op::kConstantOop:
+                                case Op::kPhi:
+                                case Op::kReturn:
+                                case Op::kPrimAddInt:
+                                case Op::kPrimSubInt:
+                                case Op::kPrimMulInt:
+                                case Op::kPrimLtInt:
+                                case Op::kPrimLeInt:
+                                case Op::kPrimGtInt:
+                                case Op::kPrimGeInt:
+                                case Op::kPrimEqInt:
+                                case Op::kPrimNeqInt:
+                                case Op::kPrimIdentityEq:
+                                case Op::kPrimIdentityNeq:
+                                    break;
+                                default:
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                    break;
+                                }
+                                if (!ok) break;
+                            }
+                        }
+
+                        if (diag) {
+                            diagCount++;
+                            std::fprintf(stderr,
+                                "[SISTA-SPLICE-DIAG] doBC=%zu litIdx=%d "
+                                "icCls=%u verdict=%s reject=%s rejOp=%s\n",
+                                i, lastFullBlockLitIdx, hintClassIdx,
+                                ok ? "OK" : "REJECT",
+                                rejectReason ? rejectReason : "(none)",
+                                ok ? "n/a" : OpInfo::name(rejectedOp));
+                        }
+
+                        // Eligible: stash the block IR and remember
+                        // this PushFullBlock's offset so the main lift
+                        // can consult.
+                        if (ok && blockIR) {
+                            uint32_t slot = static_cast<uint32_t>(
+                                out_.inlinedBlocks.size());
+                            out_.inlinedBlocks.push_back(
+                                std::move(blockIR));
+                            spliceAtPushFullBlock_[
+                                (size_t)lastPushFullBlockStart] = slot;
+                            static int spliceCount = 0;
+                            if (spliceCount++ < 16) {
+                                std::fprintf(stderr,
+                                    "[SISTA-SPLICE-CAND] pushFullBlock=%d "
+                                    "doBC=%zu litIdx=%d slot=%u\n",
+                                    lastPushFullBlockStart, i,
+                                    lastFullBlockLitIdx, slot);
+                            }
+                        }
+
+                        lastPushFullBlockEnd = -1;
+                        i++;
+                        continue;
+                    }
+                    if (op != jit::SistaV1::ExtendA
+                        && op != jit::SistaV1::ExtendB) {
+                        lastPushFullBlockEnd = -1;
+                    }
                     if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
                     else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
                     else i++;
@@ -862,6 +1091,36 @@ private:
                     if (stack_.empty()) return LiftResult::kOk;
                     return bailToInterpreter(3);
                 }
+
+                // B2 splice intercept: if this PushFullBlock starts a
+                // pre-validated `[block] do:` pattern, emit
+                // kCountedLoopDo and skip both bytecodes.  The pre-pass
+                // populated spliceAtPushFullBlock_ with eligible
+                // offsets + their block-IR slot.
+                {
+                    auto sIt = spliceAtPushFullBlock_.find(ip);
+                    if (sIt != spliceAtPushFullBlock_.end()
+                        && stack_.size() >= 1
+                        // Make sure SpecialSend do: really follows.
+                        && ip + 3 < len_
+                        && bc_[ip + 3] == 0x7B) {
+                        uint32_t blockSlot = sIt->second;
+                        uint32_t rcv = stack_.back();
+                        stack_.pop_back();
+                        std::vector<uint32_t> ops{rcv};
+                        uint32_t vid = out_.newValue(currentBlock_,
+                                       Op::kCountedLoopDo, Type::kOop,
+                                       std::move(ops),
+                                       /*literal=*/blockSlot);
+                        recordFramepoint(vid, bcOffset);
+                        stack_.push_back(vid);
+                        pendingExtA_ = 0;
+                        pendingExtB_ = 0;
+                        ip += 4;  // PushFullBlock (3) + SpecialSend (1)
+                        continue;
+                    }
+                }
+
                 uint32_t litIndex =
                     (uint32_t)((pendingExtA_ << 8) | bc_[ip + 1]);
                 uint32_t flags = (uint32_t)bc_[ip + 2];
@@ -2484,6 +2743,14 @@ private:
     // B2 splice: ObjectMemory used by the peephole's block sub-lift.
     // Set by Builder::build so we don't have to use the global.
     ObjectMemory*          memory_ = nullptr;
+
+    // B2 splice: map from bcOffset-of-PushFullBlock to the block-IR
+    // slot index in out_.inlinedBlocks.  Populated by the pre-pass
+    // when PHARO_SISTA_DO_SPLICE=1; consumed by the main lifter's
+    // PushFullBlock arm (which emits kCountedLoopDo and skips both
+    // bytecodes).  Empty when splice is disabled or no eligible
+    // patterns matched.
+    std::unordered_map<size_t, uint32_t> spliceAtPushFullBlock_;
 };
 
 }  // namespace

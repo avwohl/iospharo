@@ -138,6 +138,26 @@ enum class Op : uint8_t {
                           // Creates a FullBlockClosure.                    -> Oop
     kBlockValue,          // operands: block, args...  (not inlined)        -> Oop
 
+    // --- B2 splice ---
+    // Counted at: loop with the block body inlined.  Replaces the
+    // sequence `PushFullBlock; SpecialSend(do:)` for cases where the
+    // IC says receiver class is Array AND the block sub-lifts to
+    // splice-simple IR.  Result on stack: the receiver (do: returns
+    // its receiver).
+    //
+    // operands[0] = receiver (the array)
+    // literal     = index into Method::inlinedBlocks for the spliced
+    //               block body IR.
+    //
+    // Lowering emits: i=1; size=basicSize(rcvr); while i<=size do
+    //   each := basicAt(rcvr,i); <inlined body with each subbed>;
+    //   i := i+1. push rcvr.
+    //
+    // Bails to interpreter if rcvr is non-indexable (basicSize fails)
+    // or if any inlined body op deopts.  Gated behind
+    // PHARO_SISTA_DO_SPLICE=1; default off until end-to-end validated.
+    kCountedLoopDo,       // operands: receiver  -> Oop  (the receiver)
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).
@@ -261,6 +281,14 @@ struct Method {
     std::vector<Framepoint> framepoints; // Phase 3 deopt info; one per
                                           // potential deopt site (today
                                           // = every kSendUnspeculated).
+    // B2 splice: inlined block bodies referenced by kCountedLoopDo
+    // (and any future inline-block ops).  Each entry is a fully
+    // sub-lifted Method holding the block's IR.  The lowering walks
+    // this IR when emitting the spliced loop body.
+    //
+    // unique_ptr because Method holds vectors of Method (recursive),
+    // which would either grow unbounded or copy expensively.
+    std::vector<std::unique_ptr<Method>> inlinedBlocks;
     uint32_t numArgs  = 0;
     uint32_t numTemps = 0;               // Excludes args; just the |...| temps
     uint32_t entryBlock = 0;             // Index into blocks
