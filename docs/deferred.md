@@ -835,6 +835,53 @@ re-examining.
 `PHARO_JIT_NO_SIMSTACK`.  All cheap when not enabled.
 (`PHARO_DUMP_MIR` removed when MIR was deleted 2026-04-17.)
 
+### B7. `PHARO_SISTA_HELPER_SENDS=1` — opt-in-broken
+B-1 helper-based kSendUnspeculated infrastructure (446187d9,
+244fde02, bbe36bed).  Lifter emits `kSendCallHelper`, lowering
+calls `jit_rt_sista_call_send` via cc.invoke, helper drives
+step() to completion with depth cap 1 + inSyncSend_ flag to
+suppress process switches.  Default off; default behavior
+unchanged.
+
+Status under env=1: progresses ~2000 helper calls then stalls.
+Sista compiled methods using helper-sends bail to interpreter
+on frame-pushed sends, but the bail path doesn't unwind the
+partial frame — interp resumes with stale frame state and the
+VM hangs.
+
+Real fix needs either:
+- IC-guided emission (only emit kSendCallHelper for sites where
+  IC says receiver class → primitive method, never for normal
+  method activations).
+- Full bcToEntryState materialization on deopt so the interp
+  picks up post-send instead of pre-send.
+
+The 27× sum(1M) gap to Cog won't close via B-1 alone — Pharo
+macro-inlines `to:do:` but `Array>>do:` is a real send to a
+literal-block argument, and the per-iter `value:` block dispatch
+dominates.  See B8 for the structural fix.
+
+### B8. B2 splice — Array do: with literal-block inlining (not started)
+Identified as the structural fix for the sum(1M) gap.  Pre-work
+is in tree (kBlockCreate IR + jit_rt_sista_block_create helper +
+sub-lift validation), but the actual splice emission is ~500 LOC
+that has to handle:
+- `kStoreTemp(N>0)` to remote temps (closure copies → outer's
+  temp via escape analysis when block doesn't outlive caller).
+- `kSendUnspeculated` within block (recursively inline if mono,
+  else bail with framepoint reconstruction).
+- Counted at: loop emission (phi + branches in IR).
+
+The detection scan (`PHARO_SISTA_DO_DETECT=1`) currently logs
+zero `[SISTA-DO-PATTERN]` entries on the standard bench because
+methods like `runSum` (which contain `a do: [block]`) only run
+once and don't hit the Sista hot threshold.  The hot do:
+implementations live in `Array>>do:` / `SequenceableCollection>>do:`
+which compile but aren't matched by the do:-detector (it scans
+for adjacent `PushFullBlock + SpecialSend(do:)` in the OUTER
+method).  The matcher needs extending to follow `value:`-style
+dispatch from inside the iterator.
+
 ---
 
 ## C. Project mission — iOS
