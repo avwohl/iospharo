@@ -711,9 +711,8 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
     size_t slotCount = rh->slotCount();
 
     // fmt 9: Indexable64 (DoubleWordArray, BoxedFloat64).  Each slot
-    // holds one 64-bit word.  If the word fits in a SmallInteger
-    // return inline; otherwise this helper bails (caller falls through
-    // to bytecode body which retries via interpreter).
+    // holds one 64-bit word.  If the word fits in SmallInteger return
+    // inline; otherwise allocate a LargePositiveInteger.
     if (fmt == 9) {
         if (i < 1 || i > slotCount) return 0;
         if (!s || !s->memory) return 0;
@@ -724,7 +723,23 @@ extern "C" int jit_rt_primat_ptr(JITState* s, uint64_t rcvBits,
             *out = ((uint64_t)bits << 3) | 1;  // SmI tag
             return 1;
         }
-        return 0;  // > SmI max — bail (LargePositiveInteger alloc not safe here)
+        // Allocate LargePositiveInteger as 8-byte object.
+        // Note: alloc may trigger GC.  We've already captured `bits`
+        // locally, so the receiver moving doesn't affect us.  After
+        // return, the stencil's J2J return path uses j2jSave entries
+        // (already on the J2J pool which the GC walks) — safe.
+        pharo::Oop intClass = mem->specialObject(
+            pharo::SpecialObjectIndex::ClassLargePositiveInteger);
+        uint32_t classIndex = mem->indexOfClass(intClass);
+        pharo::Oop newOop = mem->allocateBytes(classIndex, 8);
+        if (!newOop.isObject()) return 0;
+        auto* nh = newOop.asObjectPtr();
+        // Write little-endian
+        for (int b = 0; b < 8; b++) {
+            nh->bytes()[b] = (uint8_t)(bits >> (b * 8));
+        }
+        *out = newOop.rawBits();
+        return 1;
     }
 
     // fmt 3/4/5: IndexableWithFixed / Weak.
