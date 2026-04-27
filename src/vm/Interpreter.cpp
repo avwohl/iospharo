@@ -13979,6 +13979,7 @@ void Interpreter::tryJITResumeInCaller() {
                 if (hasEmpty) {
                     pendingICPatch_ = state.icDataPtr;
                     pendingICSendArgCount_ = state.sendArgCount;
+                    pendingICOwnerMethod_ = state.method;
                     static size_t setCount1 = 0; setCount1++;
                     if (g_debug.icPatchDebug && (setCount1 & 0xFFF) == 1) {
                         fprintf(stderr, "[IC-PEND-SET1] tryResume ExitSend count=%zu ic=%p\n",
@@ -14482,6 +14483,18 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                 std::string sel = memory_.selectorOf(resolvedMethod);
                 fprintf(stderr, "[IC-PATCH] #%s J2J=1 key=0x%llx extra=0x%llx\n",
                         sel.c_str(), (unsigned long long)lookupKey, (unsigned long long)extra);
+            }
+            // Smart Sista invalidation: only re-compile the caller's
+            // entry if it was originally compiled WITHOUT hints.
+            // invalidateIfHintless() is a no-op for hint-bearing
+            // entries.  Only fires on the FIRST IC slot (slot 0)
+            // because subsequent slots don't change peephole
+            // eligibility (hints are monotonic).
+            if (e == 0 && sistaRuntimeForGCHook_
+                && pendingICOwnerMethod_.isObject()
+                && pendingICOwnerMethod_.rawBits() > 0x10000) {
+                sistaRuntimeForGCHook_->invalidateIfHintless(
+                    pendingICOwnerMethod_);
             }
             return;
         }
@@ -15863,6 +15876,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 // (super sends don't use ICs — lookup always starts from superclass)
                 pendingICPatch_ = state.icDataPtr;
                 pendingICSendArgCount_ = nArgs;
+                pendingICOwnerMethod_ = state.method;
                 patchJITICAfterSend(resolved, rcvr, sendSel);
 
                 // Populate mega cache for JIT stencil probes

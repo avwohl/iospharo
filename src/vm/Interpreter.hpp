@@ -1038,6 +1038,10 @@ private:
     // Pending IC patch data (set during ExitSend when IC was empty)
     uint64_t* pendingICPatch_ = nullptr;
     int pendingICSendArgCount_ = 0;
+    // Caller method that owns pendingICPatch_'s slot.  Captured at
+    // set time so patchJITICAfterSend can call
+    // sistaRuntime->invalidateIfHintless(method) once its IC patches.
+    Oop pendingICOwnerMethod_;
 
     // Re-entrancy guard for JIT resume chaining
     bool inJITResume_ = false;

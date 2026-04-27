@@ -27,6 +27,7 @@
 #include "SistaLowering.hpp"
 
 #include <unordered_map>
+#include <unordered_set>
 
 namespace pharo {
 
@@ -60,7 +61,23 @@ public:
     // compaction, since raw oop bits become unstable.  The cached
     // machine code stays allocated in the asmjit runtime; only the
     // lookup table is cleared.
-    void reset() { cache_.clear(); }
+    void reset() {
+        cache_.clear();
+        compiledHintless_.clear();
+    }
+
+    // Drop the cache entry for one method — but only if its compile
+    // was done WITHOUT inline hints.  That way a method's first
+    // (cold) Sista compile (which couldn't see the IC) is replaced
+    // by a second (warm) compile after the IC populates.  Methods
+    // compiled with hints stay cached: hints are monotonic, so
+    // subsequent IC patches don't change peephole eligibility.
+    void invalidateIfHintless(Oop method) {
+        uint64_t key = method.rawBits();
+        if (compiledHintless_.erase(key) > 0) {
+            cache_.erase(key);
+        }
+    }
 
     // Statistics — for the Sista survey / diagnostics.
     size_t compiledCount() const { return cache_.size(); }
@@ -68,6 +85,10 @@ public:
 private:
     Lowering lowering_;
     std::unordered_map<uint64_t, Lowering::CompiledFn> cache_;
+    // Methods whose Sista compile happened with empty/null hints.
+    // Used by invalidateIfHintless() to target only those entries
+    // without re-compiling everyone on every IC patch.
+    std::unordered_set<uint64_t> compiledHintless_;
 };
 
 }  // namespace sista

@@ -14,6 +14,11 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second;
 
+    // Track methods compiled without hints so invalidateIfHintless()
+    // can re-compile them once their IC populates.
+    bool hadHints = (hints != nullptr && !hints->empty());
+    if (!hadHints) compiledHintless_.insert(key);
+
     // Lift bytecode → IR.  Use buildWithHints when hints are present
     // so Sista can identify monomorphic sites for Phase 4 inlining.
     Method m;
