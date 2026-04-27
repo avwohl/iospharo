@@ -27,8 +27,14 @@ Key paths:
 
 ## Workflow
 
-- Commit every ~15 minutes. Push after. Then pick the next item and keep going
-  — don't stop to summarize or ask for direction.
+- Don't lose hours of work to a crash: commit when there's a meaningful unit
+  of progress, and don't sit on uncommitted work for hours. This is a safety
+  rule, not a quota — committing more often than the work warrants makes
+  things worse (rapid small commits, half-validated experiments, vanity
+  metric chasing). For large projects, fewer larger commits are better than
+  many small ones.
+- Pick the next item and keep going — don't stop to summarize or ask for
+  direction.
 - Update `docs/*.md` and memory files at least once per hour during long tasks.
   Sessions have crashed after 12 h with nothing written down.
 - Debug before asking: run the app and check logs yourself before asking the
