@@ -1267,6 +1267,20 @@ public:
 
     jit::JITRuntime& jitRuntime() { return jitRuntime_; }
 
+    /// Sista runtime helper: monomorphic Array basicSize.
+    /// Returns the size as a SmallInteger Oop on success, or 0 if
+    /// the receiver isn't an indexable object (which means the
+    /// JIT-side guard was wrong — caller should treat 0 as deopt
+    /// signal).  Doesn't allocate; cannot trigger GC.
+    uint64_t jitSistaBasicSize(jit::JITState* state, uint64_t rcvBits);
+
+    /// Sista runtime helper: monomorphic Array basicAt:.
+    /// Returns the element as an Oop on success, or 0 if the index
+    /// is out of bounds or the receiver isn't an Array (deopt).
+    /// Doesn't allocate; safe to call without state sync.
+    uint64_t jitSistaBasicAt(jit::JITState* state, uint64_t rcvBits,
+                              uint64_t idxBits);
+
     /// Sista runtime helper: create a FullBlockClosure from JIT'd code.
     ///
     /// JIT'd code has pushed `numCopied` (and possibly an extra

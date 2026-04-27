@@ -1088,6 +1088,20 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
 // Today's use: kBlockCreate's lowering replaces the bail-only path
 // with a real call here, so compiled execution can continue past
 // PushFullBlock instead of exiting to the interpreter.
+// Sista runtime helpers for Array operations — used by B2 splice.
+extern "C" uint64_t jit_rt_sista_basic_size(JITState* state,
+                                              uint64_t rcvBits) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitSistaBasicSize(state, rcvBits);
+}
+
+extern "C" uint64_t jit_rt_sista_basic_at(JITState* state,
+                                            uint64_t rcvBits,
+                                            uint64_t idxBits) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitSistaBasicAt(state, rcvBits, idxBits);
+}
+
 extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t litIndex,
                                                 uint64_t numCopied,

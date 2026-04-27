@@ -9690,6 +9690,78 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     push(block);
 }
 
+uint64_t Interpreter::jitSistaBasicSize(jit::JITState* state,
+                                         uint64_t rcvBits) {
+    (void)state;
+    // Receiver must be an object pointer (tag 0, not immediate).
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint32_t fmt = (uint32_t)hdr->format();
+    size_t slotCount = hdr->slotCount();
+    int64_t size;
+    if (fmt == 2) {
+        // Pure indexable Array.
+        size = (int64_t)slotCount;
+    } else if (fmt >= 16 && fmt <= 23) {
+        // Byte-indexable (ByteString, ByteArray, Symbol).
+        size = (int64_t)(slotCount * 8 - (fmt - 16));
+    } else if (fmt >= 24 && fmt <= 31) {
+        // CompiledMethod (rare for `do:` but supported for parity).
+        // Actual byte size is past header literals; we use slotCount
+        // here as a coarse upper bound.
+        size = (int64_t)(slotCount * 8 - (fmt - 24));
+    } else if (fmt == 9) {
+        // 64-bit indexable (DoubleWordArray).  Size in 64-bit words.
+        size = (int64_t)slotCount;
+    } else if (fmt == 3 || fmt == 4 || fmt == 5) {
+        // IndexableWithFixed.  Size = slotCount - fixedFields.
+        // Fixed fields stored in the receiver's class instSpec.
+        Oop rcv = Oop::fromRawBits(rcvBits);
+        Oop classOop = memory_.classOf(rcv);
+        if (!classOop.isObject()) return 0;
+        Oop fmtSlot = memory_.fetchPointer(2, classOop);
+        if (!fmtSlot.isSmallInteger()) return 0;
+        int64_t classFmt = fmtSlot.asSmallInteger();
+        size_t fixedFields = (size_t)(classFmt & 0xFFFF);
+        if (slotCount < fixedFields) return 0;
+        size = (int64_t)(slotCount - fixedFields);
+    } else {
+        return 0;
+    }
+    if (size < 0) return 0;
+    if ((uint64_t)size > 0x07FFFFFFFFFFFFFFULL) return 0;  // SmI range
+    Oop result = Oop::fromSmallInteger(size);
+    return result.rawBits();
+}
+
+uint64_t Interpreter::jitSistaBasicAt(jit::JITState* state,
+                                       uint64_t rcvBits,
+                                       uint64_t idxBits) {
+    (void)state;
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    if ((idxBits & 7) != 1) return 0;  // index must be SmallInteger
+    int64_t i = (int64_t)idxBits >> 3;
+    auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    uint32_t fmt = (uint32_t)hdr->format();
+    size_t slotCount = hdr->slotCount();
+    if (fmt == 2) {
+        if (i < 1 || (uint64_t)i > slotCount) return 0;
+        Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
+        return slots[i - 1].rawBits();
+    }
+    if (fmt >= 16 && fmt <= 23) {
+        uint64_t byteSize = slotCount * 8 - (fmt - 16);
+        if (i < 1 || (uint64_t)i > byteSize) return 0;
+        const uint8_t* bytes =
+            reinterpret_cast<const uint8_t*>(rcvBits + 8);
+        uint64_t b = bytes[i - 1];
+        return Oop::fromSmallInteger((int64_t)b).rawBits();
+    }
+    // Other formats (3/4/5/9/24-31) bail to interpreter for now —
+    // less common in `do:` hot paths.
+    return 0;
+}
+
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
                                                 int litIndex,
                                                 int numCopied,
