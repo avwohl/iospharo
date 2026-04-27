@@ -372,6 +372,33 @@ private:
         while (ip < len_) {
             uint8_t op = bc_[ip];
             uint32_t bcOffset = static_cast<uint32_t>(ip);
+            // Diagnostic — track every opcode the lifter sees.
+            // PHARO_SISTA_DO_DETECT=1 enables.
+            {
+                static const bool detect =
+                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
+                if (detect) {
+                    static uint64_t opcodeHist[256] = {0};
+                    static uint64_t totalOps = 0;
+                    opcodeHist[op]++;
+                    totalOps++;
+                    if (totalOps == 200000 || totalOps == 1000000) {
+                        std::fprintf(stderr, "[SISTA-LIFTER-OPHIST]");
+                        for (int i = 0; i < 256; i++) {
+                            if (opcodeHist[i] > 0
+                                && (i == 0xF8 || i == 0xF9 || i == 0xFA
+                                    || i == 0xFB)) {
+                                std::fprintf(stderr,
+                                    " op=0x%02x:%llu",
+                                    i,
+                                    (unsigned long long)opcodeHist[i]);
+                            }
+                        }
+                        std::fprintf(stderr, " total=%llu\n",
+                                      (unsigned long long)totalOps);
+                    }
+                }
+            }
             // If we're not mid-Extend-prefix, this ip starts a new
             // logical instruction.
             if (pendingExtA_ == 0 && pendingExtB_ == 0) {
@@ -490,6 +517,18 @@ private:
                                Op::kBlockCreate, Type::kOop,
                                std::move(ops), lit);
                 recordFramepoint(vid, static_cast<uint32_t>(bailOffset));
+                static const bool detect =
+                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
+                if (detect) {
+                    static int blockCreates = 0;
+                    if (blockCreates++ < 32) {
+                        std::fprintf(stderr,
+                            "[SISTA-BLOCKCREATE] bc=%llu litIdx=%u "
+                            "numCopied=%u flags=0x%02x\n",
+                            (unsigned long long)bailOffset,
+                            litIndex, numCopied, flags);
+                    }
+                }
                 pendingExtA_ = 0;
                 pendingExtB_ = 0;
                 ip += 3;
@@ -499,6 +538,16 @@ private:
             if (op == jit::SistaV1::PushClosure
              || op == jit::SistaV1::PushArray
              || op == jit::SistaV1::PushThisContext) {
+                static const bool detect =
+                    std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
+                if (detect) {
+                    static int otherBails = 0;
+                    if (otherBails++ < 32) {
+                        std::fprintf(stderr,
+                            "[SISTA-OTHER-BAIL] op=0x%02x bc=%u\n",
+                            op, (uint32_t)bcOffset);
+                    }
+                }
                 return bailToInterpreter(instructionSize(op));
             }
 
@@ -881,6 +930,7 @@ private:
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
+                detectDoBlockPattern(nArgs, bailOffset);
                 // Flush entire IR stack (see Send0/1/2 comment) —
                 // the send's rcvr+args are the top nArgs+1 entries,
                 // and earlier values below must reach state.sp too.
@@ -962,6 +1012,7 @@ private:
                     if (failedAtBytecode) *failedAtBytecode = bcOffset;
                     return LiftResult::kMalformedMethod;
                 }
+                detectDoBlockPattern(nArgs, bcOffset);
                 // Selector literal index encoded as special-selector
                 // marker: we use the opcode as selIdx (unused in the
                 // bail path since the interpreter dispatches via the
@@ -1058,6 +1109,7 @@ private:
                     continue;
                 }
 
+                detectDoBlockPattern(nArgs, bcOffset);
                 // Bail flushes the ENTIRE IR stack to state.sp so the
                 // interpreter sees every value simulated-pushed by
                 // compiled code.  Older revisions only emitted the
@@ -1492,6 +1544,47 @@ private:
     //
     // Pattern recognition is intentionally conservative — only the 2-
     // value `kLoadXxx kReturn` shape is accepted, and only when
+    // B2 detection: at any send site with nArgs==1, check if the
+    // arg is a kBlockCreate.  If so, log the receiver IC class +
+    // block literal index.  Used to size B2 (Array do: with literal
+    // block → counted at: loop with block body inlined).
+    //
+    // PHARO_SISTA_DO_DETECT=1 enables the dump.  Pure observation —
+    // does not change runtime behavior.
+    void detectDoBlockPattern(uint32_t nArgs, uint32_t bcOffset) {
+        static const bool detect =
+            std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
+        if (!detect) return;
+        if (nArgs != 1) return;
+        if (stack_.size() < 2) return;
+        uint32_t blockArgId = stack_[stack_.size() - 1];
+        if (blockArgId >= out_.values.size()) return;
+        const Value& blockVal = out_.values[blockArgId];
+        if (blockVal.op != Op::kBlockCreate) return;
+        // Probe IC hint for receiver class.
+        const InlineHint* hit = nullptr;
+        if (inlineHints_) {
+            for (const auto& h : *inlineHints_) {
+                if (h.bcOffset == bcOffset) { hit = &h; break; }
+            }
+        }
+        uint32_t litIdx = (uint32_t)(blockVal.literal & 0xFFFFu);
+        uint32_t flags = (uint32_t)((blockVal.literal >> 16) & 0xFFu);
+        uint32_t numCopied = flags & 0x3Fu;
+        bool receiverOnStack = ((flags >> 7) & 1u) != 0;
+        bool ignoreOuterCtx = ((flags >> 6) & 1u) != 0;
+        static int dumpCount = 0;
+        if (dumpCount++ < 32) {
+            std::fprintf(stderr,
+                "[SISTA-DO-BLOCK] bc=%u blockLit=%u numCopied=%u "
+                "rcvOnStack=%d ignOuter=%d icClass=0x%llx hasHint=%d\n",
+                bcOffset, litIdx, numCopied,
+                (int)receiverOnStack, (int)ignoreOuterCtx,
+                hit ? (unsigned long long)hit->classOop : 0ULL,
+                hit ? 1 : 0);
+        }
+    }
+
     // there's exactly one block with both values in it.  Anything more
     // complex still bails to the unspeculated send.
     bool tryInlineConstReturn(uint32_t nArgs, uint32_t bcOffset) {
