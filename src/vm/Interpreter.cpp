@@ -14624,6 +14624,43 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (noJit) return false;
     jitActivations_++;
 
+    // PHARO_BASICAT_TRACE=1: log basicAt: activations from JIT'd
+    // scanFor: callers, with the receiver+index args.  Catches the
+    // bench's failing basicAt: call (which goes through interpreter
+    // dispatch when JIT bails on IC miss / J2J chain bail).
+    {
+        static bool basicAtTrace = std::getenv("PHARO_BASICAT_TRACE") != nullptr;
+        static int batCount = 0;
+        if (basicAtTrace && batCount < 20) {
+            std::string sel = memory_.selectorOf(method);
+            if (sel == "basicAt:" && argCount == 1) {
+                bool callerIsScanFor = false;
+                if (frameDepth_ > 0) {
+                    Oop callerMethod = savedFrames_[frameDepth_ - 1].savedMethod;
+                    callerIsScanFor =
+                        memory_.selectorOf(callerMethod) == "scanFor:";
+                }
+                if (callerIsScanFor) {
+                    batCount++;
+                    Oop rcv = stackValue(argCount);
+                    Oop idx = stackValue(0);
+                    std::string rcls = rcv.isObject()
+                        ? memory_.classNameOf(memory_.classOf(rcv)) : "(imm)";
+                    size_t slotCnt = 0;
+                    if (rcv.isObject() && rcv.rawBits() > 0x10000) {
+                        slotCnt = rcv.asObjectPtr()->slotCount();
+                    }
+                    fprintf(stderr,
+                        "[BAT #%d] basicAt: from JIT scanFor: "
+                        "rcv=0x%llx (%s, slots=%zu) idx=%lld\n",
+                        batCount, (unsigned long long)rcv.rawBits(),
+                        rcls.c_str(), slotCnt,
+                        idx.isSmallInteger() ? (long long)idx.asSmallInteger() : -999);
+                }
+            }
+        }
+    }
+
     // PHARO_JIT_TRACE_OOP=0xhex — log entry/exit/exitReason for a specific
     // method oop, and track call/return counts to surface imbalance.
     static uint64_t traceOop = 0;
