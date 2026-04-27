@@ -1046,11 +1046,13 @@ private:
     // Re-entrancy guard for JIT resume chaining
     bool inJITResume_ = false;
 
-    // B-1: set while jitSistaCallSend is driving step() to invoke a
-    // synchronous send.  Causes step() to skip periodic scheduler
-    // activity (timer / signals / preemption) so process switches
-    // don't strand compiled-code callers on the C stack.
-    bool inSyncSend_ = false;
+    // B-1: depth of nested jitSistaCallSend frames.  When > 0, an outer
+    // helper is driving step(), and nested sends (recursive Sista
+    // callees) MUST bail to the interpreter rather than re-enter the
+    // helper — otherwise fib-like recursive workloads blow the C
+    // stack.  jit_rt_sista_call_send checks this and deopts (returns
+    // 0) when depth would exceed the cap.
+    int sistaHelperDepth_ = 0;
 
     // IC statistics
     size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)

@@ -3430,19 +3430,6 @@ bool Interpreter::step() {
     stepCheckCounter_++;
     bool periodicCheckDue = (stepCheckCounter_ & 0x3FF) == 0;  // every 1024 steps
 
-    // B-1: when driving a synchronous send via jitSistaCallSend, skip
-    // periodic checks (timer/signals/preemption).  Process switches
-    // inside the helper would leave compiled-code-callers stranded on
-    // the C stack while the new active process runs unrelated work.
-    // The send's caller will hit periodic checks again as soon as we
-    // return.  Tested without this gate: ~1M steps/sec, scheduler
-    // dies (timer semaphore never re-armed); with the gate scheduler
-    // stays healthy.
-    if (inSyncSend_) {
-        periodicCheckDue = false;
-        deferredPeriodicCheck_ = false;
-    }
-
     if (periodicCheckDue && inExtension_) {
         // Can't run periodic checks now — defer to next non-extension step.
         // Without this, tight loops whose bytecode count divides evenly into 1024
@@ -9873,6 +9860,23 @@ uint64_t Interpreter::jitSistaBasicAt(jit::JITState* state,
 uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
                                          uint64_t selBits,
                                          uint64_t nArgs) {
+    // Recursion-depth guard.  Sista helper-sends nest on the C stack:
+    // step() inside the helper may activate another Sista method whose
+    // helper-send re-enters here.  fib(28) has 514229 recursive calls
+    // — that blows the C stack instantly.  Cap depth at 1: an outer
+    // helper-send is fine, but any nested helper-send returns 0 to
+    // signal deopt; the lowering's deopt-on-zero fallback hands the
+    // send back to the bail-to-interpreter path.
+    static constexpr int kMaxSistaHelperDepth = 1;
+    if (sistaHelperDepth_ >= kMaxSistaHelperDepth) {
+        return 0;
+    }
+    sistaHelperDepth_++;
+    struct DepthGuard {
+        int* d;
+        ~DepthGuard() { (*d)--; }
+    } depthGuard{&sistaHelperDepth_};
+
     // Save caller state.  state->sp/ip/method belong to the JIT'd
     // method; we'll restore them on return so the caller's compiled
     // code can continue.
@@ -9895,8 +9899,18 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     // pushes result without touching frameDepth_.  For a normal
     // method, it pushes a frame.
     Oop sel = Oop::fromRawBits(selBits);
-    bool savedInSync = inSyncSend_;
-    inSyncSend_ = true;
+    // Capture entry process so we can detect when a process switch
+    // brings us back here.  The "send done" condition is:
+    //   activeProcess == entryProcess AND frameDepth_ <= startDepth.
+    // While other processes are running (scheduler switched away),
+    // we just continue stepping — they'll yield eventually and we'll
+    // resume.
+    // Entry-process tracking: we ONLY break out when our process is
+    // active AND frameDepth has returned.  Don't set inSyncSend_ —
+    // that suppresses the scheduler and starves Smalltalk Delay/timer
+    // processes (DELAY-DEATH).  Other processes are free to run while
+    // we're in here.
+    Oop entryProcess = getActiveProcess();
     sendSelector(sel, (int)nArgs);
 
     // Drive the interp loop until the activated frame returns.
@@ -9920,10 +9934,22 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     //
     //   - exceptions: handled like NLR (also frame-popping via
     //     `^` from a handler block).
-    while (frameDepth_ > startFrameDepth && running_) {
+    // Keep stepping until either:
+    //   - VM stopped (return error)
+    //   - The original process is active AND its frameDepth has
+    //     returned to the start (or below — NLR detection happens
+    //     after the loop)
+    // While other processes run, we just keep stepping — they'll
+    // yield and we'll come back.
+    while (running_) {
+        Oop active = getActiveProcess();
+        if (active.rawBits() == entryProcess.rawBits()) {
+            if (frameDepth_ <= startFrameDepth) {
+                break;  // our process returned; exit loop
+            }
+        }
         if (!step()) {
             // VM stopped (running_=false set somewhere).
-            inSyncSend_ = savedInSync;
             stackPointer_ = savedSP;
             instructionPointer_ = savedIP;
             method_ = savedMethod;
@@ -9935,8 +9961,6 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
             return 0;
         }
     }
-
-    inSyncSend_ = savedInSync;
 
     // NLR detection: did the called method (or a block within)
     // return PAST our frame?
