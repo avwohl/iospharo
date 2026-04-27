@@ -678,6 +678,12 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
 
     uint64_t rcvBits = s->sp[-(nArgs + 1)].rawBits();
 
+    // PHARO_INLINE_PRIM_DEBUG=1: log every inline at: failure with the
+    // index and the receiver's slot count.  Needed because primitive 60
+    // is called inline from JIT code, bypassing Interpreter::primitiveAt.
+    static bool inlineDbg = std::getenv("PHARO_INLINE_PRIM_DEBUG") != nullptr;
+    static int inlineLog = 0;
+
     // Receiver must be an object pointer (tag == 0, not immediate)
     if ((rcvBits & 7) != 0 || rcvBits < 0x10000)
         return 0;
@@ -693,10 +699,28 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
     if (primKind == 14) {
         // at: — read from Array or byte object
         uint64_t idxBits = s->sp[-nArgs].rawBits();
-        if ((idxBits & 7) != 1) return 0;
+        if ((idxBits & 7) != 1) {
+            if (inlineDbg && ++inlineLog <= 30) {
+                fprintf(stderr,
+                    "[INLINE-AT BADIDX #%d] idxBits=0x%llx (not SmI) "
+                    "rcvFmt=%llu slots=%llu\n",
+                    inlineLog, (unsigned long long)idxBits,
+                    (unsigned long long)fmt, (unsigned long long)slotCount);
+            }
+            return 0;
+        }
         int64_t i = (int64_t)idxBits >> 3;
         if (fmt == 2) {
-            if (i < 1 || (uint64_t)i > slotCount) return 0;
+            if (i < 1 || (uint64_t)i > slotCount) {
+                if (inlineDbg && ++inlineLog <= 30) {
+                    fprintf(stderr,
+                        "[INLINE-AT OOB #%d] fmt=2 i=%lld slots=%llu rcv=0x%llx\n",
+                        inlineLog, (long long)i,
+                        (unsigned long long)slotCount,
+                        (unsigned long long)rcvBits);
+                }
+                return 0;
+            }
             Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
             s->sp[-(nArgs + 1)] = slots[i - 1];
             s->sp -= nArgs;
@@ -704,7 +728,16 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
         }
         if (fmt >= 16 && fmt <= 23) {
             uint64_t byteSize = slotCount * 8 - (fmt - 16);
-            if (i < 1 || (uint64_t)i > byteSize) return 0;
+            if (i < 1 || (uint64_t)i > byteSize) {
+                if (inlineDbg && ++inlineLog <= 30) {
+                    fprintf(stderr,
+                        "[INLINE-AT OOB #%d] fmt=%llu(byte) i=%lld byteSize=%llu rcv=0x%llx\n",
+                        inlineLog, (unsigned long long)fmt,
+                        (long long)i, (unsigned long long)byteSize,
+                        (unsigned long long)rcvBits);
+                }
+                return 0;
+            }
             uint8_t byte = reinterpret_cast<uint8_t*>(rcvBits + 8)[i - 1];
             s->sp[-(nArgs + 1)] = Oop::fromRawBits(((uint64_t)byte << 3) | 1);
             s->sp -= nArgs;

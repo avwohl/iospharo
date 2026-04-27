@@ -1848,13 +1848,46 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     }
 
     int64_t idx = index.asSmallInteger();
+    // PHARO_PRIMAT_DEBUG=1: log primitiveAt failures whose immediate
+    // caller is JIT-compiled.  Filters out the noisy ReadStream>>next
+    // EOF case (interpreter only).
+    static bool primAtDbg = std::getenv("PHARO_PRIMAT_DEBUG") != nullptr;
+    static int primAtLog = 0;
+    auto logPrimAt = [&](const char* tag, int64_t slotCount) {
+        if (!primAtDbg) return;
+        // Filter: skip ReadStream>>next noise — that's normal EOF behavior.
+        std::string mSel = memory_.selectorOf(method_);
+        if (mSel == "next" || mSel == "atEnd") return;
+        if (++primAtLog > 50) return;
+        std::string mc = classNameOfMethod(method_);
+        std::string ms = memory_.selectorOf(method_);
+        std::string rc = rcvr.isObject()
+            ? memory_.classNameOf(memory_.classOf(rcvr)) : "(imm)";
+        fprintf(stderr,
+            "[PRIM-AT %s #%d] prim=%s>>%s idx=%lld "
+            "rcvr=%s slots=%lld\n",
+            tag, primAtLog, mc.c_str(), ms.c_str(),
+            (long long)idx, rc.c_str(), (long long)slotCount);
+        size_t start = frameDepth_ > 10 ? frameDepth_ - 10 : 0;
+        for (size_t j = start; j < frameDepth_; j++) {
+            Oop m = savedFrames_[j].savedMethod;
+            std::string cs = memory_.selectorOf(m);
+            std::string cc = classNameOfMethod(m);
+            bool jj = jitRuntime_.methodMap().lookup(m.rawBits()) != nullptr;
+            fprintf(stderr, "[PRIM-AT %s]   [%zu] %s>>%s JIT=%s\n",
+                tag, j, cc.c_str(), cs.c_str(), jj ? "yes" : "no");
+        }
+    };
+
     if (idx < 1) {
+        logPrimAt("idx<1", -1);
         return PrimitiveResult::Failure;  // 1-based indexing
     }
     // Validate receiver pointer is within heap bounds (old, new, or perm space)
     {
         uint8_t* ptr = reinterpret_cast<uint8_t*>(rcvr.rawBits());
         if (!memory_.isOldObject(ptr) && !memory_.isYoungObject(ptr) && !memory_.isPermObject(ptr)) {
+            logPrimAt("bad-rcvr", -1);
             return PrimitiveResult::Failure;
         }
     }
@@ -1871,6 +1904,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         // 64-bit word array (DoubleWordArray): each slot is one 64-bit element
         size_t numElements = header->slotCount();
         if (arrayIndex >= numElements) {
+            logPrimAt("OOB-i64", (int64_t)numElements);
             return PrimitiveResult::Failure;
         }
         uint64_t bits = memory_.fetchWord64(arrayIndex, rcvr);
@@ -1921,6 +1955,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     if (fmtVal >= 10 && fmtVal <= 11) {
         size_t numElements = header->slotCount() * 2 - (fmtVal - 10);
         if (arrayIndex >= numElements) {
+            logPrimAt("OOB-w32", (int64_t)numElements);
             return PrimitiveResult::Failure;
         }
         uint32_t word;
@@ -1933,6 +1968,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
     if (fmtVal >= 12 && fmtVal <= 15) {
         size_t numElements = header->slotCount() * 4 - (fmtVal - 12);
         if (arrayIndex >= numElements) {
+            logPrimAt("OOB-w16", (int64_t)numElements);
             return PrimitiveResult::Failure;
         }
         uint16_t word;
@@ -1943,6 +1979,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
 
     if (header->isBytesObject()) {
         if (arrayIndex >= header->byteSize()) {
+            logPrimAt("OOB-byte", (int64_t)header->byteSize());
             return PrimitiveResult::Failure;
         }
         uint8_t byte = header->byteAt(arrayIndex);
@@ -1958,6 +1995,7 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         // Per official VM: format 0 (ZeroSized) and 1 (FixedSize) are NOT indexable.
         // primitive at:/at:put: must fail for these - use instVarAt: instead.
         if (fmt == ObjectFormat::ZeroSized || fmt == ObjectFormat::FixedSize) {
+            logPrimAt("OOB-fixed", (int64_t)header->slotCount());
             return PrimitiveResult::Failure;
         }
         size_t fixedFields = 0;
@@ -1968,10 +2006,12 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
         }
         size_t slotCount = header->slotCount();
         if (fixedFields > slotCount) {
+            logPrimAt("OOB-ff>sc", (int64_t)slotCount);
             return PrimitiveResult::Failure;
         }
         size_t indexableSize = slotCount - fixedFields;
         if (arrayIndex >= indexableSize) {
+            logPrimAt("OOB-ptr", (int64_t)indexableSize);
             return PrimitiveResult::Failure;
         }
         size_t actualSlot = fixedFields + arrayIndex;

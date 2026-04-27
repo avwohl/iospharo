@@ -6278,14 +6278,14 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                 const char* sb = (const char*)sh->bytes();
                 size_t sz = sh->byteSize();
                 bool errorSel =
-                    (sz == 21 && memcmp(sb, "errorImproperStore:in:", 21) == 0) ||
-                    (sz == 19 && memcmp(sb, "errorSubscriptBounds:", 19) == 0) ||
+                    (sz == 22 && memcmp(sb, "errorImproperStore:in:", 22) == 0) ||
+                    (sz == 21 && memcmp(sb, "errorSubscriptBounds:", 21) == 0) ||
                     (sz == 6  && memcmp(sb, "error:", 6) == 0) ||
-                    (sz == 30 && memcmp(sb,
-                        "signalFor:lowerBound:upperBound:", 30) == 0) ||
-                    (sz == 33 && memcmp(sb,
-                        "signalFor:lowerBound:upperBound:in:", 33) == 0) ||
-                    (sz == 17 && memcmp(sb, "signalForException:", 17) == 0);
+                    (sz == 32 && memcmp(sb,
+                        "signalFor:lowerBound:upperBound:", 32) == 0) ||
+                    (sz == 35 && memcmp(sb,
+                        "signalFor:lowerBound:upperBound:in:", 35) == 0) ||
+                    (sz == 19 && memcmp(sb, "signalForException:", 19) == 0);
                 // signal/signal: are also Semaphore methods.  Only
                 // accept them when the receiver class walks up to
                 // Exception via the superclass chain.
@@ -6321,17 +6321,28 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         "  receiver: 0x%llx class=%s\n",
                         (unsigned long long)rcvr.rawBits(),
                         memory_.classNameOf(memory_.classOf(rcvr)).c_str());
-                    if (argCount >= 1) {
-                        Oop arg1 = stackValue(argCount - 1);
+                    for (int ai = 0; ai < argCount && ai < 5; ai++) {
+                        Oop arg = stackValue(argCount - 1 - ai);
+                        std::string argDesc;
+                        if (arg.isSmallInteger()) {
+                            char buf[64];
+                            snprintf(buf, sizeof(buf), "SmI(%lld)",
+                                (long long)arg.asSmallInteger());
+                            argDesc = buf;
+                        } else if (arg.isNil()) {
+                            argDesc = "nil";
+                        } else {
+                            argDesc = memory_.classNameOf(memory_.classOf(arg));
+                        }
                         fprintf(stderr,
-                            "  arg1: 0x%llx class=%s\n",
-                            (unsigned long long)arg1.rawBits(),
-                            memory_.classNameOf(memory_.classOf(arg1)).c_str());
-                        if (arg1.isObject() && arg1.rawBits() > 0x10000) {
-                            ObjectHeader* ah = arg1.asObjectPtr();
+                            "  arg[%d]: 0x%llx %s\n",
+                            ai, (unsigned long long)arg.rawBits(),
+                            argDesc.c_str());
+                        if (arg.isObject() && arg.rawBits() > 0x10000) {
+                            ObjectHeader* ah = arg.asObjectPtr();
                             if (ah->isBytesObject() && ah->byteSize() < 256) {
                                 fprintf(stderr,
-                                    "  arg1 text: '%.*s'\n",
+                                    "  arg[%d] text: '%.*s'\n", ai,
                                     (int)ah->byteSize(), (const char*)ah->bytes());
                             }
                         }
