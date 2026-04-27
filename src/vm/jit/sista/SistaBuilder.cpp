@@ -244,15 +244,92 @@ public:
                     // [PushFullBlock; specialSend do:] adjacency for now.
                     if (op == 0x7B  // SpecialSend do:
                         && lastFullBlockEnd == (int)i) {
-                        if (patternCount++ < 16) {
+                        if (patternCount++ < 32) {
                             int numCopied = lastFullBlockFlags & 0x3F;
                             bool recvOnStack = ((lastFullBlockFlags >> 7) & 1) != 0;
+
+                            // Look up block oop in method literals.
+                            // out_.literals was populated by Builder::build
+                            // before run() was called.
+                            uint64_t blockOopBits = 0;
+                            int blockBytecodeLen = -1;
+                            int blockNumArgs = -1;
+                            int blockNumTemps = -1;
+                            if (lastFullBlockLitIdx >= 0
+                                && (size_t)lastFullBlockLitIdx
+                                   < out_.literals.size()) {
+                                Oop blockOop =
+                                    out_.literals[lastFullBlockLitIdx];
+                                blockOopBits = blockOop.rawBits();
+                                if (blockOop.isObject()) {
+                                    ObjectHeader* blockHdr =
+                                        blockOop.asObjectPtr();
+                                    if (blockHdr->isCompiledMethod()) {
+                                        // CompiledBlock has same shape:
+                                        // header SmI + literals + bytecode.
+                                        // Read slot 0 directly from the
+                                        // byte body (first 8 bytes is the
+                                        // header Oop bits).
+                                        const uint8_t* bs =
+                                            blockHdr->bytes();
+                                        size_t total =
+                                            blockHdr->byteSize();
+                                        if (total >= 8) {
+                                            uint64_t hbits = 0;
+                                            std::memcpy(&hbits, bs, 8);
+                                            Oop hdr = Oop::fromRawBits(hbits);
+                                            if (hdr.isSmallInteger()) {
+                                                int64_t hb =
+                                                    hdr.asSmallInteger();
+                                                uint32_t numLits =
+                                                    (uint32_t)(hb & 0x7FFF);
+                                                blockNumArgs =
+                                                    (int)((hb >> 24) & 0x0F);
+                                                int storedTemps =
+                                                    (int)((hb >> 18) & 0x3F);
+                                                blockNumTemps =
+                                                    storedTemps
+                                                    - blockNumArgs;
+                                                size_t headerBytes =
+                                                    (1 + numLits) * 8;
+                                                blockBytecodeLen =
+                                                    (int)(total > headerBytes
+                                                          ? total
+                                                            - headerBytes
+                                                          : 0);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Look up IC hint at do: bcOffset for the
+                            // receiver class.  Stored as classIndex
+                            // (low 22 bits — see extractInlineHintsForMethod).
+                            const InlineHint* hit = nullptr;
+                            if (inlineHints_) {
+                                for (const auto& h : *inlineHints_) {
+                                    if (h.bcOffset == (uint32_t)i) {
+                                        hit = &h; break;
+                                    }
+                                }
+                            }
+                            uint32_t icClassIdx =
+                                hit ? (uint32_t)(hit->classOop & 0x3FFFFFu)
+                                    : 0;
+
                             std::fprintf(stderr,
                                 "[SISTA-DO-PATTERN] doBcOffset=%zu "
                                 "blockLit=%d numCopied=%d rcvOnStack=%d "
-                                "methodLen=%zu\n",
+                                "methodLen=%zu blockOop=0x%llx "
+                                "blockNumArgs=%d blockNumTemps=%d "
+                                "blockBcLen=%d icClassIdx=%u hasHint=%d\n",
                                 i, lastFullBlockLitIdx, numCopied,
-                                (int)recvOnStack, len_);
+                                (int)recvOnStack, len_,
+                                (unsigned long long)blockOopBits,
+                                blockNumArgs, blockNumTemps,
+                                blockBytecodeLen, icClassIdx,
+                                hit ? 1 : 0);
                         }
                         lastFullBlockEnd = -1;
                     } else {
