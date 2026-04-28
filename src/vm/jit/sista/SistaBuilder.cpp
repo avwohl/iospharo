@@ -3265,17 +3265,28 @@ private:
                 // Emit type checks if PHARO_SISTA_INLINE_ARITH=1.
                 // Each check operand[0] = value to test;
                 // operand[1..N] = deopt stack snapshot.
+                //
+                // Skip the check when the operand is already known to
+                // be SmI (PushOne/PushZero/PushInteger/PushLitConst-of-SmI,
+                // result of a previous prim arith).  Saves the IR node
+                // and the runtime AND+CMP+BEQ cost.
                 if (typeCheckArith_) {
-                    std::vector<uint32_t> checkA{a};
-                    checkA.insert(checkA.end(), deoptStack.begin(), deoptStack.end());
-                    std::vector<uint32_t> checkB{b};
-                    checkB.insert(checkB.end(), deoptStack.begin(), deoptStack.end());
-                    out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
-                                  Type::kOopSmallInt, std::move(checkA),
-                                  /*literal=*/bcOffset);
-                    out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
-                                  Type::kOopSmallInt, std::move(checkB),
-                                  /*literal=*/bcOffset);
+                    bool aSmI = (out_.values[a].type == Type::kOopSmallInt);
+                    bool bSmI = (out_.values[b].type == Type::kOopSmallInt);
+                    if (!aSmI) {
+                        std::vector<uint32_t> checkA{a};
+                        checkA.insert(checkA.end(), deoptStack.begin(), deoptStack.end());
+                        out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
+                                      Type::kOopSmallInt, std::move(checkA),
+                                      /*literal=*/bcOffset);
+                    }
+                    if (!bSmI) {
+                        std::vector<uint32_t> checkB{b};
+                        checkB.insert(checkB.end(), deoptStack.begin(), deoptStack.end());
+                        out_.newValue(currentBlock_, Op::kPrimTagCheckInt,
+                                      Type::kOopSmallInt, std::move(checkB),
+                                      /*literal=*/bcOffset);
+                    }
                 }
 
                 Op primOp;
@@ -3370,8 +3381,15 @@ private:
             if (op >= jit::SistaV1::PushLitConstBase
                 && op <= jit::SistaV1::PushLitConstLast) {
                 uint32_t litIdx = op - jit::SistaV1::PushLitConstBase;
+                // Narrow type when the literal is a SmallInteger — lets
+                // the inline-arith tag-check pass skip the emit.
+                Type ty = Type::kOop;
+                if (litIdx < out_.literals.size()
+                    && out_.literals[litIdx].isSmallInteger()) {
+                    ty = Type::kOopSmallInt;
+                }
                 uint32_t v = out_.newValue(currentBlock_,
-                                            Op::kLoadLiteral, Type::kOop,
+                                            Op::kLoadLiteral, ty,
                                             /*operands=*/{}, /*literal=*/litIdx);
                 stack_.push_back(v);
                 ip++;
@@ -4266,12 +4284,64 @@ private:
 
 }  // namespace
 
+// Narrow kLoadTemp value types to kOopSmallInt when every kStoreTemp
+// into that slot stores an SmI-typed value.  Iterates to a fixed
+// point because narrowing a load can flow through prim arith into
+// further stores and unblock other slots.  Used by the lowering's
+// kPrimTagCheckInt skip — eliminates per-iter tag checks in tight
+// SmI counted loops (plainTo, simpleLoop).
+static void narrowTempTypes(Method& m) {
+    bool changed = true;
+    int passes = 0;
+    while (changed && passes < 8) {
+        changed = false;
+        passes++;
+        // First, group stores by slot.
+        std::unordered_map<uint64_t, std::vector<uint32_t>> storesBySlot;
+        for (const Value& sv : m.values) {
+            if (sv.op == Op::kStoreTemp && !sv.operands.empty()) {
+                storesBySlot[sv.literal].push_back(sv.id);
+            }
+        }
+        // For each slot: SmI-only iff every stored value is SmI-typed.
+        std::unordered_map<uint64_t, bool> slotIsSmI;
+        for (const auto& kv : storesBySlot) {
+            uint64_t slot = kv.first;
+            const std::vector<uint32_t>& storeIds = kv.second;
+            if (storeIds.empty()) { slotIsSmI[slot] = false; continue; }
+            bool allSmI = true;
+            for (uint32_t storeId : storeIds) {
+                const Value& sv = m.values[storeId];
+                if (sv.operands.empty()
+                    || m.values[sv.operands[0]].type != Type::kOopSmallInt) {
+                    allSmI = false;
+                    break;
+                }
+            }
+            slotIsSmI[slot] = allSmI;
+        }
+        // Narrow loads of SmI-only slots.
+        for (Value& lv : m.values) {
+            if (lv.op == Op::kLoadTemp
+                && lv.type == Type::kOop) {
+                auto it = slotIsSmI.find(lv.literal);
+                if (it != slotIsSmI.end() && it->second) {
+                    lv.type = Type::kOopSmallInt;
+                    changed = true;
+                }
+            }
+        }
+    }
+}
+
 LiftResult Builder::buildFromBytes(const uint8_t* bc, size_t len,
                                      uint32_t numArgs, uint32_t numTemps,
                                      Method& out,
                                      uint32_t* failedAtBytecode) {
     LinearLifter l(bc, len, numArgs, numTemps, out);
-    return l.run(failedAtBytecode);
+    LiftResult res = l.run(failedAtBytecode);
+    if (res == LiftResult::kOk) narrowTempTypes(out);
+    return res;
 }
 
 // Read SpecialSelectorsArray from the image and extract arg counts for
@@ -4406,7 +4476,9 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (g_currentBuildHints) {
         l.setInlineHints(g_currentBuildHints);
     }
-    return l.run(failedAtBytecode);
+    LiftResult res = l.run(failedAtBytecode);
+    if (res == LiftResult::kOk) narrowTempTypes(out);
+    return res;
 }
 
 // Phase 4 Step 1: profile-guided wrapper.  Sets a thread-local hint

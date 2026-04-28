@@ -137,6 +137,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     Gp state = cc.new_gp64("state");
     fn->set_arg(0, state);
 
+    // Hoist tempBase + litBase loads out of every per-access ldr.
+    // These pointers are set once when the JITState is initialised and
+    // never change during the call; loading them once at entry lets
+    // asmjit's allocator keep them in callee-saved registers across
+    // the whole function — major win on tight loops that touch many
+    // temps/literals (plainTo, simpleLoop, do:-bodies).
+    Gp tempBaseHoisted = cc.new_gp64("tempBaseH");
+    cc.ldr(tempBaseHoisted, ptr(state, OFF_TEMPBASE));
+    Gp litBaseHoisted = cc.new_gp64("litBaseH");
+    cc.ldr(litBaseHoisted, ptr(state, OFF_LITERALS));
+
     // Map each SSA value id to the virtual register holding its
     // materialized value.  Only records values whose type is produced
     // (kOop, kInt, …); terminators have no register.
@@ -210,10 +221,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kLoadTemp: {
-                Gp tempBase = cc.new_gp64("tempBase");
-                Gp dst      = cc.new_gp64("temp");
-                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
-                cc.ldr(dst, ptr(tempBase, static_cast<int>(v.literal) * 8));
+                Gp dst = cc.new_gp64("temp");
+                cc.ldr(dst, ptr(tempBaseHoisted,
+                                 static_cast<int>(v.literal) * 8));
                 regFor[v.id] = dst;
                 break;
             }
@@ -221,10 +231,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // literal: high 32 = tempIdxOfVec, low 32 = indexInVec.
                 uint32_t tempIdx = (uint32_t)(v.literal >> 32);
                 uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
-                Gp tempBase = cc.new_gp64("tempBase");
-                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
                 Gp vec = cc.new_gp64("vec");
-                cc.ldr(vec, ptr(tempBase, (int)tempIdx * 8));
+                cc.ldr(vec, ptr(tempBaseHoisted, (int)tempIdx * 8));
                 Gp dst = cc.new_gp64("vec_slot");
                 cc.ldr(dst, ptr(vec, 8 + (int)slot * 8));
                 regFor[v.id] = dst;
@@ -242,10 +250,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
                 uint32_t tempIdx = (uint32_t)(v.literal >> 32);
                 uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
-                Gp tempBase = cc.new_gp64("tempBase");
-                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
                 Gp vec = cc.new_gp64("vec");
-                cc.ldr(vec, ptr(tempBase, (int)tempIdx * 8));
+                cc.ldr(vec, ptr(tempBaseHoisted, (int)tempIdx * 8));
                 // No write barrier yet — this is fine for SmI stores
                 // (typical accumulator), but if a heap-pointer is
                 // stored into an old TempVec we'd need rememberObject.
@@ -255,10 +261,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kLoadLiteral: {
-                Gp litBase = cc.new_gp64("litBase");
-                Gp dst     = cc.new_gp64("lit");
-                cc.ldr(litBase, ptr(state, OFF_LITERALS));
-                cc.ldr(dst, ptr(litBase, static_cast<int>(v.literal) * 8));
+                Gp dst = cc.new_gp64("lit");
+                cc.ldr(dst, ptr(litBaseHoisted,
+                                 static_cast<int>(v.literal) * 8));
                 regFor[v.id] = dst;
                 break;
             }
@@ -291,9 +296,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                Gp tempBase = cc.new_gp64("tempBase");
-                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
-                cc.str(it->second, ptr(tempBase, static_cast<int>(v.literal) * 8));
+                cc.str(it->second,
+                       ptr(tempBaseHoisted,
+                           static_cast<int>(v.literal) * 8));
                 // kStoreTemp produces void — nothing to record.
                 break;
             }
@@ -350,6 +355,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 if (itVal == regFor.end()) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
+                }
+
+                // Type narrowing: if the operand is already known-SmI
+                // (kConstantOop SmI, kPrimAddInt result, or a kLoadTemp
+                // narrowed by the post-build pass), the runtime check
+                // is redundant.  Skip codegen — kPrimTagCheckInt's
+                // output value isn't used by anyone (arith ops carry
+                // their own deopt info via overflow check).
+                if (method.values[v.operands[0]].type
+                    == Type::kOopSmallInt) {
+                    regFor[v.id] = itVal->second;  // unused but well-formed
+                    break;
                 }
 
                 using namespace asmjit::a64;
@@ -774,11 +791,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.str(sp, ptr(state, OFF_SP));
 
                 // Resolve selector: state->literals[selIdx].
-                Gp litBase = cc.new_gp64("sendLitBase");
-                Gp selReg  = cc.new_gp64("sendSel");
-                cc.ldr(litBase, ptr(state, OFF_LITERALS));
+                Gp selReg = cc.new_gp64("sendSel");
                 cc.ldr(selReg,
-                       ptr(litBase, static_cast<int>(selIdx) * 8));
+                       ptr(litBaseHoisted, static_cast<int>(selIdx) * 8));
 
                 Gp nArgsReg = cc.new_gp64("sendNArgs");
                 cc.mov(nArgsReg, Imm((uint64_t)nArgs));
@@ -1461,10 +1476,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         // literals).  Use state.literals just like the
                         // main lift.
                         uint32_t idx = (uint32_t)bv.literal;
-                        Gp lits = cc.new_gp64("blk_lits");
-                        cc.ldr(lits, ptr(state, OFF_LITERALS));
                         Gp r = cc.new_gp64("blk_lit");
-                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        cc.ldr(r, ptr(litBaseHoisted, (int)(idx * 8)));
                         blockRegs[bv.id] = r;
                         break;
                     }
@@ -1788,10 +1801,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     case Op::kLoadLiteral: {
                         uint32_t idx = (uint32_t)bv.literal;
-                        Gp lits = cc.new_gp64("ij_lits");
-                        cc.ldr(lits, ptr(state, OFF_LITERALS));
                         Gp r = cc.new_gp64("ij_lit");
-                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        cc.ldr(r, ptr(litBaseHoisted, (int)(idx * 8)));
                         blockRegs[bv.id] = r;
                         break;
                     }
@@ -2088,10 +2099,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     case Op::kLoadLiteral: {
                         uint32_t idx = (uint32_t)bv.literal;
-                        Gp lits = cc.new_gp64("iv_lits");
-                        cc.ldr(lits, ptr(state, OFF_LITERALS));
                         Gp r = cc.new_gp64("iv_lit");
-                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        cc.ldr(r, ptr(litBaseHoisted, (int)(idx * 8)));
                         blockRegs[bv.id] = r;
                         break;
                     }
@@ -2340,10 +2349,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     case Op::kLoadLiteral: {
                         uint32_t idx = (uint32_t)bv.literal;
-                        Gp lits = cc.new_gp64("ivd_lits");
-                        cc.ldr(lits, ptr(state, OFF_LITERALS));
                         Gp r = cc.new_gp64("ivd_lit");
-                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        cc.ldr(r, ptr(litBaseHoisted, (int)(idx * 8)));
                         blockRegs[bv.id] = r;
                         break;
                     }
@@ -3018,10 +3025,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     case Op::kLoadLiteral: {
                         uint32_t idx = (uint32_t)bv.literal;
-                        Gp lits = cc.new_gp64("col_b_lits");
-                        cc.ldr(lits, ptr(state, OFF_LITERALS));
                         Gp r = cc.new_gp64("col_b_lit");
-                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        cc.ldr(r, ptr(litBaseHoisted, (int)(idx * 8)));
                         blockRegs[bv.id] = r;
                         break;
                     }
