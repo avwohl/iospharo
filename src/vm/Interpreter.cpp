@@ -111,7 +111,13 @@ uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static f
 // Handle to the Sista runtime created lazily inside activateMethod.
 // recoverJITAfterGC() clears its cache — raw oop keys become stale
 // after Spur compaction.  Nullptr when Sista was never invoked.
-static sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
+//
+// Visible to JITRuntime via extern decl so JITRuntime::noteMethodEntry
+// can ask Sista whether a method has a splice (and skip T1 counting
+// if so — avoids the T1-vs-Sista race in
+// memory/project_t1_vs_sista_race.md).  Lives in pharo:: namespace,
+// not file-scoped, so extern works.
+sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
 
 // Per-method gate decision cache (1 = hasUnsafeOp, 0 = eligible).
 // Avoids re-scanning the method's bytecodes on every activation.

@@ -36,15 +36,6 @@ export PHARO_SISTA_DO_SPLICE_NO_HINT=1
 export PHARO_SISTA_INLINE_ARITH=1
 export PHARO_SISTA_IV_DO_ACCUM=1
 export PHARO_SISTA_COLLECT=1
-# PHARO_SISTA_VERBOSE=1 is an unexpected stabilizer: without it, the
-# T1-vs-Sista race (memory: project_t1_vs_sista_race.md) makes panel
-# sumArr 50/50 fast-or-slow.  Verbose mode logs every Sista dispatch,
-# which delays T1 engagement enough that Sista always wins the race.
-# Without verbose, T1 compiles sumArr in ~50% of runs and intercepts
-# Sista's dispatch, falling back to per-iter IC speed (~1s).  Send
-# overhead from verbose adds <5% to the bench timing — worth it for
-# stability.
-export PHARO_SISTA_VERBOSE=1
 
 LOG=$(mktemp -d)/bench
 trap "rm -rf $(dirname "$LOG")" EXIT

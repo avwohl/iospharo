@@ -64,6 +64,7 @@ public:
     void reset() {
         cache_.clear();
         compiledHintless_.clear();
+        spliceMethods_.clear();
     }
 
     // Drop the cache entry for one method — but only if its compile
@@ -82,6 +83,16 @@ public:
     // Statistics — for the Sista survey / diagnostics.
     size_t compiledCount() const { return cache_.size(); }
 
+    // True if the cached compile for `method` includes a counted-loop
+    // splice (kCountedLoopArrayDoAccum etc.).  Used by JITRuntime to
+    // suppress T1 compilation for methods Sista already handles
+    // optimally — prevents the T1-vs-Sista race where T1 wins the
+    // activation and falls back to per-iter IC speed.  See
+    // memory/project_t1_vs_sista_race.md.
+    bool hasSplice(Oop method) const {
+        return spliceMethods_.count(method.rawBits()) > 0;
+    }
+
 private:
     Lowering lowering_;
     std::unordered_map<uint64_t, Lowering::CompiledFn> cache_;
@@ -89,6 +100,10 @@ private:
     // Used by invalidateIfHintless() to target only those entries
     // without re-compiling everyone on every IC patch.
     std::unordered_set<uint64_t> compiledHintless_;
+    // Methods whose lifted IR contains a counted-loop splice op.
+    // Populated in compile() when hasSplice is detected.  Read by
+    // hasSplice() above.  Cleared by reset() (post-GC).
+    std::unordered_set<uint64_t> spliceMethods_;
 };
 
 }  // namespace sista

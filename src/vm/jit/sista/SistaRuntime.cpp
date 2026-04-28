@@ -88,6 +88,13 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // Lower IR → native.
     uint32_t failedVal = UINT32_MAX;
     Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, bytecodes);
+    if (hasSplice && fn) {
+        // Mark method as Sista-owned: JITRuntime::noteMethodEntry will
+        // skip counting this method, preventing T1 from compiling it
+        // and racing with Sista's splice.  See
+        // memory/project_t1_vs_sista_race.md.
+        spliceMethods_.insert(key);
+    }
     if (hasSplice) {
         static int spliceLogCount = 0;
         if (spliceLogCount++ < 16) {

@@ -9,9 +9,19 @@
 #include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
+#include "sista/SistaRuntime.hpp"
 #include <cstring>
 #include <cstdio>
 #include <algorithm>
+
+// Defined in Interpreter.cpp; nullptr until Sista hook fires for the
+// first time.  JITRuntime peeks at it to skip counting methods Sista
+// has compiled with a splice (avoids T1-vs-Sista race —
+// memory/project_t1_vs_sista_race.md).
+namespace pharo {
+namespace sista { class Runtime; }
+extern sista::Runtime* sistaRuntimeForGCHook_;
+}
 
 namespace pharo { extern uint64_t g_stepNum; }
 using pharo::g_stepNum;
@@ -1346,6 +1356,16 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             fprintf(stderr, "[JIT] Deferring compilation for ~%lld steps\n", (long long)deferSteps);
     }
     if (deferSteps > 0 && (int64_t)g_stepNum < deferSteps) return;
+
+    // Sista already owns this method via a counted-loop splice — don't
+    // race with it.  Without this check, ~50% of bench-panel runs T1
+    // compiles sumArr, intercepts the activation in tryJITActivation,
+    // and falls back to per-iter IC speed (~150× slowdown).  See
+    // memory/project_t1_vs_sista_race.md.
+    if (sistaRuntimeForGCHook_) {
+        Oop m = compiledMethod;
+        if (sistaRuntimeForGCHook_->hasSplice(m)) return;
+    }
 
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
     static const int maxCompile = g_debug.jitMaxCompile;
