@@ -3076,41 +3076,37 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, deoptBC);
                 cc.bind(allocSucc);
 
+                // Format check: only fast-path format 2 (Indexable64).
+                // Other formats deopt — the helper-based path knows how
+                // to encode bytes/etc. but inline ldr can't.
+                Gp col_hdr = cc.new_gp64("col_hdr");
+                cc.ldr(col_hdr, ptr(rcvReg));
+                Gp col_fmt = cc.new_gp64("col_fmt");
+                cc.ubfx(col_fmt, col_hdr, Imm(24), Imm(5));
+                cc.cmp(col_fmt, Imm(2));
+                Label colFmtOk = cc.new_label();
+                cc.b_eq(colFmtOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(colFmtOk);
+
                 // iReg = SmI(1) = 9.
                 Gp iReg = cc.new_gp64("col_i");
                 cc.mov(iReg, Imm(9));
 
+                // Rotated loop: pre-check size; back edge fuses cmp+b.ls.
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
-                // Compare iReg vs sizeReg as SmI Oops; b.hi exits.
                 cc.cmp(iReg, sizeReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
-                // eachReg = jit_rt_sista_basic_at(state, rcv, iReg).
-                Gp atFn = cc.new_gp64("col_atfn");
-                cc.mov(atFn,
-                       Imm((uint64_t)&jit_rt_sista_basic_at));
-                asmjit::InvokeNode* atInvoke = nullptr;
-                asmjit::Error aErr2 = cc.invoke(
-                    asmjit::Out(atInvoke), atFn,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (aErr2 != asmjit::kErrorOk || !atInvoke) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                atInvoke->set_arg(0, state);
-                atInvoke->set_arg(1, rcvReg);
-                atInvoke->set_arg(2, iReg);
+                // Inline format-2 element load.  iReg encodes (i<<3)|1;
+                // slot (i-1) lives at byte offset 8 + (i-1)*8 = i*8 from
+                // rcv.  i*8 = iReg - 1.  Use [rcv, off] addressing.
+                Gp col_off = cc.new_gp64("col_off");
+                cc.sub(col_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("col_each");
-                atInvoke->set_ret(0, eachReg);
-
-                Label atOk = cc.new_label();
-                cc.cbnz(eachReg, atOk);
-                emitDeopt(rcvReg, deoptBC);
-                cc.bind(atOk);
+                cc.ldr(eachReg, ptr(rcvReg, col_off));
 
                 // Tag-check eachReg as SmI (the splice's block is
                 // restricted to SmI arith).  Deopt before any commit
@@ -3247,16 +3243,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
-                // Store newElemReg to result[iReg].  Address =
-                // resultReg + iReg - 1 (since SmI(N)-1 = 8*N).
-                Gp addrTmp = cc.new_gp64("col_addr");
-                cc.add(addrTmp, resultReg, iReg);
-                cc.sub(addrTmp, addrTmp, Imm(1));
-                cc.str(newElemReg, ptr(addrTmp));
+                // Store newElemReg to result[iReg].  Use [result, off]
+                // addressing — off = iReg - 1 already computed for the
+                // load, but a fresh sub keeps register-allocator happy.
+                Gp col_storeOff = cc.new_gp64("col_storeOff");
+                cc.sub(col_storeOff, iReg, Imm(1));
+                cc.str(newElemReg, ptr(resultReg, col_storeOff));
 
-                // i += SmI(1).
+                // i += SmI(1); fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, sizeReg);
+                cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
 
