@@ -740,13 +740,42 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Track whether the IR op carries deopt info (operands.size > 2).
                 // Mul uses asr (not lsr) to correctly handle negative SmallInts.
                 Gp mulProd64;  // For mul overflow path: holds untagged 60-bit product
-                if (v.op == Op::kPrimAddInt) {
+                // Constant-fold tag adjustments when the second operand
+                // is a kConstantOop SmI: encoded(a) + encoded(K) - 1
+                // = a + (K<<3); encoded(a) - encoded(K) + 1 = a - (K<<3).
+                // Skips the +/- 1 instruction (the mov-of-constant remains
+                // because deopt-stack rebuild still needs it on the cold
+                // path, but asmjit can sink it).
+                bool didFold = false;
+                if ((v.op == Op::kPrimAddInt || v.op == Op::kPrimSubInt)
+                    && v.operands.size() >= 2) {
+                    const Value& bv = method.valueAt(v.operands[1]);
+                    if (bv.op == Op::kConstantOop
+                        && (bv.literal & 7) == 1) {
+                        int64_t kEnc = (int64_t)((bv.literal >> 3));
+                        int64_t imm = kEnc * 8;
+                        // ARM64 add/sub imm: 12-bit positive (0..4095),
+                        // or 12-bit shifted by 12 (0..4095 << 12).
+                        // Bail if imm doesn't fit either form.
+                        if (imm >= 0 && (imm <= 4095
+                                       || (imm % 4096 == 0
+                                        && imm / 4096 <= 4095))) {
+                            if (v.op == Op::kPrimAddInt) {
+                                cc.add(dst, ita->second, Imm(imm));
+                            } else {  // kPrimSubInt
+                                cc.sub(dst, ita->second, Imm(imm));
+                            }
+                            didFold = true;
+                        }
+                    }
+                }
+                if (!didFold && v.op == Op::kPrimAddInt) {
                     cc.add(dst, ita->second, itb->second);
                     cc.sub(dst, dst, Imm(1));
-                } else if (v.op == Op::kPrimSubInt) {
+                } else if (!didFold && v.op == Op::kPrimSubInt) {
                     cc.sub(dst, ita->second, itb->second);
                     cc.add(dst, dst, Imm(1));
-                } else {
+                } else if (v.op == Op::kPrimMulInt) {
                     // Multiply: untag both operands (asr — signed shift —
                     // for negatives), multiply, re-tag.
                     Gp au = cc.new_gp64("au");
