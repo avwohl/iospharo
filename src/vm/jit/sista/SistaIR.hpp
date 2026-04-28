@@ -193,6 +193,16 @@ enum class Op : uint8_t {
     // literal:  block-IR slot
     kCountedLoopIntervalInjectInto,
 
+    // --- B2 splice: (start to: stop) do: variant ---
+    // Counted loop iterating SmI integers start..stop with the block
+    // body inlined.  No accumulator (do: discards its block result).
+    // Result on stack is a placeholder for the Interval (rarely
+    // observed; if it is, deopts on use).
+    //
+    // operands: start, stop          -> Oop  (placeholder for the Interval)
+    // literal:  block-IR slot
+    kCountedLoopIntervalDo,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

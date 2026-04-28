@@ -1127,6 +1127,151 @@ public:
             }
         }
 
+        // --- B2 splice pre-pass: Interval-do pattern ------------------
+        //
+        // Detects: <push start> <push stop> Send1#to:
+        //          PushFullBlock SpecialSend(do:=0x7B)
+        //
+        // Records the offset of Send1#to: so the main lift emits
+        // kInterval (intervalDoAtTo_) AND records the PushFullBlock
+        // offset so the do: intercept emits kCountedLoopIntervalDo
+        // (spliceDoAtPushFullBlock_).
+        //
+        // Block must be 1-arg (each), numCopied=0, splice-simple.
+        if (injectSplice && memory_ != nullptr && toSelectorMask_) {
+            size_t i = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op >= jit::SistaV1::Send1Base
+                    && op <= jit::SistaV1::Send1Last) {
+                    uint32_t selIdx = op & 0x0F;
+                    if (((toSelectorMask_ >> selIdx) & 1) != 0) {
+                        // Possible to: send.  Check if followed by
+                        // PushFullBlock + SpecialSend(do:).
+                        size_t pfbOff = i + 1;
+                        if (pfbOff + 3 >= len_
+                            || bc_[pfbOff] != jit::SistaV1::PushFullBlock) {
+                            i++; continue;
+                        }
+                        size_t doOff = pfbOff + 3;
+                        if (bc_[doOff] != 0x7B) {  // SpecialSend do:
+                            i++; continue;
+                        }
+
+                        int litIdx = bc_[pfbOff + 1];
+                        int flags = bc_[pfbOff + 2];
+                        bool ok = true;
+                        const char* rejectReason = nullptr;
+                        Op rejectedOp = Op::kReturn;
+
+                        Oop blockOop = Oop::nil();
+                        if (litIdx < 0
+                            || (size_t)litIdx
+                               >= out_.literals.size()) {
+                            ok = false;
+                            rejectReason = "bad litIdx";
+                        } else {
+                            blockOop = out_.literals[litIdx];
+                            if (!blockOop.isObject()) {
+                                ok = false;
+                                rejectReason = "block not Object";
+                            }
+                        }
+                        bool receiverOnStack =
+                            ((flags >> 7) & 1) != 0;
+                        if (ok && receiverOnStack) {
+                            ok = false;
+                            rejectReason = "recvOnStack";
+                        }
+                        uint32_t numCopied =
+                            (uint32_t)(flags & 0x3F);
+                        if (ok && numCopied != 0) {
+                            ok = false;
+                            rejectReason = "numCopied != 0";
+                        }
+
+                        std::unique_ptr<Method> blockIR;
+                        if (ok && g_calleeLiftDepth < 1) {
+                            blockIR = std::make_unique<Method>();
+                            g_calleeLiftDepth++;
+                            bool savedBR = g_subLiftAsBlockReturnLocal;
+                            g_subLiftAsBlockReturnLocal = true;
+                            uint32_t failedBc = UINT32_MAX;
+                            LiftResult r = Builder::build(
+                                blockOop, *memory_, *blockIR, &failedBc);
+                            g_subLiftAsBlockReturnLocal = savedBR;
+                            g_calleeLiftDepth--;
+                            if (r != LiftResult::kOk) {
+                                ok = false;
+                                rejectReason = "block sub-lift failed";
+                            }
+                        } else if (ok) {
+                            ok = false;
+                            rejectReason = "recursion guard";
+                        }
+
+                        if (ok && blockIR) {
+                            for (const auto& bv : blockIR->values) {
+                                switch (bv.op) {
+                                case Op::kLoadReceiver:
+                                case Op::kLoadTrueOop:
+                                case Op::kLoadFalseOop:
+                                case Op::kLoadTemp:
+                                case Op::kLoadLiteral:
+                                case Op::kConstantOop:
+                                case Op::kReturn:
+                                case Op::kPrimAddInt:
+                                case Op::kPrimSubInt:
+                                case Op::kPrimMulInt:
+                                case Op::kPrimTagCheckInt:
+                                    break;
+                                default:
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                    break;
+                                }
+                                if (!ok) break;
+                            }
+                        }
+
+                        if (ok && blockIR) {
+                            uint32_t slot = static_cast<uint32_t>(
+                                out_.inlinedBlocks.size());
+                            out_.inlinedBlocks.push_back(
+                                std::move(blockIR));
+                            intervalDoAtTo_[(size_t)i] = slot;
+                            spliceDoAtPushFullBlock_[
+                                (size_t)pfbOff] = slot;
+                            static int ivdCount = 0;
+                            if (ivdCount++ < 4) {
+                                std::fprintf(stderr,
+                                    "[SISTA-IVDO-CAND] toBC=%zu "
+                                    "pfbBC=%zu doBC=%zu litIdx=%d "
+                                    "slot=%u\n",
+                                    i, pfbOff, doOff, litIdx, slot);
+                            }
+                        } else {
+                            static int ivdDiag = 0;
+                            if (ivdDiag++ < 16) {
+                                std::fprintf(stderr,
+                                    "[SISTA-IVDO-DIAG] toBC=%zu "
+                                    "verdict=%s reject=%s rejOp=%s\n",
+                                    i, ok ? "OK" : "REJECT",
+                                    rejectReason ? rejectReason : "(none)",
+                                    ok ? "n/a" : OpInfo::name(rejectedOp));
+                            }
+                        }
+                        i++;
+                        continue;
+                    }
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
         // --- B2 minimal peephole: `^ self size` ------------------------
         //
         // Recognize the method shape:
@@ -1551,6 +1696,47 @@ private:
                     return bailToInterpreter(3);
                 }
 
+                // B2 splice intercept (Interval-do): kInterval rcv
+                // + PushFullBlock + SpecialSend do: → kCountedLoopIntervalDo.
+                {
+                    auto dIt = spliceDoAtPushFullBlock_.find(ip);
+                    if (dIt != spliceDoAtPushFullBlock_.end()
+                        && stack_.size() >= 1
+                        && ip + 3 < len_
+                        && bc_[ip + 3] == 0x7B) {
+                        uint32_t blockSlot = dIt->second;
+                        uint32_t rcv = stack_.back();
+                        bool rcvIsInterval =
+                            (rcv < out_.values.size()
+                             && out_.values[rcv].op == Op::kInterval);
+                        if (rcvIsInterval) {
+                            stack_.pop_back();
+                            uint32_t startV =
+                                out_.values[rcv].operands[0];
+                            uint32_t stopV =
+                                out_.values[rcv].operands[1];
+                            std::vector<uint32_t> ops{startV, stopV};
+                            uint32_t vid = out_.newValue(currentBlock_,
+                                  Op::kCountedLoopIntervalDo,
+                                  Type::kOop,
+                                  std::move(ops),
+                                  /*literal=*/blockSlot);
+                            recordFramepoint(vid, bcOffset);
+                            stack_.push_back(vid);
+                            pendingExtA_ = 0;
+                            pendingExtB_ = 0;
+                            static int ivdEmitCount = 0;
+                            if (ivdEmitCount++ < 16) {
+                                std::fprintf(stderr,
+                                    "[SISTA-IVDO-SPLICE-EMIT] bc=%zu "
+                                    "slot=%u vid=%u\n",
+                                    ip, blockSlot, vid);
+                            }
+                            ip += 4;
+                            continue;
+                        }
+                    }
+                }
                 // B2 splice intercept: if this PushFullBlock starts a
                 // pre-validated `[block] do:` pattern, emit
                 // kCountedLoopDo and skip both bytecodes.  The pre-pass
@@ -2209,8 +2395,12 @@ private:
                 // kCountedLoopIntervalInjectInto when it sees
                 // kInterval as the receiver.
                 if (nArgs == 1) {
-                    auto ivIt = intervalInjectAtTo_.find(ip);
-                    if (ivIt != intervalInjectAtTo_.end()) {
+                    bool ivMatch =
+                        (intervalInjectAtTo_.find(ip)
+                         != intervalInjectAtTo_.end())
+                     || (intervalDoAtTo_.find(ip)
+                         != intervalDoAtTo_.end());
+                    if (ivMatch) {
                         uint32_t stop = stack_.back();
                         stack_.pop_back();
                         uint32_t start = stack_.back();
@@ -2225,7 +2415,7 @@ private:
                         static int ivEmitCount = 0;
                         if (ivEmitCount++ < 4) {
                             std::fprintf(stderr,
-                                "[SISTA-IVINJECT-INTERVAL-EMIT] "
+                                "[SISTA-IV-INTERVAL-EMIT] "
                                 "bc=%zu vid=%u\n", ip, vid);
                         }
                         ip++;  // Send1 #to: is 1 byte.
@@ -3356,6 +3546,12 @@ private:
     // kInterval; inject:into: intercept upgrades to
     // kCountedLoopIntervalInjectInto.
     std::unordered_map<size_t, uint32_t> intervalInjectAtTo_;
+    // B2 splice (Interval-do variant): same idea — intervalDoAtTo_ maps
+    // a recognized to: bcOffset to the block-IR slot, and
+    // spliceDoAtPushFullBlock_ tells the PushFullBlock intercept to
+    // emit kCountedLoopIntervalDo when receiver is a kInterval marker.
+    std::unordered_map<size_t, uint32_t> intervalDoAtTo_;
+    std::unordered_map<size_t, uint32_t> spliceDoAtPushFullBlock_;
 };
 
 }  // namespace
