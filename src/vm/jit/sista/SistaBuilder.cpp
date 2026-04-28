@@ -1312,6 +1312,18 @@ public:
                         if (bc_[doOff] != 0x7B) {  // SpecialSend do:
                             i++; continue;
                         }
+                        // Result-discard guard: the IV-do splice's
+                        // result is a placeholder (startReg).  Only
+                        // splice when the next bytecode discards it,
+                        // so the wrong-type result is never observed.
+                        // Pop (0xD8), ReturnReceiver (0x58), or
+                        // ReturnTop following a Pop are all "discard".
+                        if (doOff + 1 >= len_) { i++; continue; }
+                        uint8_t afterDo = bc_[doOff + 1];
+                        if (afterDo != 0xD8
+                            && afterDo != 0x58) {
+                            i++; continue;
+                        }
 
                         int litIdx = bc_[pfbOff + 1];
                         int flags = bc_[pfbOff + 2];
