@@ -199,6 +199,53 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     // bytecode offset, so block 0 is entry.
     for (const Block& b : method.blocks) {
         cc.bind(blockLabels[b.id]);
+
+        // Compare→branch fusion: if the block ends in
+        // `kPrim<cmp>Int v_a v_b ; kBranchIf<true|false> v_cmp` and the
+        // comparison's result feeds the branch directly, we can skip
+        // materialising it as a true/false oop and just emit
+        // `cmp; b.cond` — saves csel + two oop ldrs at the comparison
+        // and a redundant cmp + trueOop ldr at the branch.  Big win on
+        // inlined to:do: and whileTrue: counted-loop headers.
+        uint32_t fusedCmpId = UINT32_MAX;
+        asmjit::a64::CondCode fusedCond = asmjit::a64::CondCode::kEQ;
+        if (b.values.size() >= 2) {
+            uint32_t lastVid = b.values[b.values.size() - 1];
+            uint32_t prevVid = b.values[b.values.size() - 2];
+            const Value& lastV = method.valueAt(lastVid);
+            const Value& prevV = method.valueAt(prevVid);
+            if ((lastV.op == Op::kBranchIfTrue
+              || lastV.op == Op::kBranchIfFalse)
+                && lastV.operands.size() == 1
+                && lastV.operands[0] == prevVid) {
+                using namespace asmjit::a64;
+                bool isCmp = true;
+                CondCode trueCond;
+                switch (prevV.op) {
+                  case Op::kPrimLtInt: trueCond = CondCode::kLT; break;
+                  case Op::kPrimLeInt: trueCond = CondCode::kLE; break;
+                  case Op::kPrimGtInt: trueCond = CondCode::kGT; break;
+                  case Op::kPrimGeInt: trueCond = CondCode::kGE; break;
+                  case Op::kPrimEqInt: trueCond = CondCode::kEQ; break;
+                  case Op::kPrimNeqInt: trueCond = CondCode::kNE; break;
+                  default: isCmp = false; trueCond = CondCode::kEQ; break;
+                }
+                if (isCmp) {
+                    fusedCmpId = prevVid;
+                    fusedCond = (lastV.op == Op::kBranchIfTrue)
+                        ? trueCond
+                        // BranchIfFalse: invert the condition.
+                        : (trueCond == CondCode::kLT ? CondCode::kGE
+                         : trueCond == CondCode::kLE ? CondCode::kGT
+                         : trueCond == CondCode::kGT ? CondCode::kLE
+                         : trueCond == CondCode::kGE ? CondCode::kLT
+                         : trueCond == CondCode::kEQ ? CondCode::kNE
+                         : trueCond == CondCode::kNE ? CondCode::kEQ
+                         : CondCode::kEQ);
+                }
+            }
+        }
+
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
             switch (v.op) {
@@ -550,13 +597,25 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                using namespace asmjit::a64;
+                cc.cmp(ita->second, itb->second);
+                // If we're going straight into kBranchIfTrue/kBranchIfFalse,
+                // the comparison's bool oop is never read — skip the
+                // csel and the trueOop/falseOop loads.  The branch
+                // emits `b.cond` directly using fusedCond.
+                if (v.id == fusedCmpId) {
+                    // Still record SOMETHING in regFor so anyone scanning
+                    // doesn't trip on a missing entry; the value is
+                    // never actually read, but the input regs are
+                    // valid placeholders.
+                    regFor[v.id] = ita->second;
+                    break;
+                }
                 Gp trueOop = cc.new_gp64("true");
                 Gp falseOop = cc.new_gp64("false");
                 cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
                 cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
                 Gp dst = cc.new_gp64("intcmp");
-                cc.cmp(ita->second, itb->second);
-                using namespace asmjit::a64;
                 CondCode cond;
                 switch (v.op) {
                   case Op::kPrimLtInt:  cond = CondCode::kLT; break;
@@ -3180,6 +3239,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                // Compare→branch fusion: if operand[0] is the prevVid
+                // we marked above, the cmp flags are still set from
+                // the kPrim<cmp>Int emit and we can branch on the
+                // condition directly — no `cmp val, trueOop` round-trip.
+                fillPhis(b, b.successors[0]);
+                fillPhis(b, b.successors[1]);
+                if (v.operands[0] == fusedCmpId) {
+                    // successors[0] = taken, successors[1] = fallthrough.
+                    // fusedCond was already adjusted for true/false in
+                    // the pre-pass.
+                    cc.b(fusedCond, blockLabels[b.successors[0]]);
+                    cc.b(blockLabels[b.successors[1]]);
+                    break;
+                }
                 auto it = regFor.find(v.operands[0]);
                 if (it == regFor.end()) {
                     if (failedAtValue) *failedAtValue = v.id;
@@ -3188,11 +3261,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp trueOop = cc.new_gp64("true");
                 cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
                 cc.cmp(it->second, trueOop);
-                // Both successors may have phis; fill both sets of
-                // phi regs before branching.  The untaken side's MOVs
-                // are dead but cheap.
-                fillPhis(b, b.successors[0]);
-                fillPhis(b, b.successors[1]);
                 if (v.op == Op::kBranchIfTrue) {
                     cc.b_eq(blockLabels[b.successors[0]]);  // taken
                     cc.b   (blockLabels[b.successors[1]]);  // fallthrough
