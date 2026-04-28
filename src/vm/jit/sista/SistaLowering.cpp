@@ -2692,41 +2692,41 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, vecReg, deoptBC);
                 cc.bind(sizeOk);
 
+                // Format check: only fast-path format 2 (regular Object
+                // Array — Indexable64).  Other formats (byte arrays at
+                // 16-23, DoubleWord at 9, IndexableWithFixed at 3-5) take
+                // the deopt path; basic_at does element-encoding work
+                // (chars from bytes, etc.) we can't replicate inline.
+                // bits 24-28 of the 64-bit header carry format.
+                Gp acc_hdr = cc.new_gp64("acc_hdr");
+                cc.ldr(acc_hdr, ptr(rcvReg));
+                Gp acc_fmt = cc.new_gp64("acc_fmt");
+                cc.ubfx(acc_fmt, acc_hdr, Imm(24), Imm(5));
+                cc.cmp(acc_fmt, Imm(2));
+                Label fmtOk = cc.new_label();
+                cc.b_eq(fmtOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(fmtOk);
+
                 // iReg = SmI(1) = 9.
                 Gp iReg = cc.new_gp64("acc_i");
                 cc.mov(iReg, Imm(9));
 
+                // Rotated loop: skip body if size < 1 (already filtered
+                // by basic_size's 0-check above; size>=1 → body runs).
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
-                // Compare iReg vs sizeReg as SmI Oops; b.hi exits.
                 cc.cmp(iReg, sizeReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
-                // eachReg = basicAt(rcv, iReg).  Deopt on 0.
-                Gp atFn = cc.new_gp64("acc_atfn");
-                cc.mov(atFn,
-                       Imm((uint64_t)&jit_rt_sista_basic_at));
-                asmjit::InvokeNode* atInvoke = nullptr;
-                asmjit::Error aErr = cc.invoke(
-                    asmjit::Out(atInvoke), atFn,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (aErr != asmjit::kErrorOk || !atInvoke) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                atInvoke->set_arg(0, state);
-                atInvoke->set_arg(1, rcvReg);
-                atInvoke->set_arg(2, iReg);
+                // Inline format-2 element load.  iReg encodes (i<<3)|1;
+                // slot (i-1) lives at byte offset 8 + (i-1)*8 = i*8 from
+                // rcv.  i*8 = iReg - 1.  ldr [rcv, offReg] gives the slot.
+                Gp acc_off = cc.new_gp64("acc_off");
+                cc.sub(acc_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("acc_each");
-                atInvoke->set_ret(0, eachReg);
-
-                Label atOk = cc.new_label();
-                cc.cbnz(eachReg, atOk);
-                emitDeopt(rcvReg, vecReg, deoptBC);
-                cc.bind(atOk);
+                cc.ldr(eachReg, ptr(rcvReg, acc_off));
 
                 // Tag-check eachReg as SmI.  We never committed accReg
                 // to memory, so deopt is safe (vec[slot] still has the
@@ -2759,7 +2759,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 // i += SmI(1).
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, sizeReg);
+                cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
 
@@ -2882,13 +2883,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp iReg = cc.new_gp64("ivacc_i");
                 cc.mov(iReg, startReg);
 
+                // Rotated loop: pre-check skips body when start > stop;
+                // back edge fuses cmp+branch so the hot path has one
+                // conditional branch per iter instead of cond+uncond.
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
-                // Compare iReg vs stopReg as SmI Oops; iReg > stopReg → exit.
                 cc.cmp(iReg, stopReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
                 // accReg = accReg <arith> iReg, tag-preserving SmI.
                 if (arithCode == 0) {
@@ -2911,7 +2913,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // i += SmI(1).  SmI(1) = (1<<3)|1 = 9; +1 increment in
                 // the integer field is +8 in the encoded Oop (preserves tag).
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, stopReg);
+                cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
 
