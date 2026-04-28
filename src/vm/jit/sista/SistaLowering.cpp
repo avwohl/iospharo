@@ -1204,9 +1204,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
-                // Verify every block op is in our minimal whitelist.
-                // Anything else (stores, sends, primops) needs more
-                // lowering machinery; refuse for now.
+                // Verify every block op is in our extended whitelist.
+                // Side-effecting ops (kStoreTemp, kStoreInstVar,
+                // kSendUnspeculated etc.) would need deopt-with-resume
+                // infrastructure to roll back partial work — we don't
+                // have that yet, so reject anything with side effects.
+                //
+                // kPrimTagCheckInt is rejected because we do our own tag
+                // check (deopting to the do: bytecode, not the block
+                // body's bcOffset which would be wrong).
+                bool blockHasArith = false;
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -1216,12 +1223,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kConstantOop:
                     case Op::kLoadLiteral:
                     case Op::kReturn:
+                    case Op::kPrimTagCheckInt:
+                        // Passthrough — our own tag check fires before
+                        // each arith op in the splice context.
+                        break;
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt:
+                        blockHasArith = true;
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
                     }
                 }
+                (void)blockHasArith;  // currently unused; reserved for
+                                      // a future "pre-loop tag check"
+                                      // optimization.
 
                 Gp rcvReg = itRcv->second;
 
@@ -1327,17 +1345,159 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, deoptBC);
                 cc.bind(atOk);
 
-                // Step 6: inline block body.  For our minimal whitelist
-                // (loads + return + constants), there are no
-                // side-effecting ops to emit — every value is a no-op
-                // at the asm level (we just need to "compute" them but
-                // they don't escape the iteration).  kReturn ends the
-                // body; we don't actually return — we just continue
-                // the loop.
+                // Step 6: inline block body.  Each block IR value
+                // produces a register; we track them in a block-local
+                // map.  kLoadTemp(0) maps to eachReg (the block argument
+                // = current array element).  kPrimAddInt and friends
+                // emit tag check + SmI math, with miss deopting to the
+                // do: bytecode.
                 //
-                // Future: handle kPrimAddInt etc. by emitting tag-
-                // preserving SmI math.  Handle kStoreTemp(N) for N >=
-                // numCopied via remote-temp store to closure context.
+                // Side-effect-free guarantee: the whitelist above
+                // forbids stores and sends, so a mid-loop deopt is
+                // safe — no state has been mutated yet (the block's
+                // return value is discarded by do:).
+                std::unordered_map<uint32_t, Gp> blockRegs;
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: {
+                        // Block arg 0 = `e` = eachReg.  Block arg
+                        // ordering: temp 0 is the first block argument.
+                        // Block local temps (idx > numArgs - 1) need
+                        // separate storage we don't have; reject.
+                        uint32_t idx = (uint32_t)bv.literal;
+                        if (idx == 0) {
+                            blockRegs[bv.id] = eachReg;
+                        } else {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        break;
+                    }
+                    case Op::kLoadTrueOop: {
+                        Gp r = cc.new_gp64("blk_true");
+                        cc.ldr(r, ptr(state, OFF_TRUEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadFalseOop: {
+                        Gp r = cc.new_gp64("blk_false");
+                        cc.ldr(r, ptr(state, OFF_FALSEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kConstantOop: {
+                        Gp r = cc.new_gp64("blk_const");
+                        cc.mov(r, Imm(bv.literal));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadLiteral: {
+                        // Block's literal vector is the same memory as
+                        // the outer method's literal vector (a
+                        // CompiledBlock shares the outer CompiledMethod
+                        // literals).  Use state.literals just like the
+                        // main lift.
+                        uint32_t idx = (uint32_t)bv.literal;
+                        Gp lits = cc.new_gp64("blk_lits");
+                        cc.ldr(lits, ptr(state, OFF_LITERALS));
+                        Gp r = cc.new_gp64("blk_lit");
+                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadReceiver: {
+                        // Block's receiver is the outer-method's
+                        // receiver (closures inherit `self`).  In the
+                        // splice context we're inlined into the outer's
+                        // frame; state.receiver IS the right one.
+                        Gp r = cc.new_gp64("blk_recv");
+                        cc.ldr(r, ptr(state, OFF_RECEIVER));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kPrimTagCheckInt: {
+                        // Passthrough: output reg = input reg.  Our
+                        // splice does its own tag check before arith.
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        blockRegs[bv.id] = it->second;
+                        break;
+                    }
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt: {
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        // Tag check both operands; on miss, deopt to
+                        // the do: bytecode.  Block hasn't mutated state
+                        // yet (whitelist forbids stores), so resume is
+                        // safe.
+                        Gp tagA = cc.new_gp64("blk_tagA");
+                        cc.and_(tagA, ita->second, Imm(7));
+                        cc.cmp(tagA, Imm(1));
+                        Label tagAok = cc.new_label();
+                        cc.b_eq(tagAok);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(tagAok);
+                        Gp tagB = cc.new_gp64("blk_tagB");
+                        cc.and_(tagB, itb->second, Imm(7));
+                        cc.cmp(tagB, Imm(1));
+                        Label tagBok = cc.new_label();
+                        cc.b_eq(tagBok);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(tagBok);
+
+                        Gp dst = cc.new_gp64("blk_arith");
+                        if (bv.op == Op::kPrimAddInt) {
+                            cc.add(dst, ita->second, itb->second);
+                            cc.sub(dst, dst, Imm(1));
+                        } else if (bv.op == Op::kPrimSubInt) {
+                            cc.sub(dst, ita->second, itb->second);
+                            cc.add(dst, dst, Imm(1));
+                        } else {
+                            // mul: untag, multiply, re-tag.  No overflow
+                            // check yet — large products will silently
+                            // wrap.  Acceptable in MVP since we only
+                            // splice for blocks with no observable
+                            // side effects.
+                            Gp au = cc.new_gp64("blk_au");
+                            Gp bu = cc.new_gp64("blk_bu");
+                            cc.asr(au, ita->second, Imm(3));
+                            cc.asr(bu, itb->second, Imm(3));
+                            Gp prod = cc.new_gp64("blk_prod");
+                            cc.mul(prod, au, bu);
+                            cc.lsl(dst, prod, Imm(3));
+                            cc.orr(dst, dst, Imm(1));
+                        }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kReturn:
+                        // do: discards block result; nothing to emit.
+                        break;
+                    default:
+                        // Should never get here — whitelist already
+                        // checked.  Defensive bail.
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
 
                 // Step 7: iReg += 8 (tag-preserving SmI add: SmI(a) +
                 // SmI(b) = (a<<3 | 1) + (b<<3 | 1) - 1.  For b=1:

@@ -119,6 +119,11 @@ static ObjectMemory* g_currentBuildMemory = nullptr;
 // allow one level of recursive inlining (caller → callee → inner callee).
 static int g_calleeLiftDepth = 0;
 
+// B2 splice: when set, sub-lifts treat BlockReturnTop / BlockReturnNil
+// as a local kReturn rather than bailing.  Set only across recursive
+// Builder::build calls from the splice pre-pass.
+static bool g_subLiftAsBlockReturnLocal = false;
+
 // Phase 4 Step 5: callback that turns a CompiledMethod oop into its
 // inline-hint vector by reading the JIT runtime's IC table.  Set once
 // at VM startup by the Interpreter; nullptr disables recursive inlining.
@@ -189,6 +194,16 @@ public:
     // before each kPrimAddInt etc.  Lets the unsafe-arith gate
     // lift safely (non-SmallInt operands deopt to interpreter).
     void setTypeCheckArith(bool v) { typeCheckArith_ = v; }
+
+    // B2 splice sub-lift mode: treat BlockReturnTop / BlockReturnNil
+    // as a local kReturn rather than bailing.  Safe because the splice
+    // intercept discards the block's return value (do: ignores it).
+    // NLR cases (^ from inside a block, escaping the outer method) are
+    // still caught — a `^` compiles to ReturnTop within the block's
+    // bytecode but not as BlockReturnNil/Top.
+    void setBlockReturnAsLocalReturn(bool v) {
+        blockReturnAsLocalReturn_ = v;
+    }
 
     // Phase 4 Step 1: profile-guided inline hints from T1 IC.
     void setInlineHints(const std::vector<InlineHint>* hints) {
@@ -610,14 +625,20 @@ public:
 
                         // Sub-lift the block.  Recursion-guarded
                         // through the same g_calleeLiftDepth gate the
-                        // detector uses.
+                        // detector uses.  The blockReturnAsLocal flag
+                        // turns BlockReturnTop / BlockReturnNil into a
+                        // local kReturn (the splice intercept discards
+                        // the block's return value anyway).
                         std::unique_ptr<Method> blockIR;
                         if (ok && g_calleeLiftDepth < 1) {
                             blockIR = std::make_unique<Method>();
                             g_calleeLiftDepth++;
+                            bool savedBR = g_subLiftAsBlockReturnLocal;
+                            g_subLiftAsBlockReturnLocal = true;
                             uint32_t failedBc = UINT32_MAX;
                             LiftResult r = Builder::build(
                                 blockOop, *memory_, *blockIR, &failedBc);
+                            g_subLiftAsBlockReturnLocal = savedBR;
                             g_calleeLiftDepth--;
                             if (r != LiftResult::kOk) {
                                 ok = false;
@@ -655,6 +676,11 @@ public:
                                 case Op::kPrimNeqInt:
                                 case Op::kPrimIdentityEq:
                                 case Op::kPrimIdentityNeq:
+                                case Op::kPrimTagCheckInt:
+                                    // Tag-check is harmless at the splice
+                                    // level (lowering passes it through
+                                    // and does its own check at the do:
+                                    // bcOffset).
                                     break;
                                 default:
                                     ok = false;
@@ -2109,6 +2135,36 @@ private:
             // returns from within a block.  Semantically complex; bail
             // to the interpreter with the full IR stack transferred.
             // UnconditionalTrap (0xD9) — `self halt` / debugger trap.
+            //
+            // EXCEPT: when sub-lifting a block for B2 splice, treat
+            // block-return as a local kReturn (the splice intercept
+            // discards the block's value).
+            if ((op == jit::SistaV1::BlockReturnNil
+              || op == jit::SistaV1::BlockReturnTop)
+                && blockReturnAsLocalReturn_) {
+                if (op == jit::SistaV1::BlockReturnNil) {
+                    // Push nil and return.  No special "load nil"
+                    // op in our IR; use kConstantOop with 0 (nil's
+                    // raw bits in Spur) — but our splice lowering
+                    // won't see this anyway since kReturn's value
+                    // is unused.
+                    uint32_t nilVid = out_.newValue(currentBlock_,
+                                                     Op::kConstantOop,
+                                                     Type::kOop,
+                                                     /*operands=*/{},
+                                                     /*literal=*/0);
+                    stack_.push_back(nilVid);
+                }
+                if (stack_.empty()) {
+                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
+                    return LiftResult::kMalformedMethod;
+                }
+                uint32_t retVal = stack_.back();
+                stack_.pop_back();
+                out_.newValue(currentBlock_, Op::kReturn, Type::kVoid,
+                              /*operands=*/{retVal});
+                return LiftResult::kOk;
+            }
             if (op == jit::SistaV1::BlockReturnNil
              || op == jit::SistaV1::BlockReturnTop
              || op == 0xD9) {
@@ -2788,6 +2844,9 @@ private:
     uint16_t               identityNeqSelectorMask_ = 0;
     // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
     bool                   typeCheckArith_ = false;
+    // B2 splice: when sub-lifting a block for splice, treat block-
+    // return bytecodes as local kReturn rather than bailing.
+    bool                   blockReturnAsLocalReturn_ = false;
     // Phase 4 Step 1: profile-guided inline hints (or nullptr).
     const std::vector<InlineHint>* inlineHints_ = nullptr;
     // B2 splice: ObjectMemory used by the peephole's block sub-lift.
@@ -2916,6 +2975,9 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
     if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
     if (typeCheckArith) l.setTypeCheckArith(true);
+    if (g_subLiftAsBlockReturnLocal) {
+        l.setBlockReturnAsLocalReturn(true);
+    }
     if (g_currentBuildHints) {
         l.setInlineHints(g_currentBuildHints);
     }
