@@ -158,6 +158,21 @@ enum class Op : uint8_t {
     // PHARO_SISTA_DO_SPLICE=1; default off until end-to-end validated.
     kCountedLoopDo,       // operands: receiver  -> Oop  (the receiver)
 
+    // --- B2 splice: inject:into: variant ---
+    // Recognized PushFullBlock+Send2(#inject:into:) pattern.  Fully
+    // inlines the iteration as a counted at: loop with the
+    // accumulator held in a register; block has 2 args (acc, elem)
+    // and returns the new acc as its value.
+    //
+    // operands: receiver, init                 -> Oop  (final acc)
+    // literal:  block-IR slot in inlinedBlocks
+    //
+    // Side-effect-free invariant: the block must be a pure function
+    // of (acc, elem); no stores allowed.  Mid-loop deopt rolls back
+    // to init (no partial commit), so the interpreter can re-run the
+    // entire inject:into: send safely.
+    kCountedLoopInjectInto,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

@@ -190,6 +190,13 @@ public:
         identityNeqSelectorMask_ = mask;
     }
 
+    // B2 splice: bitmap of literals that hold the #inject:into:
+    // selector.  The splice pre-pass uses this to detect Send2
+    // bytecodes whose selector matches.
+    void setInjectIntoSelectorBitmap(uint16_t mask) {
+        injectIntoSelectorMask_ = mask;
+    }
+
     // Phase 3 deopt: when set, builder emits kPrimTagCheckInt
     // before each kPrimAddInt etc.  Lets the unsafe-arith gate
     // lift safely (non-SmallInt operands deopt to interpreter).
@@ -738,6 +745,194 @@ public:
             }
         }
 
+        // --- B2 splice pre-pass: identify `inject:into:` candidates -----
+        //
+        // Pattern: PushFullBlock + Send2 with the literal selector
+        // matching #inject:into: (literal index in injectIntoSelectorMask_
+        // bitmap).  Block has 2 args (acc, elem); body must be
+        // splice-simple and produce a return value (the new acc).
+        //
+        // No closure-store complications since inject:into:'s
+        // accumulator is the block's RETURN value, not a captured
+        // mutable temp.
+        static const bool injectSplice =
+            std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+        if (injectSplice && memory_ != nullptr && injectIntoSelectorMask_) {
+            size_t i = 0;
+            int lastPushFullBlockEnd = -1;
+            int lastPushFullBlockStart = -1;
+            int lastFullBlockLitIdx = -1;
+            int lastFullBlockFlags = -1;
+            int extA = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op == jit::SistaV1::ExtendA) {
+                    if (i + 1 >= len_) break;
+                    extA = bc_[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::ExtendB) {
+                    if (i + 1 >= len_) break;
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::PushFullBlock) {
+                    if (i + 2 >= len_) break;
+                    lastPushFullBlockStart = (int)i;
+                    lastFullBlockLitIdx = (extA << 8) | bc_[i + 1];
+                    lastFullBlockFlags = bc_[i + 2];
+                    lastPushFullBlockEnd = (int)(i + 3);
+                    extA = 0;
+                    i += 3;
+                    continue;
+                }
+                // Send2 with selector == #inject:into: at the
+                // adjacency point.
+                if (op >= jit::SistaV1::Send2Base
+                    && op <= jit::SistaV1::Send2Last
+                    && lastPushFullBlockEnd == (int)i) {
+                    uint32_t selIdx = op & 0x0F;
+                    bool isInjectInto =
+                        ((injectIntoSelectorMask_ >> selIdx) & 1) != 0;
+                    if (!isInjectInto) {
+                        lastPushFullBlockEnd = -1;
+                        i++;
+                        continue;
+                    }
+                    bool ok = true;
+                    const char* rejectReason = nullptr;
+                    Op rejectedOp = Op::kReturn;
+
+                    Oop blockOop = Oop::nil();
+                    if (lastFullBlockLitIdx < 0
+                        || (size_t)lastFullBlockLitIdx
+                           >= out_.literals.size()) {
+                        ok = false;
+                        rejectReason = "bad litIdx";
+                    } else {
+                        blockOop = out_.literals[lastFullBlockLitIdx];
+                        if (!blockOop.isObject()) {
+                            ok = false;
+                            rejectReason = "block not Object";
+                        }
+                    }
+
+                    bool receiverOnStack =
+                        ((lastFullBlockFlags >> 7) & 1) != 0;
+                    if (ok && receiverOnStack) {
+                        ok = false;
+                        rejectReason = "recvOnStack";
+                    }
+                    uint32_t numCopied =
+                        (uint32_t)(lastFullBlockFlags & 0x3F);
+                    if (ok && numCopied != 0) {
+                        // Future: handle captured vars.  MVP only.
+                        ok = false;
+                        rejectReason = "numCopied != 0";
+                    }
+
+                    // Sub-lift the block (with blockReturnAsLocal so
+                    // BlockReturnTop becomes kReturn).
+                    std::unique_ptr<Method> blockIR;
+                    if (ok && g_calleeLiftDepth < 1) {
+                        blockIR = std::make_unique<Method>();
+                        g_calleeLiftDepth++;
+                        bool savedBR = g_subLiftAsBlockReturnLocal;
+                        g_subLiftAsBlockReturnLocal = true;
+                        uint32_t failedBc = UINT32_MAX;
+                        LiftResult r = Builder::build(
+                            blockOop, *memory_, *blockIR, &failedBc);
+                        g_subLiftAsBlockReturnLocal = savedBR;
+                        g_calleeLiftDepth--;
+                        if (r != LiftResult::kOk) {
+                            ok = false;
+                            rejectReason = "block sub-lift failed";
+                        }
+                    } else if (ok) {
+                        ok = false;
+                        rejectReason = "recursion guard";
+                    }
+
+                    // Verify block is splice-simple (same whitelist as
+                    // do: splice — loads + arith + tag-check + return).
+                    if (ok && blockIR) {
+                        for (const auto& bv : blockIR->values) {
+                            switch (bv.op) {
+                            case Op::kLoadReceiver:
+                            case Op::kLoadTrueOop:
+                            case Op::kLoadFalseOop:
+                            case Op::kLoadTemp:
+                            case Op::kLoadLiteral:
+                            case Op::kConstantOop:
+                            case Op::kPhi:
+                            case Op::kReturn:
+                            case Op::kPrimAddInt:
+                            case Op::kPrimSubInt:
+                            case Op::kPrimMulInt:
+                            case Op::kPrimLtInt:
+                            case Op::kPrimLeInt:
+                            case Op::kPrimGtInt:
+                            case Op::kPrimGeInt:
+                            case Op::kPrimEqInt:
+                            case Op::kPrimNeqInt:
+                            case Op::kPrimIdentityEq:
+                            case Op::kPrimIdentityNeq:
+                            case Op::kPrimTagCheckInt:
+                                break;
+                            default:
+                                ok = false;
+                                rejectReason = "non-simple block op";
+                                rejectedOp = bv.op;
+                                break;
+                            }
+                            if (!ok) break;
+                        }
+                    }
+
+                    if (ok && blockIR) {
+                        uint32_t slot = static_cast<uint32_t>(
+                            out_.inlinedBlocks.size());
+                        out_.inlinedBlocks.push_back(
+                            std::move(blockIR));
+                        spliceInjectAtPushFullBlock_[
+                            (size_t)lastPushFullBlockStart] = slot;
+                        static int spliceInjectCount = 0;
+                        if (spliceInjectCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-INJECT-SPLICE-CAND] "
+                                "pushFullBlock=%d send2BC=%zu "
+                                "selIdx=%u litIdx=%d slot=%u\n",
+                                lastPushFullBlockStart, i,
+                                selIdx, lastFullBlockLitIdx, slot);
+                        }
+                    } else {
+                        static int diagCount = 0;
+                        if (diagCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-INJECT-SPLICE-DIAG] "
+                                "send2BC=%zu selIdx=%u verdict=%s "
+                                "reject=%s rejOp=%s\n",
+                                i, selIdx, ok ? "OK" : "REJECT",
+                                rejectReason ? rejectReason : "(none)",
+                                ok ? "n/a" : OpInfo::name(rejectedOp));
+                        }
+                    }
+
+                    lastPushFullBlockEnd = -1;
+                    i++;
+                    continue;
+                }
+                if (op != jit::SistaV1::ExtendA
+                    && op != jit::SistaV1::ExtendB) {
+                    lastPushFullBlockEnd = -1;
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
         // --- B2 minimal peephole: `^ self size` ------------------------
         //
         // Recognize the method shape:
@@ -1193,6 +1388,42 @@ private:
                                 ip, blockSlot, vid);
                         }
                         ip += 4;  // PushFullBlock (3) + SpecialSend (1)
+                        continue;
+                    }
+                }
+                // B2 splice (inject:into: variant): PushFullBlock +
+                // Send2(#inject:into:) → kCountedLoopInjectInto.
+                {
+                    auto iIt = spliceInjectAtPushFullBlock_.find(ip);
+                    if (iIt != spliceInjectAtPushFullBlock_.end()
+                        && stack_.size() >= 2
+                        // Verify Send2 really follows (op in 0xA0-0xAF).
+                        && ip + 3 < len_
+                        && bc_[ip + 3] >= 0xA0
+                        && bc_[ip + 3] <= 0xAF) {
+                        uint32_t blockSlot = iIt->second;
+                        uint32_t init = stack_.back();
+                        stack_.pop_back();
+                        uint32_t rcv = stack_.back();
+                        stack_.pop_back();
+                        std::vector<uint32_t> ops{rcv, init};
+                        uint32_t vid = out_.newValue(currentBlock_,
+                                       Op::kCountedLoopInjectInto,
+                                       Type::kOop,
+                                       std::move(ops),
+                                       /*literal=*/blockSlot);
+                        recordFramepoint(vid, bcOffset);
+                        stack_.push_back(vid);
+                        pendingExtA_ = 0;
+                        pendingExtB_ = 0;
+                        static int injEmitCount = 0;
+                        if (injEmitCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-INJECT-SPLICE-EMIT] bc=%zu "
+                                "slot=%u vid=%u\n",
+                                ip, blockSlot, vid);
+                        }
+                        ip += 4;  // PushFullBlock (3) + Send2 (1)
                         continue;
                     }
                 }
@@ -2842,6 +3073,8 @@ private:
     uint16_t               identityEqSelectorMask_ = 0;
     // Phase 4 POC #3: bitmap of literals[0..15] that hold #~~.
     uint16_t               identityNeqSelectorMask_ = 0;
+    // B2 splice: bitmap of literals[0..15] that hold #inject:into:.
+    uint16_t               injectIntoSelectorMask_ = 0;
     // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
     bool                   typeCheckArith_ = false;
     // B2 splice: when sub-lifting a block for splice, treat block-
@@ -2860,6 +3093,10 @@ private:
     // bytecodes).  Empty when splice is disabled or no eligible
     // patterns matched.
     std::unordered_map<size_t, uint32_t> spliceAtPushFullBlock_;
+    // B2 splice (inject:into: variant): same shape but for Send2
+    // #inject:into: instead of SpecialSend(do:).  The intercept emits
+    // kCountedLoopInjectInto and skips PushFullBlock+Send2 (4B).
+    std::unordered_map<size_t, uint32_t> spliceInjectAtPushFullBlock_;
 };
 
 }  // namespace
@@ -2941,7 +3178,10 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
     static const bool inlineIdentityEq =
         std::getenv("PHARO_SISTA_INLINE_IDENTITY_EQ") != nullptr;
-    if (inlineYourself || inlineIdentityEq) {
+    static const bool injectIntoSplice =
+        std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+    uint16_t injectIntoMask = 0;
+    if (inlineYourself || inlineIdentityEq || injectIntoSplice) {
         const uint32_t scanLimit = std::min(numLiterals, 16u);
         for (uint32_t i = 0; i < scanLimit; i++) {
             Oop lit = out.literals[i];
@@ -2962,6 +3202,11 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
                     identityNeqMask |= (1u << i);
                 }
             }
+            // #inject:into: is 12 bytes.
+            if (injectIntoSplice && bs == 12
+                && std::memcmp(bytes, "inject:into:", 12) == 0) {
+                injectIntoMask |= (1u << i);
+            }
         }
     }
 
@@ -2974,6 +3219,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (inlineableMask) l.setInlineableSelectorBitmap(inlineableMask);
     if (identityEqMask) l.setIdentityEqSelectorBitmap(identityEqMask);
     if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
+    if (injectIntoMask) l.setInjectIntoSelectorBitmap(injectIntoMask);
     if (typeCheckArith) l.setTypeCheckArith(true);
     if (g_subLiftAsBlockReturnLocal) {
         l.setBlockReturnAsLocalReturn(true);

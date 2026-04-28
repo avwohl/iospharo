@@ -1514,6 +1514,333 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = rcvReg;
                 break;
             }
+            case Op::kCountedLoopInjectInto: {
+                // B2 splice (inject:into: variant): counted at: loop
+                // with the accumulator held in a register (accReg).
+                // Block has 2 args: temp 0 = acc, temp 1 = elem.  Block
+                // returns the new acc as kReturn's value, which we
+                // assign to accReg.
+                using namespace asmjit::a64;
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itInit = regFor.find(v.operands[1]);
+                if (itRcv == regFor.end() || itInit == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                uint32_t blockSlot = (uint32_t)v.literal;
+                if (blockSlot >= method.inlinedBlocks.size()
+                    || !method.inlinedBlocks[blockSlot]) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                const Method& blockIR = *method.inlinedBlocks[blockSlot];
+
+                if (blockIR.blocks.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // Same whitelist as kCountedLoopDo's body — loads,
+                // arith, tag-check passthrough, return.  No stores.
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp:
+                    case Op::kLoadReceiver:
+                    case Op::kLoadTrueOop:
+                    case Op::kLoadFalseOop:
+                    case Op::kConstantOop:
+                    case Op::kLoadLiteral:
+                    case Op::kReturn:
+                    case Op::kPrimTagCheckInt:
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt:
+                        break;
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
+
+                Gp rcvReg = itRcv->second;
+                Gp initReg = itInit->second;
+
+                // accReg holds the running accumulator.  Start from
+                // initReg.  On mid-loop deopt, accReg is discarded —
+                // the interpreter's stack is restored to [rcv, init,
+                // block] and the inject:into: send re-runs from the
+                // beginning with the original init.
+                Gp accReg = cc.new_gp64("inject_acc");
+                cc.mov(accReg, initReg);
+
+                // Source bcOffset for deopt resume.
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                // Re-create the block sub-IR's CompiledBlock byte ptr
+                // — we don't have one here, but we don't need one for
+                // the splice context (no kFrameState references the
+                // block).  Lambda for deopt: rebuild interpreter
+                // stack [rcv, init, block].  But we don't have the
+                // block oop in the IR — so for now, deopt pushes only
+                // [rcv, init] and lets the interpreter re-execute
+                // PushFullBlock + Send2 from the bcOffset.  This works
+                // because deoptBC points at PushFullBlock, which the
+                // interpreter executes normally to allocate the block,
+                // then Send2 dispatches inject:into:.
+                auto emitDeopt = [&](Gp savedRcv, Gp savedInit,
+                                      uint32_t bc) {
+                    Gp sp = cc.new_gp64("inj_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedRcv, ptr(sp));
+                    cc.str(savedInit, ptr(sp, 8));
+                    cc.add(sp, sp, Imm(16));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("inj_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("inj_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("inj_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("inj_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Step 1: sizeReg = basicSize(rcv).  Deopt on 0.
+                Gp sizeFn = cc.new_gp64("inj_szfn");
+                cc.mov(sizeFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_size));
+                asmjit::InvokeNode* sizeInvoke = nullptr;
+                asmjit::Error sErr = cc.invoke(
+                    asmjit::Out(sizeInvoke), sizeFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (sErr != asmjit::kErrorOk || !sizeInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                sizeInvoke->set_arg(0, state);
+                sizeInvoke->set_arg(1, rcvReg);
+                Gp sizeReg = cc.new_gp64("inj_size");
+                sizeInvoke->set_ret(0, sizeReg);
+
+                Label sizeOk = cc.new_label();
+                cc.cbnz(sizeReg, sizeOk);
+                emitDeopt(rcvReg, initReg, deoptBC);
+                cc.bind(sizeOk);
+
+                // Step 2: iReg = SmI(1).
+                Gp iReg = cc.new_gp64("inj_i");
+                cc.mov(iReg, Imm(9));
+
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                cc.cmp(iReg, sizeReg);
+                cc.b_hi(loopExit);
+
+                // basicAt(rcv, iReg) — deopt on 0.
+                Gp atFn = cc.new_gp64("inj_atfn");
+                cc.mov(atFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_at));
+                asmjit::InvokeNode* atInvoke = nullptr;
+                asmjit::Error aErr = cc.invoke(
+                    asmjit::Out(atInvoke), atFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (aErr != asmjit::kErrorOk || !atInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                atInvoke->set_arg(0, state);
+                atInvoke->set_arg(1, rcvReg);
+                atInvoke->set_arg(2, iReg);
+                Gp eachReg = cc.new_gp64("inj_each");
+                atInvoke->set_ret(0, eachReg);
+
+                Label atOk = cc.new_label();
+                cc.cbnz(eachReg, atOk);
+                emitDeopt(rcvReg, initReg, deoptBC);
+                cc.bind(atOk);
+
+                // Inline block body.  Block has 2 args:
+                //   temp 0 = acc → accReg (READ from accReg, WRITE to
+                //                          accReg via kReturn)
+                //   temp 1 = elem → eachReg
+                std::unordered_map<uint32_t, Gp> blockRegs;
+                bool sawReturn = false;
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        if (idx == 0) {
+                            blockRegs[bv.id] = accReg;
+                        } else if (idx == 1) {
+                            blockRegs[bv.id] = eachReg;
+                        } else {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        break;
+                    }
+                    case Op::kLoadTrueOop: {
+                        Gp r = cc.new_gp64("ij_true");
+                        cc.ldr(r, ptr(state, OFF_TRUEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadFalseOop: {
+                        Gp r = cc.new_gp64("ij_false");
+                        cc.ldr(r, ptr(state, OFF_FALSEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kConstantOop: {
+                        Gp r = cc.new_gp64("ij_const");
+                        cc.mov(r, Imm(bv.literal));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadLiteral: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        Gp lits = cc.new_gp64("ij_lits");
+                        cc.ldr(lits, ptr(state, OFF_LITERALS));
+                        Gp r = cc.new_gp64("ij_lit");
+                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadReceiver: {
+                        Gp r = cc.new_gp64("ij_recv");
+                        cc.ldr(r, ptr(state, OFF_RECEIVER));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kPrimTagCheckInt: {
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        blockRegs[bv.id] = it->second;
+                        break;
+                    }
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt: {
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp tagA = cc.new_gp64("ij_tagA");
+                        cc.and_(tagA, ita->second, Imm(7));
+                        cc.cmp(tagA, Imm(1));
+                        Label tagAok = cc.new_label();
+                        cc.b_eq(tagAok);
+                        emitDeopt(rcvReg, initReg, deoptBC);
+                        cc.bind(tagAok);
+                        Gp tagB = cc.new_gp64("ij_tagB");
+                        cc.and_(tagB, itb->second, Imm(7));
+                        cc.cmp(tagB, Imm(1));
+                        Label tagBok = cc.new_label();
+                        cc.b_eq(tagBok);
+                        emitDeopt(rcvReg, initReg, deoptBC);
+                        cc.bind(tagBok);
+
+                        Gp dst = cc.new_gp64("ij_arith");
+                        if (bv.op == Op::kPrimAddInt) {
+                            cc.add(dst, ita->second, itb->second);
+                            cc.sub(dst, dst, Imm(1));
+                        } else if (bv.op == Op::kPrimSubInt) {
+                            cc.sub(dst, ita->second, itb->second);
+                            cc.add(dst, dst, Imm(1));
+                        } else {
+                            Gp au = cc.new_gp64("ij_au");
+                            Gp bu = cc.new_gp64("ij_bu");
+                            cc.asr(au, ita->second, Imm(3));
+                            cc.asr(bu, itb->second, Imm(3));
+                            Gp prod = cc.new_gp64("ij_prod");
+                            cc.mul(prod, au, bu);
+                            cc.lsl(dst, prod, Imm(3));
+                            cc.orr(dst, dst, Imm(1));
+                        }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kReturn: {
+                        // Block return = new accumulator value.
+                        // Update accReg.  We don't actually exit the
+                        // loop — kReturn here just commits the new
+                        // acc; the loop continues to next iteration.
+                        if (bv.operands.size() != 1) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.mov(accReg, it->second);
+                        sawReturn = true;
+                        break;
+                    }
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
+
+                if (!sawReturn) {
+                    // Block must have a kReturn for inject:into:
+                    // (otherwise we don't know what the new acc is).
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // i += 8 (SmI add of 1).
+                cc.add(iReg, iReg, Imm(8));
+                cc.b(loopHead);
+
+                cc.bind(loopExit);
+
+                // Result = accReg.
+                regFor[v.id] = accReg;
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared

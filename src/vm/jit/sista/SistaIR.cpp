@@ -59,6 +59,7 @@ bool producesOop(Op op) {
     case Op::kBlockCreate:
     case Op::kBlockValue:
     case Op::kCountedLoopDo:
+    case Op::kCountedLoopInjectInto:
     case Op::kPhi:
         return true;
     default:
@@ -74,6 +75,7 @@ bool mayCallBack(Op op) {
     case Op::kInlineSend:       // nested send
     case Op::kBlockValue:
     case Op::kCountedLoopDo:    // block body may include sends/deopts
+    case Op::kCountedLoopInjectInto:  // same — block body may deopt
     case Op::kPrimTagCheckInt:  // miss deopts
         return true;
     default:
@@ -133,6 +135,7 @@ const char* name(Op op) {
     case Op::kBlockCreate:      return "block_create";
     case Op::kBlockValue:       return "block_value";
     case Op::kCountedLoopDo:    return "counted_loop_do";
+    case Op::kCountedLoopInjectInto: return "counted_loop_inject";
     case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";
     }
