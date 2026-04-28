@@ -2714,6 +2714,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 // Tag-check eachReg as SmI.  accReg is uncommitted to
                 // memory, so deopt is safe (vec[slot] still holds s_0).
+                // The check looks like dead-weight on all-SmI arrays
+                // but actually pays for itself: removing it (verified
+                // 2026-04-28) made sumArr 2× SLOWER.  Branch prediction
+                // already absorbs the predicted-taken b.eq, and the
+                // explicit cmp+branch lets asmjit's allocator and the
+                // CPU's load-use scheduler hide the load latency.
                 Gp tagE = cc.new_gp64("acc_tagE");
                 cc.and_(tagE, eachReg, Imm(7));
                 cc.cmp(tagE, Imm(1));
