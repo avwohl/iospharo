@@ -2691,29 +2691,29 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, vecReg, deoptBC);
                 cc.bind(fmtOk);
 
-                // iReg = SmI(1) = 9.
-                Gp iReg = cc.new_gp64("acc_i");
-                cc.mov(iReg, Imm(9));
+                // Track byte-offset directly: offReg counts 8, 16, ...
+                // sizeReg encodes (size<<3)|1; (sizeReg-1) is the inclusive
+                // end byte offset (= size*8).  Saves a per-iter sub.
+                Gp acc_off = cc.new_gp64("acc_off");
+                cc.mov(acc_off, Imm(8));
+                Gp acc_endOff = cc.new_gp64("acc_endOff");
+                cc.sub(acc_endOff, sizeReg, Imm(1));
 
-                // Rotated loop: skip body if size < 1 (already filtered
-                // by basic_size's 0-check above; size>=1 → body runs).
+                // Rotated loop: pre-check (acc_off > acc_endOff means
+                // size==0, already filtered by basic_size's 0-check, but
+                // be defensive).
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.cmp(iReg, sizeReg);
+                cc.cmp(acc_off, acc_endOff);
                 cc.b_hi(loopExit);
                 cc.bind(loopHead);
 
-                // Inline format-2 element load.  iReg encodes (i<<3)|1;
-                // slot (i-1) lives at byte offset 8 + (i-1)*8 = i*8 from
-                // rcv.  i*8 = iReg - 1.  ldr [rcv, offReg] gives the slot.
-                Gp acc_off = cc.new_gp64("acc_off");
-                cc.sub(acc_off, iReg, Imm(1));
+                // Inline format-2 element load: ldr [rcv, off].
                 Gp eachReg = cc.new_gp64("acc_each");
                 cc.ldr(eachReg, ptr(rcvReg, acc_off));
 
-                // Tag-check eachReg as SmI.  We never committed accReg
-                // to memory, so deopt is safe (vec[slot] still has the
-                // original s).
+                // Tag-check eachReg as SmI.  accReg is uncommitted to
+                // memory, so deopt is safe (vec[slot] still holds s_0).
                 Gp tagE = cc.new_gp64("acc_tagE");
                 cc.and_(tagE, eachReg, Imm(7));
                 cc.cmp(tagE, Imm(1));
@@ -2740,9 +2740,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.orr(accReg, accReg, Imm(1));
                 }
 
-                // i += SmI(1).
-                cc.add(iReg, iReg, Imm(8));
-                cc.cmp(iReg, sizeReg);
+                // off += 8; fused cmp+b.ls back-edge.
+                cc.add(acc_off, acc_off, Imm(8));
+                cc.cmp(acc_off, acc_endOff);
                 cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
