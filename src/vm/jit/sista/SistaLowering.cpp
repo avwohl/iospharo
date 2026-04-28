@@ -835,13 +835,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         // Tagged SmallInt valid iff bit 62 == bit 63.
                         //   ovcheck = (dst << 1) ^ dst
                         //   bit 63 of ovcheck = (dst[63] ^ dst[62])
-                        //   tbnz on bit 63 → mismatch → overflow
+                        // Use tbz with the *continue* label so the
+                        // hot path is the branch-taken path (no
+                        // unconditional-branch follow-up); fall-through
+                        // is the deopt sequence which ends in `ret`.
                         Gp ovcheck = cc.new_gp64("ovcheck");
                         Gp shifted = cc.new_gp64("ovshift");
                         cc.lsl(shifted, dst, Imm(1));
                         cc.eor(ovcheck, shifted, dst);
-                        cc.tbnz(ovcheck, Imm(63), missLabel);
-                        cc.b(contLabel);
+                        cc.tbz(ovcheck, Imm(63), contLabel);
                     }
 
                     // Miss: same deopt sequence as kPrimTagCheckInt.
