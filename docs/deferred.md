@@ -861,26 +861,50 @@ macro-inlines `to:do:` but `Array>>do:` is a real send to a
 literal-block argument, and the per-iter `value:` block dispatch
 dominates.  See B8 for the structural fix.
 
-### B8. B2 splice — Array do: with literal-block inlining (not started)
-Identified as the structural fix for the sum(1M) gap.  Pre-work
-is in tree (kBlockCreate IR + jit_rt_sista_block_create helper +
-sub-lift validation), but the actual splice emission is ~500 LOC
-that has to handle:
-- `kStoreTemp(N>0)` to remote temps (closure copies → outer's
-  temp via escape analysis when block doesn't outlive caller).
-- `kSendUnspeculated` within block (recursively inline if mono,
-  else bail with framepoint reconstruction).
-- Counted at: loop emission (phi + branches in IR).
+### B8. B2 splice — Array do: with literal-block inlining (infra shipped, no payoff)
+**Status as of c3091d3b (2026-04-27):** end-to-end plumbing is in
+tree behind `PHARO_SISTA_DO_SPLICE=1` (with optional
+`PHARO_SISTA_DO_SPLICE_NO_HINT=1` to splice without IC hints):
 
-The detection scan (`PHARO_SISTA_DO_DETECT=1`) currently logs
-zero `[SISTA-DO-PATTERN]` entries on the standard bench because
-methods like `runSum` (which contain `a do: [block]`) only run
-once and don't hit the Sista hot threshold.  The hot do:
-implementations live in `Array>>do:` / `SequenceableCollection>>do:`
-which compile but aren't matched by the do:-detector (it scans
-for adjacent `PushFullBlock + SpecialSend(do:)` in the OUTER
-method).  The matcher needs extending to follow `value:`-style
-dispatch from inside the iterator.
+- `kCountedLoopDo` IR op (`SistaIR.hpp`).
+- Pre-pass scans for PushFullBlock+SpecialSend(do:) adjacency,
+  sub-lifts the block IR into `Method.inlinedBlocks`, validates
+  against splice-simple op whitelist (loads + arith + return).
+- Pre-pass filters out candidates the main lifter could never reach
+  (`sawLiftTerminator` flag — any send-byte before the candidate's
+  PushFullBlock).
+- Main lift's PushFullBlock arm intercepts admitted candidates and
+  emits `kCountedLoopDo` instead of the generic bail.
+- Lowering (`SistaLowering.cpp`) emits a counted at: loop using
+  `cc.invoke` → `jit_rt_sista_basic_size` + `jit_rt_sista_basic_at`
+  with deopt-on-zero, plus an inline whitelist body (loads + return
+  + constants only).
+- Tracing: SISTA-SPLICE-CAND, -EMIT, -LOWER-OK, -LOWER-FAIL.
+
+**Why it doesn't move benchmarks yet:**
+1. **Real Pharo methods almost always have a setup-send before any
+   `arr do: [...]`** — the receiver is typically fetched via send
+   (`arr := self getArr. arr do: ...`).  Sista's lifter terminates
+   `kOk` on the first regular send.  The pre-pass's lift-terminator
+   filter rejects every such candidate because the main lift would
+   never reach the PushFullBlock anyway.
+2. **Bench block bodies need more than the whitelist allows.**
+   sum(1M)'s `[:e | sum := sum + e]` has `kPrimAddInt` (would be
+   easy to add) and `kStoreTemp` to a closure-captured slot
+   (requires escape analysis + a side-table mapping block slot N →
+   outer captured temp slot M).
+
+**Empirical:** 100K-iteration `arr do: [:e | e]` bench under PHARO_SISTA_DO_SPLICE=1
+PHARO_SISTA_DO_SPLICE_NO_HINT=1 → 0 OK verdicts among 200 sampled
+PushFullBlock+do: pairs from real Pharo activity.  No crash, no
+divergence, default unchanged.
+
+**Real win path** is one of:
+- Fix B-1 helper-sends (B7) so the lift continues past sends and
+  reaches the PushFullBlock (then the lift-terminator filter
+  loosens for sends covered by helper-sends).
+- Extend kCountedLoopDo lowering to handle `kPrimAddInt` and
+  `kStoreTemp` to closure slot — covers the sum(1M) shape directly.
 
 ---
 
