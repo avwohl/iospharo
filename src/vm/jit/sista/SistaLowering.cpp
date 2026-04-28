@@ -246,6 +246,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             }
         }
 
+        // Per-block CSE for temp loads — avoid re-emitting `ldr` when
+        // the same temp slot is loaded multiple times within a single
+        // block.  After a kStoreTemp the cache is updated to the
+        // stored value's reg so subsequent loads reuse it directly
+        // (no memory round-trip).  Reset at block entry because the
+        // value may differ on different paths into the block.
+        std::unordered_map<uint64_t, Gp> tempCache;
+
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
             switch (v.op) {
@@ -268,10 +276,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kLoadTemp: {
+                auto cached = tempCache.find(v.literal);
+                if (cached != tempCache.end()) {
+                    regFor[v.id] = cached->second;
+                    break;
+                }
                 Gp dst = cc.new_gp64("temp");
                 cc.ldr(dst, ptr(tempBaseHoisted,
                                  static_cast<int>(v.literal) * 8));
                 regFor[v.id] = dst;
+                tempCache[v.literal] = dst;
                 break;
             }
             case Op::kLoadTempInVec: {
@@ -346,7 +360,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.str(it->second,
                        ptr(tempBaseHoisted,
                            static_cast<int>(v.literal) * 8));
-                // kStoreTemp produces void — nothing to record.
+                // Update CSE cache so a subsequent kLoadTemp(slot)
+                // reuses the stored value without re-reading memory.
+                tempCache[v.literal] = it->second;
                 break;
             }
             case Op::kStoreInstVar: {
