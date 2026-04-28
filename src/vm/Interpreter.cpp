@@ -9964,7 +9964,10 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
 uint64_t Interpreter::jitSistaAllocArray(jit::JITState* state,
                                            uint64_t size) {
     (void)state;
-    if (size > 0x7F) return 0;  // PushNewArray descriptor is 7 bits
+    // Cap at a sane upper bound to avoid runaway alloc on a corrupted
+    // size value.  Real arrays in benchmarks are well below this; for
+    // unusual sizes the splice's caller can size-check up front.
+    if (size > 0x100000) return 0;
     Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
     uint32_t classIndex = memory_.indexOfClass(arrayClass);
     Oop arr = memory_.allocateSlots(classIndex, (size_t)size,

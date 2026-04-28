@@ -202,6 +202,11 @@ public:
         toSelectorMask_ = mask;
     }
 
+    // B2 splice (collect: variant): bitmap of literals that hold #collect:.
+    void setCollectSelectorBitmap(uint16_t mask) {
+        collectSelectorMask_ = mask;
+    }
+
     // Phase 3 deopt: when set, builder emits kPrimTagCheckInt
     // before each kPrimAddInt etc.  Lets the unsafe-arith gate
     // lift safely (non-SmallInt operands deopt to interpreter).
@@ -1079,6 +1084,183 @@ public:
                         }
                     }
 
+                    lastPushFullBlockEnd = -1;
+                    i++;
+                    continue;
+                }
+                if (op != jit::SistaV1::ExtendA
+                    && op != jit::SistaV1::ExtendB) {
+                    lastPushFullBlockEnd = -1;
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
+        // --- B2 splice pre-pass: arr collect: [block] -------------------
+        //
+        // Pattern: PushFullBlock + Send1 #collect:
+        //   - block has 1 arg (e), numCopied=0, splice-simple body.
+        //   - receiver is whatever was pushed before PushFullBlock (a
+        //     general Oop expected to be Array at runtime; tag-checked
+        //     in lowering).
+        //
+        // Records spliceCollectAtPushFullBlock_[pfbOff] = block-IR slot.
+        // The main lift's Send1 arm intercepts and emits
+        // kCountedLoopArrayCollect.
+        //
+        // Gated under PHARO_SISTA_COLLECT=1 in addition to PHARO_SISTA_DO_SPLICE.
+        static const bool collectSplice =
+            std::getenv("PHARO_SISTA_COLLECT") != nullptr;
+        if (collectSplice && injectSplice && memory_ != nullptr
+            && collectSelectorMask_) {
+            size_t i = 0;
+            int lastPushFullBlockEnd = -1;
+            int lastPushFullBlockStart = -1;
+            int lastFullBlockLitIdx = -1;
+            int lastFullBlockFlags = -1;
+            int extA = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op == jit::SistaV1::ExtendA) {
+                    if (i + 1 >= len_) break;
+                    extA = bc_[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::ExtendB) {
+                    if (i + 1 >= len_) break;
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::PushFullBlock) {
+                    if (i + 2 >= len_) break;
+                    lastPushFullBlockStart = (int)i;
+                    lastFullBlockLitIdx = (extA << 8) | bc_[i + 1];
+                    lastFullBlockFlags = bc_[i + 2];
+                    lastPushFullBlockEnd = (int)(i + 3);
+                    extA = 0;
+                    i += 3;
+                    continue;
+                }
+                // Send1 with selector matching #collect: at adjacency.
+                if (op >= jit::SistaV1::Send1Base
+                    && op <= jit::SistaV1::Send1Last
+                    && lastPushFullBlockEnd == (int)i) {
+                    uint32_t selIdx = op & 0x0F;
+                    bool isCollect =
+                        ((collectSelectorMask_ >> selIdx) & 1) != 0;
+                    if (!isCollect) {
+                        lastPushFullBlockEnd = -1;
+                        i++;
+                        continue;
+                    }
+                    bool ok = true;
+                    const char* rejectReason = nullptr;
+                    Op rejectedOp = Op::kReturn;
+
+                    Oop blockOop = Oop::nil();
+                    if (lastFullBlockLitIdx < 0
+                        || (size_t)lastFullBlockLitIdx
+                           >= out_.literals.size()) {
+                        ok = false;
+                        rejectReason = "bad litIdx";
+                    } else {
+                        blockOop = out_.literals[lastFullBlockLitIdx];
+                        if (!blockOop.isObject()) {
+                            ok = false;
+                            rejectReason = "block not Object";
+                        }
+                    }
+                    bool receiverOnStack =
+                        ((lastFullBlockFlags >> 7) & 1) != 0;
+                    if (ok && receiverOnStack) {
+                        ok = false;
+                        rejectReason = "recvOnStack";
+                    }
+                    uint32_t numCopied =
+                        (uint32_t)(lastFullBlockFlags & 0x3F);
+                    if (ok && numCopied != 0) {
+                        ok = false;
+                        rejectReason = "numCopied != 0";
+                    }
+
+                    std::unique_ptr<Method> blockIR;
+                    if (ok && g_calleeLiftDepth < 1) {
+                        blockIR = std::make_unique<Method>();
+                        g_calleeLiftDepth++;
+                        bool savedBR = g_subLiftAsBlockReturnLocal;
+                        g_subLiftAsBlockReturnLocal = true;
+                        uint32_t failedBc = UINT32_MAX;
+                        LiftResult r = Builder::build(
+                            blockOop, *memory_, *blockIR, &failedBc);
+                        g_subLiftAsBlockReturnLocal = savedBR;
+                        g_calleeLiftDepth--;
+                        if (r != LiftResult::kOk) {
+                            ok = false;
+                            rejectReason = "block sub-lift failed";
+                        }
+                    } else if (ok) {
+                        ok = false;
+                        rejectReason = "recursion guard";
+                    }
+
+                    // Splice-simple whitelist: same as inject:into:
+                    // (loads + arith + tag-check + return).  No
+                    // sends, no stores.
+                    if (ok && blockIR) {
+                        for (const auto& bv : blockIR->values) {
+                            switch (bv.op) {
+                            case Op::kLoadReceiver:
+                            case Op::kLoadTrueOop:
+                            case Op::kLoadFalseOop:
+                            case Op::kLoadTemp:
+                            case Op::kLoadLiteral:
+                            case Op::kConstantOop:
+                            case Op::kPhi:
+                            case Op::kReturn:
+                            case Op::kPrimAddInt:
+                            case Op::kPrimSubInt:
+                            case Op::kPrimMulInt:
+                            case Op::kPrimTagCheckInt:
+                                break;
+                            default:
+                                ok = false;
+                                rejectReason = "non-simple block op";
+                                rejectedOp = bv.op;
+                                break;
+                            }
+                            if (!ok) break;
+                        }
+                    }
+
+                    if (ok && blockIR) {
+                        uint32_t slot = static_cast<uint32_t>(
+                            out_.inlinedBlocks.size());
+                        out_.inlinedBlocks.push_back(
+                            std::move(blockIR));
+                        spliceCollectAtPushFullBlock_[
+                            (size_t)lastPushFullBlockStart] = slot;
+                        static int collCandCount = 0;
+                        if (collCandCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-COLLECT-CAND] pfbBC=%d "
+                                "send1BC=%zu selIdx=%u litIdx=%d slot=%u\n",
+                                lastPushFullBlockStart, i,
+                                selIdx, lastFullBlockLitIdx, slot);
+                        }
+                    } else {
+                        static int collDiag = 0;
+                        if (collDiag++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-COLLECT-DIAG] send1BC=%zu "
+                                "selIdx=%u verdict=%s reject=%s rejOp=%s\n",
+                                i, selIdx, ok ? "OK" : "REJECT",
+                                rejectReason ? rejectReason : "(none)",
+                                ok ? "n/a" : OpInfo::name(rejectedOp));
+                        }
+                    }
                     lastPushFullBlockEnd = -1;
                     i++;
                     continue;
@@ -2095,6 +2277,46 @@ private:
                         }
                         ip += 4;
                         continue;
+                    }
+                }
+                // B2 splice intercept (collect:): PushFullBlock +
+                // Send1 #collect: → kCountedLoopArrayCollect.  The
+                // receiver is whatever was below the FullBlock on the
+                // sim stack (an Array, runtime-checked in lowering).
+                {
+                    auto cIt = spliceCollectAtPushFullBlock_.find(ip);
+                    if (cIt != spliceCollectAtPushFullBlock_.end()
+                        && stack_.size() >= 1
+                        && ip + 3 < len_) {
+                        uint8_t nextOp = bc_[ip + 3];
+                        if (nextOp >= jit::SistaV1::Send1Base
+                            && nextOp <= jit::SistaV1::Send1Last) {
+                            uint32_t selIdx = nextOp & 0x0F;
+                            if (((collectSelectorMask_ >> selIdx) & 1) != 0) {
+                                uint32_t blockSlot = cIt->second;
+                                uint32_t rcv = stack_.back();
+                                stack_.pop_back();
+                                std::vector<uint32_t> ops{rcv};
+                                uint32_t vid = out_.newValue(currentBlock_,
+                                      Op::kCountedLoopArrayCollect,
+                                      Type::kOop,
+                                      std::move(ops),
+                                      /*literal=*/blockSlot);
+                                recordFramepoint(vid, bcOffset);
+                                stack_.push_back(vid);
+                                pendingExtA_ = 0;
+                                pendingExtB_ = 0;
+                                static int collEmitCount = 0;
+                                if (collEmitCount++ < 16) {
+                                    std::fprintf(stderr,
+                                        "[SISTA-COLLECT-EMIT] bc=%zu "
+                                        "slot=%u vid=%u\n",
+                                        ip, blockSlot, vid);
+                                }
+                                ip += 4;
+                                continue;
+                            }
+                        }
                     }
                 }
                 // B2 splice intercept (Interval-do): kInterval rcv
@@ -3986,6 +4208,9 @@ private:
     // B2 splice: bitmap of literals[0..15] that hold #to:.  Used for
     // the Interval-inject pattern.
     uint16_t               toSelectorMask_ = 0;
+    // B2 splice: bitmap of literals[0..15] that hold #collect:.  Used
+    // for the array-collect pattern.
+    uint16_t               collectSelectorMask_ = 0;
     // Phase 3: emit kPrimTagCheckInt before inlined arith ops.
     bool                   typeCheckArith_ = false;
     // B2 splice: when sub-lifting a block for splice, treat block-
@@ -4032,6 +4257,10 @@ private:
     // emit kCountedLoopIntervalDoAccum.
     std::unordered_map<size_t, uint64_t> intervalDoAccumAtTo_;
     std::unordered_map<size_t, uint64_t> spliceIvDoAccumAtPushFullBlock_;
+    // Array-collect splice: pfbOff → block-IR slot.  Pre-pass detects
+    // PushFullBlock + Send1#collect: with splice-simple block; lift's
+    // PushFullBlock arm emits kCountedLoopArrayCollect.
+    std::unordered_map<size_t, uint32_t> spliceCollectAtPushFullBlock_;
 };
 
 }  // namespace
@@ -4117,6 +4346,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
+    uint16_t collectMask = 0;
     if (inlineYourself || inlineIdentityEq || injectIntoSplice) {
         const uint32_t scanLimit = std::min(numLiterals, 16u);
         for (uint32_t i = 0; i < scanLimit; i++) {
@@ -4148,6 +4378,11 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
                 && std::memcmp(bytes, "to:", 3) == 0) {
                 toMask |= (1u << i);
             }
+            // #collect: is 8 bytes — for the collect: splice.
+            if (injectIntoSplice && bs == 8
+                && std::memcmp(bytes, "collect:", 8) == 0) {
+                collectMask |= (1u << i);
+            }
         }
     }
 
@@ -4162,6 +4397,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (identityNeqMask) l.setIdentityNeqSelectorBitmap(identityNeqMask);
     if (injectIntoMask) l.setInjectIntoSelectorBitmap(injectIntoMask);
     if (toMask) l.setToSelectorBitmap(toMask);
+    if (collectMask) l.setCollectSelectorBitmap(collectMask);
     if (typeCheckArith) l.setTypeCheckArith(true);
     if (g_subLiftAsBlockReturnLocal) {
         l.setBlockReturnAsLocalReturn(true);

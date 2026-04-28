@@ -2785,6 +2785,345 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = startReg;
                 break;
             }
+            case Op::kCountedLoopArrayCollect: {
+                // arr collect: [:e | expr] — allocate a fresh Array
+                // of the receiver's size, iterate i = 1..size loading
+                // arr[i], apply the inlined block body to produce the
+                // new element, store into result[i].  Returns result.
+                //
+                // operands[0] = rcv (the source Array)
+                // literal     = block-IR slot
+                using namespace asmjit::a64;
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp rcvReg = itRcv->second;
+
+                uint32_t blockSlot = (uint32_t)v.literal;
+                if (blockSlot >= method.inlinedBlocks.size()
+                    || !method.inlinedBlocks[blockSlot]) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                const Method& blockIR = *method.inlinedBlocks[blockSlot];
+                if (blockIR.blocks.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                // Deopt: rebuild interp stack [arr, FullBlock] and
+                // resume at PushFullBlock's offset.  Interpreter creates
+                // the block (PushFullBlock) and dispatches Send1
+                // #collect:, which re-allocates a fresh result and
+                // populates it from scratch.  The partially-filled
+                // result Array allocated by the splice is GC garbage.
+                //
+                // Note: PushFullBlock takes a literal-block oop and
+                // creates the FullBlockClosure.  We push savedRcv
+                // [arr] only; the interpreter will re-execute
+                // PushFullBlock to push the FullBlock.
+                auto emitDeopt = [&](Gp savedRcv, uint32_t bc) {
+                    Gp sp = cc.new_gp64("col_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedRcv, ptr(sp));
+                    cc.add(sp, sp, Imm(8));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("col_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("col_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("col_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("col_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Tag-check rcv: must be heap object.
+                Gp tagR = cc.new_gp64("col_tagR");
+                cc.and_(tagR, rcvReg, Imm(7));
+                cc.cmp(tagR, Imm(0));
+                Label rOk = cc.new_label();
+                cc.b_eq(rOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(rOk);
+
+                // sizeReg = jit_rt_sista_basic_size(state, rcv);
+                // returns 0 on non-indexable receiver → deopt.
+                Gp sizeFn = cc.new_gp64("col_szfn");
+                cc.mov(sizeFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_size));
+                asmjit::InvokeNode* sizeInvoke = nullptr;
+                asmjit::Error sErr = cc.invoke(
+                    asmjit::Out(sizeInvoke), sizeFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (sErr != asmjit::kErrorOk || !sizeInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                sizeInvoke->set_arg(0, state);
+                sizeInvoke->set_arg(1, rcvReg);
+                Gp sizeReg = cc.new_gp64("col_size");
+                sizeInvoke->set_ret(0, sizeReg);
+
+                // sizeReg is SmI Oop encoding.  basic_size returns 0 (raw)
+                // on miss — deopt.  Otherwise convert to int (sizeInt).
+                Label sizeOk = cc.new_label();
+                cc.cbnz(sizeReg, sizeOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(sizeOk);
+                // sizeInt = sizeReg >> 3
+                Gp sizeInt = cc.new_gp64("col_sizeInt");
+                cc.asr(sizeInt, sizeReg, Imm(3));
+
+                // Allocate result Array via jit_rt_sista_alloc_array.
+                // The helper accepts any size up to 0x100000 (1M slots);
+                // larger sizes deopt to the interpreter to handle.
+                Label allocOk = cc.new_label();
+                Gp tmp = cc.new_gp64("col_tmp");
+                cc.mov(tmp, Imm(0x100000));
+                cc.cmp(sizeInt, tmp);
+                cc.b_le(allocOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(allocOk);
+
+                Gp allocFn = cc.new_gp64("col_allocFn");
+                cc.mov(allocFn,
+                       Imm((uint64_t)&jit_rt_sista_alloc_array));
+                asmjit::InvokeNode* allocInvoke = nullptr;
+                asmjit::Error aErr = cc.invoke(
+                    asmjit::Out(allocInvoke), allocFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (aErr != asmjit::kErrorOk || !allocInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                allocInvoke->set_arg(0, state);
+                allocInvoke->set_arg(1, sizeInt);
+                Gp resultReg = cc.new_gp64("col_result");
+                allocInvoke->set_ret(0, resultReg);
+
+                Label allocSucc = cc.new_label();
+                cc.cbnz(resultReg, allocSucc);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(allocSucc);
+
+                // iReg = SmI(1) = 9.
+                Gp iReg = cc.new_gp64("col_i");
+                cc.mov(iReg, Imm(9));
+
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                // Compare iReg vs sizeReg as SmI Oops; b.hi exits.
+                cc.cmp(iReg, sizeReg);
+                cc.b_hi(loopExit);
+
+                // eachReg = jit_rt_sista_basic_at(state, rcv, iReg).
+                Gp atFn = cc.new_gp64("col_atfn");
+                cc.mov(atFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_at));
+                asmjit::InvokeNode* atInvoke = nullptr;
+                asmjit::Error aErr2 = cc.invoke(
+                    asmjit::Out(atInvoke), atFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (aErr2 != asmjit::kErrorOk || !atInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                atInvoke->set_arg(0, state);
+                atInvoke->set_arg(1, rcvReg);
+                atInvoke->set_arg(2, iReg);
+                Gp eachReg = cc.new_gp64("col_each");
+                atInvoke->set_ret(0, eachReg);
+
+                Label atOk = cc.new_label();
+                cc.cbnz(eachReg, atOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(atOk);
+
+                // Tag-check eachReg as SmI (the splice's block is
+                // restricted to SmI arith).  Deopt before any commit
+                // so result Array is just GC garbage.
+                Gp tagE = cc.new_gp64("col_tagE");
+                cc.and_(tagE, eachReg, Imm(7));
+                cc.cmp(tagE, Imm(1));
+                Label eOk = cc.new_label();
+                cc.b_eq(eOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(eOk);
+
+                // Inline block body.  temp 0 = e (the array element)
+                // → eachReg.  Block returns the new element value.
+                std::unordered_map<uint32_t, Gp> blockRegs;
+                bool sawReturn = false;
+                Gp newElemReg;
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        if (idx == 0) {
+                            blockRegs[bv.id] = eachReg;
+                        } else {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        break;
+                    }
+                    case Op::kLoadTrueOop: {
+                        Gp r = cc.new_gp64("col_b_true");
+                        cc.ldr(r, ptr(state, OFF_TRUEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadFalseOop: {
+                        Gp r = cc.new_gp64("col_b_false");
+                        cc.ldr(r, ptr(state, OFF_FALSEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kConstantOop: {
+                        Gp r = cc.new_gp64("col_b_const");
+                        cc.mov(r, Imm(bv.literal));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadLiteral: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        Gp lits = cc.new_gp64("col_b_lits");
+                        cc.ldr(lits, ptr(state, OFF_LITERALS));
+                        Gp r = cc.new_gp64("col_b_lit");
+                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadReceiver: {
+                        Gp r = cc.new_gp64("col_b_recv");
+                        cc.ldr(r, ptr(state, OFF_RECEIVER));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kPrimTagCheckInt: {
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        blockRegs[bv.id] = it->second;
+                        break;
+                    }
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt: {
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("col_b_arith");
+                        if (bv.op == Op::kPrimAddInt) {
+                            cc.add(dst, ita->second, itb->second);
+                            cc.sub(dst, dst, Imm(1));
+                        } else if (bv.op == Op::kPrimSubInt) {
+                            cc.sub(dst, ita->second, itb->second);
+                            cc.add(dst, dst, Imm(1));
+                        } else {
+                            Gp au = cc.new_gp64("col_b_au");
+                            Gp bu = cc.new_gp64("col_b_bu");
+                            cc.asr(au, ita->second, Imm(3));
+                            cc.asr(bu, itb->second, Imm(3));
+                            Gp prod = cc.new_gp64("col_b_prod");
+                            cc.mul(prod, au, bu);
+                            cc.lsl(dst, prod, Imm(3));
+                            cc.orr(dst, dst, Imm(1));
+                        }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kReturn: {
+                        if (bv.operands.size() != 1) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        newElemReg = it->second;
+                        sawReturn = true;
+                        break;
+                    }
+                    case Op::kPhi:
+                        // Block has 1 block, no phi needed.
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    if (sawReturn) break;
+                }
+                if (!sawReturn) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // Store newElemReg to result[iReg].  Address =
+                // resultReg + iReg - 1 (since SmI(N)-1 = 8*N).
+                Gp addrTmp = cc.new_gp64("col_addr");
+                cc.add(addrTmp, resultReg, iReg);
+                cc.sub(addrTmp, addrTmp, Imm(1));
+                cc.str(newElemReg, ptr(addrTmp));
+
+                // i += SmI(1).
+                cc.add(iReg, iReg, Imm(8));
+                cc.b(loopHead);
+
+                cc.bind(loopExit);
+
+                // collect:'s result is the new Array.
+                regFor[v.id] = resultReg;
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared

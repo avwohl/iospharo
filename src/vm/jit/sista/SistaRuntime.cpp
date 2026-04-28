@@ -60,7 +60,8 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
          || v.op == Op::kCountedLoopIntervalInjectInto
          || v.op == Op::kCountedLoopIntervalDo
          || v.op == Op::kCountedLoopArrayDoAccum
-         || v.op == Op::kCountedLoopIntervalDoAccum) {
+         || v.op == Op::kCountedLoopIntervalDoAccum
+         || v.op == Op::kCountedLoopArrayCollect) {
             hasSplice = true;
         }
         if (v.op == Op::kSendUnspeculated) {

@@ -244,6 +244,24 @@ enum class Op : uint8_t {
     //           bits 16-23 = arith op (0=add, 1=sub, 2=mul)
     kCountedLoopIntervalDoAccum,
 
+    // --- B2 splice: arr collect: [:e | expr] ---
+    // Recognized at bytecode level: Send2 #collect: where receiver is
+    // an Array (runtime tag-checked) and the block is splice-simple
+    // (LoadTemp 0 + arith ops + LoadConst + BlockReturn).
+    //
+    // Lowering allocates a fresh Array of the receiver's size, iterates
+    // i = 1..size loading arr[i], applies the inlined block body
+    // producing the result element, and stores into result[i].
+    // Returns the new Array.
+    //
+    // Mid-loop deopt: rebuilds [arr, FullBlock] and resumes at the
+    // Send2 #collect: bytecode.  The interpreter re-runs collect: from
+    // scratch (allocates a fresh result, ignoring the partial work).
+    //
+    // operands: rcv (the Array)  -> Oop (the new Array)
+    // literal:  block-IR slot (low 32 bits)
+    kCountedLoopArrayCollect,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).
