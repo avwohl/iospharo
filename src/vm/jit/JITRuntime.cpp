@@ -1113,6 +1113,22 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
+extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
+                                               uint64_t size) {
+    if (!state || !state->interp) return 0;
+    static const bool dbg =
+        std::getenv("PHARO_SISTA_ALLOC_ARRAY_TRACE") != nullptr;
+    if (dbg) {
+        static size_t calls = 0;
+        if (++calls < 8 || (calls & 0xFFFF) == 0) {
+            std::fprintf(stderr,
+                "[ALLOC-ARRAY] calls=%zu size=%llu\n",
+                calls, (unsigned long long)size);
+        }
+    }
+    return state->interp->jitSistaAllocArray(state, size);
+}
+
 extern "C" uint64_t jit_rt_sista_block_create(JITState* state,
                                                 uint64_t litIndex,
                                                 uint64_t numCopied,

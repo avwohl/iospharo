@@ -9961,6 +9961,17 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     return result.rawBits();
 }
 
+uint64_t Interpreter::jitSistaAllocArray(jit::JITState* state,
+                                           uint64_t size) {
+    (void)state;
+    if (size > 0x7F) return 0;  // PushNewArray descriptor is 7 bits
+    Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
+    uint32_t classIndex = memory_.indexOfClass(arrayClass);
+    Oop arr = memory_.allocateSlots(classIndex, (size_t)size,
+                                     ObjectFormat::Indexable);
+    return arr.rawBits();
+}
+
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
                                                 int litIndex,
                                                 int numCopied,

@@ -1344,6 +1344,12 @@ public:
                                        int numCopied,
                                        int flags);
 
+    /// Allocate a fresh Array of the given size (initialized to nil).
+    /// Mirrors the bytecode-level PushNewArray (0xE7) j=0 path.  No
+    /// stack effect — the JIT-compiled caller takes the new Array as
+    /// the helper's return value.  Returns 0 on alloc failure.
+    uint64_t jitSistaAllocArray(jit::JITState* state, uint64_t size);
+
 private:
 #endif
 

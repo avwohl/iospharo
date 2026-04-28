@@ -23,6 +23,8 @@ extern "C" uint64_t jit_rt_sista_block_create(void* state,
                                                 uint64_t flags);
 extern "C" uint64_t jit_rt_sista_basic_size(void* state,
                                               uint64_t rcvBits);
+extern "C" uint64_t jit_rt_sista_alloc_array(void* state,
+                                               uint64_t size);
 extern "C" uint64_t jit_rt_sista_basic_at(void* state,
                                             uint64_t rcvBits,
                                             uint64_t idxBits);
@@ -1080,6 +1082,30 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.ret();
                 }
                 cc.bind(noDeopt);
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kAllocArray: {
+                using namespace asmjit::a64;
+                uint32_t size = (uint32_t)v.literal;
+                Gp argSize = cc.new_gp64("arrSize");
+                cc.mov(argSize, Imm((uint64_t)size));
+                Gp fnReg = cc.new_gp64("allocArrayFn");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_alloc_array));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, argSize);
+                Gp dst = cc.new_gp64("newArr");
+                invokeNode->set_ret(0, dst);
                 regFor[v.id] = dst;
                 break;
             }

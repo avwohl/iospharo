@@ -64,6 +64,9 @@ enum class Op : uint8_t {
                           // of the TempVector held in outer temp `tempIdxOfVec`.
     kStoreTempInVec,      // operand[0] = value; literal layout same as
                           // kLoadTempInVec.                                -> Void
+    kAllocArray,          // 0 operands; literal: array size               -> Oop
+                          // Allocates a fresh Array(size) initialized to
+                          // nil.  Mirrors PushNewArray (0xE7) j=0 path.
     kLoadInstVar,         // operands: receiver, instVar index            -> Oop
     kStoreInstVar,        // operands: receiver, instVar index, value     -> Void
     kLoadLiteral,         // operand: literal index                       -> Oop

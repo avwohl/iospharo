@@ -64,6 +64,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopIntervalInjectInto:
     case Op::kCountedLoopIntervalDo:
     case Op::kCountedLoopArrayDoAccum:
+    case Op::kAllocArray:
     case Op::kInterval:
     case Op::kPhi:
         return true;
@@ -84,6 +85,7 @@ bool mayCallBack(Op op) {
     case Op::kCountedLoopIntervalInjectInto:  // same
     case Op::kCountedLoopIntervalDo:  // same
     case Op::kCountedLoopArrayDoAccum:  // same
+    case Op::kAllocArray:               // alloc may GC
     case Op::kPrimTagCheckInt:  // miss deopts
         return true;
     default:
@@ -116,6 +118,7 @@ const char* name(Op op) {
     case Op::kStoreTemp:        return "store_temp";
     case Op::kLoadTempInVec:    return "load_temp_invec";
     case Op::kStoreTempInVec:   return "store_temp_invec";
+    case Op::kAllocArray:       return "alloc_array";
     case Op::kLoadInstVar:      return "load_ivar";
     case Op::kStoreInstVar:     return "store_ivar";
     case Op::kLoadLiteral:      return "load_lit";

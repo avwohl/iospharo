@@ -2075,7 +2075,6 @@ private:
             }
 
             if (op == jit::SistaV1::PushClosure
-             || op == jit::SistaV1::PushArray
              || op == jit::SistaV1::PushThisContext) {
                 static const bool detect =
                     std::getenv("PHARO_SISTA_DO_DETECT") != nullptr;
@@ -2089,6 +2088,8 @@ private:
                 }
                 return bailToInterpreter(instructionSize(op));
             }
+            // PushArray (0xE7) is handled below (kAllocArray for j=0 case;
+            // bail for j=1 popInto case).
 
             // ExtendA / ExtendB prefix: stash the byte arg and let the
             // next op consume it.  Does not emit IR.  If the next op
@@ -2337,6 +2338,28 @@ private:
             if (op == jit::SistaV1::ExtStoreLitVar
              || op == jit::SistaV1::ExtPopStoreLitVar) {
                 return bailToInterpreter(2);
+            }
+
+            // PushNewArray (0xE7): the j=0 form pushes a fresh Array
+            // of `size = desc & 0x7F`.  The j=1 form (popInto, top bit
+            // of desc set) pops `size` values from the stack and stores
+            // them in the new Array — defer for now.
+            if (op == 0xE7) {
+                if (ip + 1 >= len_) return bailToInterpreter(2);
+                uint8_t desc = bc_[ip + 1];
+                bool popInto = (desc >> 7) != 0;
+                if (popInto) {
+                    return bailToInterpreter(2);
+                }
+                uint32_t size = desc & 0x7F;
+                uint32_t vid = out_.newValue(currentBlock_,
+                               Op::kAllocArray, Type::kOop,
+                               /*operands=*/{}, /*literal=*/size);
+                stack_.push_back(vid);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 2;
+                continue;
             }
 
             // Remote-temp ops: emit kLoadTempInVec / kStoreTempInVec.
