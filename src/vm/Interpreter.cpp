@@ -14569,15 +14569,20 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // collision.  Setting this flag is the demonstrated workaround
         // for the Megamorphic-dispatch crash (deferred.md §E.3 / nextHandlerContext).
         // Real fix is TBD — see project_next_handler_context_crash.md memory.
+        // PHARO_NO_GETTER_BIT_BISECT=63|62|61 disables only one bit for bisection.
+        static const char* bisect = std::getenv("PHARO_NO_GETTER_BIT_BISECT");
         static const bool noGetterBit =
             std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
         if (!noGetterBit) {
             TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
-            if (tmi.getterIndex >= 0)
+            bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
+            bool skip62 = bisect && std::strcmp(bisect, "62") == 0;
+            bool skip61 = bisect && std::strcmp(bisect, "61") == 0;
+            if (!skip63 && tmi.getterIndex >= 0)
                 extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
-            else if (tmi.setterIndex >= 0)
+            else if (!skip62 && tmi.setterIndex >= 0)
                 extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
-            else if (tmi.returnsSelf)
+            else if (!skip61 && tmi.returnsSelf)
                 extra = (1ULL << 61);
         }
     }
