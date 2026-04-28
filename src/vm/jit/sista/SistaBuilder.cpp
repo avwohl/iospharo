@@ -1206,9 +1206,11 @@ public:
                         rejectReason = "recursion guard";
                     }
 
-                    // Splice-simple whitelist: same as inject:into:
-                    // (loads + arith + tag-check + return).  No
-                    // sends, no stores.
+                    // Splice-simple whitelist: loads + arith + tag-check
+                    // + return.  No sends, no stores.  kLoadLiteral
+                    // is excluded because of a hang seen on multi-arith
+                    // blocks like `(e * 2) + 1`; root cause unclear,
+                    // leave restricted until investigated.
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1216,7 +1218,6 @@ public:
                             case Op::kLoadTrueOop:
                             case Op::kLoadFalseOop:
                             case Op::kLoadTemp:
-                            case Op::kLoadLiteral:
                             case Op::kConstantOop:
                             case Op::kPhi:
                             case Op::kReturn:
