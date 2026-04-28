@@ -14518,7 +14518,38 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // selector matches the send's selector. If they don't match, the
     // pendingICPatch_ was stale (set by a different send in a nested JIT
     // execution or process switch) — patching would corrupt the IC.
+    //
+    // FIX 2026-04-28 (megamorphic-dispatch / nextHandlerContext crash):
+    // After GC, recoverAfterGC zeroes icData[18] to disarm the megacache
+    // probe's deref of stale selector bytes.  When slot 18 is 0, the
+    // simple `icSelectorBits != 0` gate below is bypassed and a stale
+    // pendingICPatch_ from a different send site can poison this IC
+    // (e.g., #method getter classification leaks into a #sender site,
+    // making the inline-getter read slot 3 instead of slot 0).
+    // Fix: when icData[18] is 0, consult the side-channel selBitsArray
+    // (set at compile time, never zeroed) to recover this site's expected
+    // selector and compare against the send's selector.
     uint64_t icSelectorBits = icData[18];
+    if (icSelectorBits == 0 && pendingICOwnerMethod_.isObject()
+            && pendingICOwnerMethod_.rawBits() > 0x10000) {
+        if (auto* jm = jitRuntime_.methodMap().lookup(
+                pendingICOwnerMethod_.rawBits())) {
+            if (jm->numICEntries > 0) {
+                uint8_t* icStart = jm->codeStart() + jm->codeSize
+                                 - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                ptrdiff_t off = reinterpret_cast<uint8_t*>(icData) - icStart;
+                if (off >= 0
+                        && (off % jit::IC_BYTES_PER_SITE) == 0) {
+                    uint32_t siteIdx = (uint32_t)(off / jit::IC_BYTES_PER_SITE);
+                    if (siteIdx < jm->numICEntries) {
+                        if (uint64_t* sba = jm->selBitsArray()) {
+                            icSelectorBits = sba[siteIdx];
+                        }
+                    }
+                }
+            }
+        }
+    }
     if (icSelectorBits != 0 && icSelectorBits != selector.rawBits()) {
         dbgSelMismatch++;
         if (patchDbg && dbgSelMismatch <= 5) {
@@ -14562,18 +14593,22 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t extra = 0;
     {
         // PHARO_NO_GETTER_BIT=1: disable the inline-getter/setter/returnsSelf
-        // bit-63/62/61 classification.  The bit-63 fast path in
-        // stencil_sendJ2J's IC_HIT macro (reading recvObj->slotAt(slotIdx))
-        // can produce wrong receivers for the next send when receiver is
-        // a non-Context object that passes class match by classIndex
-        // collision.  Setting this flag is the demonstrated workaround
-        // for the Megamorphic-dispatch crash (deferred.md §E.3 / nextHandlerContext).
-        // Real fix is TBD — see project_next_handler_context_crash.md memory.
-        // PHARO_NO_GETTER_BIT_BISECT=63|62|61 disables only one bit for bisection.
+        // bit-63/62/61 classification (diagnostic only since the cross-site
+        // poisoning was fixed 2026-04-28; left as a kill-switch).
+        // PHARO_NO_GETTER_BIT_BISECT=63|62|61 disables only one bit.
         static const char* bisect = std::getenv("PHARO_NO_GETTER_BIT_BISECT");
         static const bool noGetterBit =
             std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
-        if (!noGetterBit) {
+        // Only set bit-63/62/61 trivial classifications for heap-class entries.
+        // For immediate (SmI / Char / etc., tag != 0) receivers, the
+        // stencil's `tag == 0` gate skips the inline-getter path, so the
+        // classification is useless AND would conflict with bit-60 J2J
+        // entry encoding (low 48 bits hold jitAddr; OR-merge corrupts
+        // slotIdx in bits 15:0).  Skip the classification for non-heap
+        // receivers so bit-60 J2J can take over cleanly below.
+        bool receiverIsHeap = (receiver.rawBits() & 0x7) == 0
+                              && receiver.rawBits() >= 0x10000;
+        if (!noGetterBit && receiverIsHeap) {
             TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
             bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
             bool skip62 = bisect && std::strcmp(bisect, "62") == 0;
@@ -14621,8 +14656,31 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // If not a trivial method, check for JIT-compiled target for J2J direct calls.
     // IMPORTANT: Don't set J2J for methods with primitives but no prologue stencil —
     // J2J skips CallPrimitive (it compiles to stencil_nop), so the primitive never runs.
+    //
+    // FIX 2026-04-28: also don't OR-in J2J bits when the entry is already
+    // classified as a trivial inline-getter/setter/returnsSelf (bits 63/62/61).
+    // Without this guard, extra ends up with BOTH bit 63 AND bit 60 set, plus
+    // bits 47:0 = jitAddr — and the inline-getter fast path reads the LOW 16
+    // BITS as slotIdx, which equals jitAddr & 0xFFFF (a huge value).  The
+    // resulting recvObj->slotAt(huge) reads way past the receiver, returning
+    // garbage that gets passed as the result of #sender / #method / etc.
+    //
+    // For heap-class entries (tag==0): inline-getter / setter / returnsSelf
+    // ALWAYS fires (the IC lookupKey == receiver classIndex match guarantees
+    // the receiver IS the cached class), so J2J is never reached anyway.
+    //
+    // For immediate (SmI / Char / etc., tag != 0) receivers: inline-getter
+    // path is gated by `tag == 0` and never fires.  In that case bit 63 is
+    // useless and we should let bit-60 J2J take over instead — so we skip
+    // setting bit 63 entirely up front for non-heap receivers (handled in
+    // the trivial-method classification below — see PHARO_NO_GETTER_BIT
+    // gating).  The TRIVIAL_BITS guard here is the second line of defense
+    // for heap-class entries.
     static bool j2jEnabled = !g_debug.noJ2J;
-    if ((extra & (1ULL << 60)) == 0 && j2jEnabled) {
+    constexpr uint64_t TRIVIAL_BITS =
+        (1ULL << 63) | (1ULL << 62) | (1ULL << 61);
+    if ((extra & TRIVIAL_BITS) == 0 &&
+        (extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
         if (target && target->isExecutable()) {
             // Check if target has a primitive but no prologue.
@@ -14901,8 +14959,33 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
 
         // Probe: verify cachedMethod's selector matches the IC's recorded selector.
         // If they differ, this is cross-site IC poisoning — DON'T write.
+        // FIX 2026-04-28: when icData[18] is 0 (post-GC zeroed), fall back to
+        // the side-channel selBitsArray so the cross-site check still fires.
+        // Without this, a stale state.icDataPtr pointing at a different
+        // send site's IC slips through and gets a wrong slotIdx written.
         {
             uint64_t icSelBits = icData[18];
+            if (icSelBits == 0 && callerMethod.isObject()
+                    && callerMethod.rawBits() > 0x10000) {
+                if (auto* jm = jitRuntime_.methodMap().lookup(
+                        callerMethod.rawBits())) {
+                    if (jm->numICEntries > 0) {
+                        uint8_t* icStart = jm->codeStart() + jm->codeSize
+                                - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                        ptrdiff_t off = reinterpret_cast<uint8_t*>(icData)
+                                - icStart;
+                        if (off >= 0
+                                && (off % jit::IC_BYTES_PER_SITE) == 0) {
+                            uint32_t siteIdx = (uint32_t)(off / jit::IC_BYTES_PER_SITE);
+                            if (siteIdx < jm->numICEntries) {
+                                if (uint64_t* sba = jm->selBitsArray()) {
+                                    icSelBits = sba[siteIdx];
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if (icSelBits != 0 && icSelBits > 0x10000) {
                 size_t nLits = memory_.numLiteralsOf(cachedMethod);
                 if (nLits >= 2) {
