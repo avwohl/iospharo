@@ -2672,17 +2672,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                 }
 
-                // Deopt: rebuild interp stack [start, stop, vecRef] +
-                // resume at PushFullBlock.  Interpreter creates the block
-                // and re-dispatches do:.  vec[slot] still holds original s.
+                // Deopt: rebuild interp stack [start, stop] and resume
+                // at the to: bytecode (framepoint stores to:'s offset
+                // = PushFullBlock - 2).  The interpreter re-runs to:
+                // → real Interval allocation → PushTemp T_vec →
+                // PushFullBlock → SpecialSend do: from scratch.
+                // vec[slot] still holds original s (we never wrote
+                // accReg back), so re-running do: yields the right sum.
                 auto emitDeopt = [&](Gp savedStart, Gp savedStop,
-                                      Gp savedVec, uint32_t bc) {
+                                      Gp /*savedVec*/, uint32_t bc) {
                     Gp sp = cc.new_gp64("ivacc_dz_sp");
                     cc.ldr(sp, ptr(state, OFF_SP));
                     cc.str(savedStart, ptr(sp));
                     cc.str(savedStop,  ptr(sp, 8));
-                    cc.str(savedVec,   ptr(sp, 16));
-                    cc.add(sp, sp, Imm(24));
+                    cc.add(sp, sp, Imm(16));
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ivacc_dz_ip");
                     if (bytecodeBase) {

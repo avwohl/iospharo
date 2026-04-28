@@ -1457,7 +1457,16 @@ public:
         // The main lift's Send1#to: handler emits kInterval at the
         // recorded offset, and the PushFullBlock arm intercepts to emit
         // kCountedLoopIntervalDoAccum when both maps match.
-        if (accumSplice && memory_ != nullptr && toSelectorMask_) {
+        //
+        // Gated separately (PHARO_SISTA_IV_DO_ACCUM=1) — under
+        // PHARO_SISTA_DO_SPLICE alone there's a deopt-stack bug shared
+        // with the existing IV-inject/IV-do splices that surfaces on
+        // certain non-bench methods (e.g., FFI's #oopForObject:).
+        // Until the deopt is fixed (push only [start,stop], resume at
+        // to:), keep this splice opt-in.
+        static const bool ivDoAccumSplice =
+            std::getenv("PHARO_SISTA_IV_DO_ACCUM") != nullptr;
+        if (ivDoAccumSplice && accumSplice && memory_ != nullptr && toSelectorMask_) {
             size_t i = 0;
             while (i < len_) {
                 uint8_t op = bc_[i];
@@ -2029,7 +2038,12 @@ private:
                                   Type::kOop,
                                   std::move(ops),
                                   /*literal=*/packed);
-                            recordFramepoint(vid, bcOffset);
+                            // Framepoint resumes at the to: offset (=
+                            // PushFullBlock - 2 bytes for PushTemp T_vec).
+                            // Deopt pushes [start, stop] only and lets
+                            // the interpreter re-run the to: send.
+                            recordFramepoint(vid,
+                                (uint32_t)(bcOffset - 2));
                             stack_.push_back(vid);
                             pendingExtA_ = 0;
                             pendingExtB_ = 0;
