@@ -1160,27 +1160,199 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             }
             case Op::kCountedLoopDo: {
                 // B2 splice: counted at: loop with inlined block body.
-                // Stub: refuse to lower for now — caller bails the
-                // whole method's compile, falling back to bytecode
-                // interpretation.  Same effect as if the method had
-                // been gated out, so no regression for methods that
-                // would otherwise compile.
                 //
-                // Real lowering (TODO):
-                //   v_size = call basicSize(rcv)
-                //   v_i = 1
-                //   loop:
-                //     cmp v_i, v_size; b.gt exit
-                //     v_each = call basicAt(rcv, v_i)
-                //     <inlined block body — recursively lower
-                //      m.inlinedBlocks[v.literal]'s IR with
-                //      kLoadTemp(0) → v_each substitution>
-                //     v_i = v_i + 1
-                //     b loop
-                //   exit:
-                //     push rcv  (do: returns receiver)
-                if (failedAtValue) *failedAtValue = v.id;
-                return nullptr;
+                // Emits:
+                //   sizeReg = basicSize(rcv)              ; deopt on 0
+                //   iReg = SmI(1)
+                //   loopHead:
+                //     if iReg > sizeReg, goto loopExit
+                //     eachReg = basicAt(rcv, iReg)        ; deopt on 0
+                //     <inline block body — minimal whitelist: kLoadTemp,
+                //      kLoadReceiver, kConstantOop, kReturn.  Effects
+                //      on outer state are NOT yet supported (kStoreTemp
+                //      to closure-captured slot is the bench-relevant
+                //      case but requires escape analysis to map block
+                //      slot N back to outer's slot M)>
+                //     iReg = iReg + 8                     ; SmI add
+                //     b loopHead
+                //   loopExit:
+                //     result = rcv                         ; do: returns receiver
+                using namespace asmjit::a64;
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                if (itRcv == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                uint32_t blockSlot = (uint32_t)v.literal;
+                if (blockSlot >= method.inlinedBlocks.size()
+                    || !method.inlinedBlocks[blockSlot]) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                const Method& blockIR = *method.inlinedBlocks[blockSlot];
+
+                // Verify block has exactly one basic block.  Multi-block
+                // bodies need a separate lowering pass with its own
+                // block-label map.
+                if (blockIR.blocks.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // Verify every block op is in our minimal whitelist.
+                // Anything else (stores, sends, primops) needs more
+                // lowering machinery; refuse for now.
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp:
+                    case Op::kLoadReceiver:
+                    case Op::kLoadTrueOop:
+                    case Op::kLoadFalseOop:
+                    case Op::kConstantOop:
+                    case Op::kLoadLiteral:
+                    case Op::kReturn:
+                        break;
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
+
+                Gp rcvReg = itRcv->second;
+
+                // Source bcOffset for deopt resume — recorded as the
+                // framepoint when the lifter emitted kCountedLoopDo.
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                auto emitDeopt = [&](Gp savedRcv, uint32_t bc) {
+                    Gp sp = cc.new_gp64("loop_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedRcv, ptr(sp));
+                    cc.add(sp, sp, Imm(8));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("loop_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("loop_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("loop_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("loop_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Step 1: sizeReg = basicSize(rcv).  Deopt on 0 (non-
+                // indexable receiver — bails to interp at the do:
+                // bytecode, where the original send re-runs).
+                Gp sizeFn = cc.new_gp64("loop_szfn");
+                cc.mov(sizeFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_size));
+                asmjit::InvokeNode* sizeInvoke = nullptr;
+                asmjit::Error sErr = cc.invoke(
+                    asmjit::Out(sizeInvoke), sizeFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (sErr != asmjit::kErrorOk || !sizeInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                sizeInvoke->set_arg(0, state);
+                sizeInvoke->set_arg(1, rcvReg);
+                Gp sizeReg = cc.new_gp64("loop_size");
+                sizeInvoke->set_ret(0, sizeReg);
+
+                Label sizeOk = cc.new_label();
+                cc.cbnz(sizeReg, sizeOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(sizeOk);
+
+                // Step 2: iReg = SmI(1) = (1 << 3) | 1 = 9.
+                Gp iReg = cc.new_gp64("loop_i");
+                cc.mov(iReg, Imm(9));
+
+                // Step 3: loop head.
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                // Step 4: compare iReg, sizeReg as SmI Oops.  Both have
+                // tag 1 in low 3 bits; comparing raw bits as unsigned
+                // is equivalent to comparing the underlying integers
+                // (same tag, same shift).  Exit when iReg > sizeReg.
+                cc.cmp(iReg, sizeReg);
+                cc.b_hi(loopExit);
+
+                // Step 5: eachReg = basicAt(rcv, iReg).  Deopt on 0.
+                Gp atFn = cc.new_gp64("loop_atfn");
+                cc.mov(atFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_at));
+                asmjit::InvokeNode* atInvoke = nullptr;
+                asmjit::Error aErr = cc.invoke(
+                    asmjit::Out(atInvoke), atFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (aErr != asmjit::kErrorOk || !atInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                atInvoke->set_arg(0, state);
+                atInvoke->set_arg(1, rcvReg);
+                atInvoke->set_arg(2, iReg);
+                Gp eachReg = cc.new_gp64("loop_each");
+                atInvoke->set_ret(0, eachReg);
+
+                Label atOk = cc.new_label();
+                cc.cbnz(eachReg, atOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(atOk);
+
+                // Step 6: inline block body.  For our minimal whitelist
+                // (loads + return + constants), there are no
+                // side-effecting ops to emit — every value is a no-op
+                // at the asm level (we just need to "compute" them but
+                // they don't escape the iteration).  kReturn ends the
+                // body; we don't actually return — we just continue
+                // the loop.
+                //
+                // Future: handle kPrimAddInt etc. by emitting tag-
+                // preserving SmI math.  Handle kStoreTemp(N) for N >=
+                // numCopied via remote-temp store to closure context.
+
+                // Step 7: iReg += 8 (tag-preserving SmI add: SmI(a) +
+                // SmI(b) = (a<<3 | 1) + (b<<3 | 1) - 1.  For b=1:
+                // result = iReg + 9 - 1 = iReg + 8.).
+                cc.add(iReg, iReg, Imm(8));
+
+                // Step 8: branch back to loopHead.
+                cc.b(loopHead);
+
+                // Step 9: loop exit.
+                cc.bind(loopExit);
+
+                // Step 10: kCountedLoopDo's result is the receiver.
+                regFor[v.id] = rcvReg;
+                break;
             }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored

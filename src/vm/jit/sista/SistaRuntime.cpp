@@ -4,6 +4,8 @@
 #include "SistaRuntime.hpp"
 #include "../../ObjectMemory.hpp"
 
+#include <cstdio>
+
 namespace pharo {
 namespace sista {
 
@@ -48,9 +50,35 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     uint32_t numLiterals = (uint32_t)(hdrOop.asSmallInteger() & 0x7FFF);
     const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
 
+    // Trace lowering only for splice methods — otherwise the volume
+    // would drown out everything else.  Limited to 16 lines.
+    bool hasSplice = false;
+    for (const auto& v : m.values) {
+        if (v.op == Op::kCountedLoopDo) { hasSplice = true; break; }
+    }
+
     // Lower IR → native.
     uint32_t failedVal = UINT32_MAX;
     Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, bytecodes);
+    if (hasSplice) {
+        static int spliceLogCount = 0;
+        if (spliceLogCount++ < 16) {
+            if (fn) {
+                fprintf(stderr,
+                        "[SISTA-SPLICE-LOWER-OK] method=0x%llx\n",
+                        (unsigned long long)key);
+            } else {
+                const char* opName = (failedVal != UINT32_MAX
+                                      && failedVal < m.values.size())
+                    ? OpInfo::name(m.values[failedVal].op)
+                    : "(unknown)";
+                fprintf(stderr,
+                        "[SISTA-SPLICE-LOWER-FAIL] method=0x%llx "
+                        "failedAt=v%u op=%s\n",
+                        (unsigned long long)key, failedVal, opName);
+            }
+        }
+    }
     cache_[key] = fn;
     return fn;
 }

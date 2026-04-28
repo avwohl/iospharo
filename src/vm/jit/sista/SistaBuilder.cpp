@@ -464,8 +464,43 @@ public:
                 int lastFullBlockLitIdx = -1;
                 int lastFullBlockFlags = -1;
                 int extA = 0;
+                // Track whether a "lift-terminator" bytecode (one that
+                // makes the main lifter return kOk early) has been seen.
+                // Once true, no candidate further in the stream can
+                // actually compile — the main lift won't reach it.
+                bool sawLiftTerminator = false;
                 while (i < len_) {
                     uint8_t op = bc_[i];
+                    // Detect terminators that end the lift before our
+                    // PushFullBlock could be reached.  Today the lifter
+                    // returns kOk on:
+                    //   - regular literal sends (Send0/1/2: 0x80-0xAF)
+                    //   - SpecialSend other than the do: peephole (0x70-0x7F)
+                    //   - extended sends (ExtendedSend 0xEA, ExtendedSendSuper 0xEB)
+                    //   - non-inlined arith ops (0x60-0x6F) when the
+                    //     PHARO_SISTA_INLINE_ARITH gate is OFF
+                    //   - PushClosure (0xFA), PushArray (0xF8), PushThisContext
+                    //   - MUSTBOOL (0xFD)
+                    // Conservative: mark all of these as terminators.
+                    // This means we'll skip a few candidates that arith-
+                    // inlining would actually allow, but it's the safe
+                    // direction.
+                    if ((op >= 0x60 && op <= 0xAF)
+                        || op == 0xEA  // ExtendedSend
+                        || op == 0xEB  // ExtendedSendSuper
+                        || op == 0xF8  // PushArray
+                        || op == 0xFA  // PushClosure
+                        || op == 0xFD  // MUSTBOOL
+                        || op == 0xFC) // PushThisContext
+                    {
+                        // Allowed: do: itself (0x7B) when we're in the
+                        // adjacency window — that's the candidate
+                        // signal, not a terminator.
+                        if (!(op == 0x7B
+                              && lastPushFullBlockEnd == (int)i)) {
+                            sawLiftTerminator = true;
+                        }
+                    }
                     if (op == jit::SistaV1::ExtendA) {
                         if (i + 1 >= len_) break;
                         extA = bc_[i + 1];
@@ -498,6 +533,15 @@ public:
                         // sub-lift.
                         bool ok = true;
                         const char* rejectReason = nullptr;
+
+                        // Reject candidates that the main lifter cannot
+                        // reach (a terminator-send appears earlier).  No
+                        // point lifting the block sub-IR if the splice
+                        // intercept will never fire.
+                        if (sawLiftTerminator) {
+                            ok = false;
+                            rejectReason = "lift-terminator before do:";
+                        }
 
                         // Look up the block's CompiledBlock literal.
                         Oop blockOop = Oop::nil();
@@ -1116,6 +1160,12 @@ private:
                         stack_.push_back(vid);
                         pendingExtA_ = 0;
                         pendingExtB_ = 0;
+                        static int emitCount = 0;
+                        if (emitCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-SPLICE-EMIT] bc=%zu slot=%u vid=%u\n",
+                                ip, blockSlot, vid);
+                        }
                         ip += 4;  // PushFullBlock (3) + SpecialSend (1)
                         continue;
                     }
