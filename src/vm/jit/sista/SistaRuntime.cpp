@@ -56,7 +56,9 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     for (const auto& v : m.values) {
         if (v.op == Op::kCountedLoopDo
          || v.op == Op::kCountedLoopInjectInto
-         || v.op == Op::kCountedLoopIntervalInjectInto) {
+         || v.op == Op::kCountedLoopIntervalInjectInto
+         || v.op == Op::kCountedLoopIntervalDo
+         || v.op == Op::kCountedLoopArrayDoAccum) {
             hasSplice = true; break;
         }
     }

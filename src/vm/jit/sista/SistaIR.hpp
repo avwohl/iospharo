@@ -57,6 +57,13 @@ enum class Op : uint8_t {
     kLoadArg,             // literal: arg index                           -> Oop
     kLoadTemp,            // literal: temp index                          -> Oop
     kStoreTemp,           // operand[0] = value; literal: temp index      -> Void
+    kLoadTempInVec,       // 0 operands; literal: high 32 = tempIdxOfVec,
+                          //                       low  32 = indexInVec     -> Oop
+                          // Push (temps[tempIdxOfVec])[indexInVec]: the
+                          // closure-captured variable at slot `indexInVec`
+                          // of the TempVector held in outer temp `tempIdxOfVec`.
+    kStoreTempInVec,      // operand[0] = value; literal layout same as
+                          // kLoadTempInVec.                                -> Void
     kLoadInstVar,         // operands: receiver, instVar index            -> Oop
     kStoreInstVar,        // operands: receiver, instVar index, value     -> Void
     kLoadLiteral,         // operand: literal index                       -> Oop
@@ -202,6 +209,23 @@ enum class Op : uint8_t {
     // operands: start, stop          -> Oop  (placeholder for the Interval)
     // literal:  block-IR slot
     kCountedLoopIntervalDo,
+
+    // --- B2 splice: Array do: closure accumulator variant ---
+    // Recognized at bytecode level (no IR sub-lift): block has the
+    // exact 5-instruction shape `pushTempAtInVec(slot,1); pushTemp 0;
+    // <arith>; storeTempAtInVec(slot,1); blockReturn`, with numCopied=1.
+    // The outer pushed the TempVector at outer-temp T just before
+    // PushFullBlock; the splice captures T as a separate operand.
+    //
+    // Mid-loop deopt safety: accReg is held in a register only; vec[slot]
+    // stays untouched until SUCCESSFUL loop exit, so deopt rolls back to
+    // PushFullBlock with vec[slot] still holding the original "s".
+    //
+    // operands: rcv (the Array), vecRef (the TempVector Oop)  -> Oop (rcv)
+    // literal:  bits 0-15  = vec slot index
+    //           bits 16-23 = arith op (0=add, 1=sub, 2=mul)
+    //           bits 24+  = (reserved)
+    kCountedLoopArrayDoAccum,
 
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]

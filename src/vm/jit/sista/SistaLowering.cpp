@@ -215,6 +215,43 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = dst;
                 break;
             }
+            case Op::kLoadTempInVec: {
+                // literal: high 32 = tempIdxOfVec, low 32 = indexInVec.
+                uint32_t tempIdx = (uint32_t)(v.literal >> 32);
+                uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                Gp tempBase = cc.new_gp64("tempBase");
+                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
+                Gp vec = cc.new_gp64("vec");
+                cc.ldr(vec, ptr(tempBase, (int)tempIdx * 8));
+                Gp dst = cc.new_gp64("vec_slot");
+                cc.ldr(dst, ptr(vec, 8 + (int)slot * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kStoreTempInVec: {
+                if (v.operands.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                uint32_t tempIdx = (uint32_t)(v.literal >> 32);
+                uint32_t slot    = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                Gp tempBase = cc.new_gp64("tempBase");
+                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
+                Gp vec = cc.new_gp64("vec");
+                cc.ldr(vec, ptr(tempBase, (int)tempIdx * 8));
+                // No write barrier yet — this is fine for SmI stores
+                // (typical accumulator), but if a heap-pointer is
+                // stored into an old TempVec we'd need rememberObject.
+                // Acceptable risk for splice MVP since the pre-pass
+                // restricts patterns to SmI accumulation.
+                cc.str(it->second, ptr(vec, 8 + (int)slot * 8));
+                break;
+            }
             case Op::kLoadLiteral: {
                 Gp litBase = cc.new_gp64("litBase");
                 Gp dst     = cc.new_gp64("lit");
@@ -2374,6 +2411,200 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // operations on a SmI start value will deopt at their
                 // own bytecodes.
                 regFor[v.id] = startReg;
+                break;
+            }
+            case Op::kCountedLoopArrayDoAccum: {
+                // arr do: [:e | s := s + e] — the dominant Pharo
+                // accumulator idiom.  Block has numCopied=1 (TempVec
+                // for s); we recognized the exact 5-instruction shape
+                // at bytecode level and packed metadata in v.literal.
+                //
+                // operands[0] = rcv (the array)
+                // operands[1] = vecRef (the TempVector Oop)
+                // literal     = slot|arithCode|outerVecTemp packed
+                using namespace asmjit::a64;
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itVec = regFor.find(v.operands[1]);
+                if (itRcv == regFor.end() || itVec == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp rcvReg = itRcv->second;
+                Gp vecReg = itVec->second;
+
+                uint32_t slot      = (uint32_t)(v.literal & 0xFF);
+                uint32_t arithCode = (uint32_t)((v.literal >> 8) & 0xFF);
+                int slotByteOff = 8 + (int)slot * 8;
+
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                // Deopt: rebuild interp stack [rcv, vecRef] and resume
+                // at PushFullBlock's offset.  Interpreter creates the
+                // block (PushFullBlock) and re-dispatches do:.  Since
+                // we never wrote accReg back to vec[slot], the original
+                // s value is preserved → re-running do: yields correct
+                // accumulation from scratch.
+                auto emitDeopt = [&](Gp savedRcv, Gp savedVec,
+                                      uint32_t bc) {
+                    Gp sp = cc.new_gp64("acc_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedRcv, ptr(sp));
+                    cc.str(savedVec, ptr(sp, 8));
+                    cc.add(sp, sp, Imm(16));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("acc_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("acc_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("acc_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("acc_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Tag-check vecRef must be heap object (low 3 bits = 0).
+                Gp tagV = cc.new_gp64("acc_tagV");
+                cc.and_(tagV, vecReg, Imm(7));
+                cc.cmp(tagV, Imm(0));
+                Label vOk = cc.new_label();
+                cc.b_eq(vOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(vOk);
+
+                // Load accReg = vecRef[slot].  Tag-check must be SmI
+                // (so our SmI-arith fast path is safe).
+                Gp accReg = cc.new_gp64("acc_acc");
+                cc.ldr(accReg, ptr(vecReg, slotByteOff));
+                Gp tagA = cc.new_gp64("acc_tagA");
+                cc.and_(tagA, accReg, Imm(7));
+                cc.cmp(tagA, Imm(1));
+                Label aOk = cc.new_label();
+                cc.b_eq(aOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(aOk);
+
+                // sizeReg = basicSize(rcv).  Deopt on 0 (non-indexable).
+                Gp sizeFn = cc.new_gp64("acc_szfn");
+                cc.mov(sizeFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_size));
+                asmjit::InvokeNode* sizeInvoke = nullptr;
+                asmjit::Error sErr = cc.invoke(
+                    asmjit::Out(sizeInvoke), sizeFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t>());
+                if (sErr != asmjit::kErrorOk || !sizeInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                sizeInvoke->set_arg(0, state);
+                sizeInvoke->set_arg(1, rcvReg);
+                Gp sizeReg = cc.new_gp64("acc_size");
+                sizeInvoke->set_ret(0, sizeReg);
+
+                Label sizeOk = cc.new_label();
+                cc.cbnz(sizeReg, sizeOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(sizeOk);
+
+                // iReg = SmI(1) = 9.
+                Gp iReg = cc.new_gp64("acc_i");
+                cc.mov(iReg, Imm(9));
+
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                // Compare iReg vs sizeReg as SmI Oops; b.hi exits.
+                cc.cmp(iReg, sizeReg);
+                cc.b_hi(loopExit);
+
+                // eachReg = basicAt(rcv, iReg).  Deopt on 0.
+                Gp atFn = cc.new_gp64("acc_atfn");
+                cc.mov(atFn,
+                       Imm((uint64_t)&jit_rt_sista_basic_at));
+                asmjit::InvokeNode* atInvoke = nullptr;
+                asmjit::Error aErr = cc.invoke(
+                    asmjit::Out(atInvoke), atFn,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (aErr != asmjit::kErrorOk || !atInvoke) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                atInvoke->set_arg(0, state);
+                atInvoke->set_arg(1, rcvReg);
+                atInvoke->set_arg(2, iReg);
+                Gp eachReg = cc.new_gp64("acc_each");
+                atInvoke->set_ret(0, eachReg);
+
+                Label atOk = cc.new_label();
+                cc.cbnz(eachReg, atOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(atOk);
+
+                // Tag-check eachReg as SmI.  We never committed accReg
+                // to memory, so deopt is safe (vec[slot] still has the
+                // original s).
+                Gp tagE = cc.new_gp64("acc_tagE");
+                cc.and_(tagE, eachReg, Imm(7));
+                cc.cmp(tagE, Imm(1));
+                Label eOk = cc.new_label();
+                cc.b_eq(eOk);
+                emitDeopt(rcvReg, vecReg, deoptBC);
+                cc.bind(eOk);
+
+                // accReg = accReg <arith> eachReg, tag-preserving SmI.
+                if (arithCode == 0) {
+                    cc.add(accReg, accReg, eachReg);
+                    cc.sub(accReg, accReg, Imm(1));
+                } else if (arithCode == 1) {
+                    cc.sub(accReg, accReg, eachReg);
+                    cc.add(accReg, accReg, Imm(1));
+                } else {
+                    Gp au = cc.new_gp64("acc_au");
+                    Gp bu = cc.new_gp64("acc_bu");
+                    cc.asr(au, accReg, Imm(3));
+                    cc.asr(bu, eachReg, Imm(3));
+                    Gp prod = cc.new_gp64("acc_prod");
+                    cc.mul(prod, au, bu);
+                    cc.lsl(accReg, prod, Imm(3));
+                    cc.orr(accReg, accReg, Imm(1));
+                }
+
+                // i += SmI(1).
+                cc.add(iReg, iReg, Imm(8));
+                cc.b(loopHead);
+
+                cc.bind(loopExit);
+
+                // Successful exit: commit accReg back to vec[slot].
+                // Old TempVec has long since exited the nursery; for
+                // SmI accReg there's no GC barrier needed.
+                cc.str(accReg, ptr(vecReg, slotByteOff));
+
+                // do:'s result is the receiver.
+                regFor[v.id] = rcvReg;
                 break;
             }
             case Op::kReturn: {

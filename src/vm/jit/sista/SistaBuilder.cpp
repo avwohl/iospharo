@@ -750,6 +750,161 @@ public:
             }
         }
 
+        // --- B2 splice pre-pass: closure-accumulator (Array do:) -------
+        //
+        // Detects the dominant accumulator idiom: `arr do: [:e | s := s + e]`
+        // where s is an outer-method temp captured via TempVector.
+        //
+        // Block must have numCopied=1 and EXACTLY this 5-instruction shape:
+        //   0xFB slot 0x01      pushTempAtInVec(slot, vecAt 1)
+        //   0x40                pushTemp 0  (block arg `e`)
+        //   0x60 / 0x61 / 0x68  ArithAdd / Sub / Mul
+        //   0xFC slot 0x01      storeIntoTemp inVec (slot, vecAt 1)
+        //   0x5D or 0x5E        BlockReturnNil / BlockReturnTop
+        //
+        // Outer must:
+        //   - Push the receiver (any single-byte op, e.g. PushTemp T_arr)
+        //   - Push the TempVector via PushTemp T_vec (single-byte 0x40-0x4B)
+        //   - PushFullBlock(numCopied=1) at offset pfbOff
+        //   - SpecialSend do: at pfbOff+3
+        //
+        // We extract:
+        //   outerVecTemp = (op_at_pfbOff_minus_1 - 0x40)
+        //   slot         = block byte 1
+        //   arithOp      = block byte 2 (mapped: 0x60→0, 0x61→1, 0x68→2)
+        //
+        // Records spliceAccumAtPushFullBlock_[pfbOff] = packed metadata
+        // (slot 0-7 in low 8 bits, arithCode 0-2 in next 8 bits, outerTemp
+        // 0-15 in next 8 bits).
+        static const bool accumSplice =
+            std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+        if (accumSplice && memory_ != nullptr) {
+            size_t i = 0;
+            int extA = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op == jit::SistaV1::ExtendA) {
+                    if (i + 1 >= len_) break;
+                    extA = bc_[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::ExtendB) {
+                    if (i + 1 >= len_) break;
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::PushFullBlock) {
+                    if (i + 3 >= len_) break;
+                    size_t pfbOff = i;
+                    int litIdx = (extA << 8) | bc_[i + 1];
+                    int flags = bc_[i + 2];
+                    extA = 0;
+                    // Need numCopied = 1 and not recvOnStack.
+                    bool recvOnStack = ((flags >> 7) & 1) != 0;
+                    int numCopied = flags & 0x3F;
+                    if (recvOnStack || numCopied != 1) {
+                        i += 3;
+                        continue;
+                    }
+                    // Need SpecialSend do: at pfbOff+3.
+                    if (pfbOff + 3 >= len_ || bc_[pfbOff + 3] != 0x7B) {
+                        i += 3;
+                        continue;
+                    }
+                    // Need PushTemp T at pfbOff-1 (single byte 0x40..0x4B).
+                    if (pfbOff < 1) { i += 3; continue; }
+                    uint8_t prevOp = bc_[pfbOff - 1];
+                    if (prevOp < 0x40 || prevOp > 0x4B) {
+                        // Could also accept ExtPushTemp (0xE5 idx) but
+                        // skip for MVP.
+                        i += 3;
+                        continue;
+                    }
+                    uint32_t outerVecTemp = prevOp - 0x40;
+
+                    // Look up the block's bytecode and validate the
+                    // 5-instruction accumulator shape.
+                    if (litIdx < 0
+                        || (size_t)litIdx >= out_.literals.size()) {
+                        i += 3;
+                        continue;
+                    }
+                    Oop blockOop = out_.literals[litIdx];
+                    if (!blockOop.isObject()) { i += 3; continue; }
+                    ObjectHeader* blockHdr = blockOop.asObjectPtr();
+                    if (!blockHdr->isCompiledMethod()) { i += 3; continue; }
+                    const uint8_t* bs = blockHdr->bytes();
+                    size_t total = blockHdr->byteSize();
+                    if (total < 8) { i += 3; continue; }
+                    uint64_t hbits = 0;
+                    std::memcpy(&hbits, bs, 8);
+                    Oop hdr = Oop::fromRawBits(hbits);
+                    if (!hdr.isSmallInteger()) { i += 3; continue; }
+                    int64_t hb = hdr.asSmallInteger();
+                    uint32_t bNumLits = (uint32_t)(hb & 0x7FFF);
+                    size_t bHdrBytes = (1 + bNumLits) * 8;
+                    if (total <= bHdrBytes) { i += 3; continue; }
+                    const uint8_t* bbc = bs + bHdrBytes;
+                    size_t bLen = total - bHdrBytes;
+
+                    // Pattern: FB slot 01 | 40 | 60|61|68 | FC slot 01
+                    //          | 5D or 5E [optional alignment pad]
+                    if (bLen < 9 || bLen > 10) {
+                        static int dCount = 0;
+                        if (dCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-ACCUM-DIAG] pfbBC=%zu "
+                                "blockLen=%zu (want 9-10)\n",
+                                pfbOff, bLen);
+                        }
+                        i += 3;
+                        continue;
+                    }
+                    if (bbc[0] != 0xFB || bbc[2] != 0x01) {
+                        i += 3; continue;
+                    }
+                    if (bbc[3] != 0x40) { i += 3; continue; }
+                    uint8_t arithB = bbc[4];
+                    int arithCode = -1;
+                    if (arithB == 0x60) arithCode = 0;       // +
+                    else if (arithB == 0x61) arithCode = 1;  // -
+                    else if (arithB == 0x68) arithCode = 2;  // *
+                    if (arithCode < 0) { i += 3; continue; }
+                    if (bbc[5] != 0xFC) { i += 3; continue; }
+                    if (bbc[7] != 0x01) { i += 3; continue; }
+                    // bbc[6] (slot in store) must equal bbc[1] (slot in load).
+                    if (bbc[6] != bbc[1]) { i += 3; continue; }
+                    if (bbc[8] != 0x5D && bbc[8] != 0x5E) {
+                        i += 3; continue;
+                    }
+                    uint32_t slot = bbc[1];
+
+                    uint64_t packed = (uint64_t)slot
+                                    | ((uint64_t)arithCode << 8)
+                                    | ((uint64_t)outerVecTemp << 16);
+                    spliceAccumAtPushFullBlock_[pfbOff] = packed;
+                    static int aCount = 0;
+                    if (aCount++ < 16) {
+                        std::fprintf(stderr,
+                            "[SISTA-ACCUM-CAND] pfbBC=%zu doBC=%zu "
+                            "outerTemp=%u slot=%u arith=%d\n",
+                            pfbOff, pfbOff + 3, outerVecTemp, slot,
+                            arithCode);
+                    }
+                    i += 3;
+                    continue;
+                }
+                if (op != jit::SistaV1::ExtendA
+                    && op != jit::SistaV1::ExtendB) {
+                    extA = 0;
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
         // --- B2 splice pre-pass: identify `inject:into:` candidates -----
         //
         // Pattern: PushFullBlock + Send2 with the literal selector
@@ -1696,6 +1851,43 @@ private:
                     return bailToInterpreter(3);
                 }
 
+                // B2 splice intercept (closure accumulator):
+                // PushFullBlock(numCopied=1) + SpecialSend do: where
+                // outer pushed [rcv, vecRef] and block matches the
+                // 5-instruction accum pattern → kCountedLoopArrayDoAccum.
+                {
+                    auto aIt = spliceAccumAtPushFullBlock_.find(ip);
+                    if (aIt != spliceAccumAtPushFullBlock_.end()
+                        && stack_.size() >= 2
+                        && ip + 3 < len_
+                        && bc_[ip + 3] == 0x7B) {
+                        uint64_t packed = aIt->second;
+                        uint32_t vecRef = stack_.back();
+                        stack_.pop_back();
+                        uint32_t rcv = stack_.back();
+                        stack_.pop_back();
+                        std::vector<uint32_t> ops{rcv, vecRef};
+                        uint32_t vid = out_.newValue(currentBlock_,
+                                       Op::kCountedLoopArrayDoAccum,
+                                       Type::kOop,
+                                       std::move(ops),
+                                       /*literal=*/packed);
+                        recordFramepoint(vid, bcOffset);
+                        stack_.push_back(vid);
+                        pendingExtA_ = 0;
+                        pendingExtB_ = 0;
+                        static int accumEmitCount = 0;
+                        if (accumEmitCount++ < 16) {
+                            std::fprintf(stderr,
+                                "[SISTA-ACCUM-EMIT] bc=%zu vid=%u "
+                                "packed=0x%llx\n",
+                                ip, vid,
+                                (unsigned long long)packed);
+                        }
+                        ip += 4;
+                        continue;
+                    }
+                }
                 // B2 splice intercept (Interval-do): kInterval rcv
                 // + PushFullBlock + SpecialSend do: → kCountedLoopIntervalDo.
                 {
@@ -2135,15 +2327,58 @@ private:
                 return bailToInterpreter(2);
             }
 
-            // Remote-temp ops (0xFB PushTempAtInVec, 0xFC StoreTempInVec,
-            // 0xFD PopStoreTempInVec) access closure-captured variables
-            // via a shared temp vector.  Not yet modeled in the IR;
-            // bail to interpreter.
-            if (op == jit::SistaV1::PushTempAtInVec
-             || op == 0xFC  // StoreTempInVec
-             || op == 0xFD) // PopStoreTempInVec
-            {
-                return bailToInterpreter(3);
+            // Remote-temp ops: emit kLoadTempInVec / kStoreTempInVec.
+            //   0xFB indexInVec tempIdxOfVec — push slot
+            //   0xFC indexInVec tempIdxOfVec — store top, leave on stack
+            //   0xFD indexInVec tempIdxOfVec — pop into slot
+            // Encoding: literal = (tempIdxOfVec << 32) | indexInVec.
+            if (op == jit::SistaV1::PushTempAtInVec) {
+                if (ip + 2 >= len_) return bailToInterpreter(3);
+                uint32_t indexInVec  = bc_[ip + 1];
+                uint32_t tempIdxOfVec = bc_[ip + 2];
+                uint64_t lit = ((uint64_t)tempIdxOfVec << 32) | indexInVec;
+                uint32_t vid = out_.newValue(currentBlock_,
+                               Op::kLoadTempInVec, Type::kOop,
+                               /*operands=*/{}, lit);
+                stack_.push_back(vid);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 3;
+                continue;
+            }
+            if (op == 0xFC) {
+                // storeTemp:inVectorAt: — leaves value on stack.
+                if (ip + 2 >= len_) return bailToInterpreter(3);
+                if (stack_.empty()) return bailToInterpreter(3);
+                uint32_t indexInVec  = bc_[ip + 1];
+                uint32_t tempIdxOfVec = bc_[ip + 2];
+                uint64_t lit = ((uint64_t)tempIdxOfVec << 32) | indexInVec;
+                uint32_t topV = stack_.back();
+                out_.newValue(currentBlock_,
+                              Op::kStoreTempInVec, Type::kVoid,
+                              /*operands=*/{topV}, lit);
+                // value stays on stack
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 3;
+                continue;
+            }
+            if (op == 0xFD) {
+                // popStoreTemp:inVectorAt: — consumes top of stack.
+                if (ip + 2 >= len_) return bailToInterpreter(3);
+                if (stack_.empty()) return bailToInterpreter(3);
+                uint32_t indexInVec  = bc_[ip + 1];
+                uint32_t tempIdxOfVec = bc_[ip + 2];
+                uint64_t lit = ((uint64_t)tempIdxOfVec << 32) | indexInVec;
+                uint32_t topV = stack_.back();
+                stack_.pop_back();
+                out_.newValue(currentBlock_,
+                              Op::kStoreTempInVec, Type::kVoid,
+                              /*operands=*/{topV}, lit);
+                pendingExtA_ = 0;
+                pendingExtB_ = 0;
+                ip += 3;
+                continue;
             }
 
             // InlinedPrimitive (0xEC): VMMaker inlines specific
@@ -3552,6 +3787,9 @@ private:
     // emit kCountedLoopIntervalDo when receiver is a kInterval marker.
     std::unordered_map<size_t, uint32_t> intervalDoAtTo_;
     std::unordered_map<size_t, uint32_t> spliceDoAtPushFullBlock_;
+    // Closure-accumulator splice (Array do:): pfbOff → packed metadata
+    // (low 8 bits = slot, next 8 = arithCode 0/1/2, next 8 = outerTemp).
+    std::unordered_map<size_t, uint64_t> spliceAccumAtPushFullBlock_;
 };
 
 }  // namespace
