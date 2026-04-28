@@ -13,6 +13,7 @@
 #include <asmjit/core/jitruntime.h>
 
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 // Sista runtime helpers called from compiled code via asmjit cc.invoke.
@@ -147,6 +148,26 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     cc.ldr(tempBaseHoisted, ptr(state, OFF_TEMPBASE));
     Gp litBaseHoisted = cc.new_gp64("litBaseH");
     cc.ldr(litBaseHoisted, ptr(state, OFF_LITERALS));
+
+    // Pre-load every literal that's actually referenced by a
+    // kLoadLiteral.  Literals never change during a call, so caching
+    // them in virtual regs lets asmjit keep hot ones (loop bounds,
+    // literal constants) in a register across the whole function.
+    // Saves one `ldr` per access in tight loops.
+    std::unordered_map<uint64_t, Gp> litCache;
+    {
+        std::unordered_set<uint64_t> usedLitIndices;
+        for (const Value& sv : method.values) {
+            if (sv.op == Op::kLoadLiteral) {
+                usedLitIndices.insert(sv.literal);
+            }
+        }
+        for (uint64_t idx : usedLitIndices) {
+            Gp r = cc.new_gp64("litH");
+            cc.ldr(r, ptr(litBaseHoisted, (int)idx * 8));
+            litCache[idx] = r;
+        }
+    }
 
     // Map each SSA value id to the virtual register holding its
     // materialized value.  Only records values whose type is produced
@@ -322,10 +343,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kLoadLiteral: {
-                Gp dst = cc.new_gp64("lit");
-                cc.ldr(dst, ptr(litBaseHoisted,
-                                 static_cast<int>(v.literal) * 8));
-                regFor[v.id] = dst;
+                auto it = litCache.find(v.literal);
+                if (it != litCache.end()) {
+                    regFor[v.id] = it->second;
+                } else {
+                    Gp dst = cc.new_gp64("lit");
+                    cc.ldr(dst, ptr(litBaseHoisted,
+                                     static_cast<int>(v.literal) * 8));
+                    regFor[v.id] = dst;
+                }
                 break;
             }
             case Op::kLoadInstVar: {
