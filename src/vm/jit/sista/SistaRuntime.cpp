@@ -54,7 +54,11 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // would drown out everything else.  Limited to 16 lines.
     bool hasSplice = false;
     for (const auto& v : m.values) {
-        if (v.op == Op::kCountedLoopDo) { hasSplice = true; break; }
+        if (v.op == Op::kCountedLoopDo
+         || v.op == Op::kCountedLoopInjectInto
+         || v.op == Op::kCountedLoopIntervalInjectInto) {
+            hasSplice = true; break;
+        }
     }
 
     // Lower IR → native.

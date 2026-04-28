@@ -173,6 +173,26 @@ enum class Op : uint8_t {
     // entire inject:into: send safely.
     kCountedLoopInjectInto,
 
+    // --- B2 splice: Interval marker ---
+    // Emitted by the lifter for `<start> to: <stop>` Send1 sites
+    // recognized as part of an Interval-inject pattern.  Holds
+    // start+stop as a pseudo-Interval value on the IR stack.  Never
+    // lowered directly — the inject:into: intercept reads its
+    // operands and replaces it with kCountedLoopIntervalInjectInto.
+    //
+    // operands: start, stop  -> Oop (pseudo-Interval; never reified)
+    kInterval,
+
+    // --- B2 splice: (start to: stop) inject:into: variant ---
+    // Same shape as kCountedLoopInjectInto but iterates a virtual
+    // Interval directly — start..stop as SmI integers, no basicAt
+    // helper call per element.  Used when the lifter saw `to:`
+    // followed by a recognized inject:into: pattern.
+    //
+    // operands: start, stop, init  -> Oop  (final acc)
+    // literal:  block-IR slot
+    kCountedLoopIntervalInjectInto,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

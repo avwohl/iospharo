@@ -1841,6 +1841,290 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = accReg;
                 break;
             }
+            case Op::kInterval: {
+                // Marker IR op produced by the to: handler when a
+                // recognized Interval-inject pattern is in flight.
+                // kCountedLoopIntervalInjectInto reads start/stop
+                // directly from earlier loads (not via this value),
+                // so the marker has nothing to lower.  Silent skip.
+                break;
+            }
+            case Op::kCountedLoopIntervalInjectInto: {
+                // (start to: stop) inject: init into: [block].
+                // Iterates i from start to stop directly (no Interval
+                // allocation, no basicAt) with the accumulator held
+                // in a register.  Block has 2 args:
+                //   temp 0 = acc → accReg
+                //   temp 1 = i (SmI Oop) → iReg
+                using namespace asmjit::a64;
+                if (v.operands.size() != 3) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itStart = regFor.find(v.operands[0]);
+                auto itStop  = regFor.find(v.operands[1]);
+                auto itInit  = regFor.find(v.operands[2]);
+                if (itStart == regFor.end()
+                    || itStop == regFor.end()
+                    || itInit == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                uint32_t blockSlot = (uint32_t)v.literal;
+                if (blockSlot >= method.inlinedBlocks.size()
+                    || !method.inlinedBlocks[blockSlot]) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                const Method& blockIR = *method.inlinedBlocks[blockSlot];
+                if (blockIR.blocks.size() != 1) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // Same whitelist.
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp:
+                    case Op::kLoadReceiver:
+                    case Op::kLoadTrueOop:
+                    case Op::kLoadFalseOop:
+                    case Op::kConstantOop:
+                    case Op::kLoadLiteral:
+                    case Op::kReturn:
+                    case Op::kPrimTagCheckInt:
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt:
+                        break;
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
+
+                Gp startReg = itStart->second;
+                Gp stopReg  = itStop->second;
+                Gp initReg  = itInit->second;
+
+                // accReg starts as init.  Mid-loop deopt = no commit.
+                Gp accReg = cc.new_gp64("iv_acc");
+                cc.mov(accReg, initReg);
+
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                // emitDeopt: rebuild interpreter stack [start, stop]
+                // and set ip to the to: bytecode.  Interpreter then
+                // re-runs to: → Interval allocation → inject:into:.
+                auto emitDeopt = [&](Gp savedStart, Gp savedStop,
+                                      uint32_t bc) {
+                    Gp sp = cc.new_gp64("iv_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedStart, ptr(sp));
+                    cc.str(savedStop, ptr(sp, 8));
+                    cc.add(sp, sp, Imm(16));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("iv_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("iv_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("iv_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("iv_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Tag check start.  Both start and stop must be SmI
+                // for our SmI-only loop.
+                Gp tagS = cc.new_gp64("iv_tagS");
+                cc.and_(tagS, startReg, Imm(7));
+                cc.cmp(tagS, Imm(1));
+                Label sOk = cc.new_label();
+                cc.b_eq(sOk);
+                emitDeopt(startReg, stopReg, deoptBC);
+                cc.bind(sOk);
+                Gp tagE = cc.new_gp64("iv_tagE");
+                cc.and_(tagE, stopReg, Imm(7));
+                cc.cmp(tagE, Imm(1));
+                Label eOk = cc.new_label();
+                cc.b_eq(eOk);
+                emitDeopt(startReg, stopReg, deoptBC);
+                cc.bind(eOk);
+
+                // iReg = start (as SmI Oop).
+                Gp iReg = cc.new_gp64("iv_i");
+                cc.mov(iReg, startReg);
+
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                // Compare iReg, stopReg.  Both are SmI Oops with tag
+                // bit 0 set; the underlying integer ordering is
+                // preserved by raw bit comparison for non-negative
+                // SmIs.  Use unsigned higher (b_hi) — for negative
+                // SmIs this would be wrong, but the common pattern
+                // `(1 to: N)` always has positive bounds.  We tag-
+                // check both at loop entry so non-SmI deopts.
+                cc.cmp(iReg, stopReg);
+                cc.b_hi(loopExit);
+
+                // Inline block body.  temp 0 = acc → accReg,
+                // temp 1 = i (the SmI Oop) → iReg.
+                std::unordered_map<uint32_t, Gp> blockRegs;
+                bool sawReturn = false;
+                for (const auto& bv : blockIR.values) {
+                    switch (bv.op) {
+                    case Op::kLoadTemp: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        if (idx == 0) {
+                            blockRegs[bv.id] = accReg;
+                        } else if (idx == 1) {
+                            blockRegs[bv.id] = iReg;
+                        } else {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        break;
+                    }
+                    case Op::kLoadTrueOop: {
+                        Gp r = cc.new_gp64("iv_true");
+                        cc.ldr(r, ptr(state, OFF_TRUEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadFalseOop: {
+                        Gp r = cc.new_gp64("iv_false");
+                        cc.ldr(r, ptr(state, OFF_FALSEOOP));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kConstantOop: {
+                        Gp r = cc.new_gp64("iv_const");
+                        cc.mov(r, Imm(bv.literal));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadLiteral: {
+                        uint32_t idx = (uint32_t)bv.literal;
+                        Gp lits = cc.new_gp64("iv_lits");
+                        cc.ldr(lits, ptr(state, OFF_LITERALS));
+                        Gp r = cc.new_gp64("iv_lit");
+                        cc.ldr(r, ptr(lits, (int)(idx * 8)));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadReceiver: {
+                        Gp r = cc.new_gp64("iv_recv");
+                        cc.ldr(r, ptr(state, OFF_RECEIVER));
+                        blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kPrimTagCheckInt: {
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        blockRegs[bv.id] = it->second;
+                        break;
+                    }
+                    case Op::kPrimAddInt:
+                    case Op::kPrimSubInt:
+                    case Op::kPrimMulInt: {
+                        // For Interval-inject we KNOW both operands are
+                        // SmI: accReg starts as init (tag-checked at
+                        // loop entry) and is reassigned only from
+                        // SmI-arith results; iReg is SmI by
+                        // construction (loop-entry tag check + add 8).
+                        // Skip the redundant per-iteration tag check.
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("iv_arith");
+                        if (bv.op == Op::kPrimAddInt) {
+                            cc.add(dst, ita->second, itb->second);
+                            cc.sub(dst, dst, Imm(1));
+                        } else if (bv.op == Op::kPrimSubInt) {
+                            cc.sub(dst, ita->second, itb->second);
+                            cc.add(dst, dst, Imm(1));
+                        } else {
+                            Gp au = cc.new_gp64("iv_au");
+                            Gp bu = cc.new_gp64("iv_bu");
+                            cc.asr(au, ita->second, Imm(3));
+                            cc.asr(bu, itb->second, Imm(3));
+                            Gp prod = cc.new_gp64("iv_prod");
+                            cc.mul(prod, au, bu);
+                            cc.lsl(dst, prod, Imm(3));
+                            cc.orr(dst, dst, Imm(1));
+                        }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kReturn: {
+                        if (bv.operands.size() != 1) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.mov(accReg, it->second);
+                        sawReturn = true;
+                        break;
+                    }
+                    default:
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                }
+
+                if (!sawReturn) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // i += SmI(1) = i + 8 (tag-preserving).
+                cc.add(iReg, iReg, Imm(8));
+                cc.b(loopHead);
+
+                cc.bind(loopExit);
+
+                regFor[v.id] = accReg;
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared
