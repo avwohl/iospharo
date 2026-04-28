@@ -3293,7 +3293,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
                 fillPhis(b, b.successors[0]);
-                cc.b(blockLabels[b.successors[0]]);
+                if (b.successors[0] != b.id + 1) {
+                    cc.b(blockLabels[b.successors[0]]);
+                }
                 break;
             }
 
@@ -3321,7 +3323,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     // fusedCond was already adjusted for true/false in
                     // the pre-pass.
                     cc.b(fusedCond, blockLabels[b.successors[0]]);
-                    cc.b(blockLabels[b.successors[1]]);
+                    // Skip the unconditional branch when the
+                    // fallthrough successor is the very next block in
+                    // emission order — saves one instruction per loop
+                    // iteration in counted loops.
+                    if (b.successors[1] != b.id + 1) {
+                        cc.b(blockLabels[b.successors[1]]);
+                    }
                     break;
                 }
                 auto it = regFor.find(v.operands[0]);
@@ -3334,13 +3342,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(it->second, trueOop);
                 if (v.op == Op::kBranchIfTrue) {
                     cc.b_eq(blockLabels[b.successors[0]]);  // taken
-                    cc.b   (blockLabels[b.successors[1]]);  // fallthrough
+                    if (b.successors[1] != b.id + 1) {
+                        cc.b(blockLabels[b.successors[1]]);
+                    }
                 } else {
                     // BranchIfFalse: taken when cond != true.
                     // Simpler: branch to fallthrough when cond == true,
                     // else branch to taken.
                     cc.b_eq(blockLabels[b.successors[1]]);
-                    cc.b   (blockLabels[b.successors[0]]);
+                    if (b.successors[0] != b.id + 1) {
+                        cc.b(blockLabels[b.successors[0]]);
+                    }
                 }
                 break;
             }
