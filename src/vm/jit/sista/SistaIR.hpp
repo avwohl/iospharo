@@ -230,6 +230,20 @@ enum class Op : uint8_t {
     //           bits 24+  = (reserved)
     kCountedLoopArrayDoAccum,
 
+    // --- B2 splice: (start to: stop) do: closure accumulator variant ---
+    // Like kCountedLoopArrayDoAccum but the receiver is a SmI Interval
+    // (start, stop) instead of an Array.  Iterates i = start..stop and
+    // accumulates into vec[slot] using the recognized arith op.
+    //
+    // Deopt safety: accReg held in a register; vec[slot] only stored on
+    // successful exit.
+    //
+    // operands: start, stop, vecRef  -> Oop (placeholder for the Interval)
+    // literal:  same packed layout as kCountedLoopArrayDoAccum
+    //           bits 0-15  = vec slot index
+    //           bits 16-23 = arith op (0=add, 1=sub, 2=mul)
+    kCountedLoopIntervalDoAccum,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

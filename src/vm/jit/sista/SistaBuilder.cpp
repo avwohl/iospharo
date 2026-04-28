@@ -1439,6 +1439,140 @@ public:
             }
         }
 
+        // --- B2 splice pre-pass: Interval-do closure-accumulator ------
+        //
+        // Detects: <push start> <push stop> Send1#to:
+        //          PushTemp T_vec PushFullBlock(numCopied=1)
+        //          SpecialSend(do: 0x7B)
+        //
+        // The block must match the 5-instruction closure-accum shape
+        // (mirrors the kCountedLoopArrayDoAccum recognizer):
+        //   PushTempAtInVec(slot,1) PushTemp 0 <arith> PopStoreTempInVec
+        //   BlockReturnTop|Receiver
+        //
+        // Records:
+        //   intervalDoAccumAtTo_[toOff]            = packed(slot|arith|outerVecTemp)
+        //   spliceIvDoAccumAtPushFullBlock_[pfbOff] = same packed
+        //
+        // The main lift's Send1#to: handler emits kInterval at the
+        // recorded offset, and the PushFullBlock arm intercepts to emit
+        // kCountedLoopIntervalDoAccum when both maps match.
+        if (accumSplice && memory_ != nullptr && toSelectorMask_) {
+            size_t i = 0;
+            while (i < len_) {
+                uint8_t op = bc_[i];
+                if (op >= jit::SistaV1::Send1Base
+                    && op <= jit::SistaV1::Send1Last) {
+                    uint32_t selIdx = op & 0x0F;
+                    if (((toSelectorMask_ >> selIdx) & 1) != 0) {
+                        // Possible to: send.  Need:
+                        //   bc_[i+1]   = PushTemp T_vec (0x40-0x4B)
+                        //   bc_[i+2]   = PushFullBlock (0xF9)
+                        //   bc_[i+5]   = SpecialSend do: (0x7B)
+                        //   numCopied  = 1
+                        //   block-IR   = closure-accum 5-instruction shape
+                        size_t pushTOff = i + 1;
+                        size_t pfbOff   = i + 2;
+                        size_t doOff    = i + 5;
+                        if (doOff >= len_) { i++; continue; }
+                        uint8_t pushTOp = bc_[pushTOff];
+                        if (pushTOp < 0x40 || pushTOp > 0x4B) {
+                            i++; continue;
+                        }
+                        uint32_t outerVecTemp = pushTOp - 0x40;
+                        if (bc_[pfbOff] != jit::SistaV1::PushFullBlock) {
+                            i++; continue;
+                        }
+                        if (bc_[doOff] != 0x7B) {
+                            i++; continue;
+                        }
+                        // Result-discard guard: the IV-do-accum splice
+                        // returns a placeholder (startReg) for the
+                        // Interval; only splice when the next bc
+                        // discards it (Pop or ReturnReceiver).
+                        if (doOff + 1 >= len_) { i++; continue; }
+                        uint8_t afterDo = bc_[doOff + 1];
+                        if (afterDo != 0xD8 && afterDo != 0x58) {
+                            i++; continue;
+                        }
+                        int litIdx = bc_[pfbOff + 1];
+                        int flags  = bc_[pfbOff + 2];
+                        bool recvOnStack = ((flags >> 7) & 1) != 0;
+                        int  numCopied   = flags & 0x3F;
+                        if (recvOnStack || numCopied != 1) {
+                            i++; continue;
+                        }
+
+                        // Validate block bytecode shape (mirrors the
+                        // closure-accum pre-pass at the top of this
+                        // function).
+                        if (litIdx < 0
+                            || (size_t)litIdx >= out_.literals.size()) {
+                            i++; continue;
+                        }
+                        Oop blockOop = out_.literals[litIdx];
+                        if (!blockOop.isObject()) { i++; continue; }
+                        ObjectHeader* blockHdr = blockOop.asObjectPtr();
+                        if (!blockHdr->isCompiledMethod()) {
+                            i++; continue;
+                        }
+                        const uint8_t* bs = blockHdr->bytes();
+                        size_t total = blockHdr->byteSize();
+                        if (total < 8) { i++; continue; }
+                        uint64_t hbits = 0;
+                        std::memcpy(&hbits, bs, 8);
+                        Oop hdr = Oop::fromRawBits(hbits);
+                        if (!hdr.isSmallInteger()) { i++; continue; }
+                        int64_t hb = hdr.asSmallInteger();
+                        uint32_t bNumLits = (uint32_t)(hb & 0x7FFF);
+                        size_t bHdrBytes = (1 + bNumLits) * 8;
+                        if (total <= bHdrBytes) { i++; continue; }
+                        const uint8_t* bbc = bs + bHdrBytes;
+                        size_t bLen = total - bHdrBytes;
+                        if (bLen < 9 || bLen > 10) { i++; continue; }
+                        if (bbc[0] != 0xFB || bbc[2] != 0x01) {
+                            i++; continue;
+                        }
+                        if (bbc[3] != 0x40) { i++; continue; }
+                        uint8_t arithB = bbc[4];
+                        int arithCode = -1;
+                        if (arithB == 0x60) arithCode = 0;
+                        else if (arithB == 0x61) arithCode = 1;
+                        else if (arithB == 0x68) arithCode = 2;
+                        if (arithCode < 0) { i++; continue; }
+                        if (bbc[5] != 0xFC) { i++; continue; }
+                        if (bbc[7] != 0x01) { i++; continue; }
+                        if (bbc[6] != bbc[1]) { i++; continue; }
+                        if (bbc[8] != 0x5D && bbc[8] != 0x5E) {
+                            i++; continue;
+                        }
+                        uint32_t slot = bbc[1];
+                        uint64_t packed = (uint64_t)slot
+                                        | ((uint64_t)arithCode << 8)
+                                        | ((uint64_t)outerVecTemp << 16);
+
+                        intervalDoAccumAtTo_[(size_t)i] = packed;
+                        spliceIvDoAccumAtPushFullBlock_[
+                            (size_t)pfbOff] = packed;
+                        static int ivacCount = 0;
+                        if (ivacCount++ < 4) {
+                            std::fprintf(stderr,
+                                "[SISTA-IVDOACC-CAND] toBC=%zu "
+                                "pfbBC=%zu doBC=%zu slot=%u arith=%d "
+                                "outerTemp=%u\n",
+                                i, pfbOff, doOff, slot, arithCode,
+                                outerVecTemp);
+                        }
+                        i++;
+                        continue;
+                    }
+                }
+                if (jit::SistaV1::isThreeByteBytecode(op)) i += 3;
+                else if (jit::SistaV1::isExtended2Byte(op)) i += 2;
+                else i++;
+            }
+        }
+
         // --- B2 minimal peephole: `^ self size` ------------------------
         //
         // Recognize the method shape:
@@ -1863,6 +1997,55 @@ private:
                     return bailToInterpreter(3);
                 }
 
+                // B2 splice intercept (Interval closure-accumulator):
+                // kInterval(start,stop) marker on stack, then PushTemp T_vec,
+                // then PushFullBlock(numCopied=1), then SpecialSend do:.
+                // Block matches closure-accum 5-instruction shape.
+                // → kCountedLoopIntervalDoAccum.
+                {
+                    auto ivacIt =
+                        spliceIvDoAccumAtPushFullBlock_.find(ip);
+                    if (ivacIt != spliceIvDoAccumAtPushFullBlock_.end()
+                        && stack_.size() >= 2
+                        && ip + 3 < len_
+                        && bc_[ip + 3] == 0x7B) {
+                        uint64_t packed = ivacIt->second;
+                        uint32_t vecRef = stack_.back();
+                        uint32_t rcv = stack_[stack_.size() - 2];
+                        bool rcvIsInterval =
+                            (rcv < out_.values.size()
+                             && out_.values[rcv].op == Op::kInterval);
+                        if (rcvIsInterval) {
+                            stack_.pop_back();         // vecRef
+                            stack_.pop_back();         // kInterval marker
+                            uint32_t startV =
+                                out_.values[rcv].operands[0];
+                            uint32_t stopV =
+                                out_.values[rcv].operands[1];
+                            std::vector<uint32_t> ops{
+                                startV, stopV, vecRef};
+                            uint32_t vid = out_.newValue(currentBlock_,
+                                  Op::kCountedLoopIntervalDoAccum,
+                                  Type::kOop,
+                                  std::move(ops),
+                                  /*literal=*/packed);
+                            recordFramepoint(vid, bcOffset);
+                            stack_.push_back(vid);
+                            pendingExtA_ = 0;
+                            pendingExtB_ = 0;
+                            static int ivacEmitCount = 0;
+                            if (ivacEmitCount++ < 16) {
+                                std::fprintf(stderr,
+                                    "[SISTA-IVDOACC-EMIT] bc=%zu vid=%u "
+                                    "packed=0x%llx\n",
+                                    ip, vid,
+                                    (unsigned long long)packed);
+                            }
+                            ip += 4;
+                            continue;
+                        }
+                    }
+                }
                 // B2 splice intercept (closure accumulator):
                 // PushFullBlock(numCopied=1) + SpecialSend do: where
                 // outer pushed [rcv, vecRef] and block matches the
@@ -2669,7 +2852,9 @@ private:
                         (intervalInjectAtTo_.find(ip)
                          != intervalInjectAtTo_.end())
                      || (intervalDoAtTo_.find(ip)
-                         != intervalDoAtTo_.end());
+                         != intervalDoAtTo_.end())
+                     || (intervalDoAccumAtTo_.find(ip)
+                         != intervalDoAccumAtTo_.end());
                     if (ivMatch) {
                         uint32_t stop = stack_.back();
                         stack_.pop_back();
@@ -3825,6 +4010,14 @@ private:
     // Closure-accumulator splice (Array do:): pfbOff → packed metadata
     // (low 8 bits = slot, next 8 = arithCode 0/1/2, next 8 = outerTemp).
     std::unordered_map<size_t, uint64_t> spliceAccumAtPushFullBlock_;
+    // Closure-accumulator splice (Interval do:): same packed layout as
+    // spliceAccumAtPushFullBlock_, but the receiver came from
+    // <push start> <push stop> Send1#to:.  intervalDoAccumAtTo_ marks
+    // the to:-offset so the lifter emits kInterval there;
+    // spliceIvDoAccumAtPushFullBlock_ tells the PushFullBlock arm to
+    // emit kCountedLoopIntervalDoAccum.
+    std::unordered_map<size_t, uint64_t> intervalDoAccumAtTo_;
+    std::unordered_map<size_t, uint64_t> spliceIvDoAccumAtPushFullBlock_;
 };
 
 }  // namespace

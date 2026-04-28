@@ -64,6 +64,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopIntervalInjectInto:
     case Op::kCountedLoopIntervalDo:
     case Op::kCountedLoopArrayDoAccum:
+    case Op::kCountedLoopIntervalDoAccum:
     case Op::kAllocArray:
     case Op::kInterval:
     case Op::kPhi:
@@ -85,6 +86,7 @@ bool mayCallBack(Op op) {
     case Op::kCountedLoopIntervalInjectInto:  // same
     case Op::kCountedLoopIntervalDo:  // same
     case Op::kCountedLoopArrayDoAccum:  // same
+    case Op::kCountedLoopIntervalDoAccum:  // same
     case Op::kAllocArray:               // alloc may GC
     case Op::kPrimTagCheckInt:  // miss deopts
         return true;
@@ -152,6 +154,7 @@ const char* name(Op op) {
     case Op::kCountedLoopIntervalInjectInto: return "counted_loop_iv_inject";
     case Op::kCountedLoopIntervalDo: return "counted_loop_iv_do";
     case Op::kCountedLoopArrayDoAccum: return "counted_loop_arr_do_accum";
+    case Op::kCountedLoopIntervalDoAccum: return "counted_loop_iv_do_accum";
     case Op::kInterval:         return "interval";
     case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";

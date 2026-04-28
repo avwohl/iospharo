@@ -2633,6 +2633,155 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = rcvReg;
                 break;
             }
+            case Op::kCountedLoopIntervalDoAccum: {
+                // (start to: stop) do: [:e | s := s + e] — closure-accum
+                // over an Interval receiver.  Same shape as
+                // kCountedLoopArrayDoAccum but iterates SmI integers
+                // start..stop directly (no basicAt).
+                //
+                // operands[0] = start (SmI Oop)
+                // operands[1] = stop  (SmI Oop)
+                // operands[2] = vecRef (TempVector Oop)
+                // literal     = slot|arithCode|... packed (same layout)
+                using namespace asmjit::a64;
+                if (v.operands.size() != 3) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itStart = regFor.find(v.operands[0]);
+                auto itStop  = regFor.find(v.operands[1]);
+                auto itVec   = regFor.find(v.operands[2]);
+                if (itStart == regFor.end() || itStop == regFor.end()
+                    || itVec == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp startReg = itStart->second;
+                Gp stopReg  = itStop->second;
+                Gp vecReg   = itVec->second;
+
+                uint32_t slot      = (uint32_t)(v.literal & 0xFF);
+                uint32_t arithCode = (uint32_t)((v.literal >> 8) & 0xFF);
+                int slotByteOff = 8 + (int)slot * 8;
+
+                uint32_t deoptBC = 0;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        deoptBC = fp.bcOffset;
+                        break;
+                    }
+                }
+
+                // Deopt: rebuild interp stack [start, stop, vecRef] +
+                // resume at PushFullBlock.  Interpreter creates the block
+                // and re-dispatches do:.  vec[slot] still holds original s.
+                auto emitDeopt = [&](Gp savedStart, Gp savedStop,
+                                      Gp savedVec, uint32_t bc) {
+                    Gp sp = cc.new_gp64("ivacc_dz_sp");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(savedStart, ptr(sp));
+                    cc.str(savedStop,  ptr(sp, 8));
+                    cc.str(savedVec,   ptr(sp, 16));
+                    cc.add(sp, sp, Imm(24));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("ivacc_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + bc;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)bc));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("ivacc_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("ivacc_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("ivacc_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Tag-check: start, stop must be SmI; vecRef must be heap.
+                Gp tag = cc.new_gp64("ivacc_tag");
+                cc.and_(tag, startReg, Imm(7));
+                cc.cmp(tag, Imm(1));
+                Label sOk = cc.new_label();
+                cc.b_eq(sOk);
+                emitDeopt(startReg, stopReg, vecReg, deoptBC);
+                cc.bind(sOk);
+                cc.and_(tag, stopReg, Imm(7));
+                cc.cmp(tag, Imm(1));
+                Label tOk = cc.new_label();
+                cc.b_eq(tOk);
+                emitDeopt(startReg, stopReg, vecReg, deoptBC);
+                cc.bind(tOk);
+                cc.and_(tag, vecReg, Imm(7));
+                cc.cmp(tag, Imm(0));
+                Label vOk = cc.new_label();
+                cc.b_eq(vOk);
+                emitDeopt(startReg, stopReg, vecReg, deoptBC);
+                cc.bind(vOk);
+
+                // accReg = vecRef[slot]; tag-check SmI.
+                Gp accReg = cc.new_gp64("ivacc_acc");
+                cc.ldr(accReg, ptr(vecReg, slotByteOff));
+                cc.and_(tag, accReg, Imm(7));
+                cc.cmp(tag, Imm(1));
+                Label aOk = cc.new_label();
+                cc.b_eq(aOk);
+                emitDeopt(startReg, stopReg, vecReg, deoptBC);
+                cc.bind(aOk);
+
+                // iReg = startReg.
+                Gp iReg = cc.new_gp64("ivacc_i");
+                cc.mov(iReg, startReg);
+
+                Label loopHead = cc.new_label();
+                Label loopExit = cc.new_label();
+                cc.bind(loopHead);
+
+                // Compare iReg vs stopReg as SmI Oops; iReg > stopReg → exit.
+                cc.cmp(iReg, stopReg);
+                cc.b_hi(loopExit);
+
+                // accReg = accReg <arith> iReg, tag-preserving SmI.
+                if (arithCode == 0) {
+                    cc.add(accReg, accReg, iReg);
+                    cc.sub(accReg, accReg, Imm(1));
+                } else if (arithCode == 1) {
+                    cc.sub(accReg, accReg, iReg);
+                    cc.add(accReg, accReg, Imm(1));
+                } else {
+                    Gp au = cc.new_gp64("ivacc_au");
+                    Gp bu = cc.new_gp64("ivacc_bu");
+                    cc.asr(au, accReg, Imm(3));
+                    cc.asr(bu, iReg, Imm(3));
+                    Gp prod = cc.new_gp64("ivacc_prod");
+                    cc.mul(prod, au, bu);
+                    cc.lsl(accReg, prod, Imm(3));
+                    cc.orr(accReg, accReg, Imm(1));
+                }
+
+                // i += SmI(1).  SmI(1) = (1<<3)|1 = 9; +1 increment in
+                // the integer field is +8 in the encoded Oop (preserves tag).
+                cc.add(iReg, iReg, Imm(8));
+                cc.b(loopHead);
+
+                cc.bind(loopExit);
+
+                // Commit accReg to vec[slot].  SmI: no GC barrier needed.
+                cc.str(accReg, ptr(vecReg, slotByteOff));
+
+                // Result is a placeholder — do: returns the Interval but
+                // we don't materialize it.  The IV-do-accum splice's
+                // pre-pass guarantees the next bc discards the result.
+                regFor[v.id] = startReg;
+                break;
+            }
             case Op::kReturn: {
                 // Operand[0] = value to return.  Emits a tailored
                 // epilogue right here instead of jumping to a shared
