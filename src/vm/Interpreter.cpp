@@ -14561,13 +14561,25 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     //   bit 60: hasJITEntry — bits 47:0 = JIT code entry address
     uint64_t extra = 0;
     {
-        TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
-        if (tmi.getterIndex >= 0)
-            extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
-        else if (tmi.setterIndex >= 0)
-            extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
-        else if (tmi.returnsSelf)
-            extra = (1ULL << 61);
+        // PHARO_NO_GETTER_BIT=1: disable the inline-getter/setter/returnsSelf
+        // bit-63/62/61 classification.  The bit-63 fast path in
+        // stencil_sendJ2J's IC_HIT macro (reading recvObj->slotAt(slotIdx))
+        // can produce wrong receivers for the next send when receiver is
+        // a non-Context object that passes class match by classIndex
+        // collision.  Setting this flag is the demonstrated workaround
+        // for the Megamorphic-dispatch crash (deferred.md §E.3 / nextHandlerContext).
+        // Real fix is TBD — see project_next_handler_context_crash.md memory.
+        static const bool noGetterBit =
+            std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
+        if (!noGetterBit) {
+            TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
+            if (tmi.getterIndex >= 0)
+                extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
+            else if (tmi.setterIndex >= 0)
+                extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
+            else if (tmi.returnsSelf)
+                extra = (1ULL << 61);
+        }
     }
 
     // Quick primitives (256-519): map to inline getter/returnsSelf bits
@@ -14858,12 +14870,15 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         } else {
             // Detect trivial getter/setter/returnsSelf — for these, set inline
             // bits 63/62/61 instead of the J2J direct call bit 60.
+            // Also gated by PHARO_NO_GETTER_BIT for the same reason as above.
+            static const bool noGetterBit2 =
+                std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
             TrivialMethodInfo tmi = detectTrivialMethod(cachedMethod, memory_);
-            if (tmi.getterIndex >= 0)
+            if (!noGetterBit2 && tmi.getterIndex >= 0)
                 newExtra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
-            else if (tmi.setterIndex >= 0)
+            else if (!noGetterBit2 && tmi.setterIndex >= 0)
                 newExtra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
-            else if (tmi.returnsSelf)
+            else if (!noGetterBit2 && tmi.returnsSelf)
                 newExtra = (1ULL << 61);
             if (newExtra == 0) {
                 // Not trivial — set J2J direct-call entry plus inline primKind bits
