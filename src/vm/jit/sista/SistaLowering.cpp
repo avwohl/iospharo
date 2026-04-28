@@ -1515,45 +1515,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, deoptBC);
                 cc.bind(sizeOk);
 
+                // Format check: only fast-path format 2 (Indexable64).
+                Gp loop_hdr = cc.new_gp64("loop_hdr");
+                cc.ldr(loop_hdr, ptr(rcvReg));
+                Gp loop_fmt = cc.new_gp64("loop_fmt");
+                cc.ubfx(loop_fmt, loop_hdr, Imm(24), Imm(5));
+                cc.cmp(loop_fmt, Imm(2));
+                Label loopFmtOk = cc.new_label();
+                cc.b_eq(loopFmtOk);
+                emitDeopt(rcvReg, deoptBC);
+                cc.bind(loopFmtOk);
+
                 // Step 2: iReg = SmI(1) = (1 << 3) | 1 = 9.
                 Gp iReg = cc.new_gp64("loop_i");
                 cc.mov(iReg, Imm(9));
 
-                // Step 3: loop head.
+                // Step 3: rotated loop head — pre-check, fused back-edge.
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
-                // Step 4: compare iReg, sizeReg as SmI Oops.  Both have
-                // tag 1 in low 3 bits; comparing raw bits as unsigned
-                // is equivalent to comparing the underlying integers
-                // (same tag, same shift).  Exit when iReg > sizeReg.
                 cc.cmp(iReg, sizeReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
-                // Step 5: eachReg = basicAt(rcv, iReg).  Deopt on 0.
-                Gp atFn = cc.new_gp64("loop_atfn");
-                cc.mov(atFn,
-                       Imm((uint64_t)&jit_rt_sista_basic_at));
-                asmjit::InvokeNode* atInvoke = nullptr;
-                asmjit::Error aErr = cc.invoke(
-                    asmjit::Out(atInvoke), atFn,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (aErr != asmjit::kErrorOk || !atInvoke) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                atInvoke->set_arg(0, state);
-                atInvoke->set_arg(1, rcvReg);
-                atInvoke->set_arg(2, iReg);
+                // Step 5: inline format-2 element load.  i*8 = iReg-1.
+                Gp loop_off = cc.new_gp64("loop_off");
+                cc.sub(loop_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("loop_each");
-                atInvoke->set_ret(0, eachReg);
-
-                Label atOk = cc.new_label();
-                cc.cbnz(eachReg, atOk);
-                emitDeopt(rcvReg, deoptBC);
-                cc.bind(atOk);
+                cc.ldr(eachReg, ptr(rcvReg, loop_off));
 
                 // Step 6: inline block body.  Each block IR value
                 // produces a register; we track them in a block-local
@@ -1712,8 +1700,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // result = iReg + 9 - 1 = iReg + 8.).
                 cc.add(iReg, iReg, Imm(8));
 
-                // Step 8: branch back to loopHead.
-                cc.b(loopHead);
+                // Step 8: fused cmp+b.ls back-edge (rotated loop).
+                cc.cmp(iReg, sizeReg);
+                cc.b_ls(loopHead);
 
                 // Step 9: loop exit.
                 cc.bind(loopExit);
@@ -1858,40 +1847,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 emitDeopt(rcvReg, initReg, deoptBC);
                 cc.bind(sizeOk);
 
+                // Format check: only fast-path format 2 (Indexable64).
+                Gp inj_hdr = cc.new_gp64("inj_hdr");
+                cc.ldr(inj_hdr, ptr(rcvReg));
+                Gp inj_fmt = cc.new_gp64("inj_fmt");
+                cc.ubfx(inj_fmt, inj_hdr, Imm(24), Imm(5));
+                cc.cmp(inj_fmt, Imm(2));
+                Label injFmtOk = cc.new_label();
+                cc.b_eq(injFmtOk);
+                emitDeopt(rcvReg, initReg, deoptBC);
+                cc.bind(injFmtOk);
+
                 // Step 2: iReg = SmI(1).
                 Gp iReg = cc.new_gp64("inj_i");
                 cc.mov(iReg, Imm(9));
 
+                // Rotated loop: pre-check, fused back-edge.
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
                 cc.cmp(iReg, sizeReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
-                // basicAt(rcv, iReg) — deopt on 0.
-                Gp atFn = cc.new_gp64("inj_atfn");
-                cc.mov(atFn,
-                       Imm((uint64_t)&jit_rt_sista_basic_at));
-                asmjit::InvokeNode* atInvoke = nullptr;
-                asmjit::Error aErr = cc.invoke(
-                    asmjit::Out(atInvoke), atFn,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (aErr != asmjit::kErrorOk || !atInvoke) {
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                atInvoke->set_arg(0, state);
-                atInvoke->set_arg(1, rcvReg);
-                atInvoke->set_arg(2, iReg);
+                // Inline format-2 element load.  i*8 = iReg-1.
+                Gp inj_off = cc.new_gp64("inj_off");
+                cc.sub(inj_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("inj_each");
-                atInvoke->set_ret(0, eachReg);
-
-                Label atOk = cc.new_label();
-                cc.cbnz(eachReg, atOk);
-                emitDeopt(rcvReg, initReg, deoptBC);
-                cc.bind(atOk);
+                cc.ldr(eachReg, ptr(rcvReg, inj_off));
 
                 // Inline block body.  Block has 2 args:
                 //   temp 0 = acc → accReg (READ from accReg, WRITE to
@@ -2037,9 +2019,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
-                // i += 8 (SmI add of 1).
+                // i += 8 (SmI add of 1); fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, sizeReg);
+                cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
 
@@ -2179,19 +2162,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp iReg = cc.new_gp64("iv_i");
                 cc.mov(iReg, startReg);
 
+                // Rotated loop: pre-check, fused back-edge.
+                // SmI Oops with tag bit 0 set; underlying-integer
+                // ordering is preserved by raw bit comparison for
+                // non-negative SmIs (the common `(1 to: N)` pattern;
+                // tag-check at loop entry rejects non-SmI bounds).
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
-
-                // Compare iReg, stopReg.  Both are SmI Oops with tag
-                // bit 0 set; the underlying integer ordering is
-                // preserved by raw bit comparison for non-negative
-                // SmIs.  Use unsigned higher (b_hi) — for negative
-                // SmIs this would be wrong, but the common pattern
-                // `(1 to: N)` always has positive bounds.  We tag-
-                // check both at loop entry so non-SmI deopts.
                 cc.cmp(iReg, stopReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
                 // Inline block body.  temp 0 = acc → accReg,
                 // temp 1 = i (the SmI Oop) → iReg.
@@ -2320,9 +2300,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
-                // i += SmI(1) = i + 8 (tag-preserving).
+                // i += SmI(1) = i + 8; fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, stopReg);
+                cc.b_ls(loopHead);
 
                 cc.bind(loopExit);
 
@@ -2441,11 +2422,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp iReg = cc.new_gp64("ivd_i");
                 cc.mov(iReg, startReg);
 
+                // Rotated loop: pre-check, fused back-edge.
                 Label loopHead = cc.new_label();
                 Label loopExit = cc.new_label();
-                cc.bind(loopHead);
                 cc.cmp(iReg, stopReg);
                 cc.b_hi(loopExit);
+                cc.bind(loopHead);
 
                 // Inline block body.  temp 0 = each → iReg.
                 std::unordered_map<uint32_t, Gp> blockRegs;
@@ -2566,9 +2548,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                 }
 
-                // i += 8 (SmI(1) tag-preserving) and loop.
+                // i += 8 (SmI(1) tag-preserving); fused cmp+b.ls back-edge.
                 cc.add(iReg, iReg, Imm(8));
-                cc.b(loopHead);
+                cc.cmp(iReg, stopReg);
+                cc.b_ls(loopHead);
                 cc.bind(loopExit);
 
                 // Result placeholder: startReg.  do:'s caller usually
