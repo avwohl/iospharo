@@ -53,14 +53,35 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // Trace lowering only for splice methods — otherwise the volume
     // would drown out everything else.  Limited to 16 lines.
     bool hasSplice = false;
+    bool hasSend   = false;
     for (const auto& v : m.values) {
         if (v.op == Op::kCountedLoopDo
          || v.op == Op::kCountedLoopInjectInto
          || v.op == Op::kCountedLoopIntervalInjectInto
          || v.op == Op::kCountedLoopIntervalDo
-         || v.op == Op::kCountedLoopArrayDoAccum) {
-            hasSplice = true; break;
+         || v.op == Op::kCountedLoopArrayDoAccum
+         || v.op == Op::kCountedLoopIntervalDoAccum) {
+            hasSplice = true;
         }
+        if (v.op == Op::kSendUnspeculated) {
+            hasSend = true;
+        }
+    }
+
+    // Skip-dispatch heuristic: a method that contains kSendUnspeculated
+    // but no splice will bail on the first send.  Sista's compile +
+    // dispatch overhead (~80 cycles per call) is pure waste.  The
+    // bail-blacklist (sistaBailCounter_) doesn't catch this because
+    // successful leaf returns reset the counter — common for recursive
+    // methods like benchFib (~30% leaf rate).  Negative-cache by
+    // returning nullptr; the dispatch hook checks `fn != nullptr`.
+    //
+    // Opt-out: PHARO_SISTA_COMPILE_BAIL_ONLY=1 (for diagnosis).
+    static const bool compileBailOnly =
+        std::getenv("PHARO_SISTA_COMPILE_BAIL_ONLY") != nullptr;
+    if (hasSend && !hasSplice && !compileBailOnly) {
+        cache_[key] = nullptr;
+        return nullptr;
     }
 
     // Lower IR → native.
