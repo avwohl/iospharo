@@ -580,9 +580,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 // Tag check: immediates have low 3 bits != 0; we only
                 // guard object receivers.  Non-object → deopt.
-                Gp tagBits = cc.new_gp64("tag");
-                cc.and_(tagBits, itRcv->second, Imm(7));
-                cc.cmp(tagBits, Imm(0));
+                // `tst x, #7` sets flags from (x & 7) in one instruction
+                // — saves the explicit and+cmp pair.
+                cc.tst(itRcv->second, Imm(7));
                 cc.b_ne(missLabel);
 
                 // ldr header word from receiver
@@ -590,9 +590,17 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.ldr(hdr, ptr(itRcv->second, 0));
                 Gp idx = cc.new_gp64("idx");
                 cc.and_(idx, hdr, Imm(0x3FFFFF));
-                Gp expected = cc.new_gp64("exp");
-                cc.mov(expected, Imm((uint64_t)expectedIdx));
-                cc.cmp(idx, expected);
+                // ARM64 cmp accepts a 12-bit imm (with optional shift).
+                // 4096 covers ~all classIndexes seen in image bench code
+                // (well below the 22-bit Spur cap).  Avoid the materialize
+                // mov when the imm fits.
+                if (expectedIdx <= 0xFFF) {
+                    cc.cmp(idx, Imm(expectedIdx));
+                } else {
+                    Gp expected = cc.new_gp64("exp");
+                    cc.mov(expected, Imm((uint64_t)expectedIdx));
+                    cc.cmp(idx, expected);
+                }
                 cc.b_eq(contLabel);
 
                 // -- Miss: deopt sequence (mirrors kPrimTagCheckInt).
