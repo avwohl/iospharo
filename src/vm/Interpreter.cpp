@@ -7696,10 +7696,25 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // Sanity-check invariants across Sista dispatch — the
             // interpreter-owned frame state must not mutate during
             // asmjit-generated code.  Failure = ABI/callee-save bug.
-            Oop savedReceiver = receiver_;
-            Oop* savedFP = framePointer_;
-            Oop savedMethod = method_;
-            size_t savedFrameDepth = frameDepth_;
+            //
+            // Gated behind PHARO_SISTA_INVARIANT_CHECK=1 (default
+            // off): each dispatch otherwise pays 4 saves + 4
+            // compares + branch (~10ns).  Across the bench panel's
+            // ~5M Sista activations that's ~50ms.  The check is
+            // useful when bringing up a new lowering or chasing an
+            // ABI bug; unnecessary in steady state.
+            static const bool invariantCheck =
+                std::getenv("PHARO_SISTA_INVARIANT_CHECK") != nullptr;
+            Oop savedReceiver{};
+            Oop* savedFP = nullptr;
+            Oop savedMethod{};
+            size_t savedFrameDepth = 0;
+            if (invariantCheck) {
+                savedReceiver = receiver_;
+                savedFP = framePointer_;
+                savedMethod = method_;
+                savedFrameDepth = frameDepth_;
+            }
             // Snapshot frame temp slots (args + locals) — log any
             // slot Sista writes.  Only active with PHARO_SISTA_TEMP_WATCH=1.
             static const bool tempWatch =
@@ -7736,7 +7751,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             fn(&sstate);
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
-            if (__builtin_expect(
+            if (invariantCheck && __builtin_expect(
                     savedReceiver.rawBits() != receiver_.rawBits()
                     || savedFP != framePointer_
                     || savedMethod.rawBits() != method_.rawBits()
