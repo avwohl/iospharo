@@ -14485,7 +14485,19 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
             else break;
         }
         sista::Builder::recordPolyDegree(polyDegree);
-        if (classKey0 != 0 && classKey1 == 0) {
+        // Phase 5 Step 2 (2026-04-29): under PHARO_SISTA_INLINE_POLY,
+        // emit a hint for the dominant entry of polymorphic sites too.
+        // The existing kGuardClass + inline path handles dominant-class
+        // hits and bails to interp on alt-class (where T1's full IC
+        // routes correctly).  Net: dominant class fast-paths into
+        // compiled code; cold-tail invocations cost the same deopt
+        // they cost today (when the whole site bailed unspeculated).
+        // Gated behind PHARO_SISTA_INLINE_POLY=1 for soak.
+        static const bool inlinePoly =
+            std::getenv("PHARO_SISTA_INLINE_POLY") != nullptr;
+        bool emit = (classKey0 != 0
+                     && (classKey1 == 0 || inlinePoly));
+        if (emit) {
             uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
                 ? (*sendBCs)[sendIdx] : UINT16_MAX;
             if (bcOff != UINT16_MAX) {
