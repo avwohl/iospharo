@@ -866,29 +866,38 @@ unchanged.
   correct.  All remaining bugs are in the helper SUCCESS path.
 
 **Status under env=1:** still hangs.  Trace shows ~14k successful
-helper calls before fd=4096 overflow (previously ~30).  Per-call
-fd accumulation is ~0.5: about half the calls leak one frame.
+helper calls before fd=4096 overflow (previously ~30).
+470× improvement from the cascade fix.
 
-The leak is structural — popFrame restores stackPointer_ to the
-caller's framePointer_, then returnFromMethod pushes the result.
-After the helper's step() loop exits at frameDepth_ ==
-startFrameDepth, popN(1) and state restore happen.  Hypotheses
-not yet checked:
+**Per-call delta confirmed 0:** instrumented every jitSistaCallSend
+to compare entryFD vs exitFD across 24k calls — leaks=0 every time.
+So jitSistaCallSend itself is internally balanced.
 
-- popFrame's framePointer_ restoration leaves stackPointer_ above
-  the original X (one slot per "leaked" call).  Next sendSelector
-  in the JIT caller picks up an extra slot from the prior call.
-- step() inside the helper occasionally activates a method that
-  uses materializeFrameStack (PushThisContext) — this resets
-  frameDepth_ = 0 mid-helper.  The helper's NLR check (frameDepth_
-  < startFrameDepth) might mis-handle the case where
-  startFrameDepth was reset to a smaller value asymmetrically.
-- Some primitive (relinquishProcessor, suspend, etc.) leaves a
-  partially-pushed frame that the helper accepts as completed.
+**fd grows BETWEEN calls** (~0.5 fd per call avg).  This means the
+JIT-compiled caller of the helper is leaving extra frames on the
+stack between helper-sends.  Suspects (in order of likelihood):
 
-Next session: pick a single helper-send, log frameDepth_ before
-sendSelector and after the loop exit; the leak case will reveal
-itself as +1 instead of +0 net change.
+1. T1 / T2 / J2J stencil call → return imbalance.  Inner sends
+   inside the helper-driven step() loop activate methods via
+   tryJITActivation → JIT-compiled code → exits with EXIT_SEND
+   for further sub-sends.  Each EXIT_SEND dispatches via interp,
+   which pushes a frame for the bailed send's target.  If that
+   target is itself JIT-compiled and bails again, frames may
+   accumulate.  Probably not specific to HELPER_SENDS — just
+   exposed by the high call frequency.
+
+2. Sista-compiled CACHED methods invoked via Sista::Runtime::lookup
+   inside the helper.  My inSyncSend_ gate at line 7268 prevents
+   Sista compile/dispatch when active, but the gate may not cover
+   every path that finds and runs a cached compilation.
+
+3. Block activation via activateBlock (line 8224) doesn't gate on
+   inSyncSend_.  If a block runs Sista-compiled code, kSendCallHelper
+   may bail (depth-cap) — though deopt should be balanced.
+
+**Next session approach:** narrower instrumentation — log fd at
+exit of every JIT mechanism (tryJITActivation, popFrameForJIT,
+T1 stencil exit, Sista exit) to find the leak source.
 
 Real fix needs either:
 - IC-guided emission (only emit kSendCallHelper for sites where
