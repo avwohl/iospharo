@@ -23,13 +23,10 @@
  *
  * SCOPE
  *   This header defines the IR shape only.  Consumers:
- *     - SistaBuilder (TODO): lift bytecode stream into IR.
- *     - SistaLowering (TODO): emit asmjit from IR.
+ *     - SistaBuilder: lifts bytecode into IR (lift + speculation +
+ *       Phase 4 monomorphic inliner + B2 splice pre-pass).
+ *     - SistaLowering: emits asmjit ARM64 from IR.
  *     - SistaPrinter (in SistaIR.cpp): textual dump for debugging.
- *     - SistaInliner (TODO, Phase 4): splice callee IR into caller IR.
- *
- * Not yet wired into the runtime.  Compiles standalone; runtime
- * integration happens in Phase 4 once inlining actually works.
  */
 #ifndef PHARO_SISTA_IR_HPP
 #define PHARO_SISTA_IR_HPP

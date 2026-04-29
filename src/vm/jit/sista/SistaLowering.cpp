@@ -763,7 +763,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // After tagged add/sub, check that bits 62, 63 of
                 // the result match (no SmallInt overflow); on miss
                 // bail to the interpreter at the source bytecode.
-                // Mul still has no overflow detection (TODO).
+                // Mul uses smulh + bits 60-63 check (see below).
                 if (v.operands.size() < 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
