@@ -7680,13 +7680,19 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             // stash x19-x22 without save/restore).
             //
             // W^X discipline: asmjit and our CodeZone share the
-            // per-thread MAP_JIT toggle on Apple Silicon.  Force
-            // executable both BEFORE the call (in case anything in
-            // the activation prologue dropped it) and AFTER (to
-            // protect the next T1 JIT entry from a stray writable
-            // state left behind by asmjit-internal bookkeeping).
-            jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
-                                jitRuntime_.codeZone().totalBytes());
+            // per-thread MAP_JIT toggle on Apple Silicon.  AFTER-call
+            // makeExecutable (below, after fn) protects the next T1
+            // JIT entry from any stray writable state left behind by
+            // asmjit-internal bookkeeping.  The BEFORE call here used
+            // to be defensive but the dispatch path is always reached
+            // with the JIT zone already executable (the only
+            // makeWritable/makeExecutable pairs in the hot path are
+            // RAII-scoped at IC-patch sites and re-execute on every
+            // exit).  Skipping the redundant pre-call toggle saves
+            // one syscall per dispatch — measured ~13ns/call on the
+            // 1M getter regression.  If a future code path drops the
+            // toggle without restoring, the symptom is SIGBUS in
+            // Sista code; reinstate this line first when debugging.
             // Sanity-check invariants across Sista dispatch — the
             // interpreter-owned frame state must not mutate during
             // asmjit-generated code.  Failure = ABI/callee-save bug.
