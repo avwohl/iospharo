@@ -1167,30 +1167,43 @@ top entries surface their terminator op directly — useful for
 distinguishing arith-terminator from send-terminator without
 extra code.
 
-**2026-04-29 tiny-arith-method gate test (reverted):**
-prototyped a `bcLen <= 8` rejection of arith methods so
-`OrderedCollection>>size` would stay in the interp under
-INLINE_ARITH=1.  Best-of-N comparison:
+**2026-04-29 follow-up: tiny-arith-method gate doesn't fix it.**
+Multiple gate variants tested (bcLen ≤ 8, ≤ 24, no limit + only
+"pure arith no sends"); all fail to recover baseline.  Even
+`PHARO_SISTA_EXCLUDE_SELS=size` (hard-excluding the prime
+suspect) only recovers ~1ms — not a real fix.
 
-    INLINE_ARITH=1 (no gate):  getter best 110ms, sum best  66ms
-    INLINE_ARITH=1 (gate on):  getter best 111ms, sum best  65ms
-    INLINE_ARITH=1 (gate off): getter best 114ms, sum best 105ms (3-run)
-    baseline (no INLINE_ARITH): getter best 96ms, sum best 65ms
+**Real root cause — Sista activation path is slower than T1.**
+Diff'ing JIT Stats on a full bench run pinpoints it:
 
-Gate-on vs gate-off: differences are within noise (3ms).  The
-real regression source isn't `size` being Sista-compiled — it's
-something else.  Theories:
-- Some OTHER method called per iteration is Sista-compiled under
-  INLINE_ARITH but bails frequently (deopt loops in arith?).
-- The bench's outer block (running the per-iter `obj size. obj
-  yourself`) gets Sista-compiled with arith ops the bench never
-  hits, paying tag-check overhead for nothing.
-- IC churn on hot send sites changes when arith methods become
-  Sista-eligible.
+                          baseline    INLINE_ARITH=1   delta
+    compiled methods          230            231       +1
+    T1 activations          5.59M          4.49M       **-1.10M**
+    J2J stencil calls      55.87M         56.90M       +1.03M
+    Sista hit rate          8.9%           6.8%        -2.1pp
 
-Gate code reverted; no behavior change committed from this
-attempt.  Real fix needs a profiler-style attribution of where
-the 14ms/iter regression goes.
+Under `INLINE_ARITH=1`, ~1.1M activations migrate from the T1
+entry path to the Sista entry path (because the same methods
+become Sista-eligible).  J2J trampolines pick up the slack
+(+1.03M calls).  The 14ms/iter getter regression is exactly
+this: 14 ms / 1.1 M activations = **13 ns per migrated call** —
+the Sista activation overhead vs T1's tighter entry stencil.
+
+So the fix isn't shape recognition or admission gating.  It's
+**making Sista's per-call entry path competitive with T1**.
+Concrete next-session candidates:
+
+1. Profile the Sista entry stencil — what instructions execute
+   on every Sista activation that T1 doesn't run?  Compare
+   JITRuntime entry-point assembly between the two.
+2. Skip Sista's frame-state machinery on activation when no
+   speculation has fired (reset on first deopt).
+3. Inline the Sista→T1-fallback path so Sista bails don't
+   double-dispatch.
+
+Until one of those lands, INLINE_ARITH=1 stays opt-in.  The
+gate-flip *itself* is correctness-clean now (no crash) — the
+blocker is purely a per-call overhead measured at 13ns above T1.
 
 ---
 
