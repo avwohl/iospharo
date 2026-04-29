@@ -1290,6 +1290,43 @@ gap are either:
      compile, widening the existing inline-getter / setter /
      returnsSelf IC fast paths to the arith-on-ivar shapes.
 
+**2026-04-29 attempt at #5 (returnsLiteral) — reverted.**
+Prototyped a `returnsLiteral` shape recognizer that detects
+`pushTrue/False/Nil/Const + returnTop` and standalone
+`ReturnTrue/False/Nil`, encoded the cached Oop bits in IC
+`extra` bit 58 (with bits 47:0 = literal), and added a path
+to the existing `IC_HIT` macro in `stencils.cpp`.  Attempt
+reverted because:
+
+1. **Inline expansion of `IC_HIT` adds per-call overhead to
+   ALL sends, not just returnsLiteral hits.** The macro is the
+   generic poly-IC fast path used by every send site that
+   hasn't been specialized at JIT-recompile time.  Adding a
+   4th conditional after bits 63/62/61 imposed a measurable
+   cost across the bench panel: splice runs went from
+   4/7/7/7/7/4 ms to 6/9/9/9/9/6 ms (2-3 ms each).  Sum 1M did
+   show a real win (102→77 ms ~25% faster) but 1M getter
+   regressed (99→108 ms) and the panel benches went broadly
+   slower.
+
+2. **First bounds-check used `slotCount()` — over-permissive.**
+   `pushLitConst N` reads slot `1 + N` from the method, but
+   `slotCount()` of a CompiledMethod includes the byte area;
+   the bounds were too loose, allowing reads into the
+   bytecode region.  Fixed to use `numLiterals` from the
+   method header — but the macro-overhead issue remained.
+
+**The right architecture** (deferred to a future session) is
+to add a NEW SPECIALIZED STENCIL `stencil_sendInlineReturnsLiteral`
+matched to the existing pattern in `stencils.cpp`
+(stencil_sendInlineGetter et al), with a corresponding
+specialization branch in `JITCompiler.cpp:1256+`.  The
+inline-stencil path already works correctly for monomorphic
+sites without polluting the polymorphic IC_HIT macro — that's
+the only way to add new shapes without taxing all sends.
+detectTrivialMethod recognition + IC patch encoding can be
+re-introduced together with the new stencil.
+
 ---
 
 ## C. Project mission — iOS
