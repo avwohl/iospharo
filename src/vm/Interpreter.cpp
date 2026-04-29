@@ -14542,6 +14542,14 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
         // compiled code; cold-tail invocations cost the same deopt
         // they cost today (when the whole site bailed unspeculated).
         // Gated behind PHARO_SISTA_INLINE_POLY=1 for soak.
+        //
+        // Default-on attempt 2026-04-29 hit a dict 50K regression
+        // (154→176, +14%) even with a degree ≤ 3 cap.  Issue: the
+        // IC's first entry isn't actually the most-frequently-hit
+        // class — it's just the first observed.  Guard misses pay
+        // deopt cost per miss.  Real fix needs hit-count tracking
+        // per IC entry to identify the *actual* dominant class.
+        // Until then, leave opt-in.
         static const bool inlinePoly =
             std::getenv("PHARO_SISTA_INLINE_POLY") != nullptr;
         bool emit = (classKey0 != 0
