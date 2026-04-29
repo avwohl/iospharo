@@ -4095,6 +4095,55 @@ private:
             else {
                 return false;
             }
+        } else if (calleeIR.values.size() == 5) {
+            // 5-value setter pattern.  Body `foo: x` with `foo := x`
+            // (implicit returnSelf) compiles to bytecodes
+            //   pushTemp 0; popStoreRcv N; returnReceiver
+            // which lift to
+            //   v0 = kLoadTemp(N0)
+            //   v1 = kLoadReceiver
+            //   v2 = kStoreInstVar(v1, v0, ivarIdx)        [void]
+            //   v3 = kLoadReceiver
+            //   v4 = kReturn(v3)                            [void]
+            //
+            // Inline as: kGuardClass + kStoreInstVar(callerRecv,
+            // callerArg[N0], ivarIdx); result is callerRecv.
+            const Value& v0 = calleeIR.values[0];
+            const Value& v1 = calleeIR.values[1];
+            const Value& v2 = calleeIR.values[2];
+            const Value& v3 = calleeIR.values[3];
+            const Value& v4 = calleeIR.values[4];
+            if (v0.op != Op::kLoadTemp) return false;
+            if (v1.op != Op::kLoadReceiver) return false;
+            if (v2.op != Op::kStoreInstVar) return false;
+            if (v2.operands.size() != 2) return false;
+            if (v2.operands[0] != v1.id || v2.operands[1] != v0.id) return false;
+            if (v3.op != Op::kLoadReceiver) return false;
+            if (v4.op != Op::kReturn) return false;
+            if (v4.operands.size() != 1 || v4.operands[0] != v3.id) return false;
+            uint32_t tempIdx = static_cast<uint32_t>(v0.literal);
+            if (tempIdx >= nArgs) return false;
+            if (stack_.size() < nArgs + 1) return false;
+            uint32_t argId = stack_[stack_.size() - nArgs + tempIdx];
+
+            // Emit guard, then the store.  Result is the receiver
+            // (returnSelf semantics).
+            std::vector<uint32_t> setterGuardOps;
+            setterGuardOps.reserve(stack_.size() + 1);
+            setterGuardOps.push_back(recvId);
+            for (uint32_t s : stack_) setterGuardOps.push_back(s);
+            uint64_t setterGuardLit = (hit->classOop & 0x3FFFFFu)
+                                    | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(setterGuardOps), setterGuardLit);
+            out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                          /*operands=*/{recvId, argId},
+                          /*literal=*/v2.literal);
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(recvId);
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            return true;
         } else {
             return false;
         }
