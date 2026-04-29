@@ -22,10 +22,16 @@ Phase                                       Status            Where
 3  Deopt infrastructure                     STEP 1 done       Framepoint struct + capture sites
                                                               src/vm/jit/sista/SistaIR.hpp:221+
 4  Monomorphic inlining                     PATTERNS DONE     gated PHARO_SISTA_INLINE_CONST=1
+                                                              + PHARO_SISTA_INLINE_SETTERS=1
+                                                              for setter shapes.  Coverage:
                                                               const-return + getter + 4/5-value
                                                               setter + self-send chain + ivar-
-                                                              self-send.  Default-on still
-                                                              gated by soak risk (A3).
+                                                              self-send.  Setter lowering uses
+                                                              bit-63-marked kStoreInstVar →
+                                                              jit_rt_store_inst_var helper;
+                                                              bytecode-emitted stores still
+                                                              SAFETY-BAIL (status quo).  Default-
+                                                              on still gated by soak (A3).
 5  Polymorphic inlining + IC specialization NOT STARTED
 6  Block inlining                           NOT STARTED       biggest perf lever for sum/sieve
 7  Method-redef invalidation                NOT STARTED       blocks safe shipping of 4-6
@@ -59,8 +65,9 @@ A1. **Phase 3 Step 2 + 3 — finish deopt infrastructure.**  Required
     SistaRuntime.cpp handles bail.
 
 A2. **Phase 4 finish — broaden monomorphic inline patterns.**
-    **DONE 2026-04-29** (`7efbdac7`, `28efa2b7`).  All target shapes
-    are now matched in `tryInlineConstReturn`:
+    **DONE 2026-04-29** (`7efbdac7`, `28efa2b7`, `9cac2634`,
+    `6726f6f6`, `caed8d8c`).  All target shapes are now matched in
+    `tryInlineConstReturn`:
     - `^ aLiteral` / `^ true|false` (2-value const)
     - `^ instVar` (3-value getter)
     - `^ self` (2-value returnSelf via kLoadReceiver+kReturn)
@@ -73,6 +80,18 @@ A2. **Phase 4 finish — broaden monomorphic inline patterns.**
     Lift-only IR-shape tests in `test_sista_ir.cpp` give the matcher
     a tripwire if the lifter ever reorders kLoadReceiver synthesis
     around stores or returns.
+
+    Setter-shape patterns are gated separately under
+    PHARO_SISTA_INLINE_SETTERS=1 because they emit kStoreInstVar in
+    the inlined IR.  SistaLowering's setter lowering path is
+    selective: bit 63 of the literal marks "from inline" and routes
+    to a `jit_rt_store_inst_var` helper invoke (immutability +
+    bytes/CompiledMethod + OOB guards + barrier-aware
+    storePointerUnchecked); bit-63-clear stores (bytecode-emitted
+    via popStoreRcv*) keep the historic SAFETY BAIL.  This avoids
+    regressing inner-loop methods that store to ivars while letting
+    setter inline emit working code.
+
     Bench impact 0 on the panel because counted-loop splices already
     replace the hot sends; impact lands when default-on (A3) on
     setter/accessor-heavy workloads (image code, SUnit setUp etc.).
