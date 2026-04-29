@@ -1074,10 +1074,9 @@ even if we added a 4-value rule, the kSendUnspeculated terminator
 means the work is identical to a normal send.
 
 **Real lever** for the 1M getter / sum 1M Cog gap is one of:
-- Default `PHARO_SISTA_INLINE_ARITH=1` — but the prior attempt
-  crashed in FFI's `#oopForObject:`.  Memory:
-  `feedback_splice_flags_opt_in.md`.  Re-attempting needs the
-  crash investigated first.
+- Default `PHARO_SISTA_INLINE_ARITH=1` — see findings below.  No
+  crash today, but mixed bench results: big win on inner-loop
+  arith, regression on tiny-method-in-loop.
 - Add a 5-value recognizer for the arith-on-ivar shape AFTER
   enabling INLINE_ARITH (so the lifter emits `kPrimAddInt` etc.
   and the callee shape becomes
@@ -1087,6 +1086,39 @@ means the work is identical to a normal send.
 
 Histogram instrumentation kept (gated by INLINE_STATS) so future
 sessions can re-census after each recognizer is added.
+
+**2026-04-29 INLINE_ARITH=1 stability + bench delta (best-of-5):**
+
+                      baseline  INLINE_ARITH=1  delta
+    sum 1M ms              ~100      66          -34%   WIN
+    1M getter ms            ~96     110          +15%   LOSS
+    fib(28) ms              ~21      21          ~0
+    sieve x100 ms           ~44      44          ~0
+    sort 100K ms           ~220     224          ~0
+    dict 50K ms            ~157     163          +4%
+    factorial 5000 ms       ~23      23          ~0
+    1M blocks ms            ~14      15          ~0
+    100K alloc ms           ~5       5           ~0
+
+No crash.  The prior crash from `feedback_splice_flags_opt_in.md`
+was a multi-flag interaction (with IV_DO_ACCUM + DO_SPLICE), not
+INLINE_ARITH on its own.
+
+The trade-off interpretation:
+- sum 1M's inner block does `sum := sum + each` — `+` becomes
+  `kPrimAddInt` directly inside the JIT-compiled block.  Big win
+  because the bench is all about that arith op being fast.
+- 1M getter calls `obj size` (`^ lastIdx - firstIdx + 1`) inside
+  the bench loop.  Without INLINE_ARITH, `size` is gated out of
+  Sista (unsafe arith) and runs in the interpreter — fast for a
+  3-bytecode method.  With INLINE_ARITH, `size` gets Sista-
+  compiled, paying full activation + tag-check overhead per call.
+  Net loss until Phase 4 INLINES the size body into the calling
+  block.
+
+Action: keep INLINE_ARITH opt-in until the Phase 4 recognizer
+extension lands.  The combo (INLINE_ARITH on + arith-on-ivar
+recognizer) should remove the regression and keep the sum win.
 
 ---
 
