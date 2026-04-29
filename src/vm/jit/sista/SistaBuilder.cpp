@@ -3730,8 +3730,14 @@ private:
     // complex still bails to the unspeculated send.
     bool tryInlineConstReturn(uint32_t nArgs, uint32_t bcOffset) {
         if (!inlineHints_) return false;
+        // Default ON 2026-04-29 after the kGuardClass optimization
+        // (90b0356e) brought the hot-path guard from 8 to 6
+        // instructions, eliminating the prior runtime overhead that
+        // had blocked default-on.  Bench panel + setter bench at
+        // parity with no-inline; accessor-heavy code wins.
+        // Opt-out: PHARO_SISTA_NO_INLINE_CONST=1.
         static const bool inlineConst =
-            std::getenv("PHARO_SISTA_INLINE_CONST") != nullptr;
+            std::getenv("PHARO_SISTA_NO_INLINE_CONST") == nullptr;
         if (!inlineConst) return false;
         if (g_currentBuildMemory == nullptr) return false;
         if (g_calleeLiftDepth >= 2) return false;
