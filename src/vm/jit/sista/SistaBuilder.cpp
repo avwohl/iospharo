@@ -4102,16 +4102,19 @@ private:
                 return false;
             }
         } else if (calleeIR.values.size() == 4) {
-            // Setter patterns emit kStoreInstVar, which SistaLowering
-            // currently SAFETY-BAILs on (no immutability check + no
-            // write-barrier callout).  A method that triggers a setter
-            // inline would therefore fail to lower entirely.  Gate
-            // setter inlining behind PHARO_SISTA_INLINE_SETTERS=1 so
-            // the patterns stay matched but inert by default; flip when
-            // SistaLowering grows a kStoreInstVar emit path that calls
-            // jit_rt_store_inst_var (TODO).
+            // Setter inline emits kStoreInstVar with bit 63 of the
+            // literal set, which SistaLowering routes to the
+            // jit_rt_store_inst_var helper (immutability + bounds +
+            // write-barrier-aware).  Bytecode-emitted kStoreInstVar
+            // (popStoreRcv*) leaves bit 63 clear and stays SAFETY-BAILed.
+            //
+            // Default ON 2026-04-29 after the helper-invoke lowering
+            // landed in caed8d8c and the kGuardClass hot path shrank
+            // from 8 to 6 instructions in 90b0356e.  Per-store helper
+            // cost is roughly the same as the send-bail it replaces;
+            // win comes from skipping the IC dispatch + push frame.
             static const bool inlineSetters =
-                std::getenv("PHARO_SISTA_INLINE_SETTERS") != nullptr;
+                std::getenv("PHARO_SISTA_NO_INLINE_SETTERS") == nullptr;
             if (!inlineSetters) return false;
             // 4-value return-value setter pattern.  Body `foo: x` with
             //   ^ foo := x
@@ -4162,10 +4165,10 @@ private:
             g_totalHintsConsumed++;
             return true;
         } else if (calleeIR.values.size() == 5) {
-            // See PHARO_SISTA_INLINE_SETTERS gate above (4-value branch).
-            // Same kStoreInstVar / lowering issue applies here.
+            // See PHARO_SISTA_NO_INLINE_SETTERS gate above (4-value
+            // branch); same default-on rationale applies here.
             static const bool inlineSetters5 =
-                std::getenv("PHARO_SISTA_INLINE_SETTERS") != nullptr;
+                std::getenv("PHARO_SISTA_NO_INLINE_SETTERS") == nullptr;
             if (!inlineSetters5) return false;
             // Two 5-value shapes share the prefix
             //   v0 = kLoadTemp(N0)
