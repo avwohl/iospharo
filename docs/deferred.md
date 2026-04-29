@@ -1132,6 +1132,41 @@ Action: keep INLINE_ARITH opt-in.  Default-on is blocked by the
 arith-on-ivar recognizer would inline the size method body and
 remove the regression — that's the prerequisite for default-on.
 
+**2026-04-29 follow-up: INLINE_ARITH=1 + INLINE_STATS=1 trace
+disproved the simple recognizer theory.**  Reran the histogram
+under both flags expecting to see kPrimAddInt/kPrimSubInt-ending
+shapes in the unrecognized list — that would validate "extend
+recognizer for arith-on-ivar" as the lever.  Actual top entries
+are all `kSendUnspeculated`-terminated:
+
+    sz=4 / kLoadReceiver.kLoadInstVar.kConstantOop.kSendUnspec : 11
+    sz=2 / kLoadTemp.kSendUnspec                                : 6
+    sz=3 / kLoadReceiver.kLoadTemp.kSendUnspec                  : 5
+    sz=3 / kLoadReceiver.kLoadLiteral.kSendUnspec               : 4
+    ... (all remaining entries also kSendUnspec-terminated)
+
+`inlines-emitted` only goes 14 → 15 with INLINE_ARITH=1; the gate
+flip doesn't unlock new inline candidates.  The 1M getter
+regression isn't about an unrecognized inline shape — it's about
+`OrderedCollection>>size` being Sista-compiled (paying full
+activation per call) without being inlined at the bench's call
+site.
+
+So the lever isn't "extend recognizer for arith-on-ivar" — that
+shape doesn't appear in the histogram.  The correct lever is
+either:
+- Make `size`-shaped methods cheaper to call (smaller activation,
+  or T1-style fast paths for short Sista bodies).
+- Stop Sista-compiling tiny methods altogether (let them stay in
+  the interpreter where they're already fast).
+- Get them inlined at the call site by extending hint generation
+  to cover this pattern.
+
+Histogram instrumentation now records op3 (was op0..op2) so the
+top entries surface their terminator op directly — useful for
+distinguishing arith-terminator from send-terminator without
+extra code.
+
 ---
 
 ## C. Project mission — iOS

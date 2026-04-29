@@ -111,18 +111,20 @@ static uint64_t g_inlinesEmitted        = 0;
 static uint64_t g_polyDegreeHisto[8]    = {0};
 
 // Phase 4 sizing: callees we successfully lifted but couldn't recognize.
-// Key = (values_size << 24) | (op0 << 16) | (op1 << 8) | op2.
+// Key = (size << 32) | (op0 << 24) | (op1 << 16) | (op2 << 8) | op3.
 // Dump prints the top entries so we know which shapes to add next.
-static std::map<uint32_t, uint64_t> g_unrecognizedCalleeShapes;
+static std::map<uint64_t, uint64_t> g_unrecognizedCalleeShapes;
 static void recordUnrecognizedShape(const Method& m) {
     if (m.values.size() == 0 || m.values.size() > 255) return;
     uint8_t op0 = m.values.size() > 0 ? (uint8_t)m.values[0].op : 0;
     uint8_t op1 = m.values.size() > 1 ? (uint8_t)m.values[1].op : 0;
     uint8_t op2 = m.values.size() > 2 ? (uint8_t)m.values[2].op : 0;
-    uint32_t key = ((uint32_t)m.values.size() << 24)
-                 | ((uint32_t)op0 << 16)
-                 | ((uint32_t)op1 << 8)
-                 | (uint32_t)op2;
+    uint8_t op3 = m.values.size() > 3 ? (uint8_t)m.values[3].op : 0;
+    uint64_t key = ((uint64_t)m.values.size() << 32)
+                 | ((uint64_t)op0 << 24)
+                 | ((uint64_t)op1 << 16)
+                 | ((uint64_t)op2 << 8)
+                 | (uint64_t)op3;
     g_unrecognizedCalleeShapes[key]++;
 }
 
@@ -4749,7 +4751,7 @@ void Builder::dumpInlineHintStats() {
     // in {2,3,4,5}, so anything caught here is a "we lifted it but the
     // recognizer can't handle this size" miss.  Print top 8 by count.
     if (!g_unrecognizedCalleeShapes.empty()) {
-        std::vector<std::pair<uint32_t, uint64_t>> entries(
+        std::vector<std::pair<uint64_t, uint64_t>> entries(
             g_unrecognizedCalleeShapes.begin(),
             g_unrecognizedCalleeShapes.end());
         std::sort(entries.begin(), entries.end(),
@@ -4757,13 +4759,14 @@ void Builder::dumpInlineHintStats() {
         size_t topN = entries.size() < 8 ? entries.size() : 8;
         std::fprintf(stderr, "[SISTA-UNRECOG]");
         for (size_t i = 0; i < topN; i++) {
-            uint32_t key = entries[i].first;
-            uint8_t sz   = (key >> 24) & 0xFF;
-            uint8_t op0  = (key >> 16) & 0xFF;
-            uint8_t op1  = (key >>  8) & 0xFF;
-            uint8_t op2  = (key      ) & 0xFF;
-            std::fprintf(stderr, " sz=%u/%02x.%02x.%02x:%llu",
-                sz, op0, op1, op2,
+            uint64_t key = entries[i].first;
+            uint8_t sz   = (key >> 32) & 0xFF;
+            uint8_t op0  = (key >> 24) & 0xFF;
+            uint8_t op1  = (key >> 16) & 0xFF;
+            uint8_t op2  = (key >>  8) & 0xFF;
+            uint8_t op3  = (key      ) & 0xFF;
+            std::fprintf(stderr, " sz=%u/%02x.%02x.%02x.%02x:%llu",
+                sz, op0, op1, op2, op3,
                 (unsigned long long)entries[i].second);
         }
         std::fprintf(stderr, "\n");
