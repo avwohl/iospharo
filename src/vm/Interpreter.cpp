@@ -14476,6 +14476,15 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
         uint64_t classKey0 = ic[0];
         uint64_t method0   = ic[1];
         uint64_t classKey1 = ic[3];
+        // Phase 5 Step 1 (2026-04-29): count polymorphic site degree
+        // for capacity planning.  Dominant entry is ic[0..2]; chain
+        // emission (Step 2) reads ic[3..5], ic[6..8], etc.
+        uint8_t polyDegree = 0;
+        for (uint32_t e = 0; e < jit::IC_ENTRIES_PER_SITE; ++e) {
+            if (ic[e * 3] != 0) polyDegree++;
+            else break;
+        }
+        sista::Builder::recordPolyDegree(polyDegree);
         if (classKey0 != 0 && classKey1 == 0) {
             uint16_t bcOff = (sendBCs && sendIdx < sendBCs->size())
                 ? (*sendBCs)[sendIdx] : UINT16_MAX;

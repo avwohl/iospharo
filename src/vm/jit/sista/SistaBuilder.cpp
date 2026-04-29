@@ -105,6 +105,11 @@ static uint64_t g_calleeBytecodesLifted = 0;
 // substituted constant) replacing kSendUnspeculated.
 static uint64_t g_inlinesEmitted        = 0;
 
+// Phase 5 Step 1 counters: IC-site polymorphism histogram.  Indexed
+// by entry count (0 unused; 1..6 are valid IC degrees).  Filled by
+// recordPolyDegree() called from extractInlineHintsForMethod().
+static uint64_t g_polyDegreeHisto[8]    = {0};
+
 // Hint pointer set by buildWithHints() and consumed by build() when
 // constructing LinearLifter.  Single-threaded; static suffices.
 static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
@@ -4654,6 +4659,14 @@ void Builder::resetInlineHintStats() {
     g_calleeLiftSuccess = 0;
     g_calleeBytecodesLifted = 0;
     g_inlinesEmitted = 0;
+    for (auto& h : g_polyDegreeHisto) h = 0;
+}
+void Builder::recordPolyDegree(uint8_t degree) {
+    if (degree >= sizeof(g_polyDegreeHisto) / sizeof(g_polyDegreeHisto[0])) {
+        degree = static_cast<uint8_t>(
+            sizeof(g_polyDegreeHisto) / sizeof(g_polyDegreeHisto[0]) - 1);
+    }
+    g_polyDegreeHisto[degree]++;
 }
 void Builder::dumpInlineHintStats() {
     std::fprintf(stderr,
@@ -4667,6 +4680,16 @@ void Builder::dumpInlineHintStats() {
         (unsigned long long)g_calleeLiftSuccess,
         (unsigned long long)g_calleeBytecodesLifted,
         (unsigned long long)g_inlinesEmitted);
+    std::fprintf(stderr,
+        "[SISTA-POLY] poly-degree empty=%llu mono=%llu bi=%llu tri=%llu "
+        "quad=%llu 5=%llu 6=%llu\n",
+        (unsigned long long)g_polyDegreeHisto[0],
+        (unsigned long long)g_polyDegreeHisto[1],
+        (unsigned long long)g_polyDegreeHisto[2],
+        (unsigned long long)g_polyDegreeHisto[3],
+        (unsigned long long)g_polyDegreeHisto[4],
+        (unsigned long long)g_polyDegreeHisto[5],
+        (unsigned long long)g_polyDegreeHisto[6]);
 }
 
 }  // namespace sista

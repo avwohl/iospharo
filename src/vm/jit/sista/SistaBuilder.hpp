@@ -77,6 +77,12 @@ public:
     static void resetInlineHintStats();
     static void dumpInlineHintStats();
 
+    // Phase 5 Step 1: per-IC-site polymorphism histogram.  Called
+    // from extractInlineHintsForMethod once per IC site with the
+    // observed entry count (1 = monomorphic, 2-6 = polymorphic).
+    // Drives capacity planning for chain emission (Step 2).
+    static void recordPolyDegree(uint8_t degree);
+
     // Phase 4 Step 5: callback the inliner uses to get inline hints
     // for an arbitrary CompiledMethod oop.  Callee must extract the
     // method's JITMethod IC table and turn its monomorphic entries
