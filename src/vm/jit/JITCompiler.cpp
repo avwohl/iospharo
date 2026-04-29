@@ -1652,7 +1652,15 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // many-test accumulation — the original b9ab22e symptom
         // manifests differently but is not truly fixed.
         //
-        // Correctness trumps the 33% bench win.  Default remains OFF.
+        // 2026-04-29 retest: bench panel is now NET REGRESSION under
+        // PHARO_JIT_SIMSTACK=1.  3-run averages with INLINE_ARITH
+        // default-on:
+        //   tiny bc/s: 23.0M vs 25.0M (-8%)
+        //   1M getter:  110ms vs 100ms (+10%)
+        //   fib(28):     24ms vs  21ms (+14%)
+        // The "33% bench win" was a single Array-fill bench that's
+        // since been dominated by other optimizations.  Default-OFF
+        // is now the right call for *both* correctness AND perf.
         // `PHARO_JIT_SIMSTACK=1` enables for bisection / targeted
         // benches where the IntegerTest accumulation doesn't apply.
         // `PHARO_JIT_NO_SIMSTACK=1` also disables (backwards compat).
