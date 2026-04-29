@@ -4143,9 +4143,13 @@ private:
                                     | (static_cast<uint64_t>(bcOffset) << 32);
             out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                           std::move(setterGuardOps), setterGuardLit);
+            // Mark inline-emitted store with bit 63 so SistaLowering
+            // takes the helper-invoke path (immutability + bounds +
+            // barrier-aware store).  Bytecode-emitted kStoreInstVar
+            // (popStoreRcv*) leaves bit 63 clear and stays SAFETY-BAILed.
             out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
                           /*operands=*/{recvId, argId},
-                          /*literal=*/v2.literal);
+                          /*literal=*/(v2.literal | (1ULL << 63)));
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
             stack_.push_back(argId);  // returns the assigned value
             g_inlinesEmitted++;
@@ -4209,9 +4213,13 @@ private:
                                     | (static_cast<uint64_t>(bcOffset) << 32);
             out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
                           std::move(setterGuardOps), setterGuardLit);
+            // Mark inline-emitted store with bit 63 so SistaLowering
+            // takes the helper-invoke path (immutability + bounds +
+            // barrier-aware store).  Bytecode-emitted kStoreInstVar
+            // (popStoreRcv*) leaves bit 63 clear and stays SAFETY-BAILed.
             out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
                           /*operands=*/{recvId, argId},
-                          /*literal=*/v2.literal);
+                          /*literal=*/(v2.literal | (1ULL << 63)));
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
             stack_.push_back(resultId);
             g_inlinesEmitted++;

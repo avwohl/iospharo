@@ -396,32 +396,26 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kStoreInstVar: {
-                // Two paths:
-                //   default       — SAFETY BAIL: refuse to lower.  The
-                //                   historic concern was that a direct
-                //                   `str val, [recv + 8 + N*8]` would
-                //                   skip immutability + write-barrier
-                //                   semantics that setReceiverInstVar
-                //                   provides.
-                //   helper path   — opt-in via PHARO_SISTA_STORE_INSTVAR=1.
-                //                   Emit a cc.invoke of jit_rt_store_inst_var
-                //                   which delegates to Interpreter::
-                //                   jitStoreInstVar.  Skips the immutable
-                //                   case (no #attemptToAssign:withIndex:
-                //                   send yet — only matters for frozen
-                //                   receivers, rare on hot setter paths)
-                //                   and uses ObjectMemory's barrier-aware
-                //                   storePointerUnchecked so the
-                //                   generational write barrier fires.
-                //
-                // Helper path is what unblocks PHARO_SISTA_INLINE_SETTERS.
+                // Selective lowering:
+                //   bit 63 of literal clear (lifter emission, popStoreRcv*) →
+                //       SAFETY BAIL.  Methods with bytecode-level ivar
+                //       stores still don't Sista-compile.  Same as before.
+                //   bit 63 of literal set (setter-inline emission) →
+                //       cc.invoke of jit_rt_store_inst_var which delegates
+                //       to Interpreter::jitStoreInstVar (immutability /
+                //       bytes / OOB guards + ObjectMemory's barrier-aware
+                //       storePointerUnchecked).
+                // The bit-63 marker keeps the historic safety bail for
+                // bytecode-driven stores while letting Sista's setter
+                // inline emit a working store.  The marker only costs the
+                // setter-inline emission an OR; the lowering reads bit 63
+                // once.  Low 32 bits stay = ivar index.
                 if (v.operands.size() != 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                static const bool storeHelper =
-                    std::getenv("PHARO_SISTA_STORE_INSTVAR") != nullptr;
-                if (!storeHelper) {
+                bool useHelper = (v.literal >> 63) & 1;
+                if (!useHelper) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -431,8 +425,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                uint64_t ivarIdx = v.literal & 0x7FFFFFFFFFFFFFFFULL;
                 Gp ivarReg = cc.new_gp64("siv_ivar");
-                cc.mov(ivarReg, Imm((uint64_t)v.literal));
+                cc.mov(ivarReg, Imm(ivarIdx));
                 Gp fnReg = cc.new_gp64("siv_helper");
                 cc.mov(fnReg, Imm((uint64_t)&jit_rt_store_inst_var));
                 asmjit::InvokeNode* invokeNode = nullptr;
@@ -448,10 +443,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 invokeNode->set_arg(1, recvIt->second);
                 invokeNode->set_arg(2, ivarReg);
                 invokeNode->set_arg(3, valIt->second);
-                // Helper return is ignored for kStoreInstVar (Type::kVoid).
-                // A future enhancement could check for 0 (refused) and
-                // deopt to a source bcOffset, but that requires the IR op
-                // to carry one — today's literal is just the ivar index.
                 Gp dummyRet = cc.new_gp64("siv_ret");
                 invokeNode->set_ret(0, dummyRet);
                 break;
