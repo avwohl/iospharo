@@ -1189,13 +1189,37 @@ become Sista-eligible).  J2J trampolines pick up the slack
 this: 14 ms / 1.1 M activations = **13 ns per migrated call** —
 the Sista activation overhead vs T1's tighter entry stencil.
 
-So the fix isn't shape recognition or admission gating.  It's
-**making Sista's per-call entry path competitive with T1**.
-Concrete next-session candidates:
+**FIXED 2026-04-29 (`e90a6ba4`).**  The 13ns/call wasn't a
+generic Sista entry overhead — it was a single redundant
+`pthread_jit_write_protect_np` syscall in the dispatch path.
+Each Sista dispatch was calling `makeExecutable` BEFORE the call
+defensively, even though the JIT zone was always executable on
+entry (the compile site at line 7359 makes-executable; the only
+hot-path `makeWritable` sites in IC patches use RAII guards that
+re-makeExecutable on every exit).  Removing the redundant pre-call
+toggle gives best-of-5 results:
+
+                          baseline   INLINE_ARITH=1
+    1M getter ms              98         98         **PARITY**
+    sum 1M ms                104        103         parity
+    fib/sieve/sort          ~same      ~same        within noise
+    dict 50K ms              159        157         within noise
+    1M blocks ms              13         15         +2ms (mild)
+
+INLINE_ARITH=1 is now correctness- and perf-clean on the bench
+panel.  Remaining mild loss on 1M blocks (+2ms) is within noise
+across a single best-of-5; could be Sista compile churn from
+extra-eligible methods.
+
+Default-on candidate now: **yes** (pending broader soak across
+SUnit batch).
+
+Next-session candidates if more wins are wanted:
 
 1. Profile the Sista entry stencil — what instructions execute
    on every Sista activation that T1 doesn't run?  Compare
-   JITRuntime entry-point assembly between the two.
+   JITRuntime entry-point assembly between the two.  May find
+   more redundant work like the makeExecutable toggle.
 2. Skip Sista's frame-state machinery on activation when no
    speculation has fired (reset on first deopt).
 3. Inline the Sista→T1-fallback path so Sista bails don't
