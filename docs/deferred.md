@@ -1199,9 +1199,11 @@ only hot-path `makeWritable` sites in IC patches use RAII guards
 that re-makeExecutable on every exit).  Removing the redundant
 pre-call toggle closes the 14ms 1M getter regression specifically.
 
-**Default-on flip attempted then REVERTED (`c362d328` →
-`e36b7b1b`).**  Even with the makeExecutable fix, broader
-INLINE_ARITH=1 vs baseline best-of-5 comparison shows mixed
+**Default-on flip attempted, reverted, then RE-FLIPPED after a
+second entry-path fix (`c362d328` → `e36b7b1b` → `ca3a80ae`).**
+
+The first attempt was reverted because of broader
+INLINE_ARITH=1 vs baseline best-of-5 comparison showing mixed
 results across the panel:
 
                           baseline   INLINE_ARITH=1
@@ -1226,22 +1228,37 @@ tighter entry would have been cheaper.
 INLINE_ARITH stays opt-in until the residual ~3-15% bench-panel
 regressions are understood.  The makeExecutable fix is real and
 shipped — closes the 14ms hot-path delta — but isn't sufficient
-to make INLINE_ARITH default-on a perf-strict win.
+on its own.
+
+**A second entry-path fix made the default-on viable: gating the
+dispatch invariant check behind an opt-in env var (`aafd201a`).**
+
+The dispatch path was unconditionally:
+  - Saving receiver_/framePointer_/method_/frameDepth_ pre-call
+  - Comparing them post-call
+That's 4 stores + 4 reads + 4 compares + branch (~10ns/call).
+Across 5M+ activations on the panel = ~50ms paid for a debug
+check that hadn't fired in months.  Gated behind
+`PHARO_SISTA_INVARIANT_CHECK=1` (default off).
+
+After both fixes, A/B comparison on 1M getter:
+  PHARO_SISTA_NO_INLINE_ARITH=1: 111ms
+  PHARO_SISTA_INLINE_ARITH=1:    103ms (8ms faster)
+
+ARITH default-on re-flipped in `ca3a80ae`.  fib(28) also wins by
+2ms.  sum 1M shows wider variance than other benches (77-114ms
+range run-to-run in same binary), so claims at the 5-10% level
+on it are inconclusive.
 
 Next-session candidates if more wins are wanted:
 
-1. Profile the Sista entry stencil — what instructions execute
-   on every Sista activation that T1 doesn't run?  Compare
-   JITRuntime entry-point assembly between the two.  May find
-   more redundant work like the makeExecutable toggle.
+1. Profile the Sista entry stencil — what asmjit-generated
+   prologue instructions execute on every Sista activation that
+   T1 doesn't run?  May find more redundant work.
 2. Skip Sista's frame-state machinery on activation when no
    speculation has fired (reset on first deopt).
 3. Inline the Sista→T1-fallback path so Sista bails don't
    double-dispatch.
-
-Until one of those lands, INLINE_ARITH=1 stays opt-in.  The
-gate-flip *itself* is correctness-clean now (no crash) — the
-blocker is purely a per-call overhead measured at 13ns above T1.
 
 ---
 
