@@ -899,6 +899,36 @@ stack between helper-sends.  Suspects (in order of likelihood):
 exit of every JIT mechanism (tryJITActivation, popFrameForJIT,
 T1 stencil exit, Sista exit) to find the leak source.
 
+**2026-04-29 trace:** logged fd at every helper enter/exit +
+peak/end fd within each call.  Findings:
+
+- All inner activations inside helper have `canJITActivate=0`
+  (methods aren't compiled when first hit during startup).  So
+  the leak is NOT in JIT runtime — it's in interp.
+- Each individual helper call's fd is balanced: start == end.
+- Between calls, fd grows ~0.5/call.
+- The hot path is `shallowCopy` (steps=0, primitive completes
+  synchronously, fd unchanged inside the call).  Yet across many
+  shallowCopy calls, fd creeps up at +0.5/call.
+- Periodic NLR-like drops (e.g. fd 446 → 15 between two trace
+  prints) suggest exception unwinding of deep call chains.
+
+This isolates the leak to one of:
+- The JIT-compiled OUTER method (M_a) calling shallowCopy in a
+  loop is being repeatedly RE-ENTERED.  Each re-entry pushes
+  M_a's frame.
+- Some interp activation pushed during shallowCopy's caller's
+  bytecode dispatch isn't being popped (block invocation primitive
+  mismatch?  ensure: handler?).
+- The deopt path on a depth-cap bail (now rare with my Sista-skip
+  fix but still possible) doesn't fully unwind something.
+
+The primitive overflow check at fd=4096 fires during STARTUP — a
+critical process — so the failure surfaces as a process kill
+rather than a recoverable stack overflow.  Without HELPER_SENDS,
+the same code paths balance (fd plateaus); with HELPER_SENDS,
+something accumulates +0.5/call.
+
 Real fix needs either:
 - IC-guided emission (only emit kSendCallHelper for sites where
   IC says receiver class → primitive method, never for normal
