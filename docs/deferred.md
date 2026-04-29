@@ -1260,6 +1260,36 @@ Next-session candidates if more wins are wanted:
 3. Inline the Sista→T1-fallback path so Sista bails don't
    double-dispatch.
 
+**2026-04-29 follow-up: gate-cache encoding (`fd266981`).** Encoded
+the runtime blacklist into the gate cache value (0=admit,
+1=reject, 2=blacklist) so the dispatch hot path can skip the
+`sistaBailCounter_` hashmap find on every admitted dispatch.
+ExitSend's threshold check now promotes the gate state and
+erases the counter entry.  Best-of-3 1M getter 98ms vs prior
+103ms (~5% improvement, possibly within noise; splice panel
+unchanged at 4/7 ms).  Also tried (and reverted): gating the
+"always-on" Sista ring-buffer record behind PHARO_SISTA_RING=1.
+8 stores per dispatch but no measurable bench delta — keep
+always-on for DNU diagnostic context.
+
+**Structural finding — Sista doesn't compile blocks.**
+`activateBlock` (line ~8291) bypasses the Sista dispatch path
+that lives only in `activateMethod` (line ~7270).  See
+`memory/project_sista_skips_blocks.md`.  Hot block-call path
+through T1's BLOCK_VALUE_BIT stencil is already J2J-direct
+into the block's T1 code, so the BLOCK BODY is fast — but Phase
+4 callee inlining at sends inside the block never fires
+(no Sista IR for the caller).  The 1M getter+yourself bench
+sits at ~98 ms vs Cog ~3 ms because of this: `size` is
+Sista-compiled, but the bench block isn't, so `size`'s body
+can't be inlined at the call site.  Next-level levers for that
+gap are either:
+  4. Add Sista dispatch in activateBlock (mirror activateMethod;
+     preserve closure_, homeFrameDepth, NLR semantics).
+  5. Port Phase 4-style monomorphic inlining to T1's per-method
+     compile, widening the existing inline-getter / setter /
+     returnsSelf IC fast paths to the arith-on-ivar shapes.
+
 ---
 
 ## C. Project mission — iOS
