@@ -1327,6 +1327,46 @@ the only way to add new shapes without taxing all sends.
 detectTrivialMethod recognition + IC patch encoding can be
 re-introduced together with the new stencil.
 
+**2026-04-29 second attempt — proper architecture wired, perf
+validation inconclusive.**  Implemented the full pattern:
+  - `stencil_sendInlineReturnsLiteral` added (144 bytes, 5
+    relocs) reading class from `icData[0]` and literal Oop
+    bits from `icData[2] & 0x0000FFFFFFFFFFFFULL`, modeled on
+    `stencil_sendInlineMonoJ2J`.
+  - `detectTrivialMethod` recognizes 1-byte ReturnTrue/False/Nil
+    and 2-byte push<const>+returnTop (with numLiterals bounds).
+  - IC patcher sets bit 58 + bits 47:0 = literal when `(literalBits
+    >> 48) == 0` (fits in 48 bits).
+  - `JITCompiler::applyICSpecialization` swaps `stencil_sendJ2J`
+    → `stencil_sendInlineReturnsLiteral` on bit 58 (gated behind
+    `PHARO_RETLIT_SPEC=1` for now).
+  - `numSendSites` count + `operand2Ptr = icBase` loop both
+    include the new stencil.
+
+Everything compiles, regenerates, and runs without crashes.
+But A/B benching was unreliable: the laptop entered a sustained
+thermal-throttle state mid-investigation (baseline benches went
+fib=20→37 ms, getter=99→170 ms with no code changes), so the
+"regression with the change" may have been entirely
+environmental.  Reverted the implementation to keep `main`
+clean.  The full design is in:
+  - `src/vm/Interpreter.cpp:detectTrivialMethod` — recognizer.
+  - `src/vm/jit/stencils/stencils.cpp:stencil_sendInlineReturnsLiteral`.
+  - `src/vm/jit/JITCompiler.cpp:applyICSpecialization` — bit 58 branch.
+A future session can re-apply on a thermally-fresh machine and
+measure cleanly.
+
+**Important constraint discovered:** when bit 58 is set in IC,
+the IC patcher's J2J branch (`(extra & TRIVIAL_BITS) == 0 ...`)
+is skipped — bit 60 (J2J entry) does NOT get OR'd in.  So
+without the corresponding stencil specialization to bit 58,
+those methods lose their J2J fast-path and bail through
+`ExitSendCached` on every call.  This means: setting bit 58
+without `PHARO_RETLIT_SPEC=1` IS a regression (the IC patcher
+strands the method between fast paths).  The opt-in flag must
+gate BOTH the IC bit setting and the stencil specialization
+together — or always-on after validation.
+
 ---
 
 ## C. Project mission — iOS
