@@ -21,18 +21,28 @@ Phase                                       Status            Where
 2  Method-level IR + round-trip             DONE              SistaIR.hpp/.cpp, SistaBuilder.cpp (2078 LOC)
 3  Deopt infrastructure                     STEP 1 done       Framepoint struct + capture sites
                                                               src/vm/jit/sista/SistaIR.hpp:221+
-4  Monomorphic inlining                     PATTERNS DONE     gated PHARO_SISTA_INLINE_CONST=1
-                                                              + PHARO_SISTA_INLINE_SETTERS=1
-                                                              for setter shapes.  Coverage:
+4  Monomorphic inlining                     DONE — DEFAULT ON CONST + SETTERS default-on (eb205bce
+                                                              + e16908a6 2026-04-29).  Coverage:
                                                               const-return + getter + 4/5-value
                                                               setter + self-send chain + ivar-
                                                               self-send.  Setter lowering uses
                                                               bit-63-marked kStoreInstVar →
                                                               jit_rt_store_inst_var helper;
                                                               bytecode-emitted stores still
-                                                              SAFETY-BAIL (status quo).  Default-
-                                                              on still gated by soak (A3).
-5  Polymorphic inlining + IC specialization NOT STARTED
+                                                              SAFETY-BAIL (status quo).  kGuardClass
+                                                              hot path 6 instr (90b0356e).
+                                                              Escape: PHARO_SISTA_NO_INLINE_CONST,
+                                                              PHARO_SISTA_NO_INLINE_SETTERS.
+5  Polymorphic inlining + IC specialization STEPS 1+2 done   Step 1 (e9a28ef1): IC poly histogram
+                                                              counter via [SISTA-POLY] dump.
+                                                              Step 2 (f4fcde99): opt-in dominant-
+                                                              class hint emission for poly sites
+                                                              (PHARO_SISTA_INLINE_POLY=1).  No
+                                                              chain yet — alt-class deopts to
+                                                              interp.  Step 3 = real chain emission
+                                                              via kPrimClassEq + multi-block phi
+                                                              merge; needs a poly-heavy bench
+                                                              workload first to validate.
 6  Block inlining                           NOT STARTED       biggest perf lever for sum/sieve
 7  Method-redef invalidation                NOT STARTED       blocks safe shipping of 4-6
 8  IR optimization passes                   NOT STARTED       constant folding, DCE, peephole
