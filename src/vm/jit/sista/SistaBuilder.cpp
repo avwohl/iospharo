@@ -4096,6 +4096,17 @@ private:
                 return false;
             }
         } else if (calleeIR.values.size() == 4) {
+            // Setter patterns emit kStoreInstVar, which SistaLowering
+            // currently SAFETY-BAILs on (no immutability check + no
+            // write-barrier callout).  A method that triggers a setter
+            // inline would therefore fail to lower entirely.  Gate
+            // setter inlining behind PHARO_SISTA_INLINE_SETTERS=1 so
+            // the patterns stay matched but inert by default; flip when
+            // SistaLowering grows a kStoreInstVar emit path that calls
+            // jit_rt_store_inst_var (TODO).
+            static const bool inlineSetters =
+                std::getenv("PHARO_SISTA_INLINE_SETTERS") != nullptr;
+            if (!inlineSetters) return false;
             // 4-value return-value setter pattern.  Body `foo: x` with
             //   ^ foo := x
             // compiles to bytecodes (using no-pop ExtStoreRecv)
@@ -4141,6 +4152,11 @@ private:
             g_totalHintsConsumed++;
             return true;
         } else if (calleeIR.values.size() == 5) {
+            // See PHARO_SISTA_INLINE_SETTERS gate above (4-value branch).
+            // Same kStoreInstVar / lowering issue applies here.
+            static const bool inlineSetters5 =
+                std::getenv("PHARO_SISTA_INLINE_SETTERS") != nullptr;
+            if (!inlineSetters5) return false;
             // Two 5-value shapes share the prefix
             //   v0 = kLoadTemp(N0)
             //   v1 = kLoadReceiver
