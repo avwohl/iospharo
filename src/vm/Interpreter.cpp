@@ -7449,8 +7449,16 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // the interpreter at the source bytecode on non-SmallInt
                 // operands.  With type checks present, the arith ops
                 // are SAFE under any operand type — admit them.
+                // Default ON 2026-04-29 (re-flip).  Two prior fixes
+                // closed the 1M-getter regression that blocked this:
+                //   e90a6ba4 — dropped redundant pre-dispatch
+                //              makeExecutable syscall (~13ns/call)
+                //   aafd201a — gated dispatch invariant check (~10ns/call)
+                // Best-of-3 1M getter under INLINE_ARITH=1 (103) is now
+                // BETTER than the opt-out (111) on the bench panel.
+                // Opt-out: PHARO_SISTA_NO_INLINE_ARITH=1.
                 static const bool inlineArith =
-                    std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
+                    std::getenv("PHARO_SISTA_NO_INLINE_ARITH") == nullptr;
                 if (inlineArith || g_debug.sistaUnsafeArith) {
                     // + - * (inlined arith) and < <= > >= = ~=
                     // (inlined SmallInt comparison)

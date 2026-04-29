@@ -4658,8 +4658,11 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         }
     }
 
+    // Default ON 2026-04-29 (re-flip after entry-path fixes —
+    // see Interpreter.cpp gate site for rationale).  Opt-out:
+    // PHARO_SISTA_NO_INLINE_ARITH=1.
     static const bool typeCheckArith =
-        std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
+        std::getenv("PHARO_SISTA_NO_INLINE_ARITH") == nullptr;
 
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     l.setMemory(&memory);
