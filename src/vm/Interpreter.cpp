@@ -3444,7 +3444,17 @@ bool Interpreter::step() {
         deferredPeriodicCheck_ = true;
     }
 
-    if ((periodicCheckDue || deferredPeriodicCheck_) && !inExtension_) {
+    // 2026-04-29 (B7 fix): when a Sista helper-send is driving step()
+    // to completion, defer periodic checks entirely.  Timer signals,
+    // pending semaphores, and preemption can all switch the active
+    // process mid-helper, breaking the helper's frameDepth bookkeeping.
+    // Defer rather than skip so the work runs as soon as the helper
+    // returns.
+    if (periodicCheckDue && inSyncSend_) {
+        deferredPeriodicCheck_ = true;
+    }
+    if ((periodicCheckDue || deferredPeriodicCheck_)
+        && !inExtension_ && !inSyncSend_) {
         deferredPeriodicCheck_ = false;
         g_watchdogSubphase = 11;
         checkTimerSemaphore();
@@ -3538,15 +3548,17 @@ bool Interpreter::step() {
 
     // Process any pending external semaphore signals (from heartbeat/events).
     // Skip if in extension byte sequence to protect extA_/extB_.
-    if (!inExtension_ && hasPendingSignals()) {
+    // Skip during inSyncSend_ — defer until helper-send returns.
+    if (!inExtension_ && !inSyncSend_ && hasPendingSignals()) {
         processPendingSignals();
     }
 
     // Periodic preemption check - every 10000 bytecodes, check if we should
     // yield to a higher-priority or same-priority runnable process.
     // Skip if in extension byte sequence to protect extA_/extB_.
+    // Skip during inSyncSend_ — defer until helper-send returns.
     bytecodeCount_++;
-    if (bytecodeCount_ % 10000 == 0 && !inExtension_) {
+    if (bytecodeCount_ % 10000 == 0 && !inExtension_ && !inSyncSend_) {
         checkForPreemption();
     }
 
@@ -7253,7 +7265,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
     // its two exit reasons: ExitReturn (method returned a value) and
     // ExitSend (Sista bailed mid-method — interpreter resumes at the
     // bail bytecode in the same frame).
-    if (g_debug.sistaCompile || g_debug.sistaDispatch) {
+    if ((g_debug.sistaCompile || g_debug.sistaDispatch) && !inSyncSend_) {
+        // 2026-04-29 (B7 fix): skip Sista compile + dispatch while a
+        // helper-send is driving step() to completion.  Otherwise
+        // each inner activation may JIT-emit kSendCallHelper, which
+        // immediately bails (depth-1 cap), and the resulting deopt
+        // chains expand the C-stack and frame-depth without ever
+        // letting the outer helper return.
+        //
         // File-scope pointer so recoverJITAfterGC can invalidate the
         // cache — raw oop keys become stale after Spur compaction.
         static sista::Runtime* sista = [this]() {
@@ -11222,6 +11241,15 @@ bool Interpreter::tryReschedule() {
 void Interpreter::checkForPreemption() {
     // Periodic preemption check - allow other runnable processes to run
     // This simulates the timer-based preemption of CogVM
+    //
+    // 2026-04-29 (B7 fix): suppress process switches while a Sista
+    // helper-send is driving step() to completion.  Switching the
+    // active process changes frameDepth_ underneath the helper's
+    // `while (frameDepth_ > startFrameDepth)` loop, which then exits
+    // (or never exits) with the wrong receiver / method / stack.
+    // Higher-priority processes stay queued and pick up after the
+    // helper returns.
+    if (inSyncSend_) return;
     if constexpr (ENABLE_DEBUG_LOGGING) {
     }
 

@@ -1120,6 +1120,15 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
                                              uint64_t selBits,
                                              uint64_t nArgs) {
     if (!state || !state->interp) return 0;
+    // Diagnostic: PHARO_SISTA_HELPER_FORCE_BAIL=1 forces every
+    // helper-send to return 0, exercising the deopt path on every
+    // call.  Confirmed (2026-04-29) that the deopt path is correct
+    // — under FORCE_BAIL=1 the eval smoke + larger eval succeed
+    // cleanly.  The remaining B7 bug is in the helper SUCCESS path
+    // (slow per-call frame leak, ~0.5 fd accumulation per call).
+    static const bool forceBail =
+        std::getenv("PHARO_SISTA_HELPER_FORCE_BAIL") != nullptr;
+    if (forceBail) return 0;
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
