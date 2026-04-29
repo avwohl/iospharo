@@ -970,66 +970,79 @@ changes; image-side issues to propose upstream.
    benefit since Pharo inlines `to:do:` / `whileTrue:` at compile
    time.
 
-3. **Megamorphic-dispatch perf regression** (2026-04-23).
-   Heap-walking tests (ProtoObjectTest, BehaviorTest, WeakKey*Test,
-   SHA256Test, Trait*Test, ClassQuery/Hierarchy/Annotation — 19
-   classes total) time out under default JIT but pass under
-   NO_JIT.  Same-image A/B:
+3. **Megamorphic-dispatch crash + perf regression** (2026-04-23).
+
+   **Crash side: RESOLVED 2026-04-28** in commit `cbbf7254`.  Three
+   independent IC-corruption bugs:
+
+     (a) `bit-63 / bit-60 OR-merge collision` in
+         `patchJITICAfterSend` — trivial-getter classification
+         (`extra = (1ULL<<63) | slotIdx`) was unconditionally OR'd
+         with the J2J merge `(1ULL<<60) | jitAddr`, leaving both
+         bits set and low-16 = `slotIdx | (jitAddr & 0xFFFF)`
+         (typically 43416).  Inline-getter fast path then read
+         way past the receiver and returned garbage that became
+         the next send's receiver → DNU.
+         Fix: `TRIVIAL_BITS` guard on the J2J merge + skip
+         bit-63/62/61 classification when receiver tag != 0.
+
+     (b) Cross-site IC poisoning when slot 18 is 0 post-GC.  The
+         `if (icSelectorBits != 0)` selector cross-check was
+         bypassed once `recoverAfterGC` zeroed slot 18, so a
+         stale `pendingICPatch_` from a different site got
+         written into the empty slot.
+         Fix: when slot 18 is 0, recover the site's expected
+         selector from the side-channel `selBitsArray` (set at
+         compile time, never zeroed) and compare against the
+         send's selector.
+
+     (c) Same gap in `upgradeICToJ2J`'s empty-slot fill path.
+         Mirrored fix.
+
+   Bench panel (post-fix) is 1.5–13× faster than harness Cog on
+   all 6 tests.  See `project_next_handler_context_crash.md` for
+   diagnostic flags retained as kill-switches and the JIT
+   disassembly recipe (`_HOLE_RT_J2J_TRACE` event 200) used to
+   root-cause it.
+
+   **Perf side: PARTIALLY ADDRESSED.**  The `selBitsArray`
+   side-channel (option (b) below) is now in use as part of
+   cbbf7254's fix.  This eliminates the noSelBits slow path
+   the original perf regression was driven by.  Re-measurement
+   2026-04-28: `Object new pointersTo` completes under default
+   `PHARO_JIT_DEFER=4s` (eval prints `0` correctly).  Under
+   `PHARO_JIT_DEFER=0` (JIT-from-start) the heap walk still
+   hangs at ~7.96M steps with 300 methods compiled — JIT-during-
+   heap-walk scheduling issue, separate from the IC corruption.
+   Default-defer path is the production path; the JIT-from-start
+   path is a benchmarking-only mode.
+
+   Pre-fix history kept for reference:
+   Same-image A/B:
      PHARO_NO_JIT=1           15/15 pass  (ProtoObjectTest)
      PHARO_JIT_DEFER=9999     15/15 pass  (JIT enabled, no compiles)
      default JIT              12/17 done at timeout
-   So compiled methods are the slowdown.  Profile shows
-   `#pointsTo:` is called 297K times; IC hit rate is 78% (vs 97%
-   on non-heap-walk workloads).  256K of 1.5M sends take the slow
-   noSelBits path because `recoverAfterGC` memsets each IC site
-   (zeroing slot 18 / selectorBits).  Attempted fix 88dd186
-   (zero only slots 0-17, keep slot 18) got IC hit 97.5% /
-   noSelBits 0 but introduced a flaky SIGSEGV — reverted bfa20e7.
-   A narrower retry (preserve only for MethodState::Compiled; also
-   skip invalidated methods in forEachRoot) was WORSE (2/5 SIGSEGV)
-   and reverted without commit.
+   Profile showed `#pointsTo:` called 297K times; IC hit rate 78%
+   (vs 97% on non-heap-walk workloads).  256K of 1.5M sends took
+   the slow noSelBits path because `recoverAfterGC` memsets each
+   IC site (zeroing slot 18 / selectorBits).  Attempted fix
+   88dd186 (zero only slots 0-17, keep slot 18) got IC hit 97.5%
+   / noSelBits 0 but introduced a flaky SIGSEGV — reverted
+   bfa20e7.
 
-   Diagnostic (PHARO_JIT_STALE_LOG=1, added 407966f) validates every
-   slot-18 oop at GC-recovery for isValidPointer + sane classIndex.
-   Initial run (ArrayTest+ClassQueryTest, 2 GCs, 370+518 sites):
-   **zero stale oops**.  So staleness is NOT the crash source.  The
-   earlier "edge cases leaving stale selector oops" comment in
-   JITRuntime.cpp is either wrong or describes a subtler condition.
-
-   Crash-signature capture (PHARO_JIT_KEEP_ICS=1, gated in c48c1d3):
-     Always the SAME method oop=0x3003b5660 (codeSize=7920, numIC=3)
+   Crash-signature capture (PHARO_JIT_KEEP_ICS=1, c48c1d3):
+     Always SAME method oop=0x3003b5660 (codeSize=7920, numIC=3)
      Always offset 2444, instruction `ldr x10, [x24]`
-     x24 holds raw bytes from a Smalltalk Symbol/String (different
-     bytes per run: `0xff080880ff070880`, `0x73696874206e6920` =
-     ASCII " in this", etc).
-   With wider crash disasm (cd69377), the ldr loading x24 is at
-   PC-32: `ldr x24, [x8, x27, lsl #3]`.  That's an index-computed
-   load (x8 base + x27*8 offset).  Combined with the symbol-bytes
-   value pattern, the conclusion is:
+     x24 = raw bytes from a Symbol/String (e.g. " in this").
+   The JIT IC probe code was reading slot 18 (selector Oop) as
+   if it were one of the 6 entry slots, then dereferencing the
+   Symbol's char data — that's the crash that the side-channel
+   fix obviates.  With memset-all, slot 18 stayed 0 post-GC and
+   the probe's cbz skipped the crashing ldr; with KEEP_ICS=1,
+   slot 18 retained its Oop and fell through to ldr.
 
-   **The JIT IC probe code reads slot 18 (selector Oop) as if it
-   were one of the 6 entry slots' cached method pointers, then
-   dereferences the Symbol's character data and crashes on the
-   derefed bytes.**
-
-   With default code (memset-all), slot 18 is 0 post-GC and the
-   probe's cbz null-check skips the crashing ldr.  With
-   PHARO_JIT_KEEP_ICS=1, slot 18 retains its selector Oop and the
-   cbz falls through to ldr.
-
-   So safe preservation needs EITHER:
-     (a) Stencil-code changes so the IC probe bounds-checks its
-         entry index and never reads slot 18 as an entry.
-     (b) A separate storage location for selectorBits (out-of-band
-         from the IC site), which the probe code never touches.
-
-   Option (b) is mechanically simpler — add a parallel array
-   `selBitsArray[numICEntries]` to JITMethod (or in its data
-   allocation), populate at compile time alongside icSlots[18],
-   update via forEachRoot, and consult it in the megacache-probe
-   fallback path.  Then the IC memset can clear slot 18 safely
-   (no-op cost) while the array preserves the live selector bits.
-   Memory: `project_jit_timeouts_are_slowness.md`.
+   Memory: `project_next_handler_context_crash.md`,
+   `project_jit_timeouts_are_slowness.md`.
 
 Once §1.3 and §1.2e are sorted, JIT reaches diminishing returns
 and C is where project value lands.
