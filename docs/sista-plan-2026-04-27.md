@@ -115,6 +115,42 @@ Exit criterion: 30%+ improvement on dict 50K (which exercises MD
 lookup heavily and is the closest current bench to the inlining
 sweet spot).
 
+**2026-04-29 update — Phase 4 default-on result on the bigger
+bench suite (run_benchmarks.sh):**
+
+```
+                  Cog      Ours     Ratio
+1M getter         3        98       32.7×    ← biggest gap
+sum 1M            5        102      20.4×
+1M blocks         ~1       16       16×
+sort 100K         18       221      12.3×
+5000 factorial    2        21       10.5×
+dict 50K          18       157      8.7×
+fib(28)           3        21       7×
+```
+
+Phase 4 default-on is bench-neutral on this suite.  Two findings
+explain why:
+
+1. **Phase 4 catches only ~7% of monomorphic hints**
+   (`hints-provided=236, inlines-emitted=16`).  The matcher only
+   handles 2-5 value methods; real "simple" methods like
+   `OrderedCollection >> size` (`^ lastIndex - firstIndex + 1`)
+   are 6-8 IR values.  Pattern broadening (Track A2 redux —
+   "small pure-arith inline") is medium-leverage work.
+
+2. **Block invocation dominates the biggest gaps.**  1M getter is
+   `1000000 timesRepeat: [obj size. obj yourself]`; per-iter
+   ~150 cycles vs Cog's ~10.  Phase 4 inlining `obj size` /
+   `obj yourself` in `timesRepeat:` doesn't help because the
+   block body itself goes through `stencil_sendJ2J`.
+
+3. **Polymorphism is rare** — clean histogram on this suite shows
+   mono=6.4M, bi=51K, tri=142.  Phase 5 chain has bounded upside
+   (~1% of warm sites).
+
+Re-prioritize: **Phase 6 (Track B) > Phase 4 broadening > Phase 5 chain.**
+
 ### Track B: block inlining  (4-6 weeks)
 
 Goal: `do:` / `to:do:` / `whileTrue:` runs as a tight loop, not as

@@ -907,12 +907,24 @@ PHARO_SISTA_DO_SPLICE_NO_HINT=1 → 0 OK verdicts among 200 sampled
 PushFullBlock+do: pairs from real Pharo activity.  No crash, no
 divergence, default unchanged.
 
+**2026-04-29 update — splice-trace on the bigger bench suite:**
+the suite's `sum(1M)` (`(1 to: 1000000) asArray. a do: [:each | sum := sum + each]`)
+hits both rejection patterns: many `lift-terminator before do:`
+(setup sends like `Time millisecondClockValue` terminate the lift
+before the do: site) and many closure-accum candidates rejected
+because `blockLen != 9-10`.  The bench panel's `sumArr` works
+because its calling method places `arr; vec; PushFullBlock; do:`
+adjacent at method start, with no setup sends in between.
+
 **Real win path** is one of:
 - Fix B-1 helper-sends (B7) so the lift continues past sends and
   reaches the PushFullBlock (then the lift-terminator filter
   loosens for sends covered by helper-sends).
 - Extend kCountedLoopDo lowering to handle `kPrimAddInt` and
   `kStoreTemp` to closure slot — covers the sum(1M) shape directly.
+- Loosen the closure-accum recognizer's `blockLen` check (today
+  hardcoded 9-10) — sample real candidates from the suite and
+  enumerate the legitimate variants.
 
 ---
 
