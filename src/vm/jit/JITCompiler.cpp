@@ -1000,6 +1000,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
         case StencilID::stencil_sendInlineGetter:
         case StencilID::stencil_sendInlineSetter:
         case StencilID::stencil_sendInlineReturnsSelf:
+        case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
         case StencilID::stencil_pushBlock:
@@ -1273,6 +1274,18 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // ReturnsSelf: just pop args
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
+                specialized++;
+            } else if (extra0 & (1ULL << 58)) {
+                // ReturnsLiteral (Phase 4-style port).  IC patcher
+                // only sets bit 58 when PHARO_RETLIT=1 — the IC
+                // entry is rare under default settings, so this
+                // branch is dead-by-default.  When it does fire,
+                // the specialized stencil reads `icData[2]` for the
+                // literal at runtime (we can't pack 32 bits of class
+                // + 48 bits of literal into a single 64-bit operand).
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsLiteral);
+                // operand2Ptr is set to the IC base in the loop at
+                // line ~2129; it gets patched alongside sendJ2J.
                 specialized++;
             } else if (!g_debug.noBlock1Spec &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
@@ -1884,7 +1897,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     for (auto& bc : decoded) {
         auto sid = static_cast<StencilID>(bc.stencilIdx);
         if (sid == StencilID::stencil_sendJ2J ||
-            sid == StencilID::stencil_sendInlineMonoJ2J)
+            sid == StencilID::stencil_sendInlineMonoJ2J ||
+            sid == StencilID::stencil_sendInlineReturnsLiteral)
             numSendSites++;
     }
 
@@ -2116,7 +2130,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         for (auto& bc : decoded) {
             auto sid = static_cast<StencilID>(bc.stencilIdx);
             if (sid == StencilID::stencil_sendJ2J ||
-                sid == StencilID::stencil_sendInlineMonoJ2J) {
+                sid == StencilID::stencil_sendInlineMonoJ2J ||
+                sid == StencilID::stencil_sendInlineReturnsLiteral) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
                 siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));
@@ -2287,6 +2302,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Inline monomorphic sends — getter reads heap, setter writes heap
         case StencilID::stencil_sendInlineGetter:
         case StencilID::stencil_sendInlineReturnsSelf:
+        case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
             jitMethod->hasSends = true;  // can deopt on class mismatch

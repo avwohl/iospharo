@@ -1727,6 +1727,56 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// Inline returnsLiteral (Phase 4-style port to T1, 2026-04-29).
+// Selected at JIT recompile time when the IC has filled in
+// monomorphic data for a method whose body is `^ <constant>`.
+// OPT-IN — see PHARO_RETLIT in JITCompiler.cpp:applyICSpecialization.
+//
+// IC `extra` bit 58 marks the shape; bits 47:0 hold the cached
+// Oop bits (resolved at IC patch time by detectTrivialMethod +
+// patchJITICAfterSend).  Class match → pop receiver+args, push
+// the cached Oop.  Class miss → bail through ExitSend (the IC
+// will re-dispatch).
+//
+// OPERAND  = (bcLength << 24) | (nArgs << 16) | bcOffset
+// OPERAND2 = pointer to IC data (same layout as sendInlineMonoJ2J).
+// Reads class from icData[0] and literal from icData[2] & mask.
+extern "C" void stencil_sendInlineReturnsLiteral(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t tag = receiver.bits & 0x7;
+    uint64_t lookupKey;
+    if (__builtin_expect(tag == 0 && receiver.bits != 0, 1)) {
+        lookupKey = reinterpret_cast<ObjectHeader*>(receiver.bits)->classIndex();
+    } else if (tag != 0) {
+        lookupKey = tag | 0x80000000ULL;
+    } else {
+        lookupKey = 0;
+    }
+    if (__builtin_expect(lookupKey == icData[0], 1)) {
+        // Class match — push the cached literal Oop.  The IC
+        // patcher only sets bit 58 when (literalBits >> 48) == 0,
+        // so the 48-bit mask below loses no information.
+        Oop lit; lit.bits = icData[2] & 0x0000FFFFFFFFFFFFULL;
+        s->sp[-(nArgs + 1)] = lit;
+        s->sp -= nArgs;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    // Class mismatch — bail to general dispatch via the polymorphic
+    // IC.  The IC will resolve and patch a new entry.
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // Inline monomorphic J2J: specialized fast path for monomorphic sends
 // to JIT-compiled methods.  Skips the 5-way IC alternative-slot probe
 // and the trivial-method/inline-prim/block-value side branches.  Reads

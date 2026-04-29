@@ -6904,9 +6904,15 @@ MethodCacheEntry* Interpreter::probeCache(Oop selector, Oop classOop) {
 // Getter: pushRecvVar N + returnTop → returns inst var index
 // Setter: popStoreRecvVar N + returnReceiver → returns inst var index
 struct TrivialMethodInfo {
-    int16_t getterIndex = -1;  // >=0: getter
-    int16_t setterIndex = -1;  // >=0: setter
-    bool returnsSelf = false;  // just returnReceiver (yourself)
+    int16_t getterIndex = -1;     // >=0: getter
+    int16_t setterIndex = -1;     // >=0: setter
+    bool returnsSelf = false;     // just returnReceiver (yourself)
+    // returnsLiteral: method body is "push <constant> + return", or
+    // standalone "return <constant>".  Holds the resolved Oop bits
+    // for stencil_sendInlineReturnsLiteral.  OPT-IN — see
+    // PHARO_RETLIT in patchJITICAfterSend; default behavior unchanged.
+    bool     returnsLiteral = false;
+    uint64_t returnsLiteralBits = 0;
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -6959,6 +6965,66 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
     if (bc0 == 0x58) {
         info.returnsSelf = true;
         return info;
+    }
+
+    // Constant-return shapes — Phase 4-style port to T1 (2026-04-29).
+    // Methods that just return a fixed Oop are common (`^ false`,
+    // `^ #foo`, predicate stubs).  Pre-resolve the Oop here so the
+    // specialized stencil can push it without re-reading the
+    // callee's literal table at runtime.  See deferred.md B9 for
+    // status — wired but opt-in via PHARO_RETLIT until perf
+    // validation completes on a thermally-stable machine.
+    //
+    // Two distinct shape families:
+    //   1-byte:  ReturnTrue / ReturnFalse / ReturnNil (terminators).
+    //   2-byte:  Push<const> + ReturnTop.
+    // Push-constant bytecodes (0x4D-0x52, 0x20-0x3F) standalone are
+    // NOT terminators — the method continues — so they must only be
+    // recognized when followed by ReturnTop (0x5C).
+    auto resolvePushConstantOrLiteral =
+        [&](uint8_t op, uint64_t& outBits) -> bool {
+        if (op == 0x4D) { outBits = memory.trueObject().rawBits();  return true; }
+        if (op == 0x4E) { outBits = memory.falseObject().rawBits(); return true; }
+        if (op == 0x4F) { outBits = memory.nil().rawBits();         return true; }
+        if (op == 0x50) { outBits = Oop::fromSmallInteger(0).rawBits();  return true; }
+        if (op == 0x51) { outBits = Oop::fromSmallInteger(1).rawBits();  return true; }
+        if (op == 0x52) { outBits = Oop::fromSmallInteger(-1).rawBits(); return true; }
+        // pushLitConst N (0x20-0x3F): literal index N at method
+        // slot (1 + N).  Bounds-check against numLiterals — slotCount()
+        // would index past the literal section into the byte area.
+        if (op >= 0x20 && op <= 0x3F) {
+            int litIdx = op - 0x20;
+            if (litIdx >= numLiterals) return false;
+            outBits = memory.fetchPointer(1 + litIdx, method).rawBits();
+            return true;
+        }
+        return false;
+    };
+
+    // 1-byte standalone return-constant terminators.
+    if (bc0 == 0x59) {
+        info.returnsLiteral = true;
+        info.returnsLiteralBits = memory.trueObject().rawBits();
+        return info;
+    }
+    if (bc0 == 0x5A) {
+        info.returnsLiteral = true;
+        info.returnsLiteralBits = memory.falseObject().rawBits();
+        return info;
+    }
+    if (bc0 == 0x5B) {
+        info.returnsLiteral = true;
+        info.returnsLiteralBits = memory.nil().rawBits();
+        return info;
+    }
+    // 2-byte: push<const> + returnTop (0x5C).
+    if (bc1 == 0x5C) {
+        uint64_t bits;
+        if (resolvePushConstantOrLiteral(bc0, bits)) {
+            info.returnsLiteral     = true;
+            info.returnsLiteralBits = bits;
+            return info;
+        }
     }
 
     return info;
@@ -14776,6 +14842,16 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     //   bit 62: setter — slot index in bits 15:0
     //   bit 61: returnsSelf
     //   bit 60: hasJITEntry — bits 47:0 = JIT code entry address
+    //   bit 59: BLOCK_VALUE_BIT (prim 207/209 fast path)
+    //   bit 58: returnsLiteral — bits 47:0 = Oop bits to push.
+    //           OPT-IN via PHARO_RETLIT.  Read by
+    //           stencil_sendInlineReturnsLiteral (also opt-in).
+    //           Constraint: setting bit 58 displaces bit 60 (J2J
+    //           uses the same low bits for entry address), so
+    //           returnsLiteral methods lose their J2J fast path.
+    //           The opt-in must only be set together with the
+    //           matching JITCompiler specialization branch — both
+    //           gate on the same env var.
     uint64_t extra = 0;
     {
         // PHARO_NO_GETTER_BIT=1: disable the inline-getter/setter/returnsSelf
@@ -14799,12 +14875,22 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
             bool skip62 = bisect && std::strcmp(bisect, "62") == 0;
             bool skip61 = bisect && std::strcmp(bisect, "61") == 0;
+            // PHARO_RETLIT=1 enables bit 58 (returnsLiteral) — gated
+            // because it displaces J2J for these methods, which is
+            // a perf regression unless the matching stencil
+            // specialization (also gated on PHARO_RETLIT) fires.
+            static const bool retlitEnabled =
+                std::getenv("PHARO_RETLIT") != nullptr;
             if (!skip63 && tmi.getterIndex >= 0)
                 extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
             else if (!skip62 && tmi.setterIndex >= 0)
                 extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
             else if (!skip61 && tmi.returnsSelf)
                 extra = (1ULL << 61);
+            else if (retlitEnabled && tmi.returnsLiteral
+                     && (tmi.returnsLiteralBits >> 48) == 0)
+                extra = (1ULL << 58)
+                      | (tmi.returnsLiteralBits & 0x0000FFFFFFFFFFFFULL);
         }
     }
 
@@ -14864,7 +14950,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // for heap-class entries.
     static bool j2jEnabled = !g_debug.noJ2J;
     constexpr uint64_t TRIVIAL_BITS =
-        (1ULL << 63) | (1ULL << 62) | (1ULL << 61);
+        (1ULL << 63) | (1ULL << 62) | (1ULL << 61) | (1ULL << 58);
     if ((extra & TRIVIAL_BITS) == 0 &&
         (extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
