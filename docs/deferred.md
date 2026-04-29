@@ -1087,38 +1087,50 @@ means the work is identical to a normal send.
 Histogram instrumentation kept (gated by INLINE_STATS) so future
 sessions can re-census after each recognizer is added.
 
-**2026-04-29 INLINE_ARITH=1 stability + bench delta (best-of-5):**
+**2026-04-29 INLINE_ARITH=1 stability + bench delta (best-of-5
+both columns — single-run noise on this panel is huge, ±35%):**
 
-                      baseline  INLINE_ARITH=1  delta
-    sum 1M ms              ~100      66          -34%   WIN
-    1M getter ms            ~96     110          +15%   LOSS
-    fib(28) ms              ~21      21          ~0
-    sieve x100 ms           ~44      44          ~0
-    sort 100K ms           ~220     224          ~0
-    dict 50K ms            ~157     163          +4%
-    factorial 5000 ms       ~23      23          ~0
-    1M blocks ms            ~14      15          ~0
-    100K alloc ms           ~5       5           ~0
+                      baseline   INLINE_ARITH=1   delta
+    tiny bc/s          25049115   24900398        ~0
+    fib(28) ms              21         21         ~0
+    sieve x100 ms           45         44         ~0
+    sort 100K ms           221        224         +1%
+    dict 50K ms            155        163         +5%
+    sum 1M ms               65         66         ~0   (initially
+                                                       looked like
+                                                       win — noise)
+    factorial 5000 ms       23         23         ~0
+    1M blocks ms            13         15         +15% mild loss
+    1M getter ms            96        110         +15% regression
+    100K alloc ms            5          5         ~0
 
 No crash.  The prior crash from `feedback_splice_flags_opt_in.md`
 was a multi-flag interaction (with IV_DO_ACCUM + DO_SPLICE), not
 INLINE_ARITH on its own.
 
-The trade-off interpretation:
-- sum 1M's inner block does `sum := sum + each` — `+` becomes
-  `kPrimAddInt` directly inside the JIT-compiled block.  Big win
-  because the bench is all about that arith op being fast.
-- 1M getter calls `obj size` (`^ lastIdx - firstIdx + 1`) inside
-  the bench loop.  Without INLINE_ARITH, `size` is gated out of
-  Sista (unsafe arith) and runs in the interpreter — fast for a
-  3-bytecode method.  With INLINE_ARITH, `size` gets Sista-
-  compiled, paying full activation + tag-check overhead per call.
-  Net loss until Phase 4 INLINES the size body into the calling
-  block.
+**Initially I read sum 1M as a 34% win** because I compared a
+single baseline run (sum=100, an unlucky run) against best-of-5
+INLINE_ARITH (sum=66).  Best-of-5 baseline is also 65 — the
+variance dominates.  Bench panel run-to-run noise on this
+benchmark is huge; one run can be 65ms, another 103ms.  Use
+best-of-N for any A/B claim, both columns.
 
-Action: keep INLINE_ARITH opt-in until the Phase 4 recognizer
-extension lands.  The combo (INLINE_ARITH on + arith-on-ivar
-recognizer) should remove the regression and keep the sum win.
+INLINE_ARITH=1's actual effect on the panel: roughly nothing on
+the work-in-loop benches (sum 1M, factorial), small regression on
+1M blocks (+15%), real regression on 1M getter (+15%).
+
+Why the getter regression: calls `obj size` (`^ lastIdx -
+firstIdx + 1`) inside the bench loop.  Without INLINE_ARITH,
+`size` is gated out of Sista (unsafe arith) and runs in the
+interpreter — fast for a 3-bytecode method.  With INLINE_ARITH,
+`size` gets Sista-compiled, paying activation + tag-check
+overhead per call.  Net loss until Phase 4 INLINES the size body
+into the calling block.
+
+Action: keep INLINE_ARITH opt-in.  Default-on is blocked by the
+1M getter regression, not the prior crash.  Adding the Phase 4
+arith-on-ivar recognizer would inline the size method body and
+remove the regression — that's the prerequisite for default-on.
 
 ---
 
