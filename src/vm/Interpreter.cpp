@@ -9915,6 +9915,14 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     Oop savedHome = homeMethod_;
     size_t startFrameDepth = frameDepth_;
 
+    // The compiled caller pushed [rcvr, arg0..arg_{n-1}] onto state->sp
+    // before invoking us.  At successful exit we want state->sp to point
+    // BELOW those operands (the result lives in the caller's `dst`
+    // register, not on state->sp).  Capture the target SP up front so
+    // we don't rely on running-stack arithmetic that drifts when
+    // primitives or intermediate ops touch stackPointer_ unexpectedly.
+    Oop* targetExitSP = state->sp - (nArgs + 1);
+
     // Sync interp stack from JIT state.  After this, sendSelector's
     // stackValue() / popN() see the right values.
     stackPointer_ = state->sp;
@@ -9972,7 +9980,11 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     // stack.
     Oop result = stackTop();
     popN(1);
-    state->sp = stackPointer_;
+    // Force state->sp to the pre-computed target rather than trusting
+    // stackPointer_ (which can drift if the activated method or any of
+    // its callees temporarily pushes/pops without restoring exact
+    // balance — e.g., materializeFrameStack rewrites stackPointer_).
+    state->sp = targetExitSP;
 
     stackPointer_ = savedSP;
     instructionPointer_ = savedIP;
