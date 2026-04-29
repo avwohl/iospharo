@@ -1342,6 +1342,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // miss overhead that slows the startup process enough for Morphic to
     // preempt it, preventing the eval expression from ever executing.
     // PHARO_JIT_DEFER=N (seconds; default: 4s headless, 0 GUI)
+    //
+    // In headless mode, DEFER < 3s deterministically hangs SessionManager
+    // startup before StartupPreferencesLoader fires (deferred.md A1).  Bench
+    // mode bypasses startup.st via executeFromContext so the clamp doesn't
+    // apply there.  Empirically, DEFER=2s still hangs (interp creeps at ~1K
+    // steps/sec post-defer); DEFER=3s lets startup finish; we pin the floor
+    // at 4s to keep a margin.  Set PHARO_BENCH (or pass --interactive in GUI
+    // mode) to opt out.
     static int64_t deferSteps = -1; // -1 = uninitialized
     if (deferSteps == -1) {
         if (g_debug.jitDefer >= 0) {
@@ -1351,6 +1359,16 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             deferSteps = 120000000;
         } else {
             deferSteps = 0;
+        }
+        const int64_t kHeadlessFloor = 120000000; // ~4s
+        if (interp_ && interp_->isHeadless() && !g_debug.bench
+            && deferSteps < kHeadlessFloor) {
+            fprintf(stderr,
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
+                    "(headless mode; sub-3s defer hangs the startup chain — "
+                    "set PHARO_BENCH to opt out).\n",
+                    (double)deferSteps / 30000000.0);
+            deferSteps = kHeadlessFloor;
         }
         if (deferSteps > 0)
             fprintf(stderr, "[JIT] Deferring compilation for ~%lld steps\n", (long long)deferSteps);
