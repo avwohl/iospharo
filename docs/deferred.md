@@ -1011,9 +1011,36 @@ adjacent at method start, with no setup sends in between.
   loosens for sends covered by helper-sends).
 - Extend kCountedLoopDo lowering to handle `kPrimAddInt` and
   `kStoreTemp` to closure slot — covers the sum(1M) shape directly.
-- Loosen the closure-accum recognizer's `blockLen` check (today
-  hardcoded 9-10) — sample real candidates from the suite and
-  enumerate the legitimate variants.
+- ~~Loosen the closure-accum recognizer's `blockLen` check~~ — see
+  data below; not a viable lever.
+
+**2026-04-29 blockLen rejection census** (PharoBenchSuite startup
+under `PHARO_SISTA_DO_SPLICE=1 PHARO_SISTA_DO_SPLICE_NO_HINT=1`,
+116 blockLen rejections, 1 acceptance):
+- Only 3/116 rejections (~2.6%) actually start with `0xFB`
+  (closure-accum's required lead byte).  All three are
+  blockLen=74 — way past the recognizer's window and not the
+  closure-accum shape regardless of length.
+- The other 113 rejections are different idioms entirely:
+  - 60× lead=0x40 (pushTemp 0): mostly `40 41 90 5e` — `[:e | e
+    selector: capturedTemp]` (1-arg send with captured temp).
+  - 26× lead=0x41 (pushTemp 1): `41 40 7a c0 59 4f 5e` shape —
+    captured-then-arg with a SpecialSend + branch.
+  - 22× lead=0x4c (pushReceiver): `4c 40 41 a0 5e` — `[:e | self
+    selector:e with: capturedTemp]`.
+  - 5× lead=0xE7 (ExtPushLitConst): literal-constant-driven
+    blocks.
+
+Conclusion: loosening `blockLen` in isolation gains ~3 candidates,
+all of them blockLen=74 and shaped wrong anyway.  The 113 other
+rejections are *separate splice opportunities* (not closure-accum
+variants), each requiring its own recognizer + lowering pair.
+None of them are accumulator shape, so widening the existing
+recognizer's window is the wrong abstraction — recognize each new
+idiom under its own name.
+
+The diagnostic-print line was kept (lead-byte added) so future
+investigation can quickly classify rejections without rebuilding.
 
 ---
 

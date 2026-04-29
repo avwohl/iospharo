@@ -865,8 +865,10 @@ public:
                         if (dCount++ < 16) {
                             std::fprintf(stderr,
                                 "[SISTA-ACCUM-DIAG] pfbBC=%zu "
-                                "blockLen=%zu (want 9-10)\n",
-                                pfbOff, bLen);
+                                "blockLen=%zu lead=%02x (want 9-10, "
+                                "lead=fb)\n",
+                                pfbOff, bLen,
+                                bLen > 0 ? bbc[0] : 0);
                         }
                         i += 3;
                         continue;
