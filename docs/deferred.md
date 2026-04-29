@@ -1042,6 +1042,52 @@ idiom under its own name.
 The diagnostic-print line was kept (lead-byte added) so future
 investigation can quickly classify rejections without rebuilding.
 
+### B9. Phase 4 inliner — recognized-shape coverage (2026-04-29)
+
+Sized the gap with a `[SISTA-UNRECOG]` shape histogram added behind
+`PHARO_SISTA_INLINE_STATS=1`.  Full PharoBenchSuite startup trace:
+
+    sends-lifted=15700  hints-provided=1590  hints-consumed=839
+    callees-attempted=737  callees-lifted=707  inlines-emitted=102
+
+So we *successfully probe-lift* 707 callees but recognize only
+102 (~14%).  The other 605 lift fine but don't match a recognizer.
+
+Top unrecognized shapes (size / op0.op1.op2 / count):
+
+    sz=7  / kLoadReceiver.kLoadTemp.kConstantOop      / 42
+    sz=4  / kLoadReceiver.kLoadInstVar.kConstantOop   / 38
+    sz=4  / kLoadLiteral.kLoadInstVar.kConstantOop    / 35
+    sz=12 / kLoadReceiver.kLoadInstVar.kConstantOop   / 28
+    sz=3  / kLoadLiteral.kLoadInstVar.kSendUnspec     / 27
+    sz=4  / kLoadLiteral.kLoadInstVar.kLoadReceiver   / 17
+    sz=4  / kLoadReceiver.kLoadTemp.kConstantOop      / 15
+    sz=4  / kLoadReceiver.kLoadInstVar.kLoadReceiver  / 15
+
+Decoding: most of these are *arith-on-ivar* methods like
+`^ ivar + 1` or `^ ivar - other`.  With `PHARO_SISTA_INLINE_ARITH`
+**off** by default, the lifter bails arith ops to
+`kSendUnspeculated`, so a 5-instruction `^ ivar + const` source
+lifts to a 4-value method ending in kSendUnspeculated.  Without
+INLINE_ARITH the recognizer can't extract the arith intent —
+even if we added a 4-value rule, the kSendUnspeculated terminator
+means the work is identical to a normal send.
+
+**Real lever** for the 1M getter / sum 1M Cog gap is one of:
+- Default `PHARO_SISTA_INLINE_ARITH=1` — but the prior attempt
+  crashed in FFI's `#oopForObject:`.  Memory:
+  `feedback_splice_flags_opt_in.md`.  Re-attempting needs the
+  crash investigated first.
+- Add a 5-value recognizer for the arith-on-ivar shape AFTER
+  enabling INLINE_ARITH (so the lifter emits `kPrimAddInt` etc.
+  and the callee shape becomes
+  `kLoadReceiver+kLoadInstVar+kConstantOop+kPrimAddInt+kReturn`).
+- Recognizing `OrderedCollection>>size`-style 5-7-value getters
+  with multi-ivar + arith.
+
+Histogram instrumentation kept (gated by INLINE_STATS) so future
+sessions can re-census after each recognizer is added.
+
 ---
 
 ## C. Project mission — iOS

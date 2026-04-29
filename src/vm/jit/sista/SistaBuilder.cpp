@@ -110,6 +110,22 @@ static uint64_t g_inlinesEmitted        = 0;
 // recordPolyDegree() called from extractInlineHintsForMethod().
 static uint64_t g_polyDegreeHisto[8]    = {0};
 
+// Phase 4 sizing: callees we successfully lifted but couldn't recognize.
+// Key = (values_size << 24) | (op0 << 16) | (op1 << 8) | op2.
+// Dump prints the top entries so we know which shapes to add next.
+static std::map<uint32_t, uint64_t> g_unrecognizedCalleeShapes;
+static void recordUnrecognizedShape(const Method& m) {
+    if (m.values.size() == 0 || m.values.size() > 255) return;
+    uint8_t op0 = m.values.size() > 0 ? (uint8_t)m.values[0].op : 0;
+    uint8_t op1 = m.values.size() > 1 ? (uint8_t)m.values[1].op : 0;
+    uint8_t op2 = m.values.size() > 2 ? (uint8_t)m.values[2].op : 0;
+    uint32_t key = ((uint32_t)m.values.size() << 24)
+                 | ((uint32_t)op0 << 16)
+                 | ((uint32_t)op1 << 8)
+                 | (uint32_t)op2;
+    g_unrecognizedCalleeShapes[key]++;
+}
+
 // Hint pointer set by buildWithHints() and consumed by build() when
 // constructing LinearLifter.  Single-threaded; static suffices.
 static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
@@ -3853,7 +3869,7 @@ private:
                     g_totalHintsConsumed++;
                     return true;
                 }
-                default: return false;
+                default: recordUnrecognizedShape(calleeIR); return false;
                 }
             }
             // 2-value self-send chain: kLoadReceiver + kSendUnspeculated.
@@ -3932,13 +3948,17 @@ private:
                 }
             }
             else {
+                recordUnrecognizedShape(calleeIR);
                 return false;
             }
         } else if (calleeIR.values.size() == 3) {
             const Value& v0 = calleeIR.values[0];
             const Value& v1 = calleeIR.values[1];
             const Value& v2 = calleeIR.values[2];
-            if (v0.op != Op::kLoadReceiver) return false;
+            if (v0.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
             // 3-value getter: kLoadReceiver + kLoadInstVar + kReturn.
             if (v1.op == Op::kLoadInstVar
              && v1.operands.size() == 1 && v1.operands[0] == v0.id
@@ -4123,6 +4143,7 @@ private:
                 }
             }
             else {
+                recordUnrecognizedShape(calleeIR);
                 return false;
             }
         } else if (calleeIR.values.size() == 4) {
@@ -4156,7 +4177,12 @@ private:
             const Value& v1 = calleeIR.values[1];
             const Value& v2 = calleeIR.values[2];
             const Value& v3 = calleeIR.values[3];
-            if (v0.op != Op::kLoadTemp) return false;
+            if (v0.op != Op::kLoadTemp) {
+                // Size==4 but not the setter shape — record so the
+                // histogram surfaces the non-setter 4-value patterns.
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
             if (v1.op != Op::kLoadReceiver) return false;
             if (v2.op != Op::kStoreInstVar) return false;
             if (v2.operands.size() != 2) return false;
@@ -4216,7 +4242,13 @@ private:
             const Value& v2 = calleeIR.values[2];
             const Value& v3 = calleeIR.values[3];
             const Value& v4 = calleeIR.values[4];
-            if (v0.op != Op::kLoadTemp) return false;
+            if (v0.op != Op::kLoadTemp) {
+                // Size==5 but not a setter; record the shape so the
+                // histogram surfaces non-setter 5-value methods (e.g.
+                // OrderedCollection>>size: rcvr+ivar+rcvr+ivar+send).
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
             if (v1.op != Op::kLoadReceiver) return false;
             if (v2.op != Op::kStoreInstVar) return false;
             if (v2.operands.size() != 2) return false;
@@ -4259,6 +4291,10 @@ private:
             g_totalHintsConsumed++;
             return true;
         } else {
+            // values.size() not in {2,3,4,5} — record the shape so the
+            // dump can show which sizes/op-prefixes dominate the
+            // unrecognized callees.
+            recordUnrecognizedShape(calleeIR);
             return false;
         }
 
@@ -4709,6 +4745,29 @@ void Builder::dumpInlineHintStats() {
         (unsigned long long)g_polyDegreeHisto[4],
         (unsigned long long)g_polyDegreeHisto[5],
         (unsigned long long)g_polyDegreeHisto[6]);
+    // Top unrecognized callee shapes — sized only by values.size() not
+    // in {2,3,4,5}, so anything caught here is a "we lifted it but the
+    // recognizer can't handle this size" miss.  Print top 8 by count.
+    if (!g_unrecognizedCalleeShapes.empty()) {
+        std::vector<std::pair<uint32_t, uint64_t>> entries(
+            g_unrecognizedCalleeShapes.begin(),
+            g_unrecognizedCalleeShapes.end());
+        std::sort(entries.begin(), entries.end(),
+            [](const auto& a, const auto& b) { return a.second > b.second; });
+        size_t topN = entries.size() < 8 ? entries.size() : 8;
+        std::fprintf(stderr, "[SISTA-UNRECOG]");
+        for (size_t i = 0; i < topN; i++) {
+            uint32_t key = entries[i].first;
+            uint8_t sz   = (key >> 24) & 0xFF;
+            uint8_t op0  = (key >> 16) & 0xFF;
+            uint8_t op1  = (key >>  8) & 0xFF;
+            uint8_t op2  = (key      ) & 0xFF;
+            std::fprintf(stderr, " sz=%u/%02x.%02x.%02x:%llu",
+                sz, op0, op1, op2,
+                (unsigned long long)entries[i].second);
+        }
+        std::fprintf(stderr, "\n");
+    }
 }
 
 }  // namespace sista
