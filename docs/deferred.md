@@ -1189,30 +1189,44 @@ become Sista-eligible).  J2J trampolines pick up the slack
 this: 14 ms / 1.1 M activations = **13 ns per migrated call** —
 the Sista activation overhead vs T1's tighter entry stencil.
 
-**FIXED 2026-04-29 (`e90a6ba4`).**  The 13ns/call wasn't a
-generic Sista entry overhead — it was a single redundant
-`pthread_jit_write_protect_np` syscall in the dispatch path.
-Each Sista dispatch was calling `makeExecutable` BEFORE the call
-defensively, even though the JIT zone was always executable on
-entry (the compile site at line 7359 makes-executable; the only
-hot-path `makeWritable` sites in IC patches use RAII guards that
-re-makeExecutable on every exit).  Removing the redundant pre-call
-toggle gives best-of-5 results:
+**1M getter regression FIXED 2026-04-29 (`e90a6ba4`).**  The
+13ns/call wasn't a generic Sista entry overhead — it was a single
+redundant `pthread_jit_write_protect_np` syscall in the dispatch
+path.  Each Sista dispatch was calling `makeExecutable` BEFORE the
+call defensively, even though the JIT zone was always executable
+on entry (the compile site at line 7359 makes-executable; the
+only hot-path `makeWritable` sites in IC patches use RAII guards
+that re-makeExecutable on every exit).  Removing the redundant
+pre-call toggle closes the 14ms 1M getter regression specifically.
+
+**Default-on flip attempted then REVERTED (`c362d328` →
+`e36b7b1b`).**  Even with the makeExecutable fix, broader
+INLINE_ARITH=1 vs baseline best-of-5 comparison shows mixed
+results across the panel:
 
                           baseline   INLINE_ARITH=1
-    1M getter ms              98         98         **PARITY**
-    sum 1M ms                104        103         parity
-    fib/sieve/sort          ~same      ~same        within noise
-    dict 50K ms              159        157         within noise
-    1M blocks ms              13         15         +2ms (mild)
+    tinyBytecodes/s     25,147,928   24,475,524   -2.7%
+    fib(28) ms                  21         23      +9.5%
+    sieve x100 ms               44         46      +4.5%
+    sort 100K ms               223        220      -1.3% (better)
+    dict 50K ms                155        154      -0.6% (better)
+    sum 1M ms                   65         72     +11%
+    factorial 5000 ms           22         21      -4.5% (better)
+    1M blocks ms                13         15     +15%
+    1M getter ms                98        101      +3%
+    100K alloc ms                4          5     +25%
 
-INLINE_ARITH=1 is now correctness- and perf-clean on the bench
-panel.  Remaining mild loss on 1M blocks (+2ms) is within noise
-across a single best-of-5; could be Sista compile churn from
-extra-eligible methods.
+Net: 7 benches regress 3-25%, 3 improve 1-5%.  The 1M getter
+regression is gone, but other bytecodes-per-call paths (alloc,
+blocks, fib, sieve) lose more than the inlined arith saves.
+Likely cause: more methods become Sista-eligible under
+INLINE_ARITH=1, paying activation overhead per call where T1's
+tighter entry would have been cheaper.
 
-Default-on candidate now: **yes** (pending broader soak across
-SUnit batch).
+INLINE_ARITH stays opt-in until the residual ~3-15% bench-panel
+regressions are understood.  The makeExecutable fix is real and
+shipped — closes the 14ms hot-path delta — but isn't sufficient
+to make INLINE_ARITH default-on a perf-strict win.
 
 Next-session candidates if more wins are wanted:
 
