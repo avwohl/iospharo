@@ -4095,39 +4095,35 @@ private:
             else {
                 return false;
             }
-        } else if (calleeIR.values.size() == 5) {
-            // 5-value setter pattern.  Body `foo: x` with `foo := x`
-            // (implicit returnSelf) compiles to bytecodes
-            //   pushTemp 0; popStoreRcv N; returnReceiver
+        } else if (calleeIR.values.size() == 4) {
+            // 4-value return-value setter pattern.  Body `foo: x` with
+            //   ^ foo := x
+            // compiles to bytecodes (using no-pop ExtStoreRecv)
+            //   pushTemp 0; ExtStoreRecv N; returnTop
             // which lift to
             //   v0 = kLoadTemp(N0)
             //   v1 = kLoadReceiver
             //   v2 = kStoreInstVar(v1, v0, ivarIdx)        [void]
-            //   v3 = kLoadReceiver
-            //   v4 = kReturn(v3)                            [void]
+            //   v3 = kReturn(v0)                            [void]
             //
             // Inline as: kGuardClass + kStoreInstVar(callerRecv,
-            // callerArg[N0], ivarIdx); result is callerRecv.
+            // callerArg[N0], ivarIdx); result is callerArg (the value).
             const Value& v0 = calleeIR.values[0];
             const Value& v1 = calleeIR.values[1];
             const Value& v2 = calleeIR.values[2];
             const Value& v3 = calleeIR.values[3];
-            const Value& v4 = calleeIR.values[4];
             if (v0.op != Op::kLoadTemp) return false;
             if (v1.op != Op::kLoadReceiver) return false;
             if (v2.op != Op::kStoreInstVar) return false;
             if (v2.operands.size() != 2) return false;
             if (v2.operands[0] != v1.id || v2.operands[1] != v0.id) return false;
-            if (v3.op != Op::kLoadReceiver) return false;
-            if (v4.op != Op::kReturn) return false;
-            if (v4.operands.size() != 1 || v4.operands[0] != v3.id) return false;
-            uint32_t tempIdx = static_cast<uint32_t>(v0.literal);
-            if (tempIdx >= nArgs) return false;
+            if (v3.op != Op::kReturn) return false;
+            if (v3.operands.size() != 1 || v3.operands[0] != v0.id) return false;
+            uint32_t tempIdx4 = static_cast<uint32_t>(v0.literal);
+            if (tempIdx4 >= nArgs) return false;
             if (stack_.size() < nArgs + 1) return false;
-            uint32_t argId = stack_[stack_.size() - nArgs + tempIdx];
+            uint32_t argId = stack_[stack_.size() - nArgs + tempIdx4];
 
-            // Emit guard, then the store.  Result is the receiver
-            // (returnSelf semantics).
             std::vector<uint32_t> setterGuardOps;
             setterGuardOps.reserve(stack_.size() + 1);
             setterGuardOps.push_back(recvId);
@@ -4140,7 +4136,68 @@ private:
                           /*operands=*/{recvId, argId},
                           /*literal=*/v2.literal);
             for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
-            stack_.push_back(recvId);
+            stack_.push_back(argId);  // returns the assigned value
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            return true;
+        } else if (calleeIR.values.size() == 5) {
+            // Two 5-value shapes share the prefix
+            //   v0 = kLoadTemp(N0)
+            //   v1 = kLoadReceiver
+            //   v2 = kStoreInstVar(v1, v0, ivarIdx)        [void]
+            // and differ in the return:
+            //
+            //   Shape A (returnSelf — implicit ^ self):
+            //     v3 = kLoadReceiver
+            //     v4 = kReturn(v3)
+            //
+            //   Shape B (return-temp — `popStoreRcv N; pushTemp 0; ^`):
+            //     v3 = kLoadTemp(N0)
+            //     v4 = kReturn(v3)
+            //
+            // Inline as: kGuardClass + kStoreInstVar(callerRecv,
+            // callerArg[N0], ivarIdx); result is callerRecv (Shape A) or
+            // callerArg (Shape B).
+            const Value& v0 = calleeIR.values[0];
+            const Value& v1 = calleeIR.values[1];
+            const Value& v2 = calleeIR.values[2];
+            const Value& v3 = calleeIR.values[3];
+            const Value& v4 = calleeIR.values[4];
+            if (v0.op != Op::kLoadTemp) return false;
+            if (v1.op != Op::kLoadReceiver) return false;
+            if (v2.op != Op::kStoreInstVar) return false;
+            if (v2.operands.size() != 2) return false;
+            if (v2.operands[0] != v1.id || v2.operands[1] != v0.id) return false;
+            if (v4.op != Op::kReturn) return false;
+            if (v4.operands.size() != 1 || v4.operands[0] != v3.id) return false;
+            uint32_t tempIdx = static_cast<uint32_t>(v0.literal);
+            if (tempIdx >= nArgs) return false;
+            if (stack_.size() < nArgs + 1) return false;
+            uint32_t argId = stack_[stack_.size() - nArgs + tempIdx];
+
+            uint32_t resultId;
+            if (v3.op == Op::kLoadReceiver) {
+                resultId = recvId;            // Shape A: returnSelf
+            } else if (v3.op == Op::kLoadTemp
+                    && static_cast<uint32_t>(v3.literal) == tempIdx) {
+                resultId = argId;             // Shape B: ^ <assigned value>
+            } else {
+                return false;
+            }
+
+            std::vector<uint32_t> setterGuardOps;
+            setterGuardOps.reserve(stack_.size() + 1);
+            setterGuardOps.push_back(recvId);
+            for (uint32_t s : stack_) setterGuardOps.push_back(s);
+            uint64_t setterGuardLit = (hit->classOop & 0x3FFFFFu)
+                                    | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(setterGuardOps), setterGuardLit);
+            out_.newValue(currentBlock_, Op::kStoreInstVar, Type::kVoid,
+                          /*operands=*/{recvId, argId},
+                          /*literal=*/v2.literal);
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(resultId);
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;

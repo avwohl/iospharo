@@ -470,6 +470,59 @@ int main() {
         check(state.returnValue == 9ULL, "PushOne/Dup/Pop/Ret yields 1");
     }
 
+    // Phase 4 setter-shape tests: lift-only — verify the IR shapes the
+    // inliner pattern-matches against (tryInlineConstReturn).  If the
+    // lifter ever changes shape, this test fires before the inliner
+    // silently stops firing.  Placed before the round-trip setter test
+    // so a lowering regression there doesn't mask shape regressions.
+    {
+        // 5-value implicit-returnSelf setter:
+        //   pushTemp 0; popStoreRcv 1; returnReceiver
+        Method m;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            (uint8_t)(SistaV1::PopStoreRecvBase + 1),
+            SistaV1::ReturnReceiver,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 1, 1, m);
+        check(r == LiftResult::kOk, "5-value setter lifts");
+        check(m.values.size() == 5, "5-value setter has 5 IR ops");
+        check(m.values[0].op == Op::kLoadTemp,    "v0 = kLoadTemp");
+        check(m.values[1].op == Op::kLoadReceiver, "v1 = kLoadReceiver");
+        check(m.values[2].op == Op::kStoreInstVar, "v2 = kStoreInstVar");
+        check(m.values[3].op == Op::kLoadReceiver, "v3 = kLoadReceiver");
+        check(m.values[4].op == Op::kReturn,       "v4 = kReturn");
+        check(m.values[2].operands.size() == 2 &&
+              m.values[2].operands[0] == m.values[1].id &&
+              m.values[2].operands[1] == m.values[0].id,
+              "kStoreInstVar reads recv + tempVal");
+        check(m.values[4].operands.size() == 1 &&
+              m.values[4].operands[0] == m.values[3].id,
+              "kReturn returns the receiver");
+        std::cout << "--- pattern: 5-value implicit-returnSelf setter\n";
+    }
+    {
+        // 4-value return-value setter `^ foo := x`:
+        //   pushTemp 0; ExtStoreRecv 1 (no-pop); returnTop
+        Method m;
+        const uint8_t bc[] = {
+            (uint8_t)(SistaV1::PushTempBase + 0),
+            SistaV1::ExtStoreRecv, 0x01,
+            SistaV1::ReturnTop,
+        };
+        LiftResult r = Builder::buildFromBytes(bc, sizeof(bc), 1, 1, m);
+        check(r == LiftResult::kOk, "4-value setter lifts");
+        check(m.values.size() == 4, "4-value setter has 4 IR ops");
+        check(m.values[0].op == Op::kLoadTemp,    "v0 = kLoadTemp");
+        check(m.values[1].op == Op::kLoadReceiver, "v1 = kLoadReceiver");
+        check(m.values[2].op == Op::kStoreInstVar, "v2 = kStoreInstVar");
+        check(m.values[3].op == Op::kReturn,       "v3 = kReturn");
+        check(m.values[3].operands.size() == 1 &&
+              m.values[3].operands[0] == m.values[0].id,
+              "kReturn returns the assigned value (kLoadTemp)");
+        std::cout << "--- pattern: 4-value return-value setter\n";
+    }
+
     // Round-trip 7.8: Setter — PushTemp 0, PopStoreRecvVar 1, ReturnReceiver.
     // Simulates `x: aValue  x := aValue. ^ self`.
     {
