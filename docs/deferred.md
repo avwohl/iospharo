@@ -899,8 +899,10 @@ stack between helper-sends.  Suspects (in order of likelihood):
 exit of every JIT mechanism (tryJITActivation, popFrameForJIT,
 T1 stencil exit, Sista exit) to find the leak source.
 
-**2026-04-29 trace:** logged fd at every helper enter/exit +
-peak/end fd within each call.  Findings:
+**2026-04-29 traces (cumulative):** logged fd at every helper
+enter/exit + peak/end fd within each call, then added pushFrame /
+popFrame / pushFrameForJIT / j2jPopFrame / J2J-materialize counters
+(only counting while `inSyncSend_=true`).  Findings:
 
 - All inner activations inside helper have `canJITActivate=0`
   (methods aren't compiled when first hit during startup).  So
@@ -913,6 +915,14 @@ peak/end fd within each call.  Findings:
 - Periodic NLR-like drops (e.g. fd 446 → 15 between two trace
   prints) suggest exception unwinding of deep call chains.
 
+**The diagnostic gap:** all instrumented counters were guarded by
+`if (inSyncSend_)` so they only fired *inside* the helper call.
+The fd-grows-between-calls finding therefore proves the leak is
+OUTSIDE the helper — it happens when the JIT caller's compiled
+code runs between helper invocations (`inSyncSend_=false`).  The
+per-call balance is real but irrelevant: the helper isn't the
+leaker, the JIT-compiled outer method is.
+
 This isolates the leak to one of:
 - The JIT-compiled OUTER method (M_a) calling shallowCopy in a
   loop is being repeatedly RE-ENTERED.  Each re-entry pushes
@@ -922,6 +932,13 @@ This isolates the leak to one of:
   mismatch?  ensure: handler?).
 - The deopt path on a depth-cap bail (now rare with my Sista-skip
   fix but still possible) doesn't fully unwind something.
+
+**Next session approach:** instrument the JIT-runtime mechanisms
+(`tryJITActivation`, `popFrameForJIT`, T1 stencil exit, Sista
+exit) WITHOUT the `inSyncSend_` gate so they fire between helper
+calls.  Hypothesis: one of these is asymmetric — pushes a frame
+that the matching pop never sees, or vice versa, by ~0.5/call
+amortized over a long-running JIT-compiled outer method.
 
 The primitive overflow check at fd=4096 fires during STARTUP — a
 critical process — so the failure surfaces as a process kill
