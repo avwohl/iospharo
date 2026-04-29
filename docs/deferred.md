@@ -661,19 +661,27 @@ converted harness:
 Preserved the `methodsFor:` shim at the top of the harness for
 belt-and-suspenders.
 
-### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0
+### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **GATED 2026-04-28** (`13056933`)
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
-`PHARO_JIT_DEFER=0` (immediate JIT) still hangs during Morphic
-boot at `JIT_MAX_COMPILE≥10` — `do:` gets compiled and a later
-`Context>>copyTo:` recurses at frame depth 4090+.  The deeper
-chain: DNU on `#hasShortcutKey` triggers `StDebugger`, whose
-context-stack copy finds a Context with `sender == self`.
+`PHARO_JIT_DEFER=0` (immediate JIT) hangs during the SessionManager
+startup chain — `[STARTUP-ST-FIRED]` never appears, the eval
+expression never executes, and the step counter freezes at ~1.7M
+(interp creeps at ~1K steps/sec post-defer while JIT spins between
+scheduler activations).  306 methods compile, 97.4 % IC hit rate —
+scheduling issue when JIT compile runs during the boot/eval
+handoff, not a correctness one.  Bisection 2026-04-28: DEFER=2s
+still hangs, DEFER=3s lets startup finish.
 
-306 methods compile, 97.4 % IC hit rate — this is a scheduling
-issue when JIT compile runs during the boot/eval handoff, not a
-correctness one.  Benchmarks set `PHARO_JIT_DEFER=0` explicitly
-via `PHARO_BENCH` which bypasses the startup.st path entirely, so
-the default path is unaffected.
+**Mitigation in `13056933`**: in headless mode (without
+`PHARO_BENCH`), `PHARO_JIT_DEFER < 4s` is silently clamped to 4s
+with a warning.  Bench mode bypasses the clamp because
+`executeFromContext` doesn't use the startup.st path.  The
+underlying scheduling issue remains a deeper investigation but
+is no longer reachable by the obvious knob.
+
+Earlier guess that `Context>>copyTo:` recursing at depth 4090+
+was the trigger turned out to be downstream of the same boot-chain
+hang — once startup is gated, that crash signature disappears too.
 
 ### A1d. FFICallbackTest qsort tests slow under pure interpreter (2026-04-23)
 
