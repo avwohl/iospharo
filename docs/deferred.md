@@ -851,24 +851,44 @@ step() to completion with depth cap 1 + inSyncSend_ flag to
 suppress process switches.  Default off; default behavior
 unchanged.
 
-**2026-04-29 (`a2b2934c`):** fixed deopt-stack truncation —
-previously the deopt path re-pushed only rcvr+args, leaving
-IR-stack values below the send invisible to the resumed interp.
-Builder now snapshots the full IR stack into the framepoint;
-lowering reads stackValueIds and flushes them all on
-helper-returned-zero.  Necessary but not sufficient.
+**2026-04-29 progress:**
+- `a2b2934c` — deopt-stack truncation fix: builder snapshots the
+  full IR stack into the framepoint; lowering flushes all
+  stackValueIds (not just rcvr+args) on helper-returned-zero.
+- `ae7f5b6d` — `inSyncSend_` actually gated.  Previously
+  set/cleared but never read.  Now suppresses (a) preemption
+  checks, (b) processPendingSignals, and (c) Sista compile +
+  dispatch — all of which corrupted the helper's frameDepth_
+  bookkeeping when active.  This eliminated the depth-1 bail
+  cascade that made the failure mode catastrophic.
+- `PHARO_SISTA_HELPER_FORCE_BAIL=1` diagnostic added.  Under
+  FORCE_BAIL=1, eval succeeds — confirming the deopt path is
+  correct.  All remaining bugs are in the helper SUCCESS path.
 
-Status under env=1: still hangs at startup with fd=4096 overflow
-and many `pushing #copy` events.  The remaining bug is at the
-JIT-runtime + helper-loop interaction: when a Sista-compiled
-method called from inside the helper's step() deopts, the
-runtime dispatches the bailed send through interp, but the
-helper's step() loop is still active — frames accumulate on
-nested re-entry rather than balancing.  Need either:
-- depth-1 cap to also prevent re-entry on the deopt path (not
-  just on direct nested calls), or
-- proper post-deopt resume state so the OUTER helper completes
-  rather than the interp re-driving the same frame.
+**Status under env=1:** still hangs.  Trace shows ~14k successful
+helper calls before fd=4096 overflow (previously ~30).  Per-call
+fd accumulation is ~0.5: about half the calls leak one frame.
+
+The leak is structural — popFrame restores stackPointer_ to the
+caller's framePointer_, then returnFromMethod pushes the result.
+After the helper's step() loop exits at frameDepth_ ==
+startFrameDepth, popN(1) and state restore happen.  Hypotheses
+not yet checked:
+
+- popFrame's framePointer_ restoration leaves stackPointer_ above
+  the original X (one slot per "leaked" call).  Next sendSelector
+  in the JIT caller picks up an extra slot from the prior call.
+- step() inside the helper occasionally activates a method that
+  uses materializeFrameStack (PushThisContext) — this resets
+  frameDepth_ = 0 mid-helper.  The helper's NLR check (frameDepth_
+  < startFrameDepth) might mis-handle the case where
+  startFrameDepth was reset to a smaller value asymmetrically.
+- Some primitive (relinquishProcessor, suspend, etc.) leaves a
+  partially-pushed frame that the helper accepts as completed.
+
+Next session: pick a single helper-send, log frameDepth_ before
+sendSelector and after the loop exit; the leak case will reveal
+itself as +1 instead of +0 net change.
 
 Real fix needs either:
 - IC-guided emission (only emit kSendCallHelper for sites where
