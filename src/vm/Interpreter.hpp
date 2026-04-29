@@ -1350,6 +1350,12 @@ public:
     /// the helper's return value.  Returns 0 on alloc failure.
     uint64_t jitSistaAllocArray(jit::JITState* state, uint64_t size);
 
+    /// JIT helper for kStoreInstVar: write `val` into `recv`'s instVar at
+    /// `ivarIdx`.  Returns 1 on success, 0 if the store was refused
+    /// (non-object / immutable / bytes / OOB).  See implementation
+    /// comment for safety guarantees.
+    uint64_t jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val);
+
 private:
 #endif
 

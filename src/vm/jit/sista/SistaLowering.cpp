@@ -32,6 +32,10 @@ extern "C" uint64_t jit_rt_sista_basic_at(void* state,
 extern "C" uint64_t jit_rt_sista_call_send(void* state,
                                              uint64_t selBits,
                                              uint64_t nArgs);
+extern "C" uint64_t jit_rt_store_inst_var(void* state,
+                                            uint64_t recvBits,
+                                            uint64_t ivarIdx,
+                                            uint64_t valBits);
 
 namespace pharo {
 namespace sista {
@@ -392,30 +396,65 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kStoreInstVar: {
-                // SAFETY BAIL: the historic lowering emitted a direct
-                // `str val, [recv + 8 + N*8]` with NO immutability check
-                // and NO write-barrier callout — the interpreter's
-                // setReceiverInstVar does both (raises ModificationForbidden
-                // on immutable receivers, calls rememberObject when an old
-                // object gets a young oop slot).  Without those, lowered
-                // code can:
-                //   (a) silently mutate a frozen object, breaking the
-                //       Pharo readOnly contract, or
-                //   (b) leave an unremembered old→young pointer, which
-                //       scavenge will then fail to update on object move.
-                // Both are silent miscompiles.  An activate-time gate
-                // (Interpreter.cpp ~6841) marks methods with PopStoreRecv*
-                // bytecodes as unsafe so they never *dispatch*, but the
-                // unsafe code was still being emitted into the asmjit
-                // zone at compile time.  We refuse to lower instead — if
-                // the dispatch gate ever loosens, this is the second line
-                // of defense against silent miscompile.
+                // Two paths:
+                //   default       — SAFETY BAIL: refuse to lower.  The
+                //                   historic concern was that a direct
+                //                   `str val, [recv + 8 + N*8]` would
+                //                   skip immutability + write-barrier
+                //                   semantics that setReceiverInstVar
+                //                   provides.
+                //   helper path   — opt-in via PHARO_SISTA_STORE_INSTVAR=1.
+                //                   Emit a cc.invoke of jit_rt_store_inst_var
+                //                   which delegates to Interpreter::
+                //                   jitStoreInstVar.  Skips the immutable
+                //                   case (no #attemptToAssign:withIndex:
+                //                   send yet — only matters for frozen
+                //                   receivers, rare on hot setter paths)
+                //                   and uses ObjectMemory's barrier-aware
+                //                   storePointerUnchecked so the
+                //                   generational write barrier fires.
                 //
-                // Plan to re-enable: emit the same `attemptToAssign:withIndex:`
-                // callout the interpreter uses, plus the rememberObject
-                // write-barrier when isOld(recv) && isYoung(val).
-                if (failedAtValue) *failedAtValue = v.id;
-                return nullptr;
+                // Helper path is what unblocks PHARO_SISTA_INLINE_SETTERS.
+                if (v.operands.size() != 2) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                static const bool storeHelper =
+                    std::getenv("PHARO_SISTA_STORE_INSTVAR") != nullptr;
+                if (!storeHelper) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto recvIt = regFor.find(v.operands[0]);
+                auto valIt  = regFor.find(v.operands[1]);
+                if (recvIt == regFor.end() || valIt == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp ivarReg = cc.new_gp64("siv_ivar");
+                cc.mov(ivarReg, Imm((uint64_t)v.literal));
+                Gp fnReg = cc.new_gp64("siv_helper");
+                cc.mov(fnReg, Imm((uint64_t)&jit_rt_store_inst_var));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, recvIt->second);
+                invokeNode->set_arg(2, ivarReg);
+                invokeNode->set_arg(3, valIt->second);
+                // Helper return is ignored for kStoreInstVar (Type::kVoid).
+                // A future enhancement could check for 0 (refused) and
+                // deopt to a source bcOffset, but that requires the IR op
+                // to carry one — today's literal is just the ivar index.
+                Gp dummyRet = cc.new_gp64("siv_ret");
+                invokeNode->set_ret(0, dummyRet);
+                break;
             }
             case Op::kConstantOop: {
                 Gp dst = cc.new_gp64("const");

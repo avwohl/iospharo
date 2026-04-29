@@ -9967,6 +9967,31 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     return result.rawBits();
 }
 
+// JIT helper for kStoreInstVar: write `val` into `recv`'s instVar at
+// `ivarIdx` with the same safety guards setReceiverInstVar uses.
+//
+// Returns 1 on success, 0 if the store was refused.  Refusal cases:
+//   - non-object receiver (immediate)
+//   - immutable receiver (skips the #attemptToAssign:withIndex: send for
+//     now — Sista's setter inline currently guards by class, so the
+//     common path is mutable; a future enhancement can route to the
+//     send-helper when the deopt path is wired up)
+//   - bytes object / CompiledMethod receiver
+//   - ivarIdx out of bounds
+//
+// The store goes through ObjectMemory::storePointerUnchecked which
+// already includes the generational write barrier (rememberObject when
+// an old object gains a young pointer), so this is GC-safe.
+uint64_t Interpreter::jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val) {
+    if (!recv.isObject()) return 0;
+    ObjectHeader* hdr = recv.asObjectPtr();
+    if (hdr->isImmutable()) return 0;
+    if (hdr->isBytesObject() || hdr->isCompiledMethod()) return 0;
+    if (ivarIdx >= hdr->slotCount()) return 0;
+    memory_.storePointerUnchecked(static_cast<size_t>(ivarIdx), recv, val);
+    return 1;
+}
+
 uint64_t Interpreter::jitSistaAllocArray(jit::JITState* state,
                                            uint64_t size) {
     (void)state;

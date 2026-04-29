@@ -1123,6 +1123,21 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
+// kStoreInstVar lowering helper: write a value into a heap object's
+// instance-variable slot with the safety guards setReceiverInstVar
+// uses.  Returns 1 on success, 0 if the store was refused (non-object
+// / immutable / bytes / OOB).  See Interpreter::jitStoreInstVar for
+// the full guard set.
+extern "C" uint64_t jit_rt_store_inst_var(JITState* state,
+                                            uint64_t recvBits,
+                                            uint64_t ivarIdx,
+                                            uint64_t valBits) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitStoreInstVar(
+        Oop::fromRawBits(recvBits), ivarIdx,
+        Oop::fromRawBits(valBits));
+}
+
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;

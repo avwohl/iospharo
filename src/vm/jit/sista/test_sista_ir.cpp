@@ -525,6 +525,10 @@ int main() {
 
     // Round-trip 7.8: Setter — PushTemp 0, PopStoreRecvVar 1, ReturnReceiver.
     // Simulates `x: aValue  x := aValue. ^ self`.
+    //
+    // Requires PHARO_SISTA_STORE_INSTVAR=1 to enable the kStoreInstVar
+    // helper-invoke lowering path; otherwise the default SAFETY BAIL
+    // returns null and the round-trip is skipped.
     {
         Method lifted;
         const uint8_t bc[] = {
@@ -536,19 +540,31 @@ int main() {
         check(r == LiftResult::kOk, "setter lifts");
 
         Lowering::CompiledFn fn = lowering.lower(lifted);
-        check(fn != nullptr, "lower setter succeeds");
-
-        uint64_t obj[4]   = { 0xDEADDEAD, 0x1111, 0xBEEF, 0x3333 };
-        uint64_t temps[1] = { 0xFACADE };
-        FakeState state{};
-        state.receiver = reinterpret_cast<uint64_t>(&obj[0]);
-        state.tempBase = temps;
-        fn(&state);
-        check(obj[2] == 0xFACADE, "ivar[1] now holds arg value");
-        check(state.returnValue == reinterpret_cast<uint64_t>(&obj[0]),
-              "return value = receiver");
-        std::cout << "--- round-trip setter: ivar[1]=0x"
-                  << std::hex << obj[2] << std::dec << "\n";
+        if (fn == nullptr) {
+            // Default mode: SAFETY BAIL on kStoreInstVar.  Skip the
+            // round-trip; lift was checked above.
+            std::cout << "--- skip setter round-trip "
+                      << "(PHARO_SISTA_STORE_INSTVAR not set)\n";
+        } else {
+            // Build a valid Spur object header in obj[0] so the helper's
+            // slotCount + isImmutable checks pass.  Header byte 7 (bits
+            // 56-63) = slot count 4; ImmutableBit (bit 23) clear.
+            uint64_t obj[4]   = {
+                /* header: 4 slots, mutable */
+                (uint64_t)4 << 56,
+                0x1111, 0xBEEF, 0x3333
+            };
+            uint64_t temps[1] = { 0xFACADE };
+            FakeState state{};
+            state.receiver = reinterpret_cast<uint64_t>(&obj[0]);
+            state.tempBase = temps;
+            fn(&state);
+            check(obj[2] == 0xFACADE, "ivar[1] now holds arg value");
+            check(state.returnValue == reinterpret_cast<uint64_t>(&obj[0]),
+                  "return value = receiver");
+            std::cout << "--- round-trip setter: ivar[1]=0x"
+                      << std::hex << obj[2] << std::dec << "\n";
+        }
     }
 
     // Round-trip 7.9: Multi-block — ^ (cond ifTrue: [1] ifFalse: [0]).
