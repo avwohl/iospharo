@@ -991,17 +991,35 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 invokeNode->set_ret(0, dst);
 
                 // Deopt-on-zero: helper returns 0 on NLR / abnormal.
-                // Push the original operands BACK onto interp stack
-                // (helper consumed them) and bail at source bcOffset.
+                // Flush the FULL framepoint stack to interp.sp so the
+                // resumed interpreter sees every live IR value, then
+                // bail at source bcOffset.  Helper already popped
+                // rcvr+args from interp.sp before invoke, so we re-
+                // push them as part of the framepoint replay.
+                //
+                // 2026-04-29 fix (B7): previously only operands
+                // (rcvr+args) were re-pushed, leaving IR-stack values
+                // below the send invisible to the resumed interpreter.
+                const std::vector<uint32_t>* fpStack = nullptr;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        fpStack = &fp.stackValueIds;
+                        break;
+                    }
+                }
                 Label noDeopt = cc.new_label();
                 cc.cbnz(dst, noDeopt);
                 {
-                    // Restore operands to interp stack.
+                    // Restore framepoint stack (or operands if
+                    // framepoint is missing — shouldn't happen with
+                    // the fixed builder path).
                     Gp sp2 = cc.new_gp64("send_sp_dz");
                     cc.ldr(sp2, ptr(state, OFF_SP));
+                    const std::vector<uint32_t>& flushIds =
+                        fpStack ? *fpStack : v.operands;
                     for (size_t opIdx = 0;
-                         opIdx < v.operands.size(); opIdx++) {
-                        auto opIt = regFor.find(v.operands[opIdx]);
+                         opIdx < flushIds.size(); opIdx++) {
+                        auto opIt = regFor.find(flushIds[opIdx]);
                         if (opIt == regFor.end()) {
                             if (failedAtValue) *failedAtValue = v.id;
                             return nullptr;
@@ -1011,7 +1029,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                                    static_cast<int>(opIdx) * 8));
                     }
                     cc.add(sp2, sp2,
-                           Imm(static_cast<int>(v.operands.size()) * 8));
+                           Imm(static_cast<int>(flushIds.size()) * 8));
                     cc.str(sp2, ptr(state, OFF_SP));
 
                     Gp ipReg = cc.new_gp64("send_ip_dz");

@@ -3192,6 +3192,14 @@ private:
                     // Other live IR-stack values stay in their
                     // registers — kSendCallHelper is a producing op,
                     // not a terminator.
+                    //
+                    // 2026-04-29 fix (B7): snapshot the FULL IR stack
+                    // (including values BELOW rcvr+args) so the deopt
+                    // path can flush everything to interp.sp on bail.
+                    // Without this, alive values below the send slot
+                    // stay in registers and the resumed interpreter
+                    // sees a truncated stack.
+                    std::vector<uint32_t> deoptStack = stack_;
                     std::vector<uint32_t> sendOps;
                     sendOps.reserve(nArgs + 1);
                     for (uint32_t i = 0; i < nArgs + 1; i++) {
@@ -3213,7 +3221,16 @@ private:
                                                   Type::kOop,
                                                   std::move(sendOps),
                                                   lit);
-                    recordFramepoint(vid, bcOffset);
+                    // Framepoint carries the full deopt stack snapshot,
+                    // not just the send's operands — lowering uses it
+                    // to flush every live IR value to interp.sp on
+                    // helper-returned-zero.
+                    out_.framepoints.push_back({
+                        vid,
+                        static_cast<uint16_t>(bcOffset),
+                        std::move(deoptStack),
+                    });
+                    g_totalSendsLifted++;
                     stack_.push_back(vid);
                     ip++;
                     continue;
