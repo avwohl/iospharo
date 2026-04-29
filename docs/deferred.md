@@ -851,11 +851,24 @@ step() to completion with depth cap 1 + inSyncSend_ flag to
 suppress process switches.  Default off; default behavior
 unchanged.
 
-Status under env=1: progresses ~2000 helper calls then stalls.
-Sista compiled methods using helper-sends bail to interpreter
-on frame-pushed sends, but the bail path doesn't unwind the
-partial frame — interp resumes with stale frame state and the
-VM hangs.
+**2026-04-29 (`a2b2934c`):** fixed deopt-stack truncation —
+previously the deopt path re-pushed only rcvr+args, leaving
+IR-stack values below the send invisible to the resumed interp.
+Builder now snapshots the full IR stack into the framepoint;
+lowering reads stackValueIds and flushes them all on
+helper-returned-zero.  Necessary but not sufficient.
+
+Status under env=1: still hangs at startup with fd=4096 overflow
+and many `pushing #copy` events.  The remaining bug is at the
+JIT-runtime + helper-loop interaction: when a Sista-compiled
+method called from inside the helper's step() deopts, the
+runtime dispatches the bailed send through interp, but the
+helper's step() loop is still active — frames accumulate on
+nested re-entry rather than balancing.  Need either:
+- depth-1 cap to also prevent re-entry on the deopt path (not
+  just on direct nested calls), or
+- proper post-deopt resume state so the OUTER helper completes
+  rather than the interp re-driving the same frame.
 
 Real fix needs either:
 - IC-guided emission (only emit kSendCallHelper for sites where
