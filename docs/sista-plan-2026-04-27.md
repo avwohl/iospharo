@@ -21,9 +21,11 @@ Phase                                       Status            Where
 2  Method-level IR + round-trip             DONE              SistaIR.hpp/.cpp, SistaBuilder.cpp (2078 LOC)
 3  Deopt infrastructure                     STEP 1 done       Framepoint struct + capture sites
                                                               src/vm/jit/sista/SistaIR.hpp:221+
-4  Monomorphic inlining                     STEP 1-3 done     gated PHARO_SISTA_INLINE_CONST=1
-                                                              kGuardClass + const-return only;
-                                                              pattern coverage is bottleneck
+4  Monomorphic inlining                     PATTERNS DONE     gated PHARO_SISTA_INLINE_CONST=1
+                                                              const-return + getter + 4/5-value
+                                                              setter + self-send chain + ivar-
+                                                              self-send.  Default-on still
+                                                              gated by soak risk (A3).
 5  Polymorphic inlining + IC specialization NOT STARTED
 6  Block inlining                           NOT STARTED       biggest perf lever for sum/sieve
 7  Method-redef invalidation                NOT STARTED       blocks safe shipping of 4-6
@@ -57,13 +59,23 @@ A1. **Phase 3 Step 2 + 3 — finish deopt infrastructure.**  Required
     SistaRuntime.cpp handles bail.
 
 A2. **Phase 4 finish — broaden monomorphic inline patterns.**
-    Today only const-return callees inline.  Add:
-    - 1-bytecode-body callees (`^ self foo`, `^ instVar`,
-      `^ aLiteral`)
-    - Inline trivial getters/setters (already done by stencil; add
-      to Sista IR layer)
-    - Inline `^ self` (returnsSelf) callees
-    Estimate: 1 week.
+    **DONE 2026-04-29** (`7efbdac7`, `28efa2b7`).  All target shapes
+    are now matched in `tryInlineConstReturn`:
+    - `^ aLiteral` / `^ true|false` (2-value const)
+    - `^ instVar` (3-value getter)
+    - `^ self` (2-value returnSelf via kLoadReceiver+kReturn)
+    - `^ self foo` (2-value self-send chain)
+    - `^ self instVar foo` (3-value ivar-self-send)
+    - `foo: x  foo := x` (5-value Shape A — implicit returnSelf)
+    - `foo: x  ^ foo := x` (4-value return-value setter)
+    - `popStoreRcv N; pushTemp 0; ^` (5-value Shape B)
+    - `^ arg` parameter passthrough (2-value via kLoadTemp branch)
+    Lift-only IR-shape tests in `test_sista_ir.cpp` give the matcher
+    a tripwire if the lifter ever reorders kLoadReceiver synthesis
+    around stores or returns.
+    Bench impact 0 on the panel because counted-loop splices already
+    replace the hot sends; impact lands when default-on (A3) on
+    setter/accessor-heavy workloads (image code, SUnit setUp etc.).
 
 A3. **Sista default-on for stable methods.**  Today
     PHARO_SISTA_DISPATCH=1 is opt-in (with PHARO_NO_SISTA opt-out
