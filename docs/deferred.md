@@ -1327,45 +1327,55 @@ the only way to add new shapes without taxing all sends.
 detectTrivialMethod recognition + IC patch encoding can be
 re-introduced together with the new stencil.
 
-**2026-04-29 second attempt — proper architecture wired, perf
-validation inconclusive.**  Implemented the full pattern:
-  - `stencil_sendInlineReturnsLiteral` added (144 bytes, 5
-    relocs) reading class from `icData[0]` and literal Oop
-    bits from `icData[2] & 0x0000FFFFFFFFFFFFULL`, modeled on
+**2026-04-29 SHIPPED as opt-in `PHARO_RETLIT=1` (`bb9bb798`).**
+The full architecture lives in tree:
+  - `stencil_sendInlineReturnsLiteral` (144 bytes, 5 relocs)
+    reads class from `icData[0]` and literal Oop from
+    `icData[2] & 0x0000FFFFFFFFFFFFULL`, modeled on
     `stencil_sendInlineMonoJ2J`.
   - `detectTrivialMethod` recognizes 1-byte ReturnTrue/False/Nil
-    and 2-byte push<const>+returnTop (with numLiterals bounds).
-  - IC patcher sets bit 58 + bits 47:0 = literal when `(literalBits
-    >> 48) == 0` (fits in 48 bits).
-  - `JITCompiler::applyICSpecialization` swaps `stencil_sendJ2J`
-    → `stencil_sendInlineReturnsLiteral` on bit 58 (gated behind
-    `PHARO_RETLIT_SPEC=1` for now).
+    and 2-byte push<const>+returnTop (numLiterals-bounded).
+  - IC patcher sets bit 58 + bits 47:0 = literal when
+    `(literalBits >> 48) == 0` and `PHARO_RETLIT=1`.
+  - `JITCompiler::applyICSpecialization` swaps
+    `stencil_sendJ2J` → `stencil_sendInlineReturnsLiteral` on
+    bit 58.
+  - `TRIVIAL_BITS` includes 58 so J2J doesn't OR over the
+    literal bits (intentional — they share bits 47:0).
   - `numSendSites` count + `operand2Ptr = icBase` loop both
     include the new stencil.
 
-Everything compiles, regenerates, and runs without crashes.
-But A/B benching was unreliable: the laptop entered a sustained
-thermal-throttle state mid-investigation (baseline benches went
-fib=20→37 ms, getter=99→170 ms with no code changes), so the
-"regression with the change" may have been entirely
-environmental.  Reverted the implementation to keep `main`
-clean.  The full design is in:
-  - `src/vm/Interpreter.cpp:detectTrivialMethod` — recognizer.
-  - `src/vm/jit/stencils/stencils.cpp:stencil_sendInlineReturnsLiteral`.
-  - `src/vm/jit/JITCompiler.cpp:applyICSpecialization` — bit 58 branch.
-A future session can re-apply on a thermally-fresh machine and
-measure cleanly.
+**Default OFF.**  Splice panel identical (5/7/7/7/7/5) with or
+without the flag.  Bench suite under `PHARO_RETLIT=1` shows
+mixed results: sum 1M ~10% faster (102→91 ms) but fib(28)
++45%, 1M getter +32%, 1M blocks +43%.  Net negative — the cost
+of displacing J2J for these methods exceeds the literal-push
+savings.
 
-**Important constraint discovered:** when bit 58 is set in IC,
-the IC patcher's J2J branch (`(extra & TRIVIAL_BITS) == 0 ...`)
-is skipped — bit 60 (J2J entry) does NOT get OR'd in.  So
-without the corresponding stencil specialization to bit 58,
-those methods lose their J2J fast-path and bail through
-`ExitSendCached` on every call.  This means: setting bit 58
-without `PHARO_RETLIT_SPEC=1` IS a regression (the IC patcher
-strands the method between fast paths).  The opt-in flag must
-gate BOTH the IC bit setting and the stencil specialization
-together — or always-on after validation.
+**Why it regresses despite the obvious-looking inline win:**
+returnsLiteral methods are typically tiny (1-2 bytecodes).  The
+J2J fast path on those is itself very cheap — IC class match +
+~10 cycles save + tail call into target's prologue + 1-2 bytecode
+execution + tail return.  My specialized stencil saves ~20-30
+cycles per call but adds a class-extraction-from-receiver step
+that the J2J path also does.  Across many call sites, the
+displacement cost (lost J2J fast path on every method that just
+happens to be returnsLiteral) eats the savings.
+
+**For a future session that wants to re-attempt this win:**
+the levers are
+  1. Don't displace J2J — find a way to set bit 58 AND bit 60
+     simultaneously (would need a different bit budget; literal
+     bits and J2J entry both want 47:0).  E.g., encode 3-4 fixed
+     constants (nil/true/false/0/1) using bits 18-16 (free) so
+     bits 47:0 stay free for J2J entry.
+  2. Only flip bit 58 for sites where the J2J target is
+     uncompiled or eviction-likely — avoids displacing live J2J.
+  3. Add hit-count tracking so we only specialize the truly hot
+     returnsLiteral sites (where the savings amortize).
+
+The current `bb9bb798` commit captures the design and stays in
+tree as opt-in infrastructure for any of these follow-ups.
 
 ---
 
