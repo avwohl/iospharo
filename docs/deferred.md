@@ -1157,8 +1157,8 @@ shape doesn't appear in the histogram.  The correct lever is
 either:
 - Make `size`-shaped methods cheaper to call (smaller activation,
   or T1-style fast paths for short Sista bodies).
-- Stop Sista-compiling tiny methods altogether (let them stay in
-  the interpreter where they're already fast).
+- ~~Stop Sista-compiling tiny methods altogether~~ — tested
+  2026-04-29, didn't help (see below).
 - Get them inlined at the call site by extending hint generation
   to cover this pattern.
 
@@ -1166,6 +1166,31 @@ Histogram instrumentation now records op3 (was op0..op2) so the
 top entries surface their terminator op directly — useful for
 distinguishing arith-terminator from send-terminator without
 extra code.
+
+**2026-04-29 tiny-arith-method gate test (reverted):**
+prototyped a `bcLen <= 8` rejection of arith methods so
+`OrderedCollection>>size` would stay in the interp under
+INLINE_ARITH=1.  Best-of-N comparison:
+
+    INLINE_ARITH=1 (no gate):  getter best 110ms, sum best  66ms
+    INLINE_ARITH=1 (gate on):  getter best 111ms, sum best  65ms
+    INLINE_ARITH=1 (gate off): getter best 114ms, sum best 105ms (3-run)
+    baseline (no INLINE_ARITH): getter best 96ms, sum best 65ms
+
+Gate-on vs gate-off: differences are within noise (3ms).  The
+real regression source isn't `size` being Sista-compiled — it's
+something else.  Theories:
+- Some OTHER method called per iteration is Sista-compiled under
+  INLINE_ARITH but bails frequently (deopt loops in arith?).
+- The bench's outer block (running the per-iter `obj size. obj
+  yourself`) gets Sista-compiled with arith ops the bench never
+  hits, paying tag-check overhead for nothing.
+- IC churn on hot send sites changes when arith methods become
+  Sista-eligible.
+
+Gate code reverted; no behavior change committed from this
+attempt.  Real fix needs a profiler-style attribution of where
+the 14ms/iter regression goes.
 
 ---
 
