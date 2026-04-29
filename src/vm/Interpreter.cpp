@@ -7498,8 +7498,13 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 // Diagnostic gate: block all state-mutating ops to
                 // test if the Send1 divergence is caused by stores
-                // (temp or instVar).
-                if (getenv("PHARO_SISTA_NO_STORES")) {
+                // (temp or instVar).  Cache the env lookup — the
+                // unconditional getenv() costs ~200ns on glibc/libc
+                // and fires per-bytecode-per-method on the cold
+                // path; static-cached it's a single byte read.
+                static const bool noStores =
+                    std::getenv("PHARO_SISTA_NO_STORES") != nullptr;
+                if (noStores) {
                     if ((op >= 0xC8 && op <= 0xD7)       // PopStoreRecv/Temp
                      || (op >= 0xF0 && op <= 0xF5)) {    // Ext store variants
                         hasUnsafeOp = true;
@@ -7544,7 +7549,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // DIAG gate (PHARO_SISTA_NO_FULLBLOCK=1): exclude
                 // methods with PushFullBlock to test whether those
                 // bails are the source of image-startup DNU cascades.
-                if (getenv("PHARO_SISTA_NO_FULLBLOCK")) {
+                static const bool noFullBlock =
+                    std::getenv("PHARO_SISTA_NO_FULLBLOCK") != nullptr;
+                if (noFullBlock) {
                     if (op == jit::SistaV1::PushFullBlock
                      || op == jit::SistaV1::PushClosure) {
                         hasUnsafeOp = true;
@@ -7554,7 +7561,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // DIAG gate (PHARO_SISTA_NO_REMOTE_TEMP=1): exclude
                 // methods that access closure-captured temp vectors
                 // (PushTempAtInVec / StoreTempInVec / PopStoreTempInVec).
-                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP")) {
+                static const bool noRemoteTemp =
+                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP") != nullptr;
+                if (noRemoteTemp) {
                     if (op == jit::SistaV1::PushTempAtInVec
                      || op == 0xFC
                      || op == 0xFD) {
@@ -7565,7 +7574,9 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // DIAG: log methods with remote-temp ops on first
                 // admission.  Tells us which methods the
                 // NO_REMOTE_TEMP fix excludes.
-                if (getenv("PHARO_SISTA_LOG_REMOTE_TEMP")) {
+                static const bool logRemoteTemp =
+                    std::getenv("PHARO_SISTA_LOG_REMOTE_TEMP") != nullptr;
+                if (logRemoteTemp) {
                     if (op == jit::SistaV1::PushTempAtInVec
                      || op == 0xFC
                      || op == 0xFD) {
@@ -7588,13 +7599,17 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 }
                 // Finer-grained: only block READS (no effect on state)
                 // versus only block WRITES (store side).
-                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP_READ")) {
+                static const bool noRemoteTempRead =
+                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP_READ") != nullptr;
+                if (noRemoteTempRead) {
                     if (op == jit::SistaV1::PushTempAtInVec) {
                         hasUnsafeOp = true;
                         break;
                     }
                 }
-                if (getenv("PHARO_SISTA_NO_REMOTE_TEMP_WRITE")) {
+                static const bool noRemoteTempWrite =
+                    std::getenv("PHARO_SISTA_NO_REMOTE_TEMP_WRITE") != nullptr;
+                if (noRemoteTempWrite) {
                     if (op == 0xFC || op == 0xFD) {
                         hasUnsafeOp = true;
                         break;
@@ -7603,8 +7618,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // By-selector exclusion — PHARO_SISTA_EXCLUDE_SELS
                 // is a comma-separated list of selector names;
                 // matching methods get rejected from dispatch.
-                if (const char* excl = getenv("PHARO_SISTA_EXCLUDE_SELS")) {
-                    static const std::string excludeList = excl;
+                // Cache the env lookup AND the parsed list once.
+                static const char* excludeEnv =
+                    std::getenv("PHARO_SISTA_EXCLUDE_SELS");
+                if (excludeEnv != nullptr) {
+                    static const std::string excludeList = excludeEnv;
                     std::string sel = memory_.selectorOf(method);
                     size_t start = 0;
                     while (start < excludeList.size()) {
