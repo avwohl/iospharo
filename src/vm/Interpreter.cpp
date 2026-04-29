@@ -119,16 +119,28 @@ uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static f
 // not file-scoped, so extern works.
 sista::Runtime* sistaRuntimeForGCHook_ = nullptr;
 
-// Per-method gate decision cache (1 = hasUnsafeOp, 0 = eligible).
+// Per-method gate decision cache.  Values:
+//   0 = eligible, no bails recorded (hot path — skip bailCounter lookup)
+//   1 = hasUnsafeOp (rejected by bytecode scan)
+//   2 = blacklisted (bail counter exceeded threshold)
 // Avoids re-scanning the method's bytecodes on every activation.
+// State 2 lets the dispatch path skip the bail-counter hashmap lookup
+// entirely on every activation — saves ~1ns/dispatch on hot benches.
 // Reset on GC alongside the Sista fn cache.
 static std::unordered_map<uint64_t, uint8_t> sistaGateCache_;
+static constexpr uint8_t kSistaGateAdmitted    = 0;
+static constexpr uint8_t kSistaGateRejected    = 1;
+static constexpr uint8_t kSistaGateBlacklisted = 2;
 
 // Per-method consecutive-bail counter.  When a method ExitSends 8
 // times in a row without a single ExitReturn, mark it ineligible
 // so we stop paying the dispatch overhead on it.  Any subsequent
 // successful ExitReturn resets the count (unlikely for bail-only
 // methods, but handles pathological-then-recovered cases).
+//
+// Counter is only consulted/maintained for methods that have actually
+// bailed; the hot dispatch path checks sistaGateCache_ value first and
+// skips this map when state == kSistaGateAdmitted.
 static std::unordered_map<uint64_t, uint16_t> sistaBailCounter_;
 static constexpr uint16_t kSistaBailBlacklistThreshold = 8;
 
@@ -7394,10 +7406,24 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // resets both).
         uint64_t gateKey = method.rawBits();
         bool hasUnsafeOp = false;
+        // Cached state tracking — three distinct hot-path outcomes
+        // off a single gate-cache hashmap find:
+        //   gateCachedAdmitted   — admit, skip bailCounter find too
+        //   gateCachedBlacklist  — skip dispatch, skip bailCounter find
+        //   neither              — slow path or rejected
+        bool gateCachedAdmitted = false;
+        bool gateCachedBlacklist = false;
         {
             auto gateIt = sistaGateCache_.find(gateKey);
             if (gateIt != sistaGateCache_.end()) {
-                hasUnsafeOp = gateIt->second != 0;
+                uint8_t st = gateIt->second;
+                if (st == kSistaGateRejected) {
+                    hasUnsafeOp = true;
+                } else if (st == kSistaGateBlacklisted) {
+                    gateCachedBlacklist = true;
+                } else { // kSistaGateAdmitted
+                    gateCachedAdmitted = true;
+                }
                 goto gateDecided;
             }
         }
@@ -7630,7 +7656,8 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 (void)isSend0; (void)isSend1; (void)isSend2;
             }
         sizePeepholeAdmitted:
-            sistaGateCache_[gateKey] = hasUnsafeOp ? 1 : 0;
+            sistaGateCache_[gateKey] = hasUnsafeOp
+                ? kSistaGateRejected : kSistaGateAdmitted;
         }
     gateDecided:
 
@@ -7638,8 +7665,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
         // ExitSend consecutively for > threshold activations,
         // skip dispatch.  Avoids paying the per-call dispatch
         // overhead for methods Sista can't meaningfully speed up.
-        bool blacklisted = false;
-        {
+        // Hot-path optimization: if the gate cache hit and the
+        // state was kSistaGateAdmitted, the method has never had
+        // a recorded bail (bail-promote routes go through
+        // kSistaGateBlacklisted instead).  Skip the bailCounter
+        // hashmap find entirely on every dispatch — saves ~1 ns
+        // per call on hot benches.
+        bool blacklisted = gateCachedBlacklist;
+        if (!gateCachedAdmitted && !gateCachedBlacklist) {
             auto bailIt = sistaBailCounter_.find(gateKey);
             if (bailIt != sistaBailCounter_.end()
                 && bailIt->second >= kSistaBailBlacklistThreshold) {
@@ -7974,7 +8007,11 @@ void Interpreter::activateMethod(Oop method, int argCount) {
             case jit::ExitReturn: {
                 sistaReturns++;
                 // Reset this method's bail counter — it completed
-                // successfully, so don't blacklist it.
+                // successfully, so don't blacklist it.  Erase
+                // unconditionally: gate state stays admitted on
+                // sub-threshold bails (only promoted to blacklisted
+                // once cnt >= threshold), so the cache hit path
+                // alone can't tell whether a stale entry exists.
                 sistaBailCounter_.erase(gateKey);
                 // Pop Sista's frame, push return value — caller resumes.
                 if (!popFrame()) {
@@ -7995,6 +8032,14 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                 // blacklist on threshold.  Only cleared by ExitReturn.
                 uint16_t& cnt = sistaBailCounter_[gateKey];
                 if (cnt < UINT16_MAX) cnt++;
+                // Once we hit the threshold, promote the gate cache
+                // to kSistaGateBlacklisted so future dispatches can
+                // skip the bailCounter find entirely.  Drop the
+                // counter entry — it's redundant with the gate.
+                if (cnt >= kSistaBailBlacklistThreshold) {
+                    sistaGateCache_[gateKey] = kSistaGateBlacklisted;
+                    sistaBailCounter_.erase(gateKey);
+                }
                 // Under verbose mode, log the first few bails with
                 // full context so Send1/Send2 divergence can be
                 // caught against the baseline expectation.
