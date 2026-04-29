@@ -4658,8 +4658,13 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         }
     }
 
+    // Default ON 2026-04-29 after fixing the 1M getter regression
+    // (e90a6ba4: dropped redundant pre-dispatch makeExecutable
+    // syscall).  Bench panel best-of-5 confirms parity with
+    // INLINE_ARITH=0 baseline; correctness checks pass.  Opt-out:
+    // PHARO_SISTA_NO_INLINE_ARITH=1.
     static const bool typeCheckArith =
-        std::getenv("PHARO_SISTA_INLINE_ARITH") != nullptr;
+        std::getenv("PHARO_SISTA_NO_INLINE_ARITH") == nullptr;
 
     LinearLifter l(bytecodes, bytecodeSize, numArgs, numTemps, out);
     l.setMemory(&memory);
