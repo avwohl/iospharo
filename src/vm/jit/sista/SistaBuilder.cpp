@@ -4368,7 +4368,10 @@ private:
                 g_calleeBytecodesLifted += calleeIR.values.size();
                 if (std::getenv("PHARO_SISTA_INLINE_DUMP")) {
                     static int dumpCount = 0;
-                    if (dumpCount++ < 8) {
+                    // Bumped from 8 → 64 (2026-04-30) to find non-trivial
+                    // shapes (e.g. OC>>size which is 9-10 values).  The 8
+                    // limit caught only the simplest 2-3 value callees.
+                    if (dumpCount++ < 64) {
                         std::fprintf(stderr,
                             "[SISTA-CALLEE-OK] target=0x%llx values=%zu blocks=%zu",
                             (unsigned long long)h.targetMethod,
