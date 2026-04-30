@@ -1917,7 +1917,12 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // See memory/project_t1_vs_sista_race.md.
     bool isSplice = sistaRuntimeForGCHook_
                  && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
-    if (jm->stats && jm->stats->executionCount == (uint32_t)g_debug.recompileAt &&
+    // Use >= rather than == so methods whose executionCount jumps past
+    // the threshold in one go still trigger recompile.  The `tier == 1`
+    // check ensures recompile only fires once per method (recompile
+    // sets tier=2).  Future PR may bump executionCount from J2J paths;
+    // == would miss those.
+    if (jm->stats && jm->stats->executionCount >= (uint32_t)g_debug.recompileAt &&
         jm->tier == 1 && jm->numICEntries > 0 && !isSplice) {
         if (compiler_) {
             static const bool traceRecompile =
