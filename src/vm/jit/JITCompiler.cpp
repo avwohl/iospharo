@@ -2133,6 +2133,31 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // Zero IC data area first
         std::memset(codeBase_pre + icDataOffset, 0, icDataSize);
 
+        // On recompile: copy IC entries from old to new.  Without this,
+        // applyICSpecialization emits stencil_sendInlineMonoJ2J for sites
+        // that were monomorphic in the old IC, but the new IC starts
+        // empty — so MonoJ2J's `lookupKey == icData[0]` check fails on
+        // every call and bails to ExitSend (slow path).  The bench-suite
+        // 1M getter regression under PHARO_OSR_RECOMPILE=1 (100→374 ms)
+        // and the bench-panel 7→11 ms regression both stem from this
+        // empty-IC-after-recompile bug.  Copying preserves IC state so
+        // MonoJ2J hits on the first call.
+        //
+        // Safety: classKey is classIndex (GC-stable); methodBits and
+        // selectorBits are Oops that GC's recoverAfterGC zeroes —
+        // identical staleness profile to a non-recompile-time IC fill.
+        // J2J entry addresses in `extra` point into the JIT code zone
+        // (not heap), and the old method's code stays valid until
+        // eviction.  numICEntries matches between old and new (same
+        // bytecode → same send sites).
+        if (oldVersion && oldVersion->numICEntries == numSendSites) {
+            uint32_t oldICDataOff = oldVersion->codeSize -
+                                    oldVersion->numICEntries * IC_BYTES_PER_SITE;
+            std::memcpy(codeBase_pre + icDataOffset,
+                        oldVersion->codeStart() + oldICDataOff,
+                        icDataSize);
+        }
+
         // Get special selectors array for 0x70-0x7F sends
         Oop specialSelectors = memory_.specialObject(SpecialObjectIndex::SpecialSelectorsArray);
         ObjectHeader* ssArray = (specialSelectors.isObject() && specialSelectors.rawBits() > 0x10000)
