@@ -165,8 +165,11 @@ struct JITMethod {
     bool        isBlock;            // Compiled from a CompiledBlock (FullBlockClosure)
     bool        pinned;             // Temporarily protect from eviction (live on stack / j2jPool)
     uint8_t     maxRecvFieldIndex;  // Max receiver slot index accessed (for bounds checking)
+    bool        isSpliceTarget;     // SistaRuntime registered a splice for this method —
+                                    // stencils must skip executionCount bumps to avoid the
+                                    // T1-vs-Sista race (project_t1_vs_sista_race).
 
-    // 3 bytes pad to offset 48
+    // 2 bytes pad to offset 48
 
     // --- Sizes / offsets ---
     uint32_t  totalSize;          // Total allocation size including header + code + IC entries

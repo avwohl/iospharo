@@ -7,12 +7,18 @@
 #include "JITCompiler.hpp"
 #include "PlatformJIT.hpp"
 #include "SistaV1.hpp"
+#include "sista/SistaRuntime.hpp"
 #include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
 #include <cstring>
 #include <cstdio>
 #include <pthread.h>
+
+namespace pharo {
+namespace sista { class Runtime; }
+extern sista::Runtime* sistaRuntimeForGCHook_;
+}
 
 #if PHARO_JIT_ENABLED
 
@@ -2127,6 +2133,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     jitMethod->hasPrimPrologue = hasPrimPrologue;
     jitMethod->isBlock = isFullBlock;
     jitMethod->pinned = false;  // Eviction safety — pinned transiently during evictLRU
+    // isSpliceTarget: check SistaRuntime's set immediately so the flag is
+    // reliable from first activation (lazy set in tryExecute /
+    // noteMethodEntry would miss J2J-only callees that never enter
+    // tryExecute).
+    jitMethod->isSpliceTarget =
+        sistaRuntimeForGCHook_
+        && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
     // Initial j2jDepthLimit lives in the heap-side stats struct (W^X
     // audit 2026-04-26).  CodeZone::allocate has already alloc'd
     // jitMethod->stats and zeroed it; bump the depth limit here.

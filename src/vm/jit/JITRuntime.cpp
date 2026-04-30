@@ -1487,7 +1487,14 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // memory/project_t1_vs_sista_race.md.
     if (sistaRuntimeForGCHook_) {
         Oop m = compiledMethod;
-        if (sistaRuntimeForGCHook_->hasSplice(m)) return;
+        if (sistaRuntimeForGCHook_->hasSplice(m)) {
+            // Cache the splice flag on the JITMethod so stencils can
+            // skip per-call counter bumps (avoiding the T1-vs-Sista
+            // race) without an unordered_set probe per send.
+            JITMethod* jm = methodMap_.lookup(m.rawBits());
+            if (jm) jm->isSpliceTarget = true;
+            return;
+        }
     }
 
     // Bisection support: JIT_MAX_COMPILE=N stops after N compilations
@@ -1917,6 +1924,8 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // See memory/project_t1_vs_sista_race.md.
     bool isSplice = sistaRuntimeForGCHook_
                  && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
+    // Cache splice flag on JITMethod for stencil-side bump skip.
+    if (isSplice) jm->isSpliceTarget = true;
     // Use >= rather than == so methods whose executionCount jumps past
     // the threshold in one go still trigger recompile.  The `tier == 1`
     // check ensures recompile only fires once per method (recompile

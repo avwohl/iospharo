@@ -155,7 +155,8 @@ struct JITMethod_mirror {
     bool      isBlock;            // 42
     bool      pinned;             // 43
     uint8_t   maxRecvFieldIndex;  // 44
-    // (3 bytes padding to 8-byte alignment)
+    bool      isSpliceTarget;     // 45 — read by stencil_sendJ2J's caller-bump
+    // (2 bytes padding to 8-byte alignment)
     uint32_t  totalSize;          // 48
     uint32_t  bcToCodeTableOffset; // 52
     void*     nextInZone;         // 56
@@ -261,6 +262,7 @@ static constexpr int JM_METHOD_HEADER   = 16;  // uint64_t methodHeader
 static constexpr int JM_TEMP_COUNT      = 35;  // uint8_t  tempCount
 static constexpr int JM_ARG_COUNT       = 34;  // uint8_t  argCount
 static constexpr int JM_HAS_PRIM_PROL   = 41;  // bool hasPrimPrologue
+static constexpr int JM_IS_SPLICE       = 45;  // bool isSpliceTarget
 // Use sizeof(JITMethod_mirror) so this auto-tracks layout changes.
 // JITMethod_mirror is defined later in this file; both must match
 // pharo::jit::JITMethod's actual layout.  Bug 11b layer 5: hard-coded
@@ -1527,6 +1529,14 @@ j2j_direct_call:
             s->j2jSaveCursor += sizeof(J2JSave);
             s->j2jDepth++;
             s->j2jTotalCalls++;
+            // Caller-bump (executionCount) here would fire 1M+ times
+            // per send-heavy bench but gains nothing without a
+            // recompile-trigger reachable from J2J — recompile only
+            // fires from tryExecute, which J2J-only callees never
+            // reach.  Adding the bump unconditionally costs ~5%
+            // tinyBytecodes/sec.  isSpliceTarget flag (JM offset
+            // JM_IS_SPLICE) is in place for the eventual safe bump
+            // path; see project_jit_recompile_gap.md.
             // Setup callee
             Oop _calleeRecv = s->sp[-(nArgs + 1)];
             Oop* _fp = s->sp - (nArgs + 1);
