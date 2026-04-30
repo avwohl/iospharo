@@ -530,6 +530,13 @@ extern "C" void stencil_storeLitVar(JITState* s) {
 // Also emit event=3 with extra1=resumeAddr, extra2=(uintptr_t)_sv->sp
 // so the handler can correlate the J2J return's tail-call target and
 // caller-sp with the subsequent DNU in the bug-14 investigation.
+//
+// DO NOT REMOVE these traces.  2026-04-30 attempt to make them no-op
+// re-triggered the T1-vs-Sista splice race (sumArr 7→1034ms in panel
+// run 2/4).  The trace presence appears to influence compiler register
+// scheduling in a way the splice path depends on; symptom mirrors the
+// earlier 7992f829 stencil-side conditional removal that was reverted.
+// See feedback_caller_bump_breaks_splice.md for similar surface.
 #define J2J_INLINE_RETURN(s, retVal) \
     J2J_INLINE_RETURN_IMPL(s, retVal, \
         _HOLE_RT_J2J_TRACE((s), 2, (retVal).bits, \
