@@ -1368,7 +1368,11 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
 
     // Check that at least one IC entry has data — otherwise there's no
     // specialization opportunity and recompile would just produce the
-    // same code (waste of code-zone memory).
+    // same code (waste of code-zone memory).  A "high water mark"
+    // version requiring N% IC fill was tried 2026-04-30 but regressed
+    // bench panel by ~14% — the extra wait pushed methods further into
+    // interp mode and the larger fill threshold didn't unlock enough
+    // additional specializations to compensate.  See deferred B10.
     uint8_t* icStart = jm->codeStart() + jm->codeSize
                      - jm->numICEntries * IC_BYTES_PER_SITE;
     bool anyData = false;
