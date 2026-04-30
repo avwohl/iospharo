@@ -1327,55 +1327,63 @@ the only way to add new shapes without taxing all sends.
 detectTrivialMethod recognition + IC patch encoding can be
 re-introduced together with the new stencil.
 
-**2026-04-29 SHIPPED as opt-in `PHARO_RETLIT=1` (`bb9bb798`).**
-The full architecture lives in tree:
-  - `stencil_sendInlineReturnsLiteral` (144 bytes, 5 relocs)
-    reads class from `icData[0]` and literal Oop from
-    `icData[2] & 0x0000FFFFFFFFFFFFULL`, modeled on
+**2026-04-29 SHIPPED as opt-in `PHARO_RETLIT=1`** — original
+arbitrary-Oop design at `bb9bb798`, bit-budget redesign at
+`3e2efb7c`.  The full architecture lives in tree:
+  - `stencil_sendInlineReturnsLiteral` (236 bytes, 7 relocs after
+    redesign) reads class from `icData[0]` and a 3-bit kind tag
+    from `(icData[2] >> 48) & 7`, switching on
+    nil/true/false/SmI 0/SmI 1.  Modeled on
     `stencil_sendInlineMonoJ2J`.
   - `detectTrivialMethod` recognizes 1-byte ReturnTrue/False/Nil
-    and 2-byte push<const>+returnTop (numLiterals-bounded).
-  - IC patcher sets bit 58 + bits 47:0 = literal when
-    `(literalBits >> 48) == 0` and `PHARO_RETLIT=1`.
+    and 2-byte push<const>+returnTop, restricted to the 5
+    encodable kinds (`TrivialReturnKind`).
+  - IC patcher sets bit 58 + bits 50:48 = kind when
+    `PHARO_RETLIT=1`.  Bits 50:48 are above the 47-bit
+    virtual-address range, so bits 47:0 stay free for J2J's
+    entry address.
+  - `TRIVIAL_BITS` does NOT include bit 58 — bit 58 and bit 60
+    coexist on the same IC entry.  The if-else specialization
+    chain picks bit 58 first; without specialization the bit-60
+    J2J path still fires (no regression by construction).
   - `JITCompiler::applyICSpecialization` swaps
     `stencil_sendJ2J` → `stencil_sendInlineReturnsLiteral` on
     bit 58.
-  - `TRIVIAL_BITS` includes 58 so J2J doesn't OR over the
-    literal bits (intentional — they share bits 47:0).
   - `numSendSites` count + `operand2Ptr = icBase` loop both
     include the new stencil.
 
-**Default OFF.**  Splice panel identical (5/7/7/7/7/5) with or
-without the flag.  Bench suite under `PHARO_RETLIT=1` shows
-mixed results: sum 1M ~10% faster (102→91 ms) but fib(28)
-+45%, 1M getter +32%, 1M blocks +43%.  Net negative — the cost
-of displacing J2J for these methods exceeds the literal-push
-savings.
+**Default OFF.**  Bench panel identical with or without the flag
+(5/7/7/7/7/5 ms).  Eval-mode benches (sum 1M, ifTrue blocks,
+isInteger, isNil, yourself) within run-to-run noise.  No clear
+speedup yet because the most common returnsLiteral targets
+(`Integer>>isInteger`, `Object>>isNil`, predicates on
+SmallInteger receivers) are sent to immediates, and the IC
+patcher's `receiverIsHeap` gate skips bit-58 classification for
+non-heap receivers.
 
-**Why it regresses despite the obvious-looking inline win:**
-returnsLiteral methods are typically tiny (1-2 bytecodes).  The
-J2J fast path on those is itself very cheap — IC class match +
-~10 cycles save + tail call into target's prologue + 1-2 bytecode
-execution + tail return.  My specialized stencil saves ~20-30
-cycles per call but adds a class-extraction-from-receiver step
-that the J2J path also does.  Across many call sites, the
-displacement cost (lost J2J fast path on every method that just
-happens to be returnsLiteral) eats the savings.
+**Why the original (`bb9bb798`) regressed:** stored the cached
+Oop in bits 47:0 directly, which collided with J2J's entry
+address, AND set bit 58 in `TRIVIAL_BITS` to suppress J2J on
+literal entries.  Net effect: any method qualifying for
+returnsLiteral lost its J2J fast path entirely.  Since J2J on a
+1-2 bytecode method is itself very cheap, the displacement
+cost (lost J2J on every returnsLiteral target) exceeded the
+literal-push savings.  Bench suite saw fib +45%, 1M getter +32%,
+1M blocks +43%.
 
-**For a future session that wants to re-attempt this win:**
-the levers are
-  1. Don't displace J2J — find a way to set bit 58 AND bit 60
-     simultaneously (would need a different bit budget; literal
-     bits and J2J entry both want 47:0).  E.g., encode 3-4 fixed
-     constants (nil/true/false/0/1) using bits 18-16 (free) so
-     bits 47:0 stay free for J2J entry.
-  2. Only flip bit 58 for sites where the J2J target is
-     uncompiled or eviction-likely — avoids displacing live J2J.
-  3. Add hit-count tracking so we only specialize the truly hot
-     returnsLiteral sites (where the savings amortize).
-
-The current `bb9bb798` commit captures the design and stays in
-tree as opt-in infrastructure for any of these follow-ups.
+**Levers remaining for unlocking real perf:**
+  1. ~~Don't displace J2J~~ — done in `3e2efb7c`.
+  2. **Extend to immediate receivers.**  Most predicate methods
+     (`isInteger`, `isNil`, `isString`) are sent to SmI/Char/etc.
+     The patcher currently only sets bit 58 for heap-class
+     receivers; lifting that gate (with appropriate handling for
+     the immediate-tag lookup-key path) would unlock the typical
+     workload.
+  3. Only flip bit 58 for sites where the J2J target is
+     uncompiled or eviction-likely — orthogonal to (2); helps
+     when the constant-push really is faster than a J2J chain.
+  4. Hit-count tracking so we only specialize hot
+     returnsLiteral sites (where savings amortize).
 
 ---
 
