@@ -99,6 +99,17 @@ extern "C" void jit_b5_dump_ring(const char* tag) {
     fprintf(stderr, "=== end B5 dump ===\n");
 }
 
+// True no-op for the J2J trace fast path.  When B5 / primAtOob diagnostic
+// flags are off (the production case), the stencil's _HOLE_RT_J2J_TRACE
+// pointer can target this empty function instead of jit_rt_j2j_trace
+// — saves the conditional load + branch on every J2J save/return.
+// The function-call overhead remains (caller-saved register spills around
+// the call site) but the body is a single ret.
+extern "C" void jit_rt_j2j_trace_noop(JITState*, uint64_t,
+                                       uint64_t, uint64_t) {
+    // intentionally empty
+}
+
 // B5 diagnostic: called from stencils at J2J save-push and J2J return.
 // event=1: save-push.  extra1 = nArgs, extra2 = caller compiledMethod oop.
 // event=2: return.  extra1 = retVal.bits, extra2 = callerCM | args<<48.
@@ -1316,7 +1327,16 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.arrayPrim = reinterpret_cast<void*>(&jit_rt_array_prim);
     helpers.newPrim = reinterpret_cast<void*>(&jit_rt_new_prim);
     helpers.icMiss = reinterpret_cast<void*>(&jit_rt_ic_miss);
-    helpers.j2jTrace = reinterpret_cast<void*>(&jit_rt_j2j_trace);
+    // Use the no-op trace when no diagnostic flag is active — the real
+    // function checks `if (event == 99 || event == 100)` then `if (!trace)
+    // return`, which is ~5-10 cycles per send.  At 1M sends/bench that's
+    // ~10ms on the hot path.  PHARO_B5_TRACE / PHARO_PRIMAT_OOB flip to
+    // the real impl.
+    bool needTrace = g_debug.b5Trace
+                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr;
+    helpers.j2jTrace = reinterpret_cast<void*>(needTrace
+        ? &jit_rt_j2j_trace
+        : &jit_rt_j2j_trace_noop);
     helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
     helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
     compiler_->setHelpers(helpers);
