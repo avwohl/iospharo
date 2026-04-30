@@ -13656,10 +13656,13 @@ void Interpreter::tryOSRAtBackwardJump() {
     // mode `DoIt` runs once but its inner loop runs millions of times).
     // Idempotent: maybeRecompileForOSR no-ops if tier != 1 or IC empty.
     //
-    // OPT-IN.  Bench suite A/B (2026-04-30) showed 1M blocks regressed
-    // 13→16 ms (~19%) with default-on — the recompile cost outweighs
-    // partial-specialization benefit on benches where most IC sites
-    // populate after recompile.  See deferred B10.
+    // OPT-IN.  Default-off pending real benefit signal — IC-copy fix
+    // `d3823162` (2026-04-30) eliminated the prior catastrophic
+    // regression (factorial 23→303 ms etc.), but post-fix bench A/B
+    // shows opt-in at parity with baseline (no clear win, no hurt).
+    // Bench suite 1M blocks slightly noisier under default-on (best-
+    // of-3 14.67 vs 14.0 baseline).  Keep gated; flip later if a
+    // workload shows a real win.  See deferred B10.
     static const bool osrRecompile =
         std::getenv("PHARO_OSR_RECOMPILE") != nullptr;
     if (osrRecompile && jitRuntime_.maybeRecompileForOSR(method_)) {
