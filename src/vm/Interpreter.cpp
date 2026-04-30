@@ -13656,15 +13656,15 @@ void Interpreter::tryOSRAtBackwardJump() {
     // mode `DoIt` runs once but its inner loop runs millions of times).
     // Idempotent: maybeRecompileForOSR no-ops if tier != 1 or IC empty.
     //
-    // OPT-IN.  Default-off pending real benefit signal — IC-copy fix
-    // `d3823162` (2026-04-30) eliminated the prior catastrophic
-    // regression (factorial 23→303 ms etc.), but post-fix bench A/B
-    // shows opt-in at parity with baseline (no clear win, no hurt).
-    // Bench suite 1M blocks slightly noisier under default-on (best-
-    // of-3 14.67 vs 14.0 baseline).  Keep gated; flip later if a
-    // workload shows a real win.  See deferred B10.
-    static const bool osrRecompile =
-        std::getenv("PHARO_OSR_RECOMPILE") != nullptr;
+    // Default-on (2026-04-30) after IC specialization splice gate
+    // (4a0baf6a) eliminated the 1M blocks regression.  Post-gate A/B
+    // best-of-5: getter+yourself 94 vs 96 (slight win), 1M blocks
+    // 13 vs 13 (parity), sum 1M 97 vs 98 (parity).  Bench panel
+    // unchanged.  Set PHARO_NO_OSR_RECOMPILE=1 to opt out.
+    static const bool osrRecompile = []() {
+        if (std::getenv("PHARO_NO_OSR_RECOMPILE")) return false;
+        return true;  // default-on; legacy PHARO_OSR_RECOMPILE still works (no-op)
+    }();
     if (osrRecompile && jitRuntime_.maybeRecompileForOSR(method_)) {
         // Re-lookup — recompile() replaced the JITMethod entry.
         jm = jitRuntime_.methodMap().lookup(method_.rawBits());
