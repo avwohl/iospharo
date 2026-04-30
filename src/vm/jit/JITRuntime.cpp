@@ -1356,6 +1356,42 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
     }
 }
 
+bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
+    if (!initialized_ || !compiler_) return false;
+    if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000)
+        return false;
+    JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
+    // Only recompile T1-compiled methods that haven't been recompiled yet.
+    // recompile() sets tier=2, which excludes them here.
+    if (!jm || !jm->isExecutable() || jm->tier != 1) return false;
+    if (jm->numICEntries == 0) return false;
+
+    // Check that at least one IC entry has data — otherwise there's no
+    // specialization opportunity and recompile would just produce the
+    // same code (waste of code-zone memory).
+    uint8_t* icStart = jm->codeStart() + jm->codeSize
+                     - jm->numICEntries * IC_BYTES_PER_SITE;
+    bool anyData = false;
+    for (uint32_t i = 0; i < jm->numICEntries; i++) {
+        uint64_t* slots = reinterpret_cast<uint64_t*>(
+            icStart + i * IC_BYTES_PER_SITE);
+        if (slots[0] != 0) { anyData = true; break; }
+    }
+    if (!anyData) return false;
+
+    static const bool traceRecompile =
+        std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
+    if (traceRecompile) {
+        std::string sel = interp_->memory().selectorOf(compiledMethod);
+        fprintf(stderr,
+                "[RECOMPILE-OSR] %s (icEntries=%u execCount=%u)\n",
+                sel.c_str(), jm->numICEntries,
+                jm->stats ? jm->stats->executionCount : 0);
+    }
+    JITMethod* newJM = compiler_->recompile(compiledMethod);
+    return newJM != nullptr;
+}
+
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return;
 

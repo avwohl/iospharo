@@ -13647,6 +13647,22 @@ void Interpreter::tryOSRAtBackwardJump() {
         if (!jm || !jm->isExecutable()) return;
     }
 
+    // OSR-triggered recompile (2026-04-30).  If the method is still T1-
+    // compiled (no IC-guided specialization) but its IC entries got
+    // populated during interp execution, force a recompile before
+    // entering JIT.  Otherwise OSR enters first-compile code with no
+    // specialization, which never gets revisited because OSR'd methods
+    // typically never reach the 500-execution threshold (e.g., the eval-
+    // mode `DoIt` runs once but its inner loop runs millions of times).
+    // Idempotent: maybeRecompileForOSR no-ops if tier != 1 or IC empty.
+    static const bool osrRecompile =
+        std::getenv("PHARO_NO_OSR_RECOMPILE") == nullptr;
+    if (osrRecompile && jitRuntime_.maybeRecompileForOSR(method_)) {
+        // Re-lookup — recompile() replaced the JITMethod entry.
+        jm = jitRuntime_.methodMap().lookup(method_.rawBits());
+        if (!jm || !jm->isExecutable()) return;
+    }
+
     // Method is compiled — enter JIT at current IP (OSR)
     jitOSREntries_++;
     tryJITResumeInCaller();

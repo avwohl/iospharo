@@ -64,6 +64,16 @@ public:
     // execution counter and triggers compilation at the threshold.
     void noteMethodEntry(Oop compiledMethod);
 
+    // OSR-driven recompile (2026-04-30).  When OSR fires for a method that
+    // was already T1-compiled but never reached the recompile threshold,
+    // its IC entries may have been populated during interp execution but
+    // the JIT code is still the IC-empty initial compile.  This trigger
+    // forces a recompile so the specialization pass picks up the IC data
+    // before OSR enters JIT.  Idempotent — only fires when method is tier 1
+    // AND has populated IC entries AND hasn't been recompiled yet.
+    // Returns true if a recompile happened.
+    bool maybeRecompileForOSR(Oop compiledMethod);
+
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 

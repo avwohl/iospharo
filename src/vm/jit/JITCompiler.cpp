@@ -1256,6 +1256,21 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
         uint64_t extra0 = ic[2];
         uint64_t classKey1 = ic[3];
 
+        // PHARO_TRACE_IC_EXTRA=1: log extra0 bits for every monomorphic
+        // send site during specialization, so we can see which bits are
+        // actually set and why a particular branch did/didn't fire.
+        static const bool traceExtra =
+            std::getenv("PHARO_TRACE_IC_EXTRA") != nullptr;
+        if (traceExtra && classKey0 != 0 && classKey1 == 0) {
+            fprintf(stderr,
+                    "[IC-EXTRA] site=%u extra0=0x%llx (b58=%d b59=%d b60=%d "
+                    "b61=%d b62=%d b63=%d kind=%llu)\n",
+                    sendIdx, (unsigned long long)extra0,
+                    (int)((extra0 >> 58) & 1), (int)((extra0 >> 59) & 1),
+                    (int)((extra0 >> 60) & 1), (int)((extra0 >> 61) & 1),
+                    (int)((extra0 >> 62) & 1), (int)((extra0 >> 63) & 1),
+                    (unsigned long long)((extra0 >> 48) & 0x7));
+        }
         if (classKey0 != 0 && classKey1 == 0) {
             // Monomorphic site — check for trivial method patterns
             // Pack literal index (for selector recovery on bail) into bits 48-63
