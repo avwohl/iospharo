@@ -14877,24 +14877,40 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         // receivers so bit-60 J2J can take over cleanly below.
         bool receiverIsHeap = (receiver.rawBits() & 0x7) == 0
                               && receiver.rawBits() >= 0x10000;
-        if (!noGetterBit && receiverIsHeap) {
+        // PHARO_RETLIT=1 enables bit 58 (returnsLiteral).  The
+        // 3-bit kind tag goes in bits 50:48 (above the 47-bit
+        // address range) so bits 47:0 stay free for J2J.
+        static const bool retlitEnabled =
+            std::getenv("PHARO_RETLIT") != nullptr;
+        if (!noGetterBit && (receiverIsHeap || retlitEnabled)) {
             TrivialMethodInfo tmi = detectTrivialMethod(resolvedMethod, memory_);
             bool skip63 = bisect && std::strcmp(bisect, "63") == 0;
             bool skip62 = bisect && std::strcmp(bisect, "62") == 0;
             bool skip61 = bisect && std::strcmp(bisect, "61") == 0;
-            // PHARO_RETLIT=1 enables bit 58 (returnsLiteral).  The
-            // 3-bit kind tag goes in bits 50:48 (above the 47-bit
-            // address range) so bits 47:0 stay free for J2J.
-            static const bool retlitEnabled =
-                std::getenv("PHARO_RETLIT") != nullptr;
-            if (!skip63 && tmi.getterIndex >= 0)
-                extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
-            else if (!skip62 && tmi.setterIndex >= 0)
-                extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
-            else if (!skip61 && tmi.returnsSelf)
-                extra = (1ULL << 61);
-            else if (retlitEnabled
-                     && tmi.returnsLiteral != TrivialReturnKind::None)
+            // Getter/setter/returnsSelf classifications stay
+            // heap-only — they store data in bits 15:0 which
+            // collides with bit-60 J2J's address bits 47:0 if
+            // both are set.  For immediate receivers the stencil's
+            // `tag == 0` gate skips the inline-getter path anyway.
+            if (receiverIsHeap) {
+                if (!skip63 && tmi.getterIndex >= 0)
+                    extra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
+                else if (!skip62 && tmi.setterIndex >= 0)
+                    extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
+                else if (!skip61 && tmi.returnsSelf)
+                    extra = (1ULL << 61);
+            }
+            // returnsLiteral classification works for BOTH heap
+            // and immediate receivers — its kind tag in bits 50:48
+            // doesn't collide with anything in bits 47:0, and the
+            // stencil computes `lookupKey = tag | 0x80000000` for
+            // immediates so the IC class match still works.  The
+            // most common returnsLiteral targets (predicates like
+            // `Integer>>isInteger`, `Object>>isNil`) run on SmI
+            // receivers, so lifting the heap gate is where the
+            // real wins live.
+            if (extra == 0 && retlitEnabled
+                && tmi.returnsLiteral != TrivialReturnKind::None)
                 extra = (1ULL << 58)
                       | ((uint64_t)tmi.returnsLiteral << 48);
         }
