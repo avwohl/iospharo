@@ -4292,8 +4292,179 @@ private:
             g_inlinesEmitted++;
             g_totalHintsConsumed++;
             return true;
+        } else if (calleeIR.values.size() == 10) {
+            // 10-value `^ ivar OP1 ivar OP2 const` arith chain.
+            // Canonical case: `OrderedCollection>>size` is
+            // `^ lastIndex - firstIndex + 1` which lifts to:
+            //   v0 = kLoadReceiver
+            //   v1 = kLoadInstVar(v0, lit=ivarA)
+            //   v2 = kLoadReceiver
+            //   v3 = kLoadInstVar(v2, lit=ivarB)
+            //   v4 = kPrimTagCheckInt(v1, ...)
+            //   v5 = kPrimTagCheckInt(v3, ...)
+            //   v6 = kPrim{Add,Sub,Mul}Int(v4, v5)
+            //   v7 = kConstantOop(lit=K)
+            //   v8 = kPrim{Add,Sub,Mul}Int(v6, v7)
+            //   v9 = kReturn(v8)
+            //
+            // Inline as: kGuardClass + LoadInstVar(callerRecv, ivarA) +
+            // LoadInstVar(callerRecv, ivarB) + PrimTagCheckInt×2 +
+            // primOp1 + ConstantOop + primOp2.  Result is primOp2's id.
+            //
+            // Opt-in via PHARO_SISTA_INLINE_ARITHIVAR=1 — soak before
+            // default-on.  The inlined body has 2 deopt points (the
+            // tag checks); each falls back to a normal send if the
+            // ivars aren't SmI, which matches the callee's own deopt
+            // behavior.
+            static const bool inlineArithIvar =
+                std::getenv("PHARO_SISTA_INLINE_ARITHIVAR") != nullptr;
+            if (!inlineArithIvar) {
+                recordUnrecognizedShape(calleeIR);
+                return false;
+            }
+            const Value& cv0 = calleeIR.values[0];
+            const Value& cv1 = calleeIR.values[1];
+            const Value& cv2 = calleeIR.values[2];
+            const Value& cv3 = calleeIR.values[3];
+            const Value& cv4 = calleeIR.values[4];
+            const Value& cv5 = calleeIR.values[5];
+            const Value& cv6 = calleeIR.values[6];
+            const Value& cv7 = calleeIR.values[7];
+            const Value& cv8 = calleeIR.values[8];
+            const Value& cv9 = calleeIR.values[9];
+            // Validate exact operand chain.
+            if (cv0.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv1.op != Op::kLoadInstVar
+                || cv1.operands.size() != 1
+                || cv1.operands[0] != cv0.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv2.op != Op::kLoadReceiver) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv3.op != Op::kLoadInstVar
+                || cv3.operands.size() != 1
+                || cv3.operands[0] != cv2.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv4.op != Op::kPrimTagCheckInt
+                || cv4.operands.empty() || cv4.operands[0] != cv1.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv5.op != Op::kPrimTagCheckInt
+                || cv5.operands.empty() || cv5.operands[0] != cv3.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // First arith op must be one of Add/Sub/Mul on the two
+            // tag-checked ivars.
+            if ((cv6.op != Op::kPrimAddInt
+              && cv6.op != Op::kPrimSubInt
+              && cv6.op != Op::kPrimMulInt)
+                || cv6.operands.size() != 2
+                || cv6.operands[0] != cv4.id
+                || cv6.operands[1] != cv5.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv7.op != Op::kConstantOop) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Constant must be a SmI for the second arith op.  (Bit 0
+            // set on the rawBits is the SmI tag in this Oop encoding.)
+            if ((cv7.literal & 0x7) != 1) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Second arith op must combine the first arith result with
+            // the constant.
+            if ((cv8.op != Op::kPrimAddInt
+              && cv8.op != Op::kPrimSubInt
+              && cv8.op != Op::kPrimMulInt)
+                || cv8.operands.size() != 2
+                || cv8.operands[0] != cv6.id
+                || cv8.operands[1] != cv7.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            if (cv9.op != Op::kReturn
+                || cv9.operands.size() != 1
+                || cv9.operands[0] != cv8.id) {
+                recordUnrecognizedShape(calleeIR); return false;
+            }
+            // Shape OK.  Emit kGuardClass on the caller's receiver
+            // first (matches existing 3-value branch).
+            std::vector<uint32_t> aiGuardOps;
+            aiGuardOps.reserve(stack_.size() + 1);
+            aiGuardOps.push_back(recvId);
+            for (uint32_t s : stack_) aiGuardOps.push_back(s);
+            uint64_t aiGuardLit = (hit->classOop & 0x3FFFFFu)
+                                | (static_cast<uint64_t>(bcOffset) << 32);
+            out_.newValue(currentBlock_, Op::kGuardClass, Type::kOop,
+                          std::move(aiGuardOps), aiGuardLit);
+            // Materialize the two ivar loads in the caller.
+            uint32_t aiIvarA = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              {recvId},
+                                              cv1.literal);
+            uint32_t aiIvarB = out_.newValue(currentBlock_,
+                                              Op::kLoadInstVar, Type::kOop,
+                                              {recvId},
+                                              cv3.literal);
+            // Tag checks — copy deopt stack pattern from the existing
+            // arith builder path (operand[0]=value, then deopt stack
+            // snapshot from caller's stack_).
+            std::vector<uint32_t> aiCheckA{aiIvarA};
+            for (uint32_t s : stack_) aiCheckA.push_back(s);
+            uint32_t aiTaggedA = out_.newValue(currentBlock_,
+                                               Op::kPrimTagCheckInt,
+                                               Type::kOopSmallInt,
+                                               std::move(aiCheckA),
+                                               /*literal=*/bcOffset);
+            std::vector<uint32_t> aiCheckB{aiIvarB};
+            for (uint32_t s : stack_) aiCheckB.push_back(s);
+            uint32_t aiTaggedB = out_.newValue(currentBlock_,
+                                               Op::kPrimTagCheckInt,
+                                               Type::kOopSmallInt,
+                                               std::move(aiCheckB),
+                                               /*literal=*/bcOffset);
+            // First arith op.
+            uint32_t aiOp1 = out_.newValue(currentBlock_, cv6.op,
+                                            Type::kOopSmallInt,
+                                            {aiTaggedA, aiTaggedB},
+                                            /*literal=*/0);
+            // Constant.
+            uint32_t aiConst = out_.newValue(currentBlock_,
+                                              Op::kConstantOop,
+                                              Type::kOopSmallInt,
+                                              {}, cv7.literal);
+            // Second arith op.
+            uint32_t aiOp2 = out_.newValue(currentBlock_, cv8.op,
+                                            Type::kOopSmallInt,
+                                            {aiOp1, aiConst},
+                                            /*literal=*/0);
+            // Pop receiver+args, push the inlined result.
+            for (uint32_t i = 0; i < nArgs + 1; i++) stack_.pop_back();
+            stack_.push_back(aiOp2);
+            g_inlinesEmitted++;
+            g_totalHintsConsumed++;
+            static int aivCount = 0;
+            if (++aivCount <= 10
+                && std::getenv("PHARO_SISTA_INLINE_DUMP")) {
+                std::fprintf(stderr,
+                    "[ARITHIVAR-EMIT] callee=0x%llx op1=%s op2=%s "
+                    "ivarA=%llu ivarB=%llu const=0x%llx bcOff=%u\n",
+                    (unsigned long long)hit->targetMethod,
+                    cv6.op == Op::kPrimAddInt ? "+" :
+                    cv6.op == Op::kPrimSubInt ? "-" : "*",
+                    cv8.op == Op::kPrimAddInt ? "+" :
+                    cv8.op == Op::kPrimSubInt ? "-" : "*",
+                    (unsigned long long)cv1.literal,
+                    (unsigned long long)cv3.literal,
+                    (unsigned long long)cv7.literal,
+                    bcOffset);
+            }
+            return true;
         } else {
-            // values.size() not in {2,3,4,5} — record the shape so the
+            // values.size() not in {2,3,4,5,10} — record the shape so the
             // dump can show which sizes/op-prefixes dominate the
             // unrecognized callees.
             recordUnrecognizedShape(calleeIR);
