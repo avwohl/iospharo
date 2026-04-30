@@ -1299,8 +1299,13 @@ extern "C" void stencil_sendJ2J(JITState* s) {
         }
     }
 
-    // Lightweight inline primitives (bits 52:48 = primKind)
-    if ((extra >> 48) & 0x1F) {
+    // Lightweight inline primitives (bits 52:48 = primKind).
+    // Bit 58 (returnsLiteral) reuses bits 50:48 for a kind tag —
+    // skip the primKind path on those entries so kind isn't
+    // misinterpreted as primKind 1-5.  The IC patcher never sets
+    // both bits simultaneously, so this gate just guards against
+    // the tag-as-primKind misread when PHARO_RETLIT=1.
+    if (((extra >> 48) & 0x1F) && !(extra & (1ULL << 58))) {
         uint8_t primKind = (uint8_t)((extra >> 48) & 0x1F);
         if (primKind != 0) {
             // new/new: allocation helper (primKind 17-18)
