@@ -4302,9 +4302,9 @@ private:
             //   v3 = kLoadInstVar(v2, lit=ivarB)
             //   v4 = kPrimTagCheckInt(v1, ...)
             //   v5 = kPrimTagCheckInt(v3, ...)
-            //   v6 = kPrim{Add,Sub,Mul}Int(v4, v5)
+            //   v6 = kPrim{Add,Sub,Mul}Int(v1, v3, ...deoptStack)
             //   v7 = kConstantOop(lit=K)
-            //   v8 = kPrim{Add,Sub,Mul}Int(v6, v7)
+            //   v8 = kPrim{Add,Sub,Mul}Int(v6, v7, ...deoptStack)
             //   v9 = kReturn(v8)
             //
             // Inline as: kGuardClass + LoadInstVar(callerRecv, ivarA) +
@@ -4358,13 +4358,16 @@ private:
                 recordUnrecognizedShape(calleeIR); return false;
             }
             // First arith op must be one of Add/Sub/Mul on the two
-            // tag-checked ivars.
+            // ivars (NOT the tag-check results — the lifter passes the
+            // original loads through; the tag-checks are side-effecting
+            // deopt points only).  Under INLINE_ARITH default-on the
+            // operands are [a, b, ...deoptStack], so size >= 2.
             if ((cv6.op != Op::kPrimAddInt
               && cv6.op != Op::kPrimSubInt
               && cv6.op != Op::kPrimMulInt)
-                || cv6.operands.size() != 2
-                || cv6.operands[0] != cv4.id
-                || cv6.operands[1] != cv5.id) {
+                || cv6.operands.size() < 2
+                || cv6.operands[0] != cv1.id
+                || cv6.operands[1] != cv3.id) {
                 recordUnrecognizedShape(calleeIR); return false;
             }
             if (cv7.op != Op::kConstantOop) {
@@ -4376,11 +4379,11 @@ private:
                 recordUnrecognizedShape(calleeIR); return false;
             }
             // Second arith op must combine the first arith result with
-            // the constant.
+            // the constant.  Same deopt-stack append → size >= 2.
             if ((cv8.op != Op::kPrimAddInt
               && cv8.op != Op::kPrimSubInt
               && cv8.op != Op::kPrimMulInt)
-                || cv8.operands.size() != 2
+                || cv8.operands.size() < 2
                 || cv8.operands[0] != cv6.id
                 || cv8.operands[1] != cv7.id) {
                 recordUnrecognizedShape(calleeIR); return false;
