@@ -1354,12 +1354,19 @@ arbitrary-Oop design at `bb9bb798`, bit-budget redesign at
 
 **Default OFF.**  Bench panel identical with or without the flag
 (5/7/7/7/7/5 ms).  Eval-mode benches (sum 1M, ifTrue blocks,
-isInteger, isNil, yourself) within run-to-run noise.  No clear
-speedup yet because the most common returnsLiteral targets
-(`Integer>>isInteger`, `Object>>isNil`, predicates on
-SmallInteger receivers) are sent to immediates, and the IC
-patcher's `receiverIsHeap` gate skips bit-58 classification for
-non-heap receivers.
+isInteger, isNil, yourself) within run-to-run noise.
+
+**Immediate-receiver extension (`28ca1470`, 2026-04-29):**
+the heap-only gate was lifted for returnsLiteral specifically
+(getter/setter/returnsSelf stay heap-gated since their slot
+indices in bits 15:0 still collide with J2J's address).  This
+unblocks classification of predicate methods on SmI/Char
+receivers.  No measurable speedup at 10M-iter `i isInteger`
+loops — at ~50 ns/call the J2J fast path is already only a few
+cycles, and saving the tail-call/register-save overhead amounts
+to ~0.2 ns/call which is below the bench noise floor.  The
+extension is structurally correct but won't move bench numbers
+on its own.
 
 **Why the original (`bb9bb798`) regressed:** stored the cached
 Oop in bits 47:0 directly, which collided with J2J's entry
@@ -1373,17 +1380,23 @@ literal-push savings.  Bench suite saw fib +45%, 1M getter +32%,
 
 **Levers remaining for unlocking real perf:**
   1. ~~Don't displace J2J~~ — done in `3e2efb7c`.
-  2. **Extend to immediate receivers.**  Most predicate methods
-     (`isInteger`, `isNil`, `isString`) are sent to SmI/Char/etc.
-     The patcher currently only sets bit 58 for heap-class
-     receivers; lifting that gate (with appropriate handling for
-     the immediate-tag lookup-key path) would unlock the typical
-     workload.
+  2. ~~Extend to immediate receivers~~ — done in `28ca1470`.
+     Did not yield measurable wins; J2J is already too fast for
+     the constant-push savings to be visible.
   3. Only flip bit 58 for sites where the J2J target is
-     uncompiled or eviction-likely — orthogonal to (2); helps
-     when the constant-push really is faster than a J2J chain.
+     uncompiled — bypasses the dispatch overhead entirely when
+     no compiled target exists.  This is where a real speedup
+     would come from: the alternative path is interp-mode method
+     activation, which IS slow.  Worth exploring.
   4. Hit-count tracking so we only specialize hot
-     returnsLiteral sites (where savings amortize).
+     returnsLiteral sites — orthogonal; helps if (3) shows wins.
+
+**Conclusion:** returnsLiteral specialization on top of an
+already-fast J2J path has minimal value.  The original Phase 4
+inliner targeted UNCOMPILED callees (where J2J doesn't exist),
+which is structurally a bigger win.  Future work should focus on
+lever #3 or move to other Phase 4 shapes that don't compete with
+J2J.
 
 ---
 
