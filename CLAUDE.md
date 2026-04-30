@@ -42,6 +42,11 @@ Key paths:
 - `git status` before and after commits.
 - When a background task is running, start the next task immediately. Don't
   idle waiting for the notification.
+- Don't ScheduleWakeup unless you're actually waiting for something — a long
+  build, a Monitor event, or an explicit "check back in N minutes." For
+  `/loop until <goal>` invocations, just keep iterating; an idle 20-30 min
+  sleep burns the user's time for no benefit. The /loop skill calls these
+  "fallback heartbeats" but they're only useful when a real signal exists.
 
 ## No workarounds — fix root causes
 

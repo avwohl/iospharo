@@ -1002,6 +1002,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
         case StencilID::stencil_sendInlineReturnsSelf:
         case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
+        case StencilID::stencil_sendBlockValue0Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
         case StencilID::stencil_pushBlock:
         case StencilID::stencil_pushArray:
@@ -1313,6 +1314,16 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // numCopied==0.  Default-on after correctness validation
                 // (2026-04-26).  Set PHARO_NO_BLOCK1_SPEC=1 to disable.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
+                bc.operand2Ptr = litBits | (classKey0 << 16);
+                specialized++; specBlockValue1++;
+            } else if (!g_debug.noBlock1Spec &&
+                       (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
+                       ((bc.operand >> 16) & 0xFF) == 0) {
+                // value send (0-arg) — same shape as 1-arg specialization
+                // but receiver at sp[-1] and no arg slot to skip.  Helps the
+                // `N timesRepeat: [block]` pattern where each iter sends
+                // 0-arg `value` to a captured FullBlockClosure.
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue0Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
             } else if (g_debug.monoJ2JSpec &&
@@ -2350,6 +2361,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         case StencilID::stencil_sendInlineReturnsSelf:
         case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
+        case StencilID::stencil_sendBlockValue0Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
             jitMethod->hasSends = true;  // can deopt on class mismatch
             break;
