@@ -1732,15 +1732,16 @@ extern "C" void stencil_sendInlineReturnsSelf(JITState* s) {
 // monomorphic data for a method whose body is `^ <constant>`.
 // OPT-IN — see PHARO_RETLIT in JITCompiler.cpp:applyICSpecialization.
 //
-// IC `extra` bit 58 marks the shape; bits 47:0 hold the cached
-// Oop bits (resolved at IC patch time by detectTrivialMethod +
-// patchJITICAfterSend).  Class match → pop receiver+args, push
-// the cached Oop.  Class miss → bail through ExitSend (the IC
-// will re-dispatch).
+// IC `extra` bit 58 marks the shape; bits 50:48 hold a 3-bit kind
+// tag (1=nil, 2=true, 3=false, 4=SmI 0, 5=SmI 1).  The tag lives
+// ABOVE the 47-bit address range so bits 47:0 stay free for the
+// J2J entry address — the IC entry typically has BOTH bit 58
+// (this fast path) AND bit 60 (J2J entry) set, so without
+// specialization the bit-60 J2J path still works.
 //
 // OPERAND  = (bcLength << 24) | (nArgs << 16) | bcOffset
 // OPERAND2 = pointer to IC data (same layout as sendInlineMonoJ2J).
-// Reads class from icData[0] and literal from icData[2] & mask.
+// Reads class from icData[0] and kind tag from (icData[2] >> 48) & 7.
 extern "C" void stencil_sendInlineReturnsLiteral(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
@@ -1759,10 +1760,25 @@ extern "C" void stencil_sendInlineReturnsLiteral(JITState* s) {
         lookupKey = 0;
     }
     if (__builtin_expect(lookupKey == icData[0], 1)) {
-        // Class match — push the cached literal Oop.  The IC
-        // patcher only sets bit 58 when (literalBits >> 48) == 0,
-        // so the 48-bit mask below loses no information.
-        Oop lit; lit.bits = icData[2] & 0x0000FFFFFFFFFFFFULL;
+        // Class match — push the constant for the kind tag.
+        uint8_t kind = (uint8_t)((icData[2] >> 48) & 0x7);
+        Oop lit;
+        switch (kind) {
+            case 1: lit = *(Oop*)&_HOLE_NIL_OOP; break;  // nil
+            case 2: lit = s->trueOop; break;             // true
+            case 3: lit = s->falseOop; break;            // false
+            case 4: lit.bits = 0x1; break;               // SmI 0
+            case 5: lit.bits = 0x9; break;               // SmI 1
+            default:
+                // Unrecognized kind — bail (shouldn't happen, but
+                // safe fallback if the IC entry is mis-tagged).
+                s->icDataPtr = icData;
+                s->sendArgCount = nArgs;
+                s->ip = s->ip + bcOffset;
+                s->exitReason = EXIT_SEND;
+                _HOLE_RT_SEND(s);
+                return;
+        }
         s->sp[-(nArgs + 1)] = lit;
         s->sp -= nArgs;
         _HOLE_CONTINUE(s);
