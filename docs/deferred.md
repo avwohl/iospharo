@@ -1417,10 +1417,20 @@ applyICSpecialization runs.  `JITRuntime::maybeRecompileForOSR()`
 is idempotent (gates on tier == 1 + at least one IC entry has
 data); sets tier=2 on recompile.
 
-Default-off — opt in via `PHARO_OSR_RECOMPILE=1`.  Default-on
-attempt regressed bench suite 1M blocks 13→16 ms (~19%) — the
-recompile cost outweighs partial-specialization benefit when
-most IC sites populate after the recompile fires.
+**Default-on (2026-04-30, `9d1c5438`)** after IC specialization
+splice gate `4a0baf6a` eliminated the prior 1M blocks 13→16ms
+regression.  The splice gate prevents post-recompile MonoJ2J
+rewrite from bypassing Sista's `fn(&sstate)` for splice callees.
+
+Bench suite A/B (best-of-5):
+                     OSR=on    default
+  1M blocks            12        13
+  1M getter+yourself   95        96
+  sum 1M               97        98
+elsewhere unchanged.  Bench panel: 4/7/7/7/6/4 either way.
+
+Set `PHARO_NO_OSR_RECOMPILE=1` to opt out.  Legacy
+`PHARO_OSR_RECOMPILE` still works (no-op now).
 
 Bench panel at parity (4/7/7/7/7/4 ms either way).  Eval-mode
 benches: trace confirms `[RECOMPILE-OSR] DoIt (icEntries=14
