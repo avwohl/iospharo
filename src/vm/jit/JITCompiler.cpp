@@ -1282,6 +1282,20 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
             // Monomorphic site — check for trivial method patterns
             // Pack literal index (for selector recovery on bail) into bits 48-63
             uint64_t litBits = (uint64_t)(bc.branchTarget & 0xFFFF) << 48;
+            // Splice gate: if this site's callee is a Sista splice target,
+            // skip MonoJ2J (and block-value) specialization.  Those stencils
+            // bypass tryJITActivation, where Sista's lowered fn(&sstate) is
+            // invoked.  Without this gate, recompiling any caller whose IC
+            // points at a splice callee would rewire dispatch to direct T1
+            // entry — causing the 150× regression seen in prior J2J
+            // caller-bump experiments (see project_jit_recompile_gap.md).
+            // Cheap check: ic[1] is the callee CompiledMethod oop.
+            uint64_t calleeMethBits = reinterpret_cast<uint64_t*>(icBase)[1];
+            bool calleeIsSplice = false;
+            if (calleeMethBits != 0 && sistaRuntimeForGCHook_) {
+                calleeIsSplice = sistaRuntimeForGCHook_->hasSplice(
+                    Oop::fromRawBits(calleeMethBits));
+            }
             if (extra0 & (1ULL << 63)) {
                 // Getter: inline slot read
                 uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
@@ -1311,7 +1325,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // operand2Ptr is set to the IC base in the loop at
                 // line ~2129; it gets patched alongside sendJ2J.
                 specialized++; specReturnsLit++;
-            } else if (!g_debug.noBlock1Spec &&
+            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
                 // value: send to a FullBlockClosure receiver — specialize
@@ -1322,7 +1336,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
-            } else if (!g_debug.noBlock1Spec &&
+            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 0) {
                 // value send (0-arg) — same shape as 1-arg specialization
@@ -1332,7 +1346,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue0Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
-            } else if (g_debug.monoJ2JSpec &&
+            } else if (g_debug.monoJ2JSpec && !calleeIsSplice &&
                        (extra0 & (1ULL << 60)) /* J2J_ENTRY_BIT */ &&
                        (extra0 & (0x1FULL << 48)) == 0 /* no inline prim */ &&
                        (extra0 & (1ULL << 59)) == 0 /* not block value */) {
