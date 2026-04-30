@@ -1529,14 +1529,12 @@ j2j_direct_call:
             s->j2jSaveCursor += sizeof(J2JSave);
             s->j2jDepth++;
             s->j2jTotalCalls++;
-            // Caller-bump (executionCount) here would fire 1M+ times
-            // per send-heavy bench but gains nothing without a
-            // recompile-trigger reachable from J2J — recompile only
-            // fires from tryExecute, which J2J-only callees never
-            // reach.  Adding the bump unconditionally costs ~5%
-            // tinyBytecodes/sec.  isSpliceTarget flag (JM offset
-            // JM_IS_SPLICE) is in place for the eventual safe bump
-            // path; see project_jit_recompile_gap.md.
+            // J2J caller-bump deferred — sampled at 1/16 still hit the
+            // T1-vs-Sista race in panel run 2/4 (sumArr 7→1037ms).
+            // Even with isSpliceTarget gate, some interaction with the
+            // splice runtime path triggers regression.  The flag and
+            // JM_IS_SPLICE constant remain in the codebase for future
+            // structural fixes (Sista deopt-with-resume).
             // Setup callee
             Oop _calleeRecv = s->sp[-(nArgs + 1)];
             Oop* _fp = s->sp - (nArgs + 1);
