@@ -1508,16 +1508,12 @@ j2j_direct_call:
             _save->ip = s->ip + bcOffset + bcLen;
             _save->sendArgCount = nArgs;
             _save->resumeAddr = RESUME_ADDR;
-            // B5 trace: event=1 means "J2J save-push",
-            // extra1 = nArgs, extra2 = caller jitMethod (to identify chain).
-            // Pack caller's CompiledMethod oop as a 32-bit tag in extra2
-            // hi-word and nArgs in lo-word so we can correlate.
-            _HOLE_RT_J2J_TRACE(s, 1, (uint64_t)nArgs,
-                               (uint64_t)(*(uint64_t*)((uint8_t*)s->jitMethod +
-                                                       JM_COMPILED_METHOD)));
-            // literals/argCount/bcStart are derived from save.jitMethod
-            // on return (see J2J_INLINE_RETURN).  The self-recursive
-            // marker bit is obsolete now that all 3 fields are derived.
+            // B5 trace removed from hot J2J save path 2026-04-30 — was
+            // an unconditional indirect call to jit_rt_j2j_trace_noop
+            // (set when no diagnostic flag is on), costing ~6 cycles
+            // per send.  The return-path traces in J2J_INLINE_RETURN
+            // remain; B5 dump still works for return events.  Re-add
+            // a guarded version if save-event correlation needed.
             uint8_t* _calleeJM = (uint8_t*)entryAddr - JM_SIZE;
             void* _callerJM = s->jitMethod;
             _save->jitMethod = _callerJM;
