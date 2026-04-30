@@ -1908,8 +1908,17 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     // Promote hot methods: recompile Tier 1 with IC profiling data.
     // Threshold: 500 executions, tier 1 only, must have send sites.
     // (Tier 2 is now leaf-only, so skip it for methods with sends.)
+    //
+    // Skip Sista-spliced methods — same race noteMethodEntry +
+    // maybeRecompileForOSR already gate against.  Without this, a
+    // splice method that gets activated 500 times via interp (e.g.
+    // post-deopt) would recompile; entering the recompiled T1 code
+    // via OSR forces a slower per-iter dispatch than Sista's splice.
+    // See memory/project_t1_vs_sista_race.md.
+    bool isSplice = sistaRuntimeForGCHook_
+                 && sistaRuntimeForGCHook_->hasSplice(compiledMethod);
     if (jm->stats && jm->stats->executionCount == (uint32_t)g_debug.recompileAt &&
-        jm->tier == 1 && jm->numICEntries > 0) {
+        jm->tier == 1 && jm->numICEntries > 0 && !isSplice) {
         if (compiler_) {
             static const bool traceRecompile =
                 std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
