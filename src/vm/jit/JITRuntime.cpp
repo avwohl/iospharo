@@ -1386,6 +1386,27 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     if (!jm || !jm->isExecutable() || jm->tier != 1) return false;
     if (jm->numICEntries == 0) return false;
 
+    // Sista already owns this method via a counted-loop splice — don't
+    // race with it.  applyICSpecialization (run during recompile) emits
+    // stencil_sendInlineMonoJ2J for monomorphic sites; entering that T1
+    // code via OSR forces a slower per-iter dispatch than Sista's splice.
+    // A/B (2026-04-30, bench panel best-of-5):
+    //   default                          5/7/7/7/7/5
+    //   PHARO_OSR_RECOMPILE=1            6/11/11/11/11/7  (regression)
+    //   PHARO_OSR_RECOMPILE=1 + this gate 6/9/9/9/9/6     (partial fix)
+    //   PHARO_OSR_RECOMPILE=1 +
+    //     PHARO_NO_MONOJ2J_SPEC=1        5/7/7/7/7/5      (parity)
+    // The same hasSplice gate is already in noteMethodEntry to fix the
+    // T1-vs-Sista race; mirror it here for consistency.  Residual ~2 ms
+    // regression comes from `do:` (no splice) being recompiled and its
+    // MonoJ2J-specialized callees becoming a slower hot path; not yet
+    // resolved.  See memory/project_t1_vs_sista_race.md and
+    // memory/project_osr_recompile_regression.md.
+    if (sistaRuntimeForGCHook_
+        && sistaRuntimeForGCHook_->hasSplice(compiledMethod)) {
+        return false;
+    }
+
     // Check that at least one IC entry has data — otherwise there's no
     // specialization opportunity and recompile would just produce the
     // same code (waste of code-zone memory).  A "high water mark"
