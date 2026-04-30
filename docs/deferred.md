@@ -1410,12 +1410,17 @@ reached, all specialization paths miss.
 splices that bypass IC).  Lowering threshold from 500 to 50 and 10
 gave parity / mild regression — not the right knob.
 
-**OSR-triggered recompile (`bb6dee2c`, 2026-04-30):** when OSR
-fires for a T1-compiled method whose IC entries have populated,
-force a recompile so applyICSpecialization runs.
-`JITRuntime::maybeRecompileForOSR()` is idempotent (gates on
-tier == 1 + at least one IC entry has data); sets tier=2 on
-recompile.  Default-on with `PHARO_NO_OSR_RECOMPILE=1` kill switch.
+**OSR-triggered recompile (`bb6dee2c`, opt-in `a71cb3a4`,
+2026-04-30):** when OSR fires for a T1-compiled method whose IC
+entries have populated, force a recompile so
+applyICSpecialization runs.  `JITRuntime::maybeRecompileForOSR()`
+is idempotent (gates on tier == 1 + at least one IC entry has
+data); sets tier=2 on recompile.
+
+Default-off — opt in via `PHARO_OSR_RECOMPILE=1`.  Default-on
+attempt regressed bench suite 1M blocks 13→16 ms (~19%) — the
+recompile cost outweighs partial-specialization benefit when
+most IC sites populate after the recompile fires.
 
 Bench panel at parity (4/7/7/7/7/4 ms either way).  Eval-mode
 benches: trace confirms `[RECOMPILE-OSR] DoIt (icEntries=14
