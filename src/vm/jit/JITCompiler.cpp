@@ -1238,6 +1238,8 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
 
     uint16_t sendIdx = 0;
     uint16_t specialized = 0;
+    uint16_t specGetter = 0, specSetter = 0, specReturnsSelf = 0;
+    uint16_t specReturnsLit = 0, specBlockValue1 = 0, specMonoJ2J = 0;
 
     for (auto& bc : decoded) {
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_sendJ2J)
@@ -1263,18 +1265,18 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineGetter);
                 bc.operand2Ptr = litBits | (classKey0 << 16) | slotIdx;
-                specialized++;
+                specialized++; specGetter++;
             } else if (extra0 & (1ULL << 62)) {
                 // Setter: inline slot write
                 uint16_t slotIdx = (uint16_t)(extra0 & 0xFFFF);
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineSetter);
                 bc.operand2Ptr = litBits | (classKey0 << 16) | slotIdx;
-                specialized++;
+                specialized++; specSetter++;
             } else if (extra0 & (1ULL << 61)) {
                 // ReturnsSelf: just pop args
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsSelf);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
-                specialized++;
+                specialized++; specReturnsSelf++;
             } else if (extra0 & (1ULL << 58)) {
                 // ReturnsLiteral (Phase 4-style port).  IC patcher
                 // only sets bit 58 when PHARO_RETLIT=1 — the IC
@@ -1286,7 +1288,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineReturnsLiteral);
                 // operand2Ptr is set to the IC base in the loop at
                 // line ~2129; it gets patched alongside sendJ2J.
-                specialized++;
+                specialized++; specReturnsLit++;
             } else if (!g_debug.noBlock1Spec &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
@@ -1297,7 +1299,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // (2026-04-26).  Set PHARO_NO_BLOCK1_SPEC=1 to disable.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue1Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
-                specialized++;
+                specialized++; specBlockValue1++;
             } else if (g_debug.monoJ2JSpec &&
                        (extra0 & (1ULL << 60)) /* J2J_ENTRY_BIT */ &&
                        (extra0 & (0x1FULL << 48)) == 0 /* no inline prim */ &&
@@ -1311,7 +1313,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // suspected stale icData[1] (method oop) after GC.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMonoJ2J);
                 // Keep operand2Ptr unchanged (already points at IC base)
-                specialized++;
+                specialized++; specMonoJ2J++;
             }
         }
 
@@ -1319,8 +1321,12 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
     }
 
     if (specialized > 0) {
-        fprintf(stderr, "[JIT] IC specialization: %u/%u send sites inlined\n",
-                specialized, sendIdx);
+        fprintf(stderr,
+                "[JIT] IC specialization: %u/%u sites "
+                "(get=%u set=%u retSelf=%u retLit=%u block1=%u monoJ2J=%u)\n",
+                specialized, sendIdx,
+                specGetter, specSetter, specReturnsSelf,
+                specReturnsLit, specBlockValue1, specMonoJ2J);
     }
 }
 

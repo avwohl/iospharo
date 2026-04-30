@@ -1830,6 +1830,15 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
     if (jm->stats && jm->stats->executionCount == (uint32_t)g_debug.recompileAt &&
         jm->tier == 1 && jm->numICEntries > 0) {
         if (compiler_) {
+            static const bool traceRecompile =
+                std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
+            if (traceRecompile) {
+                std::string sel = interp_->memory().selectorOf(compiledMethod);
+                fprintf(stderr,
+                        "[RECOMPILE] %s (icEntries=%u execCount=%u)\n",
+                        sel.c_str(), jm->numICEntries,
+                        jm->stats->executionCount);
+            }
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
                 jm = newJM;
