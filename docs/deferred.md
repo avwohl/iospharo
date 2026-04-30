@@ -1398,6 +1398,47 @@ which is structurally a bigger win.  Future work should focus on
 lever #3 or move to other Phase 4 shapes that don't compete with
 J2J.
 
+### B10. IC-specialization fires too late for DoIt benches (2026-04-30)
+
+`applyICSpecialization` only runs during `recompile()`, gated on
+`executionCount == g_debug.recompileAt` (default 500).  Eval-mode
+DoIt benches (`1 to: 10M do: [:i | i isInteger]`) run their hot
+loop inside a method that activates ONCE — the threshold is never
+reached, all specialization paths miss.
+
+`PHARO_RECOMPILE_AT` sweep showed no win on bench panel (panel uses
+splices that bypass IC).  Lowering threshold from 500 to 50 and 10
+gave parity / mild regression — not the right knob.
+
+**OSR-triggered recompile (`bb6dee2c`, 2026-04-30):** when OSR
+fires for a T1-compiled method whose IC entries have populated,
+force a recompile so applyICSpecialization runs.
+`JITRuntime::maybeRecompileForOSR()` is idempotent (gates on
+tier == 1 + at least one IC entry has data); sets tier=2 on
+recompile.  Default-on with `PHARO_NO_OSR_RECOMPILE=1` kill switch.
+
+Bench panel at parity (4/7/7/7/7/4 ms either way).  Eval-mode
+benches: trace confirms `[RECOMPILE-OSR] DoIt (icEntries=14
+execCount=0)` — recompile fires.  But sees only 1/14 IC sites
+populated at that moment, so partial specialization.  The other
+13 sites populate AFTER recompile (during JIT execution) but
+stay as `stencil_sendJ2J` because tier=2 prevents another
+recompile.
+
+**Limitation:** OSR-recompile fires on first OSR sample with any
+IC data, before all hot sites have been observed.  Real fix:
+- "High water mark" trigger: wait for ≥ 50% IC fill before
+  recompiling (delays JIT entry but captures more sites).
+- Multi-tier recompile: allow ONE additional recompile if fill
+  count grew significantly since last recompile.  Needs an
+  ic-fill-at-recompile field on stats.
+- Per-site late patching: when a site's IC data appears AFTER
+  recompile, patch the site's stencilIdx in place (requires
+  W^X dance + careful invariants).
+
+`PHARO_TRACE_IC_EXTRA=1` logs per-site extra0 bits during
+specialization for diagnosis.
+
 ---
 
 ## C. Project mission — iOS
