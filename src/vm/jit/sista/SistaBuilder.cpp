@@ -1865,6 +1865,13 @@ public:
         // the at: send (offset 2) has observed at least one class.
         // Lowering's deopt-on-zero handles non-indexable / OOB / bad
         // index — bails to the interpreter at the at: send.
+        //
+        // OPT-IN.  Default-on attempt 2026-04-30 didn't move bench
+        // suite — the per-method bench delta (sort 215 vs 219) was
+        // within run-to-run variance; subsequent 3-run avg showed no
+        // benefit.  Combining with SIZE_PEEPHOLE hangs bench suite
+        // at 100% CPU (cause unknown).  See
+        // memory/feedback_at_peephole_hangs.md.
         {
             static const bool atPeephole =
                 std::getenv("PHARO_SISTA_AT_PEEPHOLE") != nullptr;
