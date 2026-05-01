@@ -1126,11 +1126,15 @@ public:
                                 break;
                             case Op::kLoadTemp:
                                 // inject:into: passes 2 args:
-                                // temp 0 = acc, temp 1 = elem.
-                                // Higher indices (block-local temps)
-                                // aren't handled by lowering — narrow
-                                // at admission to avoid cache-poisoning.
-                                if (bv.literal != 0 && bv.literal != 1) {
+                                // temp 0 = acc, temp 1 = elem.  With
+                                // numCopied=1 and direct capture, the
+                                // captured value is at block temp 2.
+                                // Lowering binds blockRegs[bv.id] =
+                                // injectVecReg in that case.
+                                if (bv.literal != 0
+                                    && bv.literal != 1
+                                    && !(injectHasCapture
+                                         && bv.literal == 2)) {
                                     ok = false;
                                     rejectReason = "non-simple block op";
                                     rejectedOp = bv.op;
@@ -1138,9 +1142,9 @@ public:
                                 break;
                             case Op::kLoadTempInVec:
                                 // Read-only access to captured
-                                // TempVector at vec idx 1.  Only when
-                                // pre-pass identified numCopied=1
-                                // with a valid PushTemp T_vec source.
+                                // TempVector (mutated-capture form).
+                                // Only when pre-pass identified
+                                // numCopied=1 with PushTemp T_vec.
                                 if (!injectHasCapture
                                     || (bv.literal >> 32) != 1) {
                                     ok = false;
@@ -1376,9 +1380,15 @@ public:
                                 break;
                             case Op::kLoadTemp:
                                 // collect: passes 1 block arg (e) at
-                                // temp index 0.  Lowering rejects
-                                // higher indices.  Narrow admission.
-                                if (bv.literal != 0) {
+                                // temp index 0.  When numCopied=1 and
+                                // direct (non-TempVector) capture is
+                                // used, the captured value is at
+                                // block temp 1.  Lowering binds
+                                // blockRegs[bv.id] = collectVecReg in
+                                // that case.  Reject other indices.
+                                if (bv.literal != 0
+                                    && !(hasCapture
+                                         && bv.literal == 1)) {
                                     ok = false;
                                     rejectReason = "non-simple block op";
                                     rejectedOp = bv.op;
@@ -1386,8 +1396,8 @@ public:
                                 break;
                             case Op::kLoadTempInVec:
                                 // Read-only access to the captured
-                                // TempVector.  Only valid when the
-                                // outer pre-pass detected numCopied=1
+                                // TempVector (Pharo's mutated-capture
+                                // form).  Only valid when numCopied=1
                                 // with a PushTemp T_vec source; vecIdx
                                 // (high 32 bits of literal) must be 1
                                 // (the single capture).
@@ -1541,11 +1551,31 @@ public:
                             ok = false;
                             rejectReason = "recvOnStack";
                         }
+                        // numCopied=1 capture, same as Array inject.
+                        // Records into the SHARED outerVecTempForInject_
+                        // map (consumed by the splice intercept).
                         uint32_t numCopied =
                             (uint32_t)(flags & 0x3F);
-                        if (ok && numCopied != 0) {
+                        uint32_t ivInjectOuterVecTemp = 0;
+                        bool ivInjectHasCaptureLocal = false;
+                        if (ok && numCopied == 1) {
+                            if (pfbOff < 1) {
+                                ok = false;
+                                rejectReason = "no room for vec push";
+                            } else {
+                                uint8_t prevOp = bc_[pfbOff - 1];
+                                if (prevOp < 0x40 || prevOp > 0x4B) {
+                                    ok = false;
+                                    rejectReason = "vec source not PushTemp";
+                                } else {
+                                    ivInjectOuterVecTemp =
+                                        (uint32_t)(prevOp - 0x40);
+                                    ivInjectHasCaptureLocal = true;
+                                }
+                            }
+                        } else if (ok && numCopied != 0) {
                             ok = false;
-                            rejectReason = "numCopied != 0";
+                            rejectReason = "numCopied > 1";
                         }
 
                         std::unique_ptr<Method> blockIR;
@@ -1602,9 +1632,22 @@ public:
                                     break;
                                 case Op::kLoadTemp:
                                     // IV-inject passes 2 args:
-                                    // temp 0 = acc, temp 1 = i.
-                                    // Higher indices not supported.
-                                    if (bv.literal != 0 && bv.literal != 1) {
+                                    // temp 0 = acc, temp 1 = i.  With
+                                    // numCopied=1 + direct capture,
+                                    // captured value is at temp 2.
+                                    if (bv.literal != 0
+                                        && bv.literal != 1
+                                        && !(ivInjectHasCaptureLocal
+                                             && bv.literal == 2)) {
+                                        ok = false;
+                                        rejectReason = "non-simple block op";
+                                        rejectedOp = bv.op;
+                                    }
+                                    break;
+                                case Op::kLoadTempInVec:
+                                    // TempVector capture variant.
+                                    if (!ivInjectHasCaptureLocal
+                                        || (bv.literal >> 32) != 1) {
                                         ok = false;
                                         rejectReason = "non-simple block op";
                                         rejectedOp = bv.op;
@@ -1632,6 +1675,11 @@ public:
                             intervalInjectAtTo_[(size_t)i] = slot;
                             spliceInjectAtPushFullBlock_[
                                 (size_t)pfbOff] = slot;
+                            if (ivInjectHasCaptureLocal) {
+                                outerVecTempForInject_[
+                                    (size_t)pfbOff] =
+                                    ivInjectOuterVecTemp;
+                            }
                             static int ivCount = 0;
                             if (ivCount++ < 16) {
                                 std::fprintf(stderr,

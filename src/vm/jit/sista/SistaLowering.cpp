@@ -2032,6 +2032,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                             blockRegs[bv.id] = accReg;
                         } else if (idx == 1) {
                             blockRegs[bv.id] = eachReg;
+                        } else if (idx == 2 && injectHasCapture) {
+                            // Direct (non-TempVector) capture at
+                            // block temp 2.  See pre-pass admission.
+                            blockRegs[bv.id] = injectVecReg;
                         } else {
                             if (failedAtValue) *failedAtValue = v.id;
                             return nullptr;
@@ -2477,6 +2481,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                             blockRegs[bv.id] = accReg;
                         } else if (idx == 1) {
                             blockRegs[bv.id] = iReg;
+                        } else if (idx == 2 && ivInjectHasCapture) {
+                            // Direct capture at block temp 2.
+                            blockRegs[bv.id] = ivInjectVecReg;
                         } else {
                             if (failedAtValue) *failedAtValue = v.id;
                             return nullptr;
@@ -3560,6 +3567,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         uint32_t idx = (uint32_t)bv.literal;
                         if (idx == 0) {
                             blockRegs[bv.id] = eachReg;
+                        } else if (idx == 1 && collectHasCapture) {
+                            // Direct (non-TempVector) capture lives at
+                            // block temp 1.  See pre-pass admission.
+                            blockRegs[bv.id] = collectVecReg;
                         } else {
                             if (failedAtValue) *failedAtValue = v.id;
                             return nullptr;
