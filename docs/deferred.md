@@ -1454,6 +1454,31 @@ IC data, before all hot sites have been observed.  Real fix:
 `PHARO_TRACE_IC_EXTRA=1` logs per-site extra0 bits during
 specialization for diagnosis.
 
+### B11. IC entry-addr rewrite after recompile (`f60844c0`, 2026-05-01)
+
+After `compiler_->recompile()` returns a new JITMethod, every
+caller's `IC.extra` still held the OLD entry address.  Two issues:
+
+1. The J2J fast path kept entering OLD (unspecialized) code via
+   the cached entry-addr — wasted recompile.
+2. If the OLD JITMethod was eventually evicted by codezone LRU,
+   callers' IC.extra became a dangling pointer (not yet observed
+   in the wild because the codezone hasn't filled in normal
+   usage, but a latent crash).
+
+`JITRuntime::rewriteIcEntriesAfterRecompile(methodBits, newAddr)`
+walks the code zone, patches J2J entry-addr bits where IC's
+methodBits matches.  Two-pass: read-only detect first (X-mode
+safe), then `makeWritable+walk+makeExecutable` only when an edit
+is needed.  Mega cache also refreshed.
+
+Wired into both recompile paths (tryExecute + maybeRecompileForOSR).
+
+Bench panel best-of-10: 4/7/7/6/6/4 — unchanged from baseline.
+Bench suite within noise (±1ms across all benches over best-of-5
+A/B).  Correctness-positive without measurable perf cost on the
+benches we have.  See memory/project_ic_rewrite_2026_05_01.md.
+
 ---
 
 ## C. Project mission — iOS
