@@ -1594,11 +1594,28 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.b_hi(loopExit);
                 cc.bind(loopHead);
 
+                // Element-use analysis: only emit per-iter element
+                // load if the block actually references it via
+                // kLoadTemp(0).  Blocks like `[:e | self foo]` skip
+                // the load.  do: discards the block result so we
+                // don't even need the SmI tag-check that arith ops
+                // do — the existing kPrimTagCheckInt cases handle
+                // that for the operands they actually use.
+                bool blockUsesElement = false;
+                for (const auto& bv : blockIR.values) {
+                    if (bv.op == Op::kLoadTemp && bv.literal == 0) {
+                        blockUsesElement = true;
+                        break;
+                    }
+                }
+
                 // Step 5: inline format-2 element load.  i*8 = iReg-1.
-                Gp loop_off = cc.new_gp64("loop_off");
-                cc.sub(loop_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("loop_each");
-                cc.ldr(eachReg, ptr(rcvReg, loop_off));
+                if (blockUsesElement) {
+                    Gp loop_off = cc.new_gp64("loop_off");
+                    cc.sub(loop_off, iReg, Imm(1));
+                    cc.ldr(eachReg, ptr(rcvReg, loop_off));
+                }
 
                 // Step 6: inline block body.  Each block IR value
                 // produces a register; we track them in a block-local
@@ -1959,11 +1976,25 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.b_hi(loopExit);
                 cc.bind(loopHead);
 
+                // Element-use analysis: temp 1 = element for
+                // inject:into:.  Skip per-iter load if the block
+                // doesn't reference temp 1 (rare but valid pattern,
+                // e.g. inject:0 into: [:acc :_ | acc + 1] = count).
+                bool blockUsesElement = false;
+                for (const auto& bv : blockIR.values) {
+                    if (bv.op == Op::kLoadTemp && bv.literal == 1) {
+                        blockUsesElement = true;
+                        break;
+                    }
+                }
+
                 // Inline format-2 element load.  i*8 = iReg-1.
-                Gp inj_off = cc.new_gp64("inj_off");
-                cc.sub(inj_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("inj_each");
-                cc.ldr(eachReg, ptr(rcvReg, inj_off));
+                if (blockUsesElement) {
+                    Gp inj_off = cc.new_gp64("inj_off");
+                    cc.sub(inj_off, iReg, Imm(1));
+                    cc.ldr(eachReg, ptr(rcvReg, inj_off));
+                }
 
                 // Inline block body.  Block has 2 args:
                 //   temp 0 = acc → accReg (READ from accReg, WRITE to
