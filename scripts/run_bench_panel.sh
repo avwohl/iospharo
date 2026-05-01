@@ -30,10 +30,12 @@ if [ ! -x "$VM" ]; then
   exit 1
 fi
 
-# Splice flags — must be opt-in (see feedback_splice_flags_opt_in memory).
-export PHARO_SISTA_DO_SPLICE=1
+# Splice flags.  PHARO_SISTA_DO_SPLICE and PHARO_SISTA_INLINE_ARITH are now
+# default-on (ccf5a90f, ca3a80ae); the panel's bench numbers don't change
+# whether they're set or not.  PHARO_SISTA_DO_SPLICE_NO_HINT, IV_DO_ACCUM,
+# and COLLECT remain opt-in (see project_helper_sends_gate.md and
+# feedback_splice_flags_opt_in for why).
 export PHARO_SISTA_DO_SPLICE_NO_HINT=1
-export PHARO_SISTA_INLINE_ARITH=1
 export PHARO_SISTA_IV_DO_ACCUM=1
 export PHARO_SISTA_COLLECT=1
 
