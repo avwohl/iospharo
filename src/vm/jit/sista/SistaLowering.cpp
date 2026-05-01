@@ -3356,6 +3356,66 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = dst;
                         break;
                     }
+                    case Op::kPrimLtInt:
+                    case Op::kPrimLeInt:
+                    case Op::kPrimGtInt:
+                    case Op::kPrimGeInt:
+                    case Op::kPrimEqInt:
+                    case Op::kPrimNeqInt: {
+                        // SmallInt comparison.  Tag-preserving signed
+                        // ordering (low 3 bits = tag are the same on
+                        // both sides), so cmp + csel produces the
+                        // correct boolean directly.
+                        // Deopt on non-SmI either side: the result
+                        // Array hasn't been written past the current
+                        // i, so deopt rolls back cleanly to the
+                        // collect: send.
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp tagA = cc.new_gp64("col_b_cmpTagA");
+                        cc.and_(tagA, ita->second, Imm(7));
+                        cc.cmp(tagA, Imm(1));
+                        Label cmpAok = cc.new_label();
+                        cc.b_eq(cmpAok);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(cmpAok);
+                        Gp tagB = cc.new_gp64("col_b_cmpTagB");
+                        cc.and_(tagB, itb->second, Imm(7));
+                        cc.cmp(tagB, Imm(1));
+                        Label cmpBok = cc.new_label();
+                        cc.b_eq(cmpBok);
+                        emitDeopt(rcvReg, deoptBC);
+                        cc.bind(cmpBok);
+
+                        Gp trueOop = cc.new_gp64("col_b_true");
+                        Gp falseOop = cc.new_gp64("col_b_false");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("col_b_cmp");
+                        CondCode cond;
+                        switch (bv.op) {
+                          case Op::kPrimLtInt:  cond = CondCode::kLT; break;
+                          case Op::kPrimLeInt:  cond = CondCode::kLE; break;
+                          case Op::kPrimGtInt:  cond = CondCode::kGT; break;
+                          case Op::kPrimGeInt:  cond = CondCode::kGE; break;
+                          case Op::kPrimEqInt:  cond = CondCode::kEQ; break;
+                          case Op::kPrimNeqInt: cond = CondCode::kNE; break;
+                          default:              cond = CondCode::kEQ; break;
+                        }
+                        cc.csel(dst, trueOop, falseOop, cond);
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
                     case Op::kReturn: {
                         if (bv.operands.size() != 1) {
                             if (failedAtValue) *failedAtValue = v.id;

@@ -1250,11 +1250,16 @@ public:
                         ok = false;
                         rejectReason = "multi-block IR";
                     }
-                    // Splice-simple whitelist: loads + arith + tag-check
-                    // + return.  No sends, no stores.  kLoadLiteral
-                    // is excluded because of a hang seen on multi-arith
-                    // blocks like `(e * 2) + 1`; root cause unclear,
-                    // leave restricted until investigated.
+                    // Splice-simple whitelist: loads + arith + cmp +
+                    // tag-check + return.  No sends, no stores.
+                    // kLoadLiteral is excluded because of a hang seen
+                    // on multi-arith blocks like `(e * 2) + 1`; root
+                    // cause unclear, leave restricted until investigated.
+                    // Comparison ops are admitted because collect:
+                    // semantically uses the boolean result as the new
+                    // element value (e.g. `arr collect: [:e | e > 10]`
+                    // produces a Boolean array).  The lowering emits
+                    // cmp + csel into trueOop/falseOop.
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1269,6 +1274,12 @@ public:
                             case Op::kPrimAddInt:
                             case Op::kPrimSubInt:
                             case Op::kPrimMulInt:
+                            case Op::kPrimLtInt:
+                            case Op::kPrimLeInt:
+                            case Op::kPrimGtInt:
+                            case Op::kPrimGeInt:
+                            case Op::kPrimEqInt:
+                            case Op::kPrimNeqInt:
                             case Op::kPrimTagCheckInt:
                                 break;
                             default:
