@@ -5063,8 +5063,15 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     uint16_t identityNeqMask = 0;
     static const bool inlineYourself =
         std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
+    // INLINE_IDENTITY_EQ default-on (2026-05-01): #== / #~~ are universal
+    // identity ops — never overridden in well-behaved code.  Best-of-3
+    // bench A/B (with default flags + this on) showed parity-to-small-win
+    // (sieve -2%, dict -1%, sum -1%, blocks -8%).  Set
+    // PHARO_NO_SISTA_INLINE_IDENTITY_EQ=1 to opt out.  PHARO_SISTA_INLINE_
+    // YOURSELF stays opt-in — it caused a 10× factorial regression in
+    // the same A/B (218ms vs 22ms).
     static const bool inlineIdentityEq =
-        std::getenv("PHARO_SISTA_INLINE_IDENTITY_EQ") != nullptr;
+        std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
     static const bool injectIntoSplice =
         std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
     uint16_t injectIntoMask = 0;
