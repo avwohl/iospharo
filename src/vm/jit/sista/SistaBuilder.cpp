@@ -510,8 +510,11 @@ public:
         // PushFullBlock arm consults this map and emits kCountedLoopDo
         // when it matches.
         {
+            // Default-on as of 2026-05-01.  Earlier opt-in gate was due
+            // to a now-fixed FFI #oopForObject: crash.  Set
+            // PHARO_NO_SISTA_DO_SPLICE=1 to opt out.
             static const bool splice =
-                std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+                std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
             if (splice && memory_ != nullptr) {
                 size_t i = 0;
                 int lastPushFullBlockEnd = -1;
@@ -970,7 +973,7 @@ public:
         // (slot 0-7 in low 8 bits, arithCode 0-2 in next 8 bits, outerTemp
         // 0-15 in next 8 bits).
         static const bool accumSplice =
-            std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+            std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
         if (accumSplice && memory_ != nullptr) {
             size_t i = 0;
             int extA = 0;
@@ -1111,7 +1114,7 @@ public:
         // accumulator is the block's RETURN value, not a captured
         // mutable temp.
         static const bool injectSplice =
-            std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+            std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
         if (injectSplice && memory_ != nullptr && injectIntoSelectorMask_) {
             size_t i = 0;
             int lastPushFullBlockEnd = -1;
@@ -5282,7 +5285,7 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     static const bool inlineIdentityEq =
         std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
     static const bool injectIntoSplice =
-        std::getenv("PHARO_SISTA_DO_SPLICE") != nullptr;
+        std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
     uint16_t collectMask = 0;
