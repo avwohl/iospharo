@@ -1458,9 +1458,9 @@ public:
                             ok = false;
                             rejectReason = "multi-block IR";
                         }
-                        // Narrowed: comparison ops not in lowering
-                        // whitelist; admitting them here cache-poisons
-                        // the method's Sista compile.
+                        // Comparison ops admitted now that the
+                        // IV-inject lowering emits cmp + csel for them
+                        // (boolean result can become the new acc).
                         if (ok && blockIR) {
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
@@ -1476,6 +1476,12 @@ public:
                                 case Op::kPrimAddInt:
                                 case Op::kPrimSubInt:
                                 case Op::kPrimMulInt:
+                                case Op::kPrimLtInt:
+                                case Op::kPrimLeInt:
+                                case Op::kPrimGtInt:
+                                case Op::kPrimGeInt:
+                                case Op::kPrimEqInt:
+                                case Op::kPrimNeqInt:
                                 case Op::kPrimTagCheckInt:
                                     break;
                                 default:

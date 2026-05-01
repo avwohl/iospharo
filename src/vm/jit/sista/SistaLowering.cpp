@@ -2237,7 +2237,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
-                // Same whitelist.
+                // Same whitelist as kCountedLoopInjectInto's body.
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -2252,6 +2252,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimAddInt:
                     case Op::kPrimSubInt:
                     case Op::kPrimMulInt:
+                    case Op::kPrimLtInt:
+                    case Op::kPrimLeInt:
+                    case Op::kPrimGtInt:
+                    case Op::kPrimGeInt:
+                    case Op::kPrimEqInt:
+                    case Op::kPrimNeqInt:
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2454,6 +2460,47 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                             cc.lsl(dst, prod, Imm(3));
                             cc.orr(dst, dst, Imm(1));
                         }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kPrimLtInt:
+                    case Op::kPrimLeInt:
+                    case Op::kPrimGtInt:
+                    case Op::kPrimGeInt:
+                    case Op::kPrimEqInt:
+                    case Op::kPrimNeqInt: {
+                        // For Interval-inject we KNOW both operands are
+                        // SmI (see kPrimAdd reasoning above).  Skip
+                        // per-iter tag check.  Boolean result becomes
+                        // the new acc if used by kReturn.
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp trueOop = cc.new_gp64("iv_cmpTrue");
+                        Gp falseOop = cc.new_gp64("iv_cmpFalse");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("iv_cmp");
+                        CondCode cond;
+                        switch (bv.op) {
+                          case Op::kPrimLtInt:  cond = CondCode::kLT; break;
+                          case Op::kPrimLeInt:  cond = CondCode::kLE; break;
+                          case Op::kPrimGtInt:  cond = CondCode::kGT; break;
+                          case Op::kPrimGeInt:  cond = CondCode::kGE; break;
+                          case Op::kPrimEqInt:  cond = CondCode::kEQ; break;
+                          case Op::kPrimNeqInt: cond = CondCode::kNE; break;
+                          default:              cond = CondCode::kEQ; break;
+                        }
+                        cc.csel(dst, trueOop, falseOop, cond);
                         blockRegs[bv.id] = dst;
                         break;
                     }
