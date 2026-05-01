@@ -593,7 +593,23 @@ public:
                         // reach (a terminator-send appears earlier).  No
                         // point lifting the block sub-IR if the splice
                         // intercept will never fire.
-                        if (sawLiftTerminator) {
+                        //
+                        // 2026-05-01: skip this rejection when
+                        // PHARO_SISTA_HELPER_SENDS=1.  Helper-sends
+                        // makes the main lift continue past
+                        // kSendUnspeculated by emitting kSendCallHelper
+                        // (interp drives the send to completion, lift
+                        // continues).  The splice intercept at
+                        // PushFullBlock CAN fire even with prior sends
+                        // — unblocks bench-suite runSum-style patterns
+                        // (sends to asArray / millisecondClockValue
+                        // before the do:).
+                        static const bool helperSends = []() {
+                            const char* v = std::getenv(
+                                "PHARO_SISTA_HELPER_SENDS");
+                            return v && v[0] == '1';
+                        }();
+                        if (sawLiftTerminator && !helperSends) {
                             ok = false;
                             rejectReason = "lift-terminator before do:";
                         }
@@ -620,6 +636,41 @@ public:
                         if (ok && receiverOnStack) {
                             ok = false;
                             rejectReason = "recvOnStack";
+                        }
+                        // 2026-05-01: closure-capture support.  If
+                        // numCopied=1, the byte before PushFullBlock
+                        // must push the TempVector via PushTemp T_vec
+                        // (single-byte 0x40-0x4B).  Stash the outer
+                        // temp index so the emit path can pop the
+                        // vec from the simulator stack and pass it as
+                        // operand[1] to kCountedLoopDo.  Lowering uses
+                        // it for kLoadTempInVec / kStoreTempInVec
+                        // emission with deopt-buffered writes (accReg
+                        // pre-loaded once, committed only on
+                        // successful loop exit).
+                        uint32_t doNumCopied =
+                            (uint32_t)(lastFullBlockFlags & 0x3F);
+                        uint32_t doOuterVecTemp = 0;
+                        bool doHasCapture = false;
+                        if (ok && doNumCopied == 1) {
+                            if (lastPushFullBlockStart < 1) {
+                                ok = false;
+                                rejectReason = "no room for vec push";
+                            } else {
+                                uint8_t prevOp =
+                                    bc_[lastPushFullBlockStart - 1];
+                                if (prevOp < 0x40 || prevOp > 0x4B) {
+                                    ok = false;
+                                    rejectReason = "vec source not PushTemp";
+                                } else {
+                                    doOuterVecTemp =
+                                        (uint32_t)(prevOp - 0x40);
+                                    doHasCapture = true;
+                                }
+                            }
+                        } else if (ok && doNumCopied != 0) {
+                            ok = false;
+                            rejectReason = "numCopied > 1";
                         }
 
                         // IC hint check is preferred but not required.
@@ -703,6 +754,43 @@ public:
                             ok = false;
                             rejectReason = "multi-block IR";
                         }
+                        // 2026-05-01: closure-vec op check.  If
+                        // doHasCapture, scan for kLoadTempInVec /
+                        // kStoreTempInVec.  All such ops must reference
+                        // the SAME slot — multi-slot needs separate
+                        // accReg per slot which the current lowering
+                        // doesn't track.  All ops must use vec-temp 1
+                        // (the only TempVector accessible from a
+                        // numCopied=1 block — the captured slot is at
+                        // block-temp index numArgs == 1).
+                        uint32_t doVecSlot = UINT32_MAX;
+                        if (ok && doHasCapture && blockIR) {
+                            for (const auto& bv : blockIR->values) {
+                                if (bv.op == Op::kLoadTempInVec
+                                    || bv.op == Op::kStoreTempInVec) {
+                                    // literal layout (per SistaIR.hpp):
+                                    // high 32 = tempIdxOfVec, low 32 = slot
+                                    uint32_t tempIdx =
+                                        (uint32_t)(bv.literal >> 32);
+                                    uint32_t slot =
+                                        (uint32_t)(bv.literal & 0xFFFFFFFFu);
+                                    if (tempIdx != 1) {
+                                        ok = false;
+                                        rejectReason = "vec tempIdx != 1";
+                                        rejectedOp = bv.op;
+                                        break;
+                                    }
+                                    if (doVecSlot == UINT32_MAX) {
+                                        doVecSlot = slot;
+                                    } else if (doVecSlot != slot) {
+                                        ok = false;
+                                        rejectReason = "multi-slot vec";
+                                        rejectedOp = bv.op;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
                         // Narrowed to ops the kCountedLoopDo lowering
                         // actually handles.  Earlier admission of
                         // comparison ops (kPrimLtInt etc.) caused
@@ -764,6 +852,19 @@ public:
                                     // time (here we admit and let
                                     // lowering enforce).
                                     break;
+                                case Op::kLoadTempInVec:
+                                case Op::kStoreTempInVec:
+                                    // 2026-05-01: closure-vec accumulator
+                                    // pattern (sum := sum + e).  Only
+                                    // admit when doHasCapture and the
+                                    // single-slot constraint above is
+                                    // satisfied (validated post-loop).
+                                    if (!doHasCapture) {
+                                        ok = false;
+                                        rejectReason = "vec op without capture";
+                                        rejectedOp = bv.op;
+                                    }
+                                    break;
                                 default:
                                     ok = false;
                                     rejectReason = "non-simple block op";
@@ -795,13 +896,35 @@ public:
                                 std::move(blockIR));
                             spliceAtPushFullBlock_[
                                 (size_t)lastPushFullBlockStart] = slot;
+                            // 2026-05-01: stash capture metadata so
+                            // the splice intercept knows to pop vec
+                            // off the simulator stack and pass it as
+                            // operand[1] to kCountedLoopDo.  Lowering
+                            // reads the same map (or, equivalently,
+                            // operand presence) to emit pre-load /
+                            // post-store of accReg around the loop.
+                            if (doHasCapture) {
+                                uint64_t packed =
+                                    (uint64_t)doOuterVecTemp
+                                  | ((uint64_t)doVecSlot << 16)
+                                  | ((uint64_t)1 << 32);
+                                doVecCaptureAtPushFullBlock_[
+                                    (size_t)lastPushFullBlockStart]
+                                    = packed;
+                            }
                             static int spliceCount = 0;
                             if (spliceCount++ < 16) {
                                 std::fprintf(stderr,
                                     "[SISTA-SPLICE-CAND] pushFullBlock=%d "
-                                    "doBC=%zu litIdx=%d slot=%u\n",
+                                    "doBC=%zu litIdx=%d slot=%u "
+                                    "capture=%d outerVec=%u vecSlot=%u\n",
                                     lastPushFullBlockStart, i,
-                                    lastFullBlockLitIdx, slot);
+                                    lastFullBlockLitIdx, slot,
+                                    (int)doHasCapture,
+                                    doOuterVecTemp,
+                                    doHasCapture
+                                        ? doVecSlot
+                                        : 0u);
                             }
                         }
 
@@ -2663,22 +2786,49 @@ private:
                 // pre-validated `[block] do:` pattern, emit
                 // kCountedLoopDo and skip both bytecodes.  The pre-pass
                 // populated spliceAtPushFullBlock_ with eligible
-                // offsets + their block-IR slot.
+                // offsets + their block-IR slot.  When the block
+                // captures (numCopied=1) the simulator stack also has
+                // the TempVector ref above the receiver — pop it as
+                // operand[1] and pack vecSlot into the literal.
                 {
                     auto sIt = spliceAtPushFullBlock_.find(ip);
+                    bool doHasCaptureNow =
+                        doVecCaptureAtPushFullBlock_.count(ip) > 0;
+                    size_t doNeeded = doHasCaptureNow ? 2 : 1;
                     if (sIt != spliceAtPushFullBlock_.end()
-                        && stack_.size() >= 1
+                        && stack_.size() >= doNeeded
                         // Make sure SpecialSend do: really follows.
                         && ip + 3 < len_
                         && bc_[ip + 3] == 0x7B) {
                         uint32_t blockSlot = sIt->second;
+                        uint32_t vec = 0;
+                        uint32_t vecSlotForLit = 0;
+                        if (doHasCaptureNow) {
+                            vec = stack_.back();
+                            stack_.pop_back();
+                            uint64_t packed =
+                                doVecCaptureAtPushFullBlock_[ip];
+                            vecSlotForLit =
+                                (uint32_t)((packed >> 16) & 0xFFFF);
+                        }
                         uint32_t rcv = stack_.back();
                         stack_.pop_back();
-                        std::vector<uint32_t> ops{rcv};
+                        std::vector<uint32_t> ops;
+                        ops.push_back(rcv);
+                        if (doHasCaptureNow) ops.push_back(vec);
+                        // Literal layout (extended for capture):
+                        //   bits  0-31 = blockSlot
+                        //   bits 32-47 = vecSlot (when capture)
+                        //   bit  48    = 1 if has capture
+                        uint64_t literal = (uint64_t)blockSlot;
+                        if (doHasCaptureNow) {
+                            literal |= ((uint64_t)vecSlotForLit << 32)
+                                    |  ((uint64_t)1ULL << 48);
+                        }
                         uint32_t vid = out_.newValue(currentBlock_,
                                        Op::kCountedLoopDo, Type::kOop,
                                        std::move(ops),
-                                       /*literal=*/blockSlot);
+                                       literal);
                         recordFramepoint(vid, bcOffset);
                         stack_.push_back(vid);
                         pendingExtA_ = 0;
@@ -4951,6 +5101,13 @@ private:
     // numCopied=1.  Same map serves both Array and Interval inject
     // paths since the splice intercept is the same Send2 site.
     std::unordered_map<size_t, uint32_t> outerVecTempForInject_;
+    // 2026-05-01: do: splice with numCopied=1 capture.  pfbOff →
+    // packed (low 16 = outerVecTemp, mid 16 = vecSlot, high 16 = 1
+    // for "has capture" sentinel).  Used by the splice intercept
+    // (which pops vec off simulator stack) and by the kCountedLoopDo
+    // lowering to emit pre-load + post-store of the captured slot
+    // around the loop.
+    std::unordered_map<size_t, uint64_t> doVecCaptureAtPushFullBlock_;
 };
 
 }  // namespace

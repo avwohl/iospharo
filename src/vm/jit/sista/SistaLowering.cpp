@@ -1444,7 +1444,14 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 //   loopExit:
                 //     result = rcv                         ; do: returns receiver
                 using namespace asmjit::a64;
-                if (v.operands.size() != 1) {
+                // 2026-05-01: kCountedLoopDo gained an optional vec
+                // operand for closure-capture support.  Literal layout:
+                //   bits  0-31 = blockSlot
+                //   bits 32-47 = vecSlot (when capture)
+                //   bit  48    = 1 if has capture
+                bool doHasCapture = ((v.literal >> 48) & 1) != 0;
+                size_t expectedOperands = doHasCapture ? 2u : 1u;
+                if (v.operands.size() != expectedOperands) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1453,8 +1460,19 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
+                Gp doVecReg;
+                uint32_t doVecSlot = 0;
+                if (doHasCapture) {
+                    auto itVec = regFor.find(v.operands[1]);
+                    if (itVec == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    doVecReg = itVec->second;
+                    doVecSlot = (uint32_t)((v.literal >> 32) & 0xFFFF);
+                }
 
-                uint32_t blockSlot = (uint32_t)v.literal;
+                uint32_t blockSlot = (uint32_t)(v.literal & 0xFFFFFFFFu);
                 if (blockSlot >= method.inlinedBlocks.size()
                     || !method.inlinedBlocks[blockSlot]) {
                     if (failedAtValue) *failedAtValue = v.id;
@@ -1533,6 +1551,21 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimMulInt:
                         blockHasArith = true;
                         break;
+                    case Op::kLoadTempInVec:
+                    case Op::kStoreTempInVec:
+                        // 2026-05-01: closure-vec accumulator support.
+                        // Builder validated single-slot constraint.
+                        // Lowering emits accReg pre-load before loop +
+                        // post-store after, with kLoadTempInVec /
+                        // kStoreTempInVec inside the loop reading /
+                        // writing accReg directly (no memory ops).
+                        // Deopt-safe: the outer vec[slot] is only
+                        // written on successful loop exit.
+                        if (!doHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
                         return nullptr;
@@ -1554,11 +1587,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                 }
 
+                // 2026-05-01: capture-aware deopt.  When the splice
+                // consumed both rcvr + vec (numCopied=1), the resumed
+                // interp re-executes from PushFullBlock which expects
+                // [..., rcvr, vec] on the stack — push BOTH.  accReg
+                // is NOT committed to vec[slot] before this jump, so
+                // the original outer state is preserved (deopt-safe).
                 auto emitDeopt = [&](Gp savedRcv, uint32_t bc) {
                     Gp sp = cc.new_gp64("loop_dz_sp");
                     cc.ldr(sp, ptr(state, OFF_SP));
                     cc.str(savedRcv, ptr(sp));
-                    cc.add(sp, sp, Imm(8));
+                    if (doHasCapture) {
+                        cc.str(doVecReg, ptr(sp, 8));
+                        cc.add(sp, sp, Imm(16));
+                    } else {
+                        cc.add(sp, sp, Imm(8));
+                    }
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("loop_dz_ip");
                     if (bytecodeBase) {
@@ -1620,6 +1664,35 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Step 2: iReg = SmI(1) = (1 << 3) | 1 = 9.
                 Gp iReg = cc.new_gp64("loop_i");
                 cc.mov(iReg, Imm(9));
+
+                // 2026-05-01: closure-vec accumulator pre-load.
+                // accReg = vec[8 + slot*8].  Tag-check SmI for arith
+                // safety (every arith op the block performs is on
+                // SmIs; mid-loop deopt restores the orig value via
+                // emitDeopt's stack flush of vec, which is unmodified
+                // because we haven't committed accReg back yet).
+                Gp accReg;
+                int doVecSlotByteOff = 8 + (int)doVecSlot * 8;
+                if (doHasCapture) {
+                    // vec must be a heap object (low 3 bits = 0).
+                    Gp doTagV = cc.new_gp64("do_tagV");
+                    cc.and_(doTagV, doVecReg, Imm(7));
+                    cc.cmp(doTagV, Imm(0));
+                    Label doVOk = cc.new_label();
+                    cc.b_eq(doVOk);
+                    emitDeopt(rcvReg, deoptBC);
+                    cc.bind(doVOk);
+
+                    accReg = cc.new_gp64("do_acc");
+                    cc.ldr(accReg, ptr(doVecReg, doVecSlotByteOff));
+                    Gp doTagA = cc.new_gp64("do_tagA");
+                    cc.and_(doTagA, accReg, Imm(7));
+                    cc.cmp(doTagA, Imm(1));
+                    Label doAOk = cc.new_label();
+                    cc.b_eq(doAOk);
+                    emitDeopt(rcvReg, deoptBC);
+                    cc.bind(doAOk);
+                }
 
                 // Step 3: rotated loop head — pre-check, fused back-edge.
                 Label loopHead = cc.new_label();
@@ -1851,6 +1924,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = dst;
                         break;
                     }
+                    case Op::kLoadTempInVec: {
+                        // 2026-05-01: closure-vec read.  Builder
+                        // validated single-slot (== doVecSlot).  Map to
+                        // the pre-loaded accReg; subsequent block ops
+                        // see the latest accumulator value without a
+                        // memory load per iter.
+                        blockRegs[bv.id] = accReg;
+                        break;
+                    }
+                    case Op::kStoreTempInVec: {
+                        // 2026-05-01: closure-vec write.  Buffer in
+                        // accReg — outer's vec[slot] is only updated
+                        // on successful loop exit (deopt-safe).
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto sit = blockRegs.find(bv.operands[0]);
+                        if (sit == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.mov(accReg, sit->second);
+                        // kStoreTempInVec produces no value — no
+                        // blockRegs entry for bv.id.
+                        break;
+                    }
                     case Op::kReturn:
                         // do: discards block result; nothing to emit.
                         break;
@@ -1873,6 +1973,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 // Step 9: loop exit.
                 cc.bind(loopExit);
+
+                // 2026-05-01: closure-vec post-loop commit.  Successful
+                // loop exit: write accReg back to vec[slot].  No GC
+                // barrier needed — accReg is a SmI (we tag-checked
+                // before each arith) and old TempVec has long since
+                // exited the nursery.  Mid-loop deopt skips this store
+                // (jumps directly to emitDeopt's ret), so vec[slot]
+                // retains the original pre-loop value — the resumed
+                // interp re-runs do: from scratch with correct state.
+                if (doHasCapture) {
+                    cc.str(accReg, ptr(doVecReg, doVecSlotByteOff));
+                }
 
                 // Step 10: kCountedLoopDo's result is the receiver.
                 regFor[v.id] = rcvReg;
