@@ -1549,7 +1549,7 @@ public:
                             spliceInjectAtPushFullBlock_[
                                 (size_t)pfbOff] = slot;
                             static int ivCount = 0;
-                            if (ivCount++ < 4) {
+                            if (ivCount++ < 16) {
                                 std::fprintf(stderr,
                                     "[SISTA-IVINJECT-CAND] toBC=%zu "
                                     "pfbBC=%zu injectBC=%zu litIdx=%d "
@@ -1721,7 +1721,7 @@ public:
                             spliceDoAtPushFullBlock_[
                                 (size_t)pfbOff] = slot;
                             static int ivdCount = 0;
-                            if (ivdCount++ < 4) {
+                            if (ivdCount++ < 16) {
                                 std::fprintf(stderr,
                                     "[SISTA-IVDO-CAND] toBC=%zu "
                                     "pfbBC=%zu doBC=%zu litIdx=%d "
@@ -1874,7 +1874,7 @@ public:
                         spliceIvDoAccumAtPushFullBlock_[
                             (size_t)pfbOff] = packed;
                         static int ivacCount = 0;
-                        if (ivacCount++ < 4) {
+                        if (ivacCount++ < 16) {
                             std::fprintf(stderr,
                                 "[SISTA-IVDOACC-CAND] toBC=%zu "
                                 "pfbBC=%zu doBC=%zu slot=%u arith=%d "
@@ -3239,7 +3239,7 @@ private:
                         pendingExtA_ = 0;
                         pendingExtB_ = 0;
                         static int ivEmitCount = 0;
-                        if (ivEmitCount++ < 4) {
+                        if (ivEmitCount++ < 16) {
                             std::fprintf(stderr,
                                 "[SISTA-IV-INTERVAL-EMIT] "
                                 "bc=%zu vid=%u\n", ip, vid);
