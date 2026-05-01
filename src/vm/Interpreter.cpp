@@ -10754,6 +10754,35 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
+    // Cycle-safe sender setter (2026-05-01).  Under
+    // PHARO_SISTA_HELPER_SENDS=1, recursive error handling reuses
+    // error-chain contexts and materialization can set a sender that
+    // closes a loop.  Smalltalk's Context>>copyTo: walks the sender
+    // chain — a loop makes it recurse until the C frame stack overflows
+    // (terminateAndSwitchProcess).  Walk sender's chain looking for
+    // ctx; if found, set sender to nil instead.
+    auto setSenderSafe = [this](Oop ctx, Oop sender) {
+        if (sender.isObject() && !sender.isNil()
+            && sender.rawBits() != ctx.rawBits()) {
+            Oop walk = sender;
+            for (int w = 0; w < 200 && walk.isObject() && !walk.isNil(); w++) {
+                if (walk.rawBits() == ctx.rawBits()) {
+                    static int cycleBreakLog = 0;
+                    if (cycleBreakLog++ < 10) {
+                        fprintf(stderr,
+                            "[CYCLE-BREAK] mat: ctx=0x%llx would close "
+                            "cycle (depth=%d); sender=nil instead\n",
+                            (unsigned long long)ctx.rawBits(), w);
+                    }
+                    sender = memory_.nil();
+                    break;
+                }
+                walk = memory_.fetchPointer(0, walk);
+            }
+        }
+        memory_.storePointer(0, ctx, sender);
+    };
+
     if (frameDepth_ == 0) {
         // No inline frames — sync the interpreter's current state with activeContext_.
         // The context's stored PC and stackp may be stale if bytecodes have
@@ -10991,7 +11020,7 @@ Oop Interpreter::materializeFrameStack() {
             // sender (set at creation or by a prior correct materialization) is
             // already correct.
             if (context.rawBits() != sender.rawBits()) {
-                memory_.storePointer(0, context, sender);  // update sender
+                setSenderSafe(context, sender);
             }
         } else {
             // Calculate context size (6 fixed + temps + some stack)
@@ -11034,8 +11063,8 @@ Oop Interpreter::materializeFrameStack() {
         uint8_t* methodBytes = methodHdr->bytes();
         int pc = ipOffset + 1;  // 1-based PC from 0-based offset
 
-        // Initialize context
-        memory_.storePointer(0, context, sender);                           // sender
+        // Initialize context (sender via cycle guard)
+        setSenderSafe(context, sender);
         memory_.storePointer(1, context, Oop::fromSmallInteger(pc));        // pc
         // stackp is set below after we know how many items we saved
         memory_.storePointer(3, context, frame.savedMethod);                // method
@@ -11116,7 +11145,7 @@ Oop Interpreter::materializeFrameStack() {
             if (context.isObject() && !context.isNil() && context.rawBits() > 0x10000) {
                 // Reuse existing context — just update sender and state
                 if (context.rawBits() != sender.rawBits()) {
-                    memory_.storePointer(0, context, sender);  // update sender
+                    setSenderSafe(context, sender);
                 }
                 reusingContext = true;
             } else {
@@ -11145,7 +11174,7 @@ Oop Interpreter::materializeFrameStack() {
                 // Only set sender for new contexts; reused contexts had sender
                 // handled above (with self-reference guard)
                 if (!reusingContext) {
-                    memory_.storePointer(0, context, sender);                   // sender
+                    setSenderSafe(context, sender);
                 }
                 memory_.storePointer(1, context, Oop::fromSmallInteger(pc));    // pc
                 // stackp is set below after we know how many items we saved
