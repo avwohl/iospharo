@@ -3258,9 +3258,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // new element, store into result[i].  Returns result.
                 //
                 // operands[0] = rcv (the source Array)
+                // operands[1] = vecRef (captured TempVector, only when
+                //                       block has numCopied=1)
                 // literal     = block-IR slot
                 using namespace asmjit::a64;
-                if (v.operands.size() != 1) {
+                if (v.operands.size() != 1 && v.operands.size() != 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -3270,6 +3272,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
                 Gp rcvReg = itRcv->second;
+                bool collectHasCapture = (v.operands.size() == 2);
+                Gp collectVecReg;
+                if (collectHasCapture) {
+                    auto itVec = regFor.find(v.operands[1]);
+                    if (itVec == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    collectVecReg = itVec->second;
+                }
 
                 uint32_t blockSlot = (uint32_t)v.literal;
                 if (blockSlot >= method.inlinedBlocks.size()
@@ -3527,6 +3539,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp dst = cc.new_gp64("col_b_ivar");
                         cc.ldr(dst, ptr(it->second,
                                          8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kLoadTempInVec: {
+                        // Read slot from captured TempVector.  Pre-pass
+                        // verified collectHasCapture; vec idx (literal
+                        // high 32) was checked == 1.  Slot is low 32.
+                        if (!collectHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        uint32_t slot =
+                            (uint32_t)(bv.literal & 0xFFFFFFFFu);
+                        Gp dst = cc.new_gp64("col_b_vec");
+                        cc.ldr(dst, ptr(collectVecReg,
+                                         8 + static_cast<int>(slot) * 8));
                         blockRegs[bv.id] = dst;
                         break;
                     }

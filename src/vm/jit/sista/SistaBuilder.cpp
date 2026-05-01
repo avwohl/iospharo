@@ -1247,11 +1247,34 @@ public:
                         ok = false;
                         rejectReason = "recvOnStack";
                     }
+                    // numCopied: 0 (no capture) or 1 (single TempVec).
+                    // For numCopied=1 we additionally require the byte
+                    // immediately before PushFullBlock to be PushTemp T_vec
+                    // (single byte 0x40-0x4B) so we know which outer
+                    // temp the vec lives in.  outerVecTemp is recorded
+                    // for the splice intercept + lowering.
                     uint32_t numCopied =
                         (uint32_t)(lastFullBlockFlags & 0x3F);
-                    if (ok && numCopied != 0) {
+                    uint32_t outerVecTemp = 0;
+                    bool hasCapture = false;
+                    if (ok && numCopied == 1) {
+                        if (lastPushFullBlockStart < 1) {
+                            ok = false;
+                            rejectReason = "no room for vec push";
+                        } else {
+                            uint8_t prevOp =
+                                bc_[lastPushFullBlockStart - 1];
+                            if (prevOp < 0x40 || prevOp > 0x4B) {
+                                ok = false;
+                                rejectReason = "vec source not PushTemp";
+                            } else {
+                                outerVecTemp = (uint32_t)(prevOp - 0x40);
+                                hasCapture = true;
+                            }
+                        }
+                    } else if (ok && numCopied != 0) {
                         ok = false;
-                        rejectReason = "numCopied != 0";
+                        rejectReason = "numCopied > 1";
                     }
 
                     std::unique_ptr<Method> blockIR;
@@ -1321,6 +1344,20 @@ public:
                                     rejectedOp = bv.op;
                                 }
                                 break;
+                            case Op::kLoadTempInVec:
+                                // Read-only access to the captured
+                                // TempVector.  Only valid when the
+                                // outer pre-pass detected numCopied=1
+                                // with a PushTemp T_vec source; vecIdx
+                                // (high 32 bits of literal) must be 1
+                                // (the single capture).
+                                if (!hasCapture
+                                    || (bv.literal >> 32) != 1) {
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                }
+                                break;
                             default:
                                 ok = false;
                                 rejectReason = "non-simple block op";
@@ -1338,13 +1375,20 @@ public:
                             std::move(blockIR));
                         spliceCollectAtPushFullBlock_[
                             (size_t)lastPushFullBlockStart] = slot;
+                        if (hasCapture) {
+                            outerVecTempForCollect_[
+                                (size_t)lastPushFullBlockStart] =
+                                outerVecTemp;
+                        }
                         static int collCandCount = 0;
                         if (collCandCount++ < 16) {
                             std::fprintf(stderr,
                                 "[SISTA-COLLECT-CAND] pfbBC=%d "
-                                "send1BC=%zu selIdx=%u litIdx=%d slot=%u\n",
+                                "send1BC=%zu selIdx=%u litIdx=%d slot=%u "
+                                "outerVecTemp=%d\n",
                                 lastPushFullBlockStart, i,
-                                selIdx, lastFullBlockLitIdx, slot);
+                                selIdx, lastFullBlockLitIdx, slot,
+                                hasCapture ? (int)outerVecTemp : -1);
                         }
                     } else {
                         static int collDiag = 0;
@@ -2420,8 +2464,11 @@ private:
                 // sim stack (an Array, runtime-checked in lowering).
                 {
                     auto cIt = spliceCollectAtPushFullBlock_.find(ip);
+                    bool collectHasCapture =
+                        outerVecTempForCollect_.count(ip) > 0;
+                    size_t collectNeeded = collectHasCapture ? 2 : 1;
                     if (cIt != spliceCollectAtPushFullBlock_.end()
-                        && stack_.size() >= 1
+                        && stack_.size() >= collectNeeded
                         && ip + 3 < len_) {
                         uint8_t nextOp = bc_[ip + 3];
                         if (nextOp >= jit::SistaV1::Send1Base
@@ -2429,9 +2476,18 @@ private:
                             uint32_t selIdx = nextOp & 0x0F;
                             if (((collectSelectorMask_ >> selIdx) & 1) != 0) {
                                 uint32_t blockSlot = cIt->second;
-                                uint32_t rcv = stack_.back();
-                                stack_.pop_back();
-                                std::vector<uint32_t> ops{rcv};
+                                std::vector<uint32_t> ops;
+                                if (collectHasCapture) {
+                                    uint32_t vec = stack_.back();
+                                    stack_.pop_back();
+                                    uint32_t rcv = stack_.back();
+                                    stack_.pop_back();
+                                    ops = {rcv, vec};
+                                } else {
+                                    uint32_t rcv = stack_.back();
+                                    stack_.pop_back();
+                                    ops = {rcv};
+                                }
                                 uint32_t vid = out_.newValue(currentBlock_,
                                       Op::kCountedLoopArrayCollect,
                                       Type::kOop,
@@ -2445,8 +2501,9 @@ private:
                                 if (collEmitCount++ < 16) {
                                     std::fprintf(stderr,
                                         "[SISTA-COLLECT-EMIT] bc=%zu "
-                                        "slot=%u vid=%u\n",
-                                        ip, blockSlot, vid);
+                                        "slot=%u vid=%u capture=%d\n",
+                                        ip, blockSlot, vid,
+                                        collectHasCapture ? 1 : 0);
                                 }
                                 ip += 4;
                                 continue;
@@ -4767,6 +4824,11 @@ private:
     // PushFullBlock + Send1#collect: with splice-simple block; lift's
     // PushFullBlock arm emits kCountedLoopArrayCollect.
     std::unordered_map<size_t, uint32_t> spliceCollectAtPushFullBlock_;
+    // Array-collect with numCopied=1 capture: pfbOff → outer's temp
+    // index that holds the captured TempVector.  Used by the lifter
+    // splice intercept to know the vec is on the simulator stack
+    // and by the lowering to read captured slots via kLoadTempInVec.
+    std::unordered_map<size_t, uint32_t> outerVecTempForCollect_;
 };
 
 }  // namespace
