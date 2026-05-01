@@ -2049,8 +2049,8 @@ public:
         // PHARO_SISTA_DO_SPLICE alone there's a deopt-stack bug shared
         // with the existing IV-inject/IV-do splices that surfaces on
         // certain non-bench methods (e.g., FFI's #oopForObject:).
-        // Until the deopt is fixed (push only [start,stop], resume at
-        // to:), keep this splice opt-in.
+        // Default-on attempt 2026-05-01 dropped bench-suite default-flag
+        // 10/10 → 6/10 clean.  Stays opt-in.
         static const bool ivDoAccumSplice =
             std::getenv("PHARO_SISTA_IV_DO_ACCUM") != nullptr;
         if (ivDoAccumSplice && accumSplice && memory_ != nullptr && toSelectorMask_) {
