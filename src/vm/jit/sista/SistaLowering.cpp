@@ -1484,6 +1484,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     switch (bv.op) {
                     case Op::kLoadTemp:
                     case Op::kLoadReceiver:
+                    case Op::kLoadInstVar:
                     case Op::kLoadTrueOop:
                     case Op::kLoadFalseOop:
                     case Op::kConstantOop:
@@ -1667,6 +1668,28 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = r;
                         break;
                     }
+                    case Op::kLoadInstVar: {
+                        // operand[0] is the receiver pointer; literal
+                        // is the slot index.  Slots live at offset
+                        // 8 + idx*8 from object pointer (header is 8B).
+                        // Side-effect-free read; safe in splice context
+                        // since the loop's deopt path doesn't depend on
+                        // the loaded value being preserved.
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("blk_ivar");
+                        cc.ldr(dst, ptr(it->second,
+                                         8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
                     case Op::kPrimTagCheckInt: {
                         // Passthrough: output reg = input reg.  Our
                         // splice does its own tag check before arith.
@@ -1804,6 +1827,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     switch (bv.op) {
                     case Op::kLoadTemp:
                     case Op::kLoadReceiver:
+                    case Op::kLoadInstVar:
                     case Op::kLoadTrueOop:
                     case Op::kLoadFalseOop:
                     case Op::kConstantOop:
@@ -1980,6 +2004,26 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp r = cc.new_gp64("ij_recv");
                         cc.ldr(r, ptr(state, OFF_RECEIVER));
                         blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadInstVar: {
+                        // operand[0] is the receiver pointer; literal
+                        // is the slot index.  Side-effect-free read,
+                        // safe in inject:into: splice context (deopt
+                        // rolls back to init regardless).
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("ij_ivar");
+                        cc.ldr(dst, ptr(it->second,
+                                         8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
                         break;
                     }
                     case Op::kPrimTagCheckInt: {
