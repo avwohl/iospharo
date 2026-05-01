@@ -694,6 +694,15 @@ public:
                         // lowering can emit it inline without
                         // reconstructing frame state.
                         Op rejectedOp = Op::kReturn;
+                        // Multi-block IR (block contains internal
+                        // jumps with phi merges) is not supported by
+                        // the kCountedLoopDo lowering.  Reject up
+                        // front to avoid cache-poisoning the entire
+                        // method's Sista compile.
+                        if (ok && blockIR && blockIR->blocks.size() != 1) {
+                            ok = false;
+                            rejectReason = "multi-block IR";
+                        }
                         // Narrowed to ops the kCountedLoopDo lowering
                         // actually handles.  Earlier admission of
                         // comparison ops (kPrimLtInt etc.) caused
@@ -1047,6 +1056,12 @@ public:
                         rejectReason = "recursion guard";
                     }
 
+                    // Multi-block IR is rejected by lowering — match
+                    // up front to avoid cache-poisoning.
+                    if (ok && blockIR && blockIR->blocks.size() != 1) {
+                        ok = false;
+                        rejectReason = "multi-block IR";
+                    }
                     // Verify block is splice-simple — narrowed to ops
                     // the inject:into: lowering actually handles.
                     // (Comparison ops admitted here without lowering
@@ -1230,6 +1245,11 @@ public:
                         rejectReason = "recursion guard";
                     }
 
+                    // Multi-block IR rejected by collect: lowering.
+                    if (ok && blockIR && blockIR->blocks.size() != 1) {
+                        ok = false;
+                        rejectReason = "multi-block IR";
+                    }
                     // Splice-simple whitelist: loads + arith + tag-check
                     // + return.  No sends, no stores.  kLoadLiteral
                     // is excluded because of a hang seen on multi-arith
@@ -1414,6 +1434,11 @@ public:
                             rejectReason = "recursion guard";
                         }
 
+                        // Multi-block IR rejected by IV-inject lowering.
+                        if (ok && blockIR && blockIR->blocks.size() != 1) {
+                            ok = false;
+                            rejectReason = "multi-block IR";
+                        }
                         // Narrowed: comparison ops not in lowering
                         // whitelist; admitting them here cache-poisons
                         // the method's Sista compile.
@@ -1581,6 +1606,11 @@ public:
                             rejectReason = "recursion guard";
                         }
 
+                        // Multi-block IR rejected by IV-do lowering.
+                        if (ok && blockIR && blockIR->blocks.size() != 1) {
+                            ok = false;
+                            rejectReason = "multi-block IR";
+                        }
                         if (ok && blockIR) {
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
