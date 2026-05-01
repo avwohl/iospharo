@@ -1813,8 +1813,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Block has 2 args: temp 0 = acc, temp 1 = elem.  Block
                 // returns the new acc as kReturn's value, which we
                 // assign to accReg.
+                //
+                // operands[0] = rcv (the source Array)
+                // operands[1] = init (initial accumulator)
+                // operands[2] = vecRef (captured TempVector, only when
+                //                       block has numCopied=1)
                 using namespace asmjit::a64;
-                if (v.operands.size() != 2) {
+                if (v.operands.size() != 2 && v.operands.size() != 3) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1823,6 +1828,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 if (itRcv == regFor.end() || itInit == regFor.end()) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
+                }
+                bool injectHasCapture = (v.operands.size() == 3);
+                Gp injectVecReg;
+                if (injectHasCapture) {
+                    auto itVec = regFor.find(v.operands[2]);
+                    if (itVec == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    injectVecReg = itVec->second;
                 }
 
                 uint32_t blockSlot = (uint32_t)v.literal;
@@ -1841,7 +1856,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Same whitelist as kCountedLoopDo's body — loads,
                 // arith, comparison, identity, tag-check passthrough,
                 // return.  No stores.  Boolean-producing ops can
-                // become the new acc.
+                // become the new acc.  kLoadTempInVec admitted only
+                // when injectHasCapture (operand[2] = vecRef set).
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -1864,6 +1880,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimNeqInt:
                     case Op::kPrimIdentityEq:
                     case Op::kPrimIdentityNeq:
+                        break;
+                    case Op::kLoadTempInVec:
+                        if (!injectHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2064,6 +2086,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp dst = cc.new_gp64("ij_ivar");
                         cc.ldr(dst, ptr(it->second,
                                          8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kLoadTempInVec: {
+                        // Read slot from captured TempVector.
+                        // Pre-pass verified injectHasCapture and
+                        // vec idx == 1.
+                        if (!injectHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        uint32_t slot =
+                            (uint32_t)(bv.literal & 0xFFFFFFFFu);
+                        Gp dst = cc.new_gp64("ij_vec");
+                        cc.ldr(dst, ptr(injectVecReg,
+                                         8 + static_cast<int>(slot) * 8));
                         blockRegs[bv.id] = dst;
                         break;
                     }
@@ -2270,8 +2308,11 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // in a register.  Block has 2 args:
                 //   temp 0 = acc → accReg
                 //   temp 1 = i (SmI Oop) → iReg
+                //
+                // operands[0..2] = start, stop, init.  operands[3] =
+                //   captured TempVector (only when block has numCopied=1).
                 using namespace asmjit::a64;
-                if (v.operands.size() != 3) {
+                if (v.operands.size() != 3 && v.operands.size() != 4) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -2283,6 +2324,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     || itInit == regFor.end()) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
+                }
+                bool ivInjectHasCapture = (v.operands.size() == 4);
+                Gp ivInjectVecReg;
+                if (ivInjectHasCapture) {
+                    auto itVec = regFor.find(v.operands[3]);
+                    if (itVec == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    ivInjectVecReg = itVec->second;
                 }
 
                 uint32_t blockSlot = (uint32_t)v.literal;
@@ -2298,6 +2349,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
 
                 // Same whitelist as kCountedLoopInjectInto's body.
+                // kLoadTempInVec admitted only when ivInjectHasCapture.
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -2320,6 +2372,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimNeqInt:
                     case Op::kPrimIdentityEq:
                     case Op::kPrimIdentityNeq:
+                        break;
+                    case Op::kLoadTempInVec:
+                        if (!ivInjectHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2469,6 +2527,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp dst = cc.new_gp64("iv_ivar");
                         cc.ldr(dst, ptr(it->second,
                                          8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kLoadTempInVec: {
+                        // Read slot from captured TempVector.
+                        // Pre-pass verified ivInjectHasCapture and
+                        // vec idx == 1.
+                        if (!ivInjectHasCapture) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        uint32_t slot =
+                            (uint32_t)(bv.literal & 0xFFFFFFFFu);
+                        Gp dst = cc.new_gp64("iv_vec");
+                        cc.ldr(dst, ptr(ivInjectVecReg,
+                                         8 + static_cast<int>(slot) * 8));
                         blockRegs[bv.id] = dst;
                         break;
                     }

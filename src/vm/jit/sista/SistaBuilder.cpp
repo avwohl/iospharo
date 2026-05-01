@@ -1037,12 +1037,35 @@ public:
                         ok = false;
                         rejectReason = "recvOnStack";
                     }
+                    // numCopied: 0 (no capture) or 1 (single TempVec).
+                    // For numCopied=1 the byte before PushFullBlock
+                    // must be PushTemp T_vec (single-byte 0x40-0x4B);
+                    // outerVecTemp is recorded for the splice intercept
+                    // (which pops vec off simulator stack) and the
+                    // lowering's block-body kLoadTempInVec emission.
                     uint32_t numCopied =
                         (uint32_t)(lastFullBlockFlags & 0x3F);
-                    if (ok && numCopied != 0) {
-                        // Future: handle captured vars.  MVP only.
+                    uint32_t injectOuterVecTemp = 0;
+                    bool injectHasCapture = false;
+                    if (ok && numCopied == 1) {
+                        if (lastPushFullBlockStart < 1) {
+                            ok = false;
+                            rejectReason = "no room for vec push";
+                        } else {
+                            uint8_t prevOp =
+                                bc_[lastPushFullBlockStart - 1];
+                            if (prevOp < 0x40 || prevOp > 0x4B) {
+                                ok = false;
+                                rejectReason = "vec source not PushTemp";
+                            } else {
+                                injectOuterVecTemp =
+                                    (uint32_t)(prevOp - 0x40);
+                                injectHasCapture = true;
+                            }
+                        }
+                    } else if (ok && numCopied != 0) {
                         ok = false;
-                        rejectReason = "numCopied != 0";
+                        rejectReason = "numCopied > 1";
                     }
 
                     // Sub-lift the block (with blockReturnAsLocal so
@@ -1113,6 +1136,18 @@ public:
                                     rejectedOp = bv.op;
                                 }
                                 break;
+                            case Op::kLoadTempInVec:
+                                // Read-only access to captured
+                                // TempVector at vec idx 1.  Only when
+                                // pre-pass identified numCopied=1
+                                // with a valid PushTemp T_vec source.
+                                if (!injectHasCapture
+                                    || (bv.literal >> 32) != 1) {
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                }
+                                break;
                             default:
                                 ok = false;
                                 rejectReason = "non-simple block op";
@@ -1130,6 +1165,11 @@ public:
                             std::move(blockIR));
                         spliceInjectAtPushFullBlock_[
                             (size_t)lastPushFullBlockStart] = slot;
+                        if (injectHasCapture) {
+                            outerVecTempForInject_[
+                                (size_t)lastPushFullBlockStart] =
+                                injectOuterVecTemp;
+                        }
                         static int spliceInjectCount = 0;
                         if (spliceInjectCount++ < 16) {
                             std::fprintf(stderr,
@@ -2593,13 +2633,21 @@ private:
                 // from an elided `(start to: stop)` Send1).
                 {
                     auto iIt = spliceInjectAtPushFullBlock_.find(ip);
+                    bool injectHasCaptureNow =
+                        outerVecTempForInject_.count(ip) > 0;
+                    size_t injectNeeded = injectHasCaptureNow ? 3 : 2;
                     if (iIt != spliceInjectAtPushFullBlock_.end()
-                        && stack_.size() >= 2
+                        && stack_.size() >= injectNeeded
                         // Verify Send2 really follows (op in 0xA0-0xAF).
                         && ip + 3 < len_
                         && bc_[ip + 3] >= 0xA0
                         && bc_[ip + 3] <= 0xAF) {
                         uint32_t blockSlot = iIt->second;
+                        uint32_t vec = 0;
+                        if (injectHasCaptureNow) {
+                            vec = stack_.back();
+                            stack_.pop_back();
+                        }
                         uint32_t init = stack_.back();
                         stack_.pop_back();
                         uint32_t rcv = stack_.back();
@@ -2616,6 +2664,7 @@ private:
                             uint32_t stopV =
                                 out_.values[rcv].operands[1];
                             std::vector<uint32_t> ops{startV, stopV, init};
+                            if (injectHasCaptureNow) ops.push_back(vec);
                             vid = out_.newValue(currentBlock_,
                                   Op::kCountedLoopIntervalInjectInto,
                                   Type::kOop,
@@ -2623,6 +2672,7 @@ private:
                                   /*literal=*/blockSlot);
                         } else {
                             std::vector<uint32_t> ops{rcv, init};
+                            if (injectHasCaptureNow) ops.push_back(vec);
                             vid = out_.newValue(currentBlock_,
                                   Op::kCountedLoopInjectInto,
                                   Type::kOop,
@@ -2637,9 +2687,10 @@ private:
                         if (injEmitCount++ < 16) {
                             std::fprintf(stderr,
                                 "[SISTA-INJECT-SPLICE-EMIT] bc=%zu "
-                                "slot=%u vid=%u kind=%s\n",
+                                "slot=%u vid=%u kind=%s capture=%d\n",
                                 ip, blockSlot, vid,
-                                rcvIsInterval ? "interval" : "array");
+                                rcvIsInterval ? "interval" : "array",
+                                injectHasCaptureNow ? 1 : 0);
                         }
                         ip += 4;  // PushFullBlock (3) + Send2 (1)
                         continue;
@@ -4829,6 +4880,10 @@ private:
     // splice intercept to know the vec is on the simulator stack
     // and by the lowering to read captured slots via kLoadTempInVec.
     std::unordered_map<size_t, uint32_t> outerVecTempForCollect_;
+    // Same machinery for inject:into: + IV-inject when block has
+    // numCopied=1.  Same map serves both Array and Interval inject
+    // paths since the splice intercept is the same Send2 site.
+    std::unordered_map<size_t, uint32_t> outerVecTempForInject_;
 };
 
 }  // namespace
