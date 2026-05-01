@@ -735,15 +735,34 @@ public:
                                     break;
                                 case Op::kLoadTemp:
                                     // do: passes 1 block arg (e) at
-                                    // temp index 0.  Lowering rejects
-                                    // higher indices (block-local
-                                    // temps); narrow at admission to
-                                    // avoid cache-poisoning the method.
-                                    if (bv.literal != 0) {
-                                        ok = false;
-                                        rejectReason = "non-simple block op";
-                                        rejectedOp = bv.op;
-                                    }
+                                    // temp index 0.  Higher indices
+                                    // are block-local temps; admit
+                                    // them — the lowering binds them
+                                    // to fresh registers via the
+                                    // kStoreTemp emit.  Without this,
+                                    // any block that needs an
+                                    // intermediate (`[:e | | t | t :=
+                                    // e + 1. ...]`) is rejected.
+                                    break;
+                                case Op::kStoreTemp:
+                                    // 2026-05-01: closure-capture
+                                    // support.  do: discards the block's
+                                    // return value, so writes to block-
+                                    // local temps are dead-code from the
+                                    // outer's view — safe to admit.
+                                    // Lowering tracks the value in a
+                                    // register but emits no store.
+                                    // Writes to captured slots (numArgs
+                                    // <= idx < numArgs+numCopied) would
+                                    // be VISIBLE — those still need
+                                    // kStoreTempInVec / write-buffering
+                                    // for deopt safety, which this
+                                    // change does NOT add.  Reject
+                                    // captured-slot stores by checking
+                                    // the index against the block's
+                                    // numArgs+numCopied bound at lower
+                                    // time (here we admit and let
+                                    // lowering enforce).
                                     break;
                                 default:
                                     ok = false;
