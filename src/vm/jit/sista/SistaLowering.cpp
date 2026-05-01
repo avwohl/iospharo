@@ -1822,7 +1822,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
 
                 // Same whitelist as kCountedLoopDo's body — loads,
-                // arith, tag-check passthrough, return.  No stores.
+                // arith, comparison, tag-check passthrough, return.
+                // No stores.  Comparison ops produce boolean Oops
+                // (trueOop/falseOop) that can become the new acc.
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -1837,6 +1839,12 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimAddInt:
                     case Op::kPrimSubInt:
                     case Op::kPrimMulInt:
+                    case Op::kPrimLtInt:
+                    case Op::kPrimLeInt:
+                    case Op::kPrimGtInt:
+                    case Op::kPrimGeInt:
+                    case Op::kPrimEqInt:
+                    case Op::kPrimNeqInt:
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2085,6 +2093,63 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                             cc.lsl(dst, prod, Imm(3));
                             cc.orr(dst, dst, Imm(1));
                         }
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kPrimLtInt:
+                    case Op::kPrimLeInt:
+                    case Op::kPrimGtInt:
+                    case Op::kPrimGeInt:
+                    case Op::kPrimEqInt:
+                    case Op::kPrimNeqInt: {
+                        // SmallInt comparison.  Tag-check both ops as
+                        // SmI; deopt to the inject:into: bytecode on
+                        // miss (rolls back to original init).  Boolean
+                        // result becomes the new accumulator if used
+                        // by kReturn.
+                        if (bv.operands.size() < 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp tagA = cc.new_gp64("ij_cmpTagA");
+                        cc.and_(tagA, ita->second, Imm(7));
+                        cc.cmp(tagA, Imm(1));
+                        Label cmpAok = cc.new_label();
+                        cc.b_eq(cmpAok);
+                        emitDeopt(rcvReg, initReg, deoptBC);
+                        cc.bind(cmpAok);
+                        Gp tagB = cc.new_gp64("ij_cmpTagB");
+                        cc.and_(tagB, itb->second, Imm(7));
+                        cc.cmp(tagB, Imm(1));
+                        Label cmpBok = cc.new_label();
+                        cc.b_eq(cmpBok);
+                        emitDeopt(rcvReg, initReg, deoptBC);
+                        cc.bind(cmpBok);
+
+                        Gp trueOop = cc.new_gp64("ij_cmpTrue");
+                        Gp falseOop = cc.new_gp64("ij_cmpFalse");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("ij_cmp");
+                        CondCode cond;
+                        switch (bv.op) {
+                          case Op::kPrimLtInt:  cond = CondCode::kLT; break;
+                          case Op::kPrimLeInt:  cond = CondCode::kLE; break;
+                          case Op::kPrimGtInt:  cond = CondCode::kGT; break;
+                          case Op::kPrimGeInt:  cond = CondCode::kGE; break;
+                          case Op::kPrimEqInt:  cond = CondCode::kEQ; break;
+                          case Op::kPrimNeqInt: cond = CondCode::kNE; break;
+                          default:              cond = CondCode::kEQ; break;
+                        }
+                        cc.csel(dst, trueOop, falseOop, cond);
                         blockRegs[bv.id] = dst;
                         break;
                     }

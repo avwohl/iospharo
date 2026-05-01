@@ -1062,11 +1062,13 @@ public:
                         ok = false;
                         rejectReason = "multi-block IR";
                     }
-                    // Verify block is splice-simple — narrowed to ops
-                    // the inject:into: lowering actually handles.
-                    // (Comparison ops admitted here without lowering
-                    // support cause cache-poisoning; see do: pre-pass
-                    // for the matching narrow.)
+                    // Verify block is splice-simple.  Comparison ops
+                    // are admitted now that the inject:into: lowering
+                    // emits cmp + csel for them (boolean result can
+                    // become the new acc — semantically valid even if
+                    // rare in practice; the bigger value here is
+                    // keeping admit/emit in sync to avoid the cache-
+                    // poisoning class of bug).
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1082,6 +1084,12 @@ public:
                             case Op::kPrimAddInt:
                             case Op::kPrimSubInt:
                             case Op::kPrimMulInt:
+                            case Op::kPrimLtInt:
+                            case Op::kPrimLeInt:
+                            case Op::kPrimGtInt:
+                            case Op::kPrimGeInt:
+                            case Op::kPrimEqInt:
+                            case Op::kPrimNeqInt:
                             case Op::kPrimTagCheckInt:
                                 break;
                             default:
