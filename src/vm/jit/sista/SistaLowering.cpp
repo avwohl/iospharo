@@ -3393,24 +3393,44 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.b_hi(loopExit);
                 cc.bind(loopHead);
 
+                // Element-use analysis: only emit per-iter load +
+                // SmI tag-check if the block actually references
+                // the element via kLoadTemp(0).  Patterns like
+                // `arr collect: [:e | <const>]` or
+                // `[:e | self ivar0 + 1]` ignore the element — skip
+                // the load entirely in that case.
+                bool blockUsesElement = false;
+                for (const auto& bv : blockIR.values) {
+                    if (bv.op == Op::kLoadTemp && bv.literal == 0) {
+                        blockUsesElement = true;
+                        break;
+                    }
+                }
+
                 // Inline format-2 element load.  iReg encodes (i<<3)|1;
                 // slot (i-1) lives at byte offset 8 + (i-1)*8 = i*8 from
                 // rcv.  i*8 = iReg - 1.  Use [rcv, off] addressing.
-                Gp col_off = cc.new_gp64("col_off");
-                cc.sub(col_off, iReg, Imm(1));
                 Gp eachReg = cc.new_gp64("col_each");
-                cc.ldr(eachReg, ptr(rcvReg, col_off));
+                if (blockUsesElement) {
+                    Gp col_off = cc.new_gp64("col_off");
+                    cc.sub(col_off, iReg, Imm(1));
+                    cc.ldr(eachReg, ptr(rcvReg, col_off));
 
-                // Tag-check eachReg as SmI (the splice's block is
-                // restricted to SmI arith).  Deopt before any commit
-                // so result Array is just GC garbage.
-                Gp tagE = cc.new_gp64("col_tagE");
-                cc.and_(tagE, eachReg, Imm(7));
-                cc.cmp(tagE, Imm(1));
-                Label eOk = cc.new_label();
-                cc.b_eq(eOk);
-                emitDeopt(rcvReg, deoptBC);
-                cc.bind(eOk);
+                    // Tag-check eachReg as SmI (the splice's block is
+                    // restricted to SmI arith).  Deopt before any commit
+                    // so result Array is just GC garbage.
+                    Gp tagE = cc.new_gp64("col_tagE");
+                    cc.and_(tagE, eachReg, Imm(7));
+                    cc.cmp(tagE, Imm(1));
+                    Label eOk = cc.new_label();
+                    cc.b_eq(eOk);
+                    emitDeopt(rcvReg, deoptBC);
+                    cc.bind(eOk);
+                }
+                // (when !blockUsesElement, eachReg is uninitialized
+                //  but the block-body emission below never references
+                //  it for that case — the kLoadTemp(0) case is what
+                //  binds blockRegs[bv.id] = eachReg.)
 
                 // Inline block body.  temp 0 = e (the array element)
                 // → eachReg.  Block returns the new element value.
