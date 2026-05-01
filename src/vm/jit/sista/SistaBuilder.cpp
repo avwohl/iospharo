@@ -694,6 +694,16 @@ public:
                         // lowering can emit it inline without
                         // reconstructing frame state.
                         Op rejectedOp = Op::kReturn;
+                        // Narrowed to ops the kCountedLoopDo lowering
+                        // actually handles.  Earlier admission of
+                        // comparison ops (kPrimLtInt etc.) caused
+                        // cache-poisoning: pre-pass admits the block
+                        // but lowering rejects + caches a permanent
+                        // nullptr for the method.  do: discards the
+                        // block result so comparison ops are dead-code
+                        // anyway; their fused-branch use case requires
+                        // a kBranchIfTrue/False which terminates the
+                        // sub-lift.
                         if (ok && blockIR) {
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
@@ -709,14 +719,6 @@ public:
                                 case Op::kPrimAddInt:
                                 case Op::kPrimSubInt:
                                 case Op::kPrimMulInt:
-                                case Op::kPrimLtInt:
-                                case Op::kPrimLeInt:
-                                case Op::kPrimGtInt:
-                                case Op::kPrimGeInt:
-                                case Op::kPrimEqInt:
-                                case Op::kPrimNeqInt:
-                                case Op::kPrimIdentityEq:
-                                case Op::kPrimIdentityNeq:
                                 case Op::kPrimTagCheckInt:
                                     // Tag-check is harmless at the splice
                                     // level (lowering passes it through
@@ -1045,8 +1047,11 @@ public:
                         rejectReason = "recursion guard";
                     }
 
-                    // Verify block is splice-simple (same whitelist as
-                    // do: splice — loads + arith + tag-check + return).
+                    // Verify block is splice-simple — narrowed to ops
+                    // the inject:into: lowering actually handles.
+                    // (Comparison ops admitted here without lowering
+                    // support cause cache-poisoning; see do: pre-pass
+                    // for the matching narrow.)
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1062,14 +1067,6 @@ public:
                             case Op::kPrimAddInt:
                             case Op::kPrimSubInt:
                             case Op::kPrimMulInt:
-                            case Op::kPrimLtInt:
-                            case Op::kPrimLeInt:
-                            case Op::kPrimGtInt:
-                            case Op::kPrimGeInt:
-                            case Op::kPrimEqInt:
-                            case Op::kPrimNeqInt:
-                            case Op::kPrimIdentityEq:
-                            case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
                                 break;
                             default:
@@ -1417,6 +1414,9 @@ public:
                             rejectReason = "recursion guard";
                         }
 
+                        // Narrowed: comparison ops not in lowering
+                        // whitelist; admitting them here cache-poisons
+                        // the method's Sista compile.
                         if (ok && blockIR) {
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
@@ -1432,14 +1432,6 @@ public:
                                 case Op::kPrimAddInt:
                                 case Op::kPrimSubInt:
                                 case Op::kPrimMulInt:
-                                case Op::kPrimLtInt:
-                                case Op::kPrimLeInt:
-                                case Op::kPrimGtInt:
-                                case Op::kPrimGeInt:
-                                case Op::kPrimEqInt:
-                                case Op::kPrimNeqInt:
-                                case Op::kPrimIdentityEq:
-                                case Op::kPrimIdentityNeq:
                                 case Op::kPrimTagCheckInt:
                                     break;
                                 default:
