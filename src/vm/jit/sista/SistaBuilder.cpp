@@ -3637,11 +3637,44 @@ private:
                 // and continue lifting past the send.  Helper invokes
                 // the send synchronously; result is pushed onto stack_.
                 // On NLR, helper returns 0 → lowering deopts.
+                //
+                // 2026-05-01: GATED to methods that have at least one
+                // splice candidate.  Without this gate, every method
+                // compiles with kSendCallHelper, including system code
+                // like SnapshotOperation>>performSnapshot,
+                // FileDoesNotExistException>>signal, ProcessorScheduler
+                // class>>startUp.  Their helper-driven step() interacts
+                // with materializeFrameStack to produce sender-chain
+                // cycles (see project_b1_helpersends_2026_05_01.md
+                // depth-21 cycle dump from helper-sends.log).  Methods
+                // without splice candidates get NO benefit from
+                // helper-sends, so gating on candidacy preserves the
+                // win for splice-eligible methods while removing the
+                // fragility for everything else.
                 static const bool helperSends = []() {
                     const char* v = std::getenv("PHARO_SISTA_HELPER_SENDS");
                     return v && v[0] == '1';
                 }();
-                if (helperSends) {
+                bool hasSpliceCandidate =
+                    !spliceAtPushFullBlock_.empty()
+                 || !spliceAccumAtPushFullBlock_.empty()
+                 || !spliceCollectAtPushFullBlock_.empty()
+                 || !spliceInjectAtPushFullBlock_.empty()
+                 || !spliceDoAtPushFullBlock_.empty()
+                 || !spliceIvDoAccumAtPushFullBlock_.empty()
+                 || !intervalDoAtTo_.empty()
+                 || !intervalDoAccumAtTo_.empty()
+                 || !intervalInjectAtTo_.empty();
+                // Narrow further: only short methods.  runSum is ~30
+                // bytecodes; UI methods like WorldState>>drawWorld: are
+                // hundreds.  Long methods exercise splice + helper-sends
+                // through more code paths, surfacing latent bugs (e.g.
+                // DNU on #isTransparent traced back to splice
+                // misbehavior in WorldState methods).  100-byte cap is
+                // empirical: keeps the win for runSum/sumArr/etc.,
+                // skips most UI/system code.
+                bool methodIsShort = (len_ < 100);
+                if (helperSends && hasSpliceCandidate && methodIsShort) {
                     // Pop only rcvr + args (the send consumes them).
                     // Other live IR-stack values stay in their
                     // registers — kSendCallHelper is a producing op,
