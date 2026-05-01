@@ -74,6 +74,18 @@ public:
     // Returns true if a recompile happened.
     bool maybeRecompileForOSR(Oop compiledMethod);
 
+    // Rewrite J2J entry-addr bits in every IC site whose methodBits matches
+    // the recompiled method.  After recompile() returns a new JITMethod,
+    // callers' IC.extra still holds the OLD entry address — left untouched,
+    // their stencil_sendJ2J / stencil_sendInlineMonoJ2J / sendBlockValue*
+    // tail-calls keep entering the OLD (unspecialized) code.  This walk
+    // patches them to the new code.  Two-pass: read-only detect first to
+    // avoid the W^X flip when no rewrite is needed.  Cheap: only the low
+    // 47 bits (J2J_ADDR_MASK) of `extra` are rewritten when J2J_ENTRY_BIT
+    // (bit 60) is set; classification bits preserved.
+    void rewriteIcEntriesAfterRecompile(uint64_t methodBits,
+                                        uint64_t newEntryAddr);
+
     // Flush all inline caches and mega cache (called on become:, GC, method changes)
     void flushCaches();
 

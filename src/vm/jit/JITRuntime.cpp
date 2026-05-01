@@ -1434,7 +1434,90 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
                 jm->stats ? jm->stats->executionCount : 0);
     }
     JITMethod* newJM = compiler_->recompile(compiledMethod);
+    if (newJM) {
+        rewriteIcEntriesAfterRecompile(
+            compiledMethod.rawBits(),
+            reinterpret_cast<uint64_t>(newJM->codeStart()));
+    }
     return newJM != nullptr;
+}
+
+// Rewrite J2J entry-addr bits in every IC site whose methodBits matches the
+// recompiled method.  See header comment for rationale.
+void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
+                                                uint64_t newEntryAddr) {
+    if (!initialized_) return;
+    JITMethod* m = codeZone_.firstMethod();
+    if (!m) return;
+
+    constexpr uint64_t kJ2JEntryBit  = 1ULL << 60;
+    constexpr uint64_t kJ2JAddrMask  = 0x0000FFFFFFFFFFFFULL;
+
+    // Two-pass: detect first (read-only, X-mode safe) before paying for a
+    // W^X flip on the whole code zone.  Recompile is rare and most ICs
+    // won't reference this method at all, so the early exit dominates.
+    bool madeAnyEdit = false;
+    for (JITMethod* probe = m; probe; probe = probe->nextInZone) {
+        if (probe->numICEntries == 0) continue;
+        uint8_t* icStart = probe->codeStart() + probe->codeSize
+                         - probe->numICEntries * IC_BYTES_PER_SITE;
+        for (uint32_t i = 0; i < probe->numICEntries; i++) {
+            uint64_t* slots = reinterpret_cast<uint64_t*>(
+                icStart + i * IC_BYTES_PER_SITE);
+            for (int e = 0; e < 6; e++) {
+                if (slots[e * 3 + 1] != methodBits) continue;
+                uint64_t extra = slots[e * 3 + 2];
+                if ((extra & kJ2JEntryBit) == 0) continue;
+                if ((extra & kJ2JAddrMask)
+                    != (newEntryAddr & kJ2JAddrMask)) {
+                    madeAnyEdit = true;
+                    goto need_flip;
+                }
+            }
+        }
+    }
+need_flip:
+    if (!madeAnyEdit) {
+        for (size_t k = 0; k < MegaCacheSize; k++) {
+            if (megaCache_[k].methodBits == methodBits
+                && megaCache_[k].jitEntry != 0
+                && megaCache_[k].jitEntry != newEntryAddr) {
+                megaCache_[k].jitEntry = newEntryAddr;
+            }
+        }
+        return;
+    }
+
+    makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
+    while (m) {
+        if (m->numICEntries > 0) {
+            uint8_t* icStart = m->codeStart() + m->codeSize
+                             - m->numICEntries * IC_BYTES_PER_SITE;
+            for (uint32_t i = 0; i < m->numICEntries; i++) {
+                uint64_t* slots = reinterpret_cast<uint64_t*>(
+                    icStart + i * IC_BYTES_PER_SITE);
+                for (int e = 0; e < 6; e++) {
+                    if (slots[e * 3 + 1] == methodBits) {
+                        uint64_t extra = slots[e * 3 + 2];
+                        if (extra & kJ2JEntryBit) {
+                            extra = (extra & ~kJ2JAddrMask)
+                                  | (newEntryAddr & kJ2JAddrMask);
+                            slots[e * 3 + 2] = extra;
+                        }
+                    }
+                }
+            }
+        }
+        m = m->nextInZone;
+    }
+    makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
+
+    for (size_t k = 0; k < MegaCacheSize; k++) {
+        if (megaCache_[k].methodBits == methodBits
+            && megaCache_[k].jitEntry != 0) {
+            megaCache_[k].jitEntry = newEntryAddr;
+        }
+    }
 }
 
 void JITRuntime::noteMethodEntry(Oop compiledMethod) {
@@ -1945,6 +2028,13 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
             }
             JITMethod* newJM = compiler_->recompile(compiledMethod);
             if (newJM) {
+                // Patch every IC J2J entry-addr pointing at the OLD code
+                // to the new (specialized) code.  Without this, callers'
+                // stencil_sendJ2J / sendInlineMonoJ2J / sendBlockValue*
+                // tail-calls keep entering OLD entry — wasted recompile.
+                rewriteIcEntriesAfterRecompile(
+                    compiledMethod.rawBits(),
+                    reinterpret_cast<uint64_t>(newJM->codeStart()));
                 jm = newJM;
             }
         }
