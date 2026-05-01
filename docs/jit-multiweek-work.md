@@ -1,3 +1,10 @@
+when doing items in this list, take as long as you need to per item
+when doing  /loop sleep the minimum 1min before picking the next item
+ but keep per item time as large as needed for these items. Do not assume
+ 1min max per item because /loop sleep is 1min.
+pick items in any order you think best
+if you are stuck on something that needs a human do something else
+
 # Multi-week JIT work choices
 
 The single-iteration JIT improvements (splice extensions, IC bit-packing,
