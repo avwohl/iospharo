@@ -1822,9 +1822,9 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
 
                 // Same whitelist as kCountedLoopDo's body — loads,
-                // arith, comparison, tag-check passthrough, return.
-                // No stores.  Comparison ops produce boolean Oops
-                // (trueOop/falseOop) that can become the new acc.
+                // arith, comparison, identity, tag-check passthrough,
+                // return.  No stores.  Boolean-producing ops can
+                // become the new acc.
                 for (const auto& bv : blockIR.values) {
                     switch (bv.op) {
                     case Op::kLoadTemp:
@@ -1845,6 +1845,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimGeInt:
                     case Op::kPrimEqInt:
                     case Op::kPrimNeqInt:
+                    case Op::kPrimIdentityEq:
+                    case Op::kPrimIdentityNeq:
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2153,6 +2155,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = dst;
                         break;
                     }
+                    case Op::kPrimIdentityEq:
+                    case Op::kPrimIdentityNeq: {
+                        // Identity: no tag check, semantics universal.
+                        if (bv.operands.size() != 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp trueOop = cc.new_gp64("ij_idTrue");
+                        Gp falseOop = cc.new_gp64("ij_idFalse");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("ij_idcmp");
+                        cc.csel(dst, trueOop, falseOop,
+                                bv.op == Op::kPrimIdentityEq
+                                    ? CondCode::kEQ
+                                    : CondCode::kNE);
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
                     case Op::kReturn: {
                         // Block return = new accumulator value.
                         // Update accReg.  We don't actually exit the
@@ -2258,6 +2287,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     case Op::kPrimGeInt:
                     case Op::kPrimEqInt:
                     case Op::kPrimNeqInt:
+                    case Op::kPrimIdentityEq:
+                    case Op::kPrimIdentityNeq:
                         break;
                     default:
                         if (failedAtValue) *failedAtValue = v.id;
@@ -2501,6 +2532,33 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                           default:              cond = CondCode::kEQ; break;
                         }
                         cc.csel(dst, trueOop, falseOop, cond);
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kPrimIdentityEq:
+                    case Op::kPrimIdentityNeq: {
+                        // Identity: no tag check, semantics universal.
+                        if (bv.operands.size() != 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp trueOop = cc.new_gp64("iv_idTrue");
+                        Gp falseOop = cc.new_gp64("iv_idFalse");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("iv_idcmp");
+                        cc.csel(dst, trueOop, falseOop,
+                                bv.op == Op::kPrimIdentityEq
+                                    ? CondCode::kEQ
+                                    : CondCode::kNE);
                         blockRegs[bv.id] = dst;
                         break;
                     }
@@ -3525,6 +3583,35 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                           default:              cond = CondCode::kEQ; break;
                         }
                         cc.csel(dst, trueOop, falseOop, cond);
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
+                    case Op::kPrimIdentityEq:
+                    case Op::kPrimIdentityNeq: {
+                        // Identity comparison.  No tag check, no deopt
+                        // — semantics universal across all classes.
+                        // Boolean result becomes the new element value.
+                        if (bv.operands.size() != 2) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto ita = blockRegs.find(bv.operands[0]);
+                        auto itb = blockRegs.find(bv.operands[1]);
+                        if (ita == blockRegs.end()
+                            || itb == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp trueOop = cc.new_gp64("col_b_idTrue");
+                        Gp falseOop = cc.new_gp64("col_b_idFalse");
+                        cc.ldr(trueOop, ptr(state, OFF_TRUEOOP));
+                        cc.ldr(falseOop, ptr(state, OFF_FALSEOOP));
+                        cc.cmp(ita->second, itb->second);
+                        Gp dst = cc.new_gp64("col_b_idcmp");
+                        cc.csel(dst, trueOop, falseOop,
+                                bv.op == Op::kPrimIdentityEq
+                                    ? CondCode::kEQ
+                                    : CondCode::kNE);
                         blockRegs[bv.id] = dst;
                         break;
                     }

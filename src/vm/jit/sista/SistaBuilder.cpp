@@ -1062,13 +1062,10 @@ public:
                         ok = false;
                         rejectReason = "multi-block IR";
                     }
-                    // Verify block is splice-simple.  Comparison ops
-                    // are admitted now that the inject:into: lowering
-                    // emits cmp + csel for them (boolean result can
-                    // become the new acc — semantically valid even if
-                    // rare in practice; the bigger value here is
-                    // keeping admit/emit in sync to avoid the cache-
-                    // poisoning class of bug).
+                    // Verify block is splice-simple.  Comparison and
+                    // identity ops are admitted now that the
+                    // inject:into: lowering emits cmp + csel for them
+                    // (boolean result can become the new acc).
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1090,6 +1087,8 @@ public:
                             case Op::kPrimGeInt:
                             case Op::kPrimEqInt:
                             case Op::kPrimNeqInt:
+                            case Op::kPrimIdentityEq:
+                            case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
                                 break;
                             default:
@@ -1259,15 +1258,14 @@ public:
                         rejectReason = "multi-block IR";
                     }
                     // Splice-simple whitelist: loads + arith + cmp +
-                    // tag-check + return.  No sends, no stores.
-                    // kLoadLiteral is excluded because of a hang seen
-                    // on multi-arith blocks like `(e * 2) + 1`; root
-                    // cause unclear, leave restricted until investigated.
-                    // Comparison ops are admitted because collect:
-                    // semantically uses the boolean result as the new
-                    // element value (e.g. `arr collect: [:e | e > 10]`
-                    // produces a Boolean array).  The lowering emits
-                    // cmp + csel into trueOop/falseOop.
+                    // identity + tag-check + return.  No sends, no
+                    // stores.  kLoadLiteral is excluded because of a
+                    // hang seen on multi-arith blocks like `(e * 2) + 1`;
+                    // root cause unclear, leave restricted until
+                    // investigated.  Comparison + identity ops produce
+                    // Boolean Oops that become the new element value
+                    // (e.g. `arr collect: [:e | e > 10]` makes a Bool
+                    // array; `[:e | e == nil]` checks identity).
                     if (ok && blockIR) {
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
@@ -1288,6 +1286,8 @@ public:
                             case Op::kPrimGeInt:
                             case Op::kPrimEqInt:
                             case Op::kPrimNeqInt:
+                            case Op::kPrimIdentityEq:
+                            case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
                                 break;
                             default:
@@ -1458,9 +1458,9 @@ public:
                             ok = false;
                             rejectReason = "multi-block IR";
                         }
-                        // Comparison ops admitted now that the
-                        // IV-inject lowering emits cmp + csel for them
-                        // (boolean result can become the new acc).
+                        // Comparison + identity ops admitted now that
+                        // the IV-inject lowering emits cmp + csel for
+                        // them (boolean result can become the new acc).
                         if (ok && blockIR) {
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
@@ -1482,6 +1482,8 @@ public:
                                 case Op::kPrimGeInt:
                                 case Op::kPrimEqInt:
                                 case Op::kPrimNeqInt:
+                                case Op::kPrimIdentityEq:
+                                case Op::kPrimIdentityNeq:
                                 case Op::kPrimTagCheckInt:
                                     break;
                                 default:
