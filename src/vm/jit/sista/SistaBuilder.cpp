@@ -720,7 +720,6 @@ public:
                                 case Op::kLoadInstVar:
                                 case Op::kLoadTrueOop:
                                 case Op::kLoadFalseOop:
-                                case Op::kLoadTemp:
                                 case Op::kLoadLiteral:
                                 case Op::kConstantOop:
                                 case Op::kPhi:
@@ -733,6 +732,18 @@ public:
                                     // level (lowering passes it through
                                     // and does its own check at the do:
                                     // bcOffset).
+                                    break;
+                                case Op::kLoadTemp:
+                                    // do: passes 1 block arg (e) at
+                                    // temp index 0.  Lowering rejects
+                                    // higher indices (block-local
+                                    // temps); narrow at admission to
+                                    // avoid cache-poisoning the method.
+                                    if (bv.literal != 0) {
+                                        ok = false;
+                                        rejectReason = "non-simple block op";
+                                        rejectedOp = bv.op;
+                                    }
                                     break;
                                 default:
                                     ok = false;
@@ -1073,7 +1084,6 @@ public:
                             case Op::kLoadInstVar:
                             case Op::kLoadTrueOop:
                             case Op::kLoadFalseOop:
-                            case Op::kLoadTemp:
                             case Op::kLoadLiteral:
                             case Op::kConstantOop:
                             case Op::kPhi:
@@ -1090,6 +1100,18 @@ public:
                             case Op::kPrimIdentityEq:
                             case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
+                                break;
+                            case Op::kLoadTemp:
+                                // inject:into: passes 2 args:
+                                // temp 0 = acc, temp 1 = elem.
+                                // Higher indices (block-local temps)
+                                // aren't handled by lowering — narrow
+                                // at admission to avoid cache-poisoning.
+                                if (bv.literal != 0 && bv.literal != 1) {
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                }
                                 break;
                             default:
                                 ok = false;
@@ -1273,7 +1295,6 @@ public:
                             case Op::kLoadInstVar:
                             case Op::kLoadTrueOop:
                             case Op::kLoadFalseOop:
-                            case Op::kLoadTemp:
                             case Op::kConstantOop:
                             case Op::kPhi:
                             case Op::kReturn:
@@ -1289,6 +1310,16 @@ public:
                             case Op::kPrimIdentityEq:
                             case Op::kPrimIdentityNeq:
                             case Op::kPrimTagCheckInt:
+                                break;
+                            case Op::kLoadTemp:
+                                // collect: passes 1 block arg (e) at
+                                // temp index 0.  Lowering rejects
+                                // higher indices.  Narrow admission.
+                                if (bv.literal != 0) {
+                                    ok = false;
+                                    rejectReason = "non-simple block op";
+                                    rejectedOp = bv.op;
+                                }
                                 break;
                             default:
                                 ok = false;
@@ -1468,7 +1499,6 @@ public:
                                 case Op::kLoadInstVar:
                                 case Op::kLoadTrueOop:
                                 case Op::kLoadFalseOop:
-                                case Op::kLoadTemp:
                                 case Op::kLoadLiteral:
                                 case Op::kConstantOop:
                                 case Op::kPhi:
@@ -1485,6 +1515,16 @@ public:
                                 case Op::kPrimIdentityEq:
                                 case Op::kPrimIdentityNeq:
                                 case Op::kPrimTagCheckInt:
+                                    break;
+                                case Op::kLoadTemp:
+                                    // IV-inject passes 2 args:
+                                    // temp 0 = acc, temp 1 = i.
+                                    // Higher indices not supported.
+                                    if (bv.literal != 0 && bv.literal != 1) {
+                                        ok = false;
+                                        rejectReason = "non-simple block op";
+                                        rejectedOp = bv.op;
+                                    }
                                     break;
                                 default:
                                     ok = false;
@@ -1645,7 +1685,6 @@ public:
                                 case Op::kLoadInstVar:
                                 case Op::kLoadTrueOop:
                                 case Op::kLoadFalseOop:
-                                case Op::kLoadTemp:
                                 case Op::kLoadLiteral:
                                 case Op::kConstantOop:
                                 case Op::kReturn:
@@ -1653,6 +1692,15 @@ public:
                                 case Op::kPrimSubInt:
                                 case Op::kPrimMulInt:
                                 case Op::kPrimTagCheckInt:
+                                    break;
+                                case Op::kLoadTemp:
+                                    // IV-do passes 1 arg (i) at temp 0.
+                                    // Higher indices not supported.
+                                    if (bv.literal != 0) {
+                                        ok = false;
+                                        rejectReason = "non-simple block op";
+                                        rejectedOp = bv.op;
+                                    }
                                     break;
                                 default:
                                     ok = false;
