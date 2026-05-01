@@ -1242,6 +1242,7 @@ public:
                         for (const auto& bv : blockIR->values) {
                             switch (bv.op) {
                             case Op::kLoadReceiver:
+                            case Op::kLoadInstVar:
                             case Op::kLoadTrueOop:
                             case Op::kLoadFalseOop:
                             case Op::kLoadTemp:
@@ -1420,6 +1421,7 @@ public:
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
                                 case Op::kLoadReceiver:
+                                case Op::kLoadInstVar:
                                 case Op::kLoadTrueOop:
                                 case Op::kLoadFalseOop:
                                 case Op::kLoadTemp:
@@ -1591,6 +1593,7 @@ public:
                             for (const auto& bv : blockIR->values) {
                                 switch (bv.op) {
                                 case Op::kLoadReceiver:
+                                case Op::kLoadInstVar:
                                 case Op::kLoadTrueOop:
                                 case Op::kLoadFalseOop:
                                 case Op::kLoadTemp:

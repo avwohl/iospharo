@@ -2177,6 +2177,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     switch (bv.op) {
                     case Op::kLoadTemp:
                     case Op::kLoadReceiver:
+                    case Op::kLoadInstVar:
                     case Op::kLoadTrueOop:
                     case Op::kLoadFalseOop:
                     case Op::kConstantOop:
@@ -2322,6 +2323,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         blockRegs[bv.id] = r;
                         break;
                     }
+                    case Op::kLoadInstVar: {
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("iv_ivar");
+                        cc.ldr(dst, ptr(it->second,
+                                         8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
+                        break;
+                    }
                     case Op::kPrimTagCheckInt: {
                         if (bv.operands.empty()) {
                             if (failedAtValue) *failedAtValue = v.id;
@@ -2444,6 +2461,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     switch (bv.op) {
                     case Op::kLoadTemp:
                     case Op::kLoadReceiver:
+                    case Op::kLoadInstVar:
                     case Op::kLoadTrueOop:
                     case Op::kLoadFalseOop:
                     case Op::kConstantOop:
@@ -2572,6 +2590,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp r = cc.new_gp64("ivd_recv");
                         cc.ldr(r, ptr(state, OFF_RECEIVER));
                         blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadInstVar: {
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("ivd_ivar");
+                        cc.ldr(dst, ptr(it->second,
+                                         8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
                         break;
                     }
                     case Op::kPrimTagCheckInt: {
@@ -3254,6 +3288,25 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                         Gp r = cc.new_gp64("col_b_recv");
                         cc.ldr(r, ptr(state, OFF_RECEIVER));
                         blockRegs[bv.id] = r;
+                        break;
+                    }
+                    case Op::kLoadInstVar: {
+                        // Side-effect-free read; result Array hasn't
+                        // been populated past current i, so deopt is
+                        // safe regardless of when the load fires.
+                        if (bv.operands.empty()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        auto it = blockRegs.find(bv.operands[0]);
+                        if (it == blockRegs.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        Gp dst = cc.new_gp64("col_b_ivar");
+                        cc.ldr(dst, ptr(it->second,
+                                         8 + static_cast<int>(bv.literal) * 8));
+                        blockRegs[bv.id] = dst;
                         break;
                     }
                     case Op::kPrimTagCheckInt: {
