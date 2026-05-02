@@ -174,6 +174,45 @@ inlined body code per iter.  Estimated 1-2 weeks for runInstVar
 (2 send sites, both inlinable); generalizing to handle arbitrary
 IC-monomorphic sends is full Phase 6.
 
+**2026-05-02 — foundation in tree (`c5389a47` + `98b42bb1`).**
+Extended the existing whileTrue: math splice's body recognizer to
+admit K leading purely-elidable triplets `pushTemp T; sendByte; pop`
+followed by the canonical 4-byte arith — plus a no-accum variant
+where the body is ONLY triplets (matches `n timesRepeat: [obj size.
+obj yourself]` shape).  yourself triplets need no class guard
+(universal Object>>yourself); size triplets emit kLoadTemp +
+kGuardClass.  The class for the guard comes from either (a) IC hint
+at the size bcOffset, or (b) a compile-time dataflow trace through
+the method prologue for `pushLitVar X; SpecialSend new; popIntoTemp
+T` — extracts the class from literals[X] (the class binding).  Lets
+bench-shape one-shot methods splice without IC warmup.
+
+Default-flags bench-suite is unchanged (5/5 runs).  Recognizer is
+gated behind `PHARO_SISTA_INLINE_YOURSELF=1` (opt-in).  Op::
+kCountedLoopBodyExec added as scaffolding for the real-iteration
+variant (currently unused).
+
+**Verified:** for runInstVar, the recognizer + dataflow correctly
+identifies the pattern (preLoop=6 triplets=2 bodyTemp=1
+guardCls=OrderedCollection).  Pre-pass logs:
+`[SISTA-WHILETRUE-CAND] preLoop=6 endPop=28 accumT=2 loopT=2
+limitLit=3 arith=0 const=1 method_len=46`.
+
+**Remaining blocker for the actual runInstVar win:**  Sista's lift
+terminates at byte 1 (`SpecialSend new` in the prologue) before
+reaching preLoopStart=6.  SpecialSend (0x70-0x7F) always emits
+kSendUnspeculated and returns kOk — the helper-sends path that lets
+the lift continue past Send0/1/2 doesn't apply.  Next step: extend
+the SpecialSend lift to emit a `kSendCallHelper`-style continuation
+when HELPER_SENDS=1.  The selector resolves at compile time via
+SpecialSelectorsArray (slot `(ssIdx + 16) * 2` is the selector Oop);
+that raw Oop can be baked into the IR or routed through a new
+kSendCallHelperSpecial variant.
+
+Estimated 1-2 days for the SpecialSend extension.  Once that lands,
+the runInstVar splice should fire and 1M getter+yourself should
+collapse to math-simplification time (sub-millisecond).
+
 **Related:** `memory/project_cog_gap_2026_04_29.md` ("Block dispatch
 dominates — Phase 6 is the big lever"),
 `memory/project_phase6_investigation_2026_05_01.md`,
