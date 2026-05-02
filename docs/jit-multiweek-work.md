@@ -53,6 +53,23 @@ Option (a) is cleaner but requires touching `tryJITActivation`,
 `pushFrameForJIT`, and the J2J save chain.  Option (b) bolts onto
 existing helper but needs careful save/restore design.
 
+**2026-05-02 sub-investigation:** with HELPER_SENDS=1 + JIT_DEFER=15,
+bench-suite stalls at sum 1M with `[DNU] #do: not understood by
+rcvr=0x300000000` in runSum.  The receiver bit pattern decodes to a
+nil-equivalent; some helper-send's result isn't being captured into
+the IR destination register correctly.  Pre-pass for Interval-inject
+correctly rejects `(1 to: 1000000) asArray` (next op is asArray, not
+Send2#inject:into:) so kInterval isn't emitted incorrectly.  The bug
+is elsewhere — possibly in cc.invoke return-value capture or in the
+interp-side stackTop() result extraction in jitSistaCallSend.  Needs
+multi-day instrumentation to isolate.
+
+**Cycle guard status (2026-05-02 commit `3d5b53fa`):** the
+materializeFrameStack cycle-break walk is now gated under
+HELPER_SENDS=1.  Without helper-sends, the 200-deep walk per
+context creation is wasted work.  Doesn't fix the underlying
+HELPER_SENDS=1 bug but removes overhead from the default path.
+
 **Related:** `memory/project_b1_helpersends_2026_05_01.md`,
 `memory/project_helper_sends_gate.md`, `docs/deferred.md` §B7.
 
