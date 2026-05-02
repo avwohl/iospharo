@@ -2031,6 +2031,28 @@ extern "C" void stencil_sendInlineMonoJ2J(JITState* s) {
                 s->j2jSaveCursor += sizeof(J2JSave);
                 s->j2jDepth++;
                 s->j2jTotalCalls++;
+                // Mirror the inline-bump from stencil_sendJ2J (commit
+                // 9572b019).  When a MonoJ2J-specialized site
+                // monomorphically calls a tier=1 J2J-only callee,
+                // bump its count so it eventually recompiles too.
+                {
+                    bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
+                    bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
+                    if (!calleeSpl && !callerSpl) {
+                        uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
+                        if (calleeTier == 1) {
+                            void** statsLoc = (void**)((uint8_t*)_calleeJM + 80);
+                            void* stats = *statsLoc;
+                            if (stats) {
+                                uint32_t* countPtr = (uint32_t*)stats;
+                                uint32_t newCount = ++(*countPtr);
+                                if (newCount == 500) {
+                                    _HOLE_RT_RECOMPILE_QUEUE(_calleeJM);
+                                }
+                            }
+                        }
+                    }
+                }
 
                 Oop* _fp = s->sp - (nArgs + 1);
                 s->receiver = receiver;
