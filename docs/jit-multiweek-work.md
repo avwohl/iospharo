@@ -530,25 +530,44 @@ similar outcomes.  #1 unblocks default-on of an existing opt-in.
 #3 unblocks more splices.  #8 is the cleanest long-term direction
 but the highest cost.
 
-**Bench-suite snapshot (2026-05-02, post-INLINE_YOURSELF-default-on, best-of-5):**
+**Bench-suite snapshot (2026-05-02 end-of-day, post-default-on cascade, best-of-10):**
 
 ```
-                  Ours    Cog    Ratio   Notes
-fib(28) ms        15      6      2.5×
-sieve x100 ms     45      ?      ?
-sort 100K ms      217     60     3.6×
-dict 50K ms       157     50     3.1×
-sum 1M ms         0-1     5      0×     (we win — closure-accum splice)
-factorial 5K ms   23      27     0.85×  (we win)
-1M blocks ms      0       1      0×     (we win — whileTrue: math splice)
-1M getter ms      0       3      0×     (we win — Phase 6 default-on)
-100K alloc ms     5       ?      ?
+                       Ours    Cog    Ratio   Notes
+tinyBytecodes/s    18.7M       —       —    (no Cog comparison)
+fib(28) ms             14      6      2.3×
+sieve x100 ms          44      ?      ?
+sort 100K ms          216     60      3.6×
+dict 50K ms           158     50      3.2×
+sum 1M ms               0      5      0×     (we win — splice + relinquish-fix)
+factorial 5K ms        22     27      0.81×  (we win)
+1M blocks ms            0      1      0×     (we win — whileTrue: math splice)
+1M getter ms            0      3      0×     (we win — Phase 6 default-on)
+100K alloc ms           4      ?      ?
 ```
 
-Four benches now beat Cog by default (sum 1M, factorial, 1M blocks,
-1M getter+yourself).  `sort`, `dict`, and `fib` remain — all want
-block-body inlining at hot send sites — full Phase 6 generalization —
-multi-week.
+**Four benches beat Cog by default** (sum 1M, factorial, 1M blocks,
+1M getter+yourself).  Remaining gaps (sort, dict, fib) are all
+block-dispatch dominated — full Phase 6 generalization — multi-week.
+
+**End-of-day default-on cascade (8 commits, 2026-05-02 PM):**
+
+- `49c4d91d` — kCountedLoopArrayDoAccum deopt-with-resume helper (item #3)
+- `396c4448` — DOACCUM_RESUME default-on
+- `035140c5` — INLINE_YOURSELF default-on (1M getter 20→0 ms)
+- `a3db01b9` — COLLECT default-on (100K collect ×5 = 53→0 ms)
+- `d9099ac8` — IV_DO_ACCUM default-on
+- `d78c1be5` — INLINE_ARITHIVAR default-on
+- `b327ded7` — materializeFrameStack cycle-guard gate aligned to
+                HELPER_SENDS default-on (silent safety bug)
+
+Synthetic mixed-type measurements (deopt-with-resume default-on):
+- 1M Array, Float at index 999999, ×5 reps: 481 ms → 3 ms  (160×)
+- 100K Array all-Float, ×5 reps:             56 ms → 8 ms  (7×)
+- 100K collect: ×5 reps:                     53 ms → 0 ms  (∞×)
+
+These are real-world wins for image code with mixed-type collections;
+no bench-suite target exercises them.
 
 ---
 
