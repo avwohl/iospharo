@@ -129,7 +129,28 @@ HELPER_SENDS=1 bug but removes overhead from the default path.
 
 ---
 
-## 2. Phase 6 block inlining — **FIRST WIN 2026-05-02** (`aa6eaf97`)
+## 2. Phase 6 block inlining — **FIRST WIN 2026-05-02** (`aa6eaf97`); **2-arg scaffolding 2026-05-02 PM** (`8a0fcd77`)
+
+**2026-05-02 PM scaffolding**: added `stencil_sendBlockValue2Arg`
+for the `block value: a value: b` send shape.  Mirrors the existing
+0-arg and 1-arg block-value stencils.  Wired into JITCompiler.cpp's
+specialization loop (gated on BLOCK_VALUE_BIT, same as 0/1-arg).
+
+**Bench-suite impact:** unchanged — sort 100K stays at 216 ms.  The
+spec stat shows `block1=1` for one warmup site (so the spec fires
+somewhere), but sort's hot mergeFirst:middle:last:into:by: site
+isn't picking it up at the bench-suite scale.  Either the merge
+method isn't recompiled (executionCount threshold), the IC at the
+value:value: site doesn't have BLOCK_VALUE_BIT, or the JIT
+runtime profile of 100K-element sort doesn't expose enough hot
+calls to amortize the spec.
+
+Scaffolding shipped to avoid re-discovering this gap in future
+Phase 6 sessions.  Real win requires per-site profiling at
+runtime to find where the merge step's value:value: doesn't pick
+up the spec.
+
+
 
 `1M getter+yourself` closes from 16-20 ms → **0 ms** (5/5 runs;
 beats Cog's 3 ms).  Three pieces wired together:
