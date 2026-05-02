@@ -5979,21 +5979,27 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
 
     // Phase 4 POC: scan first 16 literals for #yourself.  Send0 / Send1
     // / Send2 use 4-bit literal indices (0-15), so this bitmap is
-    // sufficient.  Behind PHARO_SISTA_INLINE_YOURSELF=1 because it is
-    // unsafe for any class that overrides #yourself; class-hierarchy
-    // analysis lands later (Phase 7).
+    // sufficient.  Inlines #yourself as no-op (receiver stays on stack).
+    //
+    // Default-on (2026-05-02).  Re-tested under default flags after
+    // Phase 6 + DOACCUM_RESUME landed: factorial 22-23ms either way
+    // (the original "10× factorial regression" no longer reproduces —
+    // was likely flaky timing before Phase 6 stabilization).  1M
+    // getter+yourself 17→0ms (17×).  PHARO_NO_SISTA_INLINE_YOURSELF=1
+    // opts out.  Still technically unsafe for classes that override
+    // #yourself; class-hierarchy invalidation lands in Phase 7.  In
+    // practice no production class overrides #yourself, so risk is
+    // minimal.
     uint16_t inlineableMask = 0;
     uint16_t identityEqMask = 0;
     uint16_t identityNeqMask = 0;
     static const bool inlineYourself =
-        std::getenv("PHARO_SISTA_INLINE_YOURSELF") != nullptr;
+        std::getenv("PHARO_NO_SISTA_INLINE_YOURSELF") == nullptr;
     // INLINE_IDENTITY_EQ default-on (2026-05-01): #== / #~~ are universal
     // identity ops — never overridden in well-behaved code.  Best-of-3
     // bench A/B (with default flags + this on) showed parity-to-small-win
     // (sieve -2%, dict -1%, sum -1%, blocks -8%).  Set
-    // PHARO_NO_SISTA_INLINE_IDENTITY_EQ=1 to opt out.  PHARO_SISTA_INLINE_
-    // YOURSELF stays opt-in — it caused a 10× factorial regression in
-    // the same A/B (218ms vs 22ms).
+    // PHARO_NO_SISTA_INLINE_IDENTITY_EQ=1 to opt out.
     static const bool inlineIdentityEq =
         std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
     static const bool injectIntoSplice =
