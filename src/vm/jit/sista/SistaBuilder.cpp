@@ -2327,12 +2327,20 @@ public:
                                         constValue = (y1 == 0x51) ? 1 : 0;
                                     }
                                     // Shape B (arithmetic-series, e.g.
-                                    // simpleLoop's `s := s + n`) is
-                                    // detectable but not yet lowered —
-                                    // would need series-sum math.
-                                    // Detection commented out to avoid
-                                    // cache-poisoning admit-without-emit.
-                                    (void)bodyShapeIsSeries;
+                                    // simpleLoop's `s := s + n`):
+                                    //   pushTemp accum, pushTemp loopT,
+                                    //   ArithBase Y, popTemp accum
+                                    // Math: accum_final = accum_init +
+                                    //   limit*(limit+1)/2 - (cI-1)*cI/2
+                                    else if (y0IsTemp
+                                        && y1 == (uint8_t)(jit::SistaV1::PushTempBase + loopTemp)
+                                        && y2IsAddSub && y3IsPopMatch && y0NotLoop) {
+                                        bodyOk = true;
+                                        bodyShapeIsSeries = true;
+                                        accumTemp = (uint32_t)(y0 - jit::SistaV1::PushTempBase);
+                                        arithCode = (y2 == jit::SistaV1::ArithBase) ? 0 : 1;
+                                        constValue = 0;  // unused for series
+                                    }
                                 }
                                 if (probeWhileTrue) {
                                     static int probeCount = 0;
@@ -2369,7 +2377,7 @@ public:
                                     && accumTemp <= 0xFF
                                     && loopTemp <= 0xFF
                                     && (b1 - jit::SistaV1::PushLitConstBase) <= 0xFF
-                                    && preLoopStart <= 0xFFFFF) {
+                                    && preLoopStart <= 0xFFFF) {
                                     uint32_t limitLitIdx =
                                         (uint32_t)(b1 - jit::SistaV1::PushLitConstBase);
                                     uint64_t packed =
@@ -2379,7 +2387,8 @@ public:
                                       | (((uint64_t)limitLitIdx & 0xFF) << 20)
                                       | (((uint64_t)loopTemp & 0xFF) << 28)
                                       | (((uint64_t)(uint8_t)countInit & 0xFF) << 36)
-                                      | (((uint64_t)preLoopStart & 0xFFFFF) << 44);
+                                      | (((uint64_t)preLoopStart & 0xFFFF) << 44)
+                                      | ((uint64_t)(bodyShapeIsSeries ? 1 : 0) << 60);
                                     // i+4 is the END pop offset; lifter
                                     // resumes at i+4 (the pop) so sim
                                     // stack consumer (pop) sees our

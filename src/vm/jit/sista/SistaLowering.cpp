@@ -3530,7 +3530,8 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t limitLitIdx   = (uint32_t)((v.literal >> 20) & 0xFF);
                 uint32_t countTempIdx  = (uint32_t)((v.literal >> 28) & 0xFF);
                 int8_t   countInit     = (int8_t)((v.literal >> 36) & 0xFF);
-                uint32_t deoptBC       = (uint32_t)((v.literal >> 44) & 0xFFFFF);
+                uint32_t deoptBC       = (uint32_t)((v.literal >> 44) & 0xFFFF);
+                bool     isSeries      = (bool)((v.literal >> 60) & 1);
 
                 auto emitDeopt = [&]() {
                     Gp ipReg = cc.new_gp64("wt_dz_ip");
@@ -3600,27 +3601,64 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 }
 
                 // Compute new accum.
-                //   const=0: newAccum = accumReg (no change)
-                //   const=1: newAccum = accumReg ± (itersOop - 1)
-                //     (delta = itersOop - 1 since we want untagged
-                //      iters added to tagged accum: a_tag + iters_unt*8
-                //      = a_unt*8+1 + iters_unt*8 = (a_unt+iters_unt)*8+1)
-                //     iters_unt*8 = itersOop - 1 (since itersOop = iters_unt*8+1)
                 Gp newAccum = cc.new_gp64("wt_new");
-                if (constValue == 0) {
+                if (isSeries) {
+                    // Shape B: arithmetic series.
+                    //   delta_unt = limit*(limit+1)/2 - (cI-1)*cI/2
+                    //   For countInit ∈ {0, 1}: (cI-1)*cI = 0
+                    //   delta_unt = limit_unt * (limit_unt + 1) / 2
+                    //   newAccum = accumReg + delta_unt*8 (tag preserved)
+                    Gp limitUnt = cc.new_gp64("wt_lu");
+                    cc.asr(limitUnt, limitReg, Imm(3));
+                    Gp limitP1 = cc.new_gp64("wt_lp1");
+                    cc.add(limitP1, limitUnt, Imm(1));
+                    // Multiply with overflow detection: smulh gives upper 64 bits
+                    Gp prodLo = cc.new_gp64("wt_plo");
+                    Gp prodHi = cc.new_gp64("wt_phi");
+                    cc.mul(prodLo, limitUnt, limitP1);
+                    cc.smulh(prodHi, limitUnt, limitP1);
+                    // For positive limit, prod_hi must be 0 (no overflow)
+                    // For negative, prod_hi must be all-ones (sign-extension)
+                    // Conservative: require prod_hi == 0 (limit > 0 in counter loops)
+                    cc.cmp(prodHi, Imm(0));
+                    Label mulOk = cc.new_label();
+                    cc.b_eq(mulOk);
+                    emitDeopt();
+                    cc.bind(mulOk);
+                    // delta_unt = prodLo / 2 = prodLo >> 1 (lsr — limit*(limit+1) is always even for SmI≥0)
+                    Gp deltaUnt = cc.new_gp64("wt_du");
+                    cc.lsr(deltaUnt, prodLo, Imm(1));
+                    // delta_oop_shift = delta_unt << 3 (multiply by 8 to align with Oop tag)
+                    Gp deltaShift = cc.new_gp64("wt_ds");
+                    cc.lsl(deltaShift, deltaUnt, Imm(3));
+                    if (arithCode == 0) {
+                        cc.add(newAccum, accumReg, deltaShift);
+                    } else {
+                        cc.sub(newAccum, accumReg, deltaShift);
+                    }
+                    // Overflow check: SmI signed range is ±2^60.
+                    Gp ovTest = cc.new_gp64("wt_ov");
+                    cc.asr(ovTest, newAccum, Imm(60));
+                    cc.cmp(ovTest, Imm(0));
+                    Label ovOk = cc.new_label();
+                    cc.b_eq(ovOk);
+                    cc.cmn(ovTest, Imm(1));
+                    cc.b_eq(ovOk);
+                    emitDeopt();
+                    cc.bind(ovOk);
+                } else if (constValue == 0) {
                     cc.mov(newAccum, accumReg);
                 } else if (constValue == 1) {
+                    // Shape A const=1:
+                    //   newAccum = accumReg ± (itersOop - 1)
+                    //   iters_unt*8 = itersOop - 1
                     if (arithCode == 0) {
-                        // Add: accum + iters_unt*8 = accum + (itersOop - 1)
                         cc.add(newAccum, accumReg, itersOop);
                         cc.sub(newAccum, newAccum, Imm(1));
                     } else {
-                        // Sub: accum - iters_unt*8 = accum - (itersOop - 1)
                         cc.sub(newAccum, accumReg, itersOop);
                         cc.add(newAccum, newAccum, Imm(1));
                     }
-                    // Overflow check: SmI signed range is ±2^60.
-                    // bits[63:60] of newAccum must all be sign-bit.
                     Gp ovTest = cc.new_gp64("wt_ov");
                     cc.asr(ovTest, newAccum, Imm(60));
                     cc.cmp(ovTest, Imm(0));
