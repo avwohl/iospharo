@@ -261,80 +261,101 @@ dominates — Phase 6 is the big lever"),
 
 ---
 
-## 3. Sista deopt-with-resume
+## 3. Sista deopt-with-resume — **FIRST FORM SHIPPED 2026-05-02**
 
-**What:** today, Sista deopt is "rebuild interp stack, jump to source
-bytecode, re-run from scratch."  For loops, this means re-iterating
-already-completed iterations.  Resume means: pause Sista mid-iteration,
-hand control to interp at the EXACT next bytecode, with the iteration
-counter and accumulator in interp-visible form.
+Shipped as the do-accum completion helper (the cleanest of the three
+forms outlined below).  The helper finishes a `kCountedLoopArrayDoAccum`
+iteration in C++ when the per-iter SmI tag-check misses, instead of
+rebuilding the interp stack and re-running do: from scratch.
 
-**Why blocked:**  currently the splice family deopts conservatively to
-the OUTER receiver expression (e.g., `to:` for IV-do, PushFullBlock for
-do-accum).  This is correct but wasteful when an inner deopt happens
-on iteration N of a million.  A real resume needs:
+**Implementation:**
 
-- per-iteration framepoint (currently we have one framepoint per splice op)
-- machinery to write iteration counter + accumulator back to interp
-  temps mid-loop
-- interp-side resume that picks up at "the next iteration" rather than
-  "from the top"
+- `Interpreter::jitSistaCompleteArrayDoAccum` (Interpreter.cpp): SmI
+  fast-path with `__builtin_*_overflow` for SmI/SmI iters; non-SmI or
+  overflowing iters dispatch through `jitSistaCallSend(`+`/`-`/`*`)`
+  for full image-side coercion semantics.  rcv + vec are kept on
+  `state->sp` as GC-rooted scratch slots so sends inside the loop
+  can move the heap; loop re-fetches them per iter.  Final commit
+  uses `storePointerUnchecked` so a young-gen LargeInteger result
+  going into an old-gen TempVec gets the rememberSet barrier.
 
-**Payoff:**  splices that currently rejection-cache or refuse to fire
-because of complex block bodies could fire with a deopt-safety net
-that survives mid-iteration unwind.  Specifically unblocks blocks
-that contain conditional sends (e.g. `[:e | e foo ifTrue: [...] ifFalse: [...]]`)
-where today the splice rejects "multi-block IR".
+- `jit_rt_sista_complete_array_do_accum` (JITRuntime.cpp): thin
+  `extern "C"` wrapper.
 
-**2026-05-02 status — payoff narrowed.**  After today's HELPER_SENDS
-fix (`31f1c640`) and Phase 6 win (`aa6eaf97`), the bench-suite census
-of splice rejections is small:
+- Lowering (`SistaLowering.cpp` `kCountedLoopArrayDoAccum`): per-iter
+  tag-check miss invokes the helper; on non-zero return the helper
+  has already committed `vec[slot]` so we branch past the loopExit's
+  `cc.str`; on zero return we fall through to the original
+  conservative deopt (rebuild `[rcv, vec]`, resume at PushFullBlock).
+
+**Gating:** opt-in via `PHARO_SISTA_DOACCUM_RESUME=1`.  Default-off
+for now; broader soak before flipping default-on.
+
+**Synthetic-bench measurements (2026-05-02):**
 
 ```
-13 reject=no hints provided     (would benefit from IC warmup)
- 6 reject=non-simple block op   (deopt-with-resume target)
- 5 reject=multi-block IR        (deopt-with-resume target)
- 3 reject=numCopied > 1         (multi-capture, harder)
+all-Float 100K array, 5 reps:
+  default off:        56 ms
+  DOACCUM_RESUME=1:    8 ms      (7×)
+
+1M array, Float at index 999999, 5 reps:
+  default off:       481 ms
+  DOACCUM_RESUME=1:    3 ms      (160×)
+
+all-SmI 1M array, 5 reps:
+  default off:         4 ms
+  DOACCUM_RESUME=1:    4 ms      (no change — flag is zero-cost on
+                                  the SmI fast-path)
 ```
 
-The ~11 candidates that deopt-with-resume could unblock are mostly
-inject:into: variants in non-bench code paths.  None correspond to
-hot bench-suite methods.  The remaining bench gaps (sort 100K, dict
-50K, fib 28) come from block-dispatch in callee Smalltalk methods
-(Array>>sort:, Dictionary>>at:put:, `+` recursion in benchFib) —
-NOT blocked by splice rejection.
+Bench-suite default-flag run (3-run best-of) is at parity with
+DOACCUM_RESUME=1, both within ±1ms of the pre-flag baseline:
 
-**Concrete implementation path** (when a bench target emerges):
+```
+                   default   RESUME=1
+  fib(28) ms       15        15
+  sieve x100 ms    45        45
+  sort 100K ms     216       218
+  dict 50K ms      155       155
+  sum 1M ms          0         0
+  factorial ms     22        23
+  1M blocks ms       0         0
+  1M getter ms     19        20
+  100K alloc ms      4         5
+```
 
-The cleanest first form is "deopt-to-completion-helper" rather than
-true mid-iter resume.  Add `jit_rt_sista_complete_array_do_accum(
-state, arr, blockOop, vec, slot, startIdx, accum, arithCode)` that
-loops `i = startIdx..size`, fetches `arr[i]`, applies the block
-operation, and stores back to `vec[slot]`.  The splice's deopt path
-calls this helper with the partial accumulator and current iter
-index instead of bailing to PushFullBlock.
+**What this unblocks (real-world):** any image code that does
+`collection do: [:e | s := s + e]` on a mixed-type collection — Pharo
+IDE callbacks, Roassal coordinate accumulators, FFI struct-field
+sums.  These were silently slow today because the splice deopts on
+the first non-SmI element and re-runs from scratch.
 
-This avoids the wasted-work problem (iters 0..N-1 don't re-execute)
-without needing per-bytecode framepoints or interp-side resume.
-Estimated 2-3 days for the do-accum variant.  Generalizing to
-inject:into:, collect:, IV-inject is another 2-3 days each.
+**What this does NOT unblock (yet):**
 
-**Why this is parked instead of done now:** zero current bench
-benefit.  All today's hot-loop benches use the math-shortcut path
-(no actual iteration in compiled code), so the deopt path never
-fires.  Only mixed-type arrays (e.g., `#(1 2.0 3 4) do: ...`) would
-exercise the deopt; those aren't bench-targets.
+- inject:into:, collect:, IV-inject variants.  Same architecture
+  applies; another 2-3 days each.  Will be done as workloads
+  surface.
+- Compile-time splice rejections (multi-block IR, non-simple block op,
+  numCopied > 1).  These are pre-pass rejections that never enter
+  the loop, so the runtime helper doesn't help.  Separate work.
+- True mid-iter resume.  This first form runs the rest of the loop
+  in C++ instead of resuming the interp at the next bytecode.  Real
+  resume (per-iter framepoint + interp-side iteration counter) is
+  still a multi-week item; the completion-helper form covers the
+  common cases and is much simpler.
 
-**When to pick this back up:** if a real workload (Pharo IDE, Roassal
-graph, FFI batch) shows splice-rejection patterns dominating, or if
-sort/dict/fib benchmarks get to a point where their remaining gap
-is in splice deopts rather than callee dispatch.
+**Future variants (when needed):**
 
-**Estimate:**  3-4 weeks.  Per-iter framepoint is the bulk of work.
-Interp-side resume is a smaller patch.
+- `jit_rt_sista_complete_array_inject_into` — inject:into: with the
+  same shape but a 2-arg block.  Block must still match the
+  recognized canonical IR.
+- `jit_rt_sista_complete_array_collect` — collect: that completes a
+  partially-filled result Array.
+- `jit_rt_sista_complete_interval_*` — Interval variants iterating
+  start..stop.
 
-**Related:** `memory/project_b1_helpersends_2026_05_01.md` (mentions as
-alternative to HELPER_SENDS), `docs/deferred.md` §B8.
+**Related:** `memory/project_b1_helpersends_2026_05_01.md` (originally
+mentioned as alternative to HELPER_SENDS), `docs/deferred.md` §B8.
 
 ---
 

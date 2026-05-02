@@ -39,6 +39,14 @@ extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
                                             uint64_t valBits);
+extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
+    void* state,
+    uint64_t rcvBits,
+    uint64_t vecBits,
+    uint64_t slotByteOff,
+    uint64_t startIdx,
+    uint64_t accBits,
+    uint64_t arithCode);
 
 namespace pharo {
 namespace sista {
@@ -3315,6 +3323,18 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 uint32_t arithCode = (uint32_t)((v.literal >> 8) & 0xFF);
                 int slotByteOff = 8 + (int)slot * 8;
 
+                // Deopt-with-resume: when the per-iter SmI tag-check
+                // misses on a mixed-type array (e.g., #(1 2 3.0 4 5))
+                // we'd normally bail to PushFullBlock and re-run do:
+                // from scratch, losing iters 0..N-1 of correct work.
+                // With this flag set, we instead call a completion
+                // helper that finishes the loop in C++ (SmI fast +
+                // send-dispatch fallback) — see
+                // Interpreter::jitSistaCompleteArrayDoAccum.  Opt-in
+                // for now; default-on after broader soak.
+                static const bool doaccumResume =
+                    std::getenv("PHARO_SISTA_DOACCUM_RESUME") != nullptr;
+
                 uint32_t deoptBC = 0;
                 for (const auto& fp : method.framepoints) {
                     if (fp.valueId == v.id) {
@@ -3451,7 +3471,57 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.and_(tagE, eachReg, Imm(7));
                 cc.cmp(tagE, Imm(1));
                 Label eOk = cc.new_label();
+                Label afterCommit = cc.new_label();
                 cc.b_eq(eOk);
+                if (doaccumResume) {
+                    // Mixed-type element: try the C++ completion helper
+                    // before giving up.  Helper finishes iters
+                    // startIdx..size with full coercion.  On success:
+                    // helper has written final acc to vec[slot] and
+                    // returns the new acc (non-zero).  On failure
+                    // (returns 0): fall back to conservative deopt.
+                    //
+                    // startIdx = acc_off / 8: at miss time acc_off holds
+                    // i*8 for the failing iter.
+                    Gp startIdxR = cc.new_gp64("acc_startIdx");
+                    cc.lsr(startIdxR, acc_off, Imm(3));
+                    Gp slotByteOffR = cc.new_gp64("acc_slotByteOff");
+                    cc.mov(slotByteOffR, Imm((uint64_t)slotByteOff));
+                    Gp arithCodeR = cc.new_gp64("acc_arithCodeR");
+                    cc.mov(arithCodeR, Imm((uint64_t)arithCode));
+                    Gp helperFn = cc.new_gp64("acc_helperFn");
+                    cc.mov(helperFn,
+                           Imm((uint64_t)
+                               &jit_rt_sista_complete_array_do_accum));
+                    asmjit::InvokeNode* helperInv = nullptr;
+                    asmjit::Error hErr = cc.invoke(
+                        asmjit::Out(helperInv), helperFn,
+                        asmjit::FuncSignature::build<
+                            uint64_t, void*, uint64_t, uint64_t,
+                            uint64_t, uint64_t, uint64_t, uint64_t>());
+                    if (hErr != asmjit::kErrorOk || !helperInv) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    helperInv->set_arg(0, state);
+                    helperInv->set_arg(1, rcvReg);
+                    helperInv->set_arg(2, vecReg);
+                    helperInv->set_arg(3, slotByteOffR);
+                    helperInv->set_arg(4, startIdxR);
+                    helperInv->set_arg(5, accReg);
+                    helperInv->set_arg(6, arithCodeR);
+                    Gp helperRet = cc.new_gp64("acc_helperRet");
+                    helperInv->set_ret(0, helperRet);
+
+                    Label helperDeopt = cc.new_label();
+                    cc.cbz(helperRet, helperDeopt);
+                    // Helper succeeded: vec[slot] already committed;
+                    // skip past loopExit's str.  IR result is rcv (kept
+                    // in rcvReg, untouched across the call by asmjit's
+                    // register allocator).
+                    cc.b(afterCommit);
+                    cc.bind(helperDeopt);
+                }
                 emitDeopt(rcvReg, vecReg, deoptBC);
                 cc.bind(eOk);
 
@@ -3484,6 +3554,13 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // Old TempVec has long since exited the nursery; for
                 // SmI accReg there's no GC barrier needed.
                 cc.str(accReg, ptr(vecReg, slotByteOff));
+
+                // afterCommit: helper-success branch lands here so the
+                // helper's already-committed vec[slot] isn't double-
+                // written.  When doaccumResume is off, no jump targets
+                // this label (asmjit treats unreferenced labels as
+                // no-ops).
+                cc.bind(afterCommit);
 
                 // do:'s result is the receiver.
                 regFor[v.id] = rcvReg;

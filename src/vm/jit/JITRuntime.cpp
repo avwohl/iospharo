@@ -1219,6 +1219,27 @@ extern "C" uint64_t jit_rt_store_inst_var(JITState* state,
         Oop::fromRawBits(valBits));
 }
 
+// Sista deopt-with-resume completion helper for kCountedLoopArrayDoAccum.
+// Compiled splice's per-iter SmI tag-check, on miss, invokes this helper
+// instead of bailing to PushFullBlock — preserving iters 0..startIdx-1
+// of correct work.  See Interpreter::jitSistaCompleteArrayDoAccum.
+extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
+    JITState* state,
+    uint64_t rcvBits,
+    uint64_t vecBits,
+    uint64_t slotByteOff,
+    uint64_t startIdx,
+    uint64_t accBits,
+    uint64_t arithCode) {
+    if (!state || !state->interp) return 0;
+    static const bool forceBail =
+        std::getenv("PHARO_SISTA_DOACCUM_FORCE_BAIL") != nullptr;
+    if (forceBail) return 0;
+    return state->interp->jitSistaCompleteArrayDoAccum(
+        state, rcvBits, vecBits, slotByteOff, startIdx, accBits,
+        arithCode);
+}
+
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;

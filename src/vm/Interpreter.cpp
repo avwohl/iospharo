@@ -10259,6 +10259,146 @@ uint64_t Interpreter::jitSistaAllocArray(jit::JITState* state,
     return arr.rawBits();
 }
 
+// Deopt-to-completion-helper for kCountedLoopArrayDoAccum.  When the
+// compiled splice's inner per-iter SmI tag-check misses (mixed-type
+// array), instead of bailing to PushFullBlock and losing iters
+// 0..startIdx-1 of correct work, we hand control here to finish the
+// loop in C++.  SmI/SmI iters use overflow-checked native arith;
+// anything else dispatches via jitSistaCallSend(`+`/`-`/`*`).
+//
+// The accumulator stays in a local until the loop succeeds, then we
+// commit `vec[slotByteOff/8] = acc`.  On failure (depth overflow,
+// NLR, bad receiver format) we return 0 and leave vec[slot] alone —
+// the caller's conservative-deopt path then re-runs do: from scratch
+// with vec[slot] = original s, which is correct (just no faster than
+// today).
+uint64_t Interpreter::jitSistaCompleteArrayDoAccum(jit::JITState* state,
+                                                     uint64_t rcvBits,
+                                                     uint64_t vecBits,
+                                                     uint64_t slotByteOff,
+                                                     uint64_t startIdx,
+                                                     uint64_t accBits,
+                                                     uint64_t arithCode) {
+    if (!state) return 0;
+    // Resolve the arith selector once.  Selectors are tenured at
+    // image-load time, so they don't move under GC.
+    Oop arithSel;
+    switch (arithCode) {
+        case 0: arithSel = selectors_.add; break;
+        case 1: arithSel = selectors_.subtract; break;
+        case 2: arithSel = selectors_.multiply; break;
+        default: return 0;
+    }
+    if (arithSel.isNil()) return 0;
+
+    int64_t i = (int64_t)startIdx;
+    if (i < 1) return 0;
+
+    // Quick once-over of receiver shape (size + format).  rcvBits is
+    // still trustworthy here — no GC has fired since the caller passed
+    // it in.  After any send dispatch below, we re-fetch from the
+    // GC-rooted scratch slot.
+    {
+        uint64_t sizeOop = jitSistaBasicSize(state, rcvBits);
+        if ((sizeOop & 7) != 1) return 0;
+        auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+        if ((uint32_t)hdr->format() != 2) return 0;  // fmt=2 only
+        if (((int64_t)sizeOop >> 3) <= 0) return 0;
+    }
+
+    // GC-rooting: keep rcv + vec on the GC-rooted interp stack so
+    // sends inside the loop can move the heap and our re-reads pick
+    // up the new addresses.  Layout (state->sp grows up):
+    //   sp[0] = rcv-shadow
+    //   sp[1] = vec-shadow
+    //   ... send args go on top of these (sp[2], sp[3], ...)
+    Oop* scratchBase = state->sp;
+    scratchBase[0] = Oop::fromRawBits(rcvBits);
+    scratchBase[1] = Oop::fromRawBits(vecBits);
+    state->sp = scratchBase + 2;
+
+    uint64_t acc = accBits;
+    uint64_t curRcv = rcvBits;
+    uint64_t curVec = vecBits;
+
+    for (; ; ++i) {
+        // Re-fetch size/slots from the (possibly post-GC) rcv each
+        // iter.  After a send, curRcv has been refreshed from the
+        // scratch slot.
+        uint64_t sizeOop = jitSistaBasicSize(state, curRcv);
+        if ((sizeOop & 7) != 1) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        int64_t size = (int64_t)sizeOop >> 3;
+        if (i > size) break;
+
+        Oop* slots = reinterpret_cast<Oop*>(curRcv + 8);
+        uint64_t elemBits = slots[i - 1].rawBits();
+
+        // SmI/SmI fast-path with native overflow detection.  60-bit
+        // SmI range matches Pharo's tag scheme (3-bit tag, signed).
+        if ((acc & 7) == 1 && (elemBits & 7) == 1) {
+            int64_t a = (int64_t)acc >> 3;
+            int64_t b = (int64_t)elemBits >> 3;
+            int64_t r = 0;
+            bool ovf = false;
+            if (arithCode == 0) {
+                ovf = __builtin_add_overflow(a, b, &r);
+            } else if (arithCode == 1) {
+                ovf = __builtin_sub_overflow(a, b, &r);
+            } else {
+                ovf = __builtin_mul_overflow(a, b, &r);
+            }
+            constexpr int64_t kSmIMin = -((int64_t)1 << 60);
+            constexpr int64_t kSmIMax = ((int64_t)1 << 60) - 1;
+            if (!ovf && r >= kSmIMin && r <= kSmIMax) {
+                acc = (uint64_t)((r << 3) | 1);
+                continue;
+            }
+            // Overflow falls through to send dispatch (same semantics
+            // as bytecode-level `+` retrying via #+ on LargeInteger).
+        }
+
+        // Non-SmI / SmI-overflow: dispatch through Smalltalk send so
+        // coercion (Float, LargeInteger, ...) follows image semantics.
+        // jitSistaCallSend expects [rcvr, arg] above state->sp and
+        // pops nArgs+1 on return.  After it returns, state->sp is
+        // back to scratchBase + 2 (our send-args zone is empty), and
+        // the rcv/vec scratch slots below remain valid even if GC
+        // moved everything.
+        Oop* sp = state->sp;
+        sp[0] = Oop::fromRawBits(acc);
+        sp[1] = Oop::fromRawBits(elemBits);
+        state->sp = sp + 2;
+        uint64_t newAcc =
+            jitSistaCallSend(state, arithSel.rawBits(), 1);
+        if (newAcc == 0) {
+            // Helper-send failed (NLR, depth overflow, etc.).  Caller
+            // will deopt to PushFullBlock; vec[slot] still holds
+            // original s, so re-run is correct.  Drop the scratch
+            // slots and report failure.
+            state->sp = scratchBase;
+            return 0;
+        }
+        acc = newAcc;
+        // Re-read rcv + vec from scratch (GC may have moved them).
+        curRcv = scratchBase[0].rawBits();
+        curVec = scratchBase[1].rawBits();
+    }
+
+    // Successful completion: commit final acc into vec[slot].  Use
+    // the GC-safe store — a non-SmI acc (heap LargeInt) might be
+    // young while vec has long since promoted.  storePointerUnchecked
+    // emits rememberObject when an old object gains a young pointer.
+    Oop vecOop = Oop::fromRawBits(curVec);
+    state->sp = scratchBase;  // drop scratch before any allocation
+    if (!vecOop.isObject()) return 0;
+    size_t slotIdx = (size_t)((slotByteOff - 8) / 8);
+    memory_.storePointerUnchecked(slotIdx, vecOop, Oop::fromRawBits(acc));
+    return acc;
+}
+
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
                                                 int litIndex,
                                                 int numCopied,

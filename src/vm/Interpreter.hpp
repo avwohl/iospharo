@@ -1356,6 +1356,25 @@ public:
     /// comment for safety guarantees.
     uint64_t jitStoreInstVar(Oop recv, uint64_t ivarIdx, Oop val);
 
+    /// Sista deopt-with-resume helper for kCountedLoopArrayDoAccum.
+    /// Called from compiled code when an inlined SmI-fast-path iter
+    /// hits a non-SmI element.  Continues the iteration in C++ from
+    /// `startIdx`..size, applying the recognized arith op (0=+, 1=-,
+    /// 2=*) with full coercion via Smalltalk-side sends for non-SmI
+    /// elements.  On full success, writes the final accumulator into
+    /// vec[slotByteOff/8] and returns the final accBits (always
+    /// non-zero for a valid Oop).  On failure (NLR, depth overflow,
+    /// non-fast-path receiver format), returns 0 and leaves vec[slot]
+    /// untouched so the caller's conservative deopt to PushFullBlock
+    /// can re-run the original do: from scratch with vec[slot] = s_0.
+    uint64_t jitSistaCompleteArrayDoAccum(jit::JITState* state,
+                                            uint64_t rcvBits,
+                                            uint64_t vecBits,
+                                            uint64_t slotByteOff,
+                                            uint64_t startIdx,
+                                            uint64_t accBits,
+                                            uint64_t arithCode);
+
 private:
 #endif
 
