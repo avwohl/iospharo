@@ -1253,6 +1253,29 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         state->argCount = savedArgCount;
         state->ip = savedIP;
         state->exitReason = ExitNone;
+
+        // PHARO_J2J_CALLEE_BUMP=1: bump callee's executionCount and
+        // trigger recompile if threshold crossed.  Catches J2J-only
+        // callees (Array>>do:, etc.) that never reach tryExecute and
+        // thus stay tier=1 forever.  Past attempt (2026-04-30) bumped
+        // CALLER without splice gate — broke splice race.  This variant
+        // uses callee's cached isSpliceTarget flag.  Opt-in until
+        // validated.
+        static const bool calleeBump =
+            std::getenv("PHARO_J2J_CALLEE_BUMP") != nullptr;
+        if (calleeBump) {
+            JITMethod* callee = reinterpret_cast<JITMethod*>(
+                entryAddr - sizeof(JITMethod));
+            if (callee->stats && !callee->isSpliceTarget
+                && callee->tier == 1 && callee->numICEntries > 0) {
+                uint32_t newCount = ++(callee->stats->executionCount);
+                if (newCount == (uint32_t)g_debug.recompileAt) {
+                    Oop calleeMethod =
+                        Oop::fromRawBits(callee->compiledMethodOop);
+                    interp->jitRuntime().maybeRecompileForOSR(calleeMethod);
+                }
+            }
+        }
     }
     // Non-ExitReturn: leave callee's state for interpreter bailout.
 }
