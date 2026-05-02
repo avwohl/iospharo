@@ -53,6 +53,13 @@ extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
     uint64_t startIdx,
     uint64_t accBits,
     uint64_t arithCode);
+extern "C" uint64_t jit_rt_sista_complete_array_collect(
+    void* state,
+    uint64_t rcvBits,
+    uint64_t resultBits,
+    uint64_t startIdx,
+    uint64_t constBits,
+    uint64_t arithCode);
 
 namespace pharo {
 namespace sista {
@@ -4148,6 +4155,60 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
+                // Canonical-shape detection (2026-05-02): `[:e | e OP const]`
+                // where const is a known SmI.  IR shape (5 values with
+                // INLINE_ARITH on):
+                //   v0 = kLoadTemp 0 (e)
+                //   v1 = kConstantOop SmI (the const, type kOopSmallInt
+                //                           so no tag check on it)
+                //   v2 = kPrimTagCheckInt(v0, ...deoptStack)  side-effect
+                //   v3 = kPrim{Add,Sub,Mul}Int(v0, v1, ...deopt)
+                //   v4 = kReturn(v3)
+                // Non-commutative form `[:e | const OP e]` has v0/v1 swapped
+                // and is handled by the generic block-IR path.
+                static const bool collectResume =
+                    std::getenv("PHARO_NO_SISTA_COLLECT_RESUME") == nullptr;
+                bool isCanonicalCollect = false;
+                uint32_t collectArithCode = 0;
+                uint64_t collectConstBits = 0;
+                if (collectResume && !collectHasCapture
+                    && blockIR.values.size() == 5) {
+                    const auto& bv0 = blockIR.values[0];
+                    const auto& bv1 = blockIR.values[1];
+                    const auto& bv2 = blockIR.values[2];
+                    const auto& bv3 = blockIR.values[3];
+                    const auto& bv4 = blockIR.values[4];
+                    bool shapeMatch =
+                        bv0.op == Op::kLoadTemp && bv0.literal == 0
+                        && bv1.op == Op::kConstantOop
+                        && bv1.type == Type::kOopSmallInt
+                        && (bv1.literal & 7) == 1   // SmI tag
+                        && bv2.op == Op::kPrimTagCheckInt
+                        && !bv2.operands.empty()
+                        && bv2.operands[0] == bv0.id
+                        && bv3.operands.size() >= 2
+                        && bv3.operands[0] == bv0.id
+                        && bv3.operands[1] == bv1.id
+                        && bv4.op == Op::kReturn
+                        && bv4.operands.size() == 1
+                        && bv4.operands[0] == bv3.id;
+                    if (shapeMatch) {
+                        if (bv3.op == Op::kPrimAddInt) {
+                            isCanonicalCollect = true;
+                            collectArithCode = 0;
+                            collectConstBits = bv1.literal;
+                        } else if (bv3.op == Op::kPrimSubInt) {
+                            isCanonicalCollect = true;
+                            collectArithCode = 1;
+                            collectConstBits = bv1.literal;
+                        } else if (bv3.op == Op::kPrimMulInt) {
+                            isCanonicalCollect = true;
+                            collectArithCode = 2;
+                            collectConstBits = bv1.literal;
+                        }
+                    }
+                }
+
                 uint32_t deoptBC = 0;
                 for (const auto& fp : method.framepoints) {
                     if (fp.valueId == v.id) {
@@ -4277,6 +4338,122 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.b_eq(colFmtOk);
                 emitDeopt(rcvReg, deoptBC);
                 cc.bind(colFmtOk);
+
+                // Canonical-shape specialized path: `[:e | e OP const]`
+                // with const a known SmI.  Emit a tighter loop with a
+                // single per-iter SmI tag-check on elem; on miss invoke
+                // jit_rt_sista_complete_array_collect to finish in C++.
+                // Skip the generic block-IR emission entirely.
+                if (isCanonicalCollect) {
+                    using namespace asmjit::a64;
+                    Gp iReg = cc.new_gp64("col_can_i");
+                    cc.mov(iReg, Imm(9));  // SmI(1)
+                    Label loopHead = cc.new_label();
+                    Label loopExit = cc.new_label();
+                    Label afterLoopExit = cc.new_label();
+                    cc.cmp(iReg, sizeReg);
+                    cc.b_hi(loopExit);
+                    cc.bind(loopHead);
+
+                    // elem = arr[(i>>3) - 1].  i*8 = iReg-1.
+                    Gp col_off = cc.new_gp64("col_can_off");
+                    cc.sub(col_off, iReg, Imm(1));
+                    Gp eachReg = cc.new_gp64("col_can_each");
+                    cc.ldr(eachReg, ptr(rcvReg, col_off));
+
+                    // Tag-check elem; const is compile-time SmI so no
+                    // check needed for it.
+                    Gp tagE = cc.new_gp64("col_can_tagE");
+                    cc.and_(tagE, eachReg, Imm(7));
+                    cc.cmp(tagE, Imm(1));
+                    Label canMiss = cc.new_label();
+                    cc.b_ne(canMiss);
+
+                    // newElem = elem OP const, tag-preserving SmI.
+                    Gp constReg = cc.new_gp64("col_can_const");
+                    cc.mov(constReg, Imm(collectConstBits));
+                    Gp newElemReg = cc.new_gp64("col_can_newElem");
+                    if (collectArithCode == 0) {
+                        cc.add(newElemReg, eachReg, constReg);
+                        cc.sub(newElemReg, newElemReg, Imm(1));
+                    } else if (collectArithCode == 1) {
+                        cc.sub(newElemReg, eachReg, constReg);
+                        cc.add(newElemReg, newElemReg, Imm(1));
+                    } else {
+                        Gp au = cc.new_gp64("col_can_au");
+                        Gp bu = cc.new_gp64("col_can_bu");
+                        cc.asr(au, eachReg, Imm(3));
+                        cc.asr(bu, constReg, Imm(3));
+                        Gp prod = cc.new_gp64("col_can_prod");
+                        cc.mul(prod, au, bu);
+                        cc.lsl(newElemReg, prod, Imm(3));
+                        cc.orr(newElemReg, newElemReg, Imm(1));
+                    }
+
+                    // Direct slot store: result[i-1] = newElem.  newElem
+                    // is SmI (immediate), no GC barrier needed.  Slot
+                    // address = result + 8 + (i-1)*8 = result + iReg - 1
+                    // ... but iReg is SmI (i<<3)|1, so byte offset i*8
+                    // is just iReg - 1.  Slot 0 is at byte offset 8, so
+                    // result[i-1] is at result + iReg - 1.
+                    cc.str(newElemReg, ptr(resultReg, col_off));
+
+                    // i += SmI(1) and back-edge.
+                    cc.add(iReg, iReg, Imm(8));
+                    cc.cmp(iReg, sizeReg);
+                    cc.b_ls(loopHead);
+                    cc.b(loopExit);
+
+                    // Per-iter SmI miss: helper finishes the loop.
+                    cc.bind(canMiss);
+                    {
+                        Gp startIdxR = cc.new_gp64("col_can_startIdx");
+                        cc.lsr(startIdxR, iReg, Imm(3));  // i = iReg/8
+                        Gp constArg = cc.new_gp64("col_can_constArg");
+                        cc.mov(constArg, Imm(collectConstBits));
+                        Gp arithR = cc.new_gp64("col_can_arith");
+                        cc.mov(arithR, Imm((uint64_t)collectArithCode));
+                        Gp helperFn = cc.new_gp64("col_can_helperFn");
+                        cc.mov(helperFn,
+                               Imm((uint64_t)
+                                   &jit_rt_sista_complete_array_collect));
+                        asmjit::InvokeNode* helperInv = nullptr;
+                        asmjit::Error hErr = cc.invoke(
+                            asmjit::Out(helperInv), helperFn,
+                            asmjit::FuncSignature::build<
+                                uint64_t, void*, uint64_t, uint64_t,
+                                uint64_t, uint64_t, uint64_t>());
+                        if (hErr != asmjit::kErrorOk || !helperInv) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        helperInv->set_arg(0, state);
+                        helperInv->set_arg(1, rcvReg);
+                        helperInv->set_arg(2, resultReg);
+                        helperInv->set_arg(3, startIdxR);
+                        helperInv->set_arg(4, constArg);
+                        helperInv->set_arg(5, arithR);
+                        Gp helperRet = cc.new_gp64("col_can_helperRet");
+                        helperInv->set_ret(0, helperRet);
+
+                        Label helperDeopt = cc.new_label();
+                        cc.cbz(helperRet, helperDeopt);
+                        // Helper succeeded: it returns resultBits — same
+                        // as resultReg (helper writes per-iter into the
+                        // already-allocated result, doesn't reallocate).
+                        cc.mov(resultReg, helperRet);
+                        cc.b(afterLoopExit);
+                        cc.bind(helperDeopt);
+                        emitDeopt(rcvReg, deoptBC);
+                    }
+
+                    cc.bind(loopExit);
+                    cc.bind(afterLoopExit);
+
+                    // Result = resultReg.
+                    regFor[v.id] = resultReg;
+                    break;
+                }
 
                 // iReg = SmI(1) = 9.
                 Gp iReg = cc.new_gp64("col_i");

@@ -1393,6 +1393,18 @@ public:
                                                uint64_t accBits,
                                                uint64_t arithCode);
 
+    /// Sista deopt-with-resume helper for kCountedLoopArrayCollect with
+    /// canonical-shape blocks `[:e | e OP const]`.  Compiled code has
+    /// allocated `result` and populated result[0..startIdx-2]; helper
+    /// finishes result[startIdx-1..size-1] = arr[startIdx..size] OP const.
+    /// Returns resultBits on full success, 0 on failure.
+    uint64_t jitSistaCompleteArrayCollect(jit::JITState* state,
+                                            uint64_t rcvBits,
+                                            uint64_t resultBits,
+                                            uint64_t startIdx,
+                                            uint64_t constBits,
+                                            uint64_t arithCode);
+
 private:
 #endif
 

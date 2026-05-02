@@ -1257,6 +1257,23 @@ extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
         state, rcvBits, startIdx, accBits, arithCode);
 }
 
+// Sista deopt-with-resume completion helper for canonical-shape
+// kCountedLoopArrayCollect.  Block matches `[:e | e OP const]`.
+extern "C" uint64_t jit_rt_sista_complete_array_collect(
+    JITState* state,
+    uint64_t rcvBits,
+    uint64_t resultBits,
+    uint64_t startIdx,
+    uint64_t constBits,
+    uint64_t arithCode) {
+    if (!state || !state->interp) return 0;
+    static const bool forceBail =
+        std::getenv("PHARO_SISTA_COLLECT_RESUME_FORCE_BAIL") != nullptr;
+    if (forceBail) return 0;
+    return state->interp->jitSistaCompleteArrayCollect(
+        state, rcvBits, resultBits, startIdx, constBits, arithCode);
+}
+
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;

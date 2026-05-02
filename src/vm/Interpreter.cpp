@@ -10501,6 +10501,128 @@ uint64_t Interpreter::jitSistaCompleteArrayInjectInto(jit::JITState* state,
     return acc;
 }
 
+// Deopt-to-completion-helper for canonical-shape kCountedLoopArrayCollect.
+// Block matches `[:e | e OP const]` where const is a known SmI (literal
+// or kConstantOop SmI).  The const is evaluated once at compile time and
+// passed in; helper applies it per element.
+//
+// The compiled code has allocated `result` (same size as rcv) and
+// populated result[0..startIdx-2].  Helper finishes
+// result[startIdx-1..size-1] from arr[startIdx..size] OP const.
+//
+// Differences from inject:into::
+//   - No accumulator threading; each iter computes elem OP const → result[i].
+//   - Result Array is the IR result; the helper writes per-iter into it
+//     (via storePointerUnchecked for GC safety on heap results).
+uint64_t Interpreter::jitSistaCompleteArrayCollect(jit::JITState* state,
+                                                     uint64_t rcvBits,
+                                                     uint64_t resultBits,
+                                                     uint64_t startIdx,
+                                                     uint64_t constBits,
+                                                     uint64_t arithCode) {
+    if (!state) return 0;
+    Oop arithSel;
+    switch (arithCode) {
+        case 0: arithSel = selectors_.add; break;
+        case 1: arithSel = selectors_.subtract; break;
+        case 2: arithSel = selectors_.multiply; break;
+        default: return 0;
+    }
+    if (arithSel.isNil()) return 0;
+
+    int64_t i = (int64_t)startIdx;
+    if (i < 1) return 0;
+
+    {
+        uint64_t sizeOop = jitSistaBasicSize(state, rcvBits);
+        if ((sizeOop & 7) != 1) return 0;
+        auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+        if ((uint32_t)hdr->format() != 2) return 0;
+        if (((int64_t)sizeOop >> 3) <= 0) return 0;
+    }
+
+    // Result must be a heap Object (allocated by compiled code).
+    Oop resultOop = Oop::fromRawBits(resultBits);
+    if (!resultOop.isObject()) return 0;
+
+    // GC-rooting: rcv + result on state->sp scratch slots.  The const
+    // is known SmI (compile-time guarantee) so it's GC-immune.
+    Oop* scratchBase = state->sp;
+    scratchBase[0] = Oop::fromRawBits(rcvBits);
+    scratchBase[1] = resultOop;
+    state->sp = scratchBase + 2;
+
+    uint64_t curRcv = rcvBits;
+    uint64_t curResult = resultBits;
+
+    for (; ; ++i) {
+        uint64_t sizeOop = jitSistaBasicSize(state, curRcv);
+        if ((sizeOop & 7) != 1) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        int64_t size = (int64_t)sizeOop >> 3;
+        if (i > size) break;
+
+        Oop* slots = reinterpret_cast<Oop*>(curRcv + 8);
+        uint64_t elemBits = slots[i - 1].rawBits();
+
+        uint64_t newElem;
+
+        // SmI/SmI fast-path with overflow detection.
+        if ((elemBits & 7) == 1 && (constBits & 7) == 1) {
+            int64_t a = (int64_t)elemBits >> 3;
+            int64_t b = (int64_t)constBits >> 3;
+            int64_t r = 0;
+            bool ovf = false;
+            if (arithCode == 0) {
+                ovf = __builtin_add_overflow(a, b, &r);
+            } else if (arithCode == 1) {
+                ovf = __builtin_sub_overflow(a, b, &r);
+            } else {
+                ovf = __builtin_mul_overflow(a, b, &r);
+            }
+            constexpr int64_t kSmIMin = -((int64_t)1 << 60);
+            constexpr int64_t kSmIMax = ((int64_t)1 << 60) - 1;
+            if (!ovf && r >= kSmIMin && r <= kSmIMax) {
+                newElem = (uint64_t)((r << 3) | 1);
+                // Inline write — SmI result, no GC barrier needed
+                // (elem.bits is immediate).
+                Oop* resultSlots =
+                    reinterpret_cast<Oop*>(curResult + 8);
+                resultSlots[i - 1] = Oop::fromRawBits(newElem);
+                continue;
+            }
+        }
+
+        // Non-SmI / overflow: dispatch send for elem OP const.
+        Oop* sp = state->sp;
+        sp[0] = Oop::fromRawBits(elemBits);
+        sp[1] = Oop::fromRawBits(constBits);
+        state->sp = sp + 2;
+        newElem = jitSistaCallSend(state, arithSel.rawBits(), 1);
+        if (newElem == 0) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        // Re-read curRcv + curResult from scratch (GC may have moved them).
+        curRcv = scratchBase[0].rawBits();
+        curResult = scratchBase[1].rawBits();
+        // GC-safe write: a heap newElem (Float / LargeInt) into possibly
+        // old-gen result needs the rememberSet barrier.
+        Oop curResultOop = Oop::fromRawBits(curResult);
+        if (!curResultOop.isObject()) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        memory_.storePointerUnchecked(
+            (size_t)(i - 1), curResultOop, Oop::fromRawBits(newElem));
+    }
+
+    state->sp = scratchBase;
+    return curResult;
+}
+
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
                                                 int litIndex,
                                                 int numCopied,
