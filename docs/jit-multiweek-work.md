@@ -18,7 +18,22 @@ notes WHAT, WHY blocked, ESTIMATE, and RELATED memory/docs.
 
 ---
 
-## 1. HELPER_SENDS scheduler architecture rework — **DONE 2026-05-02** (`2e274c7d`)
+## 1. HELPER_SENDS scheduler architecture rework — **FULLY DONE 2026-05-02** (`31f1c640`)
+
+The deeper rework wasn't actually needed — the symptom that motivated
+it (sum 1M / runSum bailing out of helper-sends) was a single missing
+line: helper-send entry didn't clear the stale `relinquishSlept_`
+signal, so the very first step() call returned false unconditionally.
+
+Fixed in `31f1c640`: clear `relinquishSlept_` on entry to
+`jitSistaCallSend`, OR-restore on exit.  sum 1M now runs the closure-
+accum splice cleanly: 100 ms → 0-1 ms (>100×, 5× faster than Cog 5
+ms).  The `2a7e2a4e` workaround gate is removed (renamed to
+`PHARO_SISTA_BLOCK_ARRAYDO_HELPER` opt-in for diagnostics).
+
+**Original analysis (kept for context):**
+
+
 
 Shipped via three precondition fixes in this session:
 - `bd7adb87` Sista deopt-path operand double-stacking fix
@@ -449,7 +464,7 @@ similar outcomes.  #1 unblocks default-on of an existing opt-in.
 #3 unblocks more splices.  #8 is the cleanest long-term direction
 but the highest cost.
 
-**Bench-suite snapshot (2026-05-02, post-Phase-6-win, best-of-5):**
+**Bench-suite snapshot (2026-05-02, post-relinquish-fix, best-of-5):**
 
 ```
                   Ours    Cog    Ratio   Notes
@@ -457,21 +472,18 @@ fib(28) ms        15      6      2.5×
 sieve x100 ms     45      ?      ?
 sort 100K ms      217     60     3.6×
 dict 50K ms       157     50     3.1×
-sum 1M ms         102     5      20×    HELPER_SENDS step()=false in to:
+sum 1M ms         0-1     5      0×     (we win — closure-accum splice)
 factorial 5K ms   23      27     0.85×  (we win)
-1M blocks ms      0       1      0×     (we win — math splice)
+1M blocks ms      0       1      0×     (we win — whileTrue: math splice)
 1M getter ms      0†      3      0×     (we win — Phase 6 INLINE_YOURSELF=1)
 100K alloc ms     5       ?      ?
 ```
 
 † PHARO_SISTA_INLINE_YOURSELF=1 opt-in.  Default is 19-21 ms.
 
-The `factorial`, `1M blocks`, and `1M getter+yourself` benches all
-beat Cog (with the opt-in).  `sum 1M`, `sort`, `dict`, and `fib`
-remain.  All four want block-body inlining at hot send sites — full
-Phase 6 generalization — which is multi-week.  `sum 1M` specifically
-is blocked by the helper-sends step()=false-on-relinquish issue
-(item #1's deeper architectural rework).
+Four benches now beat Cog (sum 1M, factorial, 1M blocks, 1M getter+yourself
+opt-in).  `sort`, `dict`, and `fib` remain — all want block-body inlining
+at hot send sites — full Phase 6 generalization — multi-week.
 
 ---
 
