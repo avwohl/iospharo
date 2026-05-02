@@ -1325,6 +1325,17 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // operand2Ptr is set to the IC base in the loop at
                 // line ~2129; it gets patched alongside sendJ2J.
                 specialized++; specReturnsLit++;
+            } else if (extra0 & (1ULL << 57)) {
+                // Multi-slot getter (^ self[A] op self[B] op const).
+                // Set in IC by patchJITICAfterSend when the callee's
+                // bytecodes match the 6-byte multi-slot pattern.  At
+                // recompile, swap in the specialized stencil that
+                // does class-check + 2 slot reads + scalar SmI arith
+                // inline (vs IC_HIT macro's chained bit-tests).
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMultiSlot);
+                // operand2Ptr stays as IC base — the stencil reads
+                // class from icData[0] and packed bits from icData[2].
+                specialized++; specReturnsLit++;
             } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
@@ -2215,7 +2226,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             auto sid = static_cast<StencilID>(bc.stencilIdx);
             if (sid == StencilID::stencil_sendJ2J ||
                 sid == StencilID::stencil_sendInlineMonoJ2J ||
-                sid == StencilID::stencil_sendInlineReturnsLiteral) {
+                sid == StencilID::stencil_sendInlineReturnsLiteral ||
+                sid == StencilID::stencil_sendInlineMultiSlot) {
                 uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
                 siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));

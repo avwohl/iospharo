@@ -1877,6 +1877,74 @@ extern "C" void stencil_sendInlineReturnsLiteral(JITState* s) {
     _HOLE_RT_SEND(s);
 }
 
+// Inline multi-slot getter: specialized fast path for the
+// `^ self[A] op1 self[B] op2 const` shape (e.g. OrderedCollection>>size).
+// Class check + 2 slot reads + scalar SmI arith with overflow + retag.
+// Bails to slow send on class mismatch / non-SmI / overflow.
+//
+// OPERAND  = (bcLength << 24) | (nArgs << 16) | bcOffset
+// OPERAND2 = pointer to IC data (same as sendJ2J)
+//
+// Reads class from icData[0] and packed multi-slot bits from icData[2].
+// Mirrors the IC `extra` word layout set in patchJITICAfterSend (bit 57):
+//   bits 7:0  slotA
+//   bits 15:8 slotB
+//   bits 23:16 signed const (-1, 0, 1)
+//   bit 24    op1Sub
+//   bit 25    op2Sub
+extern "C" void stencil_sendInlineMultiSlot(JITState* s) {
+    int packed = OPERAND;
+    int bcOffset = packed & 0xFFFF;
+    int nArgs = (packed >> 16) & 0xFF;
+
+    uint64_t* icData = (uint64_t*)(uintptr_t)&_HOLE_OPERAND2;
+
+    Oop receiver = s->sp[-(nArgs + 1)];
+    uint64_t tag = receiver.bits & 0x7;
+    if (__builtin_expect(tag == 0 && receiver.bits != 0, 1)) {
+        uint64_t lookupKey = reinterpret_cast<ObjectHeader*>(receiver.bits)->classIndex();
+        if (__builtin_expect(lookupKey == icData[0], 1)) {
+            uint64_t extra = icData[2];
+            uint8_t mA   = (uint8_t)(extra & 0xFF);
+            uint8_t mB   = (uint8_t)((extra >> 8) & 0xFF);
+            int8_t  mCst = (int8_t)((extra >> 16) & 0xFF);
+            uint8_t mOp1 = (uint8_t)((extra >> 24) & 0x1);
+            uint8_t mOp2 = (uint8_t)((extra >> 25) & 0x1);
+            ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+            Oop aOop = obj->slotAt(mA);
+            Oop bOop = obj->slotAt(mB);
+            if (isSmallInteger(aOop) && isSmallInteger(bOop)) {
+                int64_t a = asSmallInteger(aOop);
+                int64_t b = asSmallInteger(bOop);
+                int64_t inter; bool ovf;
+                if (mOp1) ovf = __builtin_sub_overflow(a, b, &inter);
+                else      ovf = __builtin_add_overflow(a, b, &inter);
+                if (!ovf) {
+                    int64_t result;
+                    if (mOp2) ovf = __builtin_sub_overflow(inter, (int64_t)mCst, &result);
+                    else      ovf = __builtin_add_overflow(inter, (int64_t)mCst, &result);
+                    if (!ovf
+                        && result >= -(1LL << 60)
+                        && result < (1LL << 60)) {
+                        Oop val;
+                        val.bits = (uint64_t)((result << 3) | 1);
+                        s->sp[-(nArgs + 1)] = val;
+                        s->sp -= nArgs;
+                        _HOLE_CONTINUE(s);
+                        return;
+                    }
+                }
+            }
+        }
+    }
+    // Class mismatch / non-SmI / overflow → bail to polymorphic IC.
+    s->icDataPtr = icData;
+    s->sendArgCount = nArgs;
+    s->ip = s->ip + bcOffset;
+    s->exitReason = EXIT_SEND;
+    _HOLE_RT_SEND(s);
+}
+
 // Inline monomorphic J2J: specialized fast path for monomorphic sends
 // to JIT-compiled methods.  Skips the 5-way IC alternative-slot probe
 // and the trivial-method/inline-prim/block-value side branches.  Reads
