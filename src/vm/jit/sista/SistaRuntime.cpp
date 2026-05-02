@@ -54,6 +54,8 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
     // would drown out everything else.  Limited to 16 lines.
     bool hasSplice = false;
     bool hasSend   = false;
+    bool hasArrayDoSplice = false;  // kCountedLoopArrayDoAccum or kCountedLoopDo
+    bool hasSendCallHelper = false;
     for (const auto& v : m.values) {
         if (v.op == Op::kCountedLoopDo
          || v.op == Op::kCountedLoopInjectInto
@@ -65,9 +67,32 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
          || v.op == Op::kCountedLoopWhileTrueAccum) {
             hasSplice = true;
         }
+        if (v.op == Op::kCountedLoopDo
+         || v.op == Op::kCountedLoopArrayDoAccum
+         || v.op == Op::kCountedLoopArrayCollect) {
+            hasArrayDoSplice = true;
+        }
         if (v.op == Op::kSendUnspeculated) {
             hasSend = true;
         }
+        if (v.op == Op::kSendCallHelper) {
+            hasSendCallHelper = true;
+        }
+    }
+
+    // 2026-05-02: when an Array-do/collect splice AND kSendCallHelper
+    // both appear in the same method, Sista's bail-and-resume sequence
+    // has a remaining bug (runSum DNUs on do: with nil rcvr after
+    // bailing at the to: helper-send).  Skip Sista compile for these
+    // methods so they run entirely in interp.  This is narrower than
+    // "any splice + helper-send" — kCountedLoopWhileTrueAccum (math
+    // simplification) is not affected and remains active under
+    // HELPER_SENDS=1, preserving the 1M blocks 13→0 ms win.
+    static const bool noArrayDoWithHelper =
+        std::getenv("PHARO_SISTA_ALLOW_ARRAYDO_HELPER") == nullptr;
+    if (hasArrayDoSplice && hasSendCallHelper && noArrayDoWithHelper) {
+        cache_[key] = nullptr;
+        return nullptr;
     }
 
     // Skip-dispatch heuristic: a method that contains kSendUnspeculated
