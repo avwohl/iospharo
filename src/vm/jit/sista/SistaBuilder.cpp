@@ -2220,8 +2220,12 @@ public:
         // sides of the arith.  Multi-send bodies (1M getter+yourself)
         // are detected but rejected here — they need helper-sends or
         // a different lowering strategy.
+        // Default-on as of 2026-05-01.  Splice only fires when the
+        // main lifter reaches preLoopStart (no setup-sends before).
+        // Without HELPER_SENDS, methods with prior sends won't trigger
+        // — safe.  Set PHARO_NO_SISTA_WHILETRUE=1 to opt out.
         static const bool whileTrueSpliceEnabled =
-            std::getenv("PHARO_SISTA_WHILETRUE") != nullptr;
+            std::getenv("PHARO_NO_SISTA_WHILETRUE") == nullptr;
         static const bool probeWhileTrue =
             std::getenv("PHARO_SISTA_PROBE_WHILETRUE") != nullptr;
         if (whileTrueSpliceEnabled || probeWhileTrue) {
