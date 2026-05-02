@@ -77,6 +77,22 @@ PharoBenchmarkRunner class compile: 'runBenchmarks
     self log: self runCreate to: stream.
     self log: '''' to: stream.
 
+    self log: ''--- floatSum(1M) ---'' to: stream.
+    self log: self runFloatSum to: stream.
+    self log: '''' to: stream.
+
+    self log: ''--- stringHash(100K) ---'' to: stream.
+    self log: self runStringHash to: stream.
+    self log: '''' to: stream.
+
+    self log: ''--- collect(100K) ---'' to: stream.
+    self log: self runCollect to: stream.
+    self log: '''' to: stream.
+
+    self log: ''--- select(100K) ---'' to: stream.
+    self log: self runSelect to: stream.
+    self log: '''' to: stream.
+
     self log: ''DONE'' to: stream
   ] ensure: [stream close].
   Transcript show: ''Benchmarks written to /tmp/pharo_benchmarks.txt''; cr' classified: 'running'
@@ -178,6 +194,53 @@ PharoBenchmarkRunner class compile: 'runCreate
   100000 timesRepeat: [Array new: 10].
   t := Time millisecondClockValue - t.
   ^ ''100K allocations = '', t printString, '' ms''' classified: 'benchmarks'
+!
+
+PharoBenchmarkRunner class compile: 'runFloatSum
+  "Float arithmetic intensive — covers a path different from SmI fast
+   paths.  Sums a 1M-element Float Array."
+  | arr s t |
+  arr := (Array new: 1000000) collect: [:_ | 1.5].
+  t := Time millisecondClockValue.
+  s := 0.0.
+  arr do: [:e | s := s + e].
+  t := Time millisecondClockValue - t.
+  ^ ''floatSum 1M = '', t printString, '' ms (sum='', s printString, '')''' classified: 'benchmarks'
+!
+
+PharoBenchmarkRunner class compile: 'runStringHash
+  "Symbol/String hash — exercises the same dispatch that dict 50K uses
+   but isolates the hash + equality cost."
+  | keys h t |
+  keys := (1 to: 100000) collect: [:i | ''key'', i printString].
+  t := Time millisecondClockValue.
+  h := 0.
+  keys do: [:k | h := h bitXor: k hash].
+  t := Time millisecondClockValue - t.
+  ^ ''stringHash 100K = '', t printString, '' ms''' classified: 'benchmarks'
+!
+
+PharoBenchmarkRunner class compile: 'runCollect
+  "collect: with SmI arith — exercises the canonical-shape collect:
+   resume helper.  Result Array is allocated each iter; bench drives
+   the alloc + per-iter SmI arith path."
+  | arr t r |
+  arr := (1 to: 100000) asArray.
+  t := Time millisecondClockValue.
+  1 to: 10 do: [:i | r := arr collect: [:e | e + 1]].
+  t := Time millisecondClockValue - t.
+  ^ ''collect 10x100K = '', t printString, '' ms''' classified: 'benchmarks'
+!
+
+PharoBenchmarkRunner class compile: 'runSelect
+  "select: with SmI predicate — exercises a different block-dispatch
+   pattern than collect: (boolean-returning block, conditional store)."
+  | arr t r |
+  arr := (1 to: 100000) asArray.
+  t := Time millisecondClockValue.
+  1 to: 10 do: [:i | r := arr select: [:e | e even]].
+  t := Time millisecondClockValue - t.
+  ^ ''select 10x100K = '', t printString, '' ms (kept='', r size printString, '')''' classified: 'benchmarks'
 !
 
 "Register as session handler"
