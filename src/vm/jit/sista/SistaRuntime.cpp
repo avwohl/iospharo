@@ -80,17 +80,16 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         }
     }
 
-    // 2026-05-02: when an Array-do/collect splice AND kSendCallHelper
-    // both appear in the same method, Sista's bail-and-resume sequence
-    // has a remaining bug (runSum DNUs on do: with nil rcvr after
-    // bailing at the to: helper-send).  Skip Sista compile for these
-    // methods so they run entirely in interp.  This is narrower than
-    // "any splice + helper-send" — kCountedLoopWhileTrueAccum (math
-    // simplification) is not affected and remains active under
-    // HELPER_SENDS=1, preserving the 1M blocks 13→0 ms win.
-    static const bool noArrayDoWithHelper =
-        std::getenv("PHARO_SISTA_ALLOW_ARRAYDO_HELPER") == nullptr;
-    if (hasArrayDoSplice && hasSendCallHelper && noArrayDoWithHelper) {
+    // 2026-05-02: the older Array-do/helper-send coexistence gate
+    // (skip Sista compile when both appear) is no longer needed —
+    // the underlying issue (stale relinquishSlept_ signal causing
+    // the helper-send's first step() call to fail) was fixed in
+    // jitSistaCallSend by clearing the signal on entry and
+    // restoring it on exit.  Set PHARO_SISTA_BLOCK_ARRAYDO_HELPER=1
+    // to re-enable the old gate (diagnostic).
+    static const bool blockArrayDoHelper =
+        std::getenv("PHARO_SISTA_BLOCK_ARRAYDO_HELPER") != nullptr;
+    if (hasArrayDoSplice && hasSendCallHelper && blockArrayDoHelper) {
         cache_[key] = nullptr;
         return nullptr;
     }

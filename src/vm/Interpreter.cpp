@@ -10139,6 +10139,16 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     bool savedInSync = inSyncSend_;
     inSyncSend_ = true;
 
+    // Clear stale relinquishSlept_ signal on entry.  If a prior
+    // primitiveRelinquishProcessor (e.g., the bench-process scheduling
+    // a brief Idle yield before the JIT'd caller invoked us) left
+    // relinquishSlept_=true, the very first step() call below would
+    // return false and we'd bail before the activated method even
+    // ran.  Sista-side handles this by re-saving the signal on exit
+    // (below) so the outer dispatcher can react after we return.
+    bool savedRelinquishSlept = relinquishSlept_;
+    relinquishSlept_ = false;
+
     Oop sel = Oop::fromRawBits(selBits);
     sendSelector(sel, (int)nArgs);
 
@@ -10151,6 +10161,9 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     while (running_ && frameDepth_ > startFrameDepth) {
         if (!step()) {
             inSyncSend_ = savedInSync;
+            // Re-raise any relinquish signal: either the saved one (if
+            // we cleared it on entry) OR a new one from this step.
+            relinquishSlept_ = relinquishSlept_ || savedRelinquishSlept;
             stackPointer_ = savedSP;
             instructionPointer_ = savedIP;
             method_ = savedMethod;
@@ -10165,6 +10178,9 @@ uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
     }
 
     inSyncSend_ = savedInSync;
+    // Re-raise saved relinquish signal so the outer dispatch can
+    // react (e.g., yield to a higher-priority process) on next step().
+    relinquishSlept_ = relinquishSlept_ || savedRelinquishSlept;
 
     if (frameDepth_ < startFrameDepth) {
         // NLR through us — restore and bail.  Source bcOffset deopt
