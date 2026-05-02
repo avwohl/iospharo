@@ -10399,6 +10399,108 @@ uint64_t Interpreter::jitSistaCompleteArrayDoAccum(jit::JITState* state,
     return acc;
 }
 
+// Deopt-to-completion-helper for canonical-shape kCountedLoopInjectInto.
+// Same idea as jitSistaCompleteArrayDoAccum but for inject:into: blocks
+// matching `[:acc :e | acc OP e]` (4-IR-value canonical shape).
+//
+// Differences from do-accum:
+//   - No vec slot to commit; the accumulator IS the IR result and is
+//     returned to the caller via the helper's return value.
+//   - The IR result feeds downstream operations (typically nothing — the
+//     test usually pops the inject:into: result, but it could be used).
+//   - Conservative deopt rebuilds [rcv, init] with ORIGINAL init, so on
+//     helper failure the interp re-runs inject:into: from scratch — same
+//     correctness as do-accum's "vec[slot] still s_0".
+uint64_t Interpreter::jitSistaCompleteArrayInjectInto(jit::JITState* state,
+                                                        uint64_t rcvBits,
+                                                        uint64_t startIdx,
+                                                        uint64_t accBits,
+                                                        uint64_t arithCode) {
+    if (!state) return 0;
+    Oop arithSel;
+    switch (arithCode) {
+        case 0: arithSel = selectors_.add; break;
+        case 1: arithSel = selectors_.subtract; break;
+        case 2: arithSel = selectors_.multiply; break;
+        default: return 0;
+    }
+    if (arithSel.isNil()) return 0;
+
+    int64_t i = (int64_t)startIdx;
+    if (i < 1) return 0;
+
+    // Receiver shape sanity (caller already validated, but no GC has
+    // fired yet so re-deriving size is cheap and lets us early-bail
+    // on bad input).
+    {
+        uint64_t sizeOop = jitSistaBasicSize(state, rcvBits);
+        if ((sizeOop & 7) != 1) return 0;
+        auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+        if ((uint32_t)hdr->format() != 2) return 0;
+        if (((int64_t)sizeOop >> 3) <= 0) return 0;
+    }
+
+    // GC root: keep rcv on the interp stack as a scratch slot so any
+    // send dispatch inside the loop can move the heap and our re-fetches
+    // pick up the new address.
+    Oop* scratchBase = state->sp;
+    scratchBase[0] = Oop::fromRawBits(rcvBits);
+    state->sp = scratchBase + 1;
+
+    uint64_t acc = accBits;
+    uint64_t curRcv = rcvBits;
+
+    for (; ; ++i) {
+        uint64_t sizeOop = jitSistaBasicSize(state, curRcv);
+        if ((sizeOop & 7) != 1) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        int64_t size = (int64_t)sizeOop >> 3;
+        if (i > size) break;
+
+        Oop* slots = reinterpret_cast<Oop*>(curRcv + 8);
+        uint64_t elemBits = slots[i - 1].rawBits();
+
+        // SmI/SmI fast-path with overflow detection.
+        if ((acc & 7) == 1 && (elemBits & 7) == 1) {
+            int64_t a = (int64_t)acc >> 3;
+            int64_t b = (int64_t)elemBits >> 3;
+            int64_t r = 0;
+            bool ovf = false;
+            if (arithCode == 0) {
+                ovf = __builtin_add_overflow(a, b, &r);
+            } else if (arithCode == 1) {
+                ovf = __builtin_sub_overflow(a, b, &r);
+            } else {
+                ovf = __builtin_mul_overflow(a, b, &r);
+            }
+            constexpr int64_t kSmIMin = -((int64_t)1 << 60);
+            constexpr int64_t kSmIMax = ((int64_t)1 << 60) - 1;
+            if (!ovf && r >= kSmIMin && r <= kSmIMax) {
+                acc = (uint64_t)((r << 3) | 1);
+                continue;
+            }
+        }
+
+        // Non-SmI / overflow: dispatch through Smalltalk send.
+        Oop* sp = state->sp;
+        sp[0] = Oop::fromRawBits(acc);
+        sp[1] = Oop::fromRawBits(elemBits);
+        state->sp = sp + 2;
+        uint64_t newAcc = jitSistaCallSend(state, arithSel.rawBits(), 1);
+        if (newAcc == 0) {
+            state->sp = scratchBase;
+            return 0;
+        }
+        acc = newAcc;
+        curRcv = scratchBase[0].rawBits();
+    }
+
+    state->sp = scratchBase;
+    return acc;
+}
+
 uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
                                                 int litIndex,
                                                 int numCopied,

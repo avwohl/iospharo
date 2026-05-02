@@ -47,6 +47,12 @@ extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     uint64_t startIdx,
     uint64_t accBits,
     uint64_t arithCode);
+extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
+    void* state,
+    uint64_t rcvBits,
+    uint64_t startIdx,
+    uint64_t accBits,
+    uint64_t arithCode);
 
 namespace pharo {
 namespace sista {
@@ -2172,6 +2178,65 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     return nullptr;
                 }
 
+                // Canonical-shape detection (2026-05-02): the most common
+                // inject:into: block is `[:acc :e | acc OP e]` — 4 IR
+                // values: kLoadTemp(0)=acc, kLoadTemp(1)=elem, kPrim*Int
+                // arith, kReturn.  When matched, emit a specialized loop
+                // path that on per-iter SmI tag-check miss invokes the
+                // jit_rt_sista_complete_array_inject_into helper instead
+                // of bailing to the inject:into: send and re-running from
+                // scratch.  Same wasted-work avoidance as do-accum.
+                static const bool injectResume =
+                    std::getenv("PHARO_NO_SISTA_INJECT_RESUME") == nullptr;
+                bool isCanonicalInject = false;
+                uint32_t injectArithCode = 0;
+                // With INLINE_ARITH on (default), the block IR shape is:
+                //   v0 = kLoadTemp 0 (a, the acc)
+                //   v1 = kLoadTemp 1 (b, the elem)
+                //   v2 = kPrimTagCheckInt({a, ...deoptStack})   side-effect
+                //   v3 = kPrimTagCheckInt({b, ...deoptStack})   side-effect
+                //   v4 = kPrim{Add,Sub,Mul}Int({a, b, ...deopt})  direct a,b
+                //   v5 = kReturn(v4)
+                // The kPrimAddInt's operands point at v0,v1 directly (not at
+                // the kPrimTagCheckInt results) — see SistaBuilder.cpp's
+                // arith-emit for the layout.
+                if (injectResume && !injectHasCapture
+                    && blockIR.values.size() == 6) {
+                    const auto& bv0 = blockIR.values[0];
+                    const auto& bv1 = blockIR.values[1];
+                    const auto& bv2 = blockIR.values[2];
+                    const auto& bv3 = blockIR.values[3];
+                    const auto& bv4 = blockIR.values[4];
+                    const auto& bv5 = blockIR.values[5];
+                    bool shapeMatch =
+                        bv0.op == Op::kLoadTemp && bv0.literal == 0
+                        && bv1.op == Op::kLoadTemp && bv1.literal == 1
+                        && bv2.op == Op::kPrimTagCheckInt
+                        && !bv2.operands.empty()
+                        && bv2.operands[0] == bv0.id
+                        && bv3.op == Op::kPrimTagCheckInt
+                        && !bv3.operands.empty()
+                        && bv3.operands[0] == bv1.id
+                        && bv4.operands.size() >= 2
+                        && bv4.operands[0] == bv0.id
+                        && bv4.operands[1] == bv1.id
+                        && bv5.op == Op::kReturn
+                        && bv5.operands.size() == 1
+                        && bv5.operands[0] == bv4.id;
+                    if (shapeMatch) {
+                        if (bv4.op == Op::kPrimAddInt) {
+                            isCanonicalInject = true;
+                            injectArithCode = 0;
+                        } else if (bv4.op == Op::kPrimSubInt) {
+                            isCanonicalInject = true;
+                            injectArithCode = 1;
+                        } else if (bv4.op == Op::kPrimMulInt) {
+                            isCanonicalInject = true;
+                            injectArithCode = 2;
+                        }
+                    }
+                }
+
                 // Same whitelist as kCountedLoopDo's body — loads,
                 // arith, comparison, identity, tag-check passthrough,
                 // return.  No stores.  Boolean-producing ops can
@@ -2305,6 +2370,126 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.b_eq(injFmtOk);
                 emitDeopt(rcvReg, initReg, deoptBC);
                 cc.bind(injFmtOk);
+
+                // Canonical-shape specialized path: when the block is
+                // exactly `[:acc :e | acc OP e]` (no captures, no extra
+                // ops), emit a tighter loop with a single per-iter SmI
+                // tag-check that on miss invokes the resume helper to
+                // finish iteration in C++.  Skip the generic inline-IR
+                // emission entirely.
+                if (isCanonicalInject) {
+                    using namespace asmjit::a64;
+                    Gp iReg = cc.new_gp64("inj_can_i");
+                    cc.mov(iReg, Imm(9));  // SmI(1)
+                    Label loopHead = cc.new_label();
+                    Label loopExit = cc.new_label();
+                    Label afterLoopExit = cc.new_label();
+                    cc.cmp(iReg, sizeReg);
+                    cc.b_hi(loopExit);
+                    cc.bind(loopHead);
+
+                    // elem = arr[(i>>3) - 1].  i*8 = iReg-1.
+                    Gp inj_off = cc.new_gp64("inj_can_off");
+                    cc.sub(inj_off, iReg, Imm(1));
+                    Gp eachReg = cc.new_gp64("inj_can_each");
+                    cc.ldr(eachReg, ptr(rcvReg, inj_off));
+
+                    // Combined tag-check: BOTH acc and elem must be
+                    // SmI.  Compute (accReg|eachReg) & 7, compare to 1
+                    // (= SmI tag).  If either is non-SmI, the OR's low
+                    // bits won't be exactly 1 and we miss.
+                    //
+                    // Wait — that's not quite right.  An OR of two SmI
+                    // (1) is 1; an OR of SmI (1) + Float (4) is 5.  But
+                    // an OR of SmI (1) + Char (3) is 3.  So checking
+                    // == 1 catches Float/Char/heap mismatches.  The one
+                    // false-negative case: acc=SmI elem=SmI but with a
+                    // bit-1 set in elem's low 3 bits beyond the tag —
+                    // impossible since SmI's tag is exactly 0b001.
+                    //
+                    // Actually safer: check both tags separately, since
+                    // the OR trick doesn't work for arbitrary mixed
+                    // tags.  Use two cmps but combine the branches.
+                    Gp tagA = cc.new_gp64("inj_can_tagA");
+                    cc.and_(tagA, accReg, Imm(7));
+                    cc.cmp(tagA, Imm(1));
+                    Label canMiss = cc.new_label();
+                    cc.b_ne(canMiss);
+                    Gp tagE = cc.new_gp64("inj_can_tagE");
+                    cc.and_(tagE, eachReg, Imm(7));
+                    cc.cmp(tagE, Imm(1));
+                    cc.b_ne(canMiss);
+
+                    // SmI arith.  Tag-preserving (acc op elem with the
+                    // 1-bit fixup).
+                    if (injectArithCode == 0) {
+                        cc.add(accReg, accReg, eachReg);
+                        cc.sub(accReg, accReg, Imm(1));
+                    } else if (injectArithCode == 1) {
+                        cc.sub(accReg, accReg, eachReg);
+                        cc.add(accReg, accReg, Imm(1));
+                    } else {
+                        Gp au = cc.new_gp64("inj_can_au");
+                        Gp bu = cc.new_gp64("inj_can_bu");
+                        cc.asr(au, accReg, Imm(3));
+                        cc.asr(bu, eachReg, Imm(3));
+                        Gp prod = cc.new_gp64("inj_can_prod");
+                        cc.mul(prod, au, bu);
+                        cc.lsl(accReg, prod, Imm(3));
+                        cc.orr(accReg, accReg, Imm(1));
+                    }
+
+                    // Continue: i += SmI(1) and back-edge.
+                    cc.add(iReg, iReg, Imm(8));
+                    cc.cmp(iReg, sizeReg);
+                    cc.b_ls(loopHead);
+                    cc.b(loopExit);
+
+                    // Per-iter SmI miss: invoke completion helper.
+                    cc.bind(canMiss);
+                    {
+                        Gp startIdxR = cc.new_gp64("inj_can_startIdx");
+                        cc.lsr(startIdxR, iReg, Imm(3));  // i = iReg/8
+                        Gp arithR = cc.new_gp64("inj_can_arith");
+                        cc.mov(arithR, Imm((uint64_t)injectArithCode));
+                        Gp helperFn = cc.new_gp64("inj_can_helperFn");
+                        cc.mov(helperFn,
+                               Imm((uint64_t)
+                                   &jit_rt_sista_complete_array_inject_into));
+                        asmjit::InvokeNode* helperInv = nullptr;
+                        asmjit::Error hErr = cc.invoke(
+                            asmjit::Out(helperInv), helperFn,
+                            asmjit::FuncSignature::build<
+                                uint64_t, void*, uint64_t, uint64_t,
+                                uint64_t, uint64_t>());
+                        if (hErr != asmjit::kErrorOk || !helperInv) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        helperInv->set_arg(0, state);
+                        helperInv->set_arg(1, rcvReg);
+                        helperInv->set_arg(2, startIdxR);
+                        helperInv->set_arg(3, accReg);
+                        helperInv->set_arg(4, arithR);
+                        Gp helperRet = cc.new_gp64("inj_can_helperRet");
+                        helperInv->set_ret(0, helperRet);
+
+                        Label helperDeopt = cc.new_label();
+                        cc.cbz(helperRet, helperDeopt);
+                        // Helper succeeded: final acc in helperRet.
+                        cc.mov(accReg, helperRet);
+                        cc.b(afterLoopExit);
+                        cc.bind(helperDeopt);
+                        emitDeopt(rcvReg, initReg, deoptBC);
+                    }
+
+                    cc.bind(loopExit);
+                    cc.bind(afterLoopExit);
+
+                    // Result = accReg.
+                    regFor[v.id] = accReg;
+                    break;
+                }
 
                 // Step 2: iReg = SmI(1).
                 Gp iReg = cc.new_gp64("inj_i");

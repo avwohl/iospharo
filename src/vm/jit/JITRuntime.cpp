@@ -1240,6 +1240,23 @@ extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
         arithCode);
 }
 
+// Sista deopt-with-resume completion helper for canonical-shape
+// kCountedLoopInjectInto.  Same architecture as do-accum's helper but
+// for `[:acc :e | acc OP e]` blocks; returns final accumulator.
+extern "C" uint64_t jit_rt_sista_complete_array_inject_into(
+    JITState* state,
+    uint64_t rcvBits,
+    uint64_t startIdx,
+    uint64_t accBits,
+    uint64_t arithCode) {
+    if (!state || !state->interp) return 0;
+    static const bool forceBail =
+        std::getenv("PHARO_SISTA_INJECT_RESUME_FORCE_BAIL") != nullptr;
+    if (forceBail) return 0;
+    return state->interp->jitSistaCompleteArrayInjectInto(
+        state, rcvBits, startIdx, accBits, arithCode);
+}
+
 extern "C" uint64_t jit_rt_sista_alloc_array(JITState* state,
                                                uint64_t size) {
     if (!state || !state->interp) return 0;

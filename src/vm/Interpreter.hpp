@@ -1375,6 +1375,24 @@ public:
                                             uint64_t accBits,
                                             uint64_t arithCode);
 
+    /// Sista deopt-with-resume helper for kCountedLoopInjectInto.
+    /// Called when a canonical-shape inject:into: splice's per-iter
+    /// SmI tag check misses on a mixed-type Array.  Continues the
+    /// iteration in C++ from `startIdx`..size, threading the
+    /// accumulator through the recognized arith op (0=+, 1=-, 2=*).
+    /// SmI/SmI iters use overflow-checked native arith; non-SmI or
+    /// overflow dispatches via jitSistaCallSend (full image-side
+    /// coercion).  Returns the final accumulator on success (always
+    /// non-zero for a valid Oop), 0 on failure (NLR / depth overflow
+    /// / bad receiver format).  Caller's conservative deopt path
+    /// rebuilds [rcv, init] with original init, so a re-run is
+    /// correct (just no faster than today).
+    uint64_t jitSistaCompleteArrayInjectInto(jit::JITState* state,
+                                               uint64_t rcvBits,
+                                               uint64_t startIdx,
+                                               uint64_t accBits,
+                                               uint64_t arithCode);
+
 private:
 #endif
 
