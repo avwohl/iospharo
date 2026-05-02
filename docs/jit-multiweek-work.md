@@ -275,7 +275,7 @@ than waiting for full-method compilation thresholds.
 If picking ONE for a focused multi-week session:
 
 - **Biggest payoff:** #2 (Phase 6 block inlining).  Closes the largest
-  remaining bench-suite gap (1M getter+yourself 100ms vs Cog 3ms).
+  remaining bench-suite gap (after #9: 1M getter+yourself 20ms vs Cog 3ms).
   Also the most work.
 
 - **Best ratio:** #5 (J2J-only callee recompile).  2-3 weeks for
@@ -285,7 +285,29 @@ If picking ONE for a focused multi-week session:
 - **Speculative:** #7 (T1/T2 interaction).  Don't start unless a
   measured workload shows T2 beating T1 — currently none does.
 
-Items #4 and #6 shipped together 2026-05-01 (commit `5448b564`).
+Items #4, #6, #9 shipped 2026-05-01 (commits `5448b564`, `d5332e48`).
 Items #1, #3, #8 are alternative paths to similar outcomes.  #1
 unblocks default-on of an existing opt-in.  #3 unblocks more splices.
 #8 is the cleanest long-term direction but the highest cost.
+
+---
+
+## 9. Multi-slot getter IC pattern — **DONE 2026-05-01**
+
+`d5332e48`: Recognize `^ ivarA op1 ivarB op2 const` (op ∈ {+,-},
+const ∈ {-1,0,1}) and dispatch inline via IC bit 57.  Two methods
+in the image match (OrderedCollection>>size and SocketStream>>inBufferSize),
+so the dispatch table impact is contained.
+
+**Bench:** `1M getter+yourself` (= `obj size. obj yourself` × 1M):
+98ms baseline → 20ms (5× speedup) when bench-suite runs cleanly.
+Other benches stable.  Opt-in via `PHARO_MULTISLOT_GETTER=1`.
+
+**Encoding:** new bit 57 in IC `extra` word.  Decoder in IC_HIT
+macro and stencil_sendJ2J's IC-hit handler unboxes both slots, does
+scalar math with `__builtin_*_overflow` checks, re-tags, pushes.
+Bails to slow send on non-SmI / overflow.
+
+**Future extension candidates:** could add 3-slot patterns like
+`^ ivarA + ivarB + ivarC` (no const) using bit 56, but only one
+image method matches that shape — not worth the encoding work.
