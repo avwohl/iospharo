@@ -10806,8 +10806,20 @@ Oop Interpreter::materializeFrameStack() {
     // chain — a loop makes it recurse until the C frame stack overflows
     // (terminateAndSwitchProcess).  Walk sender's chain looking for
     // ctx; if found, set sender to nil instead.
-    auto setSenderSafe = [this](Oop ctx, Oop sender) {
-        if (sender.isObject() && !sender.isNil()
+    //
+    // 2026-05-02: gated under HELPER_SENDS=1.  Without helper-sends,
+    // cycles don't form (verified by 6 weeks of bench-suite stability
+    // pre-cycle-guard).  The 200-deep walk per setSenderSafe call
+    // costs ~3-5ms on factorial-5K (5000 contexts × 200 reads = 1M
+    // reads) — which was the unexplained 10× factorial regression
+    // documented in project_b1_helpersends_2026_05_01.md.  Gating
+    // restores factorial's baseline timing while keeping the guard
+    // available where it's needed.
+    static const bool helperSendsStatic =
+        std::getenv("PHARO_SISTA_HELPER_SENDS") != nullptr;
+    const bool helperSends = helperSendsStatic;
+    auto setSenderSafe = [this, helperSends](Oop ctx, Oop sender) {
+        if (helperSends && sender.isObject() && !sender.isNil()
             && sender.rawBits() != ctx.rawBits()) {
             Oop walk = sender;
             for (int w = 0; w < 200 && walk.isObject() && !walk.isNil(); w++) {
