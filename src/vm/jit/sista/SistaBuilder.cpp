@@ -2304,6 +2304,7 @@ public:
                                 // Body must be canonical 4-byte arith
                                 // shape on a single accum temp.
                                 bool bodyOk = false;
+                                bool bodyShapeIsSeries = false;
                                 uint32_t accumTemp = 0;
                                 int arithCode = -1;
                                 int constValue = 0;
@@ -2312,18 +2313,26 @@ public:
                                     uint8_t y1 = bc_[bodyStart + 1];
                                     uint8_t y2 = bc_[bodyStart + 2];
                                     uint8_t y3 = bc_[bodyStart + 3];
-                                    if (y0 >= jit::SistaV1::PushTempBase
-                                        && y0 <= 0x4B
-                                        && (y1 == 0x50 || y1 == 0x51)
-                                        && (y2 == jit::SistaV1::ArithBase
-                                            || y2 == jit::SistaV1::ArithBase + 1)
-                                        && y3 == (uint8_t)(0xD0 + (y0 - jit::SistaV1::PushTempBase))
-                                        && (y0 - jit::SistaV1::PushTempBase) != (int)loopTemp) {
+                                    bool y0IsTemp = y0 >= jit::SistaV1::PushTempBase && y0 <= 0x4B;
+                                    bool y2IsAddSub = (y2 == jit::SistaV1::ArithBase
+                                            || y2 == jit::SistaV1::ArithBase + 1);
+                                    bool y3IsPopMatch = y3 == (uint8_t)(0xD0 + (y0 - jit::SistaV1::PushTempBase));
+                                    bool y0NotLoop = (y0 - jit::SistaV1::PushTempBase) != (int)loopTemp;
+                                    // Shape A: y1 = pushZero/One
+                                    if (y0IsTemp && (y1 == 0x50 || y1 == 0x51)
+                                        && y2IsAddSub && y3IsPopMatch && y0NotLoop) {
                                         bodyOk = true;
                                         accumTemp = (uint32_t)(y0 - jit::SistaV1::PushTempBase);
                                         arithCode = (y2 == jit::SistaV1::ArithBase) ? 0 : 1;
                                         constValue = (y1 == 0x51) ? 1 : 0;
                                     }
+                                    // Shape B (arithmetic-series, e.g.
+                                    // simpleLoop's `s := s + n`) is
+                                    // detectable but not yet lowered —
+                                    // would need series-sum math.
+                                    // Detection commented out to avoid
+                                    // cache-poisoning admit-without-emit.
+                                    (void)bodyShapeIsSeries;
                                 }
                                 if (probeWhileTrue) {
                                     static int probeCount = 0;
