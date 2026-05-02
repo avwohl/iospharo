@@ -66,6 +66,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopArrayDoAccum:
     case Op::kCountedLoopIntervalDoAccum:
     case Op::kCountedLoopArrayCollect:
+    case Op::kCountedLoopWhileTrueAccum:
     case Op::kAllocArray:
     case Op::kInterval:
     case Op::kPhi:
@@ -89,6 +90,7 @@ bool mayCallBack(Op op) {
     case Op::kCountedLoopArrayDoAccum:  // same
     case Op::kCountedLoopIntervalDoAccum:  // same
     case Op::kCountedLoopArrayCollect:  // alloc + per-elem block calls
+    case Op::kCountedLoopWhileTrueAccum: // overflow-deopts to bail
     case Op::kAllocArray:               // alloc may GC
     case Op::kPrimTagCheckInt:  // miss deopts
         return true;
@@ -158,6 +160,7 @@ const char* name(Op op) {
     case Op::kCountedLoopArrayDoAccum: return "counted_loop_arr_do_accum";
     case Op::kCountedLoopIntervalDoAccum: return "counted_loop_iv_do_accum";
     case Op::kCountedLoopArrayCollect: return "counted_loop_arr_collect";
+    case Op::kCountedLoopWhileTrueAccum: return "counted_loop_whiletrue_accum";
     case Op::kInterval:         return "interval";
     case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";

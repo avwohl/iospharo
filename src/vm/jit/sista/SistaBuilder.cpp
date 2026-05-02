@@ -2196,13 +2196,20 @@ public:
         // Recognizing it lets Sista lift counter+limit-counter to
         // registers, matching simpleLoop's panel speed (~0.7ns/iter).
         //
-        // PROBE PHASE 2026-05-01: detect-only.  Logs candidates so we
-        // can verify the recognizer covers real benches before adding
-        // an IR op + lowering.  Future work: emit
-        // kCountedLoopWhileTrueAccum; lower to register-based loop.
+        // PROBE PHASE 2026-05-01: detect candidates and record into
+        // whileTrueAccumPattern_ so the main lift can intercept.  The
+        // env-gated diagnostic remains as a kill-switch.  Validation
+        // ONLY admits the canonical body=4 shape:
+        //   pushTemp X, pushOne/Zero, ArithBase Y, popIntoTemp X
+        // where the body's accumTempIdx is the SAME temp on both
+        // sides of the arith.  Multi-send bodies (1M getter+yourself)
+        // are detected but rejected here — they need helper-sends or
+        // a different lowering strategy.
+        static const bool whileTrueSpliceEnabled =
+            std::getenv("PHARO_SISTA_WHILETRUE") != nullptr;
         static const bool probeWhileTrue =
             std::getenv("PHARO_SISTA_PROBE_WHILETRUE") != nullptr;
-        if (probeWhileTrue) {
+        if (whileTrueSpliceEnabled || probeWhileTrue) {
             size_t i = 0;
             while (i + 4 <= len_) {
                 // Look for ExtendB + ExtJump (4-byte long jump back).
@@ -2211,21 +2218,14 @@ public:
                     int8_t  extB = (int8_t)bc_[i + 1];
                     int8_t  off8 = (int8_t)bc_[i + 3];
                     int32_t off  = ((int32_t)extB << 8) | (uint8_t)off8;
-                    // jumpTo target is `next instruction + off`.  The
-                    // jump itself is 4 bytes (ExtendB X, ExtJump Y),
-                    // so next IP = i + 4.
                     int32_t target = (int32_t)(i + 4) + off;
                     if (target >= 0 && target < (int32_t)i) {
-                        // Backward jump.  Check if at target we have
-                        // pushTemp X, pushLitConst LIMIT, send <=,
-                        // jumpFalse END.
                         size_t t = (size_t)target;
                         if (t + 4 < len_) {
                             uint8_t b0 = bc_[t];
                             uint8_t b1 = bc_[t + 1];
                             uint8_t b2 = bc_[t + 2];
                             uint8_t b3 = bc_[t + 3];
-                            uint8_t b4 = bc_[t + 4];
                             bool isPushTemp =
                                 b0 >= jit::SistaV1::PushTempBase
                                 && b0 <= 0x4B;
@@ -2235,15 +2235,16 @@ public:
                                 (b3 == jit::SistaV1::ExtJumpFalse)
                                 || (b3 >= jit::SistaV1::ShortJumpFalseBase
                                     && b3 <= jit::SistaV1::ShortJumpFalseLast);
-                            (void)b4;
-                            // Check increment before jumpTo: at i-4..i-1.
-                            bool incrOk = false;
                             uint32_t loopTemp = (uint32_t)(b0 - jit::SistaV1::PushTempBase);
-                            if (i >= 4) {
-                                uint8_t i0 = bc_[i - 4];  // pushTemp X
-                                uint8_t i1 = bc_[i - 3];  // pushOne (0x51)
-                                uint8_t i2 = bc_[i - 2];  // send + (0x60)
-                                uint8_t i3 = bc_[i - 1];  // popIntoTemp X (0xD0+X)
+                            // Loop-counter increment before jumpTo.
+                            bool incrOk = false;
+                            if (i >= 4
+                                && isPushTemp && isLitConst
+                                && isLeq && isJumpFalse) {
+                                uint8_t i0 = bc_[i - 4];
+                                uint8_t i1 = bc_[i - 3];
+                                uint8_t i2 = bc_[i - 2];
+                                uint8_t i3 = bc_[i - 1];
                                 if (i0 == (uint8_t)(jit::SistaV1::PushTempBase + loopTemp)
                                     && i1 == 0x51
                                     && i2 == jit::SistaV1::ArithBase
@@ -2251,42 +2252,132 @@ public:
                                     incrOk = true;
                                 }
                             }
-                            if (isPushTemp && isLitConst && isLeq
-                                && isJumpFalse && incrOk) {
-                                static int probeCount = 0;
-                                if (probeCount++ < 32) {
-                                    size_t bodyStart =
-                                        (b3 == jit::SistaV1::ExtJumpFalse)
-                                            ? t + 5 : t + 4;
-                                    size_t bodyEnd = i - 4;
-                                    std::fprintf(stderr,
-                                        "[SISTA-WHILETRUE-PROBE] "
-                                        "loop_head=%zu loop_tail_jump=%zu "
-                                        "loopTemp=%u limit_litIdx=%u "
-                                        "body_start=%zu body_end=%zu "
-                                        "body_len=%zu method_len=%zu\n",
-                                        t, i, loopTemp,
-                                        (unsigned)(b1 - jit::SistaV1::PushLitConstBase),
-                                        bodyStart, bodyEnd,
-                                        bodyEnd > bodyStart ? bodyEnd - bodyStart : 0,
-                                        len_);
-                                    // Dump body bytes
-                                    std::fprintf(stderr,
-                                        "[SISTA-WHILETRUE-PROBE]   body:");
-                                    for (size_t bi = bodyStart;
-                                         bi < bodyEnd && bi < len_; bi++) {
-                                        std::fprintf(stderr, " %02x",
-                                            bc_[bi]);
+                            if (incrOk) {
+                                size_t bodyStart =
+                                    (b3 == jit::SistaV1::ExtJumpFalse)
+                                        ? t + 5 : t + 4;
+                                size_t bodyEnd = i - 4;
+                                size_t bodyLen = bodyEnd > bodyStart
+                                    ? bodyEnd - bodyStart : 0;
+                                // PRE_LOOP: 3 bytes before t.
+                                bool preLoopOk = false;
+                                size_t preLoopStart = 0;
+                                int countInit = 0;
+                                if (t >= 3) {
+                                    preLoopStart = t - 3;
+                                    uint8_t p0 = bc_[t - 3];
+                                    uint8_t p1 = bc_[t - 2];
+                                    uint8_t p2 = bc_[t - 1];
+                                    // p0 = pushLitConst LIMIT (single
+                                    // byte 0x20-0x3F, same as b1)
+                                    // p1 = pushZero/pushOne
+                                    // p2 = popIntoTemp loopTemp
+                                    if (p0 == b1
+                                        && (p1 == 0x50 || p1 == 0x51)
+                                        && p2 == (uint8_t)(0xD0 + loopTemp)) {
+                                        preLoopOk = true;
+                                        countInit = (p1 == 0x51) ? 1 : 0;
                                     }
-                                    std::fprintf(stderr, "\n");
+                                }
+                                // END pop at i+4.
+                                bool endPopOk = (i + 4 < len_
+                                    && bc_[i + 4] == jit::SistaV1::Pop);
+                                // Body must be canonical 4-byte arith
+                                // shape on a single accum temp.
+                                bool bodyOk = false;
+                                uint32_t accumTemp = 0;
+                                int arithCode = -1;
+                                int constValue = 0;
+                                if (bodyLen == 4 && bodyStart < len_) {
+                                    uint8_t y0 = bc_[bodyStart];
+                                    uint8_t y1 = bc_[bodyStart + 1];
+                                    uint8_t y2 = bc_[bodyStart + 2];
+                                    uint8_t y3 = bc_[bodyStart + 3];
+                                    if (y0 >= jit::SistaV1::PushTempBase
+                                        && y0 <= 0x4B
+                                        && (y1 == 0x50 || y1 == 0x51)
+                                        && (y2 == jit::SistaV1::ArithBase
+                                            || y2 == jit::SistaV1::ArithBase + 1)
+                                        && y3 == (uint8_t)(0xD0 + (y0 - jit::SistaV1::PushTempBase))
+                                        && (y0 - jit::SistaV1::PushTempBase) != (int)loopTemp) {
+                                        bodyOk = true;
+                                        accumTemp = (uint32_t)(y0 - jit::SistaV1::PushTempBase);
+                                        arithCode = (y2 == jit::SistaV1::ArithBase) ? 0 : 1;
+                                        constValue = (y1 == 0x51) ? 1 : 0;
+                                    }
+                                }
+                                if (probeWhileTrue) {
+                                    static int probeCount = 0;
+                                    if (probeCount++ < 32) {
+                                        std::fprintf(stderr,
+                                            "[SISTA-WHILETRUE-PROBE] "
+                                            "preLoop=%zu loopHead=%zu "
+                                            "jumpTo=%zu endPop=%zu "
+                                            "loopTemp=%u limitLitIdx=%u "
+                                            "body_len=%zu preLoopOk=%d "
+                                            "endPopOk=%d bodyOk=%d "
+                                            "method_len=%zu\n",
+                                            preLoopStart, t, i, i + 4,
+                                            loopTemp,
+                                            (unsigned)(b1 - jit::SistaV1::PushLitConstBase),
+                                            bodyLen, preLoopOk ? 1 : 0,
+                                            endPopOk ? 1 : 0, bodyOk ? 1 : 0,
+                                            len_);
+                                        std::fprintf(stderr,
+                                            "[SISTA-WHILETRUE-PROBE]   body:");
+                                        for (size_t bi = bodyStart;
+                                             bi < bodyEnd && bi < len_; bi++) {
+                                            std::fprintf(stderr, " %02x",
+                                                bc_[bi]);
+                                        }
+                                        std::fprintf(stderr, "\n");
+                                    }
+                                }
+                                if (whileTrueSpliceEnabled
+                                    && preLoopOk && endPopOk && bodyOk
+                                    && constValue >= 0 && constValue <= 1
+                                    && arithCode >= 0 && arithCode <= 1
+                                    && countInit >= 0 && countInit <= 1
+                                    && accumTemp <= 0xFF
+                                    && loopTemp <= 0xFF
+                                    && (b1 - jit::SistaV1::PushLitConstBase) <= 0xFF
+                                    && preLoopStart <= 0xFFFFF) {
+                                    uint32_t limitLitIdx =
+                                        (uint32_t)(b1 - jit::SistaV1::PushLitConstBase);
+                                    uint64_t packed =
+                                        ((uint64_t)accumTemp & 0xFF)
+                                      | (((uint64_t)arithCode & 0xF) << 8)
+                                      | (((uint64_t)(uint8_t)constValue & 0xFF) << 12)
+                                      | (((uint64_t)limitLitIdx & 0xFF) << 20)
+                                      | (((uint64_t)loopTemp & 0xFF) << 28)
+                                      | (((uint64_t)(uint8_t)countInit & 0xFF) << 36)
+                                      | (((uint64_t)preLoopStart & 0xFFFFF) << 44);
+                                    // i+4 is the END pop offset; lifter
+                                    // resumes at i+4 (the pop) so sim
+                                    // stack consumer (pop) sees our
+                                    // pushed value.
+                                    WhileTruePatternInfo info;
+                                    info.endOffset = i + 4;
+                                    info.metadata = packed;
+                                    whileTrueAccumPattern_[preLoopStart] = info;
+                                    static int wtCandCount = 0;
+                                    if (wtCandCount++ < 16) {
+                                        std::fprintf(stderr,
+                                            "[SISTA-WHILETRUE-CAND] "
+                                            "preLoop=%zu endPop=%zu "
+                                            "accumT=%u loopT=%u "
+                                            "limitLit=%u arith=%d const=%d "
+                                            "method_len=%zu\n",
+                                            preLoopStart, i + 4,
+                                            accumTemp, loopTemp,
+                                            limitLitIdx, arithCode,
+                                            constValue, len_);
+                                    }
                                 }
                             }
                         }
                     }
                 }
-                // Advance: don't try to step bytecode-by-bytecode
-                // exactly here; just probe every byte.  False positives
-                // are harmless since we only log.
                 i++;
             }
         }
@@ -2603,6 +2694,40 @@ private:
                                 uint32_t* failedAtBytecode) {
         size_t ip = startOffset;
         while (ip < len_) {
+            // 2026-05-01: inlined whileTrue: counter-loop splice.
+            // When the pre-pass identified this offset as the start
+            // of a `n timesRepeat: [accum := accum (+/-) const]` loop,
+            // emit kCountedLoopWhileTrueAccum and skip past the entire
+            // loop bytecode range.  The op produces a placeholder
+            // value (typed Oop) that's pushed to the simulator stack;
+            // the END pop bytecode (which we resume at) consumes it
+            // so the post-loop sim stack matches the pre-pass
+            // expectation.
+            {
+                auto wtIt = whileTrueAccumPattern_.find(ip);
+                if (wtIt != whileTrueAccumPattern_.end()
+                    && pendingExtA_ == 0 && pendingExtB_ == 0) {
+                    uint64_t packed = wtIt->second.metadata;
+                    size_t endOffset = wtIt->second.endOffset;
+                    uint32_t vid = out_.newValue(currentBlock_,
+                                                  Op::kCountedLoopWhileTrueAccum,
+                                                  Type::kOop,
+                                                  std::vector<uint32_t>{},
+                                                  /*literal=*/packed);
+                    recordFramepoint(vid, static_cast<uint32_t>(ip));
+                    stack_.push_back(vid);
+                    static int wtEmitCount = 0;
+                    if (wtEmitCount++ < 16) {
+                        std::fprintf(stderr,
+                            "[SISTA-WHILETRUE-EMIT] preLoop=%zu "
+                            "endPop=%zu vid=%u packed=0x%llx\n",
+                            ip, endOffset, vid,
+                            (unsigned long long)packed);
+                    }
+                    ip = endOffset;
+                    continue;
+                }
+            }
             uint8_t op = bc_[ip];
             uint32_t bcOffset = static_cast<uint32_t>(ip);
             // Diagnostic — track every opcode the lifter sees.
@@ -5266,6 +5391,17 @@ private:
     // lowering to emit pre-load + post-store of the captured slot
     // around the loop.
     std::unordered_map<size_t, uint64_t> doVecCaptureAtPushFullBlock_;
+    // 2026-05-01: inlined whileTrue: counter-loop splice candidates.
+    // Key = pre-loop start offset (where pushLitConst LIMIT begins).
+    // Value: endOffset = the END pop bytecode (lifter resumes there
+    // so the pop consumes our pushed placeholder); metadata = packed
+    // (accumTemp, arithCode, constValue, limitLitIdx, loopTemp,
+    //  countInit, preLoopStart).  See pre-pass.
+    struct WhileTruePatternInfo {
+        size_t endOffset;
+        uint64_t metadata;
+    };
+    std::unordered_map<size_t, WhileTruePatternInfo> whileTrueAccumPattern_;
 };
 
 }  // namespace

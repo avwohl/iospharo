@@ -259,6 +259,31 @@ enum class Op : uint8_t {
     // literal:  block-IR slot (low 32 bits)
     kCountedLoopArrayCollect,
 
+    // Pharo-inlined `n timesRepeat: [outer := outer arith const]`
+    // (and `(start to: stop) do:` with literal bounds).  Pharo's
+    // bytecode compiler inlines these as counted whileTrue: loops with
+    // no Send to #timesRepeat:/#do:, so the splice family above can't
+    // intercept them.  This op replaces the entire inlined-loop
+    // bytecode range when the body is the canonical 4-byte sequence
+    // `pushTemp X, pushOne (or 0), arithBase Y, popTemp X`.  Math
+    // simplifies to `outer = outer (+/-) (limit - countInit + 1) * const`.
+    //
+    // operands: (none — all metadata in literal)
+    // literal:
+    //   bits  0-7   = accumTempIdx (the body's accum temp)
+    //   bits  8-11  = arithCode (0=Add, 1=Sub)
+    //   bits 12-19  = constValue (signed 8-bit; from PushZero/PushOne)
+    //   bits 20-27  = limit_litIdx (literal index of LIMIT in method)
+    //   bits 28-35  = countTempIdx (the loop counter temp)
+    //   bits 36-43  = countInitValue (signed 8-bit, typically 1)
+    //   bits 44-63  = bcOffset of pre-loop start (deopt resume)
+    //
+    // Type::kOop placeholder result; the lifter consumes the entire
+    // pattern bytecode-wise (advancing ip past the post-loop pop), so
+    // no simulator stack effect.  See SistaBuilder pre-pass and the
+    // SistaLowering case for exact bytecode layout.
+    kCountedLoopWhileTrueAccum,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

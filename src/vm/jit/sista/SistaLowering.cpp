@@ -3515,6 +3515,140 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 regFor[v.id] = startReg;
                 break;
             }
+            case Op::kCountedLoopWhileTrueAccum: {
+                // Pharo-inlined `n timesRepeat: [outer arith const]`.
+                // Math: outer = outer + (limit - countInit + 1) * const
+                //       count = limit + 1
+                //
+                // For const ∈ {0, 1} (enforced by pre-pass), this is
+                // ~5 ARM64 instructions — replacing 1M iterations of
+                // ~13 bytecodes each.
+                using namespace asmjit::a64;
+                uint32_t accumTempIdx  = (uint32_t)(v.literal & 0xFF);
+                uint32_t arithCode     = (uint32_t)((v.literal >> 8) & 0xF);
+                int8_t   constValue    = (int8_t)((v.literal >> 12) & 0xFF);
+                uint32_t limitLitIdx   = (uint32_t)((v.literal >> 20) & 0xFF);
+                uint32_t countTempIdx  = (uint32_t)((v.literal >> 28) & 0xFF);
+                int8_t   countInit     = (int8_t)((v.literal >> 36) & 0xFF);
+                uint32_t deoptBC       = (uint32_t)((v.literal >> 44) & 0xFFFFF);
+
+                auto emitDeopt = [&]() {
+                    Gp ipReg = cc.new_gp64("wt_dz_ip");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase) + deoptBC;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm((uint64_t)deoptBC));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argc = cc.new_gp32("wt_dz_argc");
+                    cc.mov(argc, Imm(0));
+                    cc.str(argc, ptr(state, OFF_SENDARGCOUNT));
+                    Gp z64 = cc.new_gp64("wt_dz_zero");
+                    cc.mov(z64, Imm(0));
+                    cc.str(z64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("wt_dz_exit");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                };
+
+                // Read tempBase and literals.
+                Gp tempBase = cc.new_gp64("wt_tb");
+                cc.ldr(tempBase, ptr(state, OFF_TEMPBASE));
+                Gp litBase = cc.new_gp64("wt_lb");
+                cc.ldr(litBase, ptr(state, OFF_LITERALS));
+
+                // Load accum from temp slot.
+                Gp accumReg = cc.new_gp64("wt_acc");
+                cc.ldr(accumReg, ptr(tempBase, (int)accumTempIdx * 8));
+                // Tag-check accum (must be SmI: low 3 bits == 1).
+                Gp tagTest = cc.new_gp64("wt_tag");
+                cc.and_(tagTest, accumReg, Imm(7));
+                cc.cmp(tagTest, Imm(1));
+                Label aOk = cc.new_label();
+                cc.b_eq(aOk);
+                emitDeopt();
+                cc.bind(aOk);
+
+                // Load LIMIT from literals.
+                Gp limitReg = cc.new_gp64("wt_lim");
+                cc.ldr(limitReg, ptr(litBase, (int)limitLitIdx * 8));
+                // Tag-check limit.
+                cc.and_(tagTest, limitReg, Imm(7));
+                cc.cmp(tagTest, Imm(1));
+                Label lOk = cc.new_label();
+                cc.b_eq(lOk);
+                emitDeopt();
+                cc.bind(lOk);
+
+                // iters_oop = limit - encode(countInit) + 1 (in tagged form)
+                //   limit_oop - (countInit-1)*8
+                int64_t adjust = ((int64_t)countInit - 1) * 8;
+                Gp itersOop = cc.new_gp64("wt_it");
+                if (adjust == 0) {
+                    cc.mov(itersOop, limitReg);
+                } else if (adjust > 0 && adjust <= 4095) {
+                    cc.sub(itersOop, limitReg, Imm(adjust));
+                } else if (adjust < 0 && -adjust <= 4095) {
+                    cc.add(itersOop, limitReg, Imm(-adjust));
+                } else {
+                    Gp adj = cc.new_gp64("wt_adj");
+                    cc.mov(adj, Imm((int64_t)adjust));
+                    cc.sub(itersOop, limitReg, adj);
+                }
+
+                // Compute new accum.
+                //   const=0: newAccum = accumReg (no change)
+                //   const=1: newAccum = accumReg ± (itersOop - 1)
+                //     (delta = itersOop - 1 since we want untagged
+                //      iters added to tagged accum: a_tag + iters_unt*8
+                //      = a_unt*8+1 + iters_unt*8 = (a_unt+iters_unt)*8+1)
+                //     iters_unt*8 = itersOop - 1 (since itersOop = iters_unt*8+1)
+                Gp newAccum = cc.new_gp64("wt_new");
+                if (constValue == 0) {
+                    cc.mov(newAccum, accumReg);
+                } else if (constValue == 1) {
+                    if (arithCode == 0) {
+                        // Add: accum + iters_unt*8 = accum + (itersOop - 1)
+                        cc.add(newAccum, accumReg, itersOop);
+                        cc.sub(newAccum, newAccum, Imm(1));
+                    } else {
+                        // Sub: accum - iters_unt*8 = accum - (itersOop - 1)
+                        cc.sub(newAccum, accumReg, itersOop);
+                        cc.add(newAccum, newAccum, Imm(1));
+                    }
+                    // Overflow check: SmI signed range is ±2^60.
+                    // bits[63:60] of newAccum must all be sign-bit.
+                    Gp ovTest = cc.new_gp64("wt_ov");
+                    cc.asr(ovTest, newAccum, Imm(60));
+                    cc.cmp(ovTest, Imm(0));
+                    Label ovOk = cc.new_label();
+                    cc.b_eq(ovOk);
+                    cc.cmn(ovTest, Imm(1));
+                    cc.b_eq(ovOk);
+                    emitDeopt();
+                    cc.bind(ovOk);
+                } else {
+                    // Pre-pass restricts const to {0, 1}.
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+
+                // Store newAccum.
+                cc.str(newAccum, ptr(tempBase, (int)accumTempIdx * 8));
+
+                // Update count temp = limit + 1 = limitOop + 8.
+                Gp newCount = cc.new_gp64("wt_nc");
+                cc.add(newCount, limitReg, Imm(8));
+                cc.str(newCount, ptr(tempBase, (int)countTempIdx * 8));
+
+                // Result value (placeholder for sim-stack pop).  We
+                // bind to limitReg — the END pop discards it.
+                regFor[v.id] = limitReg;
+                break;
+            }
             case Op::kCountedLoopArrayCollect: {
                 // arr collect: [:e | expr] — allocate a fresh Array
                 // of the receiver's size, iterate i = 1..size loading
