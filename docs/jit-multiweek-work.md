@@ -333,9 +333,15 @@ the first non-SmI element and re-runs from scratch.
 
 **What this does NOT unblock (yet):**
 
-- inject:into:, collect:, IV-inject variants.  Same architecture
-  applies; another 2-3 days each.  Will be done as workloads
-  surface.
+- ~~inject:into:~~ — **SHIPPED 2026-05-02 (`57e58631`)** for canonical
+  `[:acc :e | acc OP e]` shape.  Same architecture as do-accum but
+  the canonical block has 6 IR values (INLINE_ARITH adds tag-check
+  side-effects) and the arith op consumes the original kLoadTemp
+  values directly, not the tag-check results.  Mixed-type 1M Float
+  ×5: 738→3ms (245×).  All-SmI 1M ×5 wins 5→2ms from the specialized
+  path bypassing generic block-IR emission.
+- collect:, IV-inject variants.  Same architecture applies; another
+  2-3 days each.  Will be done as workloads surface.
 - Compile-time splice rejections (multi-block IR, non-simple block op,
   numCopied > 1).  These are pre-pass rejections that never enter
   the loop, so the runtime helper doesn't help.  Separate work.
