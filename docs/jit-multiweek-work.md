@@ -340,8 +340,16 @@ the first non-SmI element and re-runs from scratch.
   values directly, not the tag-check results.  Mixed-type 1M Float
   ×5: 738→3ms (245×).  All-SmI 1M ×5 wins 5→2ms from the specialized
   path bypassing generic block-IR emission.
-- collect:, IV-inject variants.  Same architecture applies; another
-  2-3 days each.  Will be done as workloads surface.
+- ~~collect:~~ — **SHIPPED 2026-05-02 (`3614f42c`)** for canonical
+  `[:e | e OP <SmI const>]` shape.  5-IR-value canonical (const is
+  type=kOopSmallInt so only e gets a tag check).  Twist vs do-accum:
+  result Array is partially populated by compiled code before the
+  helper fires; helper continues populating from startIdx.  Per-iter
+  writes go through storePointerUnchecked for GC barrier on heap
+  results.  Mixed-type 1M ×3: 458→1ms (458×).
+- IV-inject variant.  Same architecture; iteration SmI by construction
+  so per-iter miss is purely accumulator-type.  Deferred until
+  workload surfaces.
 - Compile-time splice rejections (multi-block IR, non-simple block op,
   numCopied > 1).  These are pre-pass rejections that never enter
   the loop, so the runtime helper doesn't help.  Separate work.
