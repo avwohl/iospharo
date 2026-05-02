@@ -151,7 +151,14 @@ DNU breaks the bench-suite before runBlock runs).
 
 ---
 
-## 5. J2J-only callee recompile triggering
+## 5. J2J-only callee recompile triggering — **DONE 2026-05-02** (`9572b019`)
+
+Past three attempts hit the splice race; the working design is bump-only
+in the inline path + dual splice gate + safe-point recompile drain.
+`benchFib` now recompiles (was stuck tier=1 forever).  fib(28) -6%,
+sieve -4-6%, others within variance.  `memory/project_j2j_inline_bump_drain_2026_05_02.md`.
+
+
 
 **What:** methods that are only called via the J2J fast path
 (`stencil_sendJ2J`'s direct-call site) bypass `tryExecute` and
@@ -278,17 +285,14 @@ If picking ONE for a focused multi-week session:
   remaining bench-suite gap (after #9: 1M getter+yourself 20ms vs Cog 3ms).
   Also the most work.
 
-- **Best ratio:** #5 (J2J-only callee recompile).  2-3 weeks for
-  ~30-50% on block-heavy workloads.  Past attempts hit specific bugs
-  that have known fix shapes.
-
 - **Speculative:** #7 (T1/T2 interaction).  Don't start unless a
   measured workload shows T2 beating T1 — currently none does.
 
-Items #4, #6, #9 shipped 2026-05-01 (commits `5448b564`, `d5332e48`).
-Items #1, #3, #8 are alternative paths to similar outcomes.  #1
-unblocks default-on of an existing opt-in.  #3 unblocks more splices.
-#8 is the cleanest long-term direction but the highest cost.
+Items #4, #5, #6, #9 shipped 2026-05-01..02 (commits `5448b564`,
+`d5332e48`, `9572b019`).  Items #1, #3, #8 are alternative paths to
+similar outcomes.  #1 unblocks default-on of an existing opt-in.
+#3 unblocks more splices.  #8 is the cleanest long-term direction
+but the highest cost.
 
 ---
 
