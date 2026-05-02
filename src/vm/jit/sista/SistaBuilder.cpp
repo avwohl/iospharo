@@ -1382,9 +1382,14 @@ public:
         // The main lift's Send1 arm intercepts and emits
         // kCountedLoopArrayCollect.
         //
-        // Gated under PHARO_SISTA_COLLECT=1 in addition to PHARO_SISTA_DO_SPLICE.
+        // Default-on (2026-05-02): PHARO_NO_SISTA_COLLECT=1 disables.
+        // 10-run bench-suite soak under COLLECT=1 was 10/10 clean, within
+        // ±1 ms of default-flag baseline.  Real-world synthetic
+        // (`(1 to: 100000) asArray collect: [:e | e + 1]` ×5) collapses
+        // 53 ms → 0 ms.  Outer gate PHARO_NO_SISTA_DO_SPLICE still
+        // applies (collect uses inject:into: infrastructure as well).
         static const bool collectSplice =
-            std::getenv("PHARO_SISTA_COLLECT") != nullptr;
+            std::getenv("PHARO_NO_SISTA_COLLECT") == nullptr;
         if (collectSplice && injectSplice && memory_ != nullptr
             && collectSelectorMask_) {
             size_t i = 0;
