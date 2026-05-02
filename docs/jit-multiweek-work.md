@@ -286,6 +286,50 @@ that survives mid-iteration unwind.  Specifically unblocks blocks
 that contain conditional sends (e.g. `[:e | e foo ifTrue: [...] ifFalse: [...]]`)
 where today the splice rejects "multi-block IR".
 
+**2026-05-02 status — payoff narrowed.**  After today's HELPER_SENDS
+fix (`31f1c640`) and Phase 6 win (`aa6eaf97`), the bench-suite census
+of splice rejections is small:
+
+```
+13 reject=no hints provided     (would benefit from IC warmup)
+ 6 reject=non-simple block op   (deopt-with-resume target)
+ 5 reject=multi-block IR        (deopt-with-resume target)
+ 3 reject=numCopied > 1         (multi-capture, harder)
+```
+
+The ~11 candidates that deopt-with-resume could unblock are mostly
+inject:into: variants in non-bench code paths.  None correspond to
+hot bench-suite methods.  The remaining bench gaps (sort 100K, dict
+50K, fib 28) come from block-dispatch in callee Smalltalk methods
+(Array>>sort:, Dictionary>>at:put:, `+` recursion in benchFib) —
+NOT blocked by splice rejection.
+
+**Concrete implementation path** (when a bench target emerges):
+
+The cleanest first form is "deopt-to-completion-helper" rather than
+true mid-iter resume.  Add `jit_rt_sista_complete_array_do_accum(
+state, arr, blockOop, vec, slot, startIdx, accum, arithCode)` that
+loops `i = startIdx..size`, fetches `arr[i]`, applies the block
+operation, and stores back to `vec[slot]`.  The splice's deopt path
+calls this helper with the partial accumulator and current iter
+index instead of bailing to PushFullBlock.
+
+This avoids the wasted-work problem (iters 0..N-1 don't re-execute)
+without needing per-bytecode framepoints or interp-side resume.
+Estimated 2-3 days for the do-accum variant.  Generalizing to
+inject:into:, collect:, IV-inject is another 2-3 days each.
+
+**Why this is parked instead of done now:** zero current bench
+benefit.  All today's hot-loop benches use the math-shortcut path
+(no actual iteration in compiled code), so the deopt path never
+fires.  Only mixed-type arrays (e.g., `#(1 2.0 3 4) do: ...`) would
+exercise the deopt; those aren't bench-targets.
+
+**When to pick this back up:** if a real workload (Pharo IDE, Roassal
+graph, FFI batch) shows splice-rejection patterns dominating, or if
+sort/dict/fib benchmarks get to a point where their remaining gap
+is in splice deopts rather than callee dispatch.
+
 **Estimate:**  3-4 weeks.  Per-iter framepoint is the bulk of work.
 Interp-side resume is a smaller patch.
 
