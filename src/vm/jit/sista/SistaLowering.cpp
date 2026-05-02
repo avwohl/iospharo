@@ -32,6 +32,9 @@ extern "C" uint64_t jit_rt_sista_basic_at(void* state,
 extern "C" uint64_t jit_rt_sista_call_send(void* state,
                                              uint64_t selBits,
                                              uint64_t nArgs);
+extern "C" uint64_t jit_rt_sista_special_call_send(void* state,
+                                                    uint64_t ssIdx,
+                                                    uint64_t nArgs);
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
@@ -1064,6 +1067,116 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(zero64, Imm(0));
                     cc.str(zero64, ptr(state, OFF_ICDATAPTR));
                     Gp exitR = cc.new_gp32("send_exit_dz");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kSendCallHelperSpecial: {
+                // Same as kSendCallHelper but the selector lives in
+                // SpecialSelectorsArray rather than method literals.
+                // Helper is jit_rt_sista_special_call_send(state, ssIdx,
+                // nArgs) — resolves the selector at runtime.
+                if (v.operands.empty()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                uint32_t ssIdx    = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                uint32_t nArgs    = (uint32_t)((v.literal >> 32) & 0xFFFFu);
+                uint32_t bcOffset = (uint32_t)((v.literal >> 48) & 0xFFFFu);
+
+                Gp sp = cc.new_gp64("ssend_sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                for (size_t opIdx = 0; opIdx < v.operands.size(); opIdx++) {
+                    auto opIt = regFor.find(v.operands[opIdx]);
+                    if (opIt == regFor.end()) {
+                        if (failedAtValue) *failedAtValue = v.id;
+                        return nullptr;
+                    }
+                    cc.str(opIt->second,
+                           ptr(sp, static_cast<int>(opIdx) * 8));
+                }
+                cc.add(sp, sp, Imm(static_cast<int>(v.operands.size()) * 8));
+                cc.str(sp, ptr(state, OFF_SP));
+
+                Gp ssIdxReg = cc.new_gp64("ssIdx");
+                cc.mov(ssIdxReg, Imm((uint64_t)ssIdx));
+                Gp nArgsReg = cc.new_gp64("ssNArgs");
+                cc.mov(nArgsReg, Imm((uint64_t)nArgs));
+
+                Gp fnReg = cc.new_gp64("specSendHelper");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_special_call_send));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    std::fprintf(stderr,
+                        "[SISTA-INVOKE-ERR] kSendCallHelperSpecial err=%u\n",
+                        (unsigned)invErr);
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, ssIdxReg);
+                invokeNode->set_arg(2, nArgsReg);
+                Gp dst = cc.new_gp64("ssendResult");
+                invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero — same as kSendCallHelper.
+                const std::vector<uint32_t>* fpStack = nullptr;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        fpStack = &fp.stackValueIds;
+                        break;
+                    }
+                }
+                Label noDeopt = cc.new_label();
+                cc.cbnz(dst, noDeopt);
+                {
+                    Gp sp2 = cc.new_gp64("ssend_sp_dz");
+                    cc.ldr(sp2, ptr(state, OFF_SP));
+                    cc.sub(sp2, sp2,
+                           Imm(static_cast<int>(v.operands.size()) * 8));
+                    const std::vector<uint32_t>& flushIds =
+                        fpStack ? *fpStack : v.operands;
+                    for (size_t opIdx = 0;
+                         opIdx < flushIds.size(); opIdx++) {
+                        auto opIt = regFor.find(flushIds[opIdx]);
+                        if (opIt == regFor.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.str(opIt->second,
+                               ptr(sp2,
+                                   static_cast<int>(opIdx) * 8));
+                    }
+                    cc.add(sp2, sp2,
+                           Imm(static_cast<int>(flushIds.size()) * 8));
+                    cc.str(sp2, ptr(state, OFF_SP));
+
+                    Gp ipReg = cc.new_gp64("ssend_ip_dz");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOffset;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOffset));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argCountReg = cc.new_gp32("ssend_argc_dz");
+                    cc.mov(argCountReg, Imm(nArgs));
+                    cc.str(argCountReg, ptr(state, OFF_SENDARGCOUNT));
+                    Gp zero64 = cc.new_gp64("ssend_zero_dz");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("ssend_exit_dz");
                     cc.mov(exitR, Imm(EXIT_SEND));
                     cc.str(exitR, ptr(state, OFF_EXIT));
                     cc.ret();
@@ -3547,6 +3660,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 int8_t   countInit     = (int8_t)((v.literal >> 36) & 0xFF);
                 uint32_t deoptBC       = (uint32_t)((v.literal >> 44) & 0xFFFF);
                 bool     isSeries      = (bool)((v.literal >> 60) & 1);
+                // 2026-05-02 Phase 6: bit 61 marks the "no-accum"
+                // shape — body has no canonical arith, so the splice's
+                // pre-loop hasn't yet initialized accumTemp.  In that
+                // case skip the tag-check + load of accumTemp and
+                // compute count_final = limit + 1 directly.  The
+                // accumTemp slot is the loop counter (== loopTemp);
+                // writing limit+1 there matches the natural exit
+                // value of the timesRepeat counter.
+                bool     isNoAccum     = (bool)((v.literal >> 61) & 1);
+                (void)isNoAccum;
 
                 auto emitDeopt = [&]() {
                     Gp ipReg = cc.new_gp64("wt_dz_ip");
@@ -3576,17 +3699,31 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Gp litBase = cc.new_gp64("wt_lb");
                 cc.ldr(litBase, ptr(state, OFF_LITERALS));
 
-                // Load accum from temp slot.
+                // Load accum from temp slot.  In the no-accum case
+                // (Phase 6 body-triplet shape), the accumTemp slot
+                // hasn't been initialized yet by the pre-loop because
+                // the math splice replaces the entire loop bytecode
+                // range (including the pre-loop init).  Skip the
+                // load + tag check and synthesize accum_init from the
+                // countInit constant — math computes accum_final
+                // directly from there.
                 Gp accumReg = cc.new_gp64("wt_acc");
-                cc.ldr(accumReg, ptr(tempBase, (int)accumTempIdx * 8));
-                // Tag-check accum (must be SmI: low 3 bits == 1).
                 Gp tagTest = cc.new_gp64("wt_tag");
-                cc.and_(tagTest, accumReg, Imm(7));
-                cc.cmp(tagTest, Imm(1));
-                Label aOk = cc.new_label();
-                cc.b_eq(aOk);
-                emitDeopt();
-                cc.bind(aOk);
+                if (isNoAccum) {
+                    // Tagged SmI(countInit) = (countInit << 3) | 1.
+                    uint64_t accumInitOop =
+                        ((uint64_t)((int64_t)countInit) << 3) | 1ULL;
+                    cc.mov(accumReg, Imm(accumInitOop));
+                } else {
+                    cc.ldr(accumReg, ptr(tempBase, (int)accumTempIdx * 8));
+                    // Tag-check accum (must be SmI: low 3 bits == 1).
+                    cc.and_(tagTest, accumReg, Imm(7));
+                    cc.cmp(tagTest, Imm(1));
+                    Label aOk = cc.new_label();
+                    cc.b_eq(aOk);
+                    emitDeopt();
+                    cc.bind(aOk);
+                }
 
                 // Load LIMIT from literals.
                 Gp limitReg = cc.new_gp64("wt_lim");

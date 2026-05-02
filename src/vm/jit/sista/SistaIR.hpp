@@ -305,6 +305,19 @@ enum class Op : uint8_t {
     //     (more kinds added as recognizers extend)
     kCountedLoopBodyExec,
 
+    // SpecialSend variant of kSendCallHelper.  Same operand layout
+    // [rcvr, arg0, ..., arg_{n-1}], same deopt + framepoint
+    // semantics, but the selector lives in the global
+    // SpecialSelectorsArray rather than in method literals.  Lowering
+    // routes through `jit_rt_sista_special_call_send(state, ssIdx,
+    // nArgs)` which resolves the selector at runtime.
+    //
+    // literal layout (matches kSendCallHelper):
+    //   bits  0-31 = ssIdx (0-15, the bytecode-relative special index)
+    //   bits 32-47 = nArgs
+    //   bits 48-63 = bcOffset (deopt resume)
+    kSendCallHelperSpecial,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

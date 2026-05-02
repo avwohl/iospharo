@@ -1180,6 +1180,30 @@ extern "C" uint64_t jit_rt_sista_call_send(JITState* state,
     return state->interp->jitSistaCallSend(state, selBits, nArgs);
 }
 
+// SpecialSend (0x70-0x7F) variant of the helper-send.  Selector lives
+// in the global SpecialSelectorsArray, slot (ssIdx + 16) * 2.
+// Resolves the selector once per call and routes through the same
+// jitSistaCallSend path.  Lets Sista lift past SpecialSends for the
+// Phase 6 body-triplet splice (which needs to reach preLoopStart even
+// when the prologue has SpecialSend sends like `OC new`).
+extern "C" uint64_t jit_rt_sista_special_call_send(JITState* state,
+                                                    uint64_t ssIdx,
+                                                    uint64_t nArgs) {
+    if (!state || !state->interp || !state->memory) return 0;
+    static const bool forceBail =
+        std::getenv("PHARO_SISTA_HELPER_FORCE_BAIL") != nullptr;
+    if (forceBail) return 0;
+    Oop ssArrayOop = state->memory->specialObject(
+        SpecialObjectIndex::SpecialSelectorsArray);
+    if (!ssArrayOop.isObject() || ssArrayOop.rawBits() < 0x10000) return 0;
+    ObjectHeader* ssHdr = ssArrayOop.asObjectPtr();
+    size_t selSlot = (size_t)(ssIdx + 16) * 2;
+    if (selSlot >= ssHdr->slotCount()) return 0;
+    Oop sel = ssHdr->slotAt(selSlot);
+    if (sel.isNil()) return 0;
+    return state->interp->jitSistaCallSend(state, sel.rawBits(), nArgs);
+}
+
 // kStoreInstVar lowering helper: write a value into a heap object's
 // instance-variable slot with the safety guards setReceiverInstVar
 // uses.  Returns 1 on success, 0 if the store was refused (non-object

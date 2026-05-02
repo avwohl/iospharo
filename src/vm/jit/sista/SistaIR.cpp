@@ -68,6 +68,7 @@ bool producesOop(Op op) {
     case Op::kCountedLoopArrayCollect:
     case Op::kCountedLoopWhileTrueAccum:
     case Op::kCountedLoopBodyExec:
+    case Op::kSendCallHelperSpecial:
     case Op::kAllocArray:
     case Op::kInterval:
     case Op::kPhi:
@@ -81,6 +82,7 @@ bool mayCallBack(Op op) {
     switch (op) {
     case Op::kSendUnspeculated:
     case Op::kSendCallHelper:    // helper drives sub-interp loop
+    case Op::kSendCallHelperSpecial:  // same, SpecialSelectorsArray variant
     case Op::kGuardClass:       // miss deopts
     case Op::kInlineSend:       // nested send
     case Op::kBlockValue:
@@ -164,6 +166,7 @@ const char* name(Op op) {
     case Op::kCountedLoopArrayCollect: return "counted_loop_arr_collect";
     case Op::kCountedLoopWhileTrueAccum: return "counted_loop_whiletrue_accum";
     case Op::kCountedLoopBodyExec:       return "counted_loop_body_exec";
+    case Op::kSendCallHelperSpecial:     return "send_helper_special";
     case Op::kInterval:         return "interval";
     case Op::kPhi:              return "phi";
     case Op::kFrameState:       return "frame_state";

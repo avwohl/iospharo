@@ -2457,11 +2457,25 @@ public:
                                                                     Oop cls = bhdr->slotAt(1);
                                                                     if (cls.isObject()
                                                                         && cls.rawBits() > 0x10000) {
-                                                                        sendIsElidable = true;
-                                                                        sendNeedsClassGuard = true;
-                                                                        if (bodyGuardClassOop == 0) {
-                                                                            bodyGuardClassOop = cls.rawBits();
-                                                                            bodyGuardBcOffset = hintBc;
+                                                                        // Match IC-hint
+                                                                        // convention: store
+                                                                        // classIndex (the
+                                                                        // 22-bit Spur key),
+                                                                        // not the class
+                                                                        // Oop's raw bits.
+                                                                        // kGuardClass
+                                                                        // compares against
+                                                                        // the receiver's
+                                                                        // header.classIndex.
+                                                                        uint32_t clsIdx =
+                                                                            memory_->indexOfClass(cls);
+                                                                        if (clsIdx != 0) {
+                                                                            sendIsElidable = true;
+                                                                            sendNeedsClassGuard = true;
+                                                                            if (bodyGuardClassOop == 0) {
+                                                                                bodyGuardClassOop = (uint64_t)clsIdx;
+                                                                                bodyGuardBcOffset = hintBc;
+                                                                            }
                                                                         }
                                                                     }
                                                                 }
@@ -2511,10 +2525,12 @@ public:
                                 // arith=+: post-loop value is limit+1
                                 // which matches the natural exit value
                                 // of the timesRepeat counter.
+                                bool bodyShapeIsNoAccum = false;
                                 if (bodyArithLen == 0
                                     && bodySkippedTriplets > 0
                                     && bodyTempIdx >= 0) {
                                     bodyOk = true;
+                                    bodyShapeIsNoAccum = true;
                                     accumTemp = loopTemp;
                                     arithCode = 0;     // Add
                                     constValue = 1;
@@ -2598,7 +2614,8 @@ public:
                                       | (((uint64_t)loopTemp & 0xFF) << 28)
                                       | (((uint64_t)(uint8_t)countInit & 0xFF) << 36)
                                       | (((uint64_t)preLoopStart & 0xFFFF) << 44)
-                                      | ((uint64_t)(bodyShapeIsSeries ? 1 : 0) << 60);
+                                      | ((uint64_t)(bodyShapeIsSeries ? 1 : 0) << 60)
+                                      | ((uint64_t)(bodyShapeIsNoAccum ? 1 : 0) << 61);
                                     // i+4 is the END pop offset; lifter
                                     // resumes at i+4 (the pop) so sim
                                     // stack consumer (pop) sees our
@@ -4033,11 +4050,73 @@ private:
                     return LiftResult::kMalformedMethod;
                 }
                 detectDoBlockPattern(nArgs, bcOffset);
-                // Selector literal index encoded as special-selector
-                // marker: we use the opcode as selIdx (unused in the
-                // bail path since the interpreter dispatches via the
-                // bytecode directly).  Flush entire IR stack so
-                // pre-send values aren't lost (see Send0/1/2 note).
+
+                // Phase 6 helper-sends extension: when HELPER_SENDS=1
+                // is on and this method has splice candidates that
+                // need the lift to continue past prologue sends, emit
+                // kSendCallHelperSpecial (helper resolves the
+                // SpecialSelector at runtime) and keep lifting.
+                // Mirrors the Send0/1/2 helper-emit path below.
+                static const bool helperSends = []() {
+                    return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
+                           == nullptr;
+                }();
+                bool hasSpliceCandidate =
+                    !spliceAtPushFullBlock_.empty()
+                 || !spliceAccumAtPushFullBlock_.empty()
+                 || !spliceCollectAtPushFullBlock_.empty()
+                 || !spliceInjectAtPushFullBlock_.empty()
+                 || !spliceDoAtPushFullBlock_.empty()
+                 || !spliceIvDoAccumAtPushFullBlock_.empty()
+                 || !intervalDoAtTo_.empty()
+                 || !intervalDoAccumAtTo_.empty()
+                 || !intervalInjectAtTo_.empty()
+                 || !whileTrueAccumPattern_.empty();
+                bool methodIsShort = (len_ < 100);
+                bool classIsHelperSafe =
+                    sistaClassIsHelperSafe(methodClassName_);
+                if (helperSends && hasSpliceCandidate && methodIsShort
+                    && classIsHelperSafe) {
+                    static int specHelperEmitCount = 0;
+                    if (specHelperEmitCount++ < 16) {
+                        std::fprintf(stderr,
+                            "[SISTA-SPEC-HELPER-EMIT] class=%s "
+                            "ssIdx=%u nArgs=%u bcOff=%u\n",
+                            methodClassName_.c_str(), ssIdx, nArgs,
+                            bcOffset);
+                    }
+                    // Snapshot full deopt stack before popping
+                    // operands.
+                    std::vector<uint32_t> deoptStack = stack_;
+                    std::vector<uint32_t> sendOps;
+                    sendOps.reserve(nArgs + 1);
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        sendOps.push_back(
+                            stack_[stack_.size() - nArgs - 1 + i]);
+                    }
+                    for (uint32_t i = 0; i < nArgs + 1; i++) {
+                        stack_.pop_back();
+                    }
+                    uint64_t lit =
+                        static_cast<uint64_t>(ssIdx)
+                      | (static_cast<uint64_t>(nArgs)    << 32)
+                      | (static_cast<uint64_t>(bcOffset) << 48);
+                    uint32_t vid = out_.newValue(currentBlock_,
+                                                  Op::kSendCallHelperSpecial,
+                                                  Type::kOop,
+                                                  std::move(sendOps),
+                                                  lit);
+                    out_.framepoints.push_back({
+                        vid,
+                        static_cast<uint16_t>(bcOffset),
+                        std::move(deoptStack),
+                    });
+                    stack_.push_back(vid);
+                    ip++;  // SpecialSend is 1 byte.
+                    continue;
+                }
+
+                // Default path: bail-and-exit, same as before.
                 std::vector<uint32_t> ops(stack_.begin(), stack_.end());
                 stack_.clear();
                 uint64_t lit = (uint64_t)op
