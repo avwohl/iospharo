@@ -2287,16 +2287,28 @@ public:
                                     uint8_t p0 = bc_[t - 3];
                                     uint8_t p1 = bc_[t - 2];
                                     uint8_t p2 = bc_[t - 1];
-                                    // p0 = pushLitConst LIMIT (single
-                                    // byte 0x20-0x3F, same as b1)
-                                    // p1 = pushZero/pushOne
-                                    // p2 = popIntoTemp loopTemp
+                                    // timesRepeat:-style:
+                                    //   pushLitConst LIMIT, pushOne,
+                                    //   popIntoTemp loopT.  Leftover
+                                    //   on stack: LIMIT.
                                     if (p0 == b1
                                         && (p1 == 0x50 || p1 == 0x51)
                                         && p2 == (uint8_t)(0xD0 + loopTemp)) {
                                         preLoopOk = true;
                                         countInit = (p1 == 0x51) ? 1 : 0;
                                     }
+                                    // to:do:-style attempt 2026-05-01
+                                    // (pushOne + ExtStoreIntoTemp) was
+                                    // tested and rolled back: the
+                                    // recognizer false-positived on
+                                    // forEachIv (Interval do:) and
+                                    // produced 4ms → 1087ms regression.
+                                    // The leftover-on-stack semantics
+                                    // differ between to:do: (countInit
+                                    // left) and timesRepeat: (LIMIT
+                                    // left), so the IR op's deopt-stack
+                                    // assumption (push back the limit)
+                                    // doesn't match for to:do:.
                                 }
                                 // END pop at i+4.
                                 bool endPopOk = (i + 4 < len_
