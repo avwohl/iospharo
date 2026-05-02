@@ -1267,12 +1267,26 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         static const bool calleeBumpDisabled =
             std::getenv("PHARO_NO_J2J_CALLEE_BUMP") != nullptr;
         if (!calleeBumpDisabled) {
+            // Note: this code path is rarely reached.  stencil_sendJ2J's
+            // INLINE j2j_direct_call (stencils.cpp line 1569+) is the hot
+            // path and does save/BLR/restore directly.  jit_rt_j2j_call
+            // (this function) is a fallback for the few callers that need
+            // it — ~0.0006% of J2J calls in bench-suite runs (84/15M).
+            // So the bump here only catches a tiny minority of J2J calls.
+            // To recompile hot J2J-only callees (benchFib, Array>>do:),
+            // would need to bump from inside the inline path — but past
+            // attempts hit the splice race (see comment at line 1600 in
+            // stencils.cpp) and project_j2j_callee_bump_2026_05_02.md.
             JITMethod* callee = reinterpret_cast<JITMethod*>(
                 entryAddr - sizeof(JITMethod));
             if (callee->stats && !callee->isSpliceTarget
                 && callee->tier == 1 && callee->numICEntries > 0) {
                 uint32_t newCount = ++(callee->stats->executionCount);
-                if (newCount == (uint32_t)g_debug.recompileAt) {
+                // Use >= to handle the race where noteMethodEntry +
+                // this bump both increment (skipping the threshold).
+                // tier==1 guarantees recompile fires at most once
+                // (recompile sets tier=2).
+                if (newCount >= (uint32_t)g_debug.recompileAt) {
                     Oop calleeMethod =
                         Oop::fromRawBits(callee->compiledMethodOop);
                     interp->jitRuntime().maybeRecompileForOSR(calleeMethod);
