@@ -3914,7 +3914,8 @@ private:
                  || !spliceIvDoAccumAtPushFullBlock_.empty()
                  || !intervalDoAtTo_.empty()
                  || !intervalDoAccumAtTo_.empty()
-                 || !intervalInjectAtTo_.empty();
+                 || !intervalInjectAtTo_.empty()
+                 || !whileTrueAccumPattern_.empty();
                 // Narrow further: only short methods.  runSum is ~30
                 // bytecodes; UI methods like WorldState>>drawWorld: are
                 // hundreds.  Long methods exercise splice + helper-sends
@@ -5544,6 +5545,23 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
     static const bool injectIntoSplice =
         std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
+    // 2026-05-01 diagnostic: dump bench method bytecodes to trace
+    // what shape Pharo emits for inlined timesRepeat:.  Gated.
+    if (std::getenv("PHARO_SISTA_DUMP_BENCH") != nullptr) {
+        std::string sel = memory.selectorOf(compiledMethod);
+        if (sel == "runBlock" || sel == "runInstVar"
+            || sel == "runFibonacci" || sel == "runFactorial"
+            || sel == "runSum") {
+            std::fprintf(stderr,
+                "[SISTA-BENCH-DUMP] method=#%s numLits=%u bcLen=%zu\n",
+                sel.c_str(), numLiterals, bytecodeSize);
+            std::fprintf(stderr, "[SISTA-BENCH-DUMP]   bc:");
+            for (size_t i = 0; i < bytecodeSize; i++) {
+                std::fprintf(stderr, " %02x", bytecodes[i]);
+            }
+            std::fprintf(stderr, "\n");
+        }
+    }
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
     uint16_t collectMask = 0;
