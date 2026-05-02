@@ -1603,6 +1603,14 @@ j2j_direct_call:
             // splice runtime path triggers regression.  The flag and
             // JM_IS_SPLICE constant remain in the codebase for future
             // structural fixes (Sista deopt-with-resume).
+            //
+            // 2026-05-02 measurement: bump-only (no recompile trigger)
+            // experiment with DUAL splice gate (caller + callee) ran
+            // benches with no measurable regression — the per-call
+            // gate is cheap enough.  But bump-only without recompile
+            // trigger is useless.  Adding a safe-point recompile drain
+            // (track "needs recompile" methods, drain at yield/period)
+            // is multi-day work.  Reverted for now.
             // Setup callee
             Oop _calleeRecv = s->sp[-(nArgs + 1)];
             Oop* _fp = s->sp - (nArgs + 1);
