@@ -299,8 +299,8 @@ than waiting for full-method compilation thresholds.
 If picking ONE for a focused multi-week session:
 
 - **Biggest payoff:** #2 (Phase 6 block inlining).  Closes the largest
-  remaining bench-suite gap (after #9: 1M getter+yourself 20ms vs Cog 3ms).
-  Also the most work.
+  remaining bench-suite gap (after #9: 1M getter+yourself 16-19ms vs
+  Cog 3ms).  Also the most work.
 
 - **Speculative:** #7 (T1/T2 interaction).  Don't start unless a
   measured workload shows T2 beating T1 — currently none does.
@@ -310,6 +310,27 @@ Items #4, #5, #6, #9 shipped 2026-05-01..02 (commits `5448b564`,
 similar outcomes.  #1 unblocks default-on of an existing opt-in.
 #3 unblocks more splices.  #8 is the cleanest long-term direction
 but the highest cost.
+
+**Bench-suite snapshot (2026-05-02, post-session, best-of-20):**
+
+```
+                  Ours    Cog    Ratio
+fib(28) ms        15      6      2.5×
+sieve x100 ms     44      ?      ?
+sort 100K ms      210     60     3.5×
+dict 50K ms       155     50     3×
+sum 1M ms         99      5      20×    ← needs HELPER_SENDS / Phase 6
+factorial 5K ms   21      27     0.78× (we win)
+1M blocks ms      12      1      12×    ← needs Phase 6
+1M getter ms      16      3      5.3×   ← was 33×, now 5.3× after multi-slot
+100K alloc ms     4       ?      ?
+```
+
+The `factorial` bench beats Cog already (we use LargeInteger primitives
+that are tuned for our VM).  `1M getter+yourself` was a 33× gap and is
+now 5.3× after multi-slot (item #9).  `sum 1M`, `1M blocks`, and the
+3× gaps on sort/dict/fib all need block-dispatch / HELPER_SENDS work —
+multi-week structural items.
 
 ---
 
