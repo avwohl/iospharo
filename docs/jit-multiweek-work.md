@@ -449,26 +449,29 @@ similar outcomes.  #1 unblocks default-on of an existing opt-in.
 #3 unblocks more splices.  #8 is the cleanest long-term direction
 but the highest cost.
 
-**Bench-suite snapshot (2026-05-02, post-session, best-of-20):**
+**Bench-suite snapshot (2026-05-02, post-Phase-6-win, best-of-5):**
 
 ```
-                  Ours    Cog    Ratio
+                  Ours    Cog    Ratio   Notes
 fib(28) ms        15      6      2.5×
-sieve x100 ms     44      ?      ?
-sort 100K ms      210     60     3.5×
-dict 50K ms       155     50     3×
-sum 1M ms         99      5      20×    ← needs HELPER_SENDS / Phase 6
-factorial 5K ms   21      27     0.78× (we win)
-1M blocks ms      12      1      12×    ← needs Phase 6
-1M getter ms      16      3      5.3×   ← was 33×, now 5.3× after multi-slot
-100K alloc ms     4       ?      ?
+sieve x100 ms     45      ?      ?
+sort 100K ms      217     60     3.6×
+dict 50K ms       157     50     3.1×
+sum 1M ms         102     5      20×    HELPER_SENDS step()=false in to:
+factorial 5K ms   23      27     0.85×  (we win)
+1M blocks ms      0       1      0×     (we win — math splice)
+1M getter ms      0†      3      0×     (we win — Phase 6 INLINE_YOURSELF=1)
+100K alloc ms     5       ?      ?
 ```
 
-The `factorial` bench beats Cog already (we use LargeInteger primitives
-that are tuned for our VM).  `1M getter+yourself` was a 33× gap and is
-now 5.3× after multi-slot (item #9).  `sum 1M`, `1M blocks`, and the
-3× gaps on sort/dict/fib all need block-dispatch / HELPER_SENDS work —
-multi-week structural items.
+† PHARO_SISTA_INLINE_YOURSELF=1 opt-in.  Default is 19-21 ms.
+
+The `factorial`, `1M blocks`, and `1M getter+yourself` benches all
+beat Cog (with the opt-in).  `sum 1M`, `sort`, `dict`, and `fib`
+remain.  All four want block-body inlining at hot send sites — full
+Phase 6 generalization — which is multi-week.  `sum 1M` specifically
+is blocked by the helper-sends step()=false-on-relinquish issue
+(item #1's deeper architectural rework).
 
 ---
 
