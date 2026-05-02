@@ -163,6 +163,13 @@ struct ClearOuterHints {
     ~ClearOuterHints() { g_currentBuildHints = saved; }
 };
 
+// Item #6 helper: returns true if HELPER_SENDS-style activation is
+// SAFE for methods of this class.  Skips UI/system classes whose
+// short methods produce DNU cascades when their blocks splice
+// (documented in project_helper_sends_gate.md).  Forward-declared
+// here; defined after LinearLifter class.
+static bool sistaClassIsHelperSafe(const std::string& className);
+
 class LinearLifter {
 public:
     LinearLifter(const uint8_t* bc, size_t len,
@@ -228,6 +235,14 @@ public:
     // B2 splice (collect: variant): bitmap of literals that hold #collect:.
     void setCollectSelectorBitmap(uint16_t mask) {
         collectSelectorMask_ = mask;
+    }
+
+    // Item #6 (class-based HELPER_SENDS gate): name of the defining
+    // class for the method being lifted.  Used to skip UI/system
+    // classes from HELPER_SENDS activation.  Empty string = unknown
+    // (treat as helper-unsafe, conservative).
+    void setMethodClassName(std::string name) {
+        methodClassName_ = std::move(name);
     }
 
     // Phase 3 deopt: when set, builder emits kPrimTagCheckInt
@@ -3925,7 +3940,28 @@ private:
                 // empirical: keeps the win for runSum/sumArr/etc.,
                 // skips most UI/system code.
                 bool methodIsShort = (len_ < 100);
-                if (helperSends && hasSpliceCandidate && methodIsShort) {
+                // Item #6 (class-based gate, 2026-05-01): also skip
+                // UI/system classes whose short methods trigger DNU
+                // cascades downstream.  Without this, runBlock + the
+                // whileTrue: splice WORK (after the methodIsShort gate
+                // and HELPER_SENDS), but a bunch of WorldState/SpWindow
+                // /Morph methods ALSO compile with kSendCallHelper and
+                // their blocks splice, producing wrong types that
+                // surface as DNU on #isTransparent.  Skipping these
+                // classes preserves the win for user benches.
+                bool classIsHelperSafe =
+                    sistaClassIsHelperSafe(methodClassName_);
+                if (helperSends && hasSpliceCandidate && methodIsShort
+                    && classIsHelperSafe) {
+                    // Diagnostic: log first 32 distinct classes that
+                    // pass the gate.  Helps identify classes that
+                    // need to be added to the skip list.
+                    static int helperEmitCount = 0;
+                    if (helperEmitCount++ < 32) {
+                        std::fprintf(stderr,
+                            "[SISTA-HELPER-EMIT] class=#%s method_len=%zu\n",
+                            methodClassName_.c_str(), len_);
+                    }
                     // Pop only rcvr + args (the send consumes them).
                     // Other live IR-stack values stay in their
                     // registers — kSendCallHelper is a producing op,
@@ -5403,7 +5439,56 @@ private:
         uint64_t metadata;
     };
     std::unordered_map<size_t, WhileTruePatternInfo> whileTrueAccumPattern_;
+
+    // Item #6: name of the defining class (e.g. "PharoBenchmarkRunner
+    // class", "WorldState").  Used by the HELPER_SENDS gate to skip
+    // UI/system classes whose short methods trigger DNU cascades.
+    std::string methodClassName_;
 };
+
+// Item #6 helper: returns true if HELPER_SENDS-style activation is
+// SAFE for methods of this class.  Skips UI/system classes whose
+// short methods produce DNU cascades when their blocks splice
+// (documented in project_helper_sends_gate.md).
+static bool sistaClassIsHelperSafe(const std::string& className) {
+    if (className.empty()) return false;  // unknown — conservative
+    static const char* skipPrefixes[] = {
+        "World",         // WorldState (drawWorld:submorphs:invalidAreasOn:)
+        "Form",          // FormCanvas (fillRectangle:on:, fullDraw:)
+        "Morph",         // Morph and subclasses (fullDrawOn:)
+        "Sp",            // SpWindow, Spec*
+        "Snapshot",      // SnapshotOperation
+        "Session",       // SessionManager, ClassSessionHandler
+        "Process",       // Process, ProcessorScheduler
+        "Semaphore",
+        "Delay",
+        "Exception",     // exception handling chain
+        "Error",
+        "FileReference",
+        "FileSystem",
+        "DiskFile",
+        "File",          // File, FileHandle, FileDoesNotExistException
+        "Source",        // SourceFile, SourceFileArray
+        "Pharo",         // PharoFilesOpener, except PharoBenchmarkRunner
+        nullptr
+    };
+    // Allow PharoBenchmarkRunner (overrides the "Pharo" prefix skip).
+    if (className.compare(0, 21, "PharoBenchmarkRunner ") == 0
+        || className == "PharoBenchmarkRunner") {
+        return true;
+    }
+    if (className.compare(0, 21, "PharoBenchmarkRunner_") == 0) {
+        return true;
+    }
+    for (const char** p = skipPrefixes; *p; p++) {
+        size_t plen = std::strlen(*p);
+        if (className.size() >= plen
+            && className.compare(0, plen, *p) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
 
 }  // namespace
 
@@ -5619,6 +5704,28 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     if (injectIntoMask) l.setInjectIntoSelectorBitmap(injectIntoMask);
     if (toMask) l.setToSelectorBitmap(toMask);
     if (collectMask) l.setCollectSelectorBitmap(collectMask);
+    // Item #6: derive the method's defining class name from the last
+    // literal (Pharo CompiledMethod convention: last lit is class
+    // binding Association, slot 1 = class).  Used by the HELPER_SENDS
+    // class-based gate to skip UI/system classes.
+    {
+        std::string className;
+        if (numLiterals > 0) {
+            Oop classBinding = memory.fetchPointer(numLiterals, compiledMethod);
+            if (classBinding.isObject()
+                && classBinding.rawBits() > 0x10000) {
+                ObjectHeader* bindHdr = classBinding.asObjectPtr();
+                if (bindHdr->slotCount() >= 2) {
+                    Oop classObj = bindHdr->slotAt(1);
+                    if (classObj.isObject()
+                        && classObj.rawBits() > 0x10000) {
+                        className = memory.nameOfClass(classObj);
+                    }
+                }
+            }
+        }
+        l.setMethodClassName(className);
+    }
     if (typeCheckArith) l.setTypeCheckArith(true);
     if (g_subLiftAsBlockReturnLocal) {
         l.setBlockReturnAsLocalReturn(true);
