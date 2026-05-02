@@ -1614,12 +1614,18 @@ j2j_direct_call:
             // safety: if either is splice-target, skip the bump
             // entirely so the cache is never poisoned by splice-mode
             // counts.
+            //
+            // Check order optimization (2026-05-02): callee tier is
+            // checked first because it's the cheapest path to the
+            // common no-op case (callee already at tier=2 — the steady
+            // state for hot callees like benchFib).  Saves 2 reads +
+            // 1 AND + 1 branch per call once the callee is recompiled.
             {
-                bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
-                bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
-                if (!calleeSpl && !callerSpl) {
-                    uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
-                    if (calleeTier == 1) {
+                uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
+                if (calleeTier == 1) {
+                    bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
+                    bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
+                    if (!calleeSpl && !callerSpl) {
                         void** statsLoc = (void**)((uint8_t*)_calleeJM + 80);
                         void* stats = *statsLoc;
                         if (stats) {
@@ -2035,12 +2041,14 @@ extern "C" void stencil_sendInlineMonoJ2J(JITState* s) {
                 // 9572b019).  When a MonoJ2J-specialized site
                 // monomorphically calls a tier=1 J2J-only callee,
                 // bump its count so it eventually recompiles too.
+                // Tier check first (cheapest path to no-op for hot
+                // callees) — see stencil_sendJ2J for rationale.
                 {
-                    bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
-                    bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
-                    if (!calleeSpl && !callerSpl) {
-                        uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
-                        if (calleeTier == 1) {
+                    uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
+                    if (calleeTier == 1) {
+                        bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
+                        bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
+                        if (!calleeSpl && !callerSpl) {
                             void** statsLoc = (void**)((uint8_t*)_calleeJM + 80);
                             void* stats = *statsLoc;
                             if (stats) {
