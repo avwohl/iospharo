@@ -124,39 +124,30 @@ alternative to HELPER_SENDS), `docs/deferred.md` §B8.
 
 ---
 
-## 4. Sista pre-pass for inlined whileTrue: counter loops
+## 4. Sista pre-pass for inlined whileTrue: counter loops — **DONE 2026-05-01**
 
-**What:** Pharo's bytecode compiler inlines `n timesRepeat: [block]` and
-`(start to: stop) do: [block]` (when start/stop are literal SmallInts)
-as `whileTrue:` counter loops at AST-emit time.  No Send1 #timesRepeat:
-or Send1 #to: bytecode is emitted — the loop body and increment are
-inline bytecodes.  Sista's existing splice family (do:, inject:into:,
-collect:, IV-do, IV-do-accum, IV-inject) can't intercept these
-because there's no PushFullBlock+Send pair to hook.  A new pre-pass
-must recognize the inlined whileTrue: pattern at the BYTECODE level
-and emit a counted-loop IR op.
+Shipped via commits `3b9d5f08`, `3cb1ced0`, `51f57d32`, `5448b564`.
 
-**Why blocked:**  attempted 2026-05-01 as a `kCountedLoopTimesRepeatConst`
-splice — pre-pass scanned for Send1 #timesRepeat: which doesn't appear
-in the bench bytecode.  The 400-line splice was reverted (see
-`memory/feedback_pharo_inlines_timesrepeat.md`).  A real fix recognizes
-the inlined pattern: `StoreTemp counter, [PushTemp counter, Push limit,
-SpecialSend <=, jumpFalse end, BLOCK_BODY, PushTemp counter, Push 1,
-Add, StoreTemp counter, jumpBack head, end:]`.  This is a more complex
-pattern match than the splice family does.
+`Op::kCountedLoopWhileTrueAccum` IR op, byte-pattern pre-pass that
+recognizes `<pushLitConst LIMIT, pushOne, popIntoTemp count,
+pushTemp count, pushLitConst LIMIT, send <=, jumpFalse, BODY,
+pushTemp count, pushOne, send +, popIntoTemp count, jumpTo, pop>`,
+lifter intercept that emits the IR op and skips the entire loop
+bytecode range, lowering does math simplification:
+`accum += (LIMIT - countInit + 1) * const` with overflow check.
 
-**Payoff:**  `1M blocks` benchmark (currently 14ms) — the body is
-`[counter := counter + 1]` which compiles to a closure-vec-stored
-counter.  Recognizing the loop and lifting `counter` to a register
-gives the same speed as the panel's `simpleLoop` (7ms).  Smaller win
-than other items but bounded.
+Body must be the canonical 4-byte arith shape (`pushTemp X, pushOne,
+ArithBase Y, popIntoTemp X`) on a temp distinct from the loop counter.
+Multi-send bodies (1M getter+yourself's `[obj size. obj yourself]`)
+are detected but rejected — those need a different lowering or a
+combination with item #2 (Phase 6 block inlining).
 
-**Estimate:**  1-2 weeks.  Pattern recognition is straightforward
-since the inlined shape is rigid.  The trickier part is closure-vec
-register promotion (hoist load before loop, store after) under deopt
-constraints.
-
-**Related:** `memory/feedback_pharo_inlines_timesrepeat.md`.
+Result on bench-suite: 1M blocks 16ms → 0ms (math simplification turns
+1M iterations into 1 multiply + 1 add).  Requires PHARO_SISTA_WHILETRUE=1
+opt-in plus HELPER_SENDS=1 (because runBlock's `Time
+millisecondClockValue` setup-send terminates the lift without it) and
+the class-based HELPER_SENDS gate from item #6 (otherwise UI cascade
+DNU breaks the bench-suite before runBlock runs).
 
 ---
 
@@ -198,32 +189,29 @@ is simpler but the gate has been tricky to get right.
 
 ---
 
-## 6. Class-based HELPER_SENDS gate
+## 6. Class-based HELPER_SENDS gate — **DONE 2026-05-01**
 
-**What:** the current HELPER_SENDS per-method gate (commit `ee3daf70`)
-narrows by `methodIsShort` (len_<100) and `hasSpliceCandidate`.  This
-catches user bench methods but also catches some short UI methods
-whose blocks contain sends that get spliced incorrectly (e.g., DNU on
-#isTransparent in `WorldState>>drawWorld:submorphs:invalidAreasOn:`
-when its splice fires).  A class-name gate would skip UI/system
-classes (Morph, FormCanvas, WorldState, SpWindow, FileReference,
-SnapshotOperation, Process, etc.) entirely.
+Shipped via commit `5448b564`.
 
-**Why blocked:**  the LinearLifter today has access to `memory_` and
-the bytecodes but NOT to the method oop.  Plumbing the class name
-requires touching `Builder::build()` to pass class info, then storing
-it on the lifter.  Doable but invasive (changes the public API of
-Builder).
+Builder::build derives the method's defining class name from the last
+literal (Pharo CompiledMethod convention: last lit is the class
+binding, slot 1 = the class itself; `memory.nameOfClass()` resolves
+the name string).  LinearLifter stores it on `methodClassName_` and
+the HELPER_SENDS emission gate at kSendCallHelper checks
+`sistaClassIsHelperSafe(className)` which rejects classes whose name
+starts with: World, Form, Morph, Sp, Snapshot, Session, Process,
+Semaphore, Delay, Exception, Error, FileReference, FileSystem,
+DiskFile, File, Source, Pharo (with PharoBenchmarkRunner allowed-list
+override).
 
-**Payoff:**  bumps HELPER_SENDS bench-suite stability from 7/10
-(current) to ~10/10 (matching default-flag baseline) by skipping the
-UI cascades that surface DNU on #isTransparent.
+Empirical ordering: started with Collection/Array/etc. all skipped
+(too restrictive — sum 1M errored "do: receiver is nil"), narrowed to
+just UI/system (above list) and bench-suite returned to 8/10 stability
+with both 1M blocks and sum 1M dropping to 0ms.
 
-**Estimate:**  1 week.  Mostly plumbing.  The list of skip classes
-needs validation against full bench-suite + Cog's own code (some
-exception infrastructure may also benefit from skip).
-
-**Related:** `memory/project_helper_sends_gate.md`.
+Future widening (if needed): selector-class allow-list rather than
+class-prefix skip; or a runtime feedback loop that disables
+HELPER_SENDS for classes that produced DNUs in the past N runs.
 
 ---
 
@@ -287,19 +275,17 @@ than waiting for full-method compilation thresholds.
 If picking ONE for a focused multi-week session:
 
 - **Biggest payoff:** #2 (Phase 6 block inlining).  Closes the largest
-  bench-suite gaps simultaneously.  But also the most work.
+  remaining bench-suite gap (1M getter+yourself 100ms vs Cog 3ms).
+  Also the most work.
 
 - **Best ratio:** #5 (J2J-only callee recompile).  2-3 weeks for
   ~30-50% on block-heavy workloads.  Past attempts hit specific bugs
   that have known fix shapes.
 
-- **Smallest:** #6 (class-based HELPER_SENDS gate).  1 week to ship,
-  immediate stability win.  Good warm-up before tackling #2 or #5.
-
 - **Speculative:** #7 (T1/T2 interaction).  Don't start unless a
   measured workload shows T2 beating T1 — currently none does.
 
-Items #1, #3, #4, #8 are alternative paths to similar outcomes.  #1
+Items #4 and #6 shipped together 2026-05-01 (commit `5448b564`).
+Items #1, #3, #8 are alternative paths to similar outcomes.  #1
 unblocks default-on of an existing opt-in.  #3 unblocks more splices.
-#4 catches a specific Pharo idiom.  #8 is the cleanest long-term
-direction but the highest cost.
+#8 is the cleanest long-term direction but the highest cost.
