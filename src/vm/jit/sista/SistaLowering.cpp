@@ -3327,13 +3327,16 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // misses on a mixed-type array (e.g., #(1 2 3.0 4 5))
                 // we'd normally bail to PushFullBlock and re-run do:
                 // from scratch, losing iters 0..N-1 of correct work.
-                // With this flag set, we instead call a completion
-                // helper that finishes the loop in C++ (SmI fast +
-                // send-dispatch fallback) — see
-                // Interpreter::jitSistaCompleteArrayDoAccum.  Opt-in
-                // for now; default-on after broader soak.
+                // The completion helper finishes the loop in C++ (SmI
+                // fast + send-dispatch fallback) — see
+                // Interpreter::jitSistaCompleteArrayDoAccum.
+                //
+                // Default-on; PHARO_NO_SISTA_DOACCUM_RESUME=1 disables.
+                // Bench-suite parity within ±1 ms vs opt-out (`49c4d91d`
+                // synthetic mixed-type soak: 1M Float-at-999999 481→3 ms,
+                // all-SmI 4→4 ms, all-Float 100K 56→8 ms).
                 static const bool doaccumResume =
-                    std::getenv("PHARO_SISTA_DOACCUM_RESUME") != nullptr;
+                    std::getenv("PHARO_NO_SISTA_DOACCUM_RESUME") == nullptr;
 
                 uint32_t deoptBC = 0;
                 for (const auto& fp : method.framepoints) {

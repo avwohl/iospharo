@@ -288,8 +288,9 @@ rebuilding the interp stack and re-running do: from scratch.
   `cc.str`; on zero return we fall through to the original
   conservative deopt (rebuild `[rcv, vec]`, resume at PushFullBlock).
 
-**Gating:** opt-in via `PHARO_SISTA_DOACCUM_RESUME=1`.  Default-off
-for now; broader soak before flipping default-on.
+**Gating:** default-on; opt-out via `PHARO_NO_SISTA_DOACCUM_RESUME=1`.
+Bench-suite + bench panel parity within ±1 ms across all benches
+under both default and opt-out.
 
 **Synthetic-bench measurements (2026-05-02):**
 
