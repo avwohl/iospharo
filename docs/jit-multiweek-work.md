@@ -18,7 +18,21 @@ notes WHAT, WHY blocked, ESTIMATE, and RELATED memory/docs.
 
 ---
 
-## 1. HELPER_SENDS scheduler architecture rework
+## 1. HELPER_SENDS scheduler architecture rework — **DONE 2026-05-02** (`2e274c7d`)
+
+Shipped via three precondition fixes in this session:
+- `bd7adb87` Sista deopt-path operand double-stacking fix
+- `2a7e2a4e` skip Sista compile for Array-do splice + helper-send methods
+- `2e274c7d` flip `PHARO_SISTA_HELPER_SENDS` default-on (opt-out via
+  `PHARO_NO_SISTA_HELPER_SENDS=1`)
+
+Result: `1M blocks` drops from 13ms to **0 ms** (math-simplification
+splice fires).  10/10 reliable under default flags.  All other benches
+within ±2ms variance.
+
+**Original analysis (kept for context):**
+
+
 
 **What:** the helper-driven `step()` loop in `jitSistaCallSend` runs
 nested interpretation under `inSyncSend_=true` to suppress process
