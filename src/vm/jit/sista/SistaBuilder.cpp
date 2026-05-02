@@ -622,10 +622,10 @@ public:
                         // — unblocks bench-suite runSum-style patterns
                         // (sends to asArray / millisecondClockValue
                         // before the do:).
+                        // Match the default-on flip in the main gate.
                         static const bool helperSends = []() {
-                            const char* v = std::getenv(
-                                "PHARO_SISTA_HELPER_SENDS");
-                            return v && v[0] == '1';
+                            return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
+                                   == nullptr;
                         }();
                         if (sawLiftTerminator && !helperSends) {
                             ok = false;
@@ -3950,9 +3950,17 @@ private:
                 // helper-sends, so gating on candidacy preserves the
                 // win for splice-eligible methods while removing the
                 // fragility for everything else.
+                // 2026-05-02: flipped to default-on (opt-out via
+                // PHARO_NO_SISTA_HELPER_SENDS=1) after deopt-path fix
+                // (commit `bd7adb87`) + Array-do/helper coexistence
+                // gate (commit `2a7e2a4e`).  Validation: 5/5 stable
+                // bench-suite runs with `1M blocks = 0 ms` (math-
+                // simplification splice fires).  runSum-style methods
+                // (Array-do splice + kSendCallHelper) are now skipped
+                // by SistaRuntime so they run in interp without DNU.
                 static const bool helperSends = []() {
-                    const char* v = std::getenv("PHARO_SISTA_HELPER_SENDS");
-                    return v && v[0] == '1';
+                    return std::getenv("PHARO_NO_SISTA_HELPER_SENDS")
+                           == nullptr;
                 }();
                 bool hasSpliceCandidate =
                     !spliceAtPushFullBlock_.empty()
