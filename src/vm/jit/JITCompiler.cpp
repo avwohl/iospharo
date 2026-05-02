@@ -1247,6 +1247,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
     uint16_t specialized = 0;
     uint16_t specGetter = 0, specSetter = 0, specReturnsSelf = 0;
     uint16_t specReturnsLit = 0, specBlockValue1 = 0, specMonoJ2J = 0;
+    uint16_t specMultiSlot = 0;
 
     for (auto& bc : decoded) {
         if (static_cast<StencilID>(bc.stencilIdx) != StencilID::stencil_sendJ2J)
@@ -1335,7 +1336,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMultiSlot);
                 // operand2Ptr stays as IC base — the stencil reads
                 // class from icData[0] and packed bits from icData[2].
-                specialized++; specReturnsLit++;
+                specialized++; specMultiSlot++;
             } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
                        (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
                        ((bc.operand >> 16) & 0xFF) == 1) {
@@ -1380,10 +1381,10 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
     if (specialized > 0) {
         fprintf(stderr,
                 "[JIT] IC specialization: %u/%u sites "
-                "(get=%u set=%u retSelf=%u retLit=%u block1=%u monoJ2J=%u)\n",
+                "(get=%u set=%u retSelf=%u retLit=%u block1=%u monoJ2J=%u multi=%u)\n",
                 specialized, sendIdx,
                 specGetter, specSetter, specReturnsSelf,
-                specReturnsLit, specBlockValue1, specMonoJ2J);
+                specReturnsLit, specBlockValue1, specMonoJ2J, specMultiSlot);
     }
 }
 
