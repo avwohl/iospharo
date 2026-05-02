@@ -2354,7 +2354,7 @@ public:
                                     // has 2 triplets).
                                     size_t scanIp = bodyStart;
                                     int firstBodyTemp = -1;
-                                    while (scanIp + 6 <= bodyEnd
+                                    while (scanIp + 3 <= bodyEnd
                                            && bodySkippedTriplets < 8) {
                                         uint8_t t0 = bc_[scanIp];
                                         uint8_t t1 = bc_[scanIp + 1];
@@ -2384,27 +2384,91 @@ public:
                                                     & (1u << selIdx))) {
                                                 sendIsElidable = true;
                                             }
-                                        } else if (t1 == 0x72  // SpecialSend size
-                                                   && inlineHints_) {
+                                        } else if (t1 == 0x72) {  // SpecialSend size
                                             uint32_t hintBc =
                                                 (uint32_t)(scanIp + 1);
-                                            for (const auto& h : *inlineHints_) {
-                                                if (h.bcOffset == hintBc
-                                                    && h.classOop != 0) {
-                                                    sendIsElidable = true;
-                                                    sendNeedsClassGuard = true;
-                                                    if (bodyGuardClassOop == 0) {
-                                                        bodyGuardClassOop = h.classOop;
-                                                        bodyGuardBcOffset = hintBc;
-                                                    } else if (bodyGuardClassOop != h.classOop) {
-                                                        // Different classes
-                                                        // observed across
-                                                        // triplets; can't
-                                                        // unify with one
-                                                        // guard.  Reject.
-                                                        sendIsElidable = false;
+                                            // First try IC hints (the
+                                            // safe path for warm
+                                            // methods).
+                                            if (inlineHints_) {
+                                                for (const auto& h : *inlineHints_) {
+                                                    if (h.bcOffset == hintBc
+                                                        && h.classOop != 0) {
+                                                        sendIsElidable = true;
+                                                        sendNeedsClassGuard = true;
+                                                        if (bodyGuardClassOop == 0) {
+                                                            bodyGuardClassOop = h.classOop;
+                                                            bodyGuardBcOffset = hintBc;
+                                                        } else if (bodyGuardClassOop != h.classOop) {
+                                                            sendIsElidable = false;
+                                                        }
+                                                        break;
                                                     }
-                                                    break;
+                                                }
+                                            }
+                                            // Fallback: dataflow trace
+                                            // through method prologue
+                                            // for `pushLitVar X;
+                                            // SpecialSend new (0x7C);
+                                            // popIntoTemp T` where T
+                                            // is the bodyTemp.  If
+                                            // found, extract the
+                                            // class from literals[X]
+                                            // (a class binding —
+                                            // slot 1 is the class
+                                            // itself).  Lets bench
+                                            // methods (one-shot, IC
+                                            // not yet warmed) splice.
+                                            if (!sendIsElidable
+                                                && memory_ != nullptr
+                                                && tIsTemp) {
+                                                int targetTemp =
+                                                    (int)(t0 - jit::SistaV1::PushTempBase);
+                                                for (size_t pi = 0;
+                                                     pi + 2 < preLoopStart
+                                                     && pi + 2 < len_;
+                                                     pi++) {
+                                                    uint8_t p0 = bc_[pi];
+                                                    uint8_t p1 = bc_[pi + 1];
+                                                    uint8_t p2 = bc_[pi + 2];
+                                                    bool p0IsLitVar =
+                                                        (p0 >= 0x10
+                                                         && p0 <= 0x1F);
+                                                    bool p1IsNew =
+                                                        (p1 == 0x7C);
+                                                    bool p2IsPopT =
+                                                        (p2 == (uint8_t)
+                                                         (0xD0 + targetTemp));
+                                                    if (p0IsLitVar
+                                                        && p1IsNew
+                                                        && p2IsPopT) {
+                                                        uint32_t litIdx =
+                                                            (uint32_t)(p0 - 0x10);
+                                                        if (litIdx
+                                                            < out_.literals.size()) {
+                                                            Oop binding =
+                                                                out_.literals[litIdx];
+                                                            if (binding.isObject()
+                                                                && binding.rawBits()
+                                                                   > 0x10000) {
+                                                                ObjectHeader* bhdr =
+                                                                    binding.asObjectPtr();
+                                                                if (bhdr->slotCount() >= 2) {
+                                                                    Oop cls = bhdr->slotAt(1);
+                                                                    if (cls.isObject()
+                                                                        && cls.rawBits() > 0x10000) {
+                                                                        sendIsElidable = true;
+                                                                        sendNeedsClassGuard = true;
+                                                                        if (bodyGuardClassOop == 0) {
+                                                                            bodyGuardClassOop = cls.rawBits();
+                                                                            bodyGuardBcOffset = hintBc;
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                        break;
+                                                    }
                                                 }
                                             }
                                         }
