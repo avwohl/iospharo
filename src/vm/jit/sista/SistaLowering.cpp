@@ -1013,8 +1013,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     // Restore framepoint stack (or operands if
                     // framepoint is missing — shouldn't happen with
                     // the fixed builder path).
+                    //
+                    // 2026-05-02 fix: pre-helper code pushed v.operands
+                    // onto state->sp.  Helper "deopt-on-zero" failure
+                    // paths in jitSistaCallSend (depth>=1, step()=false)
+                    // don't pop them.  The framepoint replay below pushes
+                    // EVERY value at the framepoint (rcvr+args INCLUDED
+                    // as part of the IR stack), so without rolling back
+                    // state->sp first we'd push them twice — leaving the
+                    // resumed interpreter with double-stacked operands
+                    // and spDelta=2*operands.size() when it expected
+                    // spDelta=fpStack.size().  Roll back state->sp by
+                    // operands.size() before the framepoint replay so
+                    // the replay overwrites the pre-helper push site.
                     Gp sp2 = cc.new_gp64("send_sp_dz");
                     cc.ldr(sp2, ptr(state, OFF_SP));
+                    cc.sub(sp2, sp2,
+                           Imm(static_cast<int>(v.operands.size()) * 8));
                     const std::vector<uint32_t>& flushIds =
                         fpStack ? *fpStack : v.operands;
                     for (size_t opIdx = 0;
