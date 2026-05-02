@@ -1012,6 +1012,7 @@ void JITCompiler::applySimStack(std::vector<DecodedBC>& decoded,
         case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
         case StencilID::stencil_sendBlockValue0Arg:
+        case StencilID::stencil_sendBlockValue2Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
         case StencilID::stencil_pushBlock:
         case StencilID::stencil_pushArray:
@@ -1360,6 +1361,16 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 // `N timesRepeat: [block]` pattern where each iter sends
                 // 0-arg `value` to a captured FullBlockClosure.
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue0Arg);
+                bc.operand2Ptr = litBits | (classKey0 << 16);
+                specialized++; specBlockValue1++;
+            } else if (!g_debug.noBlock1Spec && !calleeIsSplice &&
+                       (extra0 & (1ULL << 59)) /* BLOCK_VALUE_BIT */ &&
+                       ((bc.operand >> 16) & 0xFF) == 2) {
+                // value:value: send (2-arg) to a FullBlockClosure receiver.
+                // Phase 6 first piece (2026-05-02): closes a chunk of the
+                // sort/dict/select bench gap where comparator blocks are
+                // invoked via `block value: a value: b` per iter.
+                bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendBlockValue2Arg);
                 bc.operand2Ptr = litBits | (classKey0 << 16);
                 specialized++; specBlockValue1++;
             } else if (g_debug.monoJ2JSpec && !calleeIsSplice &&
@@ -2406,6 +2417,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         case StencilID::stencil_sendInlineReturnsLiteral:
         case StencilID::stencil_sendBlockValue1Arg:
         case StencilID::stencil_sendBlockValue0Arg:
+        case StencilID::stencil_sendBlockValue2Arg:
         case StencilID::stencil_sendInlineMonoJ2J:
             jitMethod->hasSends = true;  // can deopt on class mismatch
             break;
