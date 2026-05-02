@@ -360,9 +360,21 @@ then the outer method returns.  Under JIT with heavy state, the
 return path walks the sender chain via `resume:through:` and hits
 a context whose sender is unexpectedly nil.
 
-**Candidate fix**: exclude `ensure:` / `activate:for:` / Context
-NLR methods from JIT.  Would degrade perf but may unblock.  Worth
-trying in a future session.
+**Candidate fix tried 2026-05-02 — FAILED**: added `ensure:`,
+`ifCurtailed:`, `valueAndForwardSignalToOuterHandler:`,
+`activate:for:`, `valueWithEnsureBlock:` to alwaysExcluded in
+JITRuntime.cpp; rebuilt; ran
+`(IntegerTest run: #testNthRootTruncated) printString` under default
+JIT.  Still hangs (60s timeout, no result).  Confirmed `PHARO_NO_JIT=1`
+and `PHARO_JIT_DEFER=120` (effectively no JIT during test) both pass:
+`'1 ran, 1 passed, 0 skipped, 0 expected failures, 0 failures, 0 errors'`.
+So the bug is JIT-specific but not in those exception-path methods.
+The actual root cause per `docs/jit-uncovered-bugs.md` bug 14 is the
+NLR kill-walk corrupting *other processes'* top contexts (an inline
+context reusing a heap-context oop that belongs to a sibling
+process).  Fixing it needs context-process-ownership tracking or
+forced materialization before NLR — multi-day work.  Change reverted;
+this note replaces the original "candidate fix" suggestion.
 
 Root cause likely shared with original A3 — the JIT-compiled exception
 unwind path doesn't preserve frame state correctly, and the corruption
