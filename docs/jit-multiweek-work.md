@@ -347,9 +347,22 @@ the first non-SmI element and re-runs from scratch.
   helper fires; helper continues populating from startIdx.  Per-iter
   writes go through storePointerUnchecked for GC barrier on heap
   results.  Mixed-type 1M ×3: 458→1ms (458×).
-- IV-inject variant.  Same architecture; iteration SmI by construction
-  so per-iter miss is purely accumulator-type.  Deferred until
-  workload surfaces.
+- IV-inject variant.  Tried 2026-05-02 and reverted: the specialized
+  canonical loop (algorithmically the same as inject:into:'s but
+  iterating SmI start..stop directly) ran ~50% slower on `sumIv 10x`
+  bench-panel target (4 ms → 6 ms).  Even after matching the generic
+  path's b.eq fall-through pattern, asmjit's Compiler emits tighter
+  code for the generic kPrim*Int + kReturn flow than for the manually-
+  written specialized loop.  The canonical path's "skip dead i tag
+  check" win is dominated by whatever the generic emission does
+  better — likely register coalescing through the kReturn mov.
+  Net: the regression on the all-SmI hot path (which dominates real
+  workloads) hurts more than the helper helps for non-SmI accumulator
+  cases.  Reverted; full attempt visible in the prior commit (which
+  introduced helper + lowering, then was undone).  Could revisit if
+  asmjit's RA model gets better visibility, or if a workload surfaces
+  with measurable mixed-type-acc hits and the all-SmI cost is
+  acceptable.
 - Compile-time splice rejections (multi-block IR, non-simple block op,
   numCopied > 1).  These are pre-pass rejections that never enter
   the loop, so the runtime helper doesn't help.  Separate work.
