@@ -2169,6 +2169,128 @@ public:
             }
         }
 
+        // --- Detect Pharo-inlined whileTrue: counter loop (PROBE) -----
+        //
+        // Pharo's bytecode compiler inlines `n timesRepeat: [block]` and
+        // `(start to: stop) do: [block]` (literal SmallInt args) as a
+        // counted whileTrue: loop with no Send to #timesRepeat:/#do:.
+        // Pattern:
+        //   PRE_LOOP: pushLitConst LIMIT      <- left on stack
+        //             pushOne                 <- 0x51
+        //             popIntoTemp X           <- 0xD0+X
+        //   LOOP_HEAD: pushTemp X             <- 0x40+X
+        //              pushLitConst LIMIT     <- same literal
+        //              send <=                 <- 0x64 (ArithBase + 4)
+        //              jumpFalse END           <- 0xEF or short jump
+        //              ; BLOCK BODY (any whitelist of ops)
+        //              pushTemp X
+        //              pushOne
+        //              send +                  <- 0x60 (ArithBase + 0)
+        //              popIntoTemp X
+        //              jumpTo LOOP_HEAD        <- ExtendB + ExtJump (0xE1, 0xED)
+        //   END:       pop                     <- 0xD8 (discard pre-loop limit)
+        //
+        // For the bench-suite's `1M blocks` (`1000000 timesRepeat:
+        // [counter := counter + 1]`), this pattern emerges with no
+        // closure-vec involvement (counter is a plain local temp).
+        // Recognizing it lets Sista lift counter+limit-counter to
+        // registers, matching simpleLoop's panel speed (~0.7ns/iter).
+        //
+        // PROBE PHASE 2026-05-01: detect-only.  Logs candidates so we
+        // can verify the recognizer covers real benches before adding
+        // an IR op + lowering.  Future work: emit
+        // kCountedLoopWhileTrueAccum; lower to register-based loop.
+        static const bool probeWhileTrue =
+            std::getenv("PHARO_SISTA_PROBE_WHILETRUE") != nullptr;
+        if (probeWhileTrue) {
+            size_t i = 0;
+            while (i + 4 <= len_) {
+                // Look for ExtendB + ExtJump (4-byte long jump back).
+                if (bc_[i] == jit::SistaV1::ExtendB
+                    && bc_[i + 2] == jit::SistaV1::ExtJump) {
+                    int8_t  extB = (int8_t)bc_[i + 1];
+                    int8_t  off8 = (int8_t)bc_[i + 3];
+                    int32_t off  = ((int32_t)extB << 8) | (uint8_t)off8;
+                    // jumpTo target is `next instruction + off`.  The
+                    // jump itself is 4 bytes (ExtendB X, ExtJump Y),
+                    // so next IP = i + 4.
+                    int32_t target = (int32_t)(i + 4) + off;
+                    if (target >= 0 && target < (int32_t)i) {
+                        // Backward jump.  Check if at target we have
+                        // pushTemp X, pushLitConst LIMIT, send <=,
+                        // jumpFalse END.
+                        size_t t = (size_t)target;
+                        if (t + 4 < len_) {
+                            uint8_t b0 = bc_[t];
+                            uint8_t b1 = bc_[t + 1];
+                            uint8_t b2 = bc_[t + 2];
+                            uint8_t b3 = bc_[t + 3];
+                            uint8_t b4 = bc_[t + 4];
+                            bool isPushTemp =
+                                b0 >= jit::SistaV1::PushTempBase
+                                && b0 <= 0x4B;
+                            bool isLitConst = jit::SistaV1::isPushLitConst(b1);
+                            bool isLeq = (b2 == jit::SistaV1::ArithBase + 4);
+                            bool isJumpFalse =
+                                (b3 == jit::SistaV1::ExtJumpFalse)
+                                || (b3 >= jit::SistaV1::ShortJumpFalseBase
+                                    && b3 <= jit::SistaV1::ShortJumpFalseLast);
+                            (void)b4;
+                            // Check increment before jumpTo: at i-4..i-1.
+                            bool incrOk = false;
+                            uint32_t loopTemp = (uint32_t)(b0 - jit::SistaV1::PushTempBase);
+                            if (i >= 4) {
+                                uint8_t i0 = bc_[i - 4];  // pushTemp X
+                                uint8_t i1 = bc_[i - 3];  // pushOne (0x51)
+                                uint8_t i2 = bc_[i - 2];  // send + (0x60)
+                                uint8_t i3 = bc_[i - 1];  // popIntoTemp X (0xD0+X)
+                                if (i0 == (uint8_t)(jit::SistaV1::PushTempBase + loopTemp)
+                                    && i1 == 0x51
+                                    && i2 == jit::SistaV1::ArithBase
+                                    && i3 == (uint8_t)(0xD0 + loopTemp)) {
+                                    incrOk = true;
+                                }
+                            }
+                            if (isPushTemp && isLitConst && isLeq
+                                && isJumpFalse && incrOk) {
+                                static int probeCount = 0;
+                                if (probeCount++ < 32) {
+                                    size_t bodyStart =
+                                        (b3 == jit::SistaV1::ExtJumpFalse)
+                                            ? t + 5 : t + 4;
+                                    size_t bodyEnd = i - 4;
+                                    std::fprintf(stderr,
+                                        "[SISTA-WHILETRUE-PROBE] "
+                                        "loop_head=%zu loop_tail_jump=%zu "
+                                        "loopTemp=%u limit_litIdx=%u "
+                                        "body_start=%zu body_end=%zu "
+                                        "body_len=%zu method_len=%zu\n",
+                                        t, i, loopTemp,
+                                        (unsigned)(b1 - jit::SistaV1::PushLitConstBase),
+                                        bodyStart, bodyEnd,
+                                        bodyEnd > bodyStart ? bodyEnd - bodyStart : 0,
+                                        len_);
+                                    // Dump body bytes
+                                    std::fprintf(stderr,
+                                        "[SISTA-WHILETRUE-PROBE]   body:");
+                                    for (size_t bi = bodyStart;
+                                         bi < bodyEnd && bi < len_; bi++) {
+                                        std::fprintf(stderr, " %02x",
+                                            bc_[bi]);
+                                    }
+                                    std::fprintf(stderr, "\n");
+                                }
+                            }
+                        }
+                    }
+                }
+                // Advance: don't try to step bytecode-by-bytecode
+                // exactly here; just probe every byte.  False positives
+                // are harmless since we only log.
+                i++;
+            }
+        }
+
         // --- B2 minimal peephole: `^ self size` ------------------------
         //
         // Recognize the method shape:
