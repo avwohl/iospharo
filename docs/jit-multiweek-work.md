@@ -530,7 +530,7 @@ similar outcomes.  #1 unblocks default-on of an existing opt-in.
 #3 unblocks more splices.  #8 is the cleanest long-term direction
 but the highest cost.
 
-**Bench-suite snapshot (2026-05-02, post-relinquish-fix, best-of-5):**
+**Bench-suite snapshot (2026-05-02, post-INLINE_YOURSELF-default-on, best-of-5):**
 
 ```
                   Ours    Cog    Ratio   Notes
@@ -541,15 +541,14 @@ dict 50K ms       157     50     3.1×
 sum 1M ms         0-1     5      0×     (we win — closure-accum splice)
 factorial 5K ms   23      27     0.85×  (we win)
 1M blocks ms      0       1      0×     (we win — whileTrue: math splice)
-1M getter ms      0†      3      0×     (we win — Phase 6 INLINE_YOURSELF=1)
+1M getter ms      0       3      0×     (we win — Phase 6 default-on)
 100K alloc ms     5       ?      ?
 ```
 
-† PHARO_SISTA_INLINE_YOURSELF=1 opt-in.  Default is 19-21 ms.
-
-Four benches now beat Cog (sum 1M, factorial, 1M blocks, 1M getter+yourself
-opt-in).  `sort`, `dict`, and `fib` remain — all want block-body inlining
-at hot send sites — full Phase 6 generalization — multi-week.
+Four benches now beat Cog by default (sum 1M, factorial, 1M blocks,
+1M getter+yourself).  `sort`, `dict`, and `fib` remain — all want
+block-body inlining at hot send sites — full Phase 6 generalization —
+multi-week.
 
 ---
 
