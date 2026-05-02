@@ -30,6 +30,19 @@ Result: `1M blocks` drops from 13ms to **0 ms** (math-simplification
 splice fires).  10/10 reliable under default flags.  All other benches
 within ±2ms variance.
 
+**2026-05-02 follow-up — `2a7e2a4e` workaround is cosmetic only:**
+investigated whether the runSum bail+resume corruption can be fixed.
+Empirically: with `PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1` (gate disabled),
+runSum is the ONLY method that triggers (per `[SISTA-ARRAYDO-HELPER]`
+diagnostic — only `PharoBenchmarkRunner class>>#runSum` matches both
+Array-do splice + kSendCallHelper).  runSum still produces the correct
+result (`sum=500000500000`) and the bench-suite reaches DONE.  The
+"do: nil" symptom is a 31-byte file-overwrite at the start of
+`/tmp/pharo_benchmarks.txt` from `Smalltalk exitSuccess` shutdown
+catching an error elsewhere.  Bench results intact.  Conclusion: the
+narrowly-scoped 2a7e2a4e workaround is the right level of fix; further
+investigation isn't justified by the cosmetic-only impact.
+
 **Original analysis (kept for context):**
 
 
@@ -126,6 +139,40 @@ specialization at IC sites (recognize monomorphic block from IC
 profile, inline the body, deopt-on-mismatch), and the lowering needs
 to handle nested IR with deopt-stack reconstruction across the inlined
 boundary.
+
+**2026-05-02 — refined target.**  `1M blocks` now hits 0ms via
+the whileTrue: math splice (item #4), so the remaining bench-suite
+gap is `1M getter+yourself`: 16-20ms ours vs Cog 3ms.  Profile of
+runInstVar shows the bottleneck is the multi-send body inside the
+inlined whileTrue: loop:
+
+    pushTemp 1; send size; pop;       <- multi-slot getter shape
+    pushTemp 1; send yourself; pop;   <- universal Object>>yourself
+    pushTemp 2; pushOne; +; popIntoTemp 2
+
+The whileTrue: splice rejects multi-send bodies; the math shortcut
+isn't applicable when the body has side effects.  The structural
+fix here isn't full block inlining at `value` sites (Pharo inlines
+timesRepeat:/to:do: at compile time, so there is no `value` send
+to intercept).  It's an extension to the whileTrue: splice's body
+whitelist to admit `pushTemp obj; sendSel; pop` triplets where the
+send is IC-monomorphic + selector inlinable (yourself → no-op,
+size → multi-slot getter), with class-guard + deopt-on-miss.
+
+Cleared INLINE_YOURSELF for the universal-no-op case (re-tested
+2026-05-02: 5000-factorial regression no longer reproduces — was
+likely flaky timing in the original A/B).  But INLINE_YOURSELF
+alone moves no needle on `1M getter+yourself` (still 20ms) because
+runInstVar's bytecode body executes via interp/T1, never reaching
+Sista's send-byte (the whileTrue: splice rejects the method).
+
+**Real next step:** new IR op `kCountedLoopBodyExec` — counted
+whileTrue: with body containing K side-effect-bounded sends.
+Pre-pass admits when each send has IC hint + matches an inline-able
+selector pattern.  Lowering emits a real iteration loop with
+inlined body code per iter.  Estimated 1-2 weeks for runInstVar
+(2 send sites, both inlinable); generalizing to handle arbitrary
+IC-monomorphic sends is full Phase 6.
 
 **Related:** `memory/project_cog_gap_2026_04_29.md` ("Block dispatch
 dominates — Phase 6 is the big lever"),
