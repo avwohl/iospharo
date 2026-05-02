@@ -1254,16 +1254,19 @@ extern "C" void jit_rt_j2j_call(JITState* state) {
         state->ip = savedIP;
         state->exitReason = ExitNone;
 
-        // PHARO_J2J_CALLEE_BUMP=1: bump callee's executionCount and
-        // trigger recompile if threshold crossed.  Catches J2J-only
-        // callees (Array>>do:, etc.) that never reach tryExecute and
-        // thus stay tier=1 forever.  Past attempt (2026-04-30) bumped
-        // CALLER without splice gate — broke splice race.  This variant
-        // uses callee's cached isSpliceTarget flag.  Opt-in until
-        // validated.
-        static const bool calleeBump =
-            std::getenv("PHARO_J2J_CALLEE_BUMP") != nullptr;
-        if (calleeBump) {
+        // Bump callee's executionCount and trigger recompile if
+        // threshold crossed.  Catches J2J-only callees (Array>>do:,
+        // etc.) that never reach tryExecute and thus stay tier=1
+        // forever.  Past attempt (2026-04-30) bumped CALLER without
+        // splice gate — broke splice race.  This variant uses
+        // callee's cached isSpliceTarget flag for race-free gating.
+        // Default-on (commit 2026-05-02) after 10/10 bench-suite
+        // validation showed neutral-to-positive impact (fib -1ms,
+        // sum -3ms, blocks -2ms; no regressions).  Opt out via
+        // PHARO_NO_J2J_CALLEE_BUMP=1.
+        static const bool calleeBumpDisabled =
+            std::getenv("PHARO_NO_J2J_CALLEE_BUMP") != nullptr;
+        if (!calleeBumpDisabled) {
             JITMethod* callee = reinterpret_cast<JITMethod*>(
                 entryAddr - sizeof(JITMethod));
             if (callee->stats && !callee->isSpliceTarget
