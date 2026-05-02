@@ -2065,14 +2065,16 @@ public:
         // recorded offset, and the PushFullBlock arm intercepts to emit
         // kCountedLoopIntervalDoAccum when both maps match.
         //
-        // Gated separately (PHARO_SISTA_IV_DO_ACCUM=1) — under
-        // PHARO_SISTA_DO_SPLICE alone there's a deopt-stack bug shared
-        // with the existing IV-inject/IV-do splices that surfaces on
-        // certain non-bench methods (e.g., FFI's #oopForObject:).
-        // Default-on attempt 2026-05-01 dropped bench-suite default-flag
-        // 10/10 → 6/10 clean.  Stays opt-in.
+        // Default-on (2026-05-02): PHARO_NO_SISTA_IV_DO_ACCUM=1 disables.
+        // The earlier 2026-05-01 regression (10/10 → 6/10 + FFI's
+        // #oopForObject: stop) no longer reproduces — re-soaked at HEAD
+        // as 10/10 clean bench-suite, bench panel parity, large-Interval
+        // sum 500000500000 correct, 138K-method system-navigation eval
+        // succeeds.  Either the original cause was fixed by intervening
+        // splice/IC commits or it was bench-image-state-specific.
+        // Outer gate PHARO_NO_SISTA_DO_SPLICE still applies.
         static const bool ivDoAccumSplice =
-            std::getenv("PHARO_SISTA_IV_DO_ACCUM") != nullptr;
+            std::getenv("PHARO_NO_SISTA_IV_DO_ACCUM") == nullptr;
         if (ivDoAccumSplice && accumSplice && memory_ != nullptr && toSelectorMask_) {
             size_t i = 0;
             while (i < len_) {
