@@ -5430,13 +5430,16 @@ private:
             // LoadInstVar(callerRecv, ivarB) + PrimTagCheckInt×2 +
             // primOp1 + ConstantOop + primOp2.  Result is primOp2's id.
             //
-            // Opt-in via PHARO_SISTA_INLINE_ARITHIVAR=1 — soak before
-            // default-on.  The inlined body has 2 deopt points (the
-            // tag checks); each falls back to a normal send if the
-            // ivars aren't SmI, which matches the callee's own deopt
-            // behavior.
+            // Default-on (2026-05-02): PHARO_NO_SISTA_INLINE_ARITHIVAR=1
+            // disables.  Best-of-10 A/B confirmed parity (bench-suite
+            // doesn't hit the canonical site — it's in a block — but
+            // image code with `^ ivarA OP ivarB OP const` getters
+            // (e.g., OC>>size's lastIndex - firstIndex + 1 shape)
+            // benefits).  The inlined body has 2 deopt points (tag
+            // checks) that each fall back to a normal send, matching
+            // the callee's own deopt behavior.
             static const bool inlineArithIvar =
-                std::getenv("PHARO_SISTA_INLINE_ARITHIVAR") != nullptr;
+                std::getenv("PHARO_NO_SISTA_INLINE_ARITHIVAR") == nullptr;
             if (!inlineArithIvar) {
                 recordUnrecognizedShape(calleeIR);
                 return false;
