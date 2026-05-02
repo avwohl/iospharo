@@ -55,14 +55,19 @@ existing helper but needs careful save/restore design.
 
 **2026-05-02 sub-investigation:** with HELPER_SENDS=1 + JIT_DEFER=15,
 bench-suite stalls at sum 1M with `[DNU] #do: not understood by
-rcvr=0x300000000` in runSum.  The receiver bit pattern decodes to a
-nil-equivalent; some helper-send's result isn't being captured into
-the IR destination register correctly.  Pre-pass for Interval-inject
-correctly rejects `(1 to: 1000000) asArray` (next op is asArray, not
-Send2#inject:into:) so kInterval isn't emitted incorrectly.  The bug
-is elsewhere — possibly in cc.invoke return-value capture or in the
-interp-side stackTop() result extraction in jitSistaCallSend.  Needs
-multi-day instrumentation to isolate.
+rcvr=0x300000000` in runSum.  Instrumented `jitSistaCallSend` and
+found the helper "Normal return" branch fires 0 times — every
+helper-send goes through the DEOPT path (helper returns 0).  Only
+1 [HELPER-ENTRY] in the entire bench run (a single early call).
+
+So the bug isn't in result-capture (no successful return ever gets
+captured); it's in the deopt path's framepoint replay.  When the
+splice's first kSendCallHelper deopts, the framepoint stack replay
+puts wrong values back, leaving `a` as nil before the `do:` send.
+
+Investigation path forward: instrument the framepoint replay (Sista
+lowering, lines around `cc.cbnz(dst, noDeopt)` for kSendCallHelper)
+to verify what's pushed onto the interp stack vs what should be.
 
 **Cycle guard status (2026-05-02 commit `3d5b53fa`):** the
 materializeFrameStack cycle-break walk is now gated under
