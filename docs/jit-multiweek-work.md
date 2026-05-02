@@ -53,21 +53,28 @@ Option (a) is cleaner but requires touching `tryJITActivation`,
 `pushFrameForJIT`, and the J2J save chain.  Option (b) bolts onto
 existing helper but needs careful save/restore design.
 
-**2026-05-02 sub-investigation:** with HELPER_SENDS=1 + JIT_DEFER=15,
-bench-suite stalls at sum 1M with `[DNU] #do: not understood by
-rcvr=0x300000000` in runSum.  Instrumented `jitSistaCallSend` and
-found the helper "Normal return" branch fires 0 times — every
-helper-send goes through the DEOPT path (helper returns 0).  Only
-1 [HELPER-ENTRY] in the entire bench run (a single early call).
+**2026-05-02 sub-investigation + partial fix:**
 
-So the bug isn't in result-capture (no successful return ever gets
-captured); it's in the deopt path's framepoint replay.  When the
-splice's first kSendCallHelper deopts, the framepoint stack replay
-puts wrong values back, leaving `a` as nil before the `do:` send.
+- **Bug 1 (FIXED, commit `bd7adb87`):** kSendCallHelper deopt path was
+  pushing operands TWICE.  Pre-helper code pushed v.operands onto
+  state->sp.  When helper returned 0 (depth check, step()=false),
+  the deopt's framepoint replay pushed values starting at state->sp
+  (post-pre-helper-push), leaving operands DOUBLE-STACKED.
+  Verified via SISTA-SEND trace: spDelta went 4 → 2 (correct).
 
-Investigation path forward: instrument the framepoint replay (Sista
-lowering, lines around `cc.cbnz(dst, noDeopt)` for kSendCallHelper)
-to verify what's pushed onto the interp stack vs what should be.
+- **Bug 2 (REMAINING, runSum-specific):** even with bug 1 fixed, sum
+  1M still DNUs with `#do:` on nil receiver in runSum.  Workaround:
+  `PHARO_SISTA_EXCLUDE_SELS=runSum` makes the bench-suite COMPLETE
+  with HELPER_SENDS=1 + 1M blocks = 0 ms (was 13 ms — the math-
+  simplification kCountedLoopWhileTrueAccum splice now fires).  So
+  the HELPER_SENDS architecture works in general; runSum specifically
+  hits another bug we haven't isolated.  Possibly in how Sista's bail
+  for kCountedLoopArrayDoAccum splice (with `asArray` setup pattern)
+  interacts with interp resume.
+
+- **Stability under HELPER_SENDS=1 + EXCLUDE runSum (5 runs):** 5/5
+  complete with sum 1M ~103 ms (interp), 1M blocks 0 ms, others
+  match baseline within ±2 ms.
 
 **Cycle guard status (2026-05-02 commit `3d5b53fa`):** the
 materializeFrameStack cycle-break walk is now gated under
