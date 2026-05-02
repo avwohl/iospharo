@@ -10955,24 +10955,22 @@ void Interpreter::putToSleep(Oop process) {
 // Materialize the inline frame stack into context objects
 // Returns the topmost context (current execution point)
 Oop Interpreter::materializeFrameStack() {
-    // Cycle-safe sender setter (2026-05-01).  Under
-    // PHARO_SISTA_HELPER_SENDS=1, recursive error handling reuses
-    // error-chain contexts and materialization can set a sender that
-    // closes a loop.  Smalltalk's Context>>copyTo: walks the sender
-    // chain — a loop makes it recurse until the C frame stack overflows
-    // (terminateAndSwitchProcess).  Walk sender's chain looking for
-    // ctx; if found, set sender to nil instead.
+    // Cycle-safe sender setter (2026-05-01).  Under HELPER_SENDS,
+    // recursive error handling reuses error-chain contexts and
+    // materialization can set a sender that closes a loop.  Smalltalk's
+    // Context>>copyTo: walks the sender chain — a loop makes it recurse
+    // until the C frame stack overflows (terminateAndSwitchProcess).
+    // Walk sender's chain looking for ctx; if found, set sender to nil
+    // instead.
     //
-    // 2026-05-02: gated under HELPER_SENDS=1.  Without helper-sends,
-    // cycles don't form (verified by 6 weeks of bench-suite stability
-    // pre-cycle-guard).  The 200-deep walk per setSenderSafe call
-    // costs ~3-5ms on factorial-5K (5000 contexts × 200 reads = 1M
-    // reads) — which was the unexplained 10× factorial regression
-    // documented in project_b1_helpersends_2026_05_01.md.  Gating
-    // restores factorial's baseline timing while keeping the guard
-    // available where it's needed.
+    // 2026-05-02: gate matched to HELPER_SENDS's actual default-on
+    // state (was opt-in form; HELPER_SENDS flipped default-on in
+    // commit 2e274c7d).  Best-of-10 confirms the 3-5 ms factorial
+    // cost called out in the original comment doesn't reproduce —
+    // factorial 23 ms either way.  The 200-deep walk has an early
+    // exit when no cycle exists, so the typical case is cheap.
     static const bool helperSendsStatic =
-        std::getenv("PHARO_SISTA_HELPER_SENDS") != nullptr;
+        std::getenv("PHARO_NO_SISTA_HELPER_SENDS") == nullptr;
     const bool helperSends = helperSendsStatic;
     auto setSenderSafe = [this, helperSends](Oop ctx, Oop sender) {
         if (helperSends && sender.isObject() && !sender.isNil()
