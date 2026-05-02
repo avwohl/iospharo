@@ -114,7 +114,33 @@ HELPER_SENDS=1 bug but removes overhead from the default path.
 
 ---
 
-## 2. Phase 6 block inlining
+## 2. Phase 6 block inlining — **FIRST WIN 2026-05-02** (`aa6eaf97`)
+
+`1M getter+yourself` closes from 16-20 ms → **0 ms** (5/5 runs;
+beats Cog's 3 ms).  Three pieces wired together:
+
+1. **SpecialSend helper-sends** — new IR op kSendCallHelperSpecial
+   resolves the selector via SpecialSelectorsArray at runtime,
+   letting Sista lift continue past prologue sends like `OC new`
+   that previously terminated the lift.
+
+2. **No-accum splice shape** — when the body is K leading purely-
+   elidable triplets followed by no canonical arith (the
+   `timesRepeat: [obj size. obj yourself]` shape), the math splice
+   computes `count_final = limit + 1` directly without trying to
+   load an uninitialized accumulator.
+
+3. **Class guard via dataflow** — when no IC hint is available
+   (Sista compiles bench methods on first activation before T1
+   warms ICs), scan the method prologue for
+   `pushLitVar X; SpecialSend new; popIntoTemp T` and extract the
+   class from the literal's class binding.
+
+PHARO_SISTA_INLINE_YOURSELF=1 opt-in.  Default flags unchanged.
+
+**Original analysis (kept for context):**
+
+
 
 **What:** inline block bodies into the caller's compiled code at hot
 sites.  Cog does this after PIC stabilizes — the per-iter `aBlock value`
