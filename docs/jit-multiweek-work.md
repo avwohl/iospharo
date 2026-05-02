@@ -136,19 +136,48 @@ for the `block value: a value: b` send shape.  Mirrors the existing
 0-arg and 1-arg block-value stencils.  Wired into JITCompiler.cpp's
 specialization loop (gated on BLOCK_VALUE_BIT, same as 0/1-arg).
 
-**Bench-suite impact:** unchanged — sort 100K stays at 216 ms.  The
-spec stat shows `block1=1` for one warmup site (so the spec fires
-somewhere), but sort's hot mergeFirst:middle:last:into:by: site
-isn't picking it up at the bench-suite scale.  Either the merge
-method isn't recompiled (executionCount threshold), the IC at the
-value:value: site doesn't have BLOCK_VALUE_BIT, or the JIT
-runtime profile of 100K-element sort doesn't expose enough hot
-calls to amortize the spec.
+**Bench-suite impact:** unchanged — sort 100K stays at 216 ms.
 
-Scaffolding shipped to avoid re-discovering this gap in future
-Phase 6 sessions.  Real win requires per-site profiling at
-runtime to find where the merge step's value:value: doesn't pick
-up the spec.
+**2026-05-02 PM profiling findings:**
+
+1. `BLOCK_VALUE_BIT` (extra bit 59) IS being set for `value:value:`
+   IC sites — verified by `PHARO_TRACE_IC_PRIM=1` instrumentation in
+   patchJITICAfterSend.  Trace shows
+   `primIdx=207 sel=#value:value: extra=0x800000000000000` for the
+   patch event.
+
+2. The new `stencil_sendBlockValue2Arg` IS being chosen at
+   compile time when `applyICSpecialization` finds a site with
+   BLOCK_VALUE_BIT + nArgs=2.  block1>0 fires for at least one
+   method per warmup run.
+
+3. `mergeFirst:middle:last:into:by:` (the hot sort callee) is
+   JIT-compiled (entry 2, ~28 KB) but NEVER reaches
+   `applyICSpecialization` because it isn't recompiled.  Even at
+   `PHARO_RECOMPILE_AT=1` (force recompile after 1 call), running
+   sort 100K shows mergeFirst's IC has 9 sites but `0/9` are
+   specializable — at recompile time the IC is empty (entries
+   not yet filled with classKey/method).
+
+4. The natural recompile trigger (executionCount >= 500) doesn't
+   fire for mergeFirst — its callers (mergeSortFrom:to:src:dst:by:)
+   don't hit the inline-bump in stencil_sendJ2J's j2j_direct_call
+   often enough.  Likely the IC at mergeSortFrom's mergeFirst-call
+   site stays at stencil_send / cold-IC dispatch rather than getting
+   J2J-classified.
+
+**Conclusion:** the 2-arg stencil scaffolding is correct.  The win
+requires solving the recompile-trigger gap for callees of
+recursive-J2J-driven hot paths.  Same architectural issue as
+documented in `project_specialization_misses_doit.md` — IC
+specialization fires too late for once-deep methods, where "once-
+deep" means "called from a function that recurses heavily and
+doesn't itself reach the threshold via non-recursive callers."
+
+Real next step (multi-week): warm-IC-detection that triggers
+recompile when an IC site has been hit > N times, regardless of
+the OWNING method's executionCount.  Currently recompile is gated
+on the method's own count.
 
 
 
