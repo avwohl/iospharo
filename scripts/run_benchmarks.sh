@@ -125,8 +125,15 @@ if $RUN_OURS; then
     cp Pharo.image Pharo-ours.image
     cp Pharo.changes Pharo-ours.changes
     rm -f /tmp/pharo_benchmarks.txt
-    # Our interpreter is slower — give it 10 minutes
-    timeout 600 "$OUR_VM" Pharo-ours.image > /dev/null 2>&1 || true
+    # Our interpreter is slower — give it 10 minutes.
+    # PHARO_JIT_DEFER=15: defer JIT compilation 15s.  At default 4s
+    # the bench-suite hits an intermittent ~50% hang during
+    # tinyBenchmarks (deferred.md A1: scheduling interaction between
+    # JIT compile and bench process forked at high priority).  15s
+    # makes the bench reliably complete (5/5) without measurably
+    # changing the JIT speed of post-tinyBenchmarks benches.
+    timeout 600 env PHARO_JIT_DEFER="${PHARO_JIT_DEFER:-15}" \
+        "$OUR_VM" Pharo-ours.image > /dev/null 2>&1 || true
     if [ -f /tmp/pharo_benchmarks.txt ]; then
         cp /tmp/pharo_benchmarks.txt "$OUR_RESULTS"
         echo "  Results: $OUR_RESULTS"

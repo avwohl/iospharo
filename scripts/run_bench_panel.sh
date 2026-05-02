@@ -39,6 +39,14 @@ export PHARO_SISTA_DO_SPLICE_NO_HINT=1
 export PHARO_SISTA_IV_DO_ACCUM=1
 export PHARO_SISTA_COLLECT=1
 
+# PHARO_JIT_DEFER=15: defer JIT compilation 15s for stability.  At
+# default 4s the bench panel hits an intermittent hang from JIT
+# compile racing with the bench process forked at high priority.
+# 15s is fully reliable and does not measurably change post-warmup
+# bench numbers (loops still hit JIT after 1M iterations).
+# See deferred.md A1 / project_jit_session_2026_05_01_pm.md.
+export PHARO_JIT_DEFER="${PHARO_JIT_DEFER:-15}"
+
 LOG=$(mktemp -d)/bench
 trap "rm -rf $(dirname "$LOG")" EXIT
 
