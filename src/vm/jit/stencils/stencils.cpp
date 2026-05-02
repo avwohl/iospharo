@@ -1117,6 +1117,41 @@ extern "C" void stencil_sendPoly(JITState* s) {
             _HOLE_CONTINUE(s);                                              \
             return;                                                         \
         }                                                                   \
+        if (extra & (1ULL << 57)) {       \
+            /* Multi-slot getter: ^ self[A] op1 self[B] op2 const.          \
+               Untag both Oops, do scalar math with overflow check,         \
+               re-tag.  Bails on non-SmI slots or overflow. */              \
+            uint8_t mA   = (uint8_t)(extra & 0xFF);                         \
+            uint8_t mB   = (uint8_t)((extra >> 8) & 0xFF);                  \
+            int8_t  mCst = (int8_t)((extra >> 16) & 0xFF);                  \
+            uint8_t mOp1 = (uint8_t)((extra >> 24) & 0x1);                  \
+            uint8_t mOp2 = (uint8_t)((extra >> 25) & 0x1);                  \
+            Oop aOop = recvObj->slotAt(mA);                                 \
+            Oop bOop = recvObj->slotAt(mB);                                 \
+            if (isSmallInteger(aOop) && isSmallInteger(bOop)) {             \
+                int64_t a = asSmallInteger(aOop);                           \
+                int64_t b = asSmallInteger(bOop);                           \
+                int64_t inter; bool ovf;                                    \
+                if (mOp1) ovf = __builtin_sub_overflow(a, b, &inter);       \
+                else      ovf = __builtin_add_overflow(a, b, &inter);       \
+                if (!ovf) {                                                 \
+                    int64_t result;                                         \
+                    if (mOp2) ovf = __builtin_sub_overflow(inter, (int64_t)mCst, &result); \
+                    else      ovf = __builtin_add_overflow(inter, (int64_t)mCst, &result); \
+                    if (!ovf                                                \
+                        && result >= -(1LL << 60)                           \
+                        && result < (1LL << 60)) {                          \
+                        Oop val;                                            \
+                        val.bits = (uint64_t)((result << 3) | 1);           \
+                        s->sp[-(nArgs + 1)] = val;                          \
+                        s->sp -= nArgs;                                     \
+                        _HOLE_CONTINUE(s);                                  \
+                        return;                                             \
+                    }                                                       \
+                }                                                           \
+            }                                                               \
+            /* Non-SmI / overflow → fall through to slow send */             \
+        }                                                                   \
     }                                                                       \
     s->cachedTarget.bits = icData[(entry_idx) * 3 + 1];                     \
     s->icDataPtr = icData;                                                  \
@@ -1305,6 +1340,39 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             s->sp -= nArgs;
             _HOLE_CONTINUE(s);
             return;
+        }
+        if (extra & (1ULL << 57)) {
+            // Multi-slot getter: ^ self[A] op1 self[B] op2 const
+            uint8_t mA   = (uint8_t)(extra & 0xFF);
+            uint8_t mB   = (uint8_t)((extra >> 8) & 0xFF);
+            int8_t  mCst = (int8_t)((extra >> 16) & 0xFF);
+            uint8_t mOp1 = (uint8_t)((extra >> 24) & 0x1);
+            uint8_t mOp2 = (uint8_t)((extra >> 25) & 0x1);
+            Oop aOop = recvObj->slotAt(mA);
+            Oop bOop = recvObj->slotAt(mB);
+            if (isSmallInteger(aOop) && isSmallInteger(bOop)) {
+                int64_t a = asSmallInteger(aOop);
+                int64_t b = asSmallInteger(bOop);
+                int64_t inter; bool ovf;
+                if (mOp1) ovf = __builtin_sub_overflow(a, b, &inter);
+                else      ovf = __builtin_add_overflow(a, b, &inter);
+                if (!ovf) {
+                    int64_t result;
+                    if (mOp2) ovf = __builtin_sub_overflow(inter, (int64_t)mCst, &result);
+                    else      ovf = __builtin_add_overflow(inter, (int64_t)mCst, &result);
+                    if (!ovf
+                        && result >= -(1LL << 60)
+                        && result < (1LL << 60)) {
+                        Oop val;
+                        val.bits = (uint64_t)((result << 3) | 1);
+                        s->sp[-(nArgs + 1)] = val;
+                        s->sp -= nArgs;
+                        _HOLE_CONTINUE(s);
+                        return;
+                    }
+                }
+            }
+            // Non-SmI / overflow → fall through to slow send
         }
     }
 

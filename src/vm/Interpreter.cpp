@@ -6926,6 +6926,15 @@ struct TrivialMethodInfo {
     // literals would need bits 47:0 of the IC entry which we want
     // to leave free for J2J entry address.
     TrivialReturnKind returnsLiteral = TrivialReturnKind::None;
+    // Multi-slot pattern: ^ self[A] op1 self[B] op2 const, where
+    // op1/op2 ∈ {+, -} and const ∈ {-1, 0, 1}.  Most common shape
+    // is OrderedCollection>>size = `^ lastIndex - firstIndex + 1`.
+    // multiSlotA == -1 means no match.
+    int8_t  multiSlotA  = -1;     // first ivar index (0-15)
+    int8_t  multiSlotB  = -1;     // second ivar index (0-15)
+    int8_t  multiConst  = 0;      // -1, 0, or 1
+    uint8_t multiOp1Sub = 0;      // 0 = add, 1 = sub (between A and B)
+    uint8_t multiOp2Sub = 0;      // 0 = add, 1 = sub (with const)
 };
 
 static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
@@ -7028,6 +7037,36 @@ static TrivialMethodInfo detectTrivialMethod(Oop method, ObjectMemory& memory) {
             info.returnsLiteral = kind;
             return info;
         }
+    }
+
+    // Multi-slot getter: ^ self[A] op1 self[B] op2 const
+    // Bytecode shape (6 bytes):
+    //   pushRcvrVar A   (0x00-0x0F)
+    //   pushRcvrVar B   (0x00-0x0F)
+    //   send +/-/       (0x60 / 0x61)
+    //   push<const>     (0x50 zero / 0x51 one / 0x52 minus-one)
+    //   send +/-/       (0x60 / 0x61)
+    //   returnTop       (0x5C)
+    // Most common shape is OrderedCollection>>size:
+    //   pushRcvr2 pushRcvr1 send-  pushOne  send+  returnTop
+    if (bcLen >= 6
+        && bc0 <= 0x0F && bc1 <= 0x0F
+        && (bytes[bcStart + 2] == 0x60 || bytes[bcStart + 2] == 0x61)
+        && (bytes[bcStart + 3] == 0x50
+            || bytes[bcStart + 3] == 0x51
+            || bytes[bcStart + 3] == 0x52)
+        && (bytes[bcStart + 4] == 0x60 || bytes[bcStart + 4] == 0x61)
+        && bytes[bcStart + 5] == 0x5C) {
+        info.multiSlotA = (int8_t)bc0;
+        info.multiSlotB = (int8_t)bc1;
+        switch (bytes[bcStart + 3]) {
+            case 0x50: info.multiConst = 0;  break;
+            case 0x51: info.multiConst = 1;  break;
+            case 0x52: info.multiConst = -1; break;
+        }
+        info.multiOp1Sub = (bytes[bcStart + 2] == 0x61) ? 1 : 0;
+        info.multiOp2Sub = (bytes[bcStart + 4] == 0x61) ? 1 : 0;
+        return info;
     }
 
     return info;
@@ -14899,6 +14938,13 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     //   bit 61: returnsSelf
     //   bit 60: hasJITEntry — bits 47:0 = JIT code entry address
     //   bit 59: BLOCK_VALUE_BIT (prim 207/209 fast path)
+    //   bit 57: multi-slot getter (^ self[A] op1 self[B] op2 const)
+    //           bits 7:0   = slot A
+    //           bits 15:8  = slot B
+    //           bits 23:16 = signed const (-1, 0, 1)
+    //           bit 24     = op1 sub (0=add, 1=sub between A and B)
+    //           bit 25     = op2 sub (0=add, 1=sub with const)
+    //           OPT-IN via PHARO_MULTISLOT_GETTER.
     //   bits 50:48: returnsLiteral kind (1=nil, 2=true, 3=false,
     //           4=SmI 0, 5=SmI 1) when bit 58 is set.  ABOVE the
     //           47-bit virtual address range so bits 47:0 stay
@@ -14952,6 +14998,21 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
                     extra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
                 else if (!skip61 && tmi.returnsSelf)
                     extra = (1ULL << 61);
+            }
+            // Multi-slot getter (bit 57): heap-only — relies on
+            // recvObj->slotAt() reads, which aren't valid for
+            // immediates.  Stencil's `tag == 0` gate enforces this.
+            // Opt-in via PHARO_MULTISLOT_GETTER until validated.
+            static const bool multiSlotEnabled =
+                std::getenv("PHARO_MULTISLOT_GETTER") != nullptr;
+            if (extra == 0 && receiverIsHeap && multiSlotEnabled
+                && tmi.multiSlotA >= 0) {
+                extra = (1ULL << 57)
+                      | ((uint64_t)(uint8_t)tmi.multiSlotA)
+                      | ((uint64_t)(uint8_t)tmi.multiSlotB << 8)
+                      | ((uint64_t)(uint8_t)tmi.multiConst << 16)
+                      | ((uint64_t)tmi.multiOp1Sub << 24)
+                      | ((uint64_t)tmi.multiOp2Sub << 25);
             }
             // returnsLiteral classification works for BOTH heap
             // and immediate receivers — its kind tag in bits 50:48
@@ -15031,7 +15092,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // specialized stencil checks bit 58 first; without
     // specialization the bit-60 J2J path takes over.
     constexpr uint64_t TRIVIAL_BITS =
-        (1ULL << 63) | (1ULL << 62) | (1ULL << 61);
+        (1ULL << 63) | (1ULL << 62) | (1ULL << 61) | (1ULL << 57);
     if ((extra & TRIVIAL_BITS) == 0 &&
         (extra & (1ULL << 60)) == 0 && j2jEnabled) {
         jit::JITMethod* target = jitRuntime_.methodMap().lookup(resolvedMethod.rawBits());
@@ -15296,6 +15357,18 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 newExtra = (1ULL << 62) | (uint16_t)tmi.setterIndex;
             else if (!noGetterBit2 && tmi.returnsSelf)
                 newExtra = (1ULL << 61);
+            else {
+                static const bool multiSlotEnabled2 =
+                    std::getenv("PHARO_MULTISLOT_GETTER") != nullptr;
+                if (multiSlotEnabled2 && tmi.multiSlotA >= 0) {
+                    newExtra = (1ULL << 57)
+                             | ((uint64_t)(uint8_t)tmi.multiSlotA)
+                             | ((uint64_t)(uint8_t)tmi.multiSlotB << 8)
+                             | ((uint64_t)(uint8_t)tmi.multiConst << 16)
+                             | ((uint64_t)tmi.multiOp1Sub << 24)
+                             | ((uint64_t)tmi.multiOp2Sub << 25);
+                }
+            }
             if (newExtra == 0) {
                 // Not trivial — set J2J direct-call entry plus inline primKind bits
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
