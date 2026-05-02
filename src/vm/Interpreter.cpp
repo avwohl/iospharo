@@ -15002,10 +15002,10 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             // Multi-slot getter (bit 57): heap-only — relies on
             // recvObj->slotAt() reads, which aren't valid for
             // immediates.  Stencil's `tag == 0` gate enforces this.
-            // Opt-in via PHARO_MULTISLOT_GETTER until validated.
-            static const bool multiSlotEnabled =
-                std::getenv("PHARO_MULTISLOT_GETTER") != nullptr;
-            if (extra == 0 && receiverIsHeap && multiSlotEnabled
+            // Default-on; opt out via PHARO_NO_MULTISLOT_GETTER=1.
+            static const bool multiSlotDisabled =
+                std::getenv("PHARO_NO_MULTISLOT_GETTER") != nullptr;
+            if (extra == 0 && receiverIsHeap && !multiSlotDisabled
                 && tmi.multiSlotA >= 0) {
                 extra = (1ULL << 57)
                       | ((uint64_t)(uint8_t)tmi.multiSlotA)
@@ -15358,9 +15358,9 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             else if (!noGetterBit2 && tmi.returnsSelf)
                 newExtra = (1ULL << 61);
             else {
-                static const bool multiSlotEnabled2 =
-                    std::getenv("PHARO_MULTISLOT_GETTER") != nullptr;
-                if (multiSlotEnabled2 && tmi.multiSlotA >= 0) {
+                static const bool multiSlotDisabled2 =
+                    std::getenv("PHARO_NO_MULTISLOT_GETTER") != nullptr;
+                if (!multiSlotDisabled2 && tmi.multiSlotA >= 0) {
                     newExtra = (1ULL << 57)
                              | ((uint64_t)(uint8_t)tmi.multiSlotA)
                              | ((uint64_t)(uint8_t)tmi.multiSlotB << 8)
