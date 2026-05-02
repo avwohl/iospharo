@@ -396,6 +396,43 @@ extern "C" void jit_rt_pop_frame(JITState* state) {
     interp->popFrameForJIT(state);
 }
 
+// Safe-point recompile queue.  stencil_sendJ2J's inline path bumps
+// callee count; when threshold crossed, calls this helper to enqueue
+// the callee for recompile.  Drained by Interpreter::drainRecompileQueue
+// at periodic safe points (preemption check, ~every 64K interp steps).
+//
+// Single-threaded VM — no atomic.  Bounded ring buffer of 32 slots;
+// overflow is silently dropped (worst case: missed recompile, no
+// correctness issue).
+constexpr size_t kRecompileQueueSize = 32;
+static uint64_t g_recompileQueue[kRecompileQueueSize] = {0};
+static size_t g_recompileQueueHead = 0;  // next free slot
+static size_t g_recompileQueueDrained = 0;  // total processed (diag)
+
+extern "C" void jit_rt_recompile_queue(void* calleeJM) {
+    if (!calleeJM) return;
+    // PHARO_NO_J2J_INLINE_BUMP=1: kill switch — if set, the helper is
+    // a no-op so any latent regression caused by the inline-bump path
+    // can be bisected away without re-extracting stencils.
+    static const bool disabled =
+        std::getenv("PHARO_NO_J2J_INLINE_BUMP") != nullptr;
+    if (disabled) return;
+    JITMethod* jm = reinterpret_cast<JITMethod*>(calleeJM);
+    uint64_t methBits = jm->compiledMethodOop;
+    if (methBits == 0) return;
+    // Push to ring buffer.  If full, drop (caller can re-trigger by
+    // bumping past threshold again — eventual consistency).
+    size_t head = g_recompileQueueHead;
+    if (head < kRecompileQueueSize) {
+        // Dedup: skip if same method already queued.
+        for (size_t i = 0; i < head; i++) {
+            if (g_recompileQueue[i] == methBits) return;
+        }
+        g_recompileQueue[head] = methBits;
+        g_recompileQueueHead = head + 1;
+    }
+}
+
 // T2 monomorphic IC counters
 int g_t2ICHits = 0;
 int g_t2ICMisses = 0;
@@ -1379,6 +1416,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
         : &jit_rt_j2j_trace_noop);
     helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
     helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
+    helpers.recompileQueue = reinterpret_cast<void*>(&jit_rt_recompile_queue);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)
@@ -1414,6 +1452,22 @@ void JITRuntime::updateSpecialOops(ObjectMemory& memory) {
     if (siClass.isObject()) {
         smallIntClassIdx = siClass.asObjectPtr()->identityHash();
     }
+}
+
+size_t JITRuntime::drainRecompileQueue() {
+    size_t head = g_recompileQueueHead;
+    if (head == 0) return 0;
+    size_t processed = 0;
+    for (size_t i = 0; i < head; i++) {
+        uint64_t methBits = g_recompileQueue[i];
+        if (methBits == 0) continue;
+        Oop method = Oop::fromRawBits(methBits);
+        if (maybeRecompileForOSR(method)) processed++;
+        g_recompileQueueDrained++;
+    }
+    // Reset queue.
+    g_recompileQueueHead = 0;
+    return processed;
 }
 
 bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {

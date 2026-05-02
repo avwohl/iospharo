@@ -74,6 +74,13 @@ public:
     // Returns true if a recompile happened.
     bool maybeRecompileForOSR(Oop compiledMethod);
 
+    // Drain the J2J inline-bump recompile queue.  Called at safe points
+    // from Interpreter (e.g. periodic preemption check) where no Sista
+    // splice is mid-execution — avoids the past T1-vs-Sista race.
+    // Pops queued method oops, calls maybeRecompileForOSR for each.
+    // Returns the number of methods processed.
+    size_t drainRecompileQueue();
+
     // Rewrite J2J entry-addr bits in every IC site whose methodBits matches
     // the recompiled method.  After recompile() returns a new JITMethod,
     // callers' IC.extra still holds the OLD entry address — left untouched,

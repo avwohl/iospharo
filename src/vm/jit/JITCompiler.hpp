@@ -96,6 +96,7 @@ public:
         void* j2jTrace;         // jit_rt_j2j_trace (B5 diagnostic — logs J2J save/restore)
         void* primAtPtr;        // jit_rt_primat_ptr (basicAt: for fmt 3/4/5/9)
         void* primAtPutPtr;     // jit_rt_primatput_ptr (basicAt:put: for fmt 3/4/5)
+        void* recompileQueue;   // jit_rt_recompile_queue (queues callee for safe-point recompile)
     };
 
     void setHelpers(const RuntimeHelpers& h) { helpers_ = h; }

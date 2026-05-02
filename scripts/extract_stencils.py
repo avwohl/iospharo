@@ -144,6 +144,7 @@ HOLE_KIND_MAP = {
     "__HOLE_RT_J2J_TRACE": "HoleKind::RuntimeHelper",
     "__HOLE_RT_PRIMAT_PTR": "HoleKind::RuntimeHelper",
     "__HOLE_RT_PRIMATPUT_PTR": "HoleKind::RuntimeHelper",
+    "__HOLE_RT_RECOMPILE_QUEUE": "HoleKind::RuntimeHelper",
     "__HOLE_RESUME_ADDR": "HoleKind::ResumeAddr",
 }
 
@@ -170,6 +171,7 @@ RUNTIME_HELPER_ID = {
     "__HOLE_RT_J2J_TRACE": 14,
     "__HOLE_RT_PRIMAT_PTR": 15,
     "__HOLE_RT_PRIMATPUT_PTR": 16,
+    "__HOLE_RT_RECOMPILE_QUEUE": 17,
     "__HOLE_RESUME_ADDR": 0,
 }
 

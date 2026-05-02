@@ -1271,6 +1271,12 @@ extern "C" int (*_HOLE_RT_PRIMAT_PTR)(JITState* s, uint64_t rcvBits,
 extern "C" int (*_HOLE_RT_PRIMATPUT_PTR)(JITState* s, uint64_t rcvBits,
                                           uint64_t i, uint64_t valBits);
 
+// J2J inline-bump recompile queue helper.  stencil_sendJ2J's inline
+// path bumps callee count on every call; when count crosses threshold
+// (==500), calls this helper with the callee's JITMethod pointer to
+// queue for safe-point recompile.
+extern "C" void (*_HOLE_RT_RECOMPILE_QUEUE)(void* calleeJM);
+
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;
@@ -1597,20 +1603,35 @@ j2j_direct_call:
             s->j2jSaveCursor += sizeof(J2JSave);
             s->j2jDepth++;
             s->j2jTotalCalls++;
-            // J2J caller-bump deferred — sampled at 1/16 still hit the
-            // T1-vs-Sista race in panel run 2/4 (sumArr 7→1037ms).
-            // Even with isSpliceTarget gate, some interaction with the
-            // splice runtime path triggers regression.  The flag and
-            // JM_IS_SPLICE constant remain in the codebase for future
-            // structural fixes (Sista deopt-with-resume).
-            //
-            // 2026-05-02 measurement: bump-only (no recompile trigger)
-            // experiment with DUAL splice gate (caller + callee) ran
-            // benches with no measurable regression — the per-call
-            // gate is cheap enough.  But bump-only without recompile
-            // trigger is useless.  Adding a safe-point recompile drain
-            // (track "needs recompile" methods, drain at yield/period)
-            // is multi-day work.  Reverted for now.
+            // J2J inline-bump with safe-point recompile drain
+            // (2026-05-02): bumps callee's executionCount on every call.
+            // When count crosses threshold (500), enqueue for recompile
+            // via _HOLE_RT_RECOMPILE_QUEUE.  Drain happens at safe
+            // points (Interpreter periodic preemption check) where no
+            // Sista splice is mid-execution — avoids the past
+            // T1-vs-Sista race that defeated direct caller-bump.
+            // Dual splice gate (callee + caller) for defensive
+            // safety: if either is splice-target, skip the bump
+            // entirely so the cache is never poisoned by splice-mode
+            // counts.
+            {
+                bool calleeSpl = *((uint8_t*)_calleeJM + JM_IS_SPLICE);
+                bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
+                if (!calleeSpl && !callerSpl) {
+                    uint8_t calleeTier = *((uint8_t*)_calleeJM + 33);
+                    if (calleeTier == 1) {
+                        void** statsLoc = (void**)((uint8_t*)_calleeJM + 80);
+                        void* stats = *statsLoc;
+                        if (stats) {
+                            uint32_t* countPtr = (uint32_t*)stats;
+                            uint32_t newCount = ++(*countPtr);
+                            if (newCount == 500) {  // recompileAt threshold
+                                _HOLE_RT_RECOMPILE_QUEUE(_calleeJM);
+                            }
+                        }
+                    }
+                }
+            }
             // Setup callee
             Oop _calleeRecv = s->sp[-(nArgs + 1)];
             Oop* _fp = s->sp - (nArgs + 1);

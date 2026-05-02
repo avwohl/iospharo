@@ -3529,6 +3529,12 @@ bool Interpreter::step() {
         // 1024 steps for responsiveness.
         if ((stepCheckCounter_ & 0xFFFF) == 0) {
             checkForPreemption();
+            // Drain the J2J inline-bump recompile queue.  At this point
+            // we're in the interp loop's safe-point (between bytecodes
+            // of the active process); no Sista splice is mid-execution
+            // here, so the recompile is race-free.  Bounded work — the
+            // queue is a 32-slot ring.
+            jitRuntime_.drainRecompileQueue();
         }
 
         // Signal finalization periodically for auto-GC mourners (not handled by the
