@@ -284,6 +284,27 @@ enum class Op : uint8_t {
     // SistaLowering case for exact bytecode layout.
     kCountedLoopWhileTrueAccum,
 
+    // Pharo-inlined `n timesRepeat: [body]` where body contains K
+    // side-effect-discarded sends BEFORE the canonical 4-byte
+    // counter-arith — e.g., runInstVar's `[obj size. obj yourself]`:
+    //
+    //   pushTemp obj; sendSel0; pop;
+    //   ...
+    //   pushTemp obj; sendSelK-1; pop;
+    //   pushTemp counter; pushOne; ArithBase Y; popTemp counter
+    //
+    // Each leading send must be IC-monomorphic with a class that the
+    // selector inlines safely (Object>>yourself = no-op, multi-slot
+    // getter shape, etc.).  Lowering emits a real iteration loop —
+    // the math shortcut isn't applicable when the body has sends.
+    //
+    // operands: 1 (the receiver obj loaded once before loop)
+    // literal: same low-44 bits as kCountedLoopWhileTrueAccum +
+    //   bits 60-63 = body kind:
+    //     1 = pushTemp+yourself+pop pair (any class, no guard)
+    //     (more kinds added as recognizers extend)
+    kCountedLoopBodyExec,
+
     // --- Phi ---
     // SSA merge at a block with multiple predecessors.  Operand[i]
     // is the incoming value from Block::predecessors[i] (same order).

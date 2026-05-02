@@ -2313,18 +2313,152 @@ public:
                                 // END pop at i+4.
                                 bool endPopOk = (i + 4 < len_
                                     && bc_[i + 4] == jit::SistaV1::Pop);
-                                // Body must be canonical 4-byte arith
-                                // shape on a single accum temp.
+                                // Body shape:
+                                //   [K leading purely-elidable triplets]
+                                //   followed by canonical 4-byte arith
+                                //   on a single accum temp.
+                                //
+                                // Each leading triplet is
+                                //   pushTemp T (0x40-0x4B)
+                                //   sendByte   (yourself)
+                                //   pop        (0xD8)
+                                // where T is the SAME temp across all
+                                // triplets (= bodyTemp, loop-invariant
+                                // receiver loaded once before the loop)
+                                // and the send is universally side-
+                                // effect-free + non-erroring on any
+                                // class.  yourself is the only such
+                                // selector today (Object>>yourself
+                                // returns self; never overridden in
+                                // standard Pharo classes; cannot raise
+                                // for any receiver including nil).
+                                //
+                                // Math splice still applies because the
+                                // triplets have no observable effect —
+                                // running them N times is observably
+                                // identical to running them 0 times.
                                 bool bodyOk = false;
                                 bool bodyShapeIsSeries = false;
                                 uint32_t accumTemp = 0;
                                 int arithCode = -1;
                                 int constValue = 0;
-                                if (bodyLen == 4 && bodyStart < len_) {
-                                    uint8_t y0 = bc_[bodyStart];
-                                    uint8_t y1 = bc_[bodyStart + 1];
-                                    uint8_t y2 = bc_[bodyStart + 2];
-                                    uint8_t y3 = bc_[bodyStart + 3];
+                                size_t bodySkippedTriplets = 0;
+                                size_t bodyArithStart = bodyStart;
+                                int   bodyTempIdx = -1;
+                                uint64_t bodyGuardClassOop = 0;
+                                uint32_t bodyGuardBcOffset = 0;
+                                {
+                                    // Scan leading triplets (max 8 so
+                                    // we don't walk into pathological
+                                    // long bodies — runInstVar-shape
+                                    // has 2 triplets).
+                                    size_t scanIp = bodyStart;
+                                    int firstBodyTemp = -1;
+                                    while (scanIp + 6 <= bodyEnd
+                                           && bodySkippedTriplets < 8) {
+                                        uint8_t t0 = bc_[scanIp];
+                                        uint8_t t1 = bc_[scanIp + 1];
+                                        uint8_t t2 = bc_[scanIp + 2];
+                                        bool tIsTemp =
+                                            t0 >= jit::SistaV1::PushTempBase
+                                            && t0 <= 0x4B;
+                                        bool tIsPop = (t2 == 0xD8);
+                                        // Send0 N (0x80-0x8F): selector
+                                        // index = N — admit when the
+                                        // selector is in the inlineable
+                                        // bitmap (yourself).  Universally
+                                        // safe for any class.
+                                        // SpecialSend size (0x72) — admit
+                                        // when an IC hint is available
+                                        // for this bcOffset; emit a class
+                                        // guard before the splice so a
+                                        // class mismatch deopts cleanly.
+                                        bool sendIsElidable = false;
+                                        bool sendNeedsClassGuard = false;
+                                        if (t1 >= jit::SistaV1::Send0Base
+                                            && t1 <= jit::SistaV1::Send0Last) {
+                                            uint32_t selIdx =
+                                                (uint32_t)(t1 - jit::SistaV1::Send0Base);
+                                            if (selIdx < 16
+                                                && (inlineableSelectorMask_
+                                                    & (1u << selIdx))) {
+                                                sendIsElidable = true;
+                                            }
+                                        } else if (t1 == 0x72  // SpecialSend size
+                                                   && inlineHints_) {
+                                            uint32_t hintBc =
+                                                (uint32_t)(scanIp + 1);
+                                            for (const auto& h : *inlineHints_) {
+                                                if (h.bcOffset == hintBc
+                                                    && h.classOop != 0) {
+                                                    sendIsElidable = true;
+                                                    sendNeedsClassGuard = true;
+                                                    if (bodyGuardClassOop == 0) {
+                                                        bodyGuardClassOop = h.classOop;
+                                                        bodyGuardBcOffset = hintBc;
+                                                    } else if (bodyGuardClassOop != h.classOop) {
+                                                        // Different classes
+                                                        // observed across
+                                                        // triplets; can't
+                                                        // unify with one
+                                                        // guard.  Reject.
+                                                        sendIsElidable = false;
+                                                    }
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if (!(tIsTemp && tIsPop && sendIsElidable)) {
+                                            break;
+                                        }
+                                        int tempIdx =
+                                            (int)(t0 - jit::SistaV1::PushTempBase);
+                                        if (firstBodyTemp < 0) {
+                                            firstBodyTemp = tempIdx;
+                                        } else if (tempIdx != firstBodyTemp) {
+                                            // All triplets must share
+                                            // the same bodyTemp.  Reject.
+                                            break;
+                                        }
+                                        if (tempIdx == (int)loopTemp) {
+                                            // bodyTemp must not collide
+                                            // with the loop counter.
+                                            break;
+                                        }
+                                        bodySkippedTriplets++;
+                                        (void)sendNeedsClassGuard;
+                                        scanIp += 3;
+                                    }
+                                    if (bodySkippedTriplets > 0
+                                        && firstBodyTemp >= 0) {
+                                        bodyTempIdx = firstBodyTemp;
+                                    }
+                                    bodyArithStart = scanIp;
+                                }
+                                size_t bodyArithLen = bodyEnd > bodyArithStart
+                                    ? bodyEnd - bodyArithStart : 0;
+                                // Case: body is K triplets ONLY (no
+                                // user accum).  This is the
+                                // `n timesRepeat: [obj size. obj yourself]`
+                                // shape — Pharo's inliner generates an
+                                // internal loop counter (loopTemp) but
+                                // no separate user accumulator.  Treat
+                                // loopTemp as the "accum" with const=1,
+                                // arith=+: post-loop value is limit+1
+                                // which matches the natural exit value
+                                // of the timesRepeat counter.
+                                if (bodyArithLen == 0
+                                    && bodySkippedTriplets > 0
+                                    && bodyTempIdx >= 0) {
+                                    bodyOk = true;
+                                    accumTemp = loopTemp;
+                                    arithCode = 0;     // Add
+                                    constValue = 1;
+                                } else if (bodyArithLen == 4 && bodyArithStart < len_) {
+                                    uint8_t y0 = bc_[bodyArithStart];
+                                    uint8_t y1 = bc_[bodyArithStart + 1];
+                                    uint8_t y2 = bc_[bodyArithStart + 2];
+                                    uint8_t y3 = bc_[bodyArithStart + 3];
                                     bool y0IsTemp = y0 >= jit::SistaV1::PushTempBase && y0 <= 0x4B;
                                     bool y2IsAddSub = (y2 == jit::SistaV1::ArithBase
                                             || y2 == jit::SistaV1::ArithBase + 1);
@@ -2408,6 +2542,12 @@ public:
                                     WhileTruePatternInfo info;
                                     info.endOffset = i + 4;
                                     info.metadata = packed;
+                                    info.bodyTriplets =
+                                        (uint8_t)bodySkippedTriplets;
+                                    info.bodyTempIdx = (bodyTempIdx >= 0)
+                                        ? (uint8_t)bodyTempIdx : 0;
+                                    info.guardClassOop = bodyGuardClassOop;
+                                    info.guardBcOffset = bodyGuardBcOffset;
                                     whileTrueAccumPattern_[preLoopStart] = info;
                                     static int wtCandCount = 0;
                                     if (wtCandCount++ < 16) {
@@ -2756,8 +2896,38 @@ private:
                 auto wtIt = whileTrueAccumPattern_.find(ip);
                 if (wtIt != whileTrueAccumPattern_.end()
                     && pendingExtA_ == 0 && pendingExtB_ == 0) {
-                    uint64_t packed = wtIt->second.metadata;
-                    size_t endOffset = wtIt->second.endOffset;
+                    const WhileTruePatternInfo& info = wtIt->second;
+                    uint64_t packed = info.metadata;
+                    size_t endOffset = info.endOffset;
+                    // If the body has elidable triplets that need a
+                    // class guard (e.g., `obj size; pop` for OC), emit
+                    // kLoadTemp(bodyTemp) + kGuardClass BEFORE the
+                    // splice IR op.  On guard miss, deopt resumes at
+                    // the size send's bcOffset; interp executes the
+                    // triplets normally (size returns the right value
+                    // for the actual class, yourself returns self).
+                    if (info.bodyTriplets > 0
+                        && info.guardClassOop != 0) {
+                        uint32_t loadV = out_.newValue(currentBlock_,
+                            Op::kLoadTemp, Type::kOop,
+                            /*operands=*/{},
+                            /*literal=*/(uint64_t)info.bodyTempIdx);
+                        // kGuardClass operands: [valueToCheck,
+                        // ...IR-stack snapshot].  At this lift point
+                        // stack_ may already have values; include them
+                        // for deopt-stack rebuild.  literal: low 24
+                        // bits = classOop; high 32 bits = bcOffset.
+                        std::vector<uint32_t> guardOps;
+                        guardOps.reserve(stack_.size() + 1);
+                        guardOps.push_back(loadV);
+                        for (uint32_t s : stack_) guardOps.push_back(s);
+                        uint64_t guardLit =
+                            (info.guardClassOop & 0x3FFFFFu)
+                          | ((uint64_t)info.guardBcOffset << 32);
+                        out_.newValue(currentBlock_, Op::kGuardClass,
+                                      Type::kOop, std::move(guardOps),
+                                      guardLit);
+                    }
                     uint32_t vid = out_.newValue(currentBlock_,
                                                   Op::kCountedLoopWhileTrueAccum,
                                                   Type::kOop,
@@ -2769,9 +2939,12 @@ private:
                     if (wtEmitCount++ < 16) {
                         std::fprintf(stderr,
                             "[SISTA-WHILETRUE-EMIT] preLoop=%zu "
-                            "endPop=%zu vid=%u packed=0x%llx\n",
+                            "endPop=%zu vid=%u packed=0x%llx "
+                            "triplets=%u guardCls=0x%llx\n",
                             ip, endOffset, vid,
-                            (unsigned long long)packed);
+                            (unsigned long long)packed,
+                            (unsigned)info.bodyTriplets,
+                            (unsigned long long)info.guardClassOop);
                     }
                     ip = endOffset;
                     continue;
@@ -5479,6 +5652,16 @@ private:
     struct WhileTruePatternInfo {
         size_t endOffset;
         uint64_t metadata;
+        // Body-extension fields (Phase 6 first cut, 2026-05-02): when
+        // the body has K leading purely-elidable triplets that consume
+        // a loop-invariant temp, record the temp index + (optional)
+        // class guard so the emit code can wrap the splice with
+        // kLoadTemp + kGuardClass.  guardClassOop=0 means no guard
+        // needed (yourself-only triplets).
+        uint8_t  bodyTriplets = 0;
+        uint8_t  bodyTempIdx  = 0;
+        uint64_t guardClassOop = 0;       // raw bits of the IC-observed class (0 = none)
+        uint32_t guardBcOffset = 0;       // resume bc on guard miss
     };
     std::unordered_map<size_t, WhileTruePatternInfo> whileTrueAccumPattern_;
 
