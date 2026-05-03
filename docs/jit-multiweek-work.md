@@ -435,9 +435,57 @@ activation notes).  Real fix likely requires moving IC entries out
 of MAP_JIT into a separate RW zone so the per-fill flip becomes
 free.
 
-**Net for sort 100K: still 215 ms.** Multi-week structural fix
-needed (separate IC zone OR redesigned mega-hit path that doesn't
-require IC writes).
+### 2026-05-03 PM: IC entries moved to heap — sort 100K 214 → 175 ms
+
+Implemented the architectural fix: ICs now live in a heap-allocated
+side-buffer (`JITMethod::icBuffer`) instead of inside the in-zone
+allocation.  Heap is always RW so per-IC-write `pthread_jit_write_
+protect_np` flips disappear entirely — every IC patch site becomes
+just three direct stores.
+
+`898ca79f`: Move IC entries out of MAP_JIT into heap (default-on).
+
+Mechanical changes:
+- `JITMethod::icBuffer` (uint64_t*) added; CodeZone::allocate
+  calloc()s, freeMethod free()s.  JITMethod grew 8 bytes, JM_SIZE
+  bumped 88 → 96 in TrampolineAsm.S + stencils.cpp's mirror.
+- JITCompiler emits operand2Ptr pointing at `icBuffer + sendIdx
+  * IC_BYTES_PER_SITE` instead of the in-zone offset.  Recompile
+  copies old->icBuffer into new->icBuffer.
+- All consumers of `codeStart() + codeSize - N*IC_BYTES_PER_SITE`
+  (applyICSpecialization, upgradeICToJ2J, patchJITICAfterSend,
+  rewriteIcEntriesAfterRecompile, flushCaches, recoverAfterGC,
+  Tier2Compiler IC plumbing) switched to `icZoneStart()`.
+- `jit::makeWritable`/`makeExecutable` calls around IC writes
+  deleted in upgradeICToJ2J + patchJITICAfterSend + flushCaches +
+  recoverAfterGC + jit_rt_fill_ic.
+
+Bench-suite (default flags):
+
+```
+                     Before      After       Delta
+fib(28)              15          15          —
+sieve x100           44          45          —
+sort 100K            214         175         -18 %
+dict 50K             158         149         -6 %
+sum 1M               1           1           —
+5000 factorial       22          23          —
+1M blocks            21          0 (already)
+1M getter+yourself   0           0           —
+100K allocations     5           5           —
+```
+
+Re-attempted the stencil-side mega-hit IC fill on top of heap-IC
+(now that the W^X cost is gone).  Still regressed sieve 45 → 129 ms
+— the per-call indirect cost into `jit_rt_fill_ic` stays expensive
+because it fires on every cold-IC mega-hit.  Reverted the stencil
+call again; helper + wiring stay in tree as scaffolding.
+
+Late-spec re-recompile (`7c1c7fd7`, opt-in) still doesn't change
+sort 100K appreciably (174 ms with PHARO_LATE_SPEC_RECOMPILE=1).
+mergeFirst's value:value: IC still stays cold because the inline
+mega-cache hit path keeps bypassing IC writes — different problem
+that needs a separate fix.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
