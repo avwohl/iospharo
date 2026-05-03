@@ -6685,9 +6685,27 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             primitiveFailed_ = false;
             primFailCode_ = 0;
             newMethod_ = cached->method;
+#if PHARO_JIT_ENABLED
+            // 2026-05-02 PM cross-path-owner-tracking fix: primitives
+            // 207/209 (block-value family) call activateBlock which
+            // clears pendingICPatch_ to keep the block's inner sends
+            // from re-patching the OUTER send's IC.  But that wipes
+            // the OUTER patch state too, before patchJITICAfterSend
+            // gets a chance to fire below.  Save+restore around
+            // executePrimitive so the outer-send patch path still
+            // sees the OUTER pending pointer.
+            uint64_t* savedPendingPatch = pendingICPatch_;
+            int savedSendArgCount = pendingICSendArgCount_;
+            Oop savedOwnerMethod = pendingICOwnerMethod_;
+#endif
             PrimitiveResult result = executePrimitive(primIdx, argCount);
             if (result == PrimitiveResult::Success) {
 #if PHARO_JIT_ENABLED
+                if (!pendingICPatch_) {
+                    pendingICPatch_ = savedPendingPatch;
+                    pendingICSendArgCount_ = savedSendArgCount;
+                    pendingICOwnerMethod_ = savedOwnerMethod;
+                }
                 patchJITICAfterSend(cached->method, rcvr, selector);
 #endif
                 return;
@@ -6755,9 +6773,22 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         primitiveFailed_ = false;
         primFailCode_ = 0;
         newMethod_ = method;
+#if PHARO_JIT_ENABLED
+        // Same save+restore as the cache-hit path (see comment above).
+        // activateBlock clears pendingICPatch_; restore around the
+        // outer-send patch.
+        uint64_t* savedPendingPatch2 = pendingICPatch_;
+        int savedSendArgCount2 = pendingICSendArgCount_;
+        Oop savedOwnerMethod2 = pendingICOwnerMethod_;
+#endif
         PrimitiveResult result = executePrimitive(primIndex, argCount);
         if (result == PrimitiveResult::Success) {
 #if PHARO_JIT_ENABLED
+            if (!pendingICPatch_) {
+                pendingICPatch_ = savedPendingPatch2;
+                pendingICSendArgCount_ = savedSendArgCount2;
+                pendingICOwnerMethod_ = savedOwnerMethod2;
+            }
             patchJITICAfterSend(method, rcvr, selector);
 #endif
             return;
