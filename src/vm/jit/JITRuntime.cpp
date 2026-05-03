@@ -741,6 +741,88 @@ ic_hit:
 //   1 = megacache hit, state set for EXIT_SEND_CACHED
 //   2 = megacache hit with J2J entry — caller does inline
 //       j2j_direct_call with *out_extra / *out_methodBits.
+// Cold-IC fill helper for stencil's mega-cache-hit path.
+//
+// CURRENTLY DEAD — wired up but the stencil call site was reverted on
+// 2026-05-03.  Even with a tier=2 + slot-0-empty inline gate, the
+// per-fill W^X flip (pthread_jit_write_protect_np ~few hundred
+// cycles) caused sieve x100 to regress 44ms → 87ms (2×) and sort
+// 100K to drift 214ms → 220ms.  Same root cause as the prior failed
+// attempt at full out-of-lining (todo.md §2.5).
+//
+// Kept in tree as scaffolding: the helper, _HOLE_RT_FILL_IC,
+// helpers.fillIC, extract_stencils ID 18, and the JITCompiler
+// wire-up are all in place.  To activate: re-add a call to
+// _HOLE_RT_FILL_IC in stencils.cpp's mega-hit branch (and re-extract
+// stencils).  Future approaches that could make activation viable:
+//   1. Move IC entries out of MAP_JIT into a separate RW zone so
+//      the W^X flip becomes free (matches Linux behaviour today).
+//   2. Batch IC fills in a deferred queue, drained at safe points.
+//   3. Reduce per-flip cost by switching to per-page mprotect on
+//      Linux/x86 only (Apple Silicon has no per-region toggle).
+//
+// Helper itself is correct: handles W^X, decodes primitive index for
+// BLOCK_VALUE_BIT (207/209), and bumps late-spec count via
+// noteLateSpecBit.  Gated by PHARO_NO_MEGAHIT_IC_FILL=1 kill switch.
+extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
+                                uint64_t lookupKey, uint64_t extra,
+                                uint64_t methodBits) {
+    // PHARO_NO_MEGAHIT_IC_FILL=1: kill switch.  Set if the mega-cache
+    // hit IC fill regresses a workload.
+    static const bool disabled =
+        std::getenv("PHARO_NO_MEGAHIT_IC_FILL") != nullptr;
+    if (disabled) return;
+    if (!icData || methodBits == 0) return;
+    if (!s || !s->interp) return;
+    JITRuntime* jr = &s->interp->jitRuntime();
+    if (!jr) return;
+    constexpr uint64_t BLOCK_VALUE_BIT = 1ULL << 59;
+    // Find first empty slot — re-check because another path may have
+    // filled slot 0 between the stencil's check and this call (no
+    // synchronization on single-threaded VM, but defense-in-depth).
+    int firstEmpty = -1;
+    for (int e = 0; e < 6; e++) {
+        if (icData[e * 3] == 0) { firstEmpty = e; break; }
+        if (icData[e * 3] == lookupKey) return;  // already classified
+    }
+    if (firstEmpty < 0) return;
+
+    // Decode callee primitive to add BLOCK_VALUE_BIT for prim 207/209.
+    Oop methodOop = Oop::fromRawBits(methodBits);
+    if (methodOop.isObject() && methodBits > 0x10000) {
+        ObjectHeader* mh = methodOop.asObjectPtr();
+        Oop hdr = mh->slotAt(0);
+        if (hdr.isSmallInteger()
+                && ((hdr.asSmallInteger() >> 16) & 1)) {
+            int primIdx = s->interp->primitiveIndexOf(methodOop);
+            if (primIdx == 207 || primIdx == 209) {
+                extra |= BLOCK_VALUE_BIT;
+            }
+        }
+    }
+
+    // W^X: open a tight write window for the 3-slot IC entry (24 B).
+    jit::makeWritable(icData + firstEmpty * 3, 24);
+    icData[firstEmpty * 3]     = lookupKey;
+    icData[firstEmpty * 3 + 1] = methodBits;
+    icData[firstEmpty * 3 + 2] = extra;
+    jit::makeExecutable(jr->codeZone().rawStart(),
+                        jr->codeZone().totalBytes());
+
+    // Account for late-spec opportunity on tier=2 callers.  Same hook
+    // used by upgradeICToJ2J / patchJITICAfterSend.
+    if (s->jitMethod) {
+        jr->noteLateSpecBit(reinterpret_cast<JITMethod*>(s->jitMethod), extra);
+    }
+}
+
+// NOTE (2026-05-03): this helper is currently DEAD CODE.  Stencils
+// inline the mega-cache probe themselves (stencils.cpp:1715-1762)
+// because out-of-lining regressed array-fill 15-20% (todo.md §2.5).
+// Kept for future experiments.  Any IC-fill changes that need to fire
+// on the mega-cache hot path must be added inline in the stencil
+// (or via a new _HOLE_RT_* runtime call invoked from there) — adding
+// them to this function does nothing.
 extern "C" int jit_rt_ic_miss(
     JITState* s, uint64_t* icData, uint64_t lookupKey,
     int nArgs, int bcOffset,
@@ -1558,6 +1640,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     helpers.primAtPtr = reinterpret_cast<void*>(&jit_rt_primat_ptr);
     helpers.primAtPutPtr = reinterpret_cast<void*>(&jit_rt_primatput_ptr);
     helpers.recompileQueue = reinterpret_cast<void*>(&jit_rt_recompile_queue);
+    helpers.fillIC = reinterpret_cast<void*>(&jit_rt_fill_ic);
     compiler_->setHelpers(helpers);
 
     // Create Tier 2 compiler (asmjit-based)

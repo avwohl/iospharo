@@ -1543,8 +1543,11 @@ private:
     /// Execute a primitive
     PrimitiveResult executePrimitive(int primitiveIndex, int argCount);
 
-    /// Get primitive index from method
+public:
+    /// Get primitive index from method (public so jit_rt_fill_ic can
+    /// decode callee primitives during cold-IC mega-cache fill).
     int primitiveIndexOf(Oop method) const;
+private:
 
     // ===== PRIMITIVE IMPLEMENTATIONS =====
     // (See Primitives.cpp for implementations)

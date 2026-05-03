@@ -1277,6 +1277,21 @@ extern "C" int (*_HOLE_RT_PRIMATPUT_PTR)(JITState* s, uint64_t rcvBits,
 // queue for safe-point recompile.
 extern "C" void (*_HOLE_RT_RECOMPILE_QUEUE)(void* calleeJM);
 
+// Mega-cache hit IC fill helper.  When the inline IC probe misses
+// but the mega-cache hits with a JIT'd callee, the stencil tail-calls
+// inline via j2j_direct_call without ever updating the caller's IC.
+// For repeated hot sends like sort's mergeFirst → BlockClosure>>
+// value:value:, this leaves the IC empty forever and blocks
+// applyICSpecialization from picking up classification bits.
+//
+// stencil_sendJ2J's mega-hit branch invokes this helper when slot 0
+// is empty (cold IC), so future hits take the fast IC-hit path AND
+// applyICSpecialization (or the late-spec re-recompile) can apply
+// stencil_sendBlockValue{0,1,2}Arg / sendInlineMonoJ2J etc.
+extern "C" void (*_HOLE_RT_FILL_IC)(JITState* s, uint64_t* icData,
+                                     uint64_t lookupKey, uint64_t extra,
+                                     uint64_t methodBits);
+
 extern "C" void stencil_sendJ2J(JITState* s) {
     int packed = OPERAND;
     int bcOffset = packed & 0xFFFF;

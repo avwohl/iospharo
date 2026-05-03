@@ -411,6 +411,33 @@ captures pendingICPatch_.
 The Option A infra is in place but doesn't unblock sort 100K
 because the bottleneck is upstream (the IC fill itself, not the
 re-spec).  Leaving Option A opt-in for now.
+
+### 2026-05-03: Mega-hit IC fill attempt — REVERTED
+
+Tried adding an inline IC fill from stencil_sendJ2J's mega-cache hit
+path via `_HOLE_RT_FILL_IC` runtime helper.  Goal: when mega-cache
+hits with a JIT'd callee, fill the caller's IC slot 0 with the
+classification bits (J2J_ENTRY_BIT + BLOCK_VALUE_BIT for 207/209) so
+applyICSpecialization (or late-spec re-recompile) can pick them up.
+
+**Result: 2× regression on sieve x100 (44 → 87 ms), sort unchanged.**
+
+Root cause: per-fill `pthread_jit_write_protect_np` flip is too
+expensive on Apple Silicon.  Even with a `tier == 2 && icData[0] == 0`
+inline gate (so the helper only fires on cold tier=2 IC slots), the
+fill cost dominated.  Each flip is a thread-wide MSR toggle —
+amortising it across many sites doesn't help when there are many
+distinct sites.
+
+Reverted the stencil call.  Helper + extract-stencils wiring stay in
+tree as scaffolding (see `jit_rt_fill_ic` header comment for re-
+activation notes).  Real fix likely requires moving IC entries out
+of MAP_JIT into a separate RW zone so the per-fill flip becomes
+free.
+
+**Net for sort 100K: still 215 ms.** Multi-week structural fix
+needed (separate IC zone OR redesigned mega-hit path that doesn't
+require IC writes).
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
