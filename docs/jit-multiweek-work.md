@@ -499,15 +499,25 @@ identify the path.  Findings:
    (no prologue stencil for it — see primitivePrologueStencil),
    it isn't in 256-519 quick-prim range, and it isn't in 257-263
    quick-constant range.  All three checks fail → bail.
-3. **mergeFirst's IC dump confirms** sites 0/1/2/7/8 are EMPTY
-   (key0=0, extra0=0) at recompile.  Sites 3-6 filled with at:/
-   at:put: (primKind=14/15).  value:value: site is one of the
-   empty ones.
+3. **mergeFirst's IC dump confirms** site layout at recompile:
+   ```
+   site=0 sel=at: key0=0x0  extra0=0x0  (cold)
+   site=1 sel=at: key0=0x0  extra0=0x0  (cold)
+   site=2 sel=value:value: key0=0x0 extra0=0x0  (cold) ← target
+   site=3 sel=at:put: key0=0x33 extra0=...  (hot, primKind=15)
+   site=4 sel=at: key0=0x33 extra0=...  (hot, primKind=14)
+   site=5 sel=at:put: key0=0x33 extra0=...  (hot)
+   site=6 sel=at: key0=0x33 extra0=...  (hot)
+   site=7 sel=replaceFrom:to:with:startingAt: key0=0x0 (cold)
+   site=8 sel=replaceFrom:to:with:startingAt: key0=0x0 (cold)
+   ```
+   value:value: site stays cold — never observed at recompile.
 
-**Attempted fix (REVERTED):** allow target to remain non-null for
-prim 207/209 in upgradeICToJ2J's eager-compile section, AND
-bypass the unsafe-prim return for them so the fill code below
-runs.  The fill already handles 207/209 by adding BLOCK_VALUE_BIT.
+**Attempted fix (REVERTED, opt-in PHARO_BLOCK_VALUE_FILL):** allow
+target to remain non-null for prim 207/209 in upgradeICToJ2J's
+eager-compile section, AND bypass the unsafe-prim return for them
+so the fill code below runs.  The fill already handles 207/209 by
+adding BLOCK_VALUE_BIT.
 
 **Result: hang during Morphic startup before sort even ran.**
 Bench process couldn't make progress; DNU-STACK errors on
@@ -516,10 +526,22 @@ methods.  Filling IC with `J2J_ENTRY_BIT | BLOCK_VALUE_BIT` for
 207/209 must be triggering some downstream path that doesn't
 work — possibly the inline IC probe matching for value:value:
 sites whose receivers aren't FullBlockClosure (e.g.,
-ConstantBlockClosure subclasses), making the BLOCK_VALUE_BIT
-branch dereference a non-FullBlockClosure layout.
+ConstantBlockClosure2Arg overrides value:value: with its own
+non-primitive method), making the BLOCK_VALUE_BIT branch
+dereference a closure layout that doesn't match.
 
 Need more careful investigation before re-attempting.  Reverted.
+
+**Alternate approach (not yet tried):** apply
+stencil_sendBlockValue2Arg from applyICSpecialization based on
+the SELECTOR (`#value:value:` + nArgs==2) rather than on
+BLOCK_VALUE_BIT in IC data.  Statically resolve
+FullBlockClosure's classIndex via the classTable at compile time
+and bake it into operand2.  Spec stencil's slow path falls
+through to ExitSend cleanly for non-FullBlockClosure receivers
+(ConstantBlockClosure subclasses).  Risk: still needs validation
+that the slow path is correct for all polymorphic receivers seen
+in the wider workload.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
