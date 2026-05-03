@@ -1638,6 +1638,39 @@ j2j_direct_call:
                     }
                 }
             }
+            // Caller-bump (2026-05-02 PM, step 2/4 of warm-IC-detection):
+            // Closes the cross-path-owner-tracking gap documented in
+            // docs/jit-multiweek-work.md.  When a J2J hot path repeatedly
+            // calls callees that fast-recompile (so callee-bump skips
+            // them at tier=2), the CALLER never gets its count bumped
+            // from non-recursive callsites.  e.g., sort's
+            // mergeFirst:middle:last:into:by: calls FullBlockClosure>>
+            // value:value: many times — value:value: recompiles fast,
+            // mergeFirst's IC entries fill, but mergeFirst itself never
+            // hits the 500 recompile threshold to apply the
+            // stencil_sendBlockValue2Arg specialization.
+            //
+            // Caller-bump fires on every J2J hit (regardless of callee
+            // tier) and bumps the CALLER's executionCount.  Same splice
+            // gate as callee-bump.  Heap write (caller's stats struct,
+            // not code zone) — no W^X issue.
+            {
+                uint8_t callerTier = *((uint8_t*)_callerJM + 33);
+                if (callerTier == 1) {
+                    bool callerSpl = *((uint8_t*)_callerJM + JM_IS_SPLICE);
+                    if (!callerSpl) {
+                        void** statsLoc = (void**)((uint8_t*)_callerJM + 80);
+                        void* stats = *statsLoc;
+                        if (stats) {
+                            uint32_t* countPtr = (uint32_t*)stats;
+                            uint32_t newCount = ++(*countPtr);
+                            if (newCount == 500) {  // standard threshold
+                                _HOLE_RT_RECOMPILE_QUEUE(_callerJM);
+                            }
+                        }
+                    }
+                }
+            }
             // Setup callee
             Oop _calleeRecv = s->sp[-(nArgs + 1)];
             Oop* _fp = s->sp - (nArgs + 1);
