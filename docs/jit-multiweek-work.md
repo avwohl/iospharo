@@ -246,6 +246,107 @@ later.
 **What got reverted:** the stencil increment + threshold-queue
 code in `stencil_sendJ2J`'s `j2j_direct_call`.  That write was
 the SIGSEGV trigger.
+
+**2026-05-02 PM deeper investigation: the actual root cause is
+mega-cache bypass.**
+
+After dumping mergeFirst's IC sites at recompile time
+(`PHARO_DUMP_MERGE_IC=1`), discovered:
+
+  Site 0 (bcOff=8, send #at:)        → empty
+  Site 1 (bcOff=12, send #at:)       → empty
+  Site 2 (bcOff=34, send #value:value:) → EMPTY
+  Site 3 (bcOff=44, send #at:put:)   → classKey=0x33 (SmI), J2J set
+  Site 4 (bcOff=52, send #at:)       → classKey=0x33 (SmI), J2J set
+  ... [other sites partially filled]
+
+Site 2 (the value:value: site) **stays empty** even after sort
+runs many calls through it.  Why?
+
+The first call from mergeFirst's compiled code goes through
+`stencil_sendJ2J`.  Cold IC → ic_miss → mega-cache probe.  Since
+`#value:value:` is invoked from MANY methods (any sort, any
+do-with-block, etc.), the mega cache has it.  Mega-cache HIT →
+`exit_send_cached` → tryResume's `case ExitSendCached` (line
+14960) — which calls `upgradeICToJ2J` to fill the IC.
+
+**`upgradeICToJ2J` fills with `J2J_ENTRY_BIT` but NOT
+`BLOCK_VALUE_BIT`** (it only sets J2J + optional inline primKind
+bits, see Interpreter.cpp:15820).  Even when target is
+BlockClosure>>value:value:, the BLOCK_VALUE_BIT path is only
+reached via `patchJITICAfterSend`'s primitive-207/209 check,
+which is on the COLD path (mega-cache miss → ExitSend →
+patchJITICAfterSend).
+
+So at sort's scale, the mega-cache rescues every value:value:
+dispatch and the IC site never gets BLOCK_VALUE_BIT.
+Specialization can't fire because the bit isn't there.
+
+**Fixes SHIPPED (4 commits this session):**
+
+1. `b05e7651` — caller-bump alongside callee-bump in stencil_sendJ2J.
+   Both caller and callee accumulate executionCount on each J2J hit
+   (with shared splice gate).  Closes one half of the
+   "callee-recompiles-fast-skips-callee-bump" gap.
+
+2. `d1ef537a` — save+restore `pendingICPatch_` around primitive in
+   sendSelector (both cache-hit and full-lookup paths).  When
+   primitive 207/209 calls `activateBlock`, it clears
+   `pendingICPatch_` to keep the block's inner sends from
+   re-patching the OUTER send's IC.  Save+restore preserves the
+   outer state across the primitive call.
+
+3. `8bd0d9ea` — `upgradeICToJ2J` sets BLOCK_VALUE_BIT for primitive
+   207/209 (both upgrade and fill paths).  Mega-cache hits arrive
+   here without going through patchJITICAfterSend; previously they
+   left BLOCK_VALUE_BIT unset.
+
+4. `f24a48d3` — eager-compile in `upgradeICToJ2J` extends to block-
+   value primitives (primIdx 207, 209 — was 0..199 only).  Lets the
+   IC fill earlier, before the target's natural compile threshold.
+
+All 4 are architecturally correct.  All gated by PHARO_NO_* opt-out
+flags.  Bench-suite parity (best-of-10 ±2 ms across 9 benches).
+
+**But sort still doesn't speed up.**  Discovered a SECOND timing
+issue when validating the fix.  Even with BLOCK_VALUE_BIT correctly
+plumbed through both patch paths, mergeFirst's recompile happens
+TOO EARLY:
+
+  1. mergeFirst's compiled code calls value:value: many times
+  2. Each call: cold IC → mega-cache hit → ExitSendCached →
+     upgradeICToJ2J(target=BlockClosure>>value:value:)
+  3. **Target not yet JIT-compiled** (eager-compile in
+     upgradeICToJ2J only fires for primIdx 0..199; 207 is excluded).
+     upgradeICToJ2J early-returns at line 15694
+     `if (!target || !target->isExecutable()) return;`.  IC stays
+     empty.
+  4. mergeFirst's executionCount accumulates from caller-bump
+     (`b05e7651`) and other paths.  At ~251, OSR fires and
+     mergeFirst recompiles.  applyICSpecialization runs on the
+     OLD IC — site 2 still empty.  No spec.
+  5. AFTER mergeFirst's recompile, BlockClosure>>value:value:
+     finally hits its own threshold via noteMethodEntry and
+     compiles.  Subsequent value:value: calls from mergeFirst
+     succeed in upgradeICToJ2J → IC site 2 fills with J2J +
+     BLOCK_VALUE_BIT.
+  6. **But mergeFirst is now tier=2.**  applyICSpecialization
+     won't run again unless something forces a SECOND recompile.
+
+**The remaining gap is "warm-IC late recompile" — multi-day work.**
+Possible approaches:
+  - Eager-compile block-value primitives (extend upgradeICToJ2J's
+    primIdx check to include 207, 209).  Risk: causes timing
+    cascades, more methods compiled per startup.
+  - Track "specializable bits added since last recompile" per
+    method; force a second recompile when a threshold of new
+    classifications appears.  Adds per-method state.
+  - Defer first recompile until target methods are compiled.
+    Hard to detect without a graph dependency tracker.
+
+The cleanest approach is probably the eager-compile extension —
+just one line change.  Worth A/B testing whether the timing
+cascade harms anything else.  Saving for next session.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
