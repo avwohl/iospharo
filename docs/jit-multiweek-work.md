@@ -486,6 +486,40 @@ sort 100K appreciably (174 ms with PHARO_LATE_SPEC_RECOMPILE=1).
 mergeFirst's value:value: IC still stays cold because the inline
 mega-cache hit path keeps bypassing IC writes — different problem
 that needs a separate fix.
+
+### 2026-05-03 PM diagnostic: why mergeFirst's value:value: site stays cold
+
+Added PHARO_DUMP_RECOMPILE_IC + PHARO_TRACE_UPGRADE_VV probes to
+identify the path.  Findings:
+
+1. **upgradeICToJ2J IS called** with mergeFirst as caller and
+   BlockClosure>>value:value: as cached method (many times).
+2. **It early-returns at line 15743** ("genuinely unsafe
+   primitive"): primitive 207 doesn't have `hasPrimPrologue`
+   (no prologue stencil for it — see primitivePrologueStencil),
+   it isn't in 256-519 quick-prim range, and it isn't in 257-263
+   quick-constant range.  All three checks fail → bail.
+3. **mergeFirst's IC dump confirms** sites 0/1/2/7/8 are EMPTY
+   (key0=0, extra0=0) at recompile.  Sites 3-6 filled with at:/
+   at:put: (primKind=14/15).  value:value: site is one of the
+   empty ones.
+
+**Attempted fix (REVERTED):** allow target to remain non-null for
+prim 207/209 in upgradeICToJ2J's eager-compile section, AND
+bypass the unsafe-prim return for them so the fill code below
+runs.  The fill already handles 207/209 by adding BLOCK_VALUE_BIT.
+
+**Result: hang during Morphic startup before sort even ran.**
+Bench process couldn't make progress; DNU-STACK errors on
+`OSWorldRenderer>>displayExtentChanged` and similar Morphic
+methods.  Filling IC with `J2J_ENTRY_BIT | BLOCK_VALUE_BIT` for
+207/209 must be triggering some downstream path that doesn't
+work — possibly the inline IC probe matching for value:value:
+sites whose receivers aren't FullBlockClosure (e.g.,
+ConstantBlockClosure subclasses), making the BLOCK_VALUE_BIT
+branch dereference a non-FullBlockClosure layout.
+
+Need more careful investigation before re-attempting.  Reverted.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
