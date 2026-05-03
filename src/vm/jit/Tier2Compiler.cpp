@@ -1760,9 +1760,8 @@ void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                         // inside the selBitsArray side-channel (Task #41),
                         // not the IC area — same bug as fixed in the
                         // Sista path (Interpreter.cpp:7037).
-                        uint8_t* icStart =
-                            t1Method->codeStart() + t1Method->codeSize
-                            - t1Method->numICEntries * IC_BYTES_PER_SITE;
+                        // 2026-05-03: IC zone moved to heap, use icBuffer.
+                        uint8_t* icStart = t1Method->icZoneStart();
                         uint8_t* icBase = icStart +
                                           sendIdx * IC_BYTES_PER_SITE;
                         icAddr = reinterpret_cast<uint64_t>(icBase);

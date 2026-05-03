@@ -164,10 +164,11 @@ struct JITMethod_mirror {
     uint32_t  selBitsArrayOffset; // 72  (Task #41 — out-of-band selectorBits)
     uint32_t  _pad_76;            // 76 (padding to 8-byte alignment for stats)
     void*     stats;              // 80 (W^X audit 2026-04-26 — heap-allocated stats)
-    // total: 88 bytes
+    void*     icBuffer;           // 88 (2026-05-03 — heap-allocated IC zone)
+    // total: 96 bytes
 };
-static_assert(sizeof(JITMethod_mirror) == 88,
-              "JITMethod_mirror must match real JITMethod (88 bytes)");
+static_assert(sizeof(JITMethod_mirror) == 96,
+              "JITMethod_mirror must match real JITMethod (96 bytes)");
 static_assert(offsetof(JITMethod_mirror, state) == 32, "state offset");
 static_assert(offsetof(JITMethod_mirror, totalSize) == 48, "totalSize offset");
 static_assert(offsetof(JITMethod_mirror, selBitsArrayOffset) == 72, "selBitsArrayOffset offset");
@@ -271,7 +272,9 @@ static constexpr int JM_IS_SPLICE       = 45;  // bool isSpliceTarget
 // Trimmed to 88 (W^X audit 2026-04-26) when executionCount/lastUsedEpoch/
 // j2jDepthLimit/j2jCleanRuns moved to a heap-allocated JITMethodStats
 // side-table (see JITMethod.hpp), with a `stats` pointer added at the end.
-static constexpr int JM_SIZE            = 88;  // == sizeof(JITMethod_mirror)
+// Bumped to 96 (2026-05-03) when icBuffer was added — IC entries moved
+// out of MAP_JIT into a heap-allocated side-buffer.
+static constexpr int JM_SIZE            = 96;  // == sizeof(JITMethod_mirror)
 static_assert(JM_SIZE == sizeof(JITMethod_mirror),
               "JM_SIZE must equal sizeof(JITMethod_mirror) — bug 11b layer 5");
 

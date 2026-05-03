@@ -218,6 +218,16 @@ struct JITMethod {
     // Allocated by CodeZone::allocate, freed by CodeZone::freeMethod.
     JITMethodStats* stats;
 
+    // --- IC entries (heap-allocated side-table) ---
+    // 2026-05-03: Moved out of MAP_JIT into regular heap so per-fill
+    // pthread_jit_write_protect_np flips are no longer needed.  Lays
+    // numICEntries × IC_BYTES_PER_SITE bytes at icBuffer.  Allocated
+    // by CodeZone::allocate(), freed by freeMethod(), copied across
+    // recompile (compile() with oldVersion).  selBitsArray stays in
+    // MAP_JIT because it's read-only after compile (only zeroed by
+    // GC).  See `jit_rt_fill_ic` re-enablement notes.
+    uint64_t* icBuffer;
+
     // --- Accessors ---
 
     // Pointer to the start of machine code (immediately after header)
@@ -229,13 +239,36 @@ struct JITMethod {
         return reinterpret_cast<const uint8_t*>(this) + sizeof(JITMethod);
     }
 
-    // Pointer to the inline cache entries (after machine code)
+    // Pointer to the inline cache entries (after machine code).
+    // NOTE (2026-05-03): legacy accessor, kept for ICEntry-shape
+    // consumers.  The actual flat IC layout used by stencils +
+    // applyICSpecialization + upgradeICToJ2J + patchJITICAfterSend
+    // lives in the heap-side `icBuffer` field; use
+    // `icBuffer + sendIdx * (IC_BYTES_PER_SITE / 8)` for IC-slot access.
     ICEntry* icEntries() {
-        return reinterpret_cast<ICEntry*>(codeStart() + codeSize);
+        return reinterpret_cast<ICEntry*>(icBuffer);
     }
 
     const ICEntry* icEntries() const {
-        return reinterpret_cast<const ICEntry*>(codeStart() + codeSize);
+        return reinterpret_cast<const ICEntry*>(icBuffer);
+    }
+
+    // Flat per-site IC pointer used by stencils and runtime IC code.
+    uint8_t* icSiteAt(uint32_t siteIdx) {
+        return reinterpret_cast<uint8_t*>(icBuffer)
+             + siteIdx * IC_BYTES_PER_SITE;
+    }
+    const uint8_t* icSiteAt(uint32_t siteIdx) const {
+        return reinterpret_cast<const uint8_t*>(icBuffer)
+             + siteIdx * IC_BYTES_PER_SITE;
+    }
+    // First byte of the IC zone for this method.  Useful when iterating
+    // sites via offset arithmetic.
+    uint8_t* icZoneStart() {
+        return reinterpret_cast<uint8_t*>(icBuffer);
+    }
+    const uint8_t* icZoneStart() const {
+        return reinterpret_cast<const uint8_t*>(icBuffer);
     }
 
     // Pointer to the side-channel selectorBits array (Task #41).

@@ -801,13 +801,11 @@ extern "C" void jit_rt_fill_ic(JITState* s, uint64_t* icData,
         }
     }
 
-    // W^X: open a tight write window for the 3-slot IC entry (24 B).
-    jit::makeWritable(icData + firstEmpty * 3, 24);
+    // 2026-05-03: IC entries are heap-allocated (RW always); no W^X
+    // flip needed.
     icData[firstEmpty * 3]     = lookupKey;
     icData[firstEmpty * 3 + 1] = methodBits;
     icData[firstEmpty * 3 + 2] = extra;
-    jit::makeExecutable(jr->codeZone().rawStart(),
-                        jr->codeZone().totalBytes());
 
     // Account for late-spec opportunity on tier=2 callers.  Same hook
     // used by upgradeICToJ2J / patchJITICAfterSend.
@@ -845,8 +843,7 @@ extern "C" int jit_rt_ic_miss(
     // stencil's null-check fall through to a crashing deref.
     if (selectorBits == 0 && s->jitMethod && s->jitMethod->numICEntries > 0) {
         JITMethod* jm = s->jitMethod;
-        uint8_t* icStart = jm->codeStart() + jm->codeSize
-                         - jm->numICEntries * IC_BYTES_PER_SITE;
+        uint8_t* icStart = jm->icZoneStart();
         ptrdiff_t offset = reinterpret_cast<uint8_t*>(icData) - icStart;
         if (offset >= 0 && (offset % IC_BYTES_PER_SITE) == 0) {
             uint32_t siteIdx = static_cast<uint32_t>(offset / IC_BYTES_PER_SITE);
@@ -1744,8 +1741,7 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     // bench panel by ~14% — the extra wait pushed methods further into
     // interp mode and the larger fill threshold didn't unlock enough
     // additional specializations to compensate.  See deferred B10.
-    uint8_t* icStart = jm->codeStart() + jm->codeSize
-                     - jm->numICEntries * IC_BYTES_PER_SITE;
+    uint8_t* icStart = jm->icZoneStart();
     bool anyData = false;
     for (uint32_t i = 0; i < jm->numICEntries; i++) {
         uint64_t* slots = reinterpret_cast<uint64_t*>(
@@ -1791,46 +1787,11 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     constexpr uint64_t kJ2JEntryBit  = 1ULL << 60;
     constexpr uint64_t kJ2JAddrMask  = 0x0000FFFFFFFFFFFFULL;
 
-    // Two-pass: detect first (read-only, X-mode safe) before paying for a
-    // W^X flip on the whole code zone.  Recompile is rare and most ICs
-    // won't reference this method at all, so the early exit dominates.
-    bool madeAnyEdit = false;
-    for (JITMethod* probe = m; probe; probe = probe->nextInZone) {
-        if (probe->numICEntries == 0) continue;
-        uint8_t* icStart = probe->codeStart() + probe->codeSize
-                         - probe->numICEntries * IC_BYTES_PER_SITE;
-        for (uint32_t i = 0; i < probe->numICEntries; i++) {
-            uint64_t* slots = reinterpret_cast<uint64_t*>(
-                icStart + i * IC_BYTES_PER_SITE);
-            for (int e = 0; e < 6; e++) {
-                if (slots[e * 3 + 1] != methodBits) continue;
-                uint64_t extra = slots[e * 3 + 2];
-                if ((extra & kJ2JEntryBit) == 0) continue;
-                if ((extra & kJ2JAddrMask)
-                    != (newEntryAddr & kJ2JAddrMask)) {
-                    madeAnyEdit = true;
-                    goto need_flip;
-                }
-            }
-        }
-    }
-need_flip:
-    if (!madeAnyEdit) {
-        for (size_t k = 0; k < MegaCacheSize; k++) {
-            if (megaCache_[k].methodBits == methodBits
-                && megaCache_[k].jitEntry != 0
-                && megaCache_[k].jitEntry != newEntryAddr) {
-                megaCache_[k].jitEntry = newEntryAddr;
-            }
-        }
-        return;
-    }
-
-    makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
+    // 2026-05-03: IC zone moved to heap; no W^X flip required.  Single
+    // pass over methods, write directly to heap-side icBuffer.
     while (m) {
-        if (m->numICEntries > 0) {
-            uint8_t* icStart = m->codeStart() + m->codeSize
-                             - m->numICEntries * IC_BYTES_PER_SITE;
+        if (m->numICEntries > 0 && m->icBuffer) {
+            uint8_t* icStart = m->icZoneStart();
             for (uint32_t i = 0; i < m->numICEntries; i++) {
                 uint64_t* slots = reinterpret_cast<uint64_t*>(
                     icStart + i * IC_BYTES_PER_SITE);
@@ -1848,7 +1809,6 @@ need_flip:
         }
         m = m->nextInZone;
     }
-    makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
 
     for (size_t k = 0; k < MegaCacheSize; k++) {
         if (megaCache_[k].methodBits == methodBits
@@ -2516,16 +2476,13 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
     // loop iterations so backward jumps eventually reach 0 and yield.
     // It's initialized by tryJITActivation and reset by ExitYield handlers.
 
-    // Validate IC data area is within code zone
-    if (jm->numICEntries > 0) {
-        uint32_t icSize = jm->numICEntries * IC_BYTES_PER_SITE;
-        uint8_t* icStart = jm->codeStart() + jm->codeSize - icSize;
-        if (icStart < codeZone_.rawStart() || icStart + icSize > codeZone_.rawStart() + codeZone_.totalBytes()) {
-            fprintf(stderr, "[JIT] BUG: IC data %p outside code zone [%p, %p)\n",
-                    (void*)icStart, (void*)codeZone_.rawStart(),
-                    (void*)(codeZone_.rawStart() + codeZone_.totalBytes()));
-            return false;
-        }
+    // Validate IC buffer is allocated when expected (heap-side, not in
+    // code zone — see JITMethod::icBuffer 2026-05-03 comment).
+    if (jm->numICEntries > 0 && !jm->icBuffer) {
+        fprintf(stderr,
+                "[JIT] BUG: numICEntries=%u but icBuffer is null\n",
+                jm->numICEntries);
+        return false;
     }
 
     // Guard: immediate receivers can't have instance variables.
@@ -2715,10 +2672,10 @@ void JITRuntime::dumpICHistogram() const {
 
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
-        if (m->state == MethodState::Compiled && m->numICEntries > 0) {
+        if (m->state == MethodState::Compiled && m->numICEntries > 0
+                && m->icBuffer) {
             compiledMethods++;
-            uint8_t* icStart = m->codeStart() + m->codeSize
-                             - m->numICEntries * IC_BYTES_PER_SITE;
+            uint8_t* icStart = m->icZoneStart();
             for (uint32_t s = 0; s < m->numICEntries; s++) {
                 totalSites++;
                 uint64_t* slots = reinterpret_cast<uint64_t*>(
@@ -2774,18 +2731,11 @@ void JITRuntime::flushCaches() {
     // so zeroing it would permanently disable megamorphic cache probes.
     // Layout per IC site defined by IC_* constants in JITMethod.hpp.
     //
-    // Ensure the entire code zone is writable. mprotect operates on pages,
-    // so a prior makeExecutable() on one method can leave adjacent methods'
-    // IC regions non-writable. Without this, flushCaches SIGSEGVs on the
-    // first IC write when called after a JIT invocation. See deferred.md A1.
-    if (codeZone_.firstMethod()) {
-        makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
-    }
+    // 2026-05-03: IC zone moved to heap; no W^X flip required.
     JITMethod* m = codeZone_.firstMethod();
     while (m) {
-        if (m->numICEntries > 0) {
-            uint8_t* icStart = m->codeStart() + m->codeSize
-                             - m->numICEntries * IC_BYTES_PER_SITE;
+        if (m->numICEntries > 0 && m->icBuffer) {
+            uint8_t* icStart = m->icZoneStart();
             for (uint32_t i = 0; i < m->numICEntries; i++) {
                 uint64_t* slots = reinterpret_cast<uint64_t*>(
                     icStart + i * IC_BYTES_PER_SITE);
@@ -2794,12 +2744,6 @@ void JITRuntime::flushCaches() {
             }
         }
         m = m->nextInZone;
-    }
-    // Restore MAP_JIT executable for this thread (pthread_jit_write_protect
-    // is per-thread and affects the whole region).  Without this any JIT
-    // entry after flushCaches SIGBUS's.
-    if (codeZone_.firstMethod()) {
-        makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
     }
 }
 
@@ -2825,11 +2769,9 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
     // forEachRoot visits IC slots, but there are edge cases (recompiled
     // methods, timing between patch and GC) where oops go stale.
     // Flushing is cheap — ICs re-fill on the next few misses.
+    // 2026-05-03: IC zone moved to heap; no W^X flip required.
     {
         JITMethod* m = codeZone_.firstMethod();
-        if (m) {
-            makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
-        }
         // Diagnostic: PHARO_JIT_STALE_LOG=1 logs each stale slot-18 oop
         // at GC-recovery time.  Helps identify which IC writes aren't
         // visited by forEachRoot (Task #41 staleness-source hunt).
@@ -2839,9 +2781,8 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
         }();
         size_t totalSites = 0, staleSlot18 = 0, staleEntries = 0;
         while (m) {
-            if (m->numICEntries > 0) {
-                uint8_t* icStart = m->codeStart() + m->codeSize
-                                 - m->numICEntries * IC_BYTES_PER_SITE;
+            if (m->numICEntries > 0 && m->icBuffer) {
+                uint8_t* icStart = m->icZoneStart();
                 if (staleLog && interp_) {
                     for (uint32_t i = 0; i < m->numICEntries; i++) {
                         uint64_t* slots = reinterpret_cast<uint64_t*>(
@@ -2973,11 +2914,9 @@ void JITRuntime::recoverAfterGC(ObjectMemory& memory) {
             tier2Insert(temp[i].key, temp[i].func);
         }
     }
-    // Flip MAP_JIT back to executable for this thread (per-thread toggle;
-    // balances the makeWritable() earlier in this function).
-    if (codeZone_.firstMethod()) {
-        makeExecutable(codeZone_.rawStart(), codeZone_.totalBytes());
-    }
+    // 2026-05-03: previous flushCaches/recoverAfterGC IC clear paths
+    // both needed code-zone makeWritable/makeExecutable; with IC moved
+    // to heap that round-trip is gone.
 }
 
 } // namespace jit

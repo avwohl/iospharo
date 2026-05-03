@@ -53,6 +53,7 @@
 #include "PlatformJIT.hpp"
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <cstdio>
 
@@ -182,8 +183,18 @@ public:
         method->stats = new JITMethodStats{};
         method->stats->lastUsedEpoch = epoch_;
 
-        for (uint16_t i = 0; i < numICEntries; i++) {
-            method->icEntries()[i].reset();
+        // Allocate the heap-side IC buffer (numICEntries × IC_BYTES_PER_SITE
+        // bytes).  Zeroed: every slot starts in the "empty IC" state.
+        // 2026-05-03: moved out of MAP_JIT so per-fill W^X flips go
+        // away (see JITMethod.hpp `icBuffer` field comment).  The
+        // legacy ICEntry struct allocation in icSize above is unused.
+        if (numICEntries > 0) {
+            size_t icBufferBytes =
+                (size_t)numICEntries * IC_BYTES_PER_SITE;
+            method->icBuffer = static_cast<uint64_t*>(
+                std::calloc(icBufferBytes, 1));
+        } else {
+            method->icBuffer = nullptr;
         }
 
         // Link into the method list (address-ordered for cache locality)
@@ -223,6 +234,10 @@ public:
         // double-free or stale pointer is caught immediately.
         delete method->stats;
         method->stats = nullptr;
+
+        // Free the heap-side IC buffer.  Same lifetime as stats.
+        std::free(method->icBuffer);
+        method->icBuffer = nullptr;
 
         // Unlink from the doubly-linked method list
         if (method->prevInZone)

@@ -15185,9 +15185,7 @@ Interpreter::extractInlineHintsForMethod(Oop method) {
     const auto* sendBCs = jitRuntime_.compiler()
         ? jitRuntime_.compiler()->getSendSiteBCOffsets(method.rawBits())
         : nullptr;
-    const uint8_t* icStart =
-        jm->codeStart() + jm->codeSize
-        - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+    const uint8_t* icStart = jm->icZoneStart();
     for (uint16_t sendIdx = 0; sendIdx < jm->numICEntries; ++sendIdx) {
         const uint8_t* icBase =
             icStart + sendIdx * jit::IC_BYTES_PER_SITE;
@@ -15250,17 +15248,8 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     uint64_t* icData = pendingICPatch_;
     pendingICPatch_ = nullptr;
 
-    // IC data lives in the MAP_JIT code zone; ensure writable for the patch.
-    // RAII guard flips the whole zone back to executable on every exit path.
-    // On Apple Silicon pthread_jit_write_protect_np is a per-thread toggle
-    // that affects the ENTIRE MAP_JIT region — leaving it writable here
-    // means this thread cannot execute JIT code on return, causing a
-    // SIGBUS "Fault addr = PC in code zone" as soon as JIT code resumes.
-    jit::makeWritable(icData, 1);
-    struct RestoreExec {
-        jit::CodeZone& z;
-        ~RestoreExec() { jit::makeExecutable(z.rawStart(), z.totalBytes()); }
-    } restoreExec{jitRuntime_.codeZone()};
+    // 2026-05-03: IC data moved out of MAP_JIT into heap-side
+    // icBuffer.  No W^X flip needed.
 
     // DEBUG: Selector-based J2J fill skip (PHARO_J2J_SKIP_SELECTORS).
     // Same skip used by upgradeICToJ2J — uses the IC's send-site selector
@@ -15309,8 +15298,7 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
         if (auto* jm = jitRuntime_.methodMap().lookup(
                 pendingICOwnerMethod_.rawBits())) {
             if (jm->numICEntries > 0) {
-                uint8_t* icStart = jm->codeStart() + jm->codeSize
-                                 - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                uint8_t* icStart = jm->icZoneStart();
                 ptrdiff_t off = reinterpret_cast<uint8_t*>(icData) - icStart;
                 if (off >= 0
                         && (off % jit::IC_BYTES_PER_SITE) == 0) {
@@ -15630,15 +15618,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
     static bool fillEnabled = !g_debug.noICFill;
     if (!j2jEnabled || !icData) return;
 
-    // IC data lives in the MAP_JIT code zone.  Open a W window for the
-    // duration of this function, restored to X on every exit path.
-    // Required by the W^X audit 2026-04-26 default-X invariant — bare
-    // icData[] writes below would SIGBUS without this guard.
-    jit::makeWritable(icData, 19 * sizeof(uint64_t));
-    struct RestoreExec {
-        jit::CodeZone& z;
-        ~RestoreExec() { jit::makeExecutable(z.rawStart(), z.totalBytes()); }
-    } restoreExec{jitRuntime_.codeZone()};
+    // 2026-05-03: IC data moved out of MAP_JIT into heap-side
+    // icBuffer.  No W^X flip needed.
 
     // DEBUG: Selector-based J2J upgrade skip (PHARO_J2J_SKIP_SELECTORS).
     // Lets us bisect which method's J2J upgrade triggers a bug. Note that
@@ -15708,10 +15689,8 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             if (eagerCompileTarget) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
                 if (target && !target->hasPrimPrologue) target = nullptr;
-                // compile() ends in EXECUTABLE mode (per the W^X audit
-                // 2026-04-26 invariant).  Re-open our W window so the
-                // icData[] writes below succeed.
-                jit::makeWritable(icData, 19 * sizeof(uint64_t));
+                // 2026-05-03: IC moved to heap, no W^X flip needed
+                // around icData[] writes below.
             }
         }
     }
@@ -15881,8 +15860,7 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 if (auto* jm = jitRuntime_.methodMap().lookup(
                         callerMethod.rawBits())) {
                     if (jm->numICEntries > 0) {
-                        uint8_t* icStart = jm->codeStart() + jm->codeSize
-                                - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                        uint8_t* icStart = jm->icZoneStart();
                         ptrdiff_t off = reinterpret_cast<uint8_t*>(icData)
                                 - icStart;
                         if (off >= 0
@@ -17025,8 +17003,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 if (selBits == 0) {
                     if (auto* jm = jitRuntime_.methodMap().lookup(state.method.rawBits())) {
                         if (jm->numICEntries > 0) {
-                            uint8_t* icStart = jm->codeStart() + jm->codeSize
-                                             - jm->numICEntries * jit::IC_BYTES_PER_SITE;
+                            uint8_t* icStart = jm->icZoneStart();
                             ptrdiff_t offset = reinterpret_cast<uint8_t*>(state.icDataPtr) - icStart;
                             if (offset >= 0 && (offset % jit::IC_BYTES_PER_SITE) == 0) {
                                 uint32_t siteIdx = static_cast<uint32_t>(offset / jit::IC_BYTES_PER_SITE);

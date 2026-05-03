@@ -71,7 +71,9 @@
 // Trimmed to 88 (W^X audit 2026-04-26) when executionCount/
 // lastUsedEpoch/j2jDepthLimit/j2jCleanRuns moved to the
 // heap-side JITMethodStats struct.
-#define JM_SIZE           88
+// Bumped to 96 (2026-05-03) when icBuffer was added — IC entries
+// moved out of MAP_JIT into a heap-allocated side-buffer.
+#define JM_SIZE           96
 
 // -------- ExitReason values --------
 #define EXIT_RETURN       1

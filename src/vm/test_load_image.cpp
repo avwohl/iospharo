@@ -584,9 +584,8 @@ static void sigsegvAction(int sig, siginfo_t* info, void* ctx) {
                 int matches = 0;
                 JITMethod* m2 = g_jitCodeZone->firstMethod();
                 while (m2 && matches < 5) {
-                    if (m2->numICEntries > 0) {
-                        uint8_t* icStart = m2->codeStart() + m2->codeSize
-                                         - m2->numICEntries * IC_BYTES_PER_SITE;
+                    if (m2->numICEntries > 0 && m2->icBuffer) {
+                        uint8_t* icStart = m2->icZoneStart();
                         for (uint32_t i = 0; i < m2->numICEntries && matches < 5; i++) {
                             uint64_t* slots = reinterpret_cast<uint64_t*>(
                                 icStart + i * IC_BYTES_PER_SITE);

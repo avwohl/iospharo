@@ -1241,14 +1241,9 @@ JITCompiler::getSendSiteBCOffsets(uint64_t compiledMethodBits) const {
 // ===== IC-GUIDED SPECIALIZATION =====
 
 void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
-    // Compute IC data location in the old method.
-    // Layout: [JITMethod header][code][literal pool][bcToCode table]
-    //         [selBitsArray][IC data]
-    // Task #41 inserted selBitsArray between bcToCode and IC.  The
-    // ICs sit AT THE END of the allocation:
-    //   icStart = codeStart + codeSize - numICEntries * IC_BYTES_PER_SITE
-    uint32_t icDataOff = oldVersion->codeSize -
-                         oldVersion->numICEntries * IC_BYTES_PER_SITE;
+    // 2026-05-03: IC data lives in heap-side icBuffer, not in MAP_JIT.
+    // No offset arithmetic needed — read directly from oldVersion->
+    // icBuffer.
 
     uint16_t sendIdx = 0;
     uint16_t specialized = 0;
@@ -1263,7 +1258,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
         if (sendIdx >= oldVersion->numICEntries)
             break;  // more sends than IC slots (shouldn't happen)
 
-        uint8_t* icBase = oldVersion->codeStart() + icDataOff + sendIdx * IC_BYTES_PER_SITE;
+        uint8_t* icBase = oldVersion->icSiteAt(sendIdx);
         uint64_t* ic = reinterpret_cast<uint64_t*>(icBase);
 
         // Check monomorphic: slot 0 populated, slot 1 empty
@@ -1995,9 +1990,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // stays true for all callers.  Accessed via JITMethod::selBitsArray().
     uint32_t selBitsArrayOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t selBitsArraySize = numSendSites * sizeof(uint64_t);
-    uint32_t icDataOffset = selBitsArrayOffset + selBitsArraySize;
-    uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
-    uint32_t totalSize = icDataOffset + icDataSize;
+    // 2026-05-03: IC data moved out of MAP_JIT into a heap-side buffer
+    // (JITMethod::icBuffer) so per-fill W^X flips disappear.  No more
+    // in-zone icDataOffset / icDataSize — totalSize ends after
+    // selBitsArray.  The pointer baked into operand2Ptr below points
+    // at the heap buffer instead of the in-zone offset.
+    uint32_t totalSize = selBitsArrayOffset + selBitsArraySize;
 
     // The code zone is kept in writable W^X mode by default (set during
     // initialize). We write freely here; tryExecute() toggles to executable
@@ -2007,8 +2005,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     size_t allocSize = sizeof(JITMethod) + totalSize;
     allocSize = (allocSize + MethodAlignment - 1) & ~(MethodAlignment - 1);
 
-    // Allocate in code zone (tries bump pointer, then free list)
-    JITMethod* jitMethod = zone_.allocate(totalSize, 0 /* no IC entries yet */);
+    // Allocate in code zone (tries bump pointer, then free list).
+    // Pass numSendSites so CodeZone::allocate also allocates the
+    // heap-side icBuffer (2026-05-03: ICs moved out of MAP_JIT).
+    JITMethod* jitMethod = zone_.allocate(totalSize, numSendSites);
     if (!jitMethod) {
         // Incremental eviction: free cold methods into the free list.
         // allocate() will reuse freed space without moving methods
@@ -2104,9 +2104,8 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             static constexpr uint64_t ADDR_MASK = 0x0000FFFFFFFFFFFFULL;
             JITMethod* im = zone_.firstMethod();
             while (im) {
-                if (im->numICEntries > 0) {
-                    uint8_t* icStart = im->codeStart() + im->codeSize
-                                     - im->numICEntries * IC_BYTES_PER_SITE;
+                if (im->numICEntries > 0 && im->icBuffer) {
+                    uint8_t* icStart = im->icZoneStart();
                     for (uint32_t i = 0; i < im->numICEntries; i++) {
                         uint64_t* slots = reinterpret_cast<uint64_t*>(
                             icStart + i * IC_BYTES_PER_SITE);
@@ -2125,7 +2124,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 }
                 im = im->nextInZone;
             }
-            jitMethod = zone_.allocate(totalSize, 0);
+            jitMethod = zone_.allocate(totalSize, numSendSites);
         }
 
         // If incremental eviction wasn't enough, full flush as last resort.
@@ -2153,7 +2152,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
             // allocate() use the free list.
             if (zone_.firstMethod() == nullptr) zone_.compact();
 
-            jitMethod = zone_.allocate(totalSize, 0);
+            jitMethod = zone_.allocate(totalSize, numSendSites);
             if (!jitMethod) {
                 compilationsFailed_++;
                 return nullptr;
@@ -2197,9 +2196,13 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // + selectorBits. The extra word encodes inline getter/setter info for
     // J2J dispatch (bit 63=getter, bit 62=setter, bit 61=returnsSelf).
     uint8_t* codeBase_pre = jitMethod->codeStart();
+    uint8_t* icBufferBase = jitMethod->icZoneStart();  // heap, not in MAP_JIT
+    uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
     {
-        // Zero IC data area first
-        std::memset(codeBase_pre + icDataOffset, 0, icDataSize);
+        // Zero IC data area first (icBuffer was zero-init by calloc, but
+        // recompile path memcpys over it; the explicit memset keeps the
+        // semantics symmetric with the prior in-zone layout).
+        if (icBufferBase) std::memset(icBufferBase, 0, icDataSize);
 
         // On recompile: copy IC entries from old to new.  Without this,
         // applyICSpecialization emits stencil_sendInlineMonoJ2J for sites
@@ -2218,11 +2221,10 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // (not heap), and the old method's code stays valid until
         // eviction.  numICEntries matches between old and new (same
         // bytecode → same send sites).
-        if (oldVersion && oldVersion->numICEntries == numSendSites) {
-            uint32_t oldICDataOff = oldVersion->codeSize -
-                                    oldVersion->numICEntries * IC_BYTES_PER_SITE;
-            std::memcpy(codeBase_pre + icDataOffset,
-                        oldVersion->codeStart() + oldICDataOff,
+        if (oldVersion && oldVersion->numICEntries == numSendSites
+                && oldVersion->icBuffer && icBufferBase) {
+            std::memcpy(icBufferBase,
+                        oldVersion->icZoneStart(),
                         icDataSize);
         }
 
@@ -2247,7 +2249,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 sid == StencilID::stencil_sendInlineMonoJ2J ||
                 sid == StencilID::stencil_sendInlineReturnsLiteral ||
                 sid == StencilID::stencil_sendInlineMultiSlot) {
-                uint8_t* icBase = codeBase_pre + icDataOffset + sendIdx * IC_BYTES_PER_SITE;
+                uint8_t* icBase = icBufferBase + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
                 siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));
 
