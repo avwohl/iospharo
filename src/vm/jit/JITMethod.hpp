@@ -94,21 +94,31 @@ struct ICEntry {
 // ===== INLINE CACHE LAYOUT (shared between compiler, runtime, stencils, GC) =====
 //
 // Each IC site has IC_ENTRIES_PER_SITE entries laid out as:
-//   [key0, method0, extra0, key1, method1, extra1, ..., selectorBits]
+//   [key0, method0, extra0, key1, method1, extra1, ..., selectorBits, hitCount]
 // keys are classIndex (or tagged immediate marker, not an Oop).
 // methods are CompiledMethod Oop (needs GC update).
 // extras are flags + slot/address (not an Oop).
 // selectorBits is the site's selector Symbol Oop (needs GC update),
-// lives after all entries at slot IC_SELBITS_SLOT.
+// lives at slot IC_SELBITS_SLOT (immediately after all entries).
+// hitCount is a per-site warm counter — incremented on each IC hit; when it
+// crosses the recompile threshold the site's owner method is queued for
+// recompile.  Lives at slot IC_HITCOUNT_SLOT (after selectorBits).  Added
+// 2026-05-02 PM as the foundation for cross-path warm-IC detection (see
+// docs/jit-multiweek-work.md item #2).
 //
 // These constants MUST match the stencil source (stencils.cpp) —
 // changing them requires regenerating stencils via extract_stencils.py.
+// Stencils only access icData[0..18] (the existing layout); the new
+// hitCount slot at offset 152 is invisible to them in this initial
+// step — counter increments will be wired in in a subsequent commit.
 static constexpr uint32_t IC_ENTRIES_PER_SITE = 6;
 static constexpr uint32_t IC_BYTES_PER_ENTRY  = 24;  // key(8) + method(8) + extra(8)
 static constexpr uint32_t IC_BYTES_PER_SITE   =
-    IC_ENTRIES_PER_SITE * IC_BYTES_PER_ENTRY + 8;    // +8 for selectorBits
+    IC_ENTRIES_PER_SITE * IC_BYTES_PER_ENTRY + 16;   // +8 selectorBits, +8 hitCount
 static constexpr uint32_t IC_SELBITS_SLOT     =
     IC_ENTRIES_PER_SITE * 3;                         // slot index of selectorBits
+static constexpr uint32_t IC_HITCOUNT_SLOT    =
+    IC_SELBITS_SLOT + 1;                             // slot index of hitCount
 
 // ===== JIT METHOD STATS (side-table) =====
 //
