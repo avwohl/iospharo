@@ -15680,7 +15680,20 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         bool hasPrim = hdr.isSmallInteger() && ((hdr.asSmallInteger() >> 16) & 1);
         if (hasPrim) {
             int primIdx = primitiveIndexOf(cachedMethod);
-            if (primIdx > 0 && primIdx < 200) {
+            // 2026-05-03: extended primIdx range to include block-value
+            // primitives 207/209 so the IC at value:value: sites can
+            // fill with BLOCK_VALUE_BIT classification before the
+            // owner method's first recompile.  Sort 100K's mergeFirst
+            // hot path was the canonical bug — without eager-compile,
+            // BlockClosure>>value:value: lagged mergeFirst's OSR-recompile
+            // and the resulting IC entries missed BLOCK_VALUE_BIT.
+            // Gated by PHARO_NO_EAGER_BLOCK_VALUE for kill switch.
+            static const bool noEagerBlockValue =
+                std::getenv("PHARO_NO_EAGER_BLOCK_VALUE") != nullptr;
+            bool eagerCompileTarget = (primIdx > 0 && primIdx < 200)
+                || (!noEagerBlockValue
+                    && (primIdx == 207 || primIdx == 209));
+            if (eagerCompileTarget) {
                 target = jitRuntime_.compiler()->compile(cachedMethod);
                 if (target && !target->hasPrimPrologue) target = nullptr;
                 // compile() ends in EXECUTABLE mode (per the W^X audit
