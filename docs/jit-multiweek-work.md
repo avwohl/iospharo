@@ -1192,3 +1192,54 @@ fallback we added for sendBlockValueNArg or it'll hang at scale.
 
 Not pursued in 2026-05-03 session due to time bound; documented
 for future work.
+
+### 2026-05-03 PM: dict 50K -13% — inline ByteString = in stencil_equalSmallInt
+
+`fc301953` (default-on): dict 50K 148-154 → 128-133 ms.  Cog gap
+3.0× → 2.6×.
+
+**Root cause located by IC dump:** scanFor:'s `=` send is opcode
+0x66 (arith special send), NOT a literal Send1 with #= selector.
+0x66 goes directly to stencil_equalSmallInt — completely bypassing
+the IC dispatch.  My initial selector-based applyICSpecialization
+attempt found nothing because there was no #= IC site to
+specialize.
+
+**Diagnostic that found it:** added `PHARO_DUMP_RECOMPILE_IC=scanFor`
+flag in JITRuntime.cpp.  Dump showed 6 IC sites — `size`, `hash`,
+`at:`, `key`, `at:`, `key`.  No `=`.  That ruled out applyICSpec
+as the lever.
+
+**The fix:** extend stencil_equalSmallInt's slow path to detect
+byte objects (format 16-23, no overflow word) and inline the byte
+compare.  Skips Pharo's String>>= → compare:with: → compare:with:
+collated: → ByteString>>compareWith:collated: (prim 158)
+4-method chain.
+
+```cpp
+// stencil_equalSmallInt:
+if (isSmallInteger(a) && isSmallInteger(b)) { ... fast SmI path ... }
+// NEW: ByteString = inline byte compare
+if (both byte objects, fmt 16-23, slotCount<255) {
+    if (sizes differ) result = false;
+    else { byte loop; result = eq; }
+    return;
+}
+// existing slow path
+```
+
+Bench-suite 5/5 stable.  All other benches at parity.
+
+**Cumulative session summary on bench gaps:**
+```
+                       Original   Final     Δ        Cog    Gap
+fib(28)                15         15        —        15     1.0×
+sieve x100             44         44        —        18     2.4×
+sort 100K              214        121-122   -43%     60     2.0×
+dict 50K               158        128-133   -18%     50     2.6×
+sum 1M                 1          1         —        5      0.2× (we beat)
+factorial              22         21-22     —        ?
+1M blocks              21         0         —        16     0    (we beat)
+1M getter+yourself     0          0         —        2      0    (we beat)
+100K alloc             5          4-5       —        ?
+```
