@@ -543,6 +543,45 @@ through to ExitSend cleanly for non-FullBlockClosure receivers
 that the slow path is correct for all polymorphic receivers seen
 in the wider workload.
 
+### 2026-05-03 PM: selector-based block-value spec — SHIPPED (default-on, sort 100K -30%)
+
+After three failed attempts (documented below), the selector-based
+spec is now default-on as `a515adcf`.  Sort 100K: 174ms → 121ms.
+
+**The fix** that made it stable: extending the spec stencil's slow
+path to consult the mega-cache like sendJ2J does.  Earlier attempts
+applied the spec but the slow path bailed to ExitSend with
+icDataPtr=nullptr — for cold IC sites where mega-cache hits
+commonly bypass IC writes (mergeFirst's value:value: pattern),
+EVERY call ate full method lookup + interp dispatch.  3000×
+slowdown.
+
+The new slow path probes the mega-cache, computes lookupKey from
+receiver class, and bails to EXIT_SEND_CACHED with cachedTarget
+= mega-hit method.  Mirrors sendJ2J's mega-cache hit path — slow
+path cost now comparable to sendJ2J's slow path.
+
+**applyICSpecialization branch** (compile-time, fires at recompile
+when classKey0 == 0):
+  - Detects Send2 with #value:value: selector via literal frame
+  - Resolves FullBlockClosure classIndex via JITRuntime cache
+  - Sets stencil to stencil_sendBlockValue2Arg with packed
+    operand2Ptr = (litIndex << 48) | (fbcIdx << 16)
+
+**Cumulative session win on sort 100K:**
+  Original baseline:  214 ms
+  Heap-IC (898ca79f): 174 ms  (-19%)
+  Spec (a515adcf):    121 ms  (additional -30%)
+  Total:              -43%
+  Cog gap:            2.0× (was 3.6×)
+
+**Files changed:** JITCompiler.cpp (new applyICSpecialization
+branch), stencils.cpp (sendBlockValue2Arg slow-path mega-cache
+probe), generated stencils regenerated.  PHARO_NO_BLOCK_VALUE_SPEC=1
+to opt out.
+
+### Earlier failed attempts (kept for context)
+
 ### 2026-05-03 PM: selector-based block-value spec attempt — REVERTED
 
 Implemented the alternate approach:
