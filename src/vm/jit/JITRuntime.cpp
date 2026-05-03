@@ -433,6 +433,68 @@ extern "C" void jit_rt_recompile_queue(void* calleeJM) {
     }
 }
 
+void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
+    if (!callerJM || !callerJM->stats) return;
+    // Only meaningful once the method has been recompiled at least once
+    // and is now tier=2 (initial compile already missed this bit).
+    if (callerJM->tier != 2) return;
+    // One-shot cap: each method can only be re-recompiled once via this
+    // path.  Without it, repeat IC fills could trigger an unbounded
+    // recompile loop.
+    if (callerJM->stats->flags & kLateSpecRecompiledOnce) return;
+    // Already at-or-past threshold: queued (or about to drain).  Don't
+    // pay the ring-buffer dedup scan on every subsequent IC fill while
+    // we wait for the safe-point drain.
+    if (callerJM->stats->lateSpecCount >= kLateSpecRecompileThreshold) return;
+
+    // Opt-in gate.  Flip default-on after bench-suite validation.
+    static const bool enabled =
+        std::getenv("PHARO_LATE_SPEC_RECOMPILE") != nullptr;
+    if (!enabled) return;
+
+    // Weight by classification value.  High-value bits (block-value,
+    // multi-slot, returnsLiteral) unlock dedicated specialized stencils
+    // worth a re-recompile on a single fill.  Plain J2J_ENTRY_BIT only
+    // unlocks MonoJ2J spec (modest gain) — needs at least two fills to
+    // be worth it.
+    uint8_t weight = 0;
+    if (newExtra & (1ULL << 59)) weight = 2;       // BLOCK_VALUE_BIT
+    else if (newExtra & (1ULL << 57)) weight = 2;  // MULTI_SLOT
+    else if (newExtra & (1ULL << 58)) weight = 2;  // RETURNS_LITERAL
+    else if (newExtra & (1ULL << 60)) weight = 1;  // J2J_ENTRY_BIT
+    if (weight == 0) return;
+
+    uint16_t newCount = (uint16_t)callerJM->stats->lateSpecCount + weight;
+    if (newCount > 0xFF) newCount = 0xFF;
+    callerJM->stats->lateSpecCount = (uint8_t)newCount;
+
+    if (callerJM->stats->lateSpecCount < kLateSpecRecompileThreshold) return;
+
+    // Threshold crossed — queue for re-recompile.  Same ring buffer used
+    // by the J2J inline-bump path (drained at safe points by Interpreter).
+    uint64_t methBits = callerJM->compiledMethodOop;
+    if (methBits == 0) return;
+    size_t head = g_recompileQueueHead;
+    if (head < kRecompileQueueSize) {
+        for (size_t i = 0; i < head; i++) {
+            if (g_recompileQueue[i] == methBits) return;  // already queued
+        }
+        g_recompileQueue[head] = methBits;
+        g_recompileQueueHead = head + 1;
+    }
+
+    static const bool traceLate =
+        std::getenv("PHARO_TRACE_LATE_SPEC") != nullptr;
+    if (traceLate && interp_) {
+        std::string sel = interp_->memory().selectorOf(
+            Oop::fromRawBits(methBits));
+        fprintf(stderr,
+                "[LATE-SPEC] queued %s (count=%u extra=0x%llx)\n",
+                sel.c_str(), callerJM->stats->lateSpecCount,
+                (unsigned long long)newExtra);
+    }
+}
+
 // T2 monomorphic IC counters
 int g_t2ICHits = 0;
 int g_t2ICMisses = 0;
@@ -1554,10 +1616,22 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000)
         return false;
     JITMethod* jm = methodMap_.lookup(compiledMethod.rawBits());
-    // Only recompile T1-compiled methods that haven't been recompiled yet.
-    // recompile() sets tier=2, which excludes them here.
-    if (!jm || !jm->isExecutable() || jm->tier != 1) return false;
+    if (!jm || !jm->isExecutable()) return false;
     if (jm->numICEntries == 0) return false;
+    // Tier gate.  T1 → unconditional recompile (the original OSR-recompile
+    // path).  T2 → only allowed for the late-spec one-shot path: caller
+    // must have crossed kLateSpecRecompileThreshold and not yet been
+    // re-recompiled.  See JITRuntime::noteLateSpecBit.
+    bool lateSpec = false;
+    if (jm->tier == 1) {
+        // first-recompile path
+    } else if (jm->tier == 2 && jm->stats
+               && !(jm->stats->flags & kLateSpecRecompiledOnce)
+               && jm->stats->lateSpecCount >= kLateSpecRecompileThreshold) {
+        lateSpec = true;
+    } else {
+        return false;
+    }
 
     // Sista already owns this method via a counted-loop splice — don't
     // race with it.  applyICSpecialization (run during recompile) emits
@@ -1602,15 +1676,23 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     if (traceRecompile) {
         std::string sel = interp_->memory().selectorOf(compiledMethod);
         fprintf(stderr,
-                "[RECOMPILE-OSR] %s (icEntries=%u execCount=%u)\n",
+                "[RECOMPILE-OSR] %s (icEntries=%u execCount=%u%s)\n",
                 sel.c_str(), jm->numICEntries,
-                jm->stats ? jm->stats->executionCount : 0);
+                jm->stats ? jm->stats->executionCount : 0,
+                lateSpec ? " late-spec" : "");
     }
     JITMethod* newJM = compiler_->recompile(compiledMethod);
     if (newJM) {
         rewriteIcEntriesAfterRecompile(
             compiledMethod.rawBits(),
             reinterpret_cast<uint64_t>(newJM->codeStart()));
+        if (lateSpec && newJM->stats) {
+            // Cap to one re-recompile per method, ever.  Reset count
+            // so any further spec-bit additions don't keep re-flagging
+            // a method that's already been given its second chance.
+            newJM->stats->flags |= kLateSpecRecompiledOnce;
+            newJM->stats->lateSpecCount = 0;
+        }
     }
     return newJM != nullptr;
 }

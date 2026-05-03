@@ -81,6 +81,14 @@ public:
     // Returns the number of methods processed.
     size_t drainRecompileQueue();
 
+    // Late-spec re-recompile: account for an IC-classification bit added
+    // to an empty slot in callerJM after callerJM has already been
+    // recompiled (tier=2).  When enough bits accumulate, queue callerJM
+    // for a one-shot re-recompile so applyICSpecialization picks them up.
+    // Closes the warm-IC late-recompile gap (sort 100K's mergeFirst).
+    // Gated by PHARO_LATE_SPEC_RECOMPILE=1 (opt-in until validated).
+    void noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra);
+
     // Rewrite J2J entry-addr bits in every IC site whose methodBits matches
     // the recompiled method.  After recompile() returns a new JITMethod,
     // callers' IC.extra still holds the OLD entry address — left untouched,

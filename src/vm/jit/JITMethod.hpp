@@ -133,10 +133,23 @@ struct JITMethodStats {
     uint32_t lastUsedEpoch;      // Updated on entry; compared against global epoch for LRU
     uint8_t  j2jDepthLimit;      // Per-method stencil J2J depth limit (default 2, max 8)
     uint8_t  j2jCleanRuns;       // Consecutive no-bail stencil re-entries (promotes at 8)
-    uint8_t  reserved1;
-    uint8_t  reserved2;
+    uint8_t  lateSpecCount;      // Specialization-bearing IC bits added since last recompile.
+                                 // upgradeICToJ2J bumps this on a tier=2 caller method when
+                                 // a previously-empty slot fills with classification bits;
+                                 // when it crosses kLateSpecRecompileThreshold the method
+                                 // is queued for a one-shot re-recompile so
+                                 // applyICSpecialization can pick up the new bits.
+    uint8_t  flags;              // bit 0 = LATE_SPEC_RECOMPILED_ONCE (one-shot cap)
 };
 static_assert(sizeof(JITMethodStats) == 12, "JITMethodStats layout");
+
+// Threshold for late-spec re-recompile.  Weight scheme in upgradeICToJ2J:
+//   +2 per high-value bit (BLOCK_VALUE_BIT / multi-slot / returnsLiteral)
+//   +1 per plain J2J_ENTRY_BIT classification
+// A single 2-arg block-value classification (sort's mergeFirst case) is enough
+// to trip the threshold; plain J2J fills need ≥2 to avoid noise.
+static constexpr uint8_t kLateSpecRecompileThreshold = 2;
+static constexpr uint8_t kLateSpecRecompiledOnce     = 0x01;
 
 // ===== JIT METHOD HEADER =====
 //

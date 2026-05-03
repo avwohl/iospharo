@@ -344,9 +344,73 @@ Possible approaches:
   - Defer first recompile until target methods are compiled.
     Hard to detect without a graph dependency tracker.
 
-The cleanest approach is probably the eager-compile extension —
-just one line change.  Worth A/B testing whether the timing
-cascade harms anything else.  Saving for next session.
+### 2026-05-03: Option A "specializable-bit accounting" implementation
+Implemented the per-method late-spec-count + one-shot re-recompile
+infrastructure (Option A from the proposal above):
+  - `JITMethodStats.lateSpecCount` (uint8) + `flags` bit
+    `kLateSpecRecompiledOnce` — fits in the existing 12-byte
+    side-table (replaced reserved1/reserved2).
+  - `JITRuntime::noteLateSpecBit(callerJM, newExtra)` — bumps the
+    caller's count when an empty IC slot fills with classifying
+    bits AND caller is tier=2.  Weight 2 for high-value bits
+    (BLOCK_VALUE/multi-slot/returnsLiteral), 1 for plain J2J.
+    Threshold = 2.  One-shot cap via flag.
+  - Hooked into both IC-fill paths: upgradeICToJ2J (existing-empty
+    extra + fill-empty) and patchJITICAfterSend (cold-IC path).
+  - Relaxed `maybeRecompileForOSR`'s `tier != 1` gate to also
+    accept `tier == 2 && lateSpecCount >= threshold && !
+    recompiledOnce`.  Sets the flag after successful re-recompile.
+  - Gated by `PHARO_LATE_SPEC_RECOMPILE=1` (opt-in).
+
+**Result on sort 100K bench: NEUTRAL (215ms with flag vs 214ms
+without).**  Many other methods get late-spec'd (shuffleBy:, scanFor:,
+findElementOrNil:, =, printStringBase:nDigits:, etc.) but mergeFirst
+itself doesn't qualify.
+
+**Why mergeFirst doesn't qualify (deeper bottleneck):**
+With `PHARO_TRACE_LATE_SPEC_DBG=1`, mergeFirst sees 4 IC-fill events
+total — ALL at tier=1, ALL for two distinct callees with primKind=14
+(at:) and primKind=15 (at:put:).  After OSR-recompile to tier=2, NO
+further IC-fill events occur for mergeFirst.  In particular, the
+`value:value:` site that we intended to hit with stencil_sendBlockValue2Arg
+NEVER fills — neither at tier=1 nor tier=2.
+
+Two paths could fill mergeFirst's value:value: IC site:
+  - `upgradeICToJ2J` from `tryResume`'s ExitSendCached (requires
+    the slot to have already been filled with at least the class
+    key — needs an earlier patchJITICAfterSend).
+  - `patchJITICAfterSend` from sendSelector's primitive-success
+    path (line 6709), gated by `pendingICPatch_ != nullptr`.
+
+Tracing with `PHARO_IC_PATCH_DEBUG=1` shows `patchJITICAfterSend` is
+called millions of times, but `noPending == call` for every range
+sample — i.e., `pendingICPatch_` is null on every entry.  The save+
+restore around `executePrimitive` (line 6697-6707) does restore the
+pointer when activateBlock cleared it — but that path requires
+pendingICPatch_ to have been set FIRST by tryResume's ExitSend
+handler.  And tryResume's ExitSend only fires on cold-IC (empty slot)
+exits.
+
+Hypothesis: mergeFirst's value:value: stencil_sendJ2J does NOT exit
+to runtime — it consults the mega-cache directly (selector hash
+lookup outside the IC), finds BlockClosure>>value:value:, and
+tail-calls into it without ever updating mergeFirst's IC.  This is
+the "mega-cache bypass" we partially fixed in `8bd0d9ea` for
+upgradeICToJ2J's BLOCK_VALUE_BIT — but the actual IC-FILL path stays
+broken for sites where the mega-cache hits before the JIT exit ever
+captures pendingICPatch_.
+
+**Real fix candidates for sort:**
+  1. Make stencil_sendJ2J set pendingICPatch_ via a direct write
+     before consulting the mega-cache, so subsequent
+     patchJITICAfterSend calls on the cache-hit path can patch.
+  2. Add a path in the mega-cache hit code (Cache::executeMethod
+     siblings) to patch the calling IC slot directly.
+  3. Track caller-IC pointer per mega-cache miss separately.
+
+The Option A infra is in place but doesn't unblock sort 100K
+because the bottleneck is upstream (the IC fill itself, not the
+re-spec).  Leaving Option A opt-in for now.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)

@@ -15580,6 +15580,18 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
             icData[e * 3 + 2] = extra;
             jitICPatches_++;
             dbgPatched++;
+            // Late-spec re-recompile accounting (mirrors upgradeICToJ2J).
+            // patchJITICAfterSend is the cold-IC fill path — when an IC
+            // slot fills here on a tier=2 caller, the new classification
+            // bit was added AFTER applyICSpecialization ran, so it stays
+            // dormant unless we trigger a one-shot re-recompile.
+            if (pendingICOwnerMethod_.isObject()
+                    && pendingICOwnerMethod_.rawBits() > 0x10000) {
+                if (auto* callerJM = jitRuntime_.methodMap().lookup(
+                        pendingICOwnerMethod_.rawBits())) {
+                    jitRuntime_.noteLateSpecBit(callerJM, extra);
+                }
+            }
             // Debug: log J2J patches for high-frequency methods
             static int logCount = 0;
             if ((extra & (1ULL << 60)) && logCount < 30) {
@@ -15781,6 +15793,18 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 }
                 icData[e * 3 + 2] = newExtra;
                 jitJ2JDirectPatches_++;
+                // Late-spec re-recompile accounting (see JITRuntime::
+                // noteLateSpecBit).  callerMethod's IC just gained a
+                // classification bit on a previously-empty extra slot —
+                // if caller is already tier=2, queue it for one-shot
+                // re-recompile so applyICSpecialization picks it up.
+                if (callerMethod.isObject()
+                        && callerMethod.rawBits() > 0x10000) {
+                    if (auto* callerJM = jitRuntime_.methodMap().lookup(
+                            callerMethod.rawBits())) {
+                        jitRuntime_.noteLateSpecBit(callerJM, newExtra);
+                    }
+                }
             }
             return;
         }
@@ -15898,6 +15922,17 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
         icData[firstEmpty * 3 + 2] = newExtra;
         if (newExtra & (1ULL << 60)) jitJ2JDirectPatches_++;
         jitICPatches_++;
+        // Late-spec re-recompile accounting — see fill of existing-empty
+        // path above for rationale.  callerMethod's IC site just gained
+        // its first classifying entry; if caller is already tier=2,
+        // queue for one-shot re-recompile.
+        if (callerMethod.isObject()
+                && callerMethod.rawBits() > 0x10000) {
+            if (auto* callerJM = jitRuntime_.methodMap().lookup(
+                    callerMethod.rawBits())) {
+                jitRuntime_.noteLateSpecBit(callerJM, newExtra);
+            }
+        }
     }
 }
 
