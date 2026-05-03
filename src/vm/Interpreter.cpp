@@ -15753,10 +15753,17 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 } else {
                     uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                     newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                    int primIdx = primitiveIndexOf(cachedMethod);
                     if (target->hasPrimPrologue) {
-                        int primIdx = primitiveIndexOf(cachedMethod);
                         uint8_t pk = inlinePrimKind(primIdx);
                         if (pk) newExtra |= (uint64_t)pk << 48;
+                    }
+                    // BLOCK_VALUE_BIT for prim 207/209 — see fill-path below
+                    // for full rationale.
+                    static const bool noBlockBit4 =
+                        std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
+                    if (!noBlockBit4 && (primIdx == 207 || primIdx == 209)) {
+                        newExtra |= (1ULL << 59);  // BLOCK_VALUE_BIT
                     }
                 }
                 icData[e * 3 + 2] = newExtra;
@@ -15800,10 +15807,24 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
                 // Not trivial — set J2J direct-call entry plus inline primKind bits
                 uint64_t entryAddr = reinterpret_cast<uint64_t>(target->codeStart());
                 newExtra = (1ULL << 60) | (entryAddr & 0x0000FFFFFFFFFFFFULL);
+                int primIdx = primitiveIndexOf(cachedMethod);
                 if (target->hasPrimPrologue) {
-                    int primIdx = primitiveIndexOf(cachedMethod);
                     uint8_t pk = inlinePrimKind(primIdx);
                     if (pk) newExtra |= (uint64_t)pk << 48;
+                }
+                // BLOCK_VALUE_BIT (bit 59): block-value primitives 207/209.
+                // 2026-05-02 PM fix: previously only patchJITICAfterSend's
+                // cold-IC path set this.  But mega-cache hits skip
+                // patchJITICAfterSend and arrive here via upgradeICToJ2J,
+                // leaving the IC J2J-classified but missing BLOCK_VALUE_BIT.
+                // applyICSpecialization then can't pick up the block-value
+                // fast-path stencil (sendBlockValue0/1/2Arg) at recompile.
+                // Sort 100K's value:value: site is the canonical case —
+                // hit by mega-cache, never gets BLOCK_VALUE_BIT.
+                static const bool noBlockBit3 =
+                    std::getenv("PHARO_NO_BLOCK_BIT") != nullptr;
+                if (!noBlockBit3 && (primIdx == 207 || primIdx == 209)) {
+                    newExtra |= (1ULL << 59);  // BLOCK_VALUE_BIT
                 }
             }
         }
