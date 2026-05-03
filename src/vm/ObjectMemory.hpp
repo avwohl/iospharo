@@ -258,6 +258,9 @@ public:
         return classTable_[index];
     }
 
+    /// Get the runtime size of the class table (number of valid indices).
+    size_t classTableSize() const { return classTable_.size(); }
+
     /// Set the class object at a given index
     void setClassAtIndex(uint32_t index, Oop classOop) {
         if (index < classTable_.size()) {

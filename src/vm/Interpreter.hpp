@@ -900,6 +900,7 @@ private:
     void initializeClassIndexCache();
 public:
     uint32_t compiledBlockClassIndex() const { return compiledBlockClassIndex_; }
+    uint32_t fullBlockClosureClassIndex() const { return fullBlockClosureClassIndex_; }
 private:
 
     // ===== CACHES =====

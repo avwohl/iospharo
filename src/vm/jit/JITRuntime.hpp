@@ -210,6 +210,16 @@ public:
         }
     }
 
+    // FullBlockClosure's classIndex, resolved lazily on first request
+    // (initialize() runs before classTable_ is fully populated for some
+    // images).  Cached for the lifetime of the runtime.  Returns 0 if
+    // we can't find the class — caller should fall back to plain J2J.
+    // Used by selector-based block-value specialization
+    // (PHARO_BLOCK_VALUE_SPEC) — when compile() sees a Send{0,1,2} with
+    // selector value/value:/value:value:, it applies stencil_sendBlockValue
+    // {0,1,2}Arg with this classIndex baked in, even on cold IC sites.
+    uint32_t resolveFullBlockClosureClassIndex();
+
 private:
     MegaCacheEntry megaCache_[MegaCacheSize] = {};
     CodeZone    codeZone_;
@@ -218,6 +228,7 @@ private:
     Tier2Compiler* tier2Compiler_ = nullptr;
     Interpreter* interp_ = nullptr;
     bool        initialized_ = false;
+    uint32_t    fullBlockClosureClassIndex_ = 0;
 
     // Tier 2 compiled method map: compiledMethodOop bits → MIR function pointer
     // Separate from MethodMap to avoid changing JITMethod layout.

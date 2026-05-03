@@ -1658,12 +1658,27 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // so allocate() can zero the memory.
     makeWritable(codeZone_.rawStart(), codeZone_.totalBytes());
 
+    // FullBlockClosure classIndex is resolved lazily — see
+    // resolveFullBlockClosureClassIndex() (some images don't have the
+    // class table fully populated until startup completes).
+    fullBlockClosureClassIndex_ = 0;
+
     initialized_ = true;
     fprintf(stderr, "[JIT] Initialized: %zu MB code zone at %p\n",
             codeZone_.totalBytes() / (1024 * 1024),
             (void*)codeZone_.rawStart());
 
     return true;
+}
+
+uint32_t JITRuntime::resolveFullBlockClosureClassIndex() {
+    if (fullBlockClosureClassIndex_ != 0) return fullBlockClosureClassIndex_;
+    if (!interp_) return 0;
+    // Reuse Interpreter's cached value (resolved via name-based class
+    // table lookup at startup).  Avoids reimplementing the same scan
+    // and matches the value used by the closure-creation path.
+    fullBlockClosureClassIndex_ = interp_->fullBlockClosureClassIndex();
+    return fullBlockClosureClassIndex_;
 }
 
 void JITRuntime::updateSpecialOops(ObjectMemory& memory) {

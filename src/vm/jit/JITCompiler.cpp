@@ -1711,6 +1711,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         applyICSpecialization(decoded, oldVersion);
     }
 
+    // Selector-based block-value specialization (PHARO_BLOCK_VALUE_SPEC=1
+    // opt-in, 2026-05-03): infra is in place via
+    // JITRuntime::resolveFullBlockClosureClassIndex(); the actual
+    // applyICSpecialization-equivalent branch was attempted on
+    // 2026-05-03 PM but caused a Morphic-startup hang we couldn't
+    // diagnose in-session.  Documented in docs/jit-multiweek-work.md
+    // for future work.
+
     // Parallel to `decoded` after SimStack: entryState[i] is the SimStack
     // state at entry to decoded[i]. state != 0 means the stencil reads
     // cached operands from x19..x22 and is NOT safe as a tryResume target
