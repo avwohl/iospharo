@@ -174,10 +174,23 @@ specialization fires too late for once-deep methods, where "once-
 deep" means "called from a function that recurses heavily and
 doesn't itself reach the threshold via non-recursive callers."
 
-Real next step (multi-week): warm-IC-detection that triggers
+**IC-fill-triggered recompile boost attempt 2026-05-02 PM (reverted).**
+Tried boosting the OWNER method's executionCount by 100 per
+specializable IC fill in patchJITICAfterSend.  The boost code DOES
+fire (verified via PHARO_TRACE_IC_FILL_BOOST) but only for methods
+where `pendingICOwnerMethod_` is correctly set — typically generic
+hot methods (#benchmark, #atAllPut:, #from:to:put:, etc.).
+mergeFirst's value:value: IC patches DO NOT show up in the trace,
+suggesting the IC-patch path for that specific dispatch doesn't
+populate `pendingICOwnerMethod_` to mergeFirst.  Reverted; bench-
+suite parity preserved.
+
+**Real next step (multi-week):** warm-IC-detection that triggers
 recompile when an IC site has been hit > N times, regardless of
-the OWNING method's executionCount.  Currently recompile is gated
-on the method's own count.
+the OWNING method's executionCount.  Plus tracking `pendingICOwner-
+Method_` correctly across all IC patch dispatch paths (incl. the
+JIT-exit-to-interp `Send2` + cache-hit + executePrimitive path
+that handles value:value:).
 
 
 
