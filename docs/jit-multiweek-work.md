@@ -1144,3 +1144,51 @@ Bails to slow send on non-SmI / overflow.
 **Future extension candidates:** could add 3-slot patterns like
 `^ ivarA + ivarB + ivarC` (no const) using bit 56, but only one
 image method matches that shape — not worth the encoding work.
+
+### 2026-05-03 PM: dict 50K gap analysis (3× behind Cog)
+
+dict 50K put+get: us 148-154ms vs Cog 50ms (3.0× gap).
+
+Hot path: Dictionary>>scanFor: probe loop calls `key = arg` per
+probe.  Bench bench does ~3 probes × 100K ops = 300K probes ×
+4-method `=` chain = 1.2M extra dispatches.
+
+**Why the chain is slow:**
+```
+String>>=         (no primitive — bytecode method)
+  → compare:with: (no primitive)
+    → compare:with:collated: (no primitive)
+      → ByteString>>compareWith:collated: (prim 158, fast)
+```
+
+Each method adds a stencil_sendJ2J dispatch (IC probe + tail
+call).  Even with InlineMonoJ2J spec applied to each (default-on
+since `1eed8b9c` post-heap-IC stability), 4 dispatches per `=`
+adds up.  At our ~200M sends/s vs Cog ~700M, the ~3.5×
+send-rate gap is where the 3× dict gap comes from.
+
+**Investigated but didn't ship:**
+
+- Recompile threshold sweep (PHARO_RECOMPILE_AT 100/250/500/1000)
+  — all within noise, threshold isn't the lever.
+- Inline at:/at:put: in stencil_sendJ2J's primKind dispatch —
+  REVERTED, regressed sieve 44→47ms (icache pressure).
+
+**Possible future approaches (all multi-day):**
+1. Sista chain-inliner for `String>>=`: lift the 4-method chain
+   into a single inlined sequence at recompile time.  Requires
+   recognizer for the chain pattern + substitution machinery.
+2. New stencil_sendByteStringEq: applyICSpecialization detects
+   Send1 with #= selector + ByteString classKey, replaces with
+   stencil that does inline byte-compare via prim 158 logic.
+   Skips the 4-method dispatch chain entirely.
+3. PrimKind for primitive 158 (compareWith:collated:): inline
+   the byte-compare in stencil_sendJ2J.  Only saves the
+   innermost dispatch; still 3 outer dispatches remain.
+
+Path #2 is likely the best return — directly attacks the chain.
+But the spec stencil's slow path needs the same mega-cache
+fallback we added for sendBlockValueNArg or it'll hang at scale.
+
+Not pursued in 2026-05-03 session due to time bound; documented
+for future work.
