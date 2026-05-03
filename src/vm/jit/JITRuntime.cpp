@@ -447,10 +447,12 @@ void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
     // we wait for the safe-point drain.
     if (callerJM->stats->lateSpecCount >= kLateSpecRecompileThreshold) return;
 
-    // Opt-in gate.  Flip default-on after bench-suite validation.
-    static const bool enabled =
-        std::getenv("PHARO_LATE_SPEC_RECOMPILE") != nullptr;
-    if (!enabled) return;
+    // Default-on after bench-suite validation 2026-05-03 (parity with
+    // and without across 5+ runs of sort/sieve/fib/dict/sum/factorial).
+    // PHARO_NO_LATE_SPEC_RECOMPILE=1 to opt out.
+    static const bool disabled =
+        std::getenv("PHARO_NO_LATE_SPEC_RECOMPILE") != nullptr;
+    if (disabled) return;
 
     // Weight by classification value.  High-value bits (block-value,
     // multi-slot, returnsLiteral) unlock dedicated specialized stencils

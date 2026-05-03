@@ -1762,6 +1762,34 @@ ic_miss:
                     if (*(_jm + 32) == 1) {
                         extra = J2J_ENTRY_BIT | (megaHit->jitEntry & J2J_ADDR_MASK);
                         methodBits = megaHit->methodBits;
+                        // Inline cold-IC fill (2026-05-03 PM): when slot 0
+                        // is empty AND the callee has no primitive, write
+                        // the J2J entry inline so future hits take the
+                        // fast IC-hit path.  3 stores + 1 branch — no
+                        // helper call, no W^X flip (IC moved to heap by
+                        // `898ca79f`).
+                        //
+                        // Primitive gate: skip inline fill when
+                        // methodHeader bit 16 (hasPrimitive) is set,
+                        // because:
+                        //   - prim 207/209 (block-value) need
+                        //     BLOCK_VALUE_BIT (bit 59) for correctness;
+                        //     the inline IC hit path else baked-J2Js
+                        //     into the WRONG block when a different
+                        //     compiled-block hits the same site.
+                        //   - other primitives need primKind bits in
+                        //     extra (52:48) to take the inline-prim
+                        //     fast path; we don't decode them inline.
+                        // patchJITICAfterSend / upgradeICToJ2J still
+                        // populate these on their own paths when they
+                        // fire.
+                        uint64_t calleeHdr = *(uint64_t*)((uint8_t*)_jm + JM_METHOD_HEADER);
+                        bool calleeHasPrim = (calleeHdr >> 16) & 1;
+                        if (icData[0] == 0 && !calleeHasPrim) {
+                            icData[0] = lookupKey;
+                            icData[1] = methodBits;
+                            icData[2] = extra;
+                        }
                         goto j2j_direct_call;
                     }
                 }
