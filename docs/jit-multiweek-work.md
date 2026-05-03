@@ -1319,3 +1319,42 @@ PHARO_JIT_DEFER=15 timeout 120 ./build/test_load_image \
 The doc snapshot above remains valid; it was captured against a clean
 image setup.
 
+### 2026-05-03 PM: inline fmt-2 path in stencil_sendJ2J primKind 14/15
+
+`ecb6911f`: removed the indirect call to `jit_rt_array_prim` for the
+fmt=2 (variable pointer / Array) hot case, inlining a single
+class+SmI+bounds check + slot load/store directly into
+stencil_sendJ2J's primKind 14/15 path.  Bails to the helper for any
+case the inline path doesn't handle (byte fmt 16-23, immutable, OoB,
+non-SmI index, immediate receiver).
+
+**Sort 100K**: 121-123 ms → 114-116 ms (~7% faster), measured
+across n=14 with-inline runs vs n=5 without-inline runs.  Helps
+mergeSort's dense at:/at:put: in the merge step.
+
+**Sieve x100**: unchanged at 44 ms.  Sieve's hot loop has at: in the
+outer `(tmp2 at: tmp8) ifTrue: [...]` arm and at:put: in the inner
+counted loop — but the bottleneck appears to be elsewhere
+(allocation, outer counter management, or send-rate overhead
+beyond just the call boundary).
+
+**Other benches**: stable.  Stencil_sendJ2J grew from 2444 → 2608
+bytes (164 bytes added per send-J2J copy in the code zone).  Earlier
+inline attempt that "regressed sieve 44→47ms" included the byte-fmt
+path too — restricting to fmt=2 keeps the icache footprint small
+enough.
+
+**Updated bench-suite snapshot (2026-05-03 PM, post-inline-fmt2):**
+```
+                       Original   Final     Δ        Cog    Gap
+fib(28)                15         14-15     —        15     1.0×
+sieve x100             44         44        —        18     2.4×
+sort 100K              214        114-116   -47%     60     1.9×
+dict 50K               158        128-131   -18%     50     2.5×
+sum 1M                 1          1         —        5      0.2× (we beat)
+factorial              22         21-22     —        ?
+1M blocks              21         0         —        16     0    (we beat)
+1M getter+yourself     0          0         —        2      0    (we beat)
+100K alloc             5          4-5       —        ?
+```
+
