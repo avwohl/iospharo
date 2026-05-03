@@ -1405,7 +1405,7 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
                 std::getenv("PHARO_NO_BLOCK_VALUE_SPEC") == nullptr;
             if (blockValueSpec) {
                 int argCount = (bc.operand >> 16) & 0xFF;
-                if (argCount == 2 && methObj
+                if (argCount <= 2 && methObj
                         && (bc.opcode >= 0x80 && bc.opcode <= 0xAF
                             || bc.opcode == SistaV1::ExtSend)) {
                     int litIndex = bc.branchTarget;
@@ -1415,18 +1415,37 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
                         if (selBits != 0 && (selBits & 0x7) == 0
                                 && selBits > 0x10000) {
                             ObjectHeader* selObj = selOop.asObjectPtr();
-                            if (selObj->isBytesObject()
-                                    && selObj->byteSize() == 12
-                                    && std::memcmp(
-                                        selObj->bytes(), "value:value:", 12)
-                                        == 0) {
+                            // Match selector by argCount: #value (0),
+                            // #value: (1), #value:value: (2)
+                            bool selMatch = false;
+                            if (selObj->isBytesObject()) {
+                                size_t bsz = selObj->byteSize();
+                                const char* sb = (const char*)selObj->bytes();
+                                if (argCount == 0 && bsz == 5
+                                        && std::memcmp(sb, "value", 5) == 0) {
+                                    selMatch = true;
+                                } else if (argCount == 1 && bsz == 6
+                                        && std::memcmp(sb, "value:", 6) == 0) {
+                                    selMatch = true;
+                                } else if (argCount == 2 && bsz == 12
+                                        && std::memcmp(sb, "value:value:", 12)
+                                            == 0) {
+                                    selMatch = true;
+                                }
+                            }
+                            if (selMatch) {
                                 uint32_t fbcIdx =
                                     interp_.jitRuntime().resolveFullBlockClosureClassIndex();
                                 if (fbcIdx != 0) {
+                                    StencilID specId = (argCount == 0)
+                                        ? StencilID::stencil_sendBlockValue0Arg
+                                        : (argCount == 1)
+                                            ? StencilID::stencil_sendBlockValue1Arg
+                                            : StencilID::stencil_sendBlockValue2Arg;
                                     uint64_t litBitsPacked =
                                         (uint64_t)(litIndex & 0xFFFF) << 48;
-                                    bc.stencilIdx = static_cast<uint16_t>(
-                                        StencilID::stencil_sendBlockValue2Arg);
+                                    bc.stencilIdx =
+                                        static_cast<uint16_t>(specId);
                                     bc.operand2Ptr =
                                         litBitsPacked
                                         | ((uint64_t)fbcIdx << 16);
