@@ -192,6 +192,41 @@ Method_` correctly across all IC patch dispatch paths (incl. the
 JIT-exit-to-interp `Send2` + cache-hit + executePrimitive path
 that handles value:value:).
 
+**2026-05-02 PM cross-path owner-tracking audit (no fix landed):**
+`pendingICOwnerMethod_` is set in only TWO places today:
+  - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
+  - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
+
+`patchJITICAfterSend` is called from many MORE places (lines 4233,
+4239, 4263, 4269, 6639, 6664, 6677, 6691, 6705, 6761, 6772) — in
+particular the regular `sendSelector` cache-hit + `executePrimitive`
++ Success path at 6691.
+
+Tracing showed:
+1. For value/value:/valueNoContextSwitch (1-arg block-value
+   primitives), `pendingICOwnerMethod_` IS set correctly when patches
+   fire (#withAllSuperclassesDo:, #on:do:, #ensure:, etc.).
+2. For value:value: (the sort comparator pattern), the patch path
+   doesn't reliably reach the owner-bearing code: `patchJITICAfterSend`
+   often early-returns because `pendingICPatch_` is null — i.e., no
+   JIT exit captured the IC slot before this dispatch.
+
+Why?  When the bench-suite is in pure-interp mode (e.g., during
+warmup before mergeFirst is JIT-compiled), value:value: calls go
+through `sendSelector` → cache-hit → executePrimitive → primitive-
+FullClosureValue, but with no JIT exit having set `pendingICPatch_`.
+The patch is silently dropped.
+
+The fix would need:
+- Initialize `pendingICPatch_` from the CALLER's JM IC slot when
+  the call originates inside JIT'd code — even for primitive-
+  successful sends.
+- OR add a separate per-IC-site hit counter that sidesteps the
+  patch-via-pendingICPatch_ mechanism entirely.
+
+Both are multi-day plumbing changes touching every IC dispatch
+path.  Documented for the future Phase 6 generalization session.
+
 
 
 `1M getter+yourself` closes from 16-20 ms → **0 ms** (5/5 runs;
