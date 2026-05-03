@@ -542,6 +542,47 @@ through to ExitSend cleanly for non-FullBlockClosure receivers
 (ConstantBlockClosure subclasses).  Risk: still needs validation
 that the slow path is correct for all polymorphic receivers seen
 in the wider workload.
+
+### 2026-05-03 PM: selector-based block-value spec attempt — REVERTED
+
+Implemented the alternate approach:
+1. `JITRuntime::resolveFullBlockClosureClassIndex()` — lazy
+   resolver using Interpreter's pre-cached value (class table
+   resolved by name during VM init).
+2. New compile()-time pass: walks `decoded` after
+   applyICSpecialization, replaces stencil_sendJ2J with
+   stencil_sendBlockValue{0,1,2}Arg when the send selector is
+   `value`/`value:`/`value:value:` and FullBlockClosure's
+   classIndex is known.  operand2Ptr packed identically to the
+   IC-driven path: `(litIndex << 48) | (fbcIdx << 16)`.
+
+**Result:** bench-suite hangs in Morphic startup — DNU cascade
+on `OSWorldRenderer>>displayExtentChanged`, `isTransparent`, etc.
+Same symptom as the upgradeICToJ2J 207/209 fix attempt.
+
+Even narrowing to JUST argCount==2 (only #value:value: spec, not
+#value or #value:) still hangs.  Same with restricting to
+literal-send opcodes (0x80-0xAF + ExtSend) only.
+
+**Hypothesis:** sendBlockValue{1,2}Arg's slow-path bail
+(`s->cachedTarget = s->literals[litIndex]; s->icDataPtr = nullptr;
+... EXIT_SEND`) interacts badly with the interp's resume path for
+some specific call.  Possibly Morphic's `value:value:` calls
+include receivers that aren't closures at all (e.g., a plain
+Object that uses `valueOf:value:` via the special-selectors
+table), making `s->literals[litIndex]` not actually a
+selector — so the interp re-dispatch goes to a wrong target.
+
+Reverted the spec branch.  Infra retained (`9a336d45`):
+`resolveFullBlockClosureClassIndex()` + accessor.  Future work
+should:
+- Reproduce the hang on a minimal test case (eval'ing a tiny
+  Morphic operation that triggers it).
+- Inspect the exact bytecode and receiver class at the failing
+  send site.
+- Fix the slow path correctness OR add receiver-class gating to
+  the spec's eligibility (e.g., only apply when the IC has
+  observed at least one FullBlockClosure receiver).
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
