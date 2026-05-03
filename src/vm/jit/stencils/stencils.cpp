@@ -1466,6 +1466,54 @@ extern "C" void stencil_sendJ2J(JITState* s) {
             }
             // Array prims at:/at:put:/size (primKind 14-16)
             else if (primKind >= 14) {
+                // Inline fmt-2 (variable pointer / Array) fast path:
+                // skip the function-call boundary on the canonical
+                // sieve hot path.  Bails to the helper for any other
+                // case (byte fmt, immediate receiver, OoB, etc).
+                // Only applies for primKind 14/15 (not 16 = size,
+                // which is rare in hot loops).
+                if (primKind <= 15) {
+                    Oop rcv = s->sp[-(nArgs + 1)];
+                    if ((rcv.bits & 7) == 0 && rcv.bits >= 0x10000) {
+                        uint64_t hdr =
+                            *reinterpret_cast<uint64_t*>(rcv.bits);
+                        if (((hdr >> 24) & 0x1F) == 2) {
+                            // fmt 2: pure variable pointer (Array).
+                            uint64_t sc = (hdr >> 56) & 0xFF;
+                            if (sc == 255) {
+                                uint64_t raw =
+                                    *reinterpret_cast<uint64_t*>(
+                                        rcv.bits - 8);
+                                sc = (raw << 8) >> 8;
+                            }
+                            Oop idxOop = s->sp[-nArgs];
+                            if ((idxOop.bits & 7) == 1) {
+                                int64_t i = (int64_t)idxOop.bits >> 3;
+                                if (i >= 1 && (uint64_t)i <= sc) {
+                                    if (primKind == 14) {
+                                        // at: read
+                                        Oop val = reinterpret_cast<
+                                            Oop*>(rcv.bits + 8)[i - 1];
+                                        s->sp[-(nArgs + 1)] = val;
+                                        s->sp -= nArgs;
+                                        _HOLE_CONTINUE(s);
+                                        return;
+                                    } else if (!(hdr & (1ULL << 23))) {
+                                        // at:put: write (mutable only)
+                                        Oop val = s->sp[-(nArgs - 1)];
+                                        reinterpret_cast<Oop*>(
+                                            rcv.bits + 8)[i - 1] = val;
+                                        s->sp[-(nArgs + 1)] = val;
+                                        s->sp -= nArgs;
+                                        _HOLE_CONTINUE(s);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Inline path missed — fall through to helper.
                 uint64_t info = ((uint64_t)primKind << 8) | (uint64_t)nArgs;
                 if (_HOLE_RT_ARRAY_PRIM(s, info)) {
                     _HOLE_CONTINUE(s);
