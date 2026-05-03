@@ -192,7 +192,49 @@ Method_` correctly across all IC patch dispatch paths (incl. the
 JIT-exit-to-interp `Send2` + cache-hit + executePrimitive path
 that handles value:value:).
 
-**2026-05-02 PM cross-path owner-tracking audit (no fix landed):**
+**2026-05-02 PM per-site counter implementation attempt (reverted —
+W^X blocker found):**
+
+Tried the recommended (b) approach — extend IC stride from 152 to
+160 bytes, adding a per-site hit-count slot.  Stencil bumps the
+counter on each J2J hit; threshold-cross queues the OWNING method
+(caller) for recompile.
+
+Result: SIGSEGV on first JIT-compiled-method invocation.  Crash trace
+points at the stencil's STR instruction (the counter increment's write).
+
+Root cause: the IC area lives INSIDE the JIT code zone, which is W^X
+protected on Apple Silicon.  Stencil execution mode is X (executable);
+writes to the code zone require an explicit `pthread_jit_write_protect_np`
+flip to W mode + restoration.  The existing IC patch path
+(`Interpreter::patchJITICAfterSend`) does this via RAII guard.  But
+inline stencil writes can't afford the per-call flip cost.
+
+The per-CALLEE inline-bump that already exists (stencil_sendJ2J's
+`*((uint8_t*)_calleeJM + 80)` write) WORKS because it writes to
+`JITMethod::stats`, which is a heap pointer to a separately-allocated
+JITMethodStats struct in regular (writable) memory — NOT the code
+zone.
+
+To make per-SITE counters work, the counter array must live OUTSIDE
+the code zone:
+- Side-table per JIT method: allocate `numICEntries × uint32_t` of
+  writable memory; JITMethod gets a new `siteHitCounts` pointer.
+  Stencil increments via `siteHitCounts[siteIdx]`.  Needs either a
+  new HOLE per IC-using stencil (OPERAND3 = siteCountsBase + idx*4)
+  OR derived computation from existing OPERAND2 (icBase) → JM →
+  siteCountsBase.
+
+This is several days of plumbing — every IC-using stencil
+(sendJ2J, sendInlineMonoJ2J, sendInlineGetter/Setter/MultiSlot,
+sendBlockValue0/1/2, etc.) needs the new HOLE wired in.
+
+**Conclusion:** the cleanest architectural answer (per-site counter
+in IC layout) is blocked by W^X.  The next-best is a side-table with
+a new per-stencil HOLE — still cleaner than (a)'s patch-the-flag-
+everywhere, but the up-front implementation cost is comparable.
+Layout extension reverted; will revisit when there's a focused
+multi-day window.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
