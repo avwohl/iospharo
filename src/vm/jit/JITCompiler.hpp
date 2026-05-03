@@ -142,7 +142,10 @@ private:
 
     // IC-guided specialization: replace sendJ2J with inline stencils at
     // monomorphic send sites using IC data from a previous compilation.
-    void applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion);
+    void applyICSpecialization(std::vector<DecodedBC>& decoded,
+                                JITMethod* oldVersion,
+                                ObjectHeader* methObj,
+                                int numLiterals);
 
     // Patch all relocations for one stencil instance
     bool patchStencilInstance(uint8_t* codeBase, uint32_t stencilOffset,

@@ -1240,7 +1240,10 @@ JITCompiler::getSendSiteBCOffsets(uint64_t compiledMethodBits) const {
 
 // ===== IC-GUIDED SPECIALIZATION =====
 
-void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMethod* oldVersion) {
+void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
+                                          JITMethod* oldVersion,
+                                          ObjectHeader* methObj,
+                                          int numLiterals) {
     // 2026-05-03: IC data lives in heap-side icBuffer, not in MAP_JIT.
     // No offset arithmetic needed — read directly from oldVersion->
     // icBuffer.
@@ -1385,6 +1388,54 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded, JITMeth
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_sendInlineMonoJ2J);
                 // Keep operand2Ptr unchanged (already points at IC base)
                 specialized++; specMonoJ2J++;
+            }
+        } else if (classKey0 == 0) {
+            // Cold IC site at recompile.  Selector-based block-value
+            // spec (default-on 2026-05-03 — sort 100K -30%): when
+            // this Send2 sends `value:value:`, apply
+            // sendBlockValue2Arg with FullBlockClosure's classIndex
+            // baked in.  The spec stencil's slow path probes the
+            // mega-cache like sendJ2J does and bails to
+            // ExitSendCached on hit (avoids the 3000× slowdown that
+            // would otherwise occur from full method lookup on
+            // every call).  Catches the canonical sort 100K
+            // bottleneck — see docs/jit-multiweek-work.md.
+            // PHARO_NO_BLOCK_VALUE_SPEC=1 to opt out.
+            static const bool blockValueSpec =
+                std::getenv("PHARO_NO_BLOCK_VALUE_SPEC") == nullptr;
+            if (blockValueSpec) {
+                int argCount = (bc.operand >> 16) & 0xFF;
+                if (argCount == 2 && methObj
+                        && (bc.opcode >= 0x80 && bc.opcode <= 0xAF
+                            || bc.opcode == SistaV1::ExtSend)) {
+                    int litIndex = bc.branchTarget;
+                    if (litIndex >= 0 && litIndex < numLiterals) {
+                        Oop selOop = methObj->slotAt(1 + litIndex);
+                        uint64_t selBits = selOop.rawBits();
+                        if (selBits != 0 && (selBits & 0x7) == 0
+                                && selBits > 0x10000) {
+                            ObjectHeader* selObj = selOop.asObjectPtr();
+                            if (selObj->isBytesObject()
+                                    && selObj->byteSize() == 12
+                                    && std::memcmp(
+                                        selObj->bytes(), "value:value:", 12)
+                                        == 0) {
+                                uint32_t fbcIdx =
+                                    interp_.jitRuntime().resolveFullBlockClosureClassIndex();
+                                if (fbcIdx != 0) {
+                                    uint64_t litBitsPacked =
+                                        (uint64_t)(litIndex & 0xFFFF) << 48;
+                                    bc.stencilIdx = static_cast<uint16_t>(
+                                        StencilID::stencil_sendBlockValue2Arg);
+                                    bc.operand2Ptr =
+                                        litBitsPacked
+                                        | ((uint64_t)fbcIdx << 16);
+                                    specialized++; specBlockValue1++;
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -1708,7 +1759,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // IC-guided specialization: if recompiling with IC data, replace
     // monomorphic sendJ2J sites with inline getter/setter/returnsSelf stencils.
     if (oldVersion) {
-        applyICSpecialization(decoded, oldVersion);
+        applyICSpecialization(decoded, oldVersion, methObj, numLiterals);
     }
 
     // Selector-based block-value specialization (PHARO_BLOCK_VALUE_SPEC=1

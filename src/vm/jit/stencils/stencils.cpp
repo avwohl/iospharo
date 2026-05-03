@@ -2534,9 +2534,56 @@ extern "C" void stencil_sendBlockValue2Arg(JITState* s) {
         }
     }
 
-    // Bail to ExitSend
+    // Slow path: receiver class doesn't match FullBlockClosure, or
+    // numArgs/methodMap lookup failed.  Instead of bailing straight
+    // to EXIT_SEND (which goes through full method lookup in interp
+    // for every call), probe the mega-cache like sendJ2J does and
+    // bail to EXIT_SEND_CACHED on hit.  This avoids a 3000× slowdown
+    // when the spec is applied at cold IC sites where mega-cache
+    // hits commonly bypass IC writes (mergeFirst's value:value:
+    // pattern — see docs/jit-multiweek-work.md).
     int litIndex = (int)(packed2 >> 48);
-    s->cachedTarget = s->literals[litIndex];
+    uint64_t selectorBits = s->literals[litIndex].bits;
+    uint64_t lookupKey;
+    if (tag == 0 && receiver.bits >= 0x10000) {
+        ObjectHeader* obj = reinterpret_cast<ObjectHeader*>(receiver.bits);
+        lookupKey = obj->classIndex();
+    } else if (tag != 0) {
+        lookupKey = tag | 0x80000000ULL;
+    } else {
+        // nil receiver — fall through to ExitSend
+        lookupKey = 0;
+    }
+    if (lookupKey != 0 && selectorBits != 0) {
+        MegaCacheEntry* cache = (MegaCacheEntry*)(uintptr_t)&_HOLE_MEGA_CACHE;
+        size_t hash = (size_t)(selectorBits ^ lookupKey) & 65535;
+        MegaCacheEntry* entry = &cache[hash];
+        MegaCacheEntry* megaHit = nullptr;
+        if (entry->selectorBits == selectorBits
+                && entry->classIndex == lookupKey) {
+            megaHit = entry;
+        } else {
+            size_t hash2 =
+                (size_t)((selectorBits >> 3)
+                         ^ (lookupKey << 2) ^ lookupKey) & 65535;
+            entry = &cache[hash2];
+            if (entry->selectorBits == selectorBits
+                    && entry->classIndex == lookupKey) {
+                megaHit = entry;
+            }
+        }
+        if (megaHit) {
+            s->cachedTarget.bits = megaHit->methodBits;
+            s->icDataPtr = nullptr;
+            s->sendArgCount = 2;
+            s->ip = s->ip + bcOffset;
+            s->exitReason = EXIT_SEND_CACHED;
+            _HOLE_RT_SEND(s);
+            return;
+        }
+    }
+    // Mega-cache miss: ExitSend, full lookup
+    s->cachedTarget.bits = selectorBits;
     s->icDataPtr = nullptr;
     s->sendArgCount = 2;
     s->ip = s->ip + bcOffset;
