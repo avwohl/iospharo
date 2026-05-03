@@ -1243,3 +1243,79 @@ factorial              22         21-22     —        ?
 1M getter+yourself     0          0         —        2      0    (we beat)
 100K alloc             5          4-5       —        ?
 ```
+
+### 2026-05-03 PM: Array-prim spec for sieve at:/at:put: — REVERTED
+
+Attempted to close the sieve x100 gap (44 ms vs Cog ~18 ms, 2.4×) by
+adding `stencil_sendInlineArrayAt` and `stencil_sendInlineArrayAtPut`
+specialized stencils.  The plan: at recompile time, when `classKey0`
+maps to a fmt=2 (variable pointer) class and primKind 14/15 is set,
+swap `stencil_sendJ2J` for the spec — skipping the IC probe + indirect
+`jit_rt_array_prim` helper-call sequence on every iter of sieve's
+inner loop.
+
+**Result:** dict 50K crashed with `Message not understood:
+SmallInteger doesNotUnderstand: #key`.  The error originates in
+`HashedCollection>>grow:` where `oldElements do: [:each | each
+ifNotNil: [self noCheckAdd: each]]` calls `each key` on what should
+be an Association — implying my spec returned a SmI somewhere where
+an Association/nil was expected.
+
+**Diagnostic steps:**
+1. Inline fast path with full class/index/bounds checks: crash.
+2. Stencil that JUST calls `_HOLE_RT_ARRAY_PRIM(s, info)` (1:1
+   semantics with sendJ2J's primKind path, only difference is no IC
+   probe upfront): ALSO crashes.
+3. ARM64 disassembly of fast-path stencil shows correct stack reads
+   (`ldr x10, [rcv, idx, lsl #3]` = rcv + i*8 = slot[i] for 1-indexed
+   i), correct class check, correct overflow-encoding handling.
+4. Restricted to at: only (no at:put: spec): still crashes.
+5. Restricted via classFormatOfIndex helper to fmt=2 only: still
+   crashes.
+
+**Hypothesis (not confirmed):** the spec stencil's bail to ExitSend
+differs from `stencil_sendJ2J`'s fall-through to J2J / SEND_CACHED in
+some subtle way.  Stencil_sendJ2J's primKind 14 path falls through to
+the J2J entry / mega-cache lookup on helper failure, then if all
+fails to ExitSendCached.  My spec bails directly to ExitSend with
+`cachedTarget = selector`.  Even though both should result in the
+interp dispatching the send via `lookupMethod`, something downstream
+in the bench's hot path produced a SmI where an Association should
+be.
+
+**Status:** all changes reverted.  New stencils + applyICSpec branch
++ `JITCompiler::classFormatOfIndex` helper are NOT in tree.  The
+opportunity remains — sieve hot loop is `(tmp2 at: tmp8) ifTrue:` +
+`tmp2 at: tmp4 put: false` — and the saving (skipping the IC probe +
+helper indirect call) is real.  Future attempt should:
+
+1. Reproduce in isolation (a minimal at:/at:put: bench, not full
+   bench-suite) to catch the divergence with less interference.
+2. Compare side-by-side with the working `stencil_sendInlineMonoJ2J`,
+   which has the same bail pattern (`cachedTarget = selector;
+   icDataPtr = nullptr; ExitSend`) and works.
+3. Consider adding a "mega-cache fallback" to the bail path, mirroring
+   the block-value spec stencils' fix that resolved a similar issue
+   (cold IC sites + bail-to-full-lookup hangs).
+
+### 2026-05-03 PM: bench-suite environment fix
+
+The persistent `/tmp/bench_suite/PharoBenchSuite.image` accumulated
+session state in `/tmp/bench_suite/pharo-local/ombu-sessions/` that
+made the bench hang at sort 100K consistently (sieve also reported
+280-290ms vs the 44ms baseline).  Fix: use a fresh image directory
+per session.
+
+```bash
+rm -rf /tmp/bench_clean && mkdir /tmp/bench_clean
+cp /tmp/bench_fresh/Pharo.image /tmp/bench_clean/PharoBenchSuite.image
+cp /tmp/bench_fresh/Pharo.changes /tmp/bench_clean/PharoBenchSuite.changes
+cp /tmp/bench_fresh/*.sources /tmp/bench_clean/
+PHARO_JIT_DEFER=15 timeout 120 ./build/test_load_image \
+    /tmp/bench_clean/PharoBenchSuite.image
+```
+
+5/5 stable at sieve 43-46ms, sort 122-124ms, dict 128-131ms post-fix.
+The doc snapshot above remains valid; it was captured against a clean
+image setup.
+
