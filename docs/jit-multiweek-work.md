@@ -233,8 +233,19 @@ sendBlockValue0/1/2, etc.) needs the new HOLE wired in.
 in IC layout) is blocked by W^X.  The next-best is a side-table with
 a new per-stencil HOLE — still cleaner than (a)'s patch-the-flag-
 everywhere, but the up-front implementation cost is comparable.
-Layout extension reverted; will revisit when there's a focused
-multi-day window.
+
+**What's left in tree:** the IC layout extension (`521275aa`) stays
+— it's harmless scaffolding (8 bytes per IC site, ~80 KB total
+overhead, no functional change since no stencil writes to the new
+slot).  Future per-site counter work can use `IC_HITCOUNT_SLOT`
+once the W^X plumbing is figured out (likely as a side-table with
+a stencil-side helper-call to increment).  Layout staying in tree
+means the side-table approach won't need a stride re-extension
+later.
+
+**What got reverted:** the stencil increment + threshold-queue
+code in `stencil_sendJ2J`'s `j2j_direct_call`.  That write was
+the SIGSEGV trigger.
 `pendingICOwnerMethod_` is set in only TWO places today:
   - `tryResume`'s ExitSend handler (Interpreter.cpp:14884)
   - Sista's `executeMethod` Send2 path (Interpreter.cpp:16992)
