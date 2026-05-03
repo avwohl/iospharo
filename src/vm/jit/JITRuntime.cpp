@@ -1769,13 +1769,36 @@ bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
 
     static const bool traceRecompile =
         std::getenv("PHARO_JIT_TRACE_RECOMPILE") != nullptr;
+    static const char* dumpICSel =
+        std::getenv("PHARO_DUMP_RECOMPILE_IC");
+    std::string sel;
+    if (traceRecompile || dumpICSel) {
+        sel = interp_->memory().selectorOf(compiledMethod);
+    }
     if (traceRecompile) {
-        std::string sel = interp_->memory().selectorOf(compiledMethod);
         fprintf(stderr,
                 "[RECOMPILE-OSR] %s (icEntries=%u execCount=%u%s)\n",
                 sel.c_str(), jm->numICEntries,
                 jm->stats ? jm->stats->executionCount : 0,
                 lateSpec ? " late-spec" : "");
+    }
+    if (dumpICSel && sel.find(dumpICSel) != std::string::npos
+            && jm->selBitsArray()) {
+        uint64_t* sba = jm->selBitsArray();
+        for (uint32_t i = 0; i < jm->numICEntries; i++) {
+            uint64_t* slots = reinterpret_cast<uint64_t*>(
+                icStart + i * IC_BYTES_PER_SITE);
+            std::string siteSel = sba[i] != 0
+                ? interp_->memory().oopToString(Oop::fromRawBits(sba[i]))
+                : std::string("(null)");
+            if (siteSel.empty()) siteSel = "?";
+            fprintf(stderr,
+                    "[IC-DUMP] %s site=%u sel=%s key0=0x%llx extra0=0x%llx key1=0x%llx\n",
+                    sel.c_str(), i, siteSel.c_str(),
+                    (unsigned long long)slots[0],
+                    (unsigned long long)slots[2],
+                    (unsigned long long)slots[3]);
+        }
     }
     JITMethod* newJM = compiler_->recompile(compiledMethod);
     if (newJM) {

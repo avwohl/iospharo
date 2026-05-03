@@ -832,6 +832,53 @@ extern "C" void stencil_equalSmallInt(JITState* s) {
         _HOLE_CONTINUE(s);
         return;
     }
+    // Inline ByteString = (2026-05-03): when both operands are byte
+    // objects (ByteString / Symbol / ByteArray, format 16-23),
+    // compare bytes inline.  Avoids the 4-method dispatch chain
+    // inside Pharo's String>>=.  Helps Dictionary>>scanFor:'s
+    // `key = arg` site (dict 50K bench).  PHARO_NO_BYTESTRING_EQ_INLINE=1
+    // to opt out via stencil rebuild (no runtime gate to keep hot
+    // path tight).
+    if ((a.bits & 7) == 0 && a.bits >= 0x10000
+            && (b.bits & 7) == 0 && b.bits >= 0x10000) {
+        uint64_t hdr_a = *reinterpret_cast<uint64_t*>(a.bits);
+        uint64_t hdr_b = *reinterpret_cast<uint64_t*>(b.bits);
+        uint64_t fmt_a = (hdr_a >> 24) & 0x1F;
+        uint64_t fmt_b = (hdr_b >> 24) & 0x1F;
+        // Indexable8 formats are 16-23.  Both must be byte objects
+        // for the comparison to mean "byte equality" (matches
+        // String>>= semantics).
+        if (fmt_a >= 16 && fmt_a <= 23 && fmt_b >= 16 && fmt_b <= 23) {
+            uint64_t slots_a = (hdr_a >> 56) & 0xFF;
+            uint64_t slots_b = (hdr_b >> 56) & 0xFF;
+            // Reject overflow-slot encoding (255 = use overflow word).
+            if (slots_a < 255 && slots_b < 255) {
+                uint64_t bytes_a = slots_a * 8 - (fmt_a - 16);
+                uint64_t bytes_b = slots_b * 8 - (fmt_b - 16);
+                Oop result;
+                if (bytes_a != bytes_b) {
+                    result = *(Oop*)&_HOLE_FALSE_OOP;
+                } else {
+                    const uint8_t* ba =
+                        reinterpret_cast<const uint8_t*>(a.bits + 8);
+                    const uint8_t* bb =
+                        reinterpret_cast<const uint8_t*>(b.bits + 8);
+                    bool eq = true;
+                    for (uint64_t i = 0; i < bytes_a; i++) {
+                        if (ba[i] != bb[i]) { eq = false; break; }
+                    }
+                    result = eq
+                        ? *(Oop*)&_HOLE_TRUE_OOP
+                        : *(Oop*)&_HOLE_FALSE_OOP;
+                }
+                s->sp -= 2;
+                *(s->sp) = result;
+                s->sp++;
+                _HOLE_CONTINUE(s);
+                return;
+            }
+        }
+    }
     s->ip = s->ip + OPERAND;
     _HOLE_RT_ARITH_OVERFLOW(s);
 }
