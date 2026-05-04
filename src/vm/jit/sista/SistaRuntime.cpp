@@ -38,10 +38,32 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             if (trace) {
                 static int liftFailLog = 0;
                 if (liftFailLog++ < 50) {
+                    // Dump the failing byte to identify what shape
+                    // the lifter doesn't yet handle.  failedBc is
+                    // local to the lifted suffix, so original method
+                    // bcOffset = startBcOffset + failedBc.
+                    uint8_t failByte = 0;
+                    if (method.isObject()) {
+                        ObjectHeader* mh = method.asObjectPtr();
+                        Oop hdr = mh->slots()[0];
+                        if (hdr.isSmallInteger()) {
+                            int nLits = hdr.asSmallInteger() & 0x7FFF;
+                            const uint8_t* bcs =
+                                mh->bytes() + (1 + nLits) * 8;
+                            uint32_t orig = startBcOffset + failedBc;
+                            if (orig < (uint32_t)mh->byteSize()
+                                       - (1 + nLits) * 8) {
+                                failByte = bcs[orig];
+                            }
+                        }
+                    }
                     fprintf(stderr,
                         "[SISTA-PER-BC-COMPILE] method=0x%llx bcOff=%u "
-                        "result=lift-failed (failedBc=%u)\n",
-                        (unsigned long long)key, startBcOffset, failedBc);
+                        "result=lift-failed (failedBc=%u origBc=%u "
+                        "failByte=0x%02x kind=%d)\n",
+                        (unsigned long long)key, startBcOffset,
+                        failedBc, startBcOffset + failedBc,
+                        (unsigned)failByte, (int)r);
                 }
             }
             return nullptr;

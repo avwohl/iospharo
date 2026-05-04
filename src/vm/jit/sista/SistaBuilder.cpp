@@ -6215,10 +6215,224 @@ uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
     candidates.erase(std::unique(candidates.begin(), candidates.end()),
                       candidates.end());
 
-    // Find the smallest candidate T <= triggerBcOffset such that no
-    // backward jump in [T..end) escapes.
+    // Compute stack-height-at-bcOffset for the whole method.  Used
+    // both for the entry-stack-height-0 check and as a sanity guard.
+    //
+    // The model: at each bytecode, push some operands and pop some
+    // operands.  Stack height changes by (pushes - pops).  For send
+    // sites, pops nArgs+1 (receiver+args), pushes 1 (result).  At
+    // forward jump targets, stack height is determined by the
+    // FIRST predecessor that reaches it.  Backward-jump targets
+    // inherit height from the forward predecessor (loop header is
+    // entered first via fall-through, then the loop iterates).
+    //
+    // Returns a vector heights[i] = stack height at the START of
+    // bytecode i (before its execution).  -1 = unreached.
+    auto computeStackHeights = [&]() -> std::vector<int32_t> {
+        std::vector<int32_t> heights(bytecodeSize, -1);
+        if (bytecodeSize == 0) return heights;
+        heights[0] = 0;
+        size_t scan = 0;
+        int extA = 0;
+        int extB = 0;
+        // Skip CallPrimitive header if present.
+        if (bytecodes[0] == jit::SistaV1::CallPrimitive
+            && bytecodeSize >= 3) {
+            scan = 3;
+            heights[3] = 0;
+        }
+        while (scan < bytecodeSize) {
+            int32_t h = heights[scan];
+            if (h < 0) {
+                // Unreachable; advance to next op (best effort).
+                scan++;
+                continue;
+            }
+            uint8_t op = bytecodes[scan];
+            int32_t newH = h;
+            size_t nextIp = scan + 1;
+            // Decode the op's stack effect.  The lifter has full
+            // bytecode coverage; here we only need approximate
+            // effects to compute heights.  Group by opcode range.
+            if (op >= 0x00 && op <= 0x4F) {
+                // PushRecvVar / PushLitVar / PushLitConst / PushTemp /
+                // PushReceiver / PushTrue / PushFalse / PushNil
+                newH = h + 1;
+            } else if (op == 0x50 || op == 0x51) {
+                // PushZero, PushOne
+                newH = h + 1;
+            } else if (op == 0x52) { newH = h + 1; }  // dup-like
+            else if (op >= 0x58 && op <= 0x5C) {
+                // Returns — terminate path.
+                scan = nextIp;
+                continue;
+            } else if (op >= 0x5D && op <= 0x5F) {
+                // Block returns — terminate (treated as bail).
+                scan = nextIp;
+                continue;
+            } else if (op >= jit::SistaV1::ArithBase
+                       && op <= jit::SistaV1::ArithBase + 0xF) {
+                // Arith ops: pop 2, push 1.
+                newH = h - 1;
+            } else if (op >= jit::SistaV1::SpecialSendBase
+                       && op <= jit::SistaV1::SpecialSendLast) {
+                // SpecialSend N: pop nArgs+1, push 1.  arg counts
+                // depend on which selector — for the height pass we
+                // only need an approximate; assume nArgs from the
+                // SistaV1 SpecialSelectorsArray could be 0/1/2.
+                // The image's actual table lives in memory and isn't
+                // available here; treat as nArgs=1 (most common).
+                // Refinement: read it from memory like
+                // build() does.  For the height pass on real
+                // methods this is approximate but consistent with
+                // how the lifter walks them.
+                newH = h - 1;  // pops 1+arg, pushes 1; net -1 for nArgs=1
+            } else if (op >= jit::SistaV1::Send0Base
+                       && op <= jit::SistaV1::Send0Base + 0xF) {
+                newH = h;  // pop 1 receiver, push 1 result
+            } else if (op >= jit::SistaV1::Send1Base
+                       && op <= jit::SistaV1::Send1Base + 0xF) {
+                newH = h - 1;
+            } else if (op >= jit::SistaV1::Send2Base
+                       && op <= jit::SistaV1::Send2Base + 0xF) {
+                newH = h - 2;
+            } else if (op >= jit::SistaV1::ShortJumpBase
+                       && op <= jit::SistaV1::ShortJumpLast) {
+                int forwardOff = (op - jit::SistaV1::ShortJumpBase) + 1;
+                size_t target = scan + 1 + forwardOff;
+                if (target <= bytecodeSize && heights[target] < 0) {
+                    heights[target] = h;
+                }
+                scan = nextIp;
+                continue;
+            } else if (op >= jit::SistaV1::ShortJumpTrueBase
+                       && op <= jit::SistaV1::ShortJumpFalseLast) {
+                // Conditional short jump: pop 1, branch.
+                int forwardOff =
+                    (op - jit::SistaV1::ShortJumpBase) % 8 + 1;
+                size_t target = scan + 1 + forwardOff;
+                int32_t branchH = h - 1;
+                if (target <= bytecodeSize && heights[target] < 0) {
+                    heights[target] = branchH;
+                }
+                newH = branchH;
+            } else if (op == jit::SistaV1::ExtJump) {
+                if (scan + 1 >= bytecodeSize) break;
+                int offset = bytecodes[scan + 1] + (extB << 8);
+                int64_t target = (int64_t)(scan + 2) + offset;
+                if (target >= 0 && target < (int64_t)bytecodeSize
+                    && heights[(size_t)target] < 0) {
+                    heights[(size_t)target] = h;
+                }
+                extB = 0; extA = 0;
+                scan = scan + 2;
+                continue;
+            } else if (op == jit::SistaV1::ExtJumpTrue
+                       || op == jit::SistaV1::ExtJumpFalse) {
+                if (scan + 1 >= bytecodeSize) break;
+                int offset = bytecodes[scan + 1] + (extB << 8);
+                int64_t target = (int64_t)(scan + 2) + offset;
+                int32_t branchH = h - 1;
+                if (target >= 0 && target < (int64_t)bytecodeSize
+                    && heights[(size_t)target] < 0) {
+                    heights[(size_t)target] = branchH;
+                }
+                extB = 0; extA = 0;
+                newH = branchH;
+                nextIp = scan + 2;
+            } else if (op == jit::SistaV1::ExtendA) {
+                if (scan + 1 >= bytecodeSize) break;
+                extA = (extA << 8) | bytecodes[scan + 1];
+                scan += 2;
+                if (scan < bytecodeSize && heights[scan] < 0)
+                    heights[scan] = h;
+                continue;
+            } else if (op == jit::SistaV1::ExtendB) {
+                if (scan + 1 >= bytecodeSize) break;
+                uint8_t b = bytecodes[scan + 1];
+                if (b >= 128)
+                    extB = (extB << 8) | b | 0xFFFFFF00;
+                else
+                    extB = (extB << 8) | b;
+                scan += 2;
+                if (scan < bytecodeSize && heights[scan] < 0)
+                    heights[scan] = h;
+                continue;
+            } else if (op >= jit::SistaV1::PopStoreRecvBase
+                       && op <= jit::SistaV1::PopStoreRecvLast) {
+                newH = h - 1;
+            } else if (op >= jit::SistaV1::PopStoreTempBase
+                       && op <= jit::SistaV1::PopStoreTempLast) {
+                newH = h - 1;
+            } else if (op == jit::SistaV1::Pop) {
+                newH = h - 1;
+            } else if (op == jit::SistaV1::ExtStoreTemp
+                       || op == jit::SistaV1::ExtStoreLitVar
+                       || op == jit::SistaV1::ExtStoreRecv) {
+                // No-pop store; height unchanged, but consumes a
+                // 2-byte instruction.
+                nextIp = scan + 2;
+                extA = 0; extB = 0;
+            } else if (op == jit::SistaV1::ExtPopStoreTemp
+                       || op == jit::SistaV1::ExtPopStoreRecv
+                       || op == jit::SistaV1::ExtPopStoreLitVar) {
+                newH = h - 1;
+                nextIp = scan + 2;
+                extA = 0; extB = 0;
+            } else if (op == jit::SistaV1::ExtPushTemp
+                       || op == jit::SistaV1::ExtPushRecvVar
+                       || op == jit::SistaV1::ExtPushLitVar
+                       || op == jit::SistaV1::ExtPushLitConst) {
+                newH = h + 1;
+                nextIp = scan + 2;
+                extA = 0; extB = 0;
+            } else if (op == jit::SistaV1::PushArray
+                       || op == jit::SistaV1::PushInteger
+                       || op == jit::SistaV1::PushCharacter) {
+                newH = h + 1;
+                nextIp = scan + 2;
+            } else if (op == jit::SistaV1::ExtSend
+                       || op == jit::SistaV1::ExtSuperSend) {
+                // ExtSend has nArgs in extB high bits + literal idx;
+                // approximate as net -1 (most common nArgs=1).
+                newH = h - 1;
+                nextIp = scan + 3;
+                extA = 0; extB = 0;
+            } else if (op == jit::SistaV1::CallPrimitive) {
+                // 3-byte; only at offset 0.  Stack unchanged.
+                nextIp = scan + 3;
+            } else if (op == jit::SistaV1::PushFullBlock
+                       || op == jit::SistaV1::PushClosure) {
+                // 3-byte.  Pushes a closure.
+                newH = h + 1;
+                nextIp = scan + 3;
+                extA = 0; extB = 0;
+            } else if (op == jit::SistaV1::PushTempAtInVec) {
+                newH = h + 1;
+                nextIp = scan + 3;
+            } else if (op == jit::SistaV1::InlinedPrimitive) {
+                nextIp = scan + 3;  // approximate
+            } else {
+                // Unknown — skip with no height change.
+                extA = 0; extB = 0;
+            }
+            // Propagate height to fall-through.
+            if (nextIp < bytecodeSize && heights[nextIp] < 0) {
+                heights[nextIp] = newH;
+            }
+            scan = nextIp;
+        }
+        return heights;
+    };
+
+    auto heights = computeStackHeights();
+
+    // Find the smallest candidate T <= triggerBcOffset such that:
+    //   - no backward jump in [T..end) escapes
+    //   - heights[T] == 0 (entry stack is empty — see header comment)
     for (uint32_t T : candidates) {
         if (T > triggerBcOffset) break;  // candidates is sorted
+        if (T >= heights.size() || heights[T] != 0) continue;
         bool selfContained = true;
         for (const auto& bj : backJumps) {
             if (bj.source >= T && bj.target < T) {
@@ -6228,7 +6442,7 @@ uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
         }
         if (selfContained) return T;
     }
-    return triggerBcOffset;
+    return UINT32_MAX;  // no safe lift point found
 }
 
 // Per-bytecode entry lift (item #8 in jit-multiweek-work.md).

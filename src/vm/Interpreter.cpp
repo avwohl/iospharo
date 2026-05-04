@@ -14298,42 +14298,32 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     uint32_t cnt = sistaRuntimeForGCHook_->bumpBackwardJumpCounter(method_, bcOff);
     if (cnt == sista::Runtime::kBackwardJumpThreshold) {
         // Resolve the OUTERMOST self-contained lift point at or
-        // before the trigger bcOff.  For nested loops, the inner
-        // loop's body start is NOT self-contained (the outer loop's
-        // jumpBack inside the suffix targets the outer body start
-        // < inner body start, escaping).  findOutermostLiftPoint
-        // walks back to the smallest backward-jump target whose
-        // suffix has no escapes — for sieve, that's the OUTER
-        // `1 to: self do:` body start, which covers all nesting.
+        // before the trigger bcOff.  findOutermostLiftPoint also
+        // checks the entry-stack invariant — it returns UINT32_MAX
+        // when no backward-jump target has both (a) self-contained
+        // suffix and (b) empty entry stack.  Pharo's inlined
+        // `to:do:` loop headers fall into this rejection because
+        // the counter init via `PushOne; ExtStoreTemp` (no-pop
+        // store) leaves a residual on the simulator stack at the
+        // header — lifting from there would re-execute the
+        // post-loop pop with an empty stack and bail.
         uint32_t liftAt = sista::Builder::findOutermostLiftPoint(
             method_, memory_, bcOff);
+        if (liftAt == UINT32_MAX) {
+            // No safe lift point — skip per-bytecode for this
+            // (method, bcOff).  The fallback is the existing
+            // method-entry Sista compile (already attempted on
+            // first call).
+            return;
+        }
 
         // Avoid duplicate compiles when multiple inner-loop triggers
-        // resolve to the same outer lift point.  Use a separate cache
-        // key so the inner-loop counter still bumps but doesn't
-        // re-trigger compile.
+        // resolve to the same outer lift point.
         sista::Lowering::CompiledFn outerFn =
             sistaRuntimeForGCHook_->lookupBcEntry(method_, liftAt);
         if (!outerFn) {
             outerFn = sistaRuntimeForGCHook_->compile(
                 method_, memory_, nullptr, liftAt);
-        }
-
-        // Also cache under the trigger's bcOff so future hits at the
-        // same inner-loop target don't re-resolve.  The dispatch path
-        // looks up by (method, current ip's bcOff); if we don't
-        // populate that key, every inner-loop iteration would re-do
-        // the lookup-miss → bump path.
-        if (liftAt != bcOff && outerFn) {
-            // We can't actually dispatch to outerFn from a different
-            // bcOffset (the lifted region's entry assumes ip is at
-            // liftAt, not at the inner trigger).  So leave the inner
-            // (method, bcOff) cache empty — future trigger hits will
-            // re-find the cached outer fn via findOutermostLiftPoint.
-            // The compile at the outer offset is amortized; the
-            // re-lookup is fast.  TODO: a smarter hot path would
-            // cache "trigger bcOff → outer bcOff" so the redirect is
-            // cheaper.
         }
 
         static const bool trace =

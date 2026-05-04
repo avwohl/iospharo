@@ -85,16 +85,24 @@ public:
     //   - T is a backward-jump target (i.e., a loop header)
     //   - All backward jumps within [T..end) target >= T (suffix is
     //     self-contained — no escape jumps)
+    //   - The entry stack height at T is 0.
     // If no such T exists (e.g., method has no backward jumps, or
-    // every candidate has an escape), returns triggerBcOffset
-    // unchanged — caller's lift attempt will likely fail, but the
-    // call is harmless.
+    // every candidate has an escape), returns UINT32_MAX — caller
+    // should reject the lift.
     //
     // Handles the nested-loop case: triggering on an inner loop's
     // body start would normally fail because the outer loop's
     // jumpBack (within the suffix) targets the outer body start
     // < inner body start.  This finds the outer body start so
     // the lifted region covers both nesting levels.
+    //
+    // The entry-stack-height-0 check rules out Pharo's inlined
+    // `to:do:` loop headers where the counter init via
+    // `PushOne; ExtStoreTemp` (no-pop store) leaves a residual
+    // value on the simulator stack at the loop header — the
+    // residual must be popped after the loop exits, so per-bytecode
+    // entry at the header would re-execute the post-loop pop with
+    // an empty stack and bail malformed.
     static uint32_t findOutermostLiftPoint(Oop compiledMethod,
                                             ObjectMemory& memory,
                                             uint32_t triggerBcOffset);
