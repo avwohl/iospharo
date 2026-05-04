@@ -79,6 +79,26 @@ public:
                                        uint32_t startBcOffset,
                                        uint32_t* failedAtBytecode = nullptr);
 
+    // Find the outermost self-contained lift point at or before
+    // `triggerBcOffset`.  Returns the smallest bcOffset T such that:
+    //   - T <= triggerBcOffset
+    //   - T is a backward-jump target (i.e., a loop header)
+    //   - All backward jumps within [T..end) target >= T (suffix is
+    //     self-contained — no escape jumps)
+    // If no such T exists (e.g., method has no backward jumps, or
+    // every candidate has an escape), returns triggerBcOffset
+    // unchanged — caller's lift attempt will likely fail, but the
+    // call is harmless.
+    //
+    // Handles the nested-loop case: triggering on an inner loop's
+    // body start would normally fail because the outer loop's
+    // jumpBack (within the suffix) targets the outer body start
+    // < inner body start.  This finds the outer body start so
+    // the lifted region covers both nesting levels.
+    static uint32_t findOutermostLiftPoint(Oop compiledMethod,
+                                            ObjectMemory& memory,
+                                            uint32_t triggerBcOffset);
+
     // Phase 4 Step 1: profile-guided inline hints.  When non-null,
     // tells the lifter which send sites are monomorphic (per T1 IC
     // observation).  Today the lifter only counts matches via the

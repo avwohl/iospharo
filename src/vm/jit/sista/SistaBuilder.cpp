@@ -136,6 +136,13 @@ static const std::vector<InlineHint>* g_currentBuildHints = nullptr;
 // callees referenced by inline hints.  Single-threaded; static suffices.
 static ObjectMemory* g_currentBuildMemory = nullptr;
 
+// Per-bytecode entry: when non-zero, build() lifts only the method
+// suffix [g_buildStartBcOffset..end) instead of the full [0..end).
+// Set by buildFromOffset; build() consumes it on the way down to
+// LinearLifter and then resets to 0.  Single-threaded; static
+// suffices.
+static uint32_t g_buildStartBcOffset = 0;
+
 // Recursion guard: probe-lifting a callee re-enters Builder::build, which
 // re-enters recordFramepoint via its own sends.  Without a guard the
 // counters explode geometrically and the build wedges.  Bumped to 2 to
@@ -5973,6 +5980,23 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     size_t slotBytes  = (1 + numLiterals) * 8;
     size_t bytecodeSize = (totalBytes > slotBytes) ? (totalBytes - slotBytes) : 0;
 
+    // Per-bytecode entry: shift the lifter's view of the method to
+    // start at g_buildStartBcOffset (set by Builder::buildFromOffset).
+    // The lifter then sees a "method" whose bytecode 0 is the loop
+    // header, and produces IR rooted there.  Reset the flag here so
+    // recursive sub-lifts (block bodies, inlined callees) start
+    // from offset 0 as before.
+    uint32_t startBcOffset = g_buildStartBcOffset;
+    g_buildStartBcOffset = 0;
+    if (startBcOffset > 0) {
+        if (startBcOffset >= bytecodeSize) {
+            return LiftResult::kMalformedMethod;
+        }
+        bytecodes += startBcOffset;
+        bytecodeSize -= startBcOffset;
+        out.entryBcOffset = startBcOffset;
+    }
+
     out.compiledMethodOop = compiledMethod;
     // Cache literals (for now just the raw Oop array).
     out.literals.clear();
@@ -6122,6 +6146,91 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
     return res;
 }
 
+// Find the outermost lift point that's >= 0 and <= triggerBcOffset
+// such that the suffix [T..end) is self-contained (no backward
+// jumps escape).  See header comment for full semantics.
+//
+// Algorithm: scan all backward jumps in the method.  For candidate
+// T = each backward-jump target ordered ascending, check whether
+// ANY backward jump with source >= T has target < T.  If yes, T is
+// not self-contained — try next.  First T that passes is the
+// answer; falls back to triggerBcOffset if none found.
+uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
+                                          ObjectMemory& memory,
+                                          uint32_t triggerBcOffset) {
+    if (!compiledMethod.isObject()) return triggerBcOffset;
+    ObjectHeader* mh = compiledMethod.asObjectPtr();
+    if (!mh->isCompiledMethod()) return triggerBcOffset;
+    Oop hdrOop = memory.fetchPointer(0, compiledMethod);
+    if (!hdrOop.isSmallInteger()) return triggerBcOffset;
+    int64_t headerBits = hdrOop.asSmallInteger();
+    uint32_t numLiterals = static_cast<uint32_t>(headerBits & 0x7FFF);
+    const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
+    size_t totalBytes = mh->byteSize();
+    size_t slotBytes = (1 + numLiterals) * 8;
+    size_t bytecodeSize = (totalBytes > slotBytes)
+                          ? (totalBytes - slotBytes) : 0;
+
+    // Collect (source, target) pairs for every backward jump.
+    struct BackJump { uint32_t source; uint32_t target; };
+    std::vector<BackJump> backJumps;
+    {
+        size_t scan = 0;
+        int extB = 0;
+        while (scan < bytecodeSize) {
+            uint8_t op = bytecodes[scan];
+            if (op == jit::SistaV1::ExtendB) {
+                if (scan + 1 >= bytecodeSize) break;
+                extB = static_cast<int8_t>(bytecodes[scan + 1]);
+                scan += 2;
+                continue;
+            }
+            if (op == jit::SistaV1::ExtJump
+             || op == jit::SistaV1::ExtJumpTrue
+             || op == jit::SistaV1::ExtJumpFalse) {
+                if (scan + 1 >= bytecodeSize) break;
+                int offset = bytecodes[scan + 1] + (extB << 8);
+                if (offset < 0) {
+                    int64_t target = (int64_t)(scan + 2) + offset;
+                    if (target >= 0 && target < (int64_t)bytecodeSize) {
+                        backJumps.push_back({(uint32_t)scan,
+                                              (uint32_t)target});
+                    }
+                }
+                extB = 0;
+                scan += 2;
+                continue;
+            }
+            extB = 0;
+            scan++;
+        }
+    }
+    if (backJumps.empty()) return triggerBcOffset;
+
+    // Build candidate lift points: distinct targets, sorted ascending.
+    std::vector<uint32_t> candidates;
+    candidates.reserve(backJumps.size());
+    for (const auto& bj : backJumps) candidates.push_back(bj.target);
+    std::sort(candidates.begin(), candidates.end());
+    candidates.erase(std::unique(candidates.begin(), candidates.end()),
+                      candidates.end());
+
+    // Find the smallest candidate T <= triggerBcOffset such that no
+    // backward jump in [T..end) escapes.
+    for (uint32_t T : candidates) {
+        if (T > triggerBcOffset) break;  // candidates is sorted
+        bool selfContained = true;
+        for (const auto& bj : backJumps) {
+            if (bj.source >= T && bj.target < T) {
+                selfContained = false;
+                break;
+            }
+        }
+        if (selfContained) return T;
+    }
+    return triggerBcOffset;
+}
+
 // Per-bytecode entry lift (item #8 in jit-multiweek-work.md).
 //
 // Lifts the suffix [startBcOffset..end) of a method as if it were a
@@ -6149,94 +6258,14 @@ LiftResult Builder::buildFromOffset(Oop compiledMethod, ObjectMemory& memory,
         return build(compiledMethod, memory, out, failedAtBytecode);
     }
 
-    if (!compiledMethod.isObject()) return LiftResult::kMalformedMethod;
-    ObjectHeader* mh = compiledMethod.asObjectPtr();
-    if (!mh->isCompiledMethod()) return LiftResult::kMalformedMethod;
-
-    Oop hdrOop = memory.fetchPointer(0, compiledMethod);
-    if (!hdrOop.isSmallInteger()) return LiftResult::kMalformedMethod;
-    int64_t headerBits = hdrOop.asSmallInteger();
-    uint32_t numLiterals = static_cast<uint32_t>(headerBits & 0x7FFF);
-
-    const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
-    size_t totalBytes = mh->byteSize();
-    size_t slotBytes = (1 + numLiterals) * 8;
-    size_t bytecodeSize = (totalBytes > slotBytes) ? (totalBytes - slotBytes) : 0;
-
-    if (startBcOffset >= bytecodeSize) return LiftResult::kMalformedMethod;
-
-    // Pre-scan: reject if any backward jump in the suffix targets
-    // before startBcOffset.  Done conservatively — if we can't decode
-    // an opcode (e.g., extension byte at the very start of the
-    // suffix), bail.  This catches the common bad case (lifted
-    // suffix's outer-loop incr → outer-loop header < startBcOffset)
-    // before invoking the lifter.
-    {
-        size_t scan = startBcOffset;
-        int extB = 0;
-        while (scan < bytecodeSize) {
-            uint8_t op = bytecodes[scan];
-            if (op == jit::SistaV1::ExtendB) {
-                if (scan + 1 >= bytecodeSize) {
-                    return LiftResult::kMalformedMethod;
-                }
-                extB = static_cast<int8_t>(bytecodes[scan + 1]);
-                scan += 2;
-                continue;
-            }
-            if (op == jit::SistaV1::ExtJump
-             || op == jit::SistaV1::ExtJumpTrue
-             || op == jit::SistaV1::ExtJumpFalse) {
-                if (scan + 1 >= bytecodeSize) {
-                    return LiftResult::kMalformedMethod;
-                }
-                int offset = bytecodes[scan + 1] + (extB << 8);
-                if (offset < 0) {
-                    int64_t target = (int64_t)(scan + 2) + offset;
-                    if (target < (int64_t)startBcOffset) {
-                        // Backward jump escapes the lifted region.
-                        if (failedAtBytecode) *failedAtBytecode = (uint32_t)scan;
-                        return LiftResult::kMalformedMethod;
-                    }
-                }
-                extB = 0;
-                scan += 2;
-                continue;
-            }
-            // Short jump form (0x90-0xA7 in SistaV1) — rare for backward
-            // because they only support +0..+7 forward offsets.  Skip.
-            extB = 0;
-            // Use rough size advance.  For safety, advance by 1 if
-            // unknown; the lifter will still see all bytes, just the
-            // pre-scan might miss some boundaries.
-            scan++;
-        }
-    }
-
-    uint32_t numArgs = static_cast<uint32_t>((headerBits >> 24) & 0x0F);
-    uint32_t numTemps = static_cast<uint32_t>((headerBits >> 18) & 0x3F);
-    numTemps = (numTemps > numArgs) ? numTemps - numArgs : 0;
-
-    // Set up Method literals (same as build()).
-    out.compiledMethodOop = compiledMethod;
-    out.literals.clear();
-    out.literals.reserve(numLiterals);
-    for (uint32_t i = 0; i < numLiterals; i++) {
-        out.literals.push_back(memory.fetchPointer(1 + i, compiledMethod));
-    }
-
-    // Lift the suffix.  buildFromBytes uses LinearLifter, which is the
-    // same lifter the main build() uses.  Bcoffsets in the resulting
-    // IR are local to the lifted region (0-based).  Caller passes
-    // entryBcOffset to lowering to rebase deopts.
-    LiftResult res = buildFromBytes(bytecodes + startBcOffset,
-                                     bytecodeSize - startBcOffset,
-                                     numArgs, numTemps, out,
-                                     failedAtBytecode);
-    if (res != LiftResult::kOk) return res;
-
-    out.entryBcOffset = startBcOffset;
-    return LiftResult::kOk;
+    // Set the per-bytecode entry hook that build() consumes.  build()
+    // does the full lifter setup (special-send arg counts, inline
+    // hint masks, class-name lookup, etc.) — this avoids duplicating
+    // all that into a separate code path.  Reset on early-return.
+    g_buildStartBcOffset = startBcOffset;
+    LiftResult r = build(compiledMethod, memory, out, failedAtBytecode);
+    g_buildStartBcOffset = 0;
+    return r;
 }
 
 // Phase 4 Step 1: profile-guided wrapper.  Sets a thread-local hint
