@@ -1193,16 +1193,67 @@ not enough to offset the dispatch + sstate-init cost.
 
 **Path forward to actual sieve win:**
 
-- **Multi-entry-point compiled fns**: lift the outermost self-
-  contained suffix once, expose entry labels for each inner
-  backward-jump target, dispatch into the right label based on
-  current bcOff.  asmjit Compiler doesn't support multi-entry
-  directly; would need to extract block-label offsets after
-  assembly and create alias fn pointers.  Estimated 1 week.
-- **Lifter extension that handles backward-jump escapes** by
-  inlining the destination's surrounding loop into the lifted
-  region (much bigger change — touches the lifter's pass-1
-  control-flow analysis).  Estimated 2-3 weeks.
+The dispatch-trace breakdown shows ~291K dispatches total, ~99.7%
+ending in ExitSend (immediate bail), ~0.3% ending in ExitReturn
+(useful work).  Each per-bytecode compiled fn for sieve's inner-
+loop target lifts the suffix [bcOff..end) — the inner loop body
+is in there, but the outer loop's backward jump (which targets
+BEFORE the suffix) gets emitted as `kSendUnspeculated` by the
+lifter's `bailToInterpreter(2)` path.  When the inner loop exits
+naturally (cond false), control falls through the inner-exit
+code and immediately hits the outer escape, bail.  Each dispatch
+runs maybe a single inner-loop pass before bailing — not enough
+work to amortize the dispatch + sstate-init cost.
+
+**Multi-entry-point compiled fns** is the cleanest fix.  Design:
+
+1. *Lift outermost*: when the trigger fires at bcOff=N, find
+   findOutermostLiftPoint(N) = M.  Lift from M (covers all
+   nested loops).  This is what `findOutermostLiftPoint` already
+   computes, but right now we lift at the trigger bcOff directly.
+
+2. *Dispatch prologue in the compiled fn*: at the start of the
+   compiled fn (after the existing tempBase/literals hoists),
+   emit a chain that reads `sstate.ip - bytecodeBase` and
+   compares against each backward-jump target's bcOff inside
+   the lifted region.  On match, branch to that block's label.
+   On no-match, fall through to the entry block (block at M).
+
+3. *Phi-register initialization*: blocks at backward-jump targets
+   in Pharo's inlined `to:do:` loops have phi nodes for the
+   counter residuals.  Direct branch to those blocks reads
+   uninitialized phi registers → tag-check deopts → ExitSend
+   bail.  The dispatch prologue needs to LOAD the phi inputs
+   from the runtime stack (sstate.sp[-K..-1]) before branching.
+   Requires the lifter to publish, for each dispatchable block,
+   the entry-stack depth + value-id-to-register mapping that
+   the lowering can use.
+
+4. *Hook*: when (method, N) compile fires, register cache entries
+   for ALL dispatchable bcoffs within the lifted region pointing
+   to the same outerFn.  Subsequent triggers at any of those
+   bcoffs hit the cache and dispatch (with sstate.ip set to the
+   trigger bcOff, so the prologue branches correctly).
+
+**Estimate**: 1-2 weeks.  Step 3 is the load-bearing piece —
+the existing lowering uses asmjit's Compiler register allocator
+which assigns physical regs late; exposing "the register holding
+phi#K of block_at_M" requires either:
+   - Forcing each phi to a specific physical register, OR
+   - Introducing kLoadStackSlot IR ops in a dispatch-prologue
+     pseudo-block that the lowering treats as the "predecessor"
+     of every dispatchable block.
+
+Latter is cleaner.  Adds K kLoadStackSlot IR ops per dispatchable
+block; the existing phi-wiring in pass 4 picks them up as
+predecessor outgoingStack values.
+
+**Alternative simpler path**: lifter extension that handles
+backward-jump escapes by inlining the destination's surrounding
+loop.  Would let the suffix from bcOff=41 cover both inner AND
+outer loops.  Bigger change to the lifter's pass-1 control-flow
+analysis (need to track which outer-loop scopes can be inlined
+without breaking the entry-stack invariant).  Estimated 2-3 weeks.
 
 Default flags bench-suite (no PHARO_SISTA_PER_BC=1) unchanged:
 sieve 42-43, sort 113-118, dict 125-128, fib 15.  3/3 stable.
