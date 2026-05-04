@@ -1149,6 +1149,64 @@ soak validation.
 Default flags bench-suite (no PHARO_SISTA_PER_BC=1) unchanged:
 sieve 44, sort 114, dict 126, fib 15.  3/3 stable across runs.
 
+### 2026-05-04: inline kPrimAt + kPrimAtPut lowering + deopt-stack fix
+
+`d61c6722`: replaced the cc.invoke(jit_rt_sista_basic_at[_put])
+helper-call with inline asmjit codegen for the fmt=2 (Array)
+fast path: tag check rcv, tag check idx, header read, fmt==2
+check, immutable bit (at:put: only), slotCount byte (overflow
+encoding bails), bounds check, slot load/store.  Mirrors T1's
+`stencil_sendInlineArrayAt[Put]` for the asmjit-generated path.
+
+**Critical correctness fix:** the prior emission carried only
+[rcv, idx, val] as IR operands.  On bail, the deopt path wrote
+ONLY those three to the runtime sp — but the Sista simulator
+stack at the at:/at:put: site usually has values BELOW them
+(e.g., outer to:do: residuals from the no-pop counter init,
+which Pop-on-empty kept in the runtime view).  When deopt
+fired, the interp resumed at the at:/at:put: bcOffset with the
+wrong stack height, and subsequent ops read garbage — sort 100K
+crashed with "receiver of 'link' is nil".
+
+Now the lifter captures a deopt-stack snapshot before popping
+operands and passes it as additional IR operands.  The lowering
+writes the full snapshot + rcv + idx (+ val) to runtime sp
+before bailing, mirroring kPrimTagCheckInt's contract.  Sort +
+dict complete cleanly under PHARO_SISTA_PER_BC=1 post-fix.
+
+**Bench-suite under PHARO_SISTA_PER_BC=1** (5 runs):
+```
+fib(28)    = 14-51 ms   (high variance, occasional outliers)
+sieve x100 = 44-45 ms   (baseline)
+sort 100K  = 114-117 ms (within noise)
+dict 50K   = 127-130 ms (within noise)
+```
+
+No bench win.  Per-bytecode dispatch trace shows ~273K dispatches
+of which ALL return ExitSend (= bail).  The lifted suffix at
+sieve's inner-whileTrue: target (bcOff=41) terminates at the
+OUTER to:do:'s backward jump (which targets bcOff=23, before
+the suffix start).  `bailToInterpreter(2)` emits kSendUnspeculated
+for that escape jump — the compiled fn always exits there.  Each
+dispatch saves only the work between fire-point and the escape,
+not enough to offset the dispatch + sstate-init cost.
+
+**Path forward to actual sieve win:**
+
+- **Multi-entry-point compiled fns**: lift the outermost self-
+  contained suffix once, expose entry labels for each inner
+  backward-jump target, dispatch into the right label based on
+  current bcOff.  asmjit Compiler doesn't support multi-entry
+  directly; would need to extract block-label offsets after
+  assembly and create alias fn pointers.  Estimated 1 week.
+- **Lifter extension that handles backward-jump escapes** by
+  inlining the destination's surrounding loop into the lifted
+  region (much bigger change — touches the lifter's pass-1
+  control-flow analysis).  Estimated 2-3 weeks.
+
+Default flags bench-suite (no PHARO_SISTA_PER_BC=1) unchanged:
+sieve 42-43, sort 113-118, dict 125-128, fib 15.  3/3 stable.
+
 **Original analysis (kept for context):**
 
 today Sista compiles whole methods.  Per-bytecode Sista would
