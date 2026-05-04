@@ -88,6 +88,15 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         uint32_t failedVal = UINT32_MAX;
         Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, lifedBase);
         bcOffsetCache_[key][startBcOffset] = fn;
+        // Multi-key cache: register the same fn at every dispatchable
+        // bcOff in the lifted region.  Triggers at interior loop tops
+        // (middle, inner) reuse this single compile.
+        if (fn) {
+            for (const auto& entry : m.dispatchableBlocks) {
+                uint32_t methodBcOff = startBcOffset + entry.first;
+                bcOffsetCache_[key][methodBcOff] = fn;
+            }
+        }
         // PHARO_SISTA_PER_BC_TRACE=1: log the outcome.
         static const bool trace =
             std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;

@@ -14435,23 +14435,15 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
 
     // Miss — bump counter and on threshold queue compile.  The
     // sampling above means each "bump" represents 64 actual backward
-    // jumps, so threshold=1000 → ~64K actual jumps before compile.
+    // jumps, so threshold=N → ~64*N actual jumps before compile.
     uint32_t cnt = sistaRuntimeForGCHook_->bumpBackwardJumpCounter(method_, bcOff);
     if (cnt == sista::Runtime::kBackwardJumpThreshold) {
-        // Lift the suffix [bcOff..end) directly.  The Pop-on-empty
-        // simulator extension means residual stack values from
-        // outer scopes (e.g., Pharo's inlined `to:do:` counter
-        // init) are tolerated — they sit on the runtime sp,
-        // untouched by lifted code, and discarded by popFrame
-        // on return.
-        //
-        // findOutermostLiftPoint is no longer required: with the
-        // Pop relaxation, the outermost-vs-inner choice is no
-        // longer about finding a "safe" entry, just an
-        // optimization choice.  Lifting from the trigger bcOff
-        // directly gives us cache hits on the dispatch path
-        // (since the dispatch lookup uses the current ip's
-        // bcOff, not a resolved liftAt).
+        // Lift the suffix [bcOff..end).  SistaRuntime::compile then
+        // populates the cache for ALL dispatchable bcOffs in the
+        // lifted region (multi-key caching) so triggers at interior
+        // loop tops (e.g. inner whileTrue: top within an outer-do:
+        // body) reuse this single compile via the lowering's
+        // multi-entry-point dispatch prologue.
         sista::Lowering::CompiledFn fn2 =
             sistaRuntimeForGCHook_->compile(
                 method_, memory_, nullptr, bcOff);
