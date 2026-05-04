@@ -4885,29 +4885,42 @@ private:
             // residual values from outer scopes (e.g., Pharo's
             // inlined `to:do:` counter init via `PushOne;
             // ExtStoreTemp` leaves a constant on the simulator
-            // stack at the loop header).  The residual gets popped
-            // after the loop exits.  At lift time the simulator
-            // stack is empty, so the Pop bytecode would otherwise
-            // bail malformed.  Allow it as a no-op: the residual
-            // sits on the runtime stack, untouched by lifted code,
-            // and is discarded along with the rest of the frame
-            // when the method returns (popFrame).
+            // stack at the loop header).  The Pop that consumes that
+            // residual lives in the post-loop epilogue.  If the lift
+            // covers it, simulator stack is empty at the Pop site.
             //
-            // This is safe ONLY when no other lifted op reads the
-            // residual via sp[-N].  The lifter's existing operations
-            // all access through SSA values (registers / spills
-            // managed by asmjit), not raw sp offsets, so the
-            // residual is invisible to them.  Deopt paths write
-            // operand[1..N] above current sp without touching
-            // sp[-N], so the residual is preserved across deopts
-            // too.
+            // Earlier behavior was: silent no-op, on the theory that
+            // the residual stays on the runtime stack and is dropped
+            // by popFrame on return.  That holds for lifts that run
+            // to method-end; it BREAKS for lifts that bail mid-method
+            // because each bail leaves the un-popped residual on
+            // the runtime stack.  In a recursive structure (e.g.
+            // SmallInteger>>benchmark, where bcOff=23 lifts the
+            // middle-loop body and bails at the outer jumpBack),
+            // every outer-loop iteration leaks one residual.  After
+            // ~30 iterations the C++ stack overflows the materialized
+            // context capacity (40 slots) and the next save+resume
+            // truncates the temp area, corrupting an Array temp into
+            // a SmallInteger ("not indexable" runtime error).
+            //
+            // Fix: bail at the Pop bytecode.  The lifted region ends
+            // here; the interpreter resumes at the Pop with sp still
+            // holding the residual, executes the Pop, and consumes
+            // the residual correctly.  Lifted region shrinks slightly
+            // (loses any post-Pop body), but inner loops are still
+            // lifted natively and there's no leak.
             if (op == 0xD8) {
                 if (!stack_.empty()) {
                     stack_.pop_back();
+                    ip++;
+                    continue;
                 }
-                // else: silent no-op for entry-residual case
-                ip++;
-                continue;
+                // Empty simulator: residual would leak across bail.
+                // Emit a kSendUnspeculated bail at this bytecode so
+                // the interpreter consumes the residual.
+                LiftResult bailRes = bailToInterpreter(1);
+                if (bailRes != LiftResult::kOk) return bailRes;
+                return LiftResult::kOk;
             }
 
             // 0x54-0x57, 0x5F, 0xDA-0xDF: 1-byte unassigned/no-op.
