@@ -3051,9 +3051,23 @@ public:
         if (!out_.dispatchableBlocks.empty()) {
             // Snapshot the original list — we'll be appending to
             // out_.blocks so we can't iterate dispatchableBlocks while
-            // the underlying vector grows.
-            std::vector<std::pair<uint32_t, uint32_t>> dispatchSnapshot =
-                out_.dispatchableBlocks;
+            // the underlying vector grows.  Also drop any dispatchable
+            // entry whose target is orphan (no IR values) — those
+            // arise when the lift bailed in the outer body and
+            // never reached the loop tops further down.  Caching
+            // such bcOffs would dispatch into an empty target block
+            // that falls through to the eventual post-loop bail,
+            // producing silent miscompile (sieve count 1028→1).
+            std::vector<std::pair<uint32_t, uint32_t>> dispatchSnapshot;
+            dispatchSnapshot.reserve(out_.dispatchableBlocks.size());
+            for (const auto& e : out_.dispatchableBlocks) {
+                if (out_.blockAt(e.second).values.empty()) continue;
+                dispatchSnapshot.push_back(e);
+            }
+            // Replace the original list with the filtered one so the
+            // multi-key cache + lowering's dispatch prologue both see
+            // the same set.
+            out_.dispatchableBlocks = dispatchSnapshot;
             for (const auto& entry : dispatchSnapshot) {
                 uint32_t targetBlockId = entry.second;
                 const Block& targetBlock = out_.blockAt(targetBlockId);
