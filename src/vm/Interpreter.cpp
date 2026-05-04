@@ -14198,6 +14198,14 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         std::getenv("PHARO_SISTA_PER_BC") != nullptr;
     if (!perBcEnabled) return;
 
+    // Sampling: like tryOSRAtBackwardJump, only check every N
+    // backward jumps to amortize the hook's per-call overhead.
+    // Without sampling, tinyBenchmarks-style microbenchmarks regress
+    // 5× from the per-call hash lookup + counter bump alone.
+    static thread_local uint32_t perBcCountdown = 0;
+    if (perBcCountdown-- > 0) return;
+    perBcCountdown = 64;
+
     if (!sistaRuntimeForGCHook_) return;
     if (!method_.isObject() || method_.rawBits() < 0x10000) return;
     if (inSyncSend_) return;  // Skip while a helper-send is driving step()
@@ -14210,19 +14218,17 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff);
     if (fn) {
         // TODO (phase 4): set up sstate at bcOffset and invoke fn.
-        // For now the hit path is unreachable because phase 1 only
-        // populates the cache via compile(method, ...) — and that
-        // compile path is gated off until phases 2-5 land.
+        // For now the hit path is unreachable because phase 4 (the
+        // entry prologue + dispatch) isn't wired yet.
         return;
     }
 
-    // Miss — bump counter and on threshold queue compile.
+    // Miss — bump counter and on threshold queue compile.  The
+    // sampling above means each "bump" represents 64 actual backward
+    // jumps, so threshold=1000 → ~64K actual jumps before compile.
     uint32_t cnt = sistaRuntimeForGCHook_->bumpBackwardJumpCounter(method_, bcOff);
     if (cnt == sista::Runtime::kBackwardJumpThreshold) {
-        // Trigger compile.  Today returns nullptr (phases 2-5 not done).
         sistaRuntimeForGCHook_->compile(method_, memory_, nullptr, bcOff);
-        // PHARO_SISTA_PER_BC_TRACE=1: log every threshold-trigger so
-        // we can see which (method, bcOffset) sites are hot.
         static const bool trace =
             std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
         if (trace) {

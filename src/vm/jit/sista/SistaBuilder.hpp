@@ -57,6 +57,28 @@ public:
                                       Method& out,
                                       uint32_t* failedAtBytecode = nullptr);
 
+    // Per-bytecode entry lift (item #8 in jit-multiweek-work.md).
+    // Lifts the method tail starting at `startBcOffset` (a backward-
+    // jump target / loop header).  The lifter sees the suffix
+    // [startBcOffset..end) as if it were a complete method:
+    //   - Block 0 starts at bcOffset 0 (= method bcOffset startBcOffset).
+    //   - Backward jumps within the suffix work normally.
+    //   - Backward jumps that escape (target before startBcOffset)
+    //     bail the lift.
+    //
+    // The Method's `entryBcOffset` field records startBcOffset so
+    // lowering can pass `bytecodeBase = methodBytes + startBcOffset`
+    // to its deopt sequences (deopt resumes at the correct method-
+    // relative ip).
+    //
+    // Returns kOk on success; the caller uses this with
+    // Lowering::lower() the same way build() output is used.
+    static LiftResult buildFromOffset(Oop compiledMethod,
+                                       ObjectMemory& memory,
+                                       Method& out,
+                                       uint32_t startBcOffset,
+                                       uint32_t* failedAtBytecode = nullptr);
+
     // Phase 4 Step 1: profile-guided inline hints.  When non-null,
     // tells the lifter which send sites are monomorphic (per T1 IC
     // observation).  Today the lifter only counts matches via the

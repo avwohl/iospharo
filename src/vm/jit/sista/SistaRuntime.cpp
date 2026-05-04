@@ -22,11 +22,58 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             auto inner = outer->second.find(startBcOffset);
             if (inner != outer->second.end()) return inner->second;
         }
-        // Per-bytecode entry not implemented yet — caller will see
-        // nullptr.  Phases 2-5 of item #8 wire the actual lift +
-        // lower path; for now the cache structure is in place and
-        // the lookup miss is the expected outcome.
-        return nullptr;
+        // Per-bytecode entry: lift the suffix [startBcOffset..end)
+        // via Builder::buildFromOffset.  Phase 3 — the lifter handles
+        // the lifting, lowering uses the same path as method-entry
+        // compile, but with bytecodeBase shifted forward so deopts
+        // resume at the right method-relative ip.
+        Method m;
+        uint32_t failedBc = UINT32_MAX;
+        LiftResult r =
+            Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc);
+        if (r != LiftResult::kOk) {
+            bcOffsetCache_[key][startBcOffset] = nullptr;  // negative cache
+            return nullptr;
+        }
+        // Recover bytecodes pointer for lowering's deopt sequences.
+        if (!method.isObject()) {
+            bcOffsetCache_[key][startBcOffset] = nullptr;
+            return nullptr;
+        }
+        ObjectHeader* mh = method.asObjectPtr();
+        Oop hdrOop = memory.fetchPointer(0, method);
+        if (!hdrOop.isSmallInteger()) {
+            bcOffsetCache_[key][startBcOffset] = nullptr;
+            return nullptr;
+        }
+        uint32_t numLiterals = (uint32_t)(hdrOop.asSmallInteger() & 0x7FFF);
+        const uint8_t* bytecodes = mh->bytes() + (1 + numLiterals) * 8;
+        // bytecodeBase shifted to the lifted-region start.  IR's
+        // bcOffsets are local; bytecodeBase + localBcOffset = method
+        // bcOffset = correct ip for deopt resume.
+        const uint8_t* lifedBase = bytecodes + startBcOffset;
+        uint32_t failedVal = UINT32_MAX;
+        Lowering::CompiledFn fn = lowering_.lower(m, &failedVal, lifedBase);
+        bcOffsetCache_[key][startBcOffset] = fn;
+        // PHARO_SISTA_PER_BC_TRACE=1: log the outcome.
+        static const bool trace =
+            std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
+        if (trace) {
+            static int logCount = 0;
+            if (logCount++ < 16) {
+                fprintf(stderr,
+                    "[SISTA-PER-BC-COMPILE] method=0x%llx bcOff=%u "
+                    "result=%s%s\n",
+                    (unsigned long long)key, startBcOffset,
+                    fn ? "OK" : "fail",
+                    fn ? "" : (failedVal != UINT32_MAX
+                                ? " (lower-failed)"
+                                : (r != LiftResult::kOk
+                                    ? " (lift-failed)"
+                                    : "")));
+            }
+        }
+        return fn;
     }
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second;

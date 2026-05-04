@@ -452,6 +452,15 @@ struct Method {
     uint32_t numArgs  = 0;
     uint32_t numTemps = 0;               // Excludes args; just the |...| temps
     uint32_t entryBlock = 0;             // Index into blocks
+    // Method bcOffset of the entry point.  0 = method-entry compile
+    // (default — preserves existing behavior).  Non-zero = the IR
+    // was lifted from a method tail starting at this offset (per-
+    // bytecode hook entry, item #8 in jit-multiweek-work.md).
+    // Lowering reads this so it can pass methodBytes + entryBcOffset
+    // as the bytecodeBase for deopt sequences (deopt's recorded
+    // bcOffsets are local to the lifted region; adding entryBcOffset
+    // gets back to method-relative ip).
+    uint32_t entryBcOffset = 0;
 
     // ===== Building helpers =====
     // Append a new block; returns its id.  Predecessor/successor links

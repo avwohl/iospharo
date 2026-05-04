@@ -125,10 +125,17 @@ public:
         return ++backwardJumpCounters_[key];
     }
 
-    // Threshold at which the per-bytecode compile is queued.
-    // Lower than the per-method threshold because backward jumps fire
-    // per-iteration of a loop, so the hot loops accumulate fast.
-    static constexpr uint32_t kBackwardJumpThreshold = 100;
+    // Threshold at which the per-bytecode compile is queued.  Higher
+    // than per-method because every iteration of a loop bumps the
+    // counter — 1000 means "loop has run at least 1000 iterations
+    // before we pay the compile cost".
+    //
+    // Phase 4 (entry prologue / dispatch) hasn't landed yet, so today
+    // every successful compile is wasted work — we lift+lower the
+    // suffix but never execute it.  The high threshold limits the
+    // damage to the bench-suite's hot loops; once phase 4 wires the
+    // hit path, we can lower this back to ~100.
+    static constexpr uint32_t kBackwardJumpThreshold = 1000;
 
 private:
     Lowering lowering_;
