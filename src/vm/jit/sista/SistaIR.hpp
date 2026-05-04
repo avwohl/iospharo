@@ -463,6 +463,15 @@ struct Method {
     // gets back to method-relative ip).
     uint32_t entryBcOffset = 0;
 
+    // Multi-entry-point dispatch table (item #8 — per-bytecode hook).
+    // Pairs of (lifted-local bcOffset, blockId) for each block that's
+    // a backward-jump target within the lifted region.  Lowering uses
+    // this to emit an IP-based dispatch prologue: read sstate.ip -
+    // bytecodeBase, compare against each entry's bcOffset, and on
+    // match branch to that block (after loading phi inputs from the
+    // runtime sp).  Populated by Builder::build after pass 2.
+    std::vector<std::pair<uint32_t, uint32_t>> dispatchableBlocks;
+
     // ===== Building helpers =====
     // Append a new block; returns its id.  Predecessor/successor links
     // are set up by addEdge().
