@@ -1099,6 +1099,56 @@ coverage extensions for the bytecodes that show up inside loop
 bodies — separate work, much narrower than the original 6-8 week
 estimate now that the dispatch architecture is in place.
 
+### 2026-05-04: per-bytecode lifter coverage — kPrimAtPut + Pop-on-empty
+
+`6190795c`: two complementary lifter extensions:
+
+**Pop-on-empty simulator stack** — Pharo's inlined `to:do:` counter
+init (`PushOne; ExtStoreTemp`) leaves a residual on the simulator
+stack at the loop header; the residual gets popped after the loop
+exits.  Without this fix, the lifter bailed kMalformedMethod at
+the post-loop Pop bytecode (failByte=0xD8).  Pop-on-empty silently
+no-ops — the residual sits on the runtime sp untouched by lifted
+code (which operates through SSA values / registers, not raw sp
+offsets) and is discarded along with the rest of the frame on
+popFrame.  `findOutermostLiftPoint`'s entry-stack-height check
+relaxed to `>= 0` accordingly.  Sieve's outer body start (offset
+5) now passes.
+
+**`kPrimAtPut` IR op + helper + lowering** — mirrors `kPrimAt` for
+the at:put: side.  `Interpreter::jitSistaBasicAtPut` handles fmt 2
+(Array slot store via `storePointerUnchecked` for the GC barrier)
+and fmt 16-23 (byte at:put: with SmI-in-[0,255] check).  Lowering
+invokes the helper, deopts on 0 return.  Lifter detects
+SpecialSend at:put: (opcode 0x71) and emits `kPrimAtPut` inline,
+gated to per-bytecode lifts only via `g_inPerBcBuild` —
+method-entry compiles continue to use the established
+kSendUnspeculated bail path.
+
+**Result:** infrastructure in place, but no bench win yet:
+```
+sieve x100 = 71 ms     (baseline 44 — REGRESSION under PER_BC=1)
+fib(28)    = 72 ms     (baseline 14-15 — REGRESSION)
+```
+
+The dispatch + helper-call overhead defeats the "skip bail"
+savings.  `jit_rt_sista_basic_at_put` is a function call (4-arg)
+per at:put: site; sieve's 3M inner iterations × ~50ns/call =
+150ms, dwarfing the 18ms baseline cost.
+
+**Next step (not in this commit):** convert the lowering from
+helper-invoke to inline asmjit codegen for the fast path
+(class+SmI+bounds check + slot store), similar to how
+`stencil_sendInlineArrayAtPut` does it for T1 (commit `ecb6911f`).
+The GC barrier (old-to-young remember-set update) is the main
+complication — simplest path is to fast-path only when val is
+immediate (tag != 0) or when rcv is young, deopt to helper
+otherwise.  Estimate: 1-2 days of asmjit codegen work + GC
+soak validation.
+
+Default flags bench-suite (no PHARO_SISTA_PER_BC=1) unchanged:
+sieve 44, sort 114, dict 126, fib 15.  3/3 stable across runs.
+
 **Original analysis (kept for context):**
 
 today Sista compiles whole methods.  Per-bytecode Sista would
