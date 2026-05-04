@@ -1041,26 +1041,71 @@ whether the wins exist.  Either:
 
 ---
 
-## 8. Per-bytecode Sista hook
+## 8. Per-bytecode Sista hook — **INFRASTRUCTURE SHIPPED 2026-05-03**
 
-**What:** today Sista compiles whole methods.  Per-bytecode Sista would
+**Status:** all five phases of the design landed in 2026-05-03 PM.
+Opt-in via `PHARO_SISTA_PER_BC=1`; bench-suite stable under it but
+hot-path lifts bail on bytecodes the existing lifter doesn't handle
+outside the method-entry context.
+
+Commits:
+- `97746b98` — phase 1: per-(method, bcOffset) cache infra +
+  backward-jump counter API.
+- `612c3aac` — phase 2: backward-jump trigger hook in all six
+  interpreter jump bytecodes (longJump/IfTrue/IfFalse,
+  ExtJump/IfTrue/IfFalse).  Sampled every 64 jumps to amortize
+  overhead.
+- `b94b8883` — phase 3: `Builder::buildFromOffset` lifts the suffix
+  `[startBcOffset..end)`.  `Method.entryBcOffset` records the
+  shift so lowering computes the right `bytecodeBase` for deopt
+  resume.
+- `1b78e033` — phase 4: cache-hit dispatch in
+  `tryPerBcSistaAtBackwardJump` — sets up `JITState`, invokes
+  `fn(&sstate)`, routes ExitReturn / ExitSend through standard
+  resume.
+- `8195a037` — phase 5: `findOutermostLiftPoint` solves the
+  nested-loop escape problem (inner loop's suffix isn't self-
+  contained because the outer loop's jumpBack inside the suffix
+  escapes); it walks back to the smallest backward-jump target
+  whose suffix has no escapes.  `g_buildStartBcOffset` hook in
+  `build()` shares the full lifter setup (special-send arg counts,
+  inline-hint masks) that the earlier `buildFromBytes` path was
+  missing.
+
+**Validation:** trace under `PHARO_SISTA_PER_BC_TRACE=1` shows the
+hook firing on bench's hot loops (`Integer>>benchmark` bcOff=41
+and bcOff=23, both resolve to `liftAt=5`; `Dictionary>>scanFor:`
+bcOff=15 and bcOff=55).  One non-bench method
+(`0x3003241d8` bcOff=8) compiles end-to-end successfully —
+confirms the lift+lower+dispatch+deopt chain works.  Sieve's
+outermost lift (bcOff=5) bails at suffix-local offset 79
+(original ~84, inside the inner whileTrue: body) — likely a
+`PushFullBlock` or other op the existing lifter doesn't handle
+outside the splice peepholes.
+
+**Bench-suite under `PHARO_SISTA_PER_BC=1`** (5/5 stable, default
+flags):
+```
+fib(28)    23 ms (baseline 14-15 — dispatch overhead)
+sieve x100 45 ms (baseline 44 — no win yet)
+sort 100K  116 ms (baseline 115 — within noise)
+dict 50K   127 ms (baseline 128 — within noise)
+sum / factorial / blocks / getter — all within noise
+```
+
+The structural gap (per-bytecode Sista entry didn't exist before)
+is now closed.  Closing the actual bench wins requires lifter
+coverage extensions for the bytecodes that show up inside loop
+bodies — separate work, much narrower than the original 6-8 week
+estimate now that the dispatch architecture is in place.
+
+**Original analysis (kept for context):**
+
+today Sista compiles whole methods.  Per-bytecode Sista would
 let Sista take over a method mid-execution at any backward jump — a
 form of OSR but at the IR level.  Combined with item #3 (deopt-with-
 resume), this would let Sista specialize hot loops in methods it
 hasn't fully analyzed.
-
-**Why blocked:**  Sista's current cache is per-method.  Per-bytecode
-needs a per-bcOffset cache, and the entry shape changes (state at
-bytecode N vs at method entry).  Also requires the lowering to support
-entering at arbitrary IR points, which is a major restructure of the
-prologue.
-
-**Payoff:**  unblocks the bench-suite one-shot problem — methods that
-are called once but iterate millions of times (runSum, runFibonacci's
-benchFib, etc.) could be Sista-specialized at the loop entry rather
-than waiting for full-method compilation thresholds.
-
-**Estimate:**  6-8 weeks.  The lowering rework alone is significant.
 
 **Related:** `memory/project_specialization_misses_doit.md`,
 `memory/project_eval_fib_gap.md`.
