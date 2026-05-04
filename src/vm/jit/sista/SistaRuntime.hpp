@@ -152,11 +152,12 @@ public:
     }
     static constexpr uint16_t kBcDispatchBlacklistThreshold = 1;
 
-    // Threshold at which the per-bytecode compile is queued.  Higher
-    // than per-method because every iteration of a loop bumps the
-    // counter — 1000 means "loop has run at least 1000 iterations
-    // before we pay the compile cost".
-    static constexpr uint32_t kBackwardJumpThreshold = 1000;
+    // Threshold at which the per-bytecode compile is queued.  Bumped
+    // only on every-64-sample fires, so threshold N = ~64*N actual
+    // backward jumps before compile.  Lower = compile sooner (more
+    // wins on shorter loops); higher = avoid compile cost on cold
+    // loops.
+    static constexpr uint32_t kBackwardJumpThreshold = 100;
 
 private:
     Lowering lowering_;
