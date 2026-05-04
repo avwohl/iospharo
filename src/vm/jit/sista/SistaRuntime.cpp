@@ -33,6 +33,17 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             Builder::buildFromOffset(method, memory, m, startBcOffset, &failedBc);
         if (r != LiftResult::kOk) {
             bcOffsetCache_[key][startBcOffset] = nullptr;  // negative cache
+            static const bool trace =
+                std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
+            if (trace) {
+                static int liftFailLog = 0;
+                if (liftFailLog++ < 50) {
+                    fprintf(stderr,
+                        "[SISTA-PER-BC-COMPILE] method=0x%llx bcOff=%u "
+                        "result=lift-failed (failedBc=%u)\n",
+                        (unsigned long long)key, startBcOffset, failedBc);
+                }
+            }
             return nullptr;
         }
         // Recover bytecodes pointer for lowering's deopt sequences.
@@ -60,7 +71,7 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
             std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
         if (trace) {
             static int logCount = 0;
-            if (logCount++ < 16) {
+            if (logCount++ < 200) {
                 fprintf(stderr,
                     "[SISTA-PER-BC-COMPILE] method=0x%llx bcOff=%u "
                     "result=%s%s\n",

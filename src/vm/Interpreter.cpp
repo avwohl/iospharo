@@ -14217,10 +14217,79 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     sista::Lowering::CompiledFn fn =
         sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff);
     if (fn) {
-        // TODO (phase 4): set up sstate at bcOffset and invoke fn.
-        // For now the hit path is unreachable because phase 4 (the
-        // entry prologue + dispatch) isn't wired yet.
-        return;
+        // Phase 4: dispatch into the per-bytecode-compiled fn.  The
+        // lowered fn's prologue reads sstate fields the same way the
+        // method-entry compile does — same temp-base, same receiver,
+        // same literals — so the only thing that differs is the
+        // entry point inside the lowered code (which is implicit;
+        // the fn always starts at its own entry, which the lifter
+        // built from bytecodes[entryBcOffset..end)).
+        //
+        // sstate.ip is the interp's current instructionPointer_
+        // (already at the backward-jump target).  Sista doesn't
+        // read sstate.ip on entry today, but pass it for symmetry
+        // and because deopt sequences need it for resume.
+        ObjectHeader* methodObj = method_.asObjectPtr();
+        Oop hdrOop = method_.isObject() ? methodObj->slots()[0] : Oop::nil();
+        if (!hdrOop.isSmallInteger()) return;
+        int numLiterals = hdrOop.asSmallInteger() & 0x7FFF;
+
+        jit::JITState sstate;
+        sstate.sp = stackPointer_;
+        sstate.receiver = receiver_;
+        sstate.literals = methodObj->slots() + 1;
+        sstate.tempBase = framePointer_ + 1;
+        sstate.memory = &memory_;
+        sstate.interp = this;
+        sstate.ip = instructionPointer_;
+        sstate.method = method_;
+        sstate.argCount = static_cast<int>((hdrOop.asSmallInteger() >> 24) & 0x0F);
+        sstate.jitMethod = nullptr;
+        sstate.exitReason = jit::ExitNone;
+        sstate.icDataPtr = nullptr;
+        sstate.sendArgCount = 0;
+        sstate.trueOop = memory_.trueObject();
+        sstate.falseOop = memory_.falseObject();
+        sstate.j2jSaveCursor = nullptr;
+        sstate.j2jSaveLimit = nullptr;
+        sstate.j2jDepth = 0;
+        sstate.j2jTotalCalls = 0;
+        sstate.methodMapPtr = nullptr;
+        sstate.yieldCountdown = 0;
+
+        fn(&sstate);
+        jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
+                            jitRuntime_.codeZone().totalBytes());
+
+        // Apply sstate updates back to the interpreter.  Sista may
+        // have advanced sp/ip and changed temps in-place.
+        stackPointer_ = sstate.sp;
+        instructionPointer_ = sstate.ip;
+
+        switch (sstate.exitReason) {
+        case jit::ExitReturn: {
+            // Sista ran past the loop and returned.  Pop frame, push
+            // return value, let the interp's caller-side resume.
+            if (!popFrame()) {
+                if (benchMode_) {
+                    handleBenchComplete(sstate.returnValue);
+                    return;
+                }
+                terminateCurrentProcess();
+                tryReschedule();
+                return;
+            }
+            push(sstate.returnValue);
+            return;
+        }
+        case jit::ExitSend:
+        case jit::ExitSendCached:
+        default:
+            // Deopt: Sista hit a type miss / unrecognized op / send.
+            // ip/sp are already set; the interp's main dispatch
+            // loop picks up at instructionPointer_ on next iteration.
+            return;
+        }
     }
 
     // Miss — bump counter and on threshold queue compile.  The
