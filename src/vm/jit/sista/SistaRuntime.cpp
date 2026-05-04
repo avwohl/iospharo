@@ -10,9 +10,24 @@ namespace pharo {
 namespace sista {
 
 Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
-                                       const std::vector<InlineHint>* hints) {
-    // Cache hit?
+                                       const std::vector<InlineHint>* hints,
+                                       uint32_t startBcOffset) {
+    // Per-bytecode entry: separate cache keyed by (method, bcOffset).
+    // For startBcOffset == 0 (the default / method-entry case), use
+    // the per-method cache to keep behavior identical to before.
     uint64_t key = method.rawBits();
+    if (startBcOffset != 0) {
+        auto outer = bcOffsetCache_.find(key);
+        if (outer != bcOffsetCache_.end()) {
+            auto inner = outer->second.find(startBcOffset);
+            if (inner != outer->second.end()) return inner->second;
+        }
+        // Per-bytecode entry not implemented yet — caller will see
+        // nullptr.  Phases 2-5 of item #8 wire the actual lift +
+        // lower path; for now the cache structure is in place and
+        // the lookup miss is the expected outcome.
+        return nullptr;
+    }
     auto it = cache_.find(key);
     if (it != cache_.end()) return it->second;
 

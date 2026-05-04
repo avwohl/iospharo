@@ -49,13 +49,20 @@ public:
     // Returns nullptr on any failure (unsupported bytecode, malformed
     // method, lowerer bail).
     //
-    // The result is cached by raw oop bits.  Callers must call reset()
-    // after a GC compaction — see GC SAFETY note in the header comment.
+    // `startBcOffset` selects the entry point.  0 = method entry
+    // (default — preserves existing behavior).  Non-zero = mid-method
+    // entry, used by the per-bytecode hook at backward-jump targets
+    // (loop headers).  See docs/jit-multiweek-work.md item #8.
+    //
+    // The result is cached by (method, startBcOffset) pair.  Callers
+    // must call reset() after a GC compaction — see GC SAFETY note in
+    // the header comment.
     //
     // Optional `hints` (Phase 4 Step 1): inline hints from T1 IC.
     // Caller-owned, must outlive the call.
     Lowering::CompiledFn compile(Oop method, ObjectMemory& memory,
-                                  const std::vector<InlineHint>* hints = nullptr);
+                                  const std::vector<InlineHint>* hints = nullptr,
+                                  uint32_t startBcOffset = 0);
 
     // Clear the method→function cache.  Call this after a GC
     // compaction, since raw oop bits become unstable.  The cached
@@ -63,8 +70,10 @@ public:
     // lookup table is cleared.
     void reset() {
         cache_.clear();
+        bcOffsetCache_.clear();
         compiledHintless_.clear();
         spliceMethods_.clear();
+        backwardJumpCounters_.clear();
     }
 
     // Drop the cache entry for one method — but only if its compile
@@ -93,9 +102,48 @@ public:
         return spliceMethods_.count(method.rawBits()) > 0;
     }
 
+    // ===== Per-bytecode hook (item #8 in jit-multiweek-work.md) =====
+    //
+    // Look up a cached lowered fn for entering `method` mid-method at
+    // bcOffset (a backward-jump target / loop header).  Returns
+    // nullptr on miss — caller (the backward-jump stencil) decides
+    // whether to bump the counter and trigger a compile.
+    Lowering::CompiledFn lookupBcEntry(Oop method, uint32_t bcOffset) const {
+        auto outer = bcOffsetCache_.find(method.rawBits());
+        if (outer == bcOffsetCache_.end()) return nullptr;
+        auto inner = outer->second.find(bcOffset);
+        if (inner == outer->second.end()) return nullptr;
+        return inner->second;
+    }
+
+    // Increment the per-(method, bcOffset) backward-jump counter.
+    // Returns the new count.  Used by the backward-jump hook to
+    // decide when to trigger a per-bytecode Sista compile.
+    uint32_t bumpBackwardJumpCounter(Oop method, uint32_t bcOffset) {
+        uint64_t key = ((uint64_t)method.rawBits() << 16)
+                     | ((uint64_t)bcOffset & 0xFFFF);
+        return ++backwardJumpCounters_[key];
+    }
+
+    // Threshold at which the per-bytecode compile is queued.
+    // Lower than the per-method threshold because backward jumps fire
+    // per-iteration of a loop, so the hot loops accumulate fast.
+    static constexpr uint32_t kBackwardJumpThreshold = 100;
+
 private:
     Lowering lowering_;
     std::unordered_map<uint64_t, Lowering::CompiledFn> cache_;
+    // Per-bytecode compile cache: method.rawBits() → bcOffset → fn.
+    // Populated when caller passes startBcOffset != 0 to compile().
+    // The outer map is method-keyed for efficient invalidation when
+    // a method's IR changes.
+    std::unordered_map<uint64_t,
+        std::unordered_map<uint32_t, Lowering::CompiledFn>> bcOffsetCache_;
+    // Per-(method, bcOffset) backward-jump counter.  Composite key:
+    // (methodBits << 16) | (bcOffset & 0xFFFF).  bcOffset for backward
+    // jumps fits in 16 bits in practice (Pharo methods rarely exceed
+    // 64KB of bytecodes).
+    std::unordered_map<uint64_t, uint32_t> backwardJumpCounters_;
     // Methods whose Sista compile happened with empty/null hints.
     // Used by invalidateIfHintless() to target only those entries
     // without re-compiling everyone on every IC patch.
