@@ -1258,6 +1258,44 @@ without breaking the entry-stack invariant).  Estimated 2-3 weeks.
 Default flags bench-suite (no PHARO_SISTA_PER_BC=1) unchanged:
 sieve 42-43, sort 113-118, dict 125-128, fib 15.  3/3 stable.
 
+### 2026-05-04: Pop-on-empty residual leak fix + default-on (`bcff1f69`, `4e490015`)
+
+The Pop-on-empty relaxation in `6190795c` had a correctness bug:
+the silent no-op left an outer-scope residual on the runtime
+stack, which leaked one slot per outer-loop iteration if the lift
+bailed mid-method.  Symptom: tinyBenchmarks under
+`PHARO_SISTA_PER_BC=1` hit "Instances of SmallInteger are not
+indexable" after ~30 outer iters of `SmallInteger>>benchmark`,
+preceded by `[VM] Warning: stackp N exceeds context capacity 40`.
+
+Sieve x100 (the published 44→17 ms win) didn't trip it because a
+single 100-iter activation completes without a process-switch
+materializing the context, so the leaked residuals sit benignly
+until popFrame discards them.
+
+**Fix** (`bcff1f69`): emit a `kSendUnspeculated` bail at the Pop
+site instead of a silent no-op.  Lifted region ends there; interp
+resumes at the Pop, runs it, consumes the residual.  Inner loops
+still lifted natively.
+
+**Default-on** (`4e490015`) flipped the same day.  Bench-suite
+A/B (default vs `PHARO_NO_SISTA_PER_BC=1`):
+
+```
+fib(28)              82  vs  81 ms      parity
+sieve x100           27  vs  162 ms     6× faster (1028 primes ✓)
+sort 100K            317 vs  312 ms     parity
+dict 50K put+get     191 vs  192 ms     parity
+sum 1M               1   vs  1 ms       parity
+floatSum 1M          113 vs  113 ms     parity
+stringHash 100K      70  vs  70 ms      parity
+select 10x100K       217 vs  219 ms     parity
+```
+
+5/5 stable on sieve.  Sort/dict per-bc-trace shows their hot
+inner methods compile but never dispatch (single-call usage
+doesn't amortize) — neutral for them.
+
 **Original analysis (kept for context):**
 
 today Sista compiles whole methods.  Per-bytecode Sista would
