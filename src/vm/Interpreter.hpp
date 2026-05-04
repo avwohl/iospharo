@@ -993,6 +993,13 @@ private:
     // On-stack replacement: at interpreter backward jumps, check if the
     // current method is JIT-compiled and transfer execution to JIT.
     void tryOSRAtBackwardJump();
+
+    // Per-bytecode Sista hook (item #8 in jit-multiweek-work.md).
+    // Called at backward-jump targets (loop headers).  Looks up the
+    // per-(method, bcOffset) Sista cache; on hit, dispatches into
+    // the lowered loop body.  On miss, bumps a counter and on
+    // threshold queues a Sista compile of the loop body.
+    void tryPerBcSistaAtBackwardJump();
 #endif  // PHARO_JIT_ENABLED — finalization helpers below run regardless
 
     // Cog-spec interrupt check fired at backward branches.  Matches

@@ -4286,6 +4286,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
+            tryPerBcSistaAtBackwardJump();
 #endif
             backwardBranchInterruptCheck();
         }
@@ -4302,6 +4303,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
+                tryPerBcSistaAtBackwardJump();
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -4322,6 +4324,7 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
             if (offset < 0) {
 #if PHARO_JIT_ENABLED
                 tryOSRAtBackwardJump();
+                tryPerBcSistaAtBackwardJump();
 #endif
                 backwardBranchInterruptCheck();
             }
@@ -5914,6 +5917,7 @@ void Interpreter::longJump() {
     if (offset < 0) {
 #if PHARO_JIT_ENABLED
         tryOSRAtBackwardJump();
+        tryPerBcSistaAtBackwardJump();
 #endif
         backwardBranchInterruptCheck();
     }
@@ -5927,6 +5931,7 @@ void Interpreter::longJumpIfTrue() {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
+            tryPerBcSistaAtBackwardJump();
 #endif
             backwardBranchInterruptCheck();
         }
@@ -5944,6 +5949,7 @@ void Interpreter::longJumpIfFalse() {
         if (offset < 0) {
 #if PHARO_JIT_ENABLED
             tryOSRAtBackwardJump();
+            tryPerBcSistaAtBackwardJump();
 #endif
             backwardBranchInterruptCheck();
         }
@@ -14169,6 +14175,65 @@ void Interpreter::tryOSRAtBackwardJump() {
     // Method is compiled — enter JIT at current IP (OSR)
     jitOSREntries_++;
     tryJITResumeInCaller();
+}
+
+// Per-bytecode Sista hook (item #8 in jit-multiweek-work.md).
+//
+// Called at every interpreter backward jump.  Steps:
+//   1. Compute (method, bcOffset) at the jump target.
+//   2. Look up the per-bcOffset Sista cache.
+//   3. On hit: dispatch into the lowered loop body (jumps to the
+//      Sista-compiled fn with sstate set up at bcOffset).
+//   4. On miss: bump the per-(method, bcOffset) backward-jump counter.
+//      On threshold (kBackwardJumpThreshold), call into Sista's
+//      compile path with startBcOffset = current bcOffset.  Today
+//      that path returns nullptr (phases 2-5 not yet wired); the
+//      counter still increments so we can observe how often the
+//      hook fires.
+//
+// Gated behind PHARO_SISTA_PER_BC=1 — opt-in until the lift/lower
+// paths are in place and we're ready to ship the wins.
+void Interpreter::tryPerBcSistaAtBackwardJump() {
+    static const bool perBcEnabled =
+        std::getenv("PHARO_SISTA_PER_BC") != nullptr;
+    if (!perBcEnabled) return;
+
+    if (!sistaRuntimeForGCHook_) return;
+    if (!method_.isObject() || method_.rawBits() < 0x10000) return;
+    if (inSyncSend_) return;  // Skip while a helper-send is driving step()
+
+    uint32_t bcOff = computeCurrentBCOffset();
+    if (bcOff == UINT32_MAX) return;
+
+    // Cache hit?  Dispatch into the lowered loop body.
+    sista::Lowering::CompiledFn fn =
+        sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff);
+    if (fn) {
+        // TODO (phase 4): set up sstate at bcOffset and invoke fn.
+        // For now the hit path is unreachable because phase 1 only
+        // populates the cache via compile(method, ...) — and that
+        // compile path is gated off until phases 2-5 land.
+        return;
+    }
+
+    // Miss — bump counter and on threshold queue compile.
+    uint32_t cnt = sistaRuntimeForGCHook_->bumpBackwardJumpCounter(method_, bcOff);
+    if (cnt == sista::Runtime::kBackwardJumpThreshold) {
+        // Trigger compile.  Today returns nullptr (phases 2-5 not done).
+        sistaRuntimeForGCHook_->compile(method_, memory_, nullptr, bcOff);
+        // PHARO_SISTA_PER_BC_TRACE=1: log every threshold-trigger so
+        // we can see which (method, bcOffset) sites are hot.
+        static const bool trace =
+            std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
+        if (trace) {
+            static int logCount = 0;
+            if (logCount++ < 32) {
+                fprintf(stderr,
+                    "[SISTA-PER-BC-TRIGGER] method=#%s bcOff=%u count=%u\n",
+                    memory_.selectorOf(method_).c_str(), bcOff, cnt);
+            }
+        }
+    }
 }
 
 uint32_t Interpreter::computeCurrentBCOffset() {
