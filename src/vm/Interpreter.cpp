@@ -14299,9 +14299,31 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         sstate.methodMapPtr = nullptr;
         sstate.yieldCountdown = 0;
 
+        // Diagnostic: PHARO_SISTA_PER_BC_DISPATCH_TRACE=1 dumps a
+        // counter every 1K dispatches with the exit-reason split.
+        // Most dispatches return ExitSend (bail) because the lifted
+        // suffix usually contains a backward jump escape that
+        // bailToInterpreter(2) emits as kSendUnspeculated.  Useful
+        // for diagnosing whether dispatch is doing useful work.
+        static thread_local size_t perBcDispCount = 0;
+        static thread_local size_t perBcDispReturn = 0;
+        static thread_local size_t perBcDispSend = 0;
+        perBcDispCount++;
+
         fn(&sstate);
         jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                             jitRuntime_.codeZone().totalBytes());
+
+        if (sstate.exitReason == jit::ExitReturn) perBcDispReturn++;
+        else if (sstate.exitReason == jit::ExitSend) perBcDispSend++;
+
+        static const bool dispTrace =
+            std::getenv("PHARO_SISTA_PER_BC_DISPATCH_TRACE") != nullptr;
+        if (dispTrace && (perBcDispCount & 0x3FF) == 0) {
+            fprintf(stderr,
+                "[SISTA-PER-BC-DISPATCH] count=%zu return=%zu send=%zu\n",
+                perBcDispCount, perBcDispReturn, perBcDispSend);
+        }
 
         // Apply sstate updates back to the interpreter.  Sista may
         // have advanced sp/ip and changed temps in-place.

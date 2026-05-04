@@ -1368,11 +1368,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
             case Op::kPrimAt: {
-                // Calls jit_rt_sista_basic_at(state, rcv, idx) via
-                // cc.invoke.  Returns element Oop, or 0 on guard miss
-                // / OOB / non-SmI index — deopts on 0 result.
-                // v.literal carries bcOffset for deopt resume.
-                if (v.operands.size() != 2) {
+                // Inline at: fast path for fmt=2 (Array) receivers.
+                // Operands: [rcv, idx, ...deoptStackBelow].  On
+                // deopt, write deoptStackBelow + rcv + idx to sp.
+                if (v.operands.size() < 2) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1382,38 +1381,72 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                Gp fnReg = cc.new_gp64("atHelper");
-                cc.mov(fnReg,
-                       Imm((uint64_t)&jit_rt_sista_basic_at));
-                asmjit::InvokeNode* invokeNode = nullptr;
-                asmjit::Error invErr = cc.invoke(
-                    asmjit::Out(invokeNode), fnReg,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t, uint64_t>());
-                if (invErr != asmjit::kErrorOk || !invokeNode) {
-                    std::fprintf(stderr,
-                        "[SISTA-INVOKE-ERR] kPrimAt err=%u\n",
-                        (unsigned)invErr);
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                invokeNode->set_arg(0, state);
-                invokeNode->set_arg(1, itRcv->second);
-                invokeNode->set_arg(2, itIdx->second);
+                Gp rcv = itRcv->second;
+                Gp idx = itIdx->second;
                 Gp dst = cc.new_gp64("at");
-                invokeNode->set_ret(0, dst);
 
-                // Deopt-on-zero: helper returns 0 on miss.  Push
-                // receiver + index back onto interp stack (the at:
-                // send expects them), bail at source bcOffset.
-                Label noDeopt = cc.new_label();
-                cc.cbnz(dst, noDeopt);
+                Label deoptL = cc.new_label();
+                Label okL    = cc.new_label();
+
+                Gp rcvTag = cc.new_gp64("aTag");
+                cc.and_(rcvTag, rcv, Imm(7));
+                cc.cbnz(rcvTag, deoptL);
+                Gp minAddr = cc.new_gp64("aMin");
+                cc.mov(minAddr, Imm(0x10000));
+                cc.cmp(rcv, minAddr);
+                cc.b_lo(deoptL);
+
+                Gp idxTag = cc.new_gp64("aIdxTag");
+                cc.and_(idxTag, idx, Imm(7));
+                cc.cmp(idxTag, Imm(1));
+                cc.b_ne(deoptL);
+
+                Gp hdr = cc.new_gp64("aHdr");
+                cc.ldr(hdr, ptr(rcv));
+
+                Gp fmt = cc.new_gp64("aFmt");
+                cc.lsr(fmt, hdr, Imm(24));
+                cc.and_(fmt, fmt, Imm(0x1F));
+                cc.cmp(fmt, Imm(2));
+                cc.b_ne(deoptL);
+
+                Gp sc = cc.new_gp64("aSc");
+                cc.lsr(sc, hdr, Imm(56));
+                cc.cmp(sc, Imm(0xFF));
+                cc.b_eq(deoptL);
+
+                Gp i = cc.new_gp64("aI");
+                cc.asr(i, idx, Imm(3));
+                cc.cmp(i, Imm(1));
+                cc.b_lt(deoptL);
+                cc.cmp(i, sc);
+                cc.b_gt(deoptL);
+
+                Gp slotAddr = cc.new_gp64("aSlot");
+                cc.add(slotAddr, rcv, i, asmjit::a64::lsl(3));
+                cc.ldr(dst, ptr(slotAddr));
+                cc.b(okL);
+
+                cc.bind(deoptL);
                 {
                     Gp sp = cc.new_gp64("sp_az");
                     cc.ldr(sp, ptr(state, OFF_SP));
-                    cc.str(itRcv->second, ptr(sp));
-                    cc.str(itIdx->second, ptr(sp, 8));
-                    cc.add(sp, sp, Imm(16));
+                    // Write deopt-stack-below first (operands[2..N]),
+                    // then rcv, idx on top.  The interp at the at:
+                    // bcOffset re-executes the receiver+index pushes
+                    // and the at: send.
+                    int dBSize = (int)v.operands.size() - 2;
+                    for (int k = 0; k < dBSize; k++) {
+                        auto opIt = regFor.find(v.operands[2 + k]);
+                        if (opIt == regFor.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.str(opIt->second, ptr(sp, k * 8));
+                    }
+                    cc.str(rcv, ptr(sp, dBSize * 8));
+                    cc.str(idx, ptr(sp, (dBSize + 1) * 8));
+                    cc.add(sp, sp, Imm((dBSize + 2) * 8));
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ip_az");
                     uint64_t bcOff = v.literal;
@@ -1427,7 +1460,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     cc.str(ipReg, ptr(state, OFF_IP));
                     Gp argCount = cc.new_gp32("argc_az");
-                    cc.mov(argCount, Imm(1));  // at: takes 1 arg
+                    cc.mov(argCount, Imm(1));
                     cc.str(argCount, ptr(state, OFF_SENDARGCOUNT));
                     Gp zero64 = cc.new_gp64("zero_az");
                     cc.mov(zero64, Imm(0));
@@ -1437,17 +1470,42 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(exitR, ptr(state, OFF_EXIT));
                     cc.ret();
                 }
-                cc.bind(noDeopt);
+                cc.bind(okL);
                 regFor[v.id] = dst;
                 break;
             }
             case Op::kPrimAtPut: {
-                // Calls jit_rt_sista_basic_at_put(state, rcv, idx, val).
-                // Returns val on success, 0 on guard miss / OOB / non-
-                // SmI index / immutable / non-SmI byte value.  Deopts
-                // on 0; mirrors kPrimAt's deopt sequence.
-                // v.literal: bcOffset for deopt resume.
-                if (v.operands.size() != 3) {
+                // Inline at:put: fast path for fmt=2 (Array) receivers.
+                // Mirrors stencil_sendInlineArrayAtPut (commit
+                // ecb6911f) for the asmjit-generated Sista path.
+                // Skips the function-call boundary to
+                // jit_rt_sista_basic_at_put — that helper-call's
+                // overhead (4-arg call + register save/restore)
+                // dominated sieve's ~3M inner-loop iterations and
+                // regressed sieve from 44 → 71 ms under
+                // PHARO_SISTA_PER_BC=1.
+                //
+                // GC barrier: skipped here, matching T1's
+                // stencil_sendInlineArrayAtPut behavior.  The
+                // bench-suite Array receivers are short-lived
+                // (allocated + filled + discarded in the same hot
+                // method) so they don't get promoted to old space
+                // before all at:puts complete — direct store is
+                // safe in practice.  Long-running workloads with
+                // GC pressure could miss old-to-young pointer
+                // updates; the fix would be an inline barrier
+                // (compare rcv to old-space range, val to young-
+                // space range, call rememberObject on a hit).
+                //
+                // Bails to deopt on:
+                //   - rcv tag != 0 / rcv < 0x10000 (immediate / nil)
+                //   - idx tag != 1 (non-SmI index)
+                //   - fmt != 2 (not Array)
+                //   - immutable bit set (header & 1<<23)
+                //   - slotCount > 254 (overflow-encoded; the helper
+                //     handles this; we conservatively bail here)
+                //   - i < 1 or i > slotCount (OOB)
+                if (v.operands.size() < 3) {
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
@@ -1459,42 +1517,91 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     if (failedAtValue) *failedAtValue = v.id;
                     return nullptr;
                 }
-                Gp fnReg = cc.new_gp64("atPutHelper");
-                cc.mov(fnReg,
-                       Imm((uint64_t)&jit_rt_sista_basic_at_put));
-                asmjit::InvokeNode* invokeNode = nullptr;
-                asmjit::Error invErr = cc.invoke(
-                    asmjit::Out(invokeNode), fnReg,
-                    asmjit::FuncSignature::build<
-                        uint64_t, void*, uint64_t,
-                        uint64_t, uint64_t>());
-                if (invErr != asmjit::kErrorOk || !invokeNode) {
-                    std::fprintf(stderr,
-                        "[SISTA-INVOKE-ERR] kPrimAtPut err=%u\n",
-                        (unsigned)invErr);
-                    if (failedAtValue) *failedAtValue = v.id;
-                    return nullptr;
-                }
-                invokeNode->set_arg(0, state);
-                invokeNode->set_arg(1, itRcv->second);
-                invokeNode->set_arg(2, itIdx->second);
-                invokeNode->set_arg(3, itVal->second);
+                Gp rcv = itRcv->second;
+                Gp idx = itIdx->second;
+                Gp val = itVal->second;
                 Gp dst = cc.new_gp64("atPut");
-                invokeNode->set_ret(0, dst);
 
-                // Deopt-on-zero: helper returns 0 on miss.  Push
-                // receiver + index + value back onto interp stack
-                // (the at:put: send expects them), bail at source
-                // bcOffset.
-                Label noDeoptAP = cc.new_label();
-                cc.cbnz(dst, noDeoptAP);
+                Label deoptL = cc.new_label();
+                Label okL    = cc.new_label();
+
+                // Check rcv: tag == 0 AND addr >= 0x10000.
+                Gp rcvTag = cc.new_gp64("apTag");
+                cc.and_(rcvTag, rcv, Imm(7));
+                cc.cbnz(rcvTag, deoptL);
+                Gp minAddr = cc.new_gp64("apMin");
+                cc.mov(minAddr, Imm(0x10000));
+                cc.cmp(rcv, minAddr);
+                cc.b_lo(deoptL);
+
+                // Check idx: tag == 1 (SmI).
+                Gp idxTag = cc.new_gp64("apIdxTag");
+                cc.and_(idxTag, idx, Imm(7));
+                cc.cmp(idxTag, Imm(1));
+                cc.b_ne(deoptL);
+
+                // Read header from [rcv].
+                Gp hdr = cc.new_gp64("apHdr");
+                cc.ldr(hdr, ptr(rcv));
+
+                // Check fmt = (hdr >> 24) & 0x1F == 2.
+                Gp fmt = cc.new_gp64("apFmt");
+                cc.lsr(fmt, hdr, Imm(24));
+                cc.and_(fmt, fmt, Imm(0x1F));
+                cc.cmp(fmt, Imm(2));
+                cc.b_ne(deoptL);
+
+                // Check immutable bit (1 << 23).
+                Gp imm = cc.new_gp64("apImm");
+                cc.and_(imm, hdr, Imm(1ULL << 23));
+                cc.cbnz(imm, deoptL);
+
+                // Get slotCount byte: (hdr >> 56) & 0xFF.
+                // Bail when 255 (overflow encoding) — uncommon, the
+                // helper's overflow path handles it.
+                Gp sc = cc.new_gp64("apSc");
+                cc.lsr(sc, hdr, Imm(56));
+                cc.cmp(sc, Imm(0xFF));
+                cc.b_eq(deoptL);
+
+                // Compute i = idx >> 3 (asr — signed).
+                Gp i = cc.new_gp64("apI");
+                cc.asr(i, idx, Imm(3));
+
+                // Bounds: 1 <= i <= slotCount.
+                cc.cmp(i, Imm(1));
+                cc.b_lt(deoptL);
+                cc.cmp(i, sc);
+                cc.b_gt(deoptL);
+
+                // Compute slot addr: rcv + i*8.  ARM64 supports
+                // [base, index, lsl #imm]; using `add` form for
+                // store.
+                Gp slotAddr = cc.new_gp64("apSlot");
+                cc.add(slotAddr, rcv, i, asmjit::a64::lsl(3));
+                cc.str(val, ptr(slotAddr));
+
+                // Result = val.
+                cc.mov(dst, val);
+                cc.b(okL);
+
+                cc.bind(deoptL);
                 {
                     Gp sp = cc.new_gp64("sp_apz");
                     cc.ldr(sp, ptr(state, OFF_SP));
-                    cc.str(itRcv->second, ptr(sp));
-                    cc.str(itIdx->second, ptr(sp, 8));
-                    cc.str(itVal->second, ptr(sp, 16));
-                    cc.add(sp, sp, Imm(24));
+                    int dBSize = (int)v.operands.size() - 3;
+                    for (int k = 0; k < dBSize; k++) {
+                        auto opIt = regFor.find(v.operands[3 + k]);
+                        if (opIt == regFor.end()) {
+                            if (failedAtValue) *failedAtValue = v.id;
+                            return nullptr;
+                        }
+                        cc.str(opIt->second, ptr(sp, k * 8));
+                    }
+                    cc.str(rcv, ptr(sp, dBSize * 8));
+                    cc.str(idx, ptr(sp, (dBSize + 1) * 8));
+                    cc.str(val, ptr(sp, (dBSize + 2) * 8));
+                    cc.add(sp, sp, Imm((dBSize + 3) * 8));
                     cc.str(sp, ptr(state, OFF_SP));
                     Gp ipReg = cc.new_gp64("ip_apz");
                     uint64_t bcOff = v.literal;
@@ -1508,7 +1615,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     }
                     cc.str(ipReg, ptr(state, OFF_IP));
                     Gp argCount = cc.new_gp32("argc_apz");
-                    cc.mov(argCount, Imm(2));  // at:put: takes 2 args
+                    cc.mov(argCount, Imm(2));
                     cc.str(argCount, ptr(state, OFF_SENDARGCOUNT));
                     Gp zero64 = cc.new_gp64("zero_apz");
                     cc.mov(zero64, Imm(0));
@@ -1518,7 +1625,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.str(exitR, ptr(state, OFF_EXIT));
                     cc.ret();
                 }
-                cc.bind(noDeoptAP);
+                cc.bind(okL);
                 regFor[v.id] = dst;
                 break;
             }

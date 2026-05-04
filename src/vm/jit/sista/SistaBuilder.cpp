@@ -4091,22 +4091,43 @@ private:
                     return std::getenv("PHARO_NO_SISTA_PRIM_AT_PUT")
                            == nullptr;
                 }();
-                // Skip kPrimAt for general SpecialSend at: sites for
-                // now — the existing peephole's kPrimAt emission is
-                // validated only for `^ self at: i` shape, and
-                // emitting it for arbitrary call sites was breaking
-                // method-entry Sista compiles.  Stick to kPrimAtPut
-                // only (validated in this commit) until a separate
-                // pass confirms kPrimAt's deopt path is robust for
-                // mid-method use.
-                if (false && primAtPutEnabled && ssIdx == 0 && nArgs == 1) {
+                // kPrimAt for SpecialSend at: — gated to per-bytecode
+                // lifts only (g_inPerBcBuild), same as kPrimAtPut.
+                // Method-entry Sista compiles continue to use the
+                // established kSendUnspeculated bail path for at:
+                // sends — emitting kPrimAt for arbitrary call sites
+                // broke startup methods (the kPrimAt lowering's
+                // helper-invoke deopts on miss, and many image
+                // methods hit non-Array receivers that produce
+                // expensive deopts).
+                if (primAtPutEnabled && g_inPerBcBuild
+                    && ssIdx == 0 && nArgs == 1) {
+                    // Capture deopt-stack snapshot BEFORE popping
+                    // operands.  At deopt the interp resumes at
+                    // bcOffset and expects the original
+                    // [..., rcv, idx] plus everything below them.
+                    std::vector<uint32_t> deoptStack = stack_;
                     uint32_t idxV = stack_.back(); stack_.pop_back();
                     uint32_t rcvV = stack_.back(); stack_.pop_back();
                     pendingExtA_ = 0;
                     pendingExtB_ = 0;
+                    // Operands: [rcv, idx, ...sim-stack-below].
+                    // The lowering uses the full snapshot for deopt
+                    // restoration (matches kPrimTagCheckInt's
+                    // contract).
+                    std::vector<uint32_t> ops{rcvV, idxV};
+                    // Add the snapshot WITHOUT rcv/idx (they were
+                    // the top 2 of stack_; deoptStack INCLUDES them).
+                    // Trim:
+                    if (deoptStack.size() >= 2) {
+                        deoptStack.pop_back();  // idx
+                        deoptStack.pop_back();  // rcv
+                    }
+                    ops.insert(ops.end(),
+                               deoptStack.begin(), deoptStack.end());
                     uint32_t resV = out_.newValue(currentBlock_,
                         Op::kPrimAt, Type::kOop,
-                        /*operands=*/{rcvV, idxV},
+                        std::move(ops),
                         /*literal=*/(uint64_t)bcOffset);
                     stack_.push_back(resV);
                     ip++;
@@ -4122,15 +4143,25 @@ private:
                 // canonical case).
                 if (primAtPutEnabled && g_inPerBcBuild
                     && ssIdx == 1 && nArgs == 2) {
-                    // SpecialSend #at:put: → kPrimAtPut
+                    // SpecialSend #at:put: → kPrimAtPut.  Capture
+                    // deopt-stack snapshot before popping operands.
+                    std::vector<uint32_t> deoptStack = stack_;
                     uint32_t valV = stack_.back(); stack_.pop_back();
                     uint32_t idxV = stack_.back(); stack_.pop_back();
                     uint32_t rcvV = stack_.back(); stack_.pop_back();
                     pendingExtA_ = 0;
                     pendingExtB_ = 0;
+                    std::vector<uint32_t> ops{rcvV, idxV, valV};
+                    if (deoptStack.size() >= 3) {
+                        deoptStack.pop_back();  // val
+                        deoptStack.pop_back();  // idx
+                        deoptStack.pop_back();  // rcv
+                    }
+                    ops.insert(ops.end(),
+                               deoptStack.begin(), deoptStack.end());
                     uint32_t resV = out_.newValue(currentBlock_,
                         Op::kPrimAtPut, Type::kOop,
-                        /*operands=*/{rcvV, idxV, valV},
+                        std::move(ops),
                         /*literal=*/(uint64_t)bcOffset);
                     stack_.push_back(resV);
                     ip++;
