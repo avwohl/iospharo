@@ -14228,16 +14228,20 @@ void Interpreter::tryOSRAtBackwardJump() {
 //      Sista-compiled fn with sstate set up at bcOffset).
 //   4. On miss: bump the per-(method, bcOffset) backward-jump counter.
 //      On threshold (kBackwardJumpThreshold), call into Sista's
-//      compile path with startBcOffset = current bcOffset.  Today
-//      that path returns nullptr (phases 2-5 not yet wired); the
-//      counter still increments so we can observe how often the
-//      hook fires.
+//      compile path with startBcOffset = current bcOffset.
 //
-// Gated behind PHARO_SISTA_PER_BC=1 — opt-in until the lift/lower
-// paths are in place and we're ready to ship the wins.
+// Default-on (2026-05-04) after the Pop-on-empty residual leak fix
+// (bcff1f69) eliminated the tinyBenchmarks corruption.  Sieve x100
+// = 28 ms vs 161 ms baseline (5.7×), bench-suite at parity on
+// fib/sort/dict/sum/floatSum/stringHash/collect/select.  Sort/dict
+// see compiles but no dispatches (their hot inner methods aren't
+// called repeatedly enough to amortize compile cost) — neutral.
+// Set PHARO_NO_SISTA_PER_BC=1 to opt out.
 void Interpreter::tryPerBcSistaAtBackwardJump() {
-    static const bool perBcEnabled =
-        std::getenv("PHARO_SISTA_PER_BC") != nullptr;
+    static const bool perBcEnabled = []() {
+        if (std::getenv("PHARO_NO_SISTA_PER_BC")) return false;
+        return true;  // default-on; legacy PHARO_SISTA_PER_BC still works (no-op)
+    }();
     if (!perBcEnabled) return;
 
     // Sampling: like tryOSRAtBackwardJump, only check every N
