@@ -6704,17 +6704,13 @@ uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
 
     // Find the smallest candidate T <= triggerBcOffset such that:
     //   - no backward jump in [T..end) escapes
-    //   - heights[T] is computable (not -1; could be > 0 — see
-    //     Pop-on-empty-simulator note in the lifter)
+    //   - heights[T] is computable (not -1)
     //
-    // For Pharo's inlined `to:do:` loop headers (heights[T] > 0
-    // because the no-pop counter init left a residual), the lifter's
-    // Pop handler has been extended to silently no-op on empty
-    // simulator stack — the residual sits on the runtime sp
-    // untouched by lifted code, and is discarded by popFrame on
-    // return.  This means we no longer need to reject heights[T]
-    // > 0; we just need heights[T] >= 0 (reachable from method
-    // entry).
+    // heights[T] > 0 is now permitted: the lifter's Pop handler
+    // bails to interp at the Pop site if the simulator is empty
+    // (commit bcff1f69), so the runtime residual is consumed
+    // correctly on bail.  The earlier silent-no-op behavior leaked
+    // residuals across mid-method bails — fixed.
     for (uint32_t T : candidates) {
         if (T > triggerBcOffset) break;  // candidates is sorted
         if (T >= heights.size() || heights[T] < 0) continue;
