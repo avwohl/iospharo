@@ -14255,10 +14255,25 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     uint32_t bcOff = computeCurrentBCOffset();
     if (bcOff == UINT32_MAX) return;
 
+    // Adaptive blacklist: if recent dispatches for this (method,
+    // bcOff) consistently bailed, skip the dispatch entirely —
+    // dispatch + sstate-init cost was net negative.
+    if (sistaRuntimeForGCHook_->isBcDispatchBlacklisted(method_, bcOff)) {
+        return;
+    }
+
+    // Diagnostic: PHARO_SISTA_PER_BC_NO_DISPATCH=1 — compile lifts
+    // succeed but never dispatch.  Lets us see whether the dispatch
+    // overhead alone is the regression source.
+    static const bool noDispatch =
+        std::getenv("PHARO_SISTA_PER_BC_NO_DISPATCH") != nullptr;
+    if (noDispatch) {
+        // Skip the dispatch hit path, but still let the trigger
+        // path bump counters and trigger compiles.
+    } else
     // Cache hit?  Dispatch into the lowered loop body.
-    sista::Lowering::CompiledFn fn =
-        sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff);
-    if (fn) {
+    if (sista::Lowering::CompiledFn fn =
+        sistaRuntimeForGCHook_->lookupBcEntry(method_, bcOff)) {
         // Phase 4: dispatch into the per-bytecode-compiled fn.  The
         // lowered fn's prologue reads sstate fields the same way the
         // method-entry compile does — same temp-base, same receiver,
@@ -14314,8 +14329,36 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                             jitRuntime_.codeZone().totalBytes());
 
-        if (sstate.exitReason == jit::ExitReturn) perBcDispReturn++;
-        else if (sstate.exitReason == jit::ExitSend) perBcDispSend++;
+        if (sstate.exitReason == jit::ExitReturn) {
+            perBcDispReturn++;
+            sistaRuntimeForGCHook_->noteBcDispatchSuccess(method_, bcOff);
+        } else if (sstate.exitReason == jit::ExitSend) {
+            perBcDispSend++;
+            // Only count toward blacklist when the bail happened
+            // close to entry — i.e., the dispatched fn didn't do
+            // useful work.  Distance threshold is in bytecode
+            // bytes between entry bcOff and bail bcOff.  Sieve's
+            // dispatched fn bails ~30 bytes past entry (after
+            // running tens of inner-loop iters) — that's a "useful"
+            // bail.  Sort's mergeFirst comparator-block dispatches
+            // bail < 15 bytes past entry every time — those are
+            // pure overhead.
+            ObjectHeader* mh = method_.asObjectPtr();
+            Oop hdr = method_.isObject() ? mh->slots()[0] : Oop::nil();
+            ptrdiff_t bailDistance = -1;
+            if (hdr.isSmallInteger()) {
+                int nLits = hdr.asSmallInteger() & 0x7FFF;
+                const uint8_t* bcs = mh->bytes() + (1 + nLits) * 8;
+                ptrdiff_t bailBcOff = sstate.ip - bcs;
+                if (bailBcOff >= 0 && bailBcOff < (ptrdiff_t)mh->byteSize()) {
+                    bailDistance = bailBcOff - (ptrdiff_t)bcOff;
+                    if (bailDistance < 0) bailDistance = -bailDistance;
+                }
+            }
+            if (bailDistance >= 0 && bailDistance < 20) {
+                sistaRuntimeForGCHook_->noteBcDispatchBail(method_, bcOff);
+            }
+        }
 
         static const bool dispTrace =
             std::getenv("PHARO_SISTA_PER_BC_DISPATCH_TRACE") != nullptr;
@@ -14323,6 +14366,36 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             fprintf(stderr,
                 "[SISTA-PER-BC-DISPATCH] count=%zu return=%zu send=%zu\n",
                 perBcDispCount, perBcDispReturn, perBcDispSend);
+        }
+
+        // Diagnostic: dump the post-bail bcOffset for the first N
+        // ExitSend bails per (method, trigger).  Tells us WHERE in
+        // the lifted region the dispatched fn bails — most likely
+        // a kPrimTagCheckInt deopt or unrecognized op.
+        static const bool bailTrace =
+            std::getenv("PHARO_SISTA_PER_BC_BAIL_TRACE") != nullptr;
+        if (bailTrace && sstate.exitReason == jit::ExitSend
+            && method_.isObject()) {
+            ObjectHeader* mh = method_.asObjectPtr();
+            Oop hdr = mh->slots()[0];
+            if (hdr.isSmallInteger()) {
+                int nLits = hdr.asSmallInteger() & 0x7FFF;
+                const uint8_t* bcs = mh->bytes() + (1 + nLits) * 8;
+                ptrdiff_t bailBcOff = sstate.ip - bcs;
+                static std::unordered_map<uint64_t, int> bailLogged;
+                uint64_t key = (method_.rawBits() << 16)
+                             | (uint64_t)(bcOff & 0xFFFF);
+                if (bailLogged[key]++ < 3) {
+                    fprintf(stderr,
+                        "[SISTA-PER-BC-BAIL] method=#%s trigger=%u "
+                        "bailBcOff=%lld byte=0x%02x\n",
+                        memory_.selectorOf(method_).c_str(), bcOff,
+                        (long long)bailBcOff,
+                        (bailBcOff >= 0 && bailBcOff <
+                            (ptrdiff_t)mh->byteSize())
+                            ? (unsigned)bcs[bailBcOff] : 0);
+                }
+            }
         }
 
         // Apply sstate updates back to the interpreter.  Sista may

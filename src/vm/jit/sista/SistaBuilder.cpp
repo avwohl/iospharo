@@ -2912,11 +2912,19 @@ public:
                 i += instructionSize(op);
             }
         }
-        for (size_t target : backwardJumpTargets) {
-            auto it = offsetToBlock.find(target);
-            if (it != offsetToBlock.end()) {
-                out_.dispatchableBlocks.push_back(
-                    {(uint32_t)target, it->second});
+        // Only populate dispatchableBlocks for per-bytecode lifts.
+        // Method-entry compiles (g_inPerBcBuild=false) don't need
+        // multi-entry dispatch — they always enter at block 0 — and
+        // populating it here would emit unused loader pseudo-blocks
+        // and a dispatch chain in every method-entry compile, slowing
+        // them down (mergeFirst regressed 2× from this).
+        if (g_inPerBcBuild) {
+            for (size_t target : backwardJumpTargets) {
+                auto it = offsetToBlock.find(target);
+                if (it != offsetToBlock.end()) {
+                    out_.dispatchableBlocks.push_back(
+                        {(uint32_t)target, it->second});
+                }
             }
         }
 

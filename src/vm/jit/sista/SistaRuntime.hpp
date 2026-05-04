@@ -74,6 +74,7 @@ public:
         compiledHintless_.clear();
         spliceMethods_.clear();
         backwardJumpCounters_.clear();
+        bcDispatchBailCounter_.clear();
     }
 
     // Drop the cache entry for one method — but only if its compile
@@ -125,16 +126,36 @@ public:
         return ++backwardJumpCounters_[key];
     }
 
+    // Adaptive blacklist (item #8 — multi-entry dispatch).  When a
+    // method's dispatched fn consistently bails close to entry, skip
+    // future dispatches for ALL bcoffs of that method.  Avoids paying
+    // the dispatch + sstate-init cost on methods where the compiled
+    // fn doesn't deliver a win.  Method-level (not per-(method, bcOff))
+    // because per-(method, bcOff) lets each new sample-bcOff burn one
+    // dispatch before blacklisting kicks in — for sort's mergeFirst
+    // (~tens of distinct sample bcoffs), that's tens of wasted
+    // dispatches per outer iter.  Method-level kills the second
+    // dispatch onward.
+    bool isBcDispatchBlacklisted(Oop method, uint32_t /*bcOffset*/) const {
+        auto it = bcDispatchBailCounter_.find(method.rawBits());
+        return it != bcDispatchBailCounter_.end()
+            && it->second >= kBcDispatchBlacklistThreshold;
+    }
+    void noteBcDispatchBail(Oop method, uint32_t /*bcOffset*/) {
+        uint64_t key = method.rawBits();
+        if (bcDispatchBailCounter_[key] < UINT16_MAX) {
+            bcDispatchBailCounter_[key]++;
+        }
+    }
+    void noteBcDispatchSuccess(Oop method, uint32_t /*bcOffset*/) {
+        bcDispatchBailCounter_.erase(method.rawBits());
+    }
+    static constexpr uint16_t kBcDispatchBlacklistThreshold = 1;
+
     // Threshold at which the per-bytecode compile is queued.  Higher
     // than per-method because every iteration of a loop bumps the
     // counter — 1000 means "loop has run at least 1000 iterations
     // before we pay the compile cost".
-    //
-    // Phase 4 (entry prologue / dispatch) hasn't landed yet, so today
-    // every successful compile is wasted work — we lift+lower the
-    // suffix but never execute it.  The high threshold limits the
-    // damage to the bench-suite's hot loops; once phase 4 wires the
-    // hit path, we can lower this back to ~100.
     static constexpr uint32_t kBackwardJumpThreshold = 1000;
 
 private:
@@ -151,6 +172,11 @@ private:
     // jumps fits in 16 bits in practice (Pharo methods rarely exceed
     // 64KB of bytecodes).
     std::unordered_map<uint64_t, uint32_t> backwardJumpCounters_;
+    // Per-(method, bcOffset) consecutive-bail counter for adaptive
+    // blacklisting.  Same composite key as backwardJumpCounters_.
+    // Bumped on ExitSend, cleared on ExitReturn; once >= threshold,
+    // dispatch is skipped for that key.
+    mutable std::unordered_map<uint64_t, uint16_t> bcDispatchBailCounter_;
     // Methods whose Sista compile happened with empty/null hints.
     // Used by invalidateIfHintless() to target only those entries
     // without re-compiling everyone on every IC patch.

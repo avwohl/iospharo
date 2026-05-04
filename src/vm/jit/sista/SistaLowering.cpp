@@ -1463,8 +1463,22 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
 
                 Gp sc = cc.new_gp64("aSc");
                 cc.lsr(sc, hdr, Imm(56));
+                // slotCount byte 255 = overflow encoding — read the
+                // actual count from the 8 bytes BEFORE the header.
+                // Common for benchmark Arrays >= 255 elements (sieve's
+                // 8190-element Array hits this every at:/at:put:).
+                Label scNoOverflow = cc.new_label();
                 cc.cmp(sc, Imm(0xFF));
-                cc.b_eq(deoptL);
+                cc.b_ne(scNoOverflow);
+                {
+                    Gp overflow = cc.new_gp64("aSv");
+                    cc.ldur(overflow, ptr(rcv, -8));
+                    // Mask to low 56 bits: (raw << 8) >> 8.
+                    cc.lsl(overflow, overflow, Imm(8));
+                    cc.lsr(overflow, overflow, Imm(8));
+                    cc.mov(sc, overflow);
+                }
+                cc.bind(scNoOverflow);
 
                 Gp i = cc.new_gp64("aI");
                 cc.asr(i, idx, Imm(3));
@@ -1607,13 +1621,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.and_(imm, hdr, Imm(1ULL << 23));
                 cc.cbnz(imm, deoptL);
 
-                // Get slotCount byte: (hdr >> 56) & 0xFF.
-                // Bail when 255 (overflow encoding) — uncommon, the
-                // helper's overflow path handles it.
+                // Get slotCount: byte from header, OR overflow word
+                // when byte is 255 (>= 255-slot objects).  Sieve's
+                // 8190-element Array hits the overflow path on every
+                // at:put: — bailing on it crippled the inline.
                 Gp sc = cc.new_gp64("apSc");
                 cc.lsr(sc, hdr, Imm(56));
+                Label apScNoOverflow = cc.new_label();
                 cc.cmp(sc, Imm(0xFF));
-                cc.b_eq(deoptL);
+                cc.b_ne(apScNoOverflow);
+                {
+                    Gp overflow = cc.new_gp64("apSv");
+                    cc.ldur(overflow, ptr(rcv, -8));
+                    cc.lsl(overflow, overflow, Imm(8));
+                    cc.lsr(overflow, overflow, Imm(8));
+                    cc.mov(sc, overflow);
+                }
+                cc.bind(apScNoOverflow);
 
                 // Compute i = idx >> 3 (asr — signed).
                 Gp i = cc.new_gp64("apI");
