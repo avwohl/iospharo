@@ -54,6 +54,7 @@ bool producesOop(Op op) {
     case Op::kPrimSize:
     case Op::kPrimAt:
     case Op::kPrimAtPut:
+    case Op::kLoadStackSlot:
     case Op::kSendUnspeculated:
     case Op::kSendCallHelper:
     case Op::kGuardClass:
@@ -157,6 +158,7 @@ const char* name(Op op) {
     case Op::kPrimSize:         return "prim_size";
     case Op::kPrimAt:           return "prim_at";
     case Op::kPrimAtPut:        return "prim_at_put";
+    case Op::kLoadStackSlot:    return "load_stack_slot";
     case Op::kBlockCreate:      return "block_create";
     case Op::kBlockValue:       return "block_value";
     case Op::kCountedLoopDo:    return "counted_loop_do";

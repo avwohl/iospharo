@@ -248,6 +248,44 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         }
     };
 
+    // Multi-entry-point dispatch prologue (item #8 — per-bytecode
+    // hook).  When the lifted IR has loader pseudo-blocks appended
+    // by Builder pass 5, emit a chain that reads sstate.ip -
+    // bytecodeBase, compares against each dispatchable bcOffset,
+    // and branches to the matching loader's label.  Falls through
+    // to block 0 (the natural entry) on no match.
+    //
+    // The loaders run kLoadStackSlot ops to materialize phi inputs
+    // from the runtime sp, then branch to the dispatchable target.
+    // The existing fillPhis path MOVs the loader's outgoingStack
+    // into the target's phi regs at the loader's terminator branch.
+    if (!method.dispatchableBlocks.empty() && bytecodeBase) {
+        // Read sstate.ip into a register and compute bcOff.
+        Gp ipReg = cc.new_gp64("dispIp");
+        cc.ldr(ipReg, ptr(state, OFF_IP));
+        Gp baseReg = cc.new_gp64("dispBase");
+        cc.mov(baseReg, Imm((uint64_t)(uintptr_t)bytecodeBase));
+        Gp bcOffReg = cc.new_gp64("dispBcOff");
+        cc.sub(bcOffReg, ipReg, baseReg);
+
+        for (const auto& entry : method.dispatchableBlocks) {
+            uint32_t targetBcOff = entry.first;
+            uint32_t loaderBlockId = entry.second;
+            if (loaderBlockId >= blockLabels.size()) continue;
+            // Compare bcOff against target.  ARM64 cmp imm has 12-bit
+            // limit; for larger offsets, materialize via mov.
+            if (targetBcOff <= 4095) {
+                cc.cmp(bcOffReg, Imm((uint64_t)targetBcOff));
+            } else {
+                Gp targetReg = cc.new_gp64("dispTgt");
+                cc.mov(targetReg, Imm((uint64_t)targetBcOff));
+                cc.cmp(bcOffReg, targetReg);
+            }
+            cc.b_eq(blockLabels[loaderBlockId]);
+        }
+        // No match — fall through to block 0 (entry).
+    }
+
     // Walk blocks in ID order.  The builder orders blocks by source
     // bytecode offset, so block 0 is entry.
     for (const Block& b : method.blocks) {
@@ -339,6 +377,19 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                                  static_cast<int>(v.literal) * 8));
                 regFor[v.id] = dst;
                 tempCache[v.literal] = dst;
+                break;
+            }
+            case Op::kLoadStackSlot: {
+                // Load sstate.sp[-(slot+1)] — used by multi-entry
+                // dispatch loaders to materialize phi inputs from
+                // the runtime stack.  literal = slot index from top
+                // (0 = sp[-1], 1 = sp[-2], etc.).
+                uint32_t slot = (uint32_t)v.literal;
+                Gp sp = cc.new_gp64("lsslot_sp");
+                cc.ldr(sp, ptr(state, OFF_SP));
+                Gp dst = cc.new_gp64("lsslot");
+                cc.ldr(dst, ptr(sp, -(int)(slot + 1) * 8));
+                regFor[v.id] = dst;
                 break;
             }
             case Op::kLoadTempInVec: {

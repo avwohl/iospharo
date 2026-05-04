@@ -2875,6 +2875,51 @@ public:
         }
         out_.entryBlock = offsetToBlock[0];
 
+        // Collect backward-jump targets within the lifted region.
+        // These are the candidates for multi-entry-point dispatch.
+        // Skip offset 0 (the natural fall-through entry).
+        // Re-scan bytecodes here rather than threading state through
+        // the existing pass 1 — keeps the modification small.
+        std::set<size_t> backwardJumpTargets;
+        {
+            int p1B = 0;
+            for (size_t i = 0; i < len_;) {
+                uint8_t op = bc_[i];
+                if (op == jit::SistaV1::ExtendB) {
+                    if (i + 1 >= len_) break;
+                    p1B = (int)(int8_t)bc_[i + 1];
+                    i += 2;
+                    continue;
+                }
+                if (op == jit::SistaV1::ExtendA) {
+                    if (i + 1 >= len_) break;
+                    i += 2;
+                    continue;
+                }
+                if (isExtJump(op)) {
+                    if (i + 1 >= len_) break;
+                    int offset = (int)bc_[i + 1] + (p1B << 8);
+                    long longTarget = (long)(i + 2) + (long)offset;
+                    if (offset < 0 && longTarget > 0
+                        && (size_t)longTarget <= len_) {
+                        backwardJumpTargets.insert((size_t)longTarget);
+                    }
+                    p1B = 0;
+                    i += 2;
+                    continue;
+                }
+                p1B = 0;
+                i += instructionSize(op);
+            }
+        }
+        for (size_t target : backwardJumpTargets) {
+            auto it = offsetToBlock.find(target);
+            if (it != offsetToBlock.end()) {
+                out_.dispatchableBlocks.push_back(
+                    {(uint32_t)target, it->second});
+            }
+        }
+
         // --- Pass 3: lift each block ---------------------------------
         //
         // Blocks are processed in offset (= id) order.  Short jumps
@@ -2972,6 +3017,91 @@ public:
                         return LiftResult::kMalformedMethod;
                     }
                     v.operands.push_back(pb.outgoingStack[slotIdx]);
+                }
+            }
+        }
+
+        // --- Pass 5: append loader pseudo-blocks for multi-entry
+        // dispatch (item #8 — per-bytecode hook).
+        //
+        // For each dispatchable block (loop header within the lifted
+        // region), create a loader pseudo-block whose body:
+        //   - emits kLoadStackSlot ops for each phi input (one per
+        //     phi in the dispatchable target block)
+        //   - has outgoingStack = [loaded values] (fed to the
+        //     target's phis as a NEW predecessor)
+        //   - terminates with kBranch to the dispatchable target
+        //
+        // The lowering's IP-dispatch prologue branches to the loader
+        // pseudo-block on bcOffset match; the loader runs the
+        // kLoadStackSlot ops, MOVs them into the target's phi regs
+        // via the existing fillPhis path, then jumps to the target.
+        //
+        // Skipped if there are no dispatchable blocks (the common
+        // case — method-entry compiles, suffix lifts with no
+        // backward-jump-target loops).
+        if (!out_.dispatchableBlocks.empty()) {
+            // Snapshot the original list — we'll be appending to
+            // out_.blocks so we can't iterate dispatchableBlocks while
+            // the underlying vector grows.
+            std::vector<std::pair<uint32_t, uint32_t>> dispatchSnapshot =
+                out_.dispatchableBlocks;
+            for (const auto& entry : dispatchSnapshot) {
+                uint32_t targetBlockId = entry.second;
+                const Block& targetBlock = out_.blockAt(targetBlockId);
+
+                // Count phi nodes in target block.
+                size_t phiCount = 0;
+                for (uint32_t vid : targetBlock.values) {
+                    if (out_.values[vid].op != Op::kPhi) break;
+                    phiCount++;
+                }
+
+                // Create the loader pseudo-block.
+                uint32_t loaderId = out_.newBlock(/*sourceBc=*/-1);
+                std::vector<uint32_t> loaderOutgoing;
+                loaderOutgoing.reserve(phiCount);
+                // Emit kLoadStackSlot for each phi slot.  Phi i is the
+                // i-th element of the target's entry stack (bottom-up
+                // in stack_).  Runtime sp at trigger time has these
+                // at sp[-(phiCount-i)..sp[-1]] (top-down: slot 0 = top
+                // = last phi, slot phiCount-1 = bottom = first phi).
+                for (size_t i = 0; i < phiCount; i++) {
+                    uint32_t loadVid = out_.newValue(loaderId,
+                        Op::kLoadStackSlot, Type::kOop,
+                        /*operands=*/{},
+                        /*literal=*/(uint64_t)(phiCount - 1 - i));
+                    loaderOutgoing.push_back(loadVid);
+                }
+                // Terminator: branch to the dispatchable target.
+                out_.newValue(loaderId, Op::kBranch, Type::kVoid,
+                              /*operands=*/{},
+                              /*literal=*/(uint64_t)targetBlockId);
+                out_.blocks[loaderId].outgoingStack = loaderOutgoing;
+                out_.addEdge(loaderId, targetBlockId);
+
+                // Append loader's outgoingStack to the target's phi
+                // operands (one per phi).  Pass 4 already wired phis
+                // from earlier predecessors; we add this loader's
+                // contribution now as an additional predecessor.
+                size_t phiSlot = 0;
+                for (uint32_t phiVid : targetBlock.values) {
+                    Value& phiV = out_.values[phiVid];
+                    if (phiV.op != Op::kPhi) break;
+                    if (phiSlot < loaderOutgoing.size()) {
+                        phiV.operands.push_back(loaderOutgoing[phiSlot]);
+                    }
+                    phiSlot++;
+                }
+
+                // Replace the (target_bcOff, target_block_id) entry
+                // in dispatchableBlocks with (target_bcOff, loaderId)
+                // so the lowering branches to the loader on match.
+                for (auto& e : out_.dispatchableBlocks) {
+                    if (e.second == targetBlockId) {
+                        e.second = loaderId;
+                        break;
+                    }
                 }
             }
         }

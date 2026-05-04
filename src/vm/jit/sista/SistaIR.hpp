@@ -138,6 +138,15 @@ enum class Op : uint8_t {
                           // Returns receiver basicSize as SmI Oop.
     kPrimAt,              // operands: receiver, index                 -> Oop
     kPrimAtPut,           // operands: receiver, index, value          -> Oop (=value)
+    kLoadStackSlot,       // 0 operands; literal: slot index relative to sp
+                          //   slot 0 = sstate.sp[-1] (top of runtime stack),
+                          //   slot 1 = sstate.sp[-2], etc.
+                          // Used by multi-entry dispatch loaders to materialize
+                          // phi inputs from the runtime stack — the dispatch
+                          // prologue's pseudo-blocks load entry-stack values
+                          // and feed them as outgoingStack to the dispatchable
+                          // target blocks via the existing phi-wiring path.
+                          //                                              -> Oop
                           // Returns receiver basicAt: index, or
                           // signals deopt via 0 result.
 
