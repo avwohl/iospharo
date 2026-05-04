@@ -10125,6 +10125,48 @@ uint64_t Interpreter::jitSistaBasicAt(jit::JITState* state,
     return 0;
 }
 
+uint64_t Interpreter::jitSistaBasicAtPut(jit::JITState* state,
+                                          uint64_t rcvBits,
+                                          uint64_t idxBits,
+                                          uint64_t valBits) {
+    (void)state;
+    if ((rcvBits & 7) != 0 || rcvBits < 0x10000) return 0;
+    if ((idxBits & 7) != 1) return 0;  // index must be SmallInteger
+    int64_t i = (int64_t)idxBits >> 3;
+    auto* hdr = reinterpret_cast<pharo::ObjectHeader*>(rcvBits);
+    // Reject immutable.  Bit 23 of header word.
+    uint64_t header = *reinterpret_cast<uint64_t*>(rcvBits);
+    if (header & (1ULL << 23)) return 0;
+    uint32_t fmt = (uint32_t)hdr->format();
+    size_t slotCount = hdr->slotCount();
+    if (fmt == 2) {
+        if (i < 1 || (uint64_t)i > slotCount) return 0;
+        Oop* slots = reinterpret_cast<Oop*>(rcvBits + 8);
+        // Use storePointerUnchecked so the GC barrier (remember-set
+        // / generational write barrier) fires for old-to-young
+        // pointer updates.  Avoids a stale-young-survivor bug where
+        // sieve's Array (old) gets a fresh-allocated value (young)
+        // stored without GC noticing.
+        memory_.storePointerUnchecked(i - 1, Oop::fromRawBits(rcvBits),
+                                       Oop::fromRawBits(valBits));
+        return valBits;
+    }
+    if (fmt >= 16 && fmt <= 23) {
+        uint64_t byteSize = slotCount * 8 - (fmt - 16);
+        if (i < 1 || (uint64_t)i > byteSize) return 0;
+        // Byte at:put: requires SmI value in [0, 255].
+        if ((valBits & 7) != 1) return 0;
+        int64_t bv = (int64_t)valBits >> 3;
+        if (bv < 0 || bv > 255) return 0;
+        uint8_t* bytes =
+            reinterpret_cast<uint8_t*>(rcvBits + 8);
+        bytes[i - 1] = (uint8_t)bv;
+        return valBits;
+    }
+    // Other formats: bail.
+    return 0;
+}
+
 uint64_t Interpreter::jitSistaCallSend(jit::JITState* state,
                                          uint64_t selBits,
                                          uint64_t nArgs) {
@@ -14297,34 +14339,23 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
     // jumps, so threshold=1000 → ~64K actual jumps before compile.
     uint32_t cnt = sistaRuntimeForGCHook_->bumpBackwardJumpCounter(method_, bcOff);
     if (cnt == sista::Runtime::kBackwardJumpThreshold) {
-        // Resolve the OUTERMOST self-contained lift point at or
-        // before the trigger bcOff.  findOutermostLiftPoint also
-        // checks the entry-stack invariant — it returns UINT32_MAX
-        // when no backward-jump target has both (a) self-contained
-        // suffix and (b) empty entry stack.  Pharo's inlined
-        // `to:do:` loop headers fall into this rejection because
-        // the counter init via `PushOne; ExtStoreTemp` (no-pop
-        // store) leaves a residual on the simulator stack at the
-        // header — lifting from there would re-execute the
-        // post-loop pop with an empty stack and bail.
-        uint32_t liftAt = sista::Builder::findOutermostLiftPoint(
-            method_, memory_, bcOff);
-        if (liftAt == UINT32_MAX) {
-            // No safe lift point — skip per-bytecode for this
-            // (method, bcOff).  The fallback is the existing
-            // method-entry Sista compile (already attempted on
-            // first call).
-            return;
-        }
-
-        // Avoid duplicate compiles when multiple inner-loop triggers
-        // resolve to the same outer lift point.
-        sista::Lowering::CompiledFn outerFn =
-            sistaRuntimeForGCHook_->lookupBcEntry(method_, liftAt);
-        if (!outerFn) {
-            outerFn = sistaRuntimeForGCHook_->compile(
-                method_, memory_, nullptr, liftAt);
-        }
+        // Lift the suffix [bcOff..end) directly.  The Pop-on-empty
+        // simulator extension means residual stack values from
+        // outer scopes (e.g., Pharo's inlined `to:do:` counter
+        // init) are tolerated — they sit on the runtime sp,
+        // untouched by lifted code, and discarded by popFrame
+        // on return.
+        //
+        // findOutermostLiftPoint is no longer required: with the
+        // Pop relaxation, the outermost-vs-inner choice is no
+        // longer about finding a "safe" entry, just an
+        // optimization choice.  Lifting from the trigger bcOff
+        // directly gives us cache hits on the dispatch path
+        // (since the dispatch lookup uses the current ip's
+        // bcOff, not a resolved liftAt).
+        sista::Lowering::CompiledFn fn2 =
+            sistaRuntimeForGCHook_->compile(
+                method_, memory_, nullptr, bcOff);
 
         static const bool trace =
             std::getenv("PHARO_SISTA_PER_BC_TRACE") != nullptr;
@@ -14333,9 +14364,9 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
             if (logCount++ < 32) {
                 fprintf(stderr,
                     "[SISTA-PER-BC-TRIGGER] method=#%s bcOff=%u "
-                    "liftAt=%u count=%u\n",
+                    "compiled=%s count=%u\n",
                     memory_.selectorOf(method_).c_str(), bcOff,
-                    liftAt, cnt);
+                    fn2 ? "yes" : "no", cnt);
             }
         }
     }

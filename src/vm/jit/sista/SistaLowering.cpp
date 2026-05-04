@@ -29,6 +29,10 @@ extern "C" uint64_t jit_rt_sista_alloc_array(void* state,
 extern "C" uint64_t jit_rt_sista_basic_at(void* state,
                                             uint64_t rcvBits,
                                             uint64_t idxBits);
+extern "C" uint64_t jit_rt_sista_basic_at_put(void* state,
+                                                uint64_t rcvBits,
+                                                uint64_t idxBits,
+                                                uint64_t valBits);
 extern "C" uint64_t jit_rt_sista_call_send(void* state,
                                              uint64_t selBits,
                                              uint64_t nArgs);
@@ -1434,6 +1438,87 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.ret();
                 }
                 cc.bind(noDeopt);
+                regFor[v.id] = dst;
+                break;
+            }
+            case Op::kPrimAtPut: {
+                // Calls jit_rt_sista_basic_at_put(state, rcv, idx, val).
+                // Returns val on success, 0 on guard miss / OOB / non-
+                // SmI index / immutable / non-SmI byte value.  Deopts
+                // on 0; mirrors kPrimAt's deopt sequence.
+                // v.literal: bcOffset for deopt resume.
+                if (v.operands.size() != 3) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                auto itRcv = regFor.find(v.operands[0]);
+                auto itIdx = regFor.find(v.operands[1]);
+                auto itVal = regFor.find(v.operands[2]);
+                if (itRcv == regFor.end() || itIdx == regFor.end()
+                    || itVal == regFor.end()) {
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                Gp fnReg = cc.new_gp64("atPutHelper");
+                cc.mov(fnReg,
+                       Imm((uint64_t)&jit_rt_sista_basic_at_put));
+                asmjit::InvokeNode* invokeNode = nullptr;
+                asmjit::Error invErr = cc.invoke(
+                    asmjit::Out(invokeNode), fnReg,
+                    asmjit::FuncSignature::build<
+                        uint64_t, void*, uint64_t,
+                        uint64_t, uint64_t>());
+                if (invErr != asmjit::kErrorOk || !invokeNode) {
+                    std::fprintf(stderr,
+                        "[SISTA-INVOKE-ERR] kPrimAtPut err=%u\n",
+                        (unsigned)invErr);
+                    if (failedAtValue) *failedAtValue = v.id;
+                    return nullptr;
+                }
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, itRcv->second);
+                invokeNode->set_arg(2, itIdx->second);
+                invokeNode->set_arg(3, itVal->second);
+                Gp dst = cc.new_gp64("atPut");
+                invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero: helper returns 0 on miss.  Push
+                // receiver + index + value back onto interp stack
+                // (the at:put: send expects them), bail at source
+                // bcOffset.
+                Label noDeoptAP = cc.new_label();
+                cc.cbnz(dst, noDeoptAP);
+                {
+                    Gp sp = cc.new_gp64("sp_apz");
+                    cc.ldr(sp, ptr(state, OFF_SP));
+                    cc.str(itRcv->second, ptr(sp));
+                    cc.str(itIdx->second, ptr(sp, 8));
+                    cc.str(itVal->second, ptr(sp, 16));
+                    cc.add(sp, sp, Imm(24));
+                    cc.str(sp, ptr(state, OFF_SP));
+                    Gp ipReg = cc.new_gp64("ip_apz");
+                    uint64_t bcOff = v.literal;
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOff;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOff));
+                    }
+                    cc.str(ipReg, ptr(state, OFF_IP));
+                    Gp argCount = cc.new_gp32("argc_apz");
+                    cc.mov(argCount, Imm(2));  // at:put: takes 2 args
+                    cc.str(argCount, ptr(state, OFF_SENDARGCOUNT));
+                    Gp zero64 = cc.new_gp64("zero_apz");
+                    cc.mov(zero64, Imm(0));
+                    cc.str(zero64, ptr(state, OFF_ICDATAPTR));
+                    Gp exitR = cc.new_gp32("exit_apz");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.str(exitR, ptr(state, OFF_EXIT));
+                    cc.ret();
+                }
+                cc.bind(noDeoptAP);
                 regFor[v.id] = dst;
                 break;
             }

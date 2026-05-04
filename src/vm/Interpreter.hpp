@@ -1310,6 +1310,14 @@ public:
     uint64_t jitSistaBasicAt(jit::JITState* state, uint64_t rcvBits,
                               uint64_t idxBits);
 
+    /// Sista runtime helper for basicAt:put: (prim 61).  Returns the
+    /// stored value (val) on success, 0 on guard miss / OOB / non-SmI
+    /// index / immutable receiver / non-SmI byte value.  Mirrors
+    /// jitSistaBasicAt for the at:put: side; lets the lifter emit
+    /// kPrimAtPut for any `array at: i put: v` SpecialSend site.
+    uint64_t jitSistaBasicAtPut(jit::JITState* state, uint64_t rcvBits,
+                                 uint64_t idxBits, uint64_t valBits);
+
     /// Sista runtime helper: synchronously invoke a send and return
     /// its result.  This is what makes Sista compiled code able to
     /// continue past sends instead of bailing.

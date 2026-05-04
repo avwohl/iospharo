@@ -1303,6 +1303,15 @@ extern "C" uint64_t jit_rt_sista_basic_at(JITState* state,
     return state->interp->jitSistaBasicAt(state, rcvBits, idxBits);
 }
 
+extern "C" uint64_t jit_rt_sista_basic_at_put(JITState* state,
+                                                uint64_t rcvBits,
+                                                uint64_t idxBits,
+                                                uint64_t valBits) {
+    if (!state || !state->interp) return 0;
+    return state->interp->jitSistaBasicAtPut(state, rcvBits, idxBits,
+                                              valBits);
+}
+
 // B-1 helper: synchronously invoke a send and return its result.
 // Replaces the old kSendUnspeculated bail-and-exit path so compiled
 // code can continue after sends.  See jitSistaCallSend in

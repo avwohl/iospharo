@@ -137,6 +137,7 @@ enum class Op : uint8_t {
     kPrimSize,            // operands: receiver                        -> OopSmallInt
                           // Returns receiver basicSize as SmI Oop.
     kPrimAt,              // operands: receiver, index                 -> Oop
+    kPrimAtPut,           // operands: receiver, index, value          -> Oop (=value)
                           // Returns receiver basicAt: index, or
                           // signals deopt via 0 result.
 

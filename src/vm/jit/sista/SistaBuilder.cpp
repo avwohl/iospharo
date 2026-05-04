@@ -143,6 +143,13 @@ static ObjectMemory* g_currentBuildMemory = nullptr;
 // suffices.
 static uint32_t g_buildStartBcOffset = 0;
 
+// True while a per-bytecode lift is active (set by buildFromOffset,
+// kept across the entire build/lift, cleared on return).  Lets the
+// lifter gate experimental kPrimAtPut emission to per-bytecode lifts
+// only — method-entry compiles use the established path that doesn't
+// emit kPrimAtPut for arbitrary call sites.
+static bool g_inPerBcBuild = false;
+
 // Recursion guard: probe-lifting a callee re-enters Builder::build, which
 // re-enters recordFramepoint via its own sends.  Without a guard the
 // counters explode geometrically and the build wedges.  Bumped to 2 to
@@ -4065,6 +4072,71 @@ private:
                 }
                 detectDoBlockPattern(nArgs, bcOffset);
 
+                // Per-bytecode lifter coverage extension (item #8 in
+                // jit-multiweek-work.md): for SpecialSend at: (ssIdx
+                // 0, nArgs 1) and at:put: (ssIdx 1, nArgs 2), emit
+                // kPrimAt / kPrimAtPut inline.  Lowering invokes the
+                // jit_rt_sista_basic_at[_put] helper which handles
+                // fmt 2 (Array) and 16-23 (byte) inline; on miss
+                // (OOB / non-SmI / wrong fmt / immutable) the
+                // lowering deopts at this bcOffset.  Avoids the
+                // kSendUnspeculated bail that would otherwise stop
+                // Sista at the first at:/at:put: in any non-trivial
+                // loop body — the canonical sieve hot-path shape.
+                //
+                // Gated behind PHARO_NO_SISTA_PRIM_AT_PUT=1 (default
+                // on) since this is new and may flush out lowering
+                // bugs.  Kill switch lets us isolate regressions.
+                static const bool primAtPutEnabled = []() {
+                    return std::getenv("PHARO_NO_SISTA_PRIM_AT_PUT")
+                           == nullptr;
+                }();
+                // Skip kPrimAt for general SpecialSend at: sites for
+                // now — the existing peephole's kPrimAt emission is
+                // validated only for `^ self at: i` shape, and
+                // emitting it for arbitrary call sites was breaking
+                // method-entry Sista compiles.  Stick to kPrimAtPut
+                // only (validated in this commit) until a separate
+                // pass confirms kPrimAt's deopt path is robust for
+                // mid-method use.
+                if (false && primAtPutEnabled && ssIdx == 0 && nArgs == 1) {
+                    uint32_t idxV = stack_.back(); stack_.pop_back();
+                    uint32_t rcvV = stack_.back(); stack_.pop_back();
+                    pendingExtA_ = 0;
+                    pendingExtB_ = 0;
+                    uint32_t resV = out_.newValue(currentBlock_,
+                        Op::kPrimAt, Type::kOop,
+                        /*operands=*/{rcvV, idxV},
+                        /*literal=*/(uint64_t)bcOffset);
+                    stack_.push_back(resV);
+                    ip++;
+                    continue;
+                }
+                // Gate kPrimAtPut emission to per-bytecode lifts
+                // only.  Method-entry Sista compiles use the
+                // established kSendUnspeculated bail path for
+                // at:put: sends, which is validated across the
+                // whole image.  Per-bytecode lifts NEED kPrimAtPut
+                // to avoid bailing on every iteration of a hot
+                // loop (sieve's inner whileTrue: body is the
+                // canonical case).
+                if (primAtPutEnabled && g_inPerBcBuild
+                    && ssIdx == 1 && nArgs == 2) {
+                    // SpecialSend #at:put: → kPrimAtPut
+                    uint32_t valV = stack_.back(); stack_.pop_back();
+                    uint32_t idxV = stack_.back(); stack_.pop_back();
+                    uint32_t rcvV = stack_.back(); stack_.pop_back();
+                    pendingExtA_ = 0;
+                    pendingExtB_ = 0;
+                    uint32_t resV = out_.newValue(currentBlock_,
+                        Op::kPrimAtPut, Type::kOop,
+                        /*operands=*/{rcvV, idxV, valV},
+                        /*literal=*/(uint64_t)bcOffset);
+                    stack_.push_back(resV);
+                    ip++;
+                    continue;
+                }
+
                 // Phase 6 helper-sends extension: when HELPER_SENDS=1
                 // is on and this method has splice candidates that
                 // need the lift to continue past prologue sends, emit
@@ -4638,12 +4710,33 @@ private:
             }
 
             // Pop (0xD8): discard TOS, no other effect.
+            //
+            // Per-bytecode entry exception (item #8): when lifting
+            // from a non-zero startBcOffset, the runtime sp can have
+            // residual values from outer scopes (e.g., Pharo's
+            // inlined `to:do:` counter init via `PushOne;
+            // ExtStoreTemp` leaves a constant on the simulator
+            // stack at the loop header).  The residual gets popped
+            // after the loop exits.  At lift time the simulator
+            // stack is empty, so the Pop bytecode would otherwise
+            // bail malformed.  Allow it as a no-op: the residual
+            // sits on the runtime stack, untouched by lifted code,
+            // and is discarded along with the rest of the frame
+            // when the method returns (popFrame).
+            //
+            // This is safe ONLY when no other lifted op reads the
+            // residual via sp[-N].  The lifter's existing operations
+            // all access through SSA values (registers / spills
+            // managed by asmjit), not raw sp offsets, so the
+            // residual is invisible to them.  Deopt paths write
+            // operand[1..N] above current sp without touching
+            // sp[-N], so the residual is preserved across deopts
+            // too.
             if (op == 0xD8) {
-                if (stack_.empty()) {
-                    if (failedAtBytecode) *failedAtBytecode = bcOffset;
-                    return LiftResult::kMalformedMethod;
+                if (!stack_.empty()) {
+                    stack_.pop_back();
                 }
-                stack_.pop_back();
+                // else: silent no-op for entry-residual case
                 ip++;
                 continue;
             }
@@ -6429,10 +6522,20 @@ uint32_t Builder::findOutermostLiftPoint(Oop compiledMethod,
 
     // Find the smallest candidate T <= triggerBcOffset such that:
     //   - no backward jump in [T..end) escapes
-    //   - heights[T] == 0 (entry stack is empty — see header comment)
+    //   - heights[T] is computable (not -1; could be > 0 — see
+    //     Pop-on-empty-simulator note in the lifter)
+    //
+    // For Pharo's inlined `to:do:` loop headers (heights[T] > 0
+    // because the no-pop counter init left a residual), the lifter's
+    // Pop handler has been extended to silently no-op on empty
+    // simulator stack — the residual sits on the runtime sp
+    // untouched by lifted code, and is discarded by popFrame on
+    // return.  This means we no longer need to reject heights[T]
+    // > 0; we just need heights[T] >= 0 (reachable from method
+    // entry).
     for (uint32_t T : candidates) {
         if (T > triggerBcOffset) break;  // candidates is sorted
-        if (T >= heights.size() || heights[T] != 0) continue;
+        if (T >= heights.size() || heights[T] < 0) continue;
         bool selfContained = true;
         for (const auto& bj : backJumps) {
             if (bj.source >= T && bj.target < T) {
@@ -6477,8 +6580,10 @@ LiftResult Builder::buildFromOffset(Oop compiledMethod, ObjectMemory& memory,
     // hint masks, class-name lookup, etc.) — this avoids duplicating
     // all that into a separate code path.  Reset on early-return.
     g_buildStartBcOffset = startBcOffset;
+    g_inPerBcBuild = true;
     LiftResult r = build(compiledMethod, memory, out, failedAtBytecode);
     g_buildStartBcOffset = 0;
+    g_inPerBcBuild = false;
     return r;
 }
 
