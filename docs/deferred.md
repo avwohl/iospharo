@@ -1542,6 +1542,30 @@ changes; image-side issues to propose upstream.
 
 ## E. Remaining JIT work
 
+0. **JIT_DEFER blocks short-bench compile (2026-05-05).**  Sort 50K
+   runs in ~2.5M interp steps; JIT_DEFER floor is 120M (~4 sec).
+   So mergeFirst (49K calls during sort) never compiles in time —
+   sort gets ~0% JIT speedup vs interp.
+
+   The fix isn't trivial: removing `noteMethodEntry`'s early-return
+   during defer — even WITHOUT triggering compiles — hangs the
+   bench (4 attempts in
+   `memory/project_mergeFirst_recompile_2026_05_04.md`).  JIT_DEFER
+   does more than gate compile; some side effect of the early-return
+   is load-bearing for SessionManager startup (deferred.md A1's
+   "DEFER < 3s deterministically hangs startup").
+
+   Real fix path: trace what propagates when noteMethodEntry no
+   longer early-returns during defer, then refactor JIT_DEFER to
+   per-method opt-in (skip compile for specific startup-chain
+   methods) instead of global step-gated switch.  Then mergeFirst-
+   class hot methods can compile mid-bench while startup methods
+   stay in interp.  Estimated 2-3 days focused investigation.
+
+   Workload impact: closes the sort 100K vs Cog gap (313 vs ~100 ms,
+   3×).  Maybe also helps other short-bench workloads that don't
+   amortize the defer.
+
 1. **Architectural T1/T2 interaction (§1.3).**  T2 intercepting
    methods still breaks T1's inline-IC warmup in the non-coexist
    (REPLACE=1) path — neither shared-IC, warmup delay, nor
