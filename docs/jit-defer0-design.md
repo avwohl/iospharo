@@ -207,6 +207,26 @@ the hang — other methods compiled in its slot also have buggy
 codegen.  There's a long tail of buggy compiles, not a single
 isolated bug.
 
+**Further refinement (same session)**: even excluding `nextPut:`
+by exact methodOop (JIT_EXCLUDE_OOP=0x30046ce80) still hangs — a
+DIFFERENT method takes the #13 slot and triggers the cascade.
+
+**Even more revealing**: excluding the FIRST 12 selector names
+(basicNew:, new:, /, size, on:, reset:, max:, at:, do:, at:put:,
+key:) lets 718 OTHER methods compile.  Still hangs.
+
+**Conclusion**: the bug is NOT in any specific method's JIT
+codegen.  It's an AGGREGATE state issue — once compile count
+crosses ~12 during startup, some shared resource breaks.
+Candidates:
+- Code zone allocation pattern hits a boundary
+- IC zone fills past a threshold
+- An internal counter overflows
+- A specific JIT compile triggers OS-level memory remapping
+  (W^X transition?) that doesn't compose with subsequent compiles
+- The JIT compile work + startup process scheduling crosses some
+  invariant that only holds when defer keeps compile inactive
+
 ### What this tells us about the architecture
 
 The 4s clamp WORKS because by the time defer expires, all the
