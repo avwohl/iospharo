@@ -81,6 +81,21 @@ public:
     // Returns the number of methods processed.
     size_t drainRecompileQueue();
 
+    // Push a method onto the initial-compile queue.  Called by
+    // noteMethodEntry when PHARO_QUEUE_COMPILE=1 is set; otherwise the
+    // direct compile path runs.  Bounded ring buffer; overflow drops
+    // silently (re-queue happens on next threshold-bump).
+    void queueInitialCompile(Oop compiledMethod);
+
+    // Drain the initial-compile queue.  Methods that crossed the JIT
+    // threshold during interp dispatch are enqueued here (instead of
+    // being compiled inline in noteMethodEntry).  Drained at the same
+    // safe point as drainRecompileQueue so compile happens between
+    // bytecodes — never mid-bytecode while local interp state is
+    // in flux.  Gated by PHARO_QUEUE_COMPILE=1 (opt-in).
+    // Returns the number of methods compiled.
+    size_t drainInitialCompileQueue();
+
     // Late-spec re-recompile: account for an IC-classification bit added
     // to an empty slot in callerJM after callerJM has already been
     // recompiled (tier=2).  When enough bits accumulate, queue callerJM

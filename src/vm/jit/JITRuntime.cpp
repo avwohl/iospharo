@@ -1717,6 +1717,76 @@ size_t JITRuntime::drainRecompileQueue() {
     return processed;
 }
 
+// Initial-compile queue.  Methods that crossed the JIT threshold during
+// interp dispatch are pushed here (instead of being compiled inline in
+// noteMethodEntry).  Drained at the safe point alongside
+// drainRecompileQueue, so compile happens between bytecodes — never
+// mid-bytecode while interp local state is in flux.
+//
+// The 256-slot ring is bigger than g_recompileQueue (32) because initial
+// compile is the common case: every method that crosses threshold during
+// startup or eval-body execution lands here.  Overflow drops silently
+// (the method's next call will re-cross the count == threshold check
+// and re-queue if there's room).
+constexpr size_t kInitialCompileQueueSize = 256;
+static uint64_t g_initialCompileQueue[kInitialCompileQueueSize] = {0};
+static size_t g_initialCompileQueueHead = 0;
+static size_t g_initialCompileQueueDrained = 0;
+static size_t g_initialCompileQueueDropped = 0;
+
+void JITRuntime::queueInitialCompile(Oop compiledMethod) {
+    uint64_t methBits = compiledMethod.rawBits();
+    if (methBits == 0) return;
+    size_t head = g_initialCompileQueueHead;
+    if (head < kInitialCompileQueueSize) {
+        for (size_t i = 0; i < head; i++) {
+            if (g_initialCompileQueue[i] == methBits) return;  // dedup
+        }
+        g_initialCompileQueue[head] = methBits;
+        g_initialCompileQueueHead = head + 1;
+    } else {
+        g_initialCompileQueueDropped++;
+    }
+}
+
+size_t JITRuntime::drainInitialCompileQueue() {
+    size_t head = g_initialCompileQueueHead;
+    if (head == 0) return 0;
+    size_t processed = 0;
+    // Reset head BEFORE compiling.  compile() can call back into
+    // noteMethodEntry (e.g., via scavenging GC during compile), and
+    // we want re-entrant queue pushes to land in fresh slots, not
+    // overwrite ones we're about to drain.
+    g_initialCompileQueueHead = 0;
+    uint64_t snapshot[kInitialCompileQueueSize];
+    for (size_t i = 0; i < head; i++) {
+        snapshot[i] = g_initialCompileQueue[i];
+        g_initialCompileQueue[i] = 0;
+    }
+    for (size_t i = 0; i < head; i++) {
+        uint64_t methBits = snapshot[i];
+        if (methBits == 0) continue;
+        Oop method = Oop::fromRawBits(methBits);
+        if (!method.isObject() || method.rawBits() < 0x10000) continue;
+        // Skip if already compiled (race against another path).
+        if (methodMap_.lookup(method.rawBits())) {
+            g_initialCompileQueueDrained++;
+            continue;
+        }
+        // Skip Sista-spliced methods (race-avoidance — same gate as in
+        // noteMethodEntry's direct path).
+        if (sistaRuntimeForGCHook_
+            && sistaRuntimeForGCHook_->hasSplice(method)) {
+            g_initialCompileQueueDrained++;
+            continue;
+        }
+        compiler_->compile(method);
+        processed++;
+        g_initialCompileQueueDrained++;
+    }
+    return processed;
+}
+
 bool JITRuntime::maybeRecompileForOSR(Oop compiledMethod) {
     if (!initialized_ || !compiler_) return false;
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000)
@@ -1908,7 +1978,71 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         if (deferSteps > 0)
             fprintf(stderr, "[JIT] Deferring compilation for ~%lld steps\n", (long long)deferSteps);
     }
-    if (deferSteps > 0 && (int64_t)g_stepNum < deferSteps) return;
+
+    // Eval-DoIt early defer-lift (2026-05-05).  Detect entry to selectors
+    // unique to OpalCompiler's user-eval flow; lift defer immediately so
+    // JIT can compile the eval body's hot methods.  REQUIRES
+    // PHARO_QUEUE_COMPILE=1 — without it, mid-bytecode compile during
+    // eval body execution causes sender-chain corruption (verified
+    // 2026-05-05; see project_eval_doit_attempt_2026_05_05.md).
+    //
+    // Implementation: read the method's selector Oop directly (numLits-1
+    // slot) and compare against cached Oops for the eval-mode selectors.
+    // No std::string allocation per entry — just a pointer fetch +
+    // 64-bit compare.  Selector Oops cached on first call (after image
+    // load when symbols are stable).
+    static const bool deferLiftEnabled =
+        std::getenv("PHARO_DEFER_LIFT") != nullptr;
+    static bool g_deferLifted = false;
+    static uint64_t g_evaluateColon_oop = 0;
+    static uint64_t g_evaluateDoItColon_oop = 0;
+    if (deferLiftEnabled && deferSteps > 0 && !g_deferLifted
+        && (int64_t)g_stepNum < deferSteps && interp_) {
+        // One-time symbol cache.  Look up the Symbol Oops for the
+        // target selectors so subsequent compares are pointer-only.
+        if (g_evaluateColon_oop == 0) {
+            Oop ev = interp_->memory().lookupSymbol("evaluate:");
+            Oop evDoIt = interp_->memory().lookupSymbol("evaluateDoIt:");
+            if (ev.isObject() && !ev.isNil()) {
+                g_evaluateColon_oop = ev.rawBits();
+            }
+            if (evDoIt.isObject() && !evDoIt.isNil()) {
+                g_evaluateDoItColon_oop = evDoIt.rawBits();
+            }
+        }
+        if (g_evaluateColon_oop != 0 || g_evaluateDoItColon_oop != 0) {
+            // Cheap selector-Oop fetch: penultimate literal of the method.
+            auto& mem = interp_->memory();
+            size_t nLits = mem.numLiteralsOf(compiledMethod);
+            if (nLits >= 2) {
+                Oop sel = mem.fetchPointer(nLits - 1, compiledMethod);
+                uint64_t selBits = sel.rawBits();
+                if (selBits == g_evaluateColon_oop
+                    || selBits == g_evaluateDoItColon_oop) {
+                    g_deferLifted = true;
+                    const char* selName = (selBits == g_evaluateColon_oop)
+                        ? "evaluate:" : "evaluateDoIt:";
+                    // Clear countMap_ so accumulated startup counts don't
+                    // suppress threshold-bump check (count==threshold).
+                    // Without queue-compile this would burst-compile and
+                    // hang (documented attempts #2,#3,#7); with queue-
+                    // compile, all the post-lift bumps just enqueue, and
+                    // the safe-point drain processes them gradually.
+                    for (size_t ci = 0; ci < CountMapSize; ci++) {
+                        countMap_[ci].key = 0;
+                        countMap_[ci].count = 0;
+                    }
+                    fprintf(stderr, "[JIT] Defer lifted on entry to #%s "
+                            "(step=%llu of %lld)\n",
+                            selName,
+                            (unsigned long long)g_stepNum,
+                            (long long)deferSteps);
+                }
+            }
+        }
+    }
+    if (deferSteps > 0 && !g_deferLifted
+        && (int64_t)g_stepNum < deferSteps) return;
 
     // Sista already owns this method via a counted-loop splice — don't
     // race with it.  Without this check, ~50% of bench-panel runs T1
@@ -2193,6 +2327,22 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                     }
                 }
                 // Hit threshold — compile!
+                //
+                // PHARO_QUEUE_COMPILE=1 — defer the actual compile to the
+                // safe-point drain (Interpreter calls drainInitialCompileQueue
+                // at preemption checks, every 64K interp steps, between
+                // bytecodes).  Avoids the "compile mid-bytecode while interp
+                // local state is in flux" hazard documented in deferred.md
+                // E.0 / project_eval_doit_attempt_2026_05_05.md (sender-chain
+                // corruption when JIT compile interleaves with eval body
+                // dispatch).  When enabled, the method's NEXT activation
+                // sees the JIT entry; this call falls through to interp.
+                static const bool queueCompile =
+                    std::getenv("PHARO_QUEUE_COMPILE") != nullptr;
+                if (queueCompile) {
+                    queueInitialCompile(compiledMethod);
+                    return;
+                }
                 size_t gcBefore = interp_ ? interp_->memory().statistics().gcCount : 0;
                 JITMethod* jm = compiler_->compile(compiledMethod);
                 if (interp_) {

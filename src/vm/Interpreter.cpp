@@ -1994,6 +1994,15 @@ void Interpreter::interpret() {
         if ((totalSteps & 0xFFFF) == 0) {
             checkForPreemption();
 
+            // Safe-point JIT compile drains.  The recompile queue handles
+            // J2J inline-bump callees; the initial-compile queue handles
+            // methods that crossed threshold during interp dispatch (when
+            // PHARO_QUEUE_COMPILE=1).  Compiling between bytecodes
+            // avoids the mid-bytecode compile race that breaks sender
+            // chains in eval-DoIt mode (deferred.md E.0).
+            jitRuntime_.drainRecompileQueue();
+            jitRuntime_.drainInitialCompileQueue();
+
             // Stuck process termination (wall-clock based)
             {
                 Oop currentActive = getActiveProcess();
@@ -3535,6 +3544,14 @@ bool Interpreter::step() {
             // here, so the recompile is race-free.  Bounded work — the
             // queue is a 32-slot ring.
             jitRuntime_.drainRecompileQueue();
+            // Drain the initial-compile queue when PHARO_QUEUE_COMPILE=1.
+            // Same safe-point reasoning: between bytecodes, no Sista
+            // splice mid-execution.  Bounded work — 256-slot ring.
+            // Routing initial compile through here avoids the mid-
+            // bytecode compile race that breaks sender chains in eval
+            // mode (see JITRuntime.cpp drainInitialCompileQueue + the
+            // 7 prior JIT_DEFER attempt history).
+            jitRuntime_.drainInitialCompileQueue();
         }
 
         // Signal finalization periodically for auto-GC mourners (not handled by the
