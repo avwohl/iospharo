@@ -176,33 +176,80 @@ compile, near codegen finalization) is the next thing to chase.
 - Trying to deduce the root cause from the `0x100000000` bit pattern
   alone without bisecting WHICH operation produces it.
 
+### Continuing the session — additional narrowing
+
+**Item 4 done** (`PHARO_NO_QUEUE_COMPILE=1` at low DEFER): same
+crash signature with both modes (lookupMethod +840, x1=0x100000000,
+fault 0x100000004).  Bug is NOT queue safe-point timing — it's in
+the compile pipeline OR runtime IC OR send dispatch path.
+
+**Critical re-discovery**: x1=0x100000000 is the **selector**, not
+the classOop.  ARM64 calling convention: x0=`this`, x1=arg1
+(selector), x2=arg2 (classOop).  The fault is in
+`selector.asObjectPtr()->identityHash()` (lookupInMethodDict line
+6922) — reading at selector+4 (the hash field within ObjectHeader).
+
+So the bad oop is being passed AS THE SELECTOR.  Selectors come
+from `literal(idx)` in send dispatch, which reads from
+`method_`'s literal frame.  Either:
+- The active method's literal slot has been overwritten with 0x100000000
+- The active method itself is a wrong/corrupt object
+
+**Bench mode at DEFER=0 WORKS** (5/5 fib(28)=14ms, JIT speed).
+Bench mode bypasses startup chain via `executeFromContext`.
+This narrows the bug to **startup-chain code being JIT-compiled
+incorrectly**.  Specifically:
+- StartupPreferencesLoader
+- FileLocator>>resolve
+- Image-init methods touched between resume and eval-DoIt invocation
+
+JIT_EXCLUDE for common startup selectors (basicNew:, at:, new:,
+size, keysDo:, on:, /) didn't help — the buggy method is more
+specific (or is one not in that list).
+
+### Summary of narrowing across this session
+
+```
+Mode                              Result
+-----------------------------     ------
+DEFER=4 (default)                 5/5 success
+DEFER=2 queue-OFF                 0/5 (5/5 SIGSEGV)
+DEFER=2 queue-ON                  0/5 (3/5 SIGSEGV)
+DEFER=0 queue-ON eval             0/5 (hang, no crash)
+DEFER=0 PHARO_BENCH=fib28         5/5 success at JIT speed
+DEFER=0 + JIT_EXCLUDE=common      0/5 (still hang/crash)
+```
+
+The bug is in startup-chain methods getting JIT-compiled.  Bench
+mode skips those methods entirely (executeFromContext path).  Eval
+mode runs them all and hits the bug.
+
 ### What WOULD be productive (next session)
 
 The previous probes were too high-level.  Need lower-level tools:
 
 1. **lldb single-stepping** at the actual crash PC.  Get the
    register state and walk back the data flow to find where
-   `0x100000000` enters the program.  Requires interactive debug
-   session; not productive via grep/edit cycles.
+   `0x100000000` enters the active method's literal frame.
 
-2. **GC write-barrier instrumentation**: log every classTable write
-   AND every header.classIndex change for objects in old space.
-   Look for patterns where an object's classIndex shifts from a
-   small value to one that decodes to 0x100000000.
+2. **Active-method tracking when bad selector enters dispatch**:
+   when `selector.isObject() && !isValidPointer(selector)` in
+   send dispatch, dump the active method's class>>selector AND the
+   literal index being read.  This identifies WHICH method has
+   the corrupt literal frame.
 
-3. **JIT compile output capture**: dump every method's compiled
-   machine code at low DEFER.  Look for class-oop immediates that
-   fall in the bit pattern leading to 0x100000000.  The single-bit
-   pattern strongly suggests an arithmetic mistake (shift by 32?
-   `1ULL << x` where x is wrong?), not memory corruption.
+3. **Per-method JIT exclusion bisection**: enable JIT logging of
+   every compile, then with bisection try `JIT_EXCLUDE` for halves
+   of the compiled-during-startup set.  If excluding half fixes
+   it, recurse.  Identifies the specific method whose JIT code
+   corrupts state.
 
-4. **`PHARO_NO_QUEUE_COMPILE=1` at low DEFER**: does the legacy
-   inline-compile path crash at the same PCs?  If yes, the bug
-   is in the compile pipeline.  If no, the bug is in the queue
-   safe-point drain (timing-dependent invalidation).
+4. **GC write-barrier instrumentation on literal frames**: when
+   an old-space CompiledMethod's literal slot is overwritten,
+   log it.  Catches the actual moment the literal frame becomes
+   0x100000000.
 
-These need 2-4 hours of focused interactive debugging per item,
-not a session of grep+edit.
+Items 2 and 3 are tractable in a 2-4 hour session each.
 
 ## Status
 
