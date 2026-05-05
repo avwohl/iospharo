@@ -1970,8 +1970,10 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
                     "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
-                    "(headless mode; sub-3s defer hangs the startup chain — "
-                    "set PHARO_BENCH to opt out).\n",
+                    "(headless mode; sub-4s defer hangs the startup chain — "
+                    "see deferred.md A1.  Queue-compile (5d189328) reduced "
+                    "the symptom severity 50× but didn't fully fix it.  "
+                    "Set PHARO_BENCH to opt out.).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }

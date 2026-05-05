@@ -6888,6 +6888,13 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     // Symbols are interned, so identity comparison (Oop equality) suffices.
 
     if (!methodDict.isObject()) return Oop::nil();
+    // Defensive heap-range check.  Without it, a corrupt method dict oop
+    // (e.g., 0x200000000 — below the 0x300000000 heap base) passes the
+    // isObject tag check (tag=0) but asObjectPtr() returns an unmapped
+    // address → SIGSEGV in the slot read below.  Observed at low
+    // PHARO_JIT_DEFER values (deferred.md A1) — the IC/J2J cache holds
+    // a stale or wrong method-dict pointer and lookup walks into it.
+    if (!memory_.isValidPointer(methodDict)) return Oop::nil();
 
     ObjectHeader* mdHeader = methodDict.asObjectPtr();
     size_t mdSlotCount = mdHeader->slotCount();
@@ -6896,6 +6903,9 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     // Get values array (slot 1) — methodDict validated above
     Oop valuesArray = memory_.fetchPointerUnchecked(1, methodDict);
     if (!valuesArray.isObject() || valuesArray.rawBits() < 0x10000) return Oop::nil();
+    // Same heap-range check as the methodDict guard above — a corrupt
+    // valuesArray oop can be tag=0 with an out-of-heap address.
+    if (!memory_.isValidPointer(valuesArray)) return Oop::nil();
 
     ObjectHeader* valuesHeader = valuesArray.asObjectPtr();
     size_t valuesSize = valuesHeader->slotCount();
