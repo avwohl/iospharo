@@ -130,18 +130,86 @@ and validation.
   signature, suggesting a specific bit-pattern bug rather than
   generic memory corruption
 
-## Next session — focused P0 investigation
+## P0 investigation log
 
-1. Add a write-watch on `classTable_` entries during startup window
-   (track every write, log when value changes to a non-heap pointer).
-2. Add receiver-class diagnostic in send dispatch: when the `classOf`
-   result fails `isValidPointer`, dump the receiver's header bits,
-   classIndex, and the call stack.
-3. Run at DEFER=2 multiple times and collect data on:
-   - Which receiver triggers the bad-class path
-   - Whether the class table entry was ever good (was it overwritten?)
-   - What was happening just before (last GC?  last class registration?
-     last JIT compile?)
+### Session 2026-05-05 (initial probe)
 
-Once P0 is identified, P1-P4 priorities may shift again.  This
-document gets updated each session.
+Tried 3 instrumentation approaches:
+
+1. **`classOf` return-value diagnostic** (`PHARO_DIAG_BAD_CLASSOF=1`).
+   Captures cases where `classAtIndex(header->classIndex())` returns
+   an out-of-heap oop.  Result: **never fired** at DEFER=2 across
+   multiple runs.  So either (a) `classOf` isn't the source, or
+   (b) the inlined `classOf` body skips the path with the diagnostic.
+
+2. **`lookupMethod` entry guard** (`PHARO_DIAG_LOOKUP_BAD_CLASS=1`)
+   with volatile-load to defeat optimizer hoisting.  Result: **never
+   fired** at DEFER=2.  Crashes happened before the diagnostic ran
+   (different code paths reached the SIGSEGV first).
+
+3. **Crash-site profiling**: 5 runs each at DEFER=0..4, captured PC
+   offsets.  Crashes occur in DIFFERENT functions per run:
+   - `JITCompiler::compile +232` (entry path)
+   - `JITCompiler::compile +21568` (~end of compile)
+   - `JITCompiler::compile +21700` (~end of compile)
+   - `lookupMethod +652..+852` (inside loop)
+   - `lookupInMethodDict +236..+300` (slot access)
+
+   Each run hits a different one — confirms multiple corruption
+   paths active simultaneously, not one root bug.
+
+**Tactical fix shipped this session**: `JITCompiler::compile` now
+validates the input `compiledMethod` oop before `asObjectPtr()`.
+At low DEFER, the safe-point queue can hand us oops whose objects
+have been freed/moved — without the guard, the entry deref crashes
+in `methObj->slotAt(0)`.  Bails to `compilationsFailed_++` instead.
+
+**Doesn't reach goal**: 0/5 success at DEFER=0..3 (same as before),
+but reduces the variety of crash sites.  The +21700 crash (deep in
+compile, near codegen finalization) is the next thing to chase.
+
+### What WASN'T productive
+
+- Adding diagnostics that the compiler then optimizes away or that
+  never reach the failing path.
+- Chasing different crash PCs — they're symptoms, not causes.
+- Trying to deduce the root cause from the `0x100000000` bit pattern
+  alone without bisecting WHICH operation produces it.
+
+### What WOULD be productive (next session)
+
+The previous probes were too high-level.  Need lower-level tools:
+
+1. **lldb single-stepping** at the actual crash PC.  Get the
+   register state and walk back the data flow to find where
+   `0x100000000` enters the program.  Requires interactive debug
+   session; not productive via grep/edit cycles.
+
+2. **GC write-barrier instrumentation**: log every classTable write
+   AND every header.classIndex change for objects in old space.
+   Look for patterns where an object's classIndex shifts from a
+   small value to one that decodes to 0x100000000.
+
+3. **JIT compile output capture**: dump every method's compiled
+   machine code at low DEFER.  Look for class-oop immediates that
+   fall in the bit pattern leading to 0x100000000.  The single-bit
+   pattern strongly suggests an arithmetic mistake (shift by 32?
+   `1ULL << x` where x is wrong?), not memory corruption.
+
+4. **`PHARO_NO_QUEUE_COMPILE=1` at low DEFER**: does the legacy
+   inline-compile path crash at the same PCs?  If yes, the bug
+   is in the compile pipeline.  If no, the bug is in the queue
+   safe-point drain (timing-dependent invalidation).
+
+These need 2-4 hours of focused interactive debugging per item,
+not a session of grep+edit.
+
+## Status
+
+**P0 not solved.**  Investigation produced one shipped guard
+(`JITCompiler::compile` entry validation) and confirmed the bug
+is multi-source rather than single-source.  4s clamp stays.
+
+Next session: start with item (4) above (queue vs inline at low
+DEFER) — that's the cheapest investigation and would narrow scope
+significantly.

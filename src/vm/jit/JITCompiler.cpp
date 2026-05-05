@@ -1506,6 +1506,17 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return methodMap_.lookup(compiledMethod.rawBits());
     }
 
+    // Validate the method oop is in heap (deferred.md A1 P0).
+    // At low PHARO_JIT_DEFER, the queue can hand us methods whose
+    // oops have been freed/moved by the time the safe-point drain
+    // runs.  Without this guard, asObjectPtr() crashes on a stale
+    // pointer.
+    if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000
+        || !interp_.memory().isValidPointer(compiledMethod)) {
+        compilationsFailed_++;
+        return nullptr;
+    }
+
     // Get bytecode range from CompiledMethod
     ObjectHeader* methObj = compiledMethod.asObjectPtr();
     Oop headerOop = methObj->slotAt(0);
