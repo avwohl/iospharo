@@ -6862,9 +6862,15 @@ Oop Interpreter::lookupMethod(Oop selector, Oop classOop) {
     };
 
     while (!isNilOrEnd(currentClass) && currentClass.isObject() && depth < 100) {
+        // Heap-range check on class oop.  Without it, a corrupt class
+        // (e.g., from a stale IC entry whose class oop got promoted)
+        // dereferences into unmapped memory in methodDictOf below.
+        // (deferred.md A1 / project_a1_init_signal_dead_ends_2026_05_05.md)
+        if (!memory_.isValidPointer(currentClass)) return Oop::nil();
         Oop methodDict = methodDictOf(currentClass);
 
-        if (!isNilOrEnd(methodDict) && methodDict.isObject()) {
+        if (!isNilOrEnd(methodDict) && methodDict.isObject()
+            && memory_.isValidPointer(methodDict)) {
             Oop method = lookupInMethodDict(methodDict, selector);
             if (!isNilOrEnd(method) && method.isObject()) {
                 return method;

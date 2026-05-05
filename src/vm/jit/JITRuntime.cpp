@@ -1966,7 +1966,12 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             deferSteps = 0;
         }
         const int64_t kHeadlessFloor = 120000000; // ~4s
-        if (interp_ && interp_->isHeadless() && !g_debug.bench
+        // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for testing
+        // JIT correctness fixes that aim to make DEFER<4s safe
+        // (deferred.md A1).  Don't ship workloads with this set.
+        static const bool clampDisabled =
+            std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
+        if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
                     "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
