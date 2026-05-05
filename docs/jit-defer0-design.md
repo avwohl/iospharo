@@ -176,6 +176,64 @@ compile, near codegen finalization) is the next thing to chase.
 - Trying to deduce the root cause from the `0x100000000` bit pattern
   alone without bisecting WHICH operation produces it.
 
+### BISECTION RESULT — boundary at compile #13
+
+`JIT_MAX_COMPILE=N` bisection at PHARO_JIT_DEFER=0:
+
+```
+MAX=0..12:  5/5 success at JIT speed (eval = 1028457)
+MAX=13+:    hangs at startup
+```
+
+**Compile #13 = `#nextPut:`** (WriteStream>>nextPut: family)
+
+The first 12 methods that compile (all simple Object/Collection
+accessors) are JIT-compiled correctly.  Compile #13 is the FIRST
+one whose JIT'd code triggers the cascade.
+
+This required fixing JITCompiler::compile to honor `JIT_MAX_COMPILE`
+on the recompile path too (was only honored on noteMethodEntry path).
+
+```c
+// JITCompiler.cpp:1503 — added at function entry
+if (maxCompile >= 0 && (int)methodsCompiled_ >= maxCompile) {
+    compilationsFailed_++;
+    return nullptr;
+}
+```
+
+**Caveat**: excluding `nextPut:` alone via JIT_EXCLUDE doesn't fix
+the hang — other methods compiled in its slot also have buggy
+codegen.  There's a long tail of buggy compiles, not a single
+isolated bug.
+
+### What this tells us about the architecture
+
+The 4s clamp WORKS because by the time defer expires, all the
+buggy methods have already been "warmed up" in interp and
+classified differently / IC patched / etc.  The compile happens
+in a different state where the same code paths produce different
+output.
+
+Or, the system is past the windows where these buggy methods are
+called critically — they get compiled "after the fact" and don't
+affect correctness.
+
+### Concrete next-session investigation
+
+With the bisection narrowed to `#nextPut:` (compile #13):
+
+1. **Look at nextPut: bytecodes** — what's special about its
+   shape vs the 12 that compile fine?
+2. **Disassemble the JIT output for nextPut:** — is there a wrong
+   immediate, a missing barrier, an off-by-one?
+3. **Check what specifically goes wrong** — does the compiled
+   nextPut: get called and return wrong data, or does its
+   compilation itself corrupt some shared state (IC, megacache)?
+4. **Compare with same method compiled at DEFER=4** — if the JIT
+   output differs, find why (different IC state at compile time?
+   different inline-cache data?)
+
 ### Continuing the session — additional narrowing
 
 **Item 4 done** (`PHARO_NO_QUEUE_COMPILE=1` at low DEFER): same

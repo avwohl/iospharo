@@ -1501,6 +1501,19 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
 // ===== MAIN COMPILATION =====
 
 JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
+    // JIT_MAX_COMPILE: hard limit on total compilations + recompilations.
+    // The noteMethodEntry path also has this check but it doesn't catch
+    // the recompile path (maybeRecompileForOSR → recompile → compile).
+    // For bisection at low PHARO_JIT_DEFER (deferred.md A1 P0), enforce
+    // the limit here too.
+    {
+        static const int maxCompile = pharo::g_debug.jitMaxCompile;
+        if (maxCompile >= 0 && (int)methodsCompiled_ >= maxCompile) {
+            compilationsFailed_++;
+            return nullptr;
+        }
+    }
+
     // Check if already compiled (skip check during recompilation)
     if (!oldVersion && methodMap_.lookup(compiledMethod.rawBits())) {
         return methodMap_.lookup(compiledMethod.rawBits());
@@ -2670,7 +2683,7 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 pos = comma + 1;
             }
         }
-        if (methodsCompiled_ <= 5 || isKeysDo || isDebugTarget || isEnvDump) {
+        if (methodsCompiled_ <= 20 || isKeysDo || isDebugTarget || isEnvDump) {
             if (isEnvDump) {
                 fprintf(stderr, "[JIT-DUMP] methodOop=0x%llx numLits=%d bcLen=%zu\n",
                         (unsigned long long)compiledMethod.rawBits(),
