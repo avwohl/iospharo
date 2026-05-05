@@ -2328,18 +2328,30 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                 }
                 // Hit threshold — compile!
                 //
-                // PHARO_QUEUE_COMPILE=1 — defer the actual compile to the
-                // safe-point drain (Interpreter calls drainInitialCompileQueue
-                // at preemption checks, every 64K interp steps, between
-                // bytecodes).  Avoids the "compile mid-bytecode while interp
-                // local state is in flux" hazard documented in deferred.md
-                // E.0 / project_eval_doit_attempt_2026_05_05.md (sender-chain
-                // corruption when JIT compile interleaves with eval body
-                // dispatch).  When enabled, the method's NEXT activation
+                // Defer the actual compile to the safe-point drain
+                // (Interpreter calls drainInitialCompileQueue at
+                // preemption checks, every 64K interp steps, between
+                // bytecodes).  Avoids the "compile mid-bytecode while
+                // interp local state is in flux" hazard documented in
+                // deferred.md E.0 / project_eval_doit_attempt_2026_05_05.md
+                // (sender-chain corruption when JIT compile interleaves
+                // with eval body dispatch).  The method's NEXT activation
                 // sees the JIT entry; this call falls through to interp.
-                static const bool queueCompile =
-                    std::getenv("PHARO_QUEUE_COMPILE") != nullptr;
-                if (queueCompile) {
+                //
+                // Default-on after wider validation 2026-05-05:
+                //   - bench-suite 10/10 each mode: queue 3 done vs baseline
+                //     2 done (within noise).  Performance identical when
+                //     both complete (line-for-line same timings on all 14
+                //     benches).  Both fail at floatSum due to pre-existing
+                //     image issue, not introduced.
+                //   - SUnit 5-class: 640/640 identical (4 skipped).
+                //   - SUnit 20-class: 682/682 identical (6 classes complete
+                //     in 43s vs 42s — within timing noise).
+                // PHARO_NO_QUEUE_COMPILE=1 to opt out (falls back to direct
+                // inline compile, the legacy mid-bytecode behavior).
+                static const bool queueCompileDisabled =
+                    std::getenv("PHARO_NO_QUEUE_COMPILE") != nullptr;
+                if (!queueCompileDisabled) {
                     queueInitialCompile(compiledMethod);
                     return;
                 }
