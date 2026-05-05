@@ -673,7 +673,7 @@ converted harness:
 Preserved the `methodsFor:` shim at the top of the harness for
 belt-and-suspenders.
 
-### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **GATED 2026-04-28** (`13056933`)
+### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **GATED 2026-04-28** (`13056933`), partially improved (`5d189328` + `db8e914d` 2026-05-05)
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
 `PHARO_JIT_DEFER=0` (immediate JIT) hangs during the SessionManager
 startup chain — `[STARTUP-ST-FIRED]` never appears, the eval
@@ -687,9 +687,27 @@ still hangs, DEFER=3s lets startup finish.
 **Mitigation in `13056933`**: in headless mode (without
 `PHARO_BENCH`), `PHARO_JIT_DEFER < 4s` is silently clamped to 4s
 with a warning.  Bench mode bypasses the clamp because
-`executeFromContext` doesn't use the startup.st path.  The
-underlying scheduling issue remains a deeper investigation but
-is no longer reachable by the obvious knob.
+`executeFromContext` doesn't use the startup.st path.
+
+**Partial improvement 2026-05-05** (`5d189328` queue-compile
+default-on + `db8e914d` lookupInMethodDict guards): with the
+clamp temporarily bypassed via PHARO_NO_DEFER_CLAMP=1 (test-only),
+queue-compile let interp progress 50× further before hanging
+(~85M steps stuck vs the original ~1.7M).  Each lower DEFER value
+exposes a different corruption:
+  DEFER=4: works (5s, result 1028457)
+  DEFER=3: SIGSEGV in lookupInMethodDict +236/+300 (corrupt IC
+           cache returns out-of-heap method dict oop — guards
+           catch one offset, the other's in key-array access)
+  DEFER=2: SIGSEGV in JITCompiler::compile +21700
+  DEFER=1: hangs ~85M steps (Morphic UI render cascade)
+  DEFER=0: hangs ~85M steps
+
+The lookupInMethodDict guards prevent one specific SIGSEGV but
+the underlying IC corruption (which produces the bad oop in the
+first place) remains.  Real fix needs a non-step-count "image
+initialization complete" signal — same architectural problem as
+project_jit_defer_queue_2026_05_05.md.  4s clamp still load-bearing.
 
 Earlier guess that `Context>>copyTo:` recursing at depth 4090+
 was the trigger turned out to be downstream of the same boot-chain
