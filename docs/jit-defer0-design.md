@@ -218,14 +218,39 @@ key:) lets 718 OTHER methods compile.  Still hangs.
 **Conclusion**: the bug is NOT in any specific method's JIT
 codegen.  It's an AGGREGATE state issue — once compile count
 crosses ~12 during startup, some shared resource breaks.
-Candidates:
-- Code zone allocation pattern hits a boundary
-- IC zone fills past a threshold
-- An internal counter overflows
-- A specific JIT compile triggers OS-level memory remapping
-  (W^X transition?) that doesn't compose with subsequent compiles
-- The JIT compile work + startup process scheduling crosses some
-  invariant that only holds when defer keeps compile inactive
+
+**Stats comparison** (MAX=12 vs MAX=20):
+```
+                    MAX=12       MAX=20
+Code zone           102 KB       193 KB     (+89 KB, modest)
+IC: hits/total      91/92        95/96      (similar)
+J2J-r: chains/tot   0/11         0/11       (same)
+J2J-a: hits/tot     1/80         5/84       (+4 successful J2J activations)
+J2J-d: direct       2            2          (same)
+J2J-s: stencil      1/2          1/2        (same)
+methodMap tracked   374          374        (same — count of seen oops)
+```
+
+The notable difference is J2J-a (J2J activations succeeded): 1
+at MAX=12, 5 at MAX=20.  When more methods are JIT-compiled, more
+of them become reachable as J2J callees from already-compiled
+callers.
+
+**But disabling J2J entirely (PHARO_NO_J2J=1) STILL hangs at
+DEFER=0.**  So J2J transitions aren't the unique culprit either.
+
+Candidates remaining:
+- Code zone allocation hits a boundary at ~150 KB
+  (JIT page transitions, mprotect activity)
+- A specific JIT compile triggers OS-level state change (W^X
+  transition?) that doesn't compose with subsequent compiles
+- Aggregate IC patches accumulate past a threshold for some
+  global cache (megaCache, methodCache_)
+- The JIT compile work + startup process scheduling crosses
+  some invariant that only holds when defer keeps compile inactive
+- Something in `applyICSpecialization` triggers when enough sites
+  have IC data — maybe a specific specialization reaches a buggy
+  pattern
 
 ### What this tells us about the architecture
 
