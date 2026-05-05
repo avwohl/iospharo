@@ -1547,24 +1547,29 @@ changes; image-side issues to propose upstream.
    So mergeFirst (49K calls during sort) never compiles in time —
    sort gets ~0% JIT speedup vs interp.
 
-   The fix isn't trivial: removing `noteMethodEntry`'s early-return
-   during defer — even WITHOUT triggering compiles — hangs the
-   bench (4 attempts in
-   `memory/project_mergeFirst_recompile_2026_05_04.md`).  JIT_DEFER
-   does more than gate compile; some side effect of the early-return
-   is load-bearing for SessionManager startup (deferred.md A1's
-   "DEFER < 3s deterministically hangs startup").
+   **Architectural piece SHIPPED 2026-05-05** in `5d189328` — see
+   `memory/project_jit_defer_queue_2026_05_05.md`.  Initial JIT
+   compile now goes through a 256-slot safe-point queue
+   (`PHARO_QUEUE_COMPILE=1`), drained between bytecodes alongside
+   the existing recompile queue.  Compile no longer interleaves
+   with mid-bytecode interp state — the sender-chain corruption
+   that broke 7 prior attempts is gone.  Eval-mode `PHARO_DEFER_LIFT=1`
+   (requires queue-compile) lifts defer on `#evaluate:` /
+   `#evaluateDoIt:` entry; eval-mode benches now complete (vs
+   100% hang previously).
 
-   Real fix path: trace what propagates when noteMethodEntry no
-   longer early-returns during defer, then refactor JIT_DEFER to
-   per-method opt-in (skip compile for specific startup-chain
-   methods) instead of global step-gated switch.  Then mergeFirst-
-   class hot methods can compile mid-bench while startup methods
-   stay in interp.  Estimated 2-3 days focused investigation.
+   Bench-suite impact under PHARO_QUEUE_COMPILE=1 alone (no
+   defer-lift): sieve 7 ms (vs 142 ms baseline, 20×), factorial
+   23 ms (vs 200 ms, 9×); other benches at parity.  Both opt-in
+   until wider validation.
 
-   Workload impact: closes the sort 100K vs Cog gap (313 vs ~100 ms,
-   3×).  Maybe also helps other short-bench workloads that don't
-   amortize the defer.
+   Remaining: defer-lift exposes intermittent "Improper store
+   into indexable object" — separate JIT codegen bug in at:put:
+   path triggered by post-lift compile order.  Default-on for
+   defer-lift blocked on resolving that.  Sort 50K (the original
+   target) doesn't benefit yet — that bench uses SessionManager
+   startUp:, not eval-DoIt; needs detection extension to first
+   user-installed startUp: handler entry.
 
 1. **Architectural T1/T2 interaction (§1.3).**  T2 intercepting
    methods still breaks T1's inline-IC warmup in the non-coexist
