@@ -404,6 +404,31 @@ DEFER=0 hangs.  The remaining bug class is:
 
 Without lldb / sanitizers, can't isolate further.
 
+### IC integrity check (added then removed this session)
+
+Added a post-compile check that walks every JITMethod's IC zone
+and flags entries whose key isn't a tagged-immediate marker
+(bit 31 set) or a small classIndex (< 1<<22).  Goal: catch IC
+corruption AT the write moment.
+
+**Result: zero IC-CORRUPT events** at PHARO_JIT_DEFER=0 +
+JIT_MAX_COMPILE=20.  All IC keys remain valid throughout the
+broken state.
+
+So the bug ISN'T in IC entries.  Combined with the methodMap
+size (8192 capacity, no rehash needed for 13 entries), the
+remaining suspects are:
+
+- Code zone allocation pattern at compile #13 (page boundary?
+  W^X transition?)
+- Process scheduling state corrupted by compile work timing
+- A specific JIT compile WRITE pattern that affects shared
+  state visible to interp dispatch (not IC, not classTable, not
+  methodMap)
+
+Without lldb to single-step the 13th compile, can't narrow
+beyond this.
+
 ### What this tells us about the architecture
 
 The 4s clamp WORKS because by the time defer expires, all the
