@@ -1529,6 +1529,26 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         compilationsFailed_++;
         return nullptr;
     }
+    // Reject nil/true/false specials (deferred.md A1 P0,
+    // lldb-confirmed 2026-05-06): if the queue has a stale oop that
+    // happens to be nil = 0x300000000, the early checks above pass
+    // (nil IS a valid object pointer in heap range), then the IC
+    // setup loop later writes through icBase = NULL+offset → crash
+    // at JITCompiler.cpp:2402.  Catch it here.  Also validate that
+    // the method's header is a SmallInteger — every CompiledMethod
+    // has a SmI header, so this filters non-method oops cheaply.
+    {
+        Oop nilObj = interp_.memory().nil();
+        if (compiledMethod.rawBits() == nilObj.rawBits()) {
+            compilationsFailed_++;
+            return nullptr;
+        }
+        ObjectHeader* h = compiledMethod.asObjectPtr();
+        if (h->slotCount() < 1 || !h->slotAt(0).isSmallInteger()) {
+            compilationsFailed_++;
+            return nullptr;
+        }
+    }
 
     // Get bytecode range from CompiledMethod
     ObjectHeader* methObj = compiledMethod.asObjectPtr();
@@ -2072,12 +2092,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // Count send sites for inline cache data allocation.
     // sendInlineMonoJ2J also reads icData[0/1/2] from operand2Ptr, so it
     // needs an IC slot allocated and operand2Ptr populated below.
+    //
+    // CRITICAL: this list MUST match the IC-setup loop below (line ~2386
+    // currently).  When stencil_sendInlineMultiSlot was added to the
+    // setup loop without updating this counter, methods with multi-slot
+    // sends got numSendSites=0 → icBuffer not allocated (NULL) → setup
+    // loop writes through NULL+offset → SIGSEGV at 0x90 in the recompile
+    // path.  Root cause of deferred.md A1 P0, lldb-confirmed 2026-05-06.
     uint16_t numSendSites = 0;
     for (auto& bc : decoded) {
         auto sid = static_cast<StencilID>(bc.stencilIdx);
         if (sid == StencilID::stencil_sendJ2J ||
             sid == StencilID::stencil_sendInlineMonoJ2J ||
-            sid == StencilID::stencil_sendInlineReturnsLiteral)
+            sid == StencilID::stencil_sendInlineReturnsLiteral ||
+            sid == StencilID::stencil_sendInlineMultiSlot)
             numSendSites++;
     }
 
@@ -2367,6 +2395,25 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 sid == StencilID::stencil_sendInlineMonoJ2J ||
                 sid == StencilID::stencil_sendInlineReturnsLiteral ||
                 sid == StencilID::stencil_sendInlineMultiSlot) {
+                // Critical defensive check (deferred.md A1 P0): icBufferBase
+                // can be NULL if calloc failed at allocate() time.  Without
+                // this guard, icBase = NULL+offset and the slot writes
+                // below SIGSEGV at address 0x90.
+                if (!icBufferBase) {
+                    static int n = 0;
+                    if (++n <= 5) {
+                        fprintf(stderr,
+                                "[JIT-FATAL-NULL-IC] compile: icBufferBase NULL "
+                                "but sendJ2J site present (numSendSites=%u "
+                                "method=0x%llx is_recompile=%d)\n",
+                                numSendSites,
+                                (unsigned long long)compiledMethod.rawBits(),
+                                oldVersion != nullptr);
+                    }
+                    compilationsFailed_++;
+                    zone_.freeMethod(jitMethod);
+                    return nullptr;
+                }
                 uint8_t* icBase = icBufferBase + sendIdx * IC_BYTES_PER_SITE;
                 bc.operand2Ptr = reinterpret_cast<uint64_t>(icBase);
                 siteOffsets.push_back(static_cast<uint16_t>(bc.bcOffset));
