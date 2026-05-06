@@ -1383,20 +1383,24 @@ void Interpreter::interpret() {
         if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
         if (__builtin_expect(traceSpCorrupt_, 0)) { \
             uint64_t _spB = (uint64_t)stackPointer_; \
-            if ((_spB & 7) == 1) { \
+            uint64_t _fpB = (uint64_t)framePointer_; \
+            if ((_spB & 7) == 1 || (_fpB & 7) == 1) { \
                 static int _n = 0; \
                 if (_n++ < 10) { \
-                    fprintf(stderr, "[SP-CORRUPT] BEFORE-NEXT lastBC=0x%02x sp=0x%llx " \
-                            "(SmI %lld) method=#%s fd=%zu\n", \
+                    fprintf(stderr, "[FP-CORRUPT] BEFORE-NEXT lastBC=0x%02x " \
+                            "sp=0x%llx fp=0x%llx method=#%s fd=%zu\n", \
                             bytecode, (unsigned long long)_spB, \
-                            (long long)((int64_t)_spB >> 3), \
+                            (unsigned long long)_fpB, \
                             memory_.selectorOf(method_).c_str(), frameDepth_); \
-                    fprintf(stderr, "[SP-CORRUPT] recent: "); \
+                    fprintf(stderr, "[FP-CORRUPT] recent: "); \
                     for (int _j = 0; _j < 12; _j++) { \
                         int _idx = (int)(recentBytecodeIdx_ - 1 - _j) & 0xFF; \
                         fprintf(stderr, "0x%02x ", (unsigned)recentBytecodes_[_idx]); \
                     } \
                     fprintf(stderr, "\n"); \
+                    static const bool corruptTrap = \
+                        std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr; \
+                    if (corruptTrap) __builtin_debugtrap(); \
                 } \
             } \
         } \
@@ -8899,13 +8903,14 @@ bool Interpreter::pushFrame(Oop method, int argCount) {
     // produced by pushFrame's FP computation.
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
-        if ((spB & 7) == 1) {
+        uint64_t fpB = (uint64_t)framePointer_;
+        if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
             static int n = 0;
             if (n++ < 5) {
                 fprintf(stderr,
-                    "[SP-CORRUPT-pushFrame] entry sp=0x%llx callee=#%s "
-                    "caller=#%s argCount=%d fd=%zu\n",
-                    (unsigned long long)spB,
+                    "[SP-CORRUPT-pushFrame] entry sp=0x%llx fp=0x%llx "
+                    "callee=#%s caller=#%s argCount=%d fd=%zu\n",
+                    (unsigned long long)spB, (unsigned long long)fpB,
                     memory_.selectorOf(method).c_str(),
                     memory_.selectorOf(method_).c_str(),
                     argCount, frameDepth_);
@@ -9232,7 +9237,6 @@ bool Interpreter::popFrame() {
                     got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL,
                     (void*)frame.savedFP,
                     memory_.selectorOf(frame.savedMethod).c_str());
-                // Dump all savedFrames_ to see history
                 fprintf(stderr, "  savedFrames_:\n");
                 for (size_t f = 0; f <= frameDepth_ + 1 && f < 8; f++) {
                     fprintf(stderr,
@@ -9241,6 +9245,14 @@ bool Interpreter::popFrame() {
                         memory_.selectorOf(savedFrames_[f].savedMethod).c_str(),
                         (void*)savedFrames_[f].savedIP);
                 }
+            }
+            // PHARO_SP_CORRUPT_TRAP=1: trigger SIGTRAP when corruption
+            // detected, so lldb (if attached) catches the exact moment
+            // and can set a hardware watchpoint to find the writer.
+            static const bool corruptTrap =
+                std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr;
+            if (corruptTrap) {
+                __builtin_debugtrap();
             }
         }
     }
