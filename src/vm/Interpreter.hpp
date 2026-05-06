@@ -69,6 +69,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <dlfcn.h>
 #include <csetjmp>
 #include <cstdint>
 #include <cstdio>
@@ -371,12 +372,25 @@ public:
                          (spB >= ps && spB < pe);
             }
             if (__builtin_expect(!inArr && !inHeap, 0)) {
+                void* ra0 = __builtin_return_address(0);
+                void* ra1 = __builtin_extract_return_addr(__builtin_return_address(1));
+                Dl_info info0{}, info1{};
+                int got0 = dladdr(ra0, &info0);
+                int got1 = dladdr(ra1, &info1);
                 fprintf(stderr, "[VM] push() with CORRUPT stackPointer_=%p "
                         "(not in stack_[%p..%p) and not in any heap region) "
                         "fd=%zu method=#%s\n",
                         (void*)spB, (void*)arrBase, (void*)arrEnd,
                         frameDepth_,
                         memory_.selectorOf(method_).c_str());
+                fprintf(stderr, "[VM]   ra0=%p sym=%s+%lld\n",
+                        ra0,
+                        got0 && info0.dli_sname ? info0.dli_sname : "?",
+                        got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL);
+                fprintf(stderr, "[VM]   ra1=%p sym=%s+%lld\n",
+                        ra1,
+                        got1 && info1.dli_sname ? info1.dli_sname : "?",
+                        got1 ? (long long)((uint8_t*)ra1 - (uint8_t*)info1.dli_saddr) : 0LL);
                 // Decode SP to see if it looks like a SmI / nil / bool
                 uint64_t spBits = (uint64_t)spB;
                 fprintf(stderr, "[VM]   SP raw=0x%llx tag=%d ",
@@ -1217,6 +1231,32 @@ public:
         Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
         int nArgs = state->sendArgCount;
 
+        // 2026-05-06 A1 trace: detect SP-tag corruption in JIT state at
+        // pushFrameForJIT entry — `state->sp` here is the JIT-side SP
+        // that the stencil left behind.  If a stencil wrote a SmI-encoded
+        // value (e.g., a primitive return) into state->sp by mistake,
+        // pushFrameForJIT propagates it into stackPointer_ and then into
+        // framePointer_ via fp = sp - (nArgs+1).
+        if (__builtin_expect(traceSpCorrupt_, 0)) {
+            uint64_t spB = (uint64_t)state->sp;
+            if ((spB & 7) == 1) {
+                static int n = 0;
+                if (n++ < 5) {
+                    fprintf(stderr,
+                        "[SP-CORRUPT-pushFrameForJIT] state->sp=0x%llx "
+                        "(SmI %lld) callee=#%s caller=#%s nArgs=%d fd=%zu "
+                        "state->ip=%p state->method=0x%llx\n",
+                        (unsigned long long)spB,
+                        (long long)((int64_t)spB >> 3),
+                        memory_.selectorOf(targetMethod).c_str(),
+                        memory_.selectorOf(method_).c_str(),
+                        nArgs, frameDepth_,
+                        (void*)state->ip,
+                        (unsigned long long)state->method.rawBits());
+                }
+            }
+        }
+
         // Sync interpreter state from JITState (the stencil has been modifying sp)
         stackPointer_ = state->sp;
         instructionPointer_ = state->ip;
@@ -1292,6 +1332,36 @@ public:
     /// Minimal frame pop for J2J fast path (ExitReturn).
     /// Only decrements frameDepth and restores GC-critical interpreter fields.
     /// Caller is responsible for restoring JITState fields from C locals.
+    // 2026-05-06 A1 diagnostic helper: restores stackPointer_ from a JIT
+    // exit's state.sp.  Logs the call site (return address) when the
+    // restored SP has SmI tag bits — proves WHICH JIT exit is leaking
+    // a SmI-encoded value into stackPointer_.  Gated on
+    // PHARO_TRACE_SP_CORRUPT=1 (zero overhead in production).
+    inline void restoreSpFromState(jit::JITState& state, int siteId) {
+        stackPointer_ = state.sp;
+        if (__builtin_expect(traceSpCorrupt_, 0)) {
+            uint64_t spB = (uint64_t)stackPointer_;
+            if ((spB & 7) == 1) {
+                static int n = 0;
+                if (n++ < 8) {
+                    void* ra = __builtin_return_address(0);
+                    Dl_info info{};
+                    int got = dladdr(ra, &info);
+                    fprintf(stderr,
+                        "[SP-CORRUPT-restore] siteId=%d sp=0x%llx "
+                        "(SmI %lld) caller=%s+%lld method=#%s fd=%zu "
+                        "state.sp=%p\n",
+                        siteId, (unsigned long long)spB,
+                        (long long)((int64_t)spB >> 3),
+                        got && info.dli_sname ? info.dli_sname : "?",
+                        got ? (long long)((uint8_t*)ra - (uint8_t*)info.dli_saddr) : 0LL,
+                        memory_.selectorOf(method_).c_str(),
+                        frameDepth_, (void*)state.sp);
+                }
+            }
+        }
+    }
+
     inline void j2jPopFrame(Oop callerMethod, Oop callerRecv) {
         --frameDepth_;
         SavedFrame& frame = savedFrames_[frameDepth_];

@@ -6370,6 +6370,22 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        if ((spB & 7) == 1) {
+            static int n = 0;
+            if (n++ < 5) {
+                fprintf(stderr,
+                    "[SP-CORRUPT-sendSelector] entry sp=0x%llx sel=#%s "
+                    "argc=%d caller=#%s fd=%zu\n",
+                    (unsigned long long)spB,
+                    memory_.selectorOf(selector).c_str(),
+                    argCount,
+                    memory_.selectorOf(method_).c_str(),
+                    frameDepth_);
+            }
+        }
+    }
     Oop rcvr = stackValue(argCount);
 
     // PHARO_DETECT_ERRORS=1: catch the moment any "this is an error
@@ -8878,6 +8894,24 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    // 2026-05-06 A1 trace: detect SP-tag corruption AT pushFrame entry —
+    // tells us whether the bug is before pushFrame (in send dispatch) or
+    // produced by pushFrame's FP computation.
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        if ((spB & 7) == 1) {
+            static int n = 0;
+            if (n++ < 5) {
+                fprintf(stderr,
+                    "[SP-CORRUPT-pushFrame] entry sp=0x%llx callee=#%s "
+                    "caller=#%s argCount=%d fd=%zu\n",
+                    (unsigned long long)spB,
+                    memory_.selectorOf(method).c_str(),
+                    memory_.selectorOf(method_).c_str(),
+                    argCount, frameDepth_);
+            }
+        }
+    }
     // Graceful stack overflow: StackOverflowLimit < MaxFrameDepth, so this
     // catches both infinite recursion (soft) and hard overflow.
     if (__builtin_expect(frameDepth_ >= StackOverflowLimit, 0)) {
@@ -9179,6 +9213,37 @@ bool Interpreter::popFrame() {
     SavedFrame& frame = savedFrames_[frameDepth_];
 
     // Reset stack to frame pointer (discards temps and locals)
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t fpB = (uint64_t)framePointer_;
+        if ((fpB & 7) == 1) {
+            static int n = 0;
+            if (n++ < 5) {
+                void* ra0 = __builtin_return_address(0);
+                Dl_info info0{};
+                int got0 = dladdr(ra0, &info0);
+                fprintf(stderr,
+                    "[SP-CORRUPT-popFrame] fp=0x%llx (SmI %lld) → sp "
+                    "method=#%s fd=%zu  caller=%s+%lld\n"
+                    "  savedFP=%p savedMethod=#%s\n",
+                    (unsigned long long)fpB,
+                    (long long)((int64_t)fpB >> 3),
+                    memory_.selectorOf(method_).c_str(), frameDepth_,
+                    got0 && info0.dli_sname ? info0.dli_sname : "?",
+                    got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL,
+                    (void*)frame.savedFP,
+                    memory_.selectorOf(frame.savedMethod).c_str());
+                // Dump all savedFrames_ to see history
+                fprintf(stderr, "  savedFrames_:\n");
+                for (size_t f = 0; f <= frameDepth_ + 1 && f < 8; f++) {
+                    fprintf(stderr,
+                        "    [%zu] savedFP=%p savedMethod=#%s savedIP=%p\n",
+                        f, (void*)savedFrames_[f].savedFP,
+                        memory_.selectorOf(savedFrames_[f].savedMethod).c_str(),
+                        (void*)savedFrames_[f].savedIP);
+                }
+            }
+        }
+    }
     stackPointer_ = framePointer_;
 
     // Restore saved execution state
@@ -13364,6 +13429,20 @@ bool Interpreter::executeFromContext(Oop context) {
 // ===== PRIMITIVE SUPPORT =====
 
 void Interpreter::primitiveSuccess(Oop result) {
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        if ((spB & 7) == 1) {
+            static int n = 0;
+            if (n++ < 5) {
+                fprintf(stderr,
+                    "[SP-CORRUPT-primSuccess] entry sp=0x%llx argCount_=%d "
+                    "result=0x%llx method=#%s fd=%zu\n",
+                    (unsigned long long)spB, argCount_,
+                    (unsigned long long)result.rawBits(),
+                    memory_.selectorOf(method_).c_str(), frameDepth_);
+            }
+        }
+    }
     primitiveFailed_ = false;
     // Pop args and receiver, push result
     popN(argCount_ + 1);
@@ -13711,6 +13790,19 @@ void Interpreter::initializeNamedPrimitives() {
 }
 
 PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) {
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        if ((spB & 7) == 1) {
+            static int n = 0;
+            if (n++ < 5) {
+                fprintf(stderr,
+                    "[SP-CORRUPT-executePrimitive] entry sp=0x%llx prim=%d "
+                    "argc=%d method=#%s fd=%zu\n",
+                    (unsigned long long)spB, primitiveIndex, argCount,
+                    memory_.selectorOf(method_).c_str(), frameDepth_);
+            }
+        }
+    }
     // Legacy prim 63 (basicAt:put:) counter — gated on PHARO_P63_TRACE.
     static const bool p63Trace = std::getenv("PHARO_P63_TRACE") != nullptr;
     if (__builtin_expect(p63Trace, 0) && primitiveIndex == 63) {
@@ -13784,7 +13876,26 @@ PrimitiveResult Interpreter::executePrimitive(int primitiveIndex, int argCount) 
     {
         PrimitiveFunc prim = primitiveTable_[primitiveIndex];
         if (prim) {
+            uint64_t spBefore = (uint64_t)stackPointer_;
             PrimitiveResult result = (this->*prim)(argCount);
+            if (__builtin_expect(traceSpCorrupt_, 0)) {
+                uint64_t spAfter = (uint64_t)stackPointer_;
+                if ((spAfter & 7) == 1 && (spBefore & 7) != 1) {
+                    static int n = 0;
+                    if (n++ < 5) {
+                        fprintf(stderr,
+                            "[SP-CORRUPT-primReturn] prim=%d argc=%d "
+                            "spBefore=0x%llx spAfter=0x%llx (=SmI %lld) "
+                            "method=#%s fd=%zu result=%d\n",
+                            primitiveIndex, argCount,
+                            (unsigned long long)spBefore,
+                            (unsigned long long)spAfter,
+                            (long long)((int64_t)spAfter >> 3),
+                            memory_.selectorOf(method_).c_str(),
+                            frameDepth_, (int)result);
+                    }
+                }
+            }
             if (result == PrimitiveResult::Success) {
                 lastPrimitiveIndex_ = primitiveIndex;
             }
@@ -15195,9 +15306,9 @@ void Interpreter::tryJITResumeInCaller() {
                 method_ = state.method;
                 homeMethod_ = state.method;
                 receiver_ = state.receiver;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 instructionPointer_ = state.ip;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
@@ -15285,7 +15396,7 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitSend: {
             // JIT hit a send. Let interpreter handle it.
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             jitICMisses_++;
 
             // Patch IC on miss if any slot is empty
@@ -15330,7 +15441,7 @@ void Interpreter::tryJITResumeInCaller() {
                 // Stale IC — fall through to normal send
                 jitICStale_++;
                 instructionPointer_ = state.ip;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 pendingICPatch_ = nullptr;
                 inJITResume_ = false;
                 return;
@@ -15338,7 +15449,7 @@ void Interpreter::tryJITResumeInCaller() {
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
@@ -15397,7 +15508,7 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitBlockCreate: {
             // PushFullBlock during resume: create closure, then continue resume loop
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             uint64_t packed = state.cachedTarget.rawBits();
             int litIndex = static_cast<int>(packed & 0xFFFF);
@@ -15414,7 +15525,7 @@ void Interpreter::tryJITResumeInCaller() {
         case jit::ExitArrayCreate: {
             // PushArray during resume: allocate array, then continue resume loop
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             int desc = static_cast<int>(state.cachedTarget.rawBits());
             int arraySize = desc & 0x7F;
@@ -15454,7 +15565,7 @@ void Interpreter::tryJITResumeInCaller() {
                 }
             }
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             inJITResume_ = false;
             return;
 
@@ -15462,7 +15573,7 @@ void Interpreter::tryJITResumeInCaller() {
             // Backward-jump yield during resume — charge countdown and continue
             jitYieldCount_++;
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
             int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
             int charge = 1000 * numBC;
@@ -15483,14 +15594,14 @@ void Interpreter::tryJITResumeInCaller() {
                 cached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 // Stale IC entry — sync state and bail to interpreter
                 instructionPointer_ = state.ip;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 inJITResume_ = false;
                 return;
             }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;  // Already past the send
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             jitRuntime_.noteMethodEntry(cached);
 
@@ -16327,6 +16438,22 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    if (__builtin_expect(traceSpCorrupt_, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        uint64_t fpB = (uint64_t)framePointer_;
+        if (((spB & 7) == 1) || ((fpB & 7) == 1)) {
+            static int n = 0;
+            if (n++ < 5) {
+                fprintf(stderr,
+                    "[SP-CORRUPT-tryJIT-entry] sp=0x%llx fp=0x%llx "
+                    "callee=#%s caller=#%s argCount=%d fd=%zu\n",
+                    (unsigned long long)spB, (unsigned long long)fpB,
+                    memory_.selectorOf(method).c_str(),
+                    memory_.selectorOf(method_).c_str(),
+                    argCount, frameDepth_);
+            }
+        }
+    }
     if (!jitRuntime_.isInitialized()) return false;
     // Match initializeJIT's gate: PHARO_NO_JIT=0 means "JIT on",
     // so noJit only blocks when the env var is set to a non-"0" value.
@@ -16925,9 +17052,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             method_ = state.method;
             homeMethod_ = state.method;
             receiver_ = state.receiver;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             instructionPointer_ = state.ip;
-            framePointer_ = state.tempBase - 1;
+            framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             argCount_ = state.argCount;
             // Set bytecodeEnd_ from the innermost frame's method.
             // Without this, fetchByte() sees stale bytecodeEnd_ from the
@@ -17075,9 +17202,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         method = state.method;
         homeMethod_ = state.method;
         receiver_ = state.receiver;
-        stackPointer_ = state.sp;
+        stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         instructionPointer_ = state.ip;
-        framePointer_ = state.tempBase - 1;
+        framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         argCount_ = state.argCount;
         {
             ObjectHeader* mObj = state.method.asObjectPtr();
@@ -17269,9 +17396,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     method = state.method;
                     homeMethod_ = state.method;
                     receiver_ = state.receiver;
-                    stackPointer_ = state.sp;
+                    stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                     instructionPointer_ = state.ip;
-                    framePointer_ = state.tempBase - 1;
+                    framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                     argCount_ = state.argCount;
                     {
                         ObjectHeader* mObj = state.method.asObjectPtr();
@@ -17355,7 +17482,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             jitICMisses_++;
 
             // DIAGNOSTIC: distinguish "IC had room" vs "IC full" vs
@@ -17494,13 +17621,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     }
                 }
                 instructionPointer_ = state.ip;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 return false;
             }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             // Upgrade IC entry to J2J if target is now JIT-compiled
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
@@ -17513,7 +17640,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitBlockCreate: {
             // PushFullBlock exit: create the closure, then resume JIT.
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             // Extract block parameters from cachedTarget
             uint64_t packed = state.cachedTarget.rawBits();
@@ -17564,7 +17691,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitArrayCreate: {
             // PushArray exit: allocate array, then resume JIT.
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             int desc = static_cast<int>(state.cachedTarget.rawBits());
             int arraySize = desc & 0x7F;
@@ -17636,7 +17763,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 }
             }
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             return false;
         }
 
@@ -17649,13 +17776,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (!j2jCached.isObject() || j2jCached.rawBits() < 0x10000 ||
                 j2jCached.asObjectPtr()->classIndex() != compiledMethodClassIndex_) {
                 instructionPointer_ = state.ip;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 return false;
             }
             jitICHits_++;
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             chainTarget = j2jCached;
             jitRuntime_.noteMethodEntry(j2jCached);
             ipAlreadyAdvanced = true;
@@ -17668,7 +17795,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // yieldCountdown, and resume JIT — or bail if scheduler needs to run.
             jitYieldCount_++;
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             {
                 // Each yield = ~1000 backward jumps. Estimate bytecodes executed.
                 int numBC = state.jitMethod ? state.jitMethod->numBytecodes : 20;
@@ -17746,9 +17873,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 method = state.method;
                 homeMethod_ = state.method;
                 receiver_ = state.receiver;
-                stackPointer_ = state.sp;
+                stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 instructionPointer_ = state.ip;
-                framePointer_ = state.tempBase - 1;
+                framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                 argCount_ = state.argCount;
                 {
                     ObjectHeader* mObj = state.method.asObjectPtr();
@@ -17975,7 +18102,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             state.sp -= nArgs;
 
                             // Sync interpreter state for resume
-                            stackPointer_ = state.sp;
+                            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
                             // Use precomputed resume to skip tryResume overhead
                             if (__builtin_expect(savedResumeEntry != nullptr, 1)) {
@@ -18032,9 +18159,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                     method = state.method;
                                     homeMethod_ = state.method;
                                     receiver_ = state.receiver;
-                                    stackPointer_ = state.sp;
+                                    stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                                     instructionPointer_ = state.ip;
-                                    framePointer_ = state.tempBase - 1;
+                                    framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                                     argCount_ = state.argCount;
                                     {
                                         ObjectHeader* mObj = state.method.asObjectPtr();
@@ -18145,9 +18272,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         method_ = exitMethod;
                         homeMethod_ = exitMethod;
                         receiver_ = state.receiver;
-                        stackPointer_ = state.sp;
+                        stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                         instructionPointer_ = state.ip;
-                        framePointer_ = state.tempBase - 1;
+                        framePointer_ = state.tempBase - 1; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _fpB=(uint64_t)framePointer_; if((_fpB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-fpFromTb] fp=0x%llx state.tb=%p caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_fpB,(void*)state.tempBase,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
                         argCount_ = (state.j2jDepth > 0) ? state.argCount : nArgs;
                         if (exitMethod.isObject() && exitMethod.rawBits() != 0) {
                             ObjectHeader* tMO = exitMethod.asObjectPtr();
@@ -18359,7 +18486,7 @@ jit_loop_exit:
         } else {
             // Non-return exit — sync callee's state so interpreter can continue.
             instructionPointer_ = state.ip;
-            stackPointer_ = state.sp;
+            stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         }
         return true;  // Interpreter dispatch loop handles the rest
     }
@@ -18401,20 +18528,20 @@ jit_loop_exit:
     case jit::ExitArithOverflow:
         // Sync interpreter state from JIT and let interpreter handle
         instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
+        stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         return false;
 
     case jit::ExitBlockCreate:
     case jit::ExitArrayCreate:
         // These exits need interpreter handling; sync state
         instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
+        stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         return false;
 
     case jit::ExitYield:
         // Yield after chain limit / countdown expired — let interpreter run
         instructionPointer_ = state.ip;
-        stackPointer_ = state.sp;
+        stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         return false;
 
     default:
