@@ -9237,18 +9237,6 @@ bool Interpreter::popFrame() {
                     got0 ? (long long)((uint8_t*)ra0 - (uint8_t*)info0.dli_saddr) : 0LL,
                     (void*)frame.savedFP,
                     memory_.selectorOf(frame.savedMethod).c_str());
-                // Stack-overflow hypothesis: if JIT pushed past stack_end,
-                // the 3 fields SP/SB/FP just past stack_ get clobbered in
-                // sequence.  Dump all three to verify.
-                fprintf(stderr,
-                    "  PROBE: stackPointer_=%p stackBase_=%p framePointer_=%p\n",
-                    (void*)stackPointer_, (void*)stackBase_,
-                    (void*)framePointer_);
-                fprintf(stderr,
-                    "  PROBE: stack_.data()=%p arr_end=%p (= &stackPointer_=%p?)\n",
-                    (void*)stack_.data(),
-                    (void*)(stack_.data() + MaxStackDepth),
-                    (void*)&stackPointer_);
                 fprintf(stderr, "  savedFrames_:\n");
                 for (size_t f = 0; f <= frameDepth_ + 1 && f < 8; f++) {
                     fprintf(stderr,
@@ -9258,6 +9246,9 @@ bool Interpreter::popFrame() {
                         (void*)savedFrames_[f].savedIP);
                 }
             }
+            // PHARO_SP_CORRUPT_TRAP=1: trigger SIGTRAP when corruption
+            // detected, so lldb (if attached) catches the exact moment
+            // and can set a hardware watchpoint to find the writer.
             static const bool corruptTrap =
                 std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr;
             if (corruptTrap) {

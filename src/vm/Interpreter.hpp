@@ -662,14 +662,6 @@ private:
 
     // Stack (single stack for all frames)
     std::array<Oop, MaxStackDepth> stack_;
-    // 2026-05-06 A1 fix: 16-slot guard band between stack_ and the
-    // critical SP/SB/FP fields.  When JIT-compiled code overflows the
-    // stack via raw `*sp++` writes (bypassing push()'s bounds check),
-    // overflow writes land here instead of clobbering stackPointer_ /
-    // stackBase_ / framePointer_.  The next push() bounds check then
-    // catches the overflow cleanly.  See
-    // memory/project_a1_oopforobject_2026_05_06.md.
-    std::array<Oop, 16> stackOverflowGuard_;
     Oop* stackPointer_;
     Oop* stackBase_;
 
