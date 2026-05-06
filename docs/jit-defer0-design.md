@@ -252,6 +252,34 @@ Candidates remaining:
   have IC data — maybe a specific specialization reaches a buggy
   pattern
 
+### Universality + viability of MAX=12 as fallback
+
+**Same boundary across workloads**:
+- `eval "28 benchFib"`: MAX=12 success, MAX=13+ hangs
+- `eval "100 benchmark"`: MAX=12 success (=1028), MAX=15+ hangs
+- bench-suite at DEFER=0 unbounded: 822 compiles, hangs
+- bench-suite at DEFER=0 MAX=12: ran through tinyBench, fib,
+  sieve, sort, dict before hitting the pre-existing floatSum
+  failure (sieve 7ms = JIT speed; sort 273ms ≈ JIT speed)
+
+So MAX=12 + DEFER=0 IS a working configuration — just limited
+to the 12 hottest methods getting JIT'd.  fib(28) eval timing:
+
+```
+DEFER=4 (default, no clamp bypass): 5s
+DEFER=0 + JIT_MAX_COMPILE=12       : 6s  (12 methods JIT'd)
+DEFER=0 unbounded                   : hang
+```
+
+Higher PHARO_JIT_THRESHOLD doesn't help (5..500 all hang
+eventually — they just delay reaching the 13-compile boundary).
+
+**Pragmatic interim** (not shipped — would need wider
+validation): default to JIT_MAX_COMPILE=12 in headless eval mode.
+Loses most JIT perf but unlocks DEFER=0.  Probably not worth it
+since DEFER=4 works fine and the 4s wait is acceptable for the
+workloads we care about.
+
 ### What this tells us about the architecture
 
 The 4s clamp WORKS because by the time defer expires, all the
