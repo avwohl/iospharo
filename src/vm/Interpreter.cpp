@@ -8326,6 +8326,26 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
+                // 2026-05-06 A1: trace ExitReturn sp-balance.  Sista's
+                // kReturn lowering doesn't sync state.sp before exit,
+                // so sstate.sp reflects the value at Sista entry, not
+                // the post-pop position.  This is benign here because
+                // popFrame() (below) overwrites stackPointer_ from
+                // framePointer_ regardless.  PHARO_TRACE_SISTA_LEAK=1
+                // logs the divergence — most methods show delta=+1
+                // (not synced after popping return value).
+                if (__builtin_expect(traceSistaLeak, 0)) {
+                    Oop* expected = framePointer_ + 1;
+                    if (sstate.sp != expected) {
+                        static size_t n = 0;
+                        if (++n <= 10) {
+                            fprintf(stderr,
+                                "[SISTA-RET] #%zu sel=#%s delta=%+lld\n",
+                                n, memory_.selectorOf(method).c_str(),
+                                (long long)(sstate.sp - expected));
+                        }
+                    }
+                }
                 sistaReturns++;
                 // Reset this method's bail counter — it completed
                 // successfully, so don't blacklist it.  Erase
