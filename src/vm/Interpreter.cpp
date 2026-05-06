@@ -16486,27 +16486,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // with non-zero deviation are the JIT stencil bug source from
     // memory/project_a1_oopforobject_2026_05_06.md.
     Oop* spAtEntry = stackPointer_;
+    Oop* fpAtEntry = framePointer_;
+    size_t fdAtEntry = frameDepth_;
     static const bool traceSpDelta =
         std::getenv("PHARO_TRACE_SP_DELTA") != nullptr;
-    auto checkSpDelta = [this, spAtEntry, method, argCount](const char* exitTag) {
+    auto checkSpDelta = [this, spAtEntry, fpAtEntry, fdAtEntry, method, argCount](const char* exitTag) {
         if (!traceSpDelta) return;
+        // Only check when frame depth returned to entry value — i.e.,
+        // the method fully completed and unwound its frames.  If fd
+        // differs at exit, the JIT bailed mid-execution and left
+        // callee frames on stack (legitimate ExitSend behavior).
+        if (frameDepth_ != fdAtEntry) return;
         long long actualDelta = stackPointer_ - spAtEntry;
         long long expectedDelta = -(long long)argCount;
-        // Only check on normal return (one result on stack).  Other
-        // exits (Send/Block/etc.) leave the args on stack — we'd need
-        // to know the exit reason to verify correctly.
-        // Skip if delta is in a "reasonable" range — only flag wild
-        // imbalances.
         if (actualDelta == expectedDelta) return;
         if (actualDelta < -8 || actualDelta > 8) {
             static int n = 0;
             if (n++ < 16) {
                 fprintf(stderr,
                     "[SP-DELTA] tag=%s method=#%s argCount=%d "
-                    "actualDelta=%+lld expected=%+lld bug?\n",
+                    "actualDelta=%+lld expected=%+lld fd=%zu (same as entry)\n"
+                    "  ENTRY: sp=%p fp=%p\n"
+                    "  EXIT:  sp=%p fp=%p\n",
                     exitTag,
                     memory_.selectorOf(method).c_str(),
-                    argCount, actualDelta, expectedDelta);
+                    argCount, actualDelta, expectedDelta,
+                    frameDepth_,
+                    (void*)spAtEntry, (void*)fpAtEntry,
+                    (void*)stackPointer_, (void*)framePointer_);
             }
         }
     };
