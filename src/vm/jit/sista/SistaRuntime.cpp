@@ -184,16 +184,20 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
         }
     }
 
-    // 2026-05-02: the older Array-do/helper-send coexistence gate
-    // (skip Sista compile when both appear) is no longer needed —
-    // the underlying issue (stale relinquishSlept_ signal causing
-    // the helper-send's first step() call to fail) was fixed in
-    // jitSistaCallSend by clearing the signal on entry and
-    // restoring it on exit.  Set PHARO_SISTA_BLOCK_ARRAYDO_HELPER=1
-    // to re-enable the old gate (diagnostic).
-    static const bool blockArrayDoHelper =
-        std::getenv("PHARO_SISTA_BLOCK_ARRAYDO_HELPER") != nullptr;
-    if (hasArrayDoSplice && hasSendCallHelper && blockArrayDoHelper) {
+    // 2026-05-02: tried to disable this gate after fixing stale
+    // relinquishSlept_ in jitSistaCallSend (commit 31f1c640).  Iso
+    // eval of runSum stayed at 1ms with gate off.  But 2026-05-06
+    // bench-suite re-bisection shows the gate is still needed — sum
+    // 1M intermittently fails ("receiver of + is nil") in bench-suite
+    // context (5/5 fail) while running fine in iso eval.  Something
+    // about prior bench activity (sort/dict splices) corrupts state
+    // that runSum's compile then trips on.  Reliability > the 1ms→99ms
+    // sum 1M perf cost.  Re-enable the gate by default; opt out via
+    // PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1 for diagnosis or workloads
+    // that don't trigger the bench-suite-context corruption.
+    static const bool allowArrayDoHelper =
+        std::getenv("PHARO_SISTA_ALLOW_ARRAYDO_HELPER") != nullptr;
+    if (hasArrayDoSplice && hasSendCallHelper && !allowArrayDoHelper) {
         cache_[key] = nullptr;
         return nullptr;
     }
