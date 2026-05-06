@@ -280,6 +280,65 @@ Loses most JIT perf but unlocks DEFER=0.  Probably not worth it
 since DEFER=4 works fine and the 4s wait is acceptable for the
 workloads we care about.
 
+### lldb attempt + breakthrough on what the "hang" actually is
+
+Tried `lldb -p $PID` to attach and `lldb -b -s ...` to launch.
+Both hung.  macOS codesigning restricts lldb attachment without
+proper entitlements; the full lldb session machinery isn't
+available via Bash here.
+
+But the lldb attempt led to a key observation: at MAX=13 +
+DEFER=0, the process is **not actually hung** — it's running
+at ~1.5M sends/sec (vs 30M/sec normal), with the JIT stats
+showing:
+
+```
+J2J-a: 47610/56701  (47K successful J2J activations)
+J2J-r: 0/47117      (ZERO successful J2J resumes — every
+                     resume bails to interp)
+13 compiled methods, 222K compilations failed (the MAX cap)
+```
+
+Run with longer timeout (120s instead of 25s):
+
+```
+After 120s: error reaches Smalltalk runtime —
+   "Improper store into indexable object"
+   CompiledMethod(Object)>>error:
+   CompiledMethod(Object)>>errorImproperStore
+```
+
+So **the "hang" is actually a slow-cascade ending in
+errorImproperStore** — Pharo's runtime check that an at:put:
+target is a properly indexable object.  A JIT-compiled method
+is passing the wrong receiver/arg to at:put:.
+
+Likely candidates (all do at:put: codegen):
+- nextPut: — the cascade-trigger method (compile #13)
+- Method #11 at:put: itself
+- Some inner at:put: call chain
+
+The JIT codegen for nextPut:'s `bc[15]: sendJ2J at:put:` (the
+inner `collection at: position put: aValue` call) probably has
+wrong operand encoding or wrong receiver selection.  At MAX=12
+this method runs in interp (correct), at MAX≥13 it runs JIT
+(wrong) and eventually errors.
+
+### Concrete next-session path
+
+1. Set up lldb with proper codesigning (the project may have a
+   debug entitlements plist somewhere) OR build a debug binary
+   with `JIT_DEBUG_TRACE` flag that dumps every at:put:
+   dispatch's receiver/arg.
+2. At MAX=13, capture the FIRST at:put: call where the receiver
+   isn't an Array/String/ByteArray.  That's the bug.
+3. Compare to MAX=12 path: the same call site should pass
+   correct arguments when nextPut: runs in interp.
+
+This is now a focused single-method codegen bug, not the broad
+"shared-resource corruption" hypothesis.  Significant scope
+reduction.
+
 ### What this tells us about the architecture
 
 The 4s clamp WORKS because by the time defer expires, all the
