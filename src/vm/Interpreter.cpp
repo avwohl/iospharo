@@ -8624,6 +8624,34 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                             sstate.sendArgCount);
                     }
                 }
+                // 2026-05-06 A1: trace sp-delta at ExitSend bail.
+                // Compares sstate.sp (Sista's view at bail) vs the
+                // expected "what interp would have at this bc" value.
+                // For a send bail, expected sp = sp_at_send_bytecode_entry
+                // (which equals stackPointer_ pre-Sista + numIRStackPushed).
+                if (__builtin_expect(traceSpCorrupt_, 0)) {
+                    // Sista's bail emits ALL operands of kSendUnspeculated
+                    // onto sp, where operands.size() == IR stack at bail.
+                    // For a send bail, IR stack = rcv + args.  For a generic
+                    // bail (PushFullBlock, PushArray), IR stack = full
+                    // expression stack at bail.
+                    uint8_t bailOp = 0;
+                    if (sstate.ip >= methodBytes + bytecodeStart
+                     && sstate.ip < methodBytes + totalBytes) {
+                        bailOp = *sstate.ip;
+                    }
+                    static int n = 0;
+                    if (n++ < 32) {
+                        ptrdiff_t spDelta = sstate.sp - stackPointer_;
+                        fprintf(stderr,
+                            "[SISTA-EXIT-SEND] sel=#%s bailOp=0x%02x "
+                            "argc=%d spDelta=%+lld bcOff=%lld\n",
+                            memory_.selectorOf(method).c_str(),
+                            bailOp, (int)sstate.sendArgCount,
+                            (long long)spDelta,
+                            (long long)(sstate.ip - (methodBytes + bytecodeStart)));
+                    }
+                }
                 stackPointer_ = sstate.sp;
                 instructionPointer_ = sstate.ip;
                 return;
