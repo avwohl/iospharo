@@ -171,9 +171,12 @@ Lowering::CompiledFn Runtime::compile(Oop method, ObjectMemory& memory,
          || v.op == Op::kCountedLoopWhileTrueAccum) {
             hasSplice = true;
         }
+        // 2026-05-06: gate only Do/ArrayDoAccum.  ArrayCollect has its
+        // own deopt-with-resume helper (commit 3614f42c) that handles
+        // the helper-send interaction correctly — including ArrayCollect
+        // here regresses runCollect 10x100K from 63ms → 254ms.
         if (v.op == Op::kCountedLoopDo
-         || v.op == Op::kCountedLoopArrayDoAccum
-         || v.op == Op::kCountedLoopArrayCollect) {
+         || v.op == Op::kCountedLoopArrayDoAccum) {
             hasArrayDoSplice = true;
         }
         if (v.op == Op::kSendUnspeculated) {
