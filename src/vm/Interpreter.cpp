@@ -8071,7 +8071,46 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
+            // PHARO_TRACE_SISTA_LEAK=1: per-Sista-exit sp-delta tracker.
+            // Captures sp at entry, runs Sista, compares to sstate.sp at
+            // exit.  For ExitSend, expected delta = IR stack size at bail
+            // (encoded in the bail's literal).  For ExitReturn, expected
+            // delta = 1 (one return value pushed).  Mismatch = leak.
+            static const bool traceSistaLeak =
+                std::getenv("PHARO_TRACE_SISTA_LEAK") != nullptr;
+            Oop* spBeforeSista = stackPointer_;
             fn(&sstate);
+            if (__builtin_expect(traceSistaLeak, 0)) {
+                ptrdiff_t actualDelta = sstate.sp - spBeforeSista;
+                // Estimate expected: for ExitSend, parse the bail bc to
+                // determine IR stack size.  For ExitReturn, we expect
+                // sstate.sp to be at most receiver-relative; actual
+                // popFrame happens in interp.
+                if (sstate.exitReason == jit::ExitSend) {
+                    // The bail's literal encoded stackSize at bits 16-23.
+                    // Without re-decoding the literal, just log the delta
+                    // and the bail bc — we'll match patterns afterward.
+                    uint8_t bailOp = 0;
+                    if (sstate.ip >= methodBytes + bytecodeStart
+                     && sstate.ip < methodBytes + totalBytes) {
+                        bailOp = *sstate.ip;
+                    }
+                    static size_t n = 0;
+                    n++;
+                    // Log first 30, then every 5000th — captures both
+                    // startup pattern and steady-state.
+                    if (n <= 30 || n % 5000 == 0) {
+                        fprintf(stderr,
+                            "[SISTA-EXIT] #%zu sel=#%s exitReason=Send "
+                            "spDelta=%+lld bailOp=0x%02x argc=%d "
+                            "sp_off=%lld\n",
+                            n, memory_.selectorOf(method).c_str(),
+                            (long long)actualDelta, bailOp,
+                            (int)sstate.sendArgCount,
+                            (long long)(stackPointer_ - stack_.data()));
+                    }
+                }
+            }
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
             if (invariantCheck && __builtin_expect(
