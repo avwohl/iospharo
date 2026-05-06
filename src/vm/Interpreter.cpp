@@ -16950,7 +16950,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         long long actualDelta = stackPointer_ - spAtEntry;
         long long expectedDelta = -(long long)argCount;
         if (actualDelta == expectedDelta) return;
-        if (actualDelta < -8 || actualDelta > 8) {
+        // 2026-05-06 A1: detect ANY leak (was: only |delta|>8).  A1's
+        // leak per-call is small (+1 to +7) per JIT-activated method.
+        if (actualDelta != expectedDelta) {
             static int n = 0;
             if (n++ < 16) {
                 fprintf(stderr,
