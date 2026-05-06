@@ -1763,11 +1763,43 @@ size_t JITRuntime::drainInitialCompileQueue() {
         snapshot[i] = g_initialCompileQueue[i];
         g_initialCompileQueue[i] = 0;
     }
+    Oop nilOop = interp_ ? interp_->memory().nil() : Oop::nil();
+    Oop trueOop = interp_ ? interp_->memory().trueObject() : Oop::nil();
+    Oop falseOop = interp_ ? interp_->memory().falseObject() : Oop::nil();
     for (size_t i = 0; i < head; i++) {
         uint64_t methBits = snapshot[i];
         if (methBits == 0) continue;
         Oop method = Oop::fromRawBits(methBits);
         if (!method.isObject() || method.rawBits() < 0x10000) continue;
+        // Skip nil/true/false (deferred.md A1 P0): startup-window
+        // queueing can race with GC and end up with a stale oop that
+        // happens to land on a special object (nil = heap base).
+        // Calling compile() with nil crashes deep in IC setup
+        // (lldb-confirmed at JITCompiler.cpp:2402, fault addr 0x90).
+        if (method.rawBits() == nilOop.rawBits()
+            || method.rawBits() == trueOop.rawBits()
+            || method.rawBits() == falseOop.rawBits()) {
+            g_initialCompileQueueDrained++;
+            continue;
+        }
+        // Validate it's actually a CompiledMethod by checking the
+        // header is a SmallInteger (CompiledMethod's slot 0 is the
+        // method header, always a SmallInt).
+        if (interp_ && interp_->memory().isValidPointer(method)) {
+            ObjectHeader* h = method.asObjectPtr();
+            if (h->slotCount() < 1) {
+                g_initialCompileQueueDrained++;
+                continue;
+            }
+            Oop hdr = h->slotAt(0);
+            if (!hdr.isSmallInteger()) {
+                g_initialCompileQueueDrained++;
+                continue;
+            }
+        } else {
+            g_initialCompileQueueDrained++;
+            continue;
+        }
         // Skip if already compiled (race against another path).
         if (methodMap_.lookup(method.rawBits())) {
             g_initialCompileQueueDrained++;

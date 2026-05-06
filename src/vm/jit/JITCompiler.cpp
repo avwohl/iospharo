@@ -2300,6 +2300,22 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     uint8_t* codeBase_pre = jitMethod->codeStart();
     uint8_t* icBufferBase = jitMethod->icZoneStart();  // heap, not in MAP_JIT
     uint32_t icDataSize = numSendSites * IC_BYTES_PER_SITE;
+    // Bail out if IC buffer allocation failed but the method has send
+    // sites — without this, the loop below writes to icSlots[18] at
+    // offset 0x90 from NULL → SIGSEGV (deferred.md A1 P0 root cause
+    // observed at low PHARO_JIT_DEFER, lldb-confirmed 2026-05-06 at
+    // JITCompiler.cpp:2386).  Free the partially-set-up jitMethod
+    // and return nullptr so caller falls back to interp.
+    if (numSendSites > 0 && !icBufferBase) {
+        compilationsFailed_++;
+        fprintf(stderr,
+                "[JIT] FAIL: icBuffer NULL but numSendSites=%u for "
+                "method 0x%llx — bailing\n",
+                numSendSites,
+                (unsigned long long)compiledMethod.rawBits());
+        zone_.freeMethod(jitMethod);
+        return nullptr;
+    }
     {
         // Zero IC data area first (icBuffer was zero-init by calloc, but
         // recompile path memcpys over it; the explicit memset keeps the
