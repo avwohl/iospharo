@@ -16490,12 +16490,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     size_t fdAtEntry = frameDepth_;
     static const bool traceSpDelta =
         std::getenv("PHARO_TRACE_SP_DELTA") != nullptr;
+    static const bool traceFdDelta =
+        std::getenv("PHARO_TRACE_FD_DELTA") != nullptr;
     auto checkSpDelta = [this, spAtEntry, fpAtEntry, fdAtEntry, method, argCount](const char* exitTag) {
+        // FD-DELTA tracker: flag exits where frame depth GREW beyond
+        // entry value.  fd_exit == fdAtEntry: bailed mid-method (OK).
+        // fd_exit == fdAtEntry - 1: clean popFrame + return (OK).
+        // fd_exit > fdAtEntry: chained inline activations didn't
+        // fully unwind — leak suspect.
+        if (traceFdDelta && frameDepth_ > fdAtEntry) {
+            static int nFd = 0;
+            if (nFd++ < 16) {
+                fprintf(stderr,
+                    "[FD-LEAK] method=#%s argCount=%d "
+                    "fdAtEntry=%zu fd_exit=%zu (+%lld frames leaked)\n",
+                    memory_.selectorOf(method).c_str(),
+                    argCount, fdAtEntry, frameDepth_,
+                    (long long)(frameDepth_ - fdAtEntry));
+                // Dump the saved frames for the leaked range
+                for (size_t f = fdAtEntry; f <= frameDepth_ && f < fdAtEntry + 8; f++) {
+                    SavedFrame& sf = savedFrames_[f];
+                    fprintf(stderr,
+                        "  [%zu] method=#%s rcvr_class=%s\n",
+                        f,
+                        memory_.selectorOf(sf.savedMethod).c_str(),
+                        memory_.classNameOf(sf.savedReceiver).c_str());
+                }
+            }
+        }
         if (!traceSpDelta) return;
-        // Only check when frame depth returned to entry value — i.e.,
-        // the method fully completed and unwound its frames.  If fd
-        // differs at exit, the JIT bailed mid-execution and left
-        // callee frames on stack (legitimate ExitSend behavior).
         if (frameDepth_ != fdAtEntry) return;
         long long actualDelta = stackPointer_ - spAtEntry;
         long long expectedDelta = -(long long)argCount;
