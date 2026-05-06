@@ -9336,6 +9336,158 @@ bool Interpreter::popFrame() {
         return false;
     }
 
+    // 2026-05-06 A1: trace popFrame sp drift at low fd.  If fd=1's
+    // savedFP keeps climbing, the bug is in pushFrame ordering or in
+    // some path that calls pushFrame without matching popFrame.
+    if (__builtin_expect(traceSpCorrupt_, 0) && frameDepth_ <= 3) {
+        SavedFrame& sf = savedFrames_[frameDepth_ - 1];
+        long long savedFpOff = (long long)((Oop*)sf.savedFP - stack_.data());
+        long long curFpOff = (long long)(framePointer_ - stack_.data());
+        long long curSpOff = (long long)(stackPointer_ - stack_.data());
+        static long long lastReportedFp[4] = {0, 0, 0, 0};
+        size_t newFd = frameDepth_ - 1;
+        if (newFd < 4 && savedFpOff > lastReportedFp[newFd] + 100) {
+            lastReportedFp[newFd] = savedFpOff;
+            fprintf(stderr,
+                "[POPFRAME-DRIFT] post-pop fd=%zu savedFP_off=%lld "
+                "curFP_off=%lld curSP_off=%lld method=#%s caller=#%s "
+                "leakedSlots=%lld\n",
+                newFd, savedFpOff, curFpOff, curSpOff,
+                memory_.selectorOf(method_).c_str(),
+                memory_.selectorOf(sf.savedMethod).c_str(),
+                curSpOff - savedFpOff);
+            // Dump the full saved-frame chain
+            for (size_t f = 0; f < frameDepth_ && f < 6; f++) {
+                SavedFrame& sff = savedFrames_[f];
+                long long sfpOff = (long long)((Oop*)sff.savedFP - stack_.data());
+                fprintf(stderr,
+                    "  chain[%zu] savedFP_off=%lld method=#%s\n",
+                    f, sfpOff,
+                    memory_.selectorOf(sff.savedMethod).c_str());
+            }
+            // Dump 12 leaked slots BELOW the current FP to identify
+            // what is filling them.  These are slots accumulated in
+            // the pollEvent:/eventLoop expression stack.
+            if (frameDepth_ >= 2) {
+                Oop* leakBase = (Oop*)savedFrames_[1].savedFP;
+                fprintf(stderr,
+                    "  leaked slots (sample 12 above pollEvent FP=%lld):\n",
+                    (long long)(leakBase - stack_.data()));
+                for (int i = 0; i < 12; i++) {
+                    Oop* p = leakBase + 5 + i;  // skip past pollEvent's frame
+                    if (p >= stack_.data() && p < stack_.data() + stack_.size()) {
+                        Oop val = *p;
+                        std::string desc;
+                        if (val.isSmallInteger()) {
+                            desc = "SmI " + std::to_string(val.asSmallInteger());
+                        } else if (val.isNil()) {
+                            desc = "nil";
+                        } else if (val.isCharacter()) {
+                            desc = "Char";
+                        } else if (val.isObject() && val.rawBits() > 0x10000) {
+                            if (memory_.isValidPointer(val)) {
+                                desc = memory_.classNameOf(val);
+                            } else {
+                                desc = "(out-of-heap 0x"
+                                    + std::to_string(val.rawBits()) + ")";
+                            }
+                        } else {
+                            desc = "(unknown)";
+                        }
+                        fprintf(stderr,
+                            "    slot[%lld] = 0x%llx (%s)\n",
+                            (long long)(p - stack_.data()),
+                            (unsigned long long)val.rawBits(),
+                            desc.c_str());
+                    }
+                }
+            }
+            // Dump caller's bytecode the first time we see the leak
+            // pattern.  Do this once per (caller-method) tuple.
+            // Also dump every method in the savedFrames chain.
+            static std::set<uint64_t> dumpedCallers;
+            for (size_t cf = 0; cf < frameDepth_ && cf < 6; cf++) {
+                Oop chainMethod = savedFrames_[cf].savedMethod;
+                if (chainMethod.isObject() && chainMethod.rawBits() > 0x10000
+                        && dumpedCallers.insert(chainMethod.rawBits()).second
+                        && dumpedCallers.size() < 30) {
+                    ObjectHeader* mh2 = chainMethod.asObjectPtr();
+                    Oop hdr2 = mh2->slots()[0];
+                    if (hdr2.isSmallInteger()) {
+                        int nLits2 = hdr2.asSmallInteger() & 0x7FFF;
+                        int nT2 = (hdr2.asSmallInteger() >> 18) & 0x3F;
+                        int nA2 = (hdr2.asSmallInteger() >> 24) & 0x0F;
+                        const uint8_t* bcs2 = mh2->bytes() + (1 + nLits2) * 8;
+                        size_t bcSz = mh2->byteSize() - (1 + nLits2) * 8;
+                        fprintf(stderr,
+                            "[CHAIN-METHOD-DUMP] #%s nLits=%d nTemps=%d nArgs=%d bcSize=%zu\n",
+                            memory_.selectorOf(chainMethod).c_str(),
+                            nLits2, nT2, nA2, bcSz);
+                        fprintf(stderr, "  bytecodes:");
+                        for (size_t i = 0; i < bcSz && i < 100; i++) {
+                            fprintf(stderr, " %02x", bcs2[i]);
+                        }
+                        fprintf(stderr, "\n");
+                        fprintf(stderr, "  literals:");
+                        for (int i = 0; i < std::min(nLits2, 12); i++) {
+                            Oop lit = mh2->slotAt(i + 1);
+                            if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                ObjectHeader* lh = lit.asObjectPtr();
+                                if (lh->isBytesObject() && lh->byteSize() < 64) {
+                                    fprintf(stderr, " [%d]=#%.*s", i,
+                                            (int)lh->byteSize(),
+                                            (char*)lh->bytes());
+                                }
+                            }
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                }
+            }
+            uint64_t cmBits = sf.savedMethod.rawBits();
+            if (sf.savedMethod.isObject() && cmBits > 0x10000
+                    && false  // disable old dumper, replaced by chain dumper
+                    && dumpedCallers.insert(cmBits).second
+                    && dumpedCallers.size() < 20) {
+                ObjectHeader* mh = sf.savedMethod.asObjectPtr();
+                Oop hdr = mh->slots()[0];
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    int nTemps = (hdr.asSmallInteger() >> 18) & 0x3F;
+                    int nArgs = (hdr.asSmallInteger() >> 24) & 0x0F;
+                    const uint8_t* bcs = mh->bytes() + (1 + nLits) * 8;
+                    size_t bcSize = mh->byteSize() - (1 + nLits) * 8;
+                    fprintf(stderr,
+                        "[METHOD-DUMP] #%s nLits=%d nTemps=%d nArgs=%d "
+                        "bcSize=%zu savedIP_off=%lld\n",
+                        memory_.selectorOf(sf.savedMethod).c_str(),
+                        nLits, nTemps, nArgs, bcSize,
+                        (long long)(sf.savedIP - bcs));
+                    fprintf(stderr, "  bytecodes:");
+                    for (size_t i = 0; i < bcSize && i < 80; i++) {
+                        fprintf(stderr, " %02x", bcs[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    // Dump literals (just first 8) so we can identify
+                    // selectors being sent.
+                    fprintf(stderr, "  literals (selectors only):");
+                    for (int i = 0; i < std::min(nLits, 8); i++) {
+                        Oop lit = mh->slotAt(i + 1);
+                        if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            if (lh->isBytesObject() && lh->byteSize() < 64) {
+                                fprintf(stderr, " [%d]=#%.*s", i,
+                                        (int)lh->byteSize(),
+                                        (char*)lh->bytes());
+                            }
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
+
     --frameDepth_;
     SavedFrame& frame = savedFrames_[frameDepth_];
 
@@ -16694,7 +16846,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             long long spOff = stackPointer_ - stack_.data();
             static size_t baselineCount = 0;
             ++baselineCount;
-            if (baselineCount % 1000 == 0) {
+            if (baselineCount % 50 == 0) {
                 long long delta = spOff - firstSpAtBaseline;
                 fprintf(stderr,
                     "[FD-BASELINE] baseline_count=%zu fd=%zu sp_off=%lld "
