@@ -1238,6 +1238,9 @@ public:
         // pushFrameForJIT, never changed by JIT code). We load nil once
         // and store it directly, avoiding 3 interpreter field reads.
 
+        // 2026-05-06 A1 — sp-delta check at pushFrameForJIT.  Records
+        // entry sp and validates exit sp = entry + (totalTemps - nArgs).
+        Oop* spAtEntry = state->sp;
         Oop targetMethod = Oop::fromRawBits(state->cachedTarget.rawBits());
         int nArgs = state->sendArgCount;
 
@@ -1336,6 +1339,24 @@ public:
         state->sp = stackPointer_;
         state->exitReason = jit::ExitNone;
         state->jitMethod = jm;
+
+        // 2026-05-06 A1 — verify sp-delta is exactly (totalTemps - nArgs).
+        // PHARO_TRACE_PUSHFRAME_DELTA=1 enables.
+        if (__builtin_expect(traceSpCorrupt_, 0)) {
+            ptrdiff_t actualDelta = state->sp - spAtEntry;
+            ptrdiff_t expectedDelta = (ptrdiff_t)(totalTemps - nArgs);
+            if (actualDelta != expectedDelta) {
+                static int n = 0;
+                if (n++ < 8) {
+                    fprintf(stderr,
+                        "[PUSHFRAME-DELTA] sel=#%s nArgs=%d totalTemps=%d "
+                        "actual=%+lld expected=%+lld\n",
+                        memory_.selectorOf(targetMethod).c_str(),
+                        nArgs, totalTemps,
+                        (long long)actualDelta, (long long)expectedDelta);
+                }
+            }
+        }
     }
     void popFrameForJIT(jit::JITState* state);
 
