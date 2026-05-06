@@ -410,6 +410,21 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     )
     endif()  # APPLE for test_load_image link options
 
+    if(APPLE)
+        # Re-sign the test_load_image binary with debug + JIT
+        # entitlements after link.  Without get-task-allow, lldb
+        # cannot attach (deferred.md A1 P0 investigation needed
+        # this).  Re-signing also preserves the JIT entitlements
+        # the binary needs at runtime.
+        add_custom_command(TARGET test_load_image POST_BUILD
+            COMMAND codesign --force --sign - --entitlements
+                ${CMAKE_SOURCE_DIR}/scripts/test_load_image-entitlements.plist
+                $<TARGET_FILE:test_load_image>
+            VERBATIM
+            COMMENT "Re-signing test_load_image with debug + JIT entitlements"
+        )
+    endif()
+
     add_executable(test_class_table src/vm/test_class_table.cpp)
     target_link_libraries(test_class_table PharoVMCore)
 
