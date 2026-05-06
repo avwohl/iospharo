@@ -280,6 +280,28 @@ Loses most JIT perf but unlocks DEFER=0.  Probably not worth it
 since DEFER=4 works fine and the 4s wait is acceptable for the
 workloads we care about.
 
+### Debug-build line-number gap
+
+After `cmake -B build_debug -DCMAKE_BUILD_TYPE=RelWithDebInfo`
+and `dsymutil build_debug/test_load_image`, the dSYM bundle
+ends up only 3.4 MB (vs expected 100MB+).  dsymutil warns:
+
+```
+skipping debug map object with duplicate name and timestamp
+```
+
+CMake's debug-map can't disambiguate same-named source files
+across the libPharoVMCore.a archive.  Result: file/line
+breakpoints (`breakpoint set --file Primitives.cpp --line 2117`)
+don't resolve.
+
+**Workaround for next session**: either
+1. Build with `-DCMAKE_BUILD_TYPE=Debug` (slow but full debug info)
+2. Use `add_executable` directly without going through static lib
+3. Break on `pharo::Interpreter::primitiveAtPut` symbol-name and
+   step-through manually
+4. Use lldb's `breakpoint set --address` with computed offset
+
 ### lldb attempt + breakthrough on what the "hang" actually is
 
 Tried `lldb -p $PID` to attach and `lldb -b -s ...` to launch.
@@ -404,7 +426,17 @@ DEFER=0 hangs.  The remaining bug class is:
 
 Without lldb / sanitizers, can't isolate further.
 
-### lldb FIXED + actual bug location identified
+### Confirmed: bug is unambiguously in JIT (PHARO_NO_JIT=1 works)
+
+```
+PHARO_NO_JIT=1 + DEFER=0 + 3 runs: 3/3 success
+```
+
+So the bug is unambiguously in JIT compile/execute path.  Not
+in defer logic, not in scheduling, not in startup chain in
+general.
+
+### lldb attachment infrastructure (this session)
 
 Codesigning fix: `codesign --force --sign - --entitlements
 /tmp/debug-entitlements.plist build/test_load_image` with
