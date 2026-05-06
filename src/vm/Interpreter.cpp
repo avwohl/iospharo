@@ -14667,9 +14667,71 @@ void Interpreter::tryPerBcSistaAtBackwardJump() {
         static thread_local size_t perBcDispSend = 0;
         perBcDispCount++;
 
+        // 2026-05-06 A1: trace per-bc Sista exit sp-delta.  For ExitSend
+        // bails, sstate.sp - spBefore should equal the IR stack pushed
+        // by the bail (matches kSendUnspeculated lowering).  Anomalous
+        // deltas point to a buggy bail path.
+        Oop* spBefore = stackPointer_;  // = sstate.sp at entry (set above)
+
         fn(&sstate);
         jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                             jitRuntime_.codeZone().totalBytes());
+
+        if (__builtin_expect(traceSpCorrupt_, 0)
+            && sstate.exitReason == jit::ExitReturn) {
+            // For ExitReturn: Sista's kReturn doesn't sync state.sp.
+            // sstate.sp typically equals spBefore + (per-method temp
+            // allocation).  The per-bc handler then does popFrame +
+            // push retVal which OVERWRITES stackPointer_ from FP.
+            // BUT: the line `stackPointer_ = sstate.sp;` (line 14745
+            // before switch) sets stackPointer_ FIRST.  If popFrame
+            // doesn't reset (e.g., fd=0 path), the +N stays.
+            ptrdiff_t spDelta = sstate.sp - spBefore;
+            static int n = 0;
+            if (n++ < 8 || (spDelta > 8 && n < 200)) {
+                fprintf(stderr,
+                    "[PER-BC-EXIT-RETURN] sel=#%s entry_bcOff=%u "
+                    "spDelta=%+lld fd=%zu\n",
+                    memory_.selectorOf(method_).c_str(), bcOff,
+                    (long long)spDelta, frameDepth_);
+            }
+        }
+        if (__builtin_expect(traceSpCorrupt_, 0)
+            && sstate.exitReason == jit::ExitSend) {
+            ptrdiff_t spDelta = sstate.sp - spBefore;
+            // Get bail bytecode for context
+            uint8_t bailOp = 0;
+            ptrdiff_t bailOffsetInLifted = 0;
+            if (method_.isObject()) {
+                ObjectHeader* mh = method_.asObjectPtr();
+                Oop hdr = mh->slots()[0];
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    const uint8_t* bcs = mh->bytes() + (1 + nLits) * 8;
+                    if (sstate.ip >= bcs
+                        && sstate.ip < bcs + mh->byteSize()) {
+                        bailOp = *sstate.ip;
+                        bailOffsetInLifted = sstate.ip - bcs;
+                    }
+                }
+            }
+            // Log anomalous deltas (>5 or negative, since most are 1-3)
+            // and a sample of normal ones for baseline.
+            static int n_anom = 0;
+            static int n_normal = 0;
+            bool isAnomalous = (spDelta > 5 || spDelta < 0);
+            if ((isAnomalous && n_anom < 32) ||
+                (!isAnomalous && n_normal++ < 4)) {
+                if (isAnomalous) n_anom++;
+                fprintf(stderr,
+                    "[PER-BC-EXIT-SEND] sel=#%s entry_bcOff=%u "
+                    "bailBcOff=%lld bailOp=0x%02x spDelta=%+lld %s\n",
+                    memory_.selectorOf(method_).c_str(),
+                    bcOff, (long long)bailOffsetInLifted,
+                    bailOp, (long long)spDelta,
+                    isAnomalous ? "ANOMALOUS" : "");
+            }
+        }
 
         if (sstate.exitReason == jit::ExitReturn) {
             perBcDispReturn++;
