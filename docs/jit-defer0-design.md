@@ -371,6 +371,39 @@ the at:put: failure must happen with a DIFFERENT failure mode
    real fix — just a workaround that exchanges 4s wait for
    12-method JIT cap.
 
+### Additional ruled-out hypotheses (this session)
+
+Tested various JIT-feature opt-out flags at PHARO_JIT_DEFER=0:
+
+```
+PHARO_NO_SISTA=1            still 0/3 success
+PHARO_NO_OSR=1              still hangs (754 compiles)
+PHARO_NO_IC_FILL=1          still hangs
+PHARO_NO_CHAIN=1            still hangs (751 compiles)
+PHARO_NO_EAGER_COMPILE=1    still hangs (760 compiles)
+PHARO_JIT_NO_BLOCKS=1       still hangs
+```
+
+**Bonus surprise**: temporarily added `PHARO_NO_JIT_ACTIVATE=1`
+(compile but never execute JIT code).  Result: STILL HANGS at
+DEFER=0 (400 compiles, system grinds at 530K steps/sec).
+
+So the bug isn't even in JIT execution — it's in JIT compile
+itself stealing enough resources during startup that the system
+can't make adequate progress.  Or the COMPILE side has a write
+that corrupts shared state independently of execution.
+
+This narrows further: even disabling all known opt-out paths,
+DEFER=0 hangs.  The remaining bug class is:
+
+- JIT compile-time work taking too much CPU during the critical
+  startup window (scheduler can't make progress)
+- JIT compile WRITES (IC patches, codeZone allocation, methodMap
+  inserts) corrupt shared state
+- Memory pressure / GC pattern from compile work disrupts startup
+
+Without lldb / sanitizers, can't isolate further.
+
 ### What this tells us about the architecture
 
 The 4s clamp WORKS because by the time defer expires, all the
