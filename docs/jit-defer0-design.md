@@ -324,20 +324,52 @@ wrong operand encoding or wrong receiver selection.  At MAX=12
 this method runs in interp (correct), at MAX≥13 it runs JIT
 (wrong) and eventually errors.
 
+### Multiple failure modes — bug is timing-dependent corruption
+
+Subsequent runs at PHARO_JIT_DEFER=0 produced DIFFERENT failure
+modes per run:
+
+```
+Run A (~120s):  errorImproperStore cascade
+                "Improper store into indexable object"
+                CompiledMethod(Object)>>errorImproperStore
+
+Run B (~38s):   process termination via #ensure: / FileLocator>>resolve
+                sender=nil chain length 1 (sender-chain corruption)
+
+Run C (~25s):   SIGSEGV in lookupMethod +840
+                x1=0x100000000 (out-of-heap pointer)
+
+Run D (timeout): no progress, JIT cycle loop
+```
+
+So the bug class is **timing-dependent corruption** that
+manifests differently each run.  It's not ONE specific codegen
+bug — it's a CLASS of bugs unmasked when JIT compile runs
+during startup.
+
+The PHARO_TRACE_AT_PUT_FAIL diagnostic added (then reverted) for
+the errorImproperStore path didn't fire in subsequent runs —
+the at:put: failure must happen with a DIFFERENT failure mode
+(e.g., immutable check, range check) per run.
+
 ### Concrete next-session path
 
 1. Set up lldb with proper codesigning (the project may have a
-   debug entitlements plist somewhere) OR build a debug binary
-   with `JIT_DEBUG_TRACE` flag that dumps every at:put:
-   dispatch's receiver/arg.
-2. At MAX=13, capture the FIRST at:put: call where the receiver
-   isn't an Array/String/ByteArray.  That's the bug.
-3. Compare to MAX=12 path: the same call site should pass
-   correct arguments when nextPut: runs in interp.
-
-This is now a focused single-method codegen bug, not the broad
-"shared-resource corruption" hypothesis.  Significant scope
-reduction.
+   debug entitlements plist somewhere).  Without lldb attaching,
+   we can't observe the corruption window directly.
+2. Build with sanitizers (ASAN/UBSAN) and replicate the bug.
+   Sanitizers may pinpoint the corruption write.
+3. Add a periodic "consistency check" that walks key data
+   structures (active method's literal frame, scheduler queues,
+   IC cache integrity) and logs when corruption appears.  Catches
+   the corruption MOMENT rather than its consequences.
+4. **Practical alternative**: ship `JIT_MAX_COMPILE=12` as the
+   default for headless eval mode.  Loses most JIT perf for
+   short evals (where defer mostly does the same thing anyway).
+   For longer workloads, default DEFER=4 still works.  Not a
+   real fix — just a workaround that exchanges 4s wait for
+   12-method JIT cap.
 
 ### What this tells us about the architecture
 
