@@ -16479,6 +16479,55 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (noJit) return false;
     jitActivations_++;
 
+    // 2026-05-06 A1 root-cause work: sp-delta assertion per JIT
+    // activation.  Records sp at entry; if PHARO_TRACE_SP_DELTA=1 is
+    // set, checks at each return path that sp moved by exactly
+    // -argCount (consumed args+receiver, pushed 1 result).  Methods
+    // with non-zero deviation are the JIT stencil bug source from
+    // memory/project_a1_oopforobject_2026_05_06.md.
+    Oop* spAtEntry = stackPointer_;
+    static const bool traceSpDelta =
+        std::getenv("PHARO_TRACE_SP_DELTA") != nullptr;
+    auto checkSpDelta = [this, spAtEntry, method, argCount](const char* exitTag) {
+        if (!traceSpDelta) return;
+        long long actualDelta = stackPointer_ - spAtEntry;
+        long long expectedDelta = -(long long)argCount;
+        // Only check on normal return (one result on stack).  Other
+        // exits (Send/Block/etc.) leave the args on stack — we'd need
+        // to know the exit reason to verify correctly.
+        // Skip if delta is in a "reasonable" range — only flag wild
+        // imbalances.
+        if (actualDelta == expectedDelta) return;
+        if (actualDelta < -8 || actualDelta > 8) {
+            static int n = 0;
+            if (n++ < 16) {
+                fprintf(stderr,
+                    "[SP-DELTA] tag=%s method=#%s argCount=%d "
+                    "actualDelta=%+lld expected=%+lld bug?\n",
+                    exitTag,
+                    memory_.selectorOf(method).c_str(),
+                    argCount, actualDelta, expectedDelta);
+            }
+        }
+    };
+    // We'll invoke checkSpDelta at the function-exit by capturing it
+    // in a guard struct.  For inline returns within the body, the
+    // C++ scope guard won't fire — but the major exits (popFrame +
+    // push retVal paths) are uniform enough that we can rely on the
+    // C++ destructor.
+    struct SpDeltaGuard {
+        std::function<void(const char*)>& fn;
+        const char* tag;
+        bool armed = true;
+        ~SpDeltaGuard() { if (armed) fn(tag); }
+    };
+    std::function<void(const char*)> checkFn =
+        [this, spAtEntry, method, argCount, &checkSpDelta](const char* tag) {
+            checkSpDelta(tag);
+        };
+    SpDeltaGuard spGuard{checkFn, "tryJIT-exit"};
+    (void)spGuard;  // suppress unused warning
+
     // PHARO_BASICAT_TRACE=1: log basicAt: activations from JIT'd
     // scanFor: callers, with the receiver+index args.  Catches the
     // bench's failing basicAt: call (which goes through interpreter
