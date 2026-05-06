@@ -661,7 +661,8 @@ private:
 #endif
 
     // Stack (single stack for all frames)
-    std::array<Oop, MaxStackDepth> stack_;
+    static constexpr size_t StackSafetyZone = 256;
+    std::array<Oop, MaxStackDepth + StackSafetyZone> stack_;
     Oop* stackPointer_;
     Oop* stackBase_;
 
