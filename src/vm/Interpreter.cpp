@@ -16488,6 +16488,39 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     Oop* spAtEntry = stackPointer_;
     Oop* fpAtEntry = framePointer_;
     size_t fdAtEntry = frameDepth_;
+
+    // Track sp at low-fd checkpoints — finds the slow expression-
+    // stack leak that's not at the per-method level.  Gated on
+    // PHARO_TRACE_FD_TREND=1.  Logs sp at the lowest fd seen (the
+    // "baseline" — should be a constant in absence of leak).
+    static const bool traceFdTrend =
+        std::getenv("PHARO_TRACE_FD_TREND") != nullptr;
+    if (__builtin_expect(traceFdTrend, 0)) {
+        static size_t callCount = 0;
+        static size_t baselineFd = SIZE_MAX;
+        static long long firstSpAtBaseline = -1;
+        ++callCount;
+        if (frameDepth_ < baselineFd) {
+            baselineFd = frameDepth_;
+            // Reset the firstSp marker since we found a new baseline
+            firstSpAtBaseline = stackPointer_ - stack_.data();
+            fprintf(stderr,
+                "[FD-BASELINE] new fd_baseline=%zu sp_off=%lld call=%zu\n",
+                baselineFd, firstSpAtBaseline, callCount);
+        } else if (frameDepth_ == baselineFd) {
+            long long spOff = stackPointer_ - stack_.data();
+            // Log sp at baseline every 1000 occurrences
+            static size_t baselineCount = 0;
+            ++baselineCount;
+            if (baselineCount % 1000 == 0) {
+                long long delta = spOff - firstSpAtBaseline;
+                fprintf(stderr,
+                    "[FD-BASELINE] baseline_count=%zu fd=%zu sp_off=%lld "
+                    "delta_from_first=%+lld\n",
+                    baselineCount, frameDepth_, spOff, delta);
+            }
+        }
+    }
     static const bool traceSpDelta =
         std::getenv("PHARO_TRACE_SP_DELTA") != nullptr;
     static const bool traceFdDelta =
