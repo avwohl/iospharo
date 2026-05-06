@@ -14728,6 +14728,29 @@ void Interpreter::tryOSRAtBackwardJump() {
 // called repeatedly enough to amortize compile cost) — neutral.
 // Set PHARO_NO_SISTA_PER_BC=1 to opt out.
 void Interpreter::tryPerBcSistaAtBackwardJump() {
+    // 2026-05-06 A1: per-iteration sp watermark for eventLoop.
+    // Every backward jump in eventLoop logs sp_off so we can see
+    // exactly when the +101 leak hits.
+    if (__builtin_expect(traceSpCorrupt_, 0) && method_.isObject()) {
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "eventLoop") {
+            uint32_t bcOff = computeCurrentBCOffset();
+            long long spOff = stackPointer_ - stack_.data();
+            long long spFp  = stackPointer_ - framePointer_;
+            static long long lastSpOff = -1;
+            static int n = 0;
+            if (lastSpOff < 0 || spOff > lastSpOff || n < 4) {
+                if (n++ < 200) {
+                    fprintf(stderr,
+                        "[EVENTLOOP-BACKJUMP] bcOff=%u sp_off=%lld "
+                        "sp-fp=%lld delta_from_last=%+lld\n",
+                        bcOff, spOff, spFp,
+                        lastSpOff < 0 ? 0 : (spOff - lastSpOff));
+                }
+                lastSpOff = spOff;
+            }
+        }
+    }
     static const bool perBcEnabled = []() {
         if (std::getenv("PHARO_NO_SISTA_PER_BC")) return false;
         return true;  // default-on; legacy PHARO_SISTA_PER_BC still works (no-op)
