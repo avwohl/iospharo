@@ -16502,14 +16502,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         ++callCount;
         if (frameDepth_ < baselineFd) {
             baselineFd = frameDepth_;
-            // Reset the firstSp marker since we found a new baseline
             firstSpAtBaseline = stackPointer_ - stack_.data();
             fprintf(stderr,
                 "[FD-BASELINE] new fd_baseline=%zu sp_off=%lld call=%zu\n",
                 baselineFd, firstSpAtBaseline, callCount);
         } else if (frameDepth_ == baselineFd) {
             long long spOff = stackPointer_ - stack_.data();
-            // Log sp at baseline every 1000 occurrences
             static size_t baselineCount = 0;
             ++baselineCount;
             if (baselineCount % 1000 == 0) {
@@ -16518,6 +16516,43 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     "[FD-BASELINE] baseline_count=%zu fd=%zu sp_off=%lld "
                     "delta_from_first=%+lld\n",
                     baselineCount, frameDepth_, spOff, delta);
+            }
+        }
+    }
+
+    // PHARO_DUMP_LEAKED_SP=1: when sp grows past a threshold, dump
+    // the leaked stack values to identify their types.  Helps find
+    // which bytecode/primitive is producing the leaked values.
+    static const bool dumpLeakedSp =
+        std::getenv("PHARO_DUMP_LEAKED_SP") != nullptr;
+    if (__builtin_expect(dumpLeakedSp, 0)) {
+        long long spOff = stackPointer_ - stack_.data();
+        static long long lastDumpAt = 0;
+        if (spOff > 100000 && spOff > lastDumpAt + 5000) {
+            lastDumpAt = spOff;
+            fprintf(stderr,
+                "[LEAKED-SP] sp_off=%lld fd=%zu method=#%s — dumping last 24 leaked slots:\n",
+                spOff, frameDepth_, memory_.selectorOf(method).c_str());
+            // Walk stack downward from sp printing values + classes
+            for (int i = 0; i < 24 && (stackPointer_ - 1 - i) >= stack_.data(); i++) {
+                Oop val = stackPointer_[-1 - i];
+                std::string cls = "?";
+                if (val.isSmallInteger()) {
+                    cls = "SmI " + std::to_string(val.asSmallInteger());
+                } else if (val.isNil()) {
+                    cls = "nil";
+                } else if (val.isObject() && val.rawBits() > 0x10000) {
+                    if (memory_.isValidPointer(val)) {
+                        cls = memory_.classNameOf(val);
+                    } else {
+                        cls = "(out-of-heap)";
+                    }
+                } else {
+                    cls = "(unknown)";
+                }
+                fprintf(stderr, "[LEAKED-SP]   sp[-%d] = 0x%llx (%s)\n",
+                        i + 1, (unsigned long long)val.rawBits(),
+                        cls.c_str());
             }
         }
     }
