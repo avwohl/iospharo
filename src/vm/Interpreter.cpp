@@ -6922,10 +6922,17 @@ Oop Interpreter::lookupInMethodDict(Oop methodDict, Oop selector) const {
     Oop nilObj = memory_.specialObject(SpecialObjectIndex::NilObject);
     uint64_t nilBits = nilObj.rawBits();
 
-    // Hash-based probe: start at (identityHash & (keySlotCount - 1)), linear probe
+    // Hash-based probe: start at (identityHash & (keySlotCount - 1)), linear probe.
+    // 2026-05-06: validate selector pointer too — at low PHARO_JIT_DEFER values,
+    // the IC/J2J cache can pass a corrupt selector oop (observed: 0x200000000,
+    // tag=0 but out-of-heap).  Without this guard, asObjectPtr()->identityHash()
+    // dereferences garbage and SIGSEGVs.  Companion to the methodDict guard above.
     uint32_t selectorHash = 0;
-    if (selector.isObject()) {
+    if (selector.isObject() && memory_.isValidPointer(selector)) {
         selectorHash = selector.asObjectPtr()->identityHash();
+    } else if (selector.isObject()) {
+        // Bad selector pointer — abort lookup gracefully instead of SIGSEGV.
+        return Oop::nil();
     }
     size_t mask = keySlotCount - 1;  // keySlotCount is power of 2
     size_t startIndex = selectorHash & mask;

@@ -377,6 +377,53 @@ public:
                         (void*)spB, (void*)arrBase, (void*)arrEnd,
                         frameDepth_,
                         memory_.selectorOf(method_).c_str());
+                // Decode SP to see if it looks like a SmI / nil / bool
+                uint64_t spBits = (uint64_t)spB;
+                fprintf(stderr, "[VM]   SP raw=0x%llx tag=%d ",
+                        (unsigned long long)spBits, (int)(spBits & 7));
+                if ((spBits & 7) == 1) {
+                    fprintf(stderr, "looks like SmI value=%lld\n",
+                            (long long)((int64_t)spBits >> 3));
+                } else if (spBits == 0x300000000ULL) {
+                    fprintf(stderr, "is nil sentinel\n");
+                } else if (spBits == 0x300000010ULL || spBits == 0x300000020ULL) {
+                    fprintf(stderr, "is true/false\n");
+                } else {
+                    fprintf(stderr, "(unknown encoding)\n");
+                }
+                fprintf(stderr, "[VM]   value being pushed: 0x%llx\n",
+                        (unsigned long long)value.rawBits());
+                fprintf(stderr, "[VM]   receiver_ = 0x%llx (class=%s)\n",
+                        (unsigned long long)receiver_.rawBits(),
+                        memory_.classNameOf(receiver_).c_str());
+                fprintf(stderr, "[VM]   method_ = 0x%llx\n",
+                        (unsigned long long)method_.rawBits());
+                fprintf(stderr, "[VM]   instructionPointer_ = %p\n",
+                        (void*)instructionPointer_);
+                fprintf(stderr, "[VM]   framePointer_ = %p\n",
+                        (void*)framePointer_);
+                // Dump the previous SP value if available — the stencil that
+                // wrote SP usually loaded then stored, so the OLD SP might be
+                // just below the corrupted one.  Look at fp+1..16 area for
+                // recognizable values.
+                if (framePointer_) {
+                    fprintf(stderr, "[VM]   FP[0..6] (low bits):\n");
+                    for (int i = 0; i < 7; i++) {
+                        uint64_t v = ((uint64_t*)framePointer_)[i];
+                        fprintf(stderr, "[VM]     FP[%d] = 0x%llx\n", i,
+                                (unsigned long long)v);
+                    }
+                }
+                // Walk savedFrames_ to show what called this method
+                fprintf(stderr, "[VM]   Saved frame chain (depth %zu):\n",
+                        frameDepth_);
+                for (size_t fi = 0; fi <= frameDepth_ && fi < 8; fi++) {
+                    SavedFrame& sf = savedFrames_[fi];
+                    fprintf(stderr, "[VM]     [%zu] method=%s rcvr=0x%llx\n",
+                            fi,
+                            memory_.selectorOf(sf.savedMethod).c_str(),
+                            (unsigned long long)sf.savedReceiver.rawBits());
+                }
                 stopVM("Corrupt stackPointer_ in push()");
                 return;
             }
