@@ -372,14 +372,23 @@ public:
                          (spB >= ps && spB < pe);
             }
             if (__builtin_expect(!inArr && !inHeap, 0)) {
+                // 2026-05-06 A1: with the StackSafetyZone fix shipped in
+                // d9d23903, JIT overflow now lands sp exactly at arr_end
+                // (logical limit) instead of past the safety zone.  Emit
+                // a clearer "Stack overflow" diagnostic for that clean
+                // case rather than the original "CORRUPT" message which
+                // implied actual memory corruption.
+                bool cleanOverflow = (spB == arrEnd);
                 void* ra0 = __builtin_return_address(0);
                 void* ra1 = __builtin_extract_return_addr(__builtin_return_address(1));
                 Dl_info info0{}, info1{};
                 int got0 = dladdr(ra0, &info0);
                 int got1 = dladdr(ra1, &info1);
-                fprintf(stderr, "[VM] push() with CORRUPT stackPointer_=%p "
+                fprintf(stderr, "[VM] push() %s stackPointer_=%p "
                         "(not in stack_[%p..%p) and not in any heap region) "
                         "fd=%zu method=#%s\n",
+                        cleanOverflow ? "STACK OVERFLOW (sp at arr_end)"
+                                       : "with CORRUPT",
                         (void*)spB, (void*)arrBase, (void*)arrEnd,
                         frameDepth_,
                         memory_.selectorOf(method_).c_str());
