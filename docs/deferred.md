@@ -873,7 +873,38 @@ re-examining.
 `PHARO_JIT_NO_SIMSTACK`.  All cheap when not enabled.
 (`PHARO_DUMP_MIR` removed when MIR was deleted 2026-04-17.)
 
-### B7. `PHARO_SISTA_HELPER_SENDS=1` — opt-in-broken
+### B7. `PHARO_SISTA_HELPER_SENDS=1` — default-on with Array-do gate
+
+**2026-05-06 status:** HELPER_SENDS was flipped default-on in
+`2e274c7d` (2026-05-02) plus three precondition fixes
+(`bd7adb87`, `2a7e2a4e`, `2e274c7d`).  See
+`memory/project_helper_sends_default_on_2026_05_02.md`.
+
+The Array-do/helper-send coexistence gate (`2a7e2a4e`) was briefly
+disabled (commit 31f1c640) on the assumption that the
+`relinquishSlept_`-clearing fix solved the underlying issue.  It
+didn't — bench-suite re-bisection 2026-05-06 showed sum 1M still
+fails 0/5 in bench-suite context with the gate off.  Gate
+re-enabled in `0803530f` and narrowed to exclude ArrayCollect in
+`f5e594d0` (collect's deopt-with-resume helper handles the
+interaction correctly).  Bench-suite now 5/5 reliable; sum 1M
+runs in interp (80ms) instead of spliced (1ms) when both
+conditions apply.
+
+Opt-out flags:
+- `PHARO_NO_SISTA_HELPER_SENDS=1`     disables helper-sends entirely
+- `PHARO_SISTA_ALLOW_ARRAYDO_HELPER=1` keeps helper-sends on but
+   bypasses the Array-do gate (returns to flaky bench-suite)
+
+Future work to recover sum 1M splice perf: find which prior bench
+state poisons runSum's compile (sort/dict splice activity is
+suspect).  Multi-session — needs lldb attach during bench-suite
+or a state-snapshot diff between iso-eval (works) and bench-suite
+(fails) at the moment runSum compiles.
+
+---
+
+**Historical context (pre-default-on):**
 B-1 helper-based kSendUnspeculated infrastructure (446187d9,
 244fde02, bbe36bed).  Lifter emits `kSendCallHelper`, lowering
 calls `jit_rt_sista_call_send` via cc.invoke, helper drives
