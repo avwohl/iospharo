@@ -260,6 +260,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     if (std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr) {
         traceSpCorrupt_ = true;
     }
+    if (std::getenv("PHARO_TRACE_PER_BC_SP") != nullptr) {
+        tracePerBcSp_ = true;
+    }
 }
 
 bool Interpreter::initialize() {
@@ -1401,6 +1404,38 @@ void Interpreter::interpret() {
                     static const bool corruptTrap = \
                         std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr; \
                     if (corruptTrap) __builtin_debugtrap(); \
+                } \
+            } \
+        } \
+        /* 2026-05-06 A1 — per-bc sp-delta tracker.  Records sp BEFORE \
+         * each bytecode and then verifies the delta after. \
+         * PHARO_TRACE_PER_BC_SP=1 enables; gates on a counter so we \
+         * only sample at intervals to keep cost manageable. */ \
+        if (__builtin_expect(tracePerBcSp_, 0) && framePointer_) { \
+            static thread_local int64_t _sample = 0; \
+            _sample++; \
+            if ((_sample & 0xFF) == 0) {  /* every 256 bcs */ \
+                long long _spOff = (long long)(stackPointer_ - stack_.data()); \
+                long long _spFp  = (long long)(stackPointer_ - framePointer_); \
+                static long long _maxSpOff = 0; \
+                static long long _maxSpFp = 0; \
+                if (_spOff > _maxSpOff) { \
+                    _maxSpOff = _spOff; \
+                    fprintf(stderr, \
+                        "[PER-BC-SP] sample=%lld new max sp_off=%lld " \
+                        "sp-fp=%lld lastBC=0x%02x method=#%s fd=%zu\n", \
+                        (long long)_sample, _spOff, _spFp, \
+                        bytecode, memory_.selectorOf(method_).c_str(), \
+                        frameDepth_); \
+                } \
+                if (_spFp > _maxSpFp) { \
+                    _maxSpFp = _spFp; \
+                    fprintf(stderr, \
+                        "[PER-BC-SP] sample=%lld new max sp-fp=%lld " \
+                        "sp_off=%lld lastBC=0x%02x method=#%s fd=%zu\n", \
+                        (long long)_sample, _spFp, _spOff, \
+                        bytecode, memory_.selectorOf(method_).c_str(), \
+                        frameDepth_); \
                 } \
             } \
         } \
