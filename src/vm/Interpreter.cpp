@@ -257,6 +257,9 @@ Interpreter::Interpreter(ObjectMemory& memory)
     if (g_debug.debugDispLeak) {
         dispatchTraceLeakOn_ = true;
     }
+    if (std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr) {
+        traceSpCorrupt_ = true;
+    }
 }
 
 bool Interpreter::initialize() {
@@ -1378,6 +1381,25 @@ void Interpreter::interpret() {
 #else
     #define DISPATCH_NEXT() do { \
         if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
+        if (__builtin_expect(traceSpCorrupt_, 0)) { \
+            uint64_t _spB = (uint64_t)stackPointer_; \
+            if ((_spB & 7) == 1) { \
+                static int _n = 0; \
+                if (_n++ < 10) { \
+                    fprintf(stderr, "[SP-CORRUPT] BEFORE-NEXT lastBC=0x%02x sp=0x%llx " \
+                            "(SmI %lld) method=#%s fd=%zu\n", \
+                            bytecode, (unsigned long long)_spB, \
+                            (long long)((int64_t)_spB >> 3), \
+                            memory_.selectorOf(method_).c_str(), frameDepth_); \
+                    fprintf(stderr, "[SP-CORRUPT] recent: "); \
+                    for (int _j = 0; _j < 12; _j++) { \
+                        int _idx = (int)(recentBytecodeIdx_ - 1 - _j) & 0xFF; \
+                        fprintf(stderr, "0x%02x ", (unsigned)recentBytecodes_[_idx]); \
+                    } \
+                    fprintf(stderr, "\n"); \
+                } \
+            } \
+        } \
         bytecode = *instructionPointer_++; \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
@@ -3840,6 +3862,37 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     if constexpr (ENABLE_DEBUG_LOGGING) {
         recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode;
         recentBytecodeIdx_++;
+    }
+    // 2026-05-06 diagnostic: when PHARO_TRACE_SP_CORRUPT=1, check SP for
+    // tag-encoded values at every bytecode boundary.  Catches the exact
+    // bytecode that produced the corruption (vs catching only at push()).
+    static const bool trace_sp = std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr;
+    if (__builtin_expect(trace_sp, 0)) {
+        uint64_t spB = (uint64_t)stackPointer_;
+        if ((spB & 7) == 1) {  // looks like SmI tag
+            static int n = 0;
+            if (n++ < 10) {
+                fprintf(stderr,
+                    "[SP-CORRUPT] BEFORE bc=0x%02x sp=0x%llx (SmI %lld) "
+                    "method=#%s fd=%zu ip-method=%lld lastBC=0x%02x\n",
+                    bytecode, (unsigned long long)spB,
+                    (long long)((int64_t)spB >> 3),
+                    memory_.selectorOf(method_).c_str(), frameDepth_,
+                    (long long)(reinterpret_cast<uintptr_t>(instructionPointer_) -
+                                (method_.isObject()
+                                    ? reinterpret_cast<uintptr_t>(method_.asObjectPtr())
+                                    : 0)),
+                    lastBytecode_);
+                // Dump last few bytecodes from ring
+                fprintf(stderr, "[SP-CORRUPT] recent bcs: ");
+                for (int j = 0; j < 8; j++) {
+                    int idx = (int)(recentBytecodeIdx_ - 1 - j) & 0xFF;
+                    fprintf(stderr, "0x%02x ",
+                            (unsigned)recentBytecodes_[idx]);
+                }
+                fprintf(stderr, "\n");
+            }
+        }
     }
     // ========================================================================
     // SISTA V1 BYTECODE DISPATCH (Pharo 10+)

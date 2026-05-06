@@ -744,6 +744,7 @@ private:
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
     bool dispatchTraceLeakOn_ = false;  // Diagnostic: PHARO_DEBUG_DISP_LEAK=1 enables bytecode dispatch tracing during stack leaks
+    bool traceSpCorrupt_ = false;       // Diagnostic: PHARO_TRACE_SP_CORRUPT=1 traces SP corruption at every bc boundary
     bool finalizationCheckAfterGC_ = false;  // One-shot: signal finalization on next step after GC
     size_t finalizationSignalCount_ = 0;     // Diagnostic: total signalFinalizationIfNeeded firings
     size_t finalizationPendingTotal_ = 0;    // Diagnostic: sum of pending mourners across firings
