@@ -404,6 +404,59 @@ DEFER=0 hangs.  The remaining bug class is:
 
 Without lldb / sanitizers, can't isolate further.
 
+### lldb FIXED + actual bug location identified
+
+Codesigning fix: `codesign --force --sign - --entitlements
+/tmp/debug-entitlements.plist build/test_load_image` with
+`com.apple.security.get-task-allow=true` (plus the existing
+JIT entitlements: allow-jit, allow-unsigned-executable-memory,
+disable-library-validation).  lldb now attaches successfully.
+
+Re-ran with lldb watching, captured the actual error chain:
+
+```
+TFCalloutMethodBuilder>>generate                  (FFI callout building)
+  OCIRMethod>>generate
+    OCIRBytecodeGenerator>>compiledMethod
+      OCIRBytecodeGenerator>>compiledMethodHeader:literals:
+        WriteStream>>nextPutAll:                  (writing bytes into method)
+          ByteArray(SequenceableCollection)>>do:
+            WriteStream>>nextPut:                 ← JIT-compiled #13
+              CompiledMethod(Object)>>at:put:     ← receiver is CompiledMethod
+                errorImproperStore                ← non-byte value
+```
+
+So the workload is **building a CompiledMethod for an FFI
+callout** during startup.  The bytecode generator streams the
+method's bytes through a WriteStream whose `collection` slot
+points to the new CompiledMethod (using it as the byte buffer).
+
+The block `[:each | self nextPut: each]` from
+ByteArray>>do: iterates header bytes (SmallInt 0-255).
+JIT-compiled `nextPut:` should write each byte into the
+method's byte slots via `at:put:`.
+
+But `errorImproperStore` fires.  Either:
+- `nextPut:`'s bc[14] (pushTemp 0) emits wrong codegen — pushes
+  the wrong value (e.g., the receiver) instead of `aValue`
+- The J2J transition into nextPut: corrupts the temp slot
+- bc[12] (pushRecvVar 0) loads wrong receiver, so `collection`
+  is wrong type (but error message says receiver IS
+  CompiledMethod which IS what we want here)
+
+**Concrete handle**: nextPut: codegen for either pushTemp 0
+(bc[14]) or the J2J entry sequence is the bug.  We can now
+build a focused test:
+1. Make a synthetic image that calls FFI builder code at
+   startup with a forced JIT-compile of nextPut:
+2. Use lldb to set a breakpoint at JIT-compiled nextPut:'s
+   bc[14] code address (we have bcToCode table)
+3. Inspect register state when nextPut: is entered with
+   a CompiledMethod receiver
+
+This is now a focused single-method codegen investigation
+rather than open-ended "bug somewhere in JIT/startup".
+
 ### IC integrity check (added then removed this session)
 
 Added a post-compile check that walks every JITMethod's IC zone
