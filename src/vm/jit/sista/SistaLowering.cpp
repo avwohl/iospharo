@@ -43,6 +43,9 @@ extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
                                             uint64_t valBits);
+extern "C" void jit_rt_sista_trace_splice_entry(uint64_t rcv,
+                                                uint64_t vec,
+                                                uint64_t slot);
 extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     void* state,
     uint64_t rcvBits,
@@ -73,6 +76,8 @@ namespace {
 // JITState offsets — must match Tier 1 / Tier 2 so runtime can invoke
 // either transparently.  See src/vm/jit/JITState.hpp.
 constexpr int OFF_SP           = 0;
+constexpr int OFF_SPLICE_SPILL0 = 184;  // see JITState.hpp
+constexpr int OFF_SPLICE_SPILL1 = 192;
 constexpr int OFF_RECEIVER     = 8;
 constexpr int OFF_LITERALS     = 16;
 constexpr int OFF_TEMPBASE     = 24;
@@ -3811,8 +3816,51 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // we never wrote accReg back to vec[slot], the original
                 // s value is preserved → re-running do: yields correct
                 // accumulation from scratch.
-                auto emitDeopt = [&](Gp savedRcv, Gp savedVec,
+                // Defensively spill rcv + vec to JITState scratch slots
+                // before any cc.invoke — see project_arraydo_helper_gate
+                // _2026_05_06.md.  Asmjit's virtual-reg lifetime tracking
+                // across cc.invoke + branch + use produced garbage
+                // rcv/vec at deopt-time when the splice was re-compiled
+                // post-GC (corrupting closure-vec capture and cascading
+                // into nil-receiver `+` DNUs).  Spilling here and
+                // reloading inside emitDeopt makes the deopt path
+                // independent of the allocator's bookkeeping for these
+                // critical values.
+                cc.str(rcvReg, ptr(state, OFF_SPLICE_SPILL0));
+                cc.str(vecReg, ptr(state, OFF_SPLICE_SPILL1));
+
+                // 2026-05-06 diagnostic: when PHARO_TRACE_SPLICE_ENTRY=1
+                // is set, call a C helper at splice entry that dumps rcv
+                // and vec values to stderr.  Used to verify whether the
+                // splice receives correct operands (vs corrupted vec
+                // post-GC re-compile).
+                if (std::getenv("PHARO_TRACE_SPLICE_ENTRY") != nullptr) {
+                    Gp slotR = cc.new_gp64("acc_dbg_slot");
+                    cc.mov(slotR, Imm((uint64_t)slot));
+                    Gp dbgFn = cc.new_gp64("acc_dbg_fn");
+                    cc.mov(dbgFn, Imm((uint64_t)
+                        &jit_rt_sista_trace_splice_entry));
+                    asmjit::InvokeNode* dbgInv = nullptr;
+                    cc.invoke(asmjit::Out(dbgInv), dbgFn,
+                        asmjit::FuncSignature::build<
+                            void, uint64_t, uint64_t, uint64_t>());
+                    if (dbgInv) {
+                        dbgInv->set_arg(0, rcvReg);
+                        dbgInv->set_arg(1, vecReg);
+                        dbgInv->set_arg(2, slotR);
+                    }
+                }
+
+                auto emitDeopt = [&](Gp /*savedRcv*/, Gp /*savedVec*/,
                                       uint32_t bc) {
+                    // Reload rcv/vec from the spill slots rather than
+                    // trusting the caller-supplied virtual regs.  Adds
+                    // 2 loads on the cold deopt path; correctness over
+                    // the (vanishingly small) speed cost.
+                    Gp savedRcv = cc.new_gp64("acc_dz_savedRcv");
+                    Gp savedVec = cc.new_gp64("acc_dz_savedVec");
+                    cc.ldr(savedRcv, ptr(state, OFF_SPLICE_SPILL0));
+                    cc.ldr(savedVec, ptr(state, OFF_SPLICE_SPILL1));
                     Gp sp = cc.new_gp64("acc_dz_sp");
                     cc.ldr(sp, ptr(state, OFF_SP));
                     cc.str(savedRcv, ptr(sp));

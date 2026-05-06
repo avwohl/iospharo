@@ -1372,6 +1372,41 @@ extern "C" uint64_t jit_rt_store_inst_var(JITState* state,
 }
 
 // Sista deopt-with-resume completion helper for kCountedLoopArrayDoAccum.
+// 2026-05-06 diagnostic: trace splice entry rcv/vec.  Set
+// PHARO_TRACE_SPLICE_ENTRY=1 to enable the call site in
+// SistaLowering.cpp.  Used to confirm whether the splice receives
+// correct operands when re-compiled post-GC.
+extern "C" void jit_rt_sista_trace_splice_entry(
+    uint64_t rcv, uint64_t vec, uint64_t slot) {
+    static int n = 0;
+    if (++n > 32) return;
+    uint64_t vecSlotVal = 0;
+    uint64_t rcvSlot0 = 0;
+    uint32_t vecHdrFmt = 0xFFFF;
+    uint32_t vecHdrSize = 0;
+    if ((vec & 7) == 0 && vec > 0x10000) {
+        uint64_t* vecHdr = (uint64_t*)vec;
+        vecHdrFmt = (*vecHdr >> 24) & 0x1F;
+        vecHdrSize = (*vecHdr >> 0) & 0xFF;
+        uint64_t* vecSlots = (uint64_t*)(vec + 8 + slot * 8);
+        vecSlotVal = *vecSlots;
+    }
+    if ((rcv & 7) == 0 && rcv > 0x10000) {
+        uint64_t* rcvSlots = (uint64_t*)(rcv + 8);
+        rcvSlot0 = *rcvSlots;
+    }
+    std::fprintf(stderr,
+        "[SPLICE-ENTRY] #%d rcv=0x%llx (rcv[0]=0x%llx) "
+        "vec=0x%llx (fmt=%u sz=%u) vec[%llu]=0x%llx\n",
+        n,
+        (unsigned long long)rcv,
+        (unsigned long long)rcvSlot0,
+        (unsigned long long)vec,
+        vecHdrFmt, vecHdrSize,
+        (unsigned long long)slot,
+        (unsigned long long)vecSlotVal);
+}
+
 // Compiled splice's per-iter SmI tag-check, on miss, invokes this helper
 // instead of bailing to PushFullBlock — preserving iters 0..startIdx-1
 // of correct work.  See Interpreter::jitSistaCompleteArrayDoAccum.

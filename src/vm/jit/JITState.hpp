@@ -106,6 +106,18 @@ struct JITState {
     // enables J2J save stack for resumed methods without starving the
     // scheduler on long-running loops.
     int32_t yieldCountdown;  // offset 176: backward-jump yield counter
+
+    // --- Sista splice deopt scratch ---
+    // Two oop slots used by Sista splices to spill receiver / vec values
+    // before calling C++ helpers (e.g. jit_rt_sista_complete_array_do_accum)
+    // and reload them on the deopt fall-through path.  Avoids relying on
+    // asmjit virtual-reg lifetime tracking across cc.invoke + conditional
+    // branch + use, which has produced garbage rcv/vec at deopt time
+    // (corrupting the closure-vec capture and resulting in nil-receiver
+    // DNUs on the resumed interp).  Documented in
+    // memory/project_arraydo_helper_gate_2026_05_06.md.
+    uint64_t spliceSpill0;   // offset 184: spill slot 0 (rcv)
+    uint64_t spliceSpill1;   // offset 192: spill slot 1 (vec / accum)
 };
 
 // Verify expected offsets (stencils depend on these)
@@ -128,6 +140,8 @@ static_assert(offsetof(JITState, j2jDepth)      == 160, "j2jDepth offset");
 static_assert(offsetof(JITState, j2jTotalCalls) == 164, "j2jTotalCalls offset");
 static_assert(offsetof(JITState, methodMapPtr)  == 168, "methodMapPtr offset");
 static_assert(offsetof(JITState, yieldCountdown) == 176, "yieldCountdown offset");
+static_assert(offsetof(JITState, spliceSpill0)   == 184, "spliceSpill0 offset");
+static_assert(offsetof(JITState, spliceSpill1)   == 192, "spliceSpill1 offset");
 
 // ===== EXIT REASONS =====
 //
