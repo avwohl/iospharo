@@ -15872,7 +15872,34 @@ void Interpreter::tryJITResumeInCaller() {
             }
 
             size_t callerDepth = frameDepth_;
+            // 2026-05-07 A1: trace sp delta around J2J→activate transition.
+            // This call site is the leak source per origin tracking.
+            Oop* spBeforeActivate = stackPointer_;
+            int sendArgCountBefore = state.sendArgCount;
+            (void)spBeforeActivate;
+            (void)sendArgCountBefore;
             activateMethod(cached, state.sendArgCount);
+            if (__builtin_expect(stackOriginEnabled_, 0)
+                    && frameDepth_ == callerDepth) {
+                // Method completed in place — caller should see -argCount.
+                ptrdiff_t actualDelta = stackPointer_ - spBeforeActivate;
+                ptrdiff_t expectedDelta = -(ptrdiff_t)sendArgCountBefore;
+                if (actualDelta != expectedDelta) {
+                    static size_t cnt = 0;
+                    cnt++;
+                    if (cnt <= 8 || (cnt % 5000 == 1)) {
+                        fprintf(stderr,
+                            "[J2J-ACT] #%zu callee=#%s argc=%d "
+                            "actualDelta=%+lld expected=%+lld leak=%+lld\n",
+                            cnt,
+                            memory_.selectorOf(cached).c_str(),
+                            sendArgCountBefore,
+                            (long long)actualDelta,
+                            (long long)expectedDelta,
+                            (long long)(actualDelta - expectedDelta));
+                    }
+                }
+            }
             if (frameDepth_ == callerDepth) {
                 // Target completed (JIT handled it end-to-end).
                 // We're back in the caller's frame — resume JIT.
