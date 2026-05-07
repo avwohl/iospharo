@@ -698,14 +698,19 @@ belt-and-suspenders.
 ### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **MOSTLY FIXED 2026-05-07** (`0bd8c501`)
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
 
-**Status sweep with PHARO_NO_DEFER_CLAMP=1 (2026-05-07 post-fix)**:
-  DEFER=0:  hangs ~5M steps (process termination via resume:through: —
-            same pattern as A3, distinct bug)
-  DEFER=1:  works ✓ (was: hang)
-  DEFER=2:  works ✓ (was: SIGSEGV in JITCompiler::compile)
-  DEFER=3:  works ✓ (was: SIGSEGV in lookupInMethodDict)
-  DEFER=4:  works
-  DEFER=15: works
+**Status sweep (2026-05-07 post-fix)**:
+
+With default clamp (1s floor):
+  DEFER=0:   OK (clamps to 1s)
+  DEFER=1:   OK
+  DEFER=2-15: OK
+
+With PHARO_NO_DEFER_CLAMP=1:
+  DEFER=0:  HANGS (Morphic render loop / process scheduling)
+  DEFER=1:  flaky (timing-sensitive — some runs hang)
+  DEFER=2:  OK ✓ (was: SIGSEGV in JITCompiler::compile)
+  DEFER=3:  OK ✓ (was: SIGSEGV in lookupInMethodDict)
+  DEFER=4+: OK
 
 **Root cause of DEFER=1/2/3 issues** (commit `0bd8c501`): C++
 ExitArrayCreate handlers (lines 16013, 18443) did
