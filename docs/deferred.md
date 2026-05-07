@@ -133,9 +133,26 @@ Next steps: JIT optimization work.  The Sista Phase 4 monomorphic
 inliner is the intended fix; shorter term, any perf win on the
 interpreter (e.g., quickening hot sends) narrows the gap.
 
-## A3. JIT sequential-test regression — hang after ~3 test classes (2026-04-23)
+## A3. JIT sequential-test regression — **NOT REPRODUCING** post-A1 fix (2026-05-07)
 
-### 2026-04-23 session update
+**2026-05-07 verification** (post commit `0bd8c501`):
+SUnit harness ran 6 sequential classes cleanly:
+  SmallIntegerTest 29 (27P 0F 0E 2S)
+  FractionTest 32 (30P 0F 0E 2S)
+  IntegerTest 83 (74P 0F 0E 3S)
+  CharacterTest 19 (16P 0F 0E 3S)
+  StringTest 438 (438P 0F 0E 0S)
+  DateTest 54 (52P 0F 0E 2S)
+Total: 655 tests, 0 fail, 0 error.  SortedCollectionTest started
+without hang; testGroupedBySortedCollection timed out (separate
+slow-test issue, not the original "hang after 3 classes" pattern).
+
+A3 may be fully fixed by the A1 fix (commit `0bd8c501`) — the
+"hang via Context>>resume:through: with nil sender" pattern is
+plausibly downstream of the same JIT-state corruption that caused
+the +1 sp leak.  Mark CLOSED unless it recurs.
+
+### 2026-04-23 session update — historical
 
 Extended [TERM] diagnostic (commit 1c93cc1) revealed:
 
@@ -296,6 +313,11 @@ Mitigation: run tests with `PHARO_NO_JIT=1` (slow but correct), or run
 one-at-a-time from shell.
 
 ## A4. IntegerTest hang under JIT — **NARROWED to one test** (2026-04-23 late)
+
+**2026-05-07**: with the skip-list workaround, IntegerTest passes
+74/83 (3 skips) under our VM via the SUnit harness.  Worth retrying
+the skipped tests after commit `0bd8c501` to see if A4 is also
+fully fixed.
 
 Originally flagged as IntegerTest + FloatTest + CharacterTest all
 hanging under JIT.  Re-tested each in isolation with default JIT on
