@@ -1268,6 +1268,26 @@ public:
     /// J2J direct call: lightweight frame push/pop for GC root scanning.
     /// Called from jit_rt_push_frame / jit_rt_pop_frame during stencil execution.
     inline void pushFrameForJIT(jit::JITState* state) {
+        // 2026-05-07 A1 hunt: log pushFrameForJIT for pollEvent:
+        static const bool a1TraceFJ =
+            std::getenv("PHARO_A1_TRACE") != nullptr;
+        if (__builtin_expect(a1TraceFJ, 0)) {
+            Oop targetMethodCheck = Oop::fromRawBits(state->cachedTarget.rawBits());
+            if (targetMethodCheck.isObject()
+                && memory_.selectorOf(targetMethodCheck) == "pollEvent:") {
+                static size_t cnt = 0;
+                cnt++;
+                if (cnt <= 30 || cnt % 5000 == 1) {
+                    fprintf(stderr,
+                        "[A1-PUSHFJ] #%zu pushFrameForJIT(#pollEvent:) "
+                        "sp_in=%lld fp_in=%lld nArgs=%d fd=%zu\n",
+                        cnt,
+                        (long long)((Oop*)state->sp - stack_.data()),
+                        (long long)(framePointer_ - stack_.data()),
+                        state->sendArgCount, frameDepth_);
+                }
+            }
+        }
         // Lightweight frame push for J2J direct calls.
         // Syncs interpreter state from JITState, pushes a frame, then sets up
         // callee state in both interpreter and JITState.

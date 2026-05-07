@@ -9029,6 +9029,27 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    // 2026-05-07 A1 hunt: count pushFrame calls per selector
+    static const bool a1Trace =
+        std::getenv("PHARO_A1_TRACE") != nullptr;
+    if (__builtin_expect(a1Trace, 0) && method.isObject()) {
+        static std::unordered_map<std::string, size_t> perSelCnt;
+        std::string sel = memory_.selectorOf(method);
+        size_t& c = perSelCnt[sel];
+        c++;
+        if (sel == "pollEvent:") {
+            if (c <= 5 || c % 5000 == 1) {
+                fprintf(stderr,
+                    "[A1-PUSH-pollEvent:] #%zu sp_in=%lld fp_in=%lld "
+                    "argCount=%d fd=%zu method=0x%llx\n",
+                    c,
+                    (long long)(stackPointer_ - stack_.data()),
+                    (long long)(framePointer_ - stack_.data()),
+                    argCount, frameDepth_,
+                    (unsigned long long)method.rawBits());
+            }
+        }
+    }
     // 2026-05-06 A1 trace: detect SP-tag corruption AT pushFrame entry —
     // tells us whether the bug is before pushFrame (in send dispatch) or
     // produced by pushFrame's FP computation.
@@ -9336,6 +9357,28 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 
 
 bool Interpreter::popFrame() {
+    // 2026-05-07 A1 hunt: log popFrame for pollEvent:
+    static const bool a1Trace =
+        std::getenv("PHARO_A1_TRACE") != nullptr;
+    if (__builtin_expect(a1Trace, 0) && method_.isObject()) {
+        std::string sel = memory_.selectorOf(method_);
+        static size_t pollEventPopCnt = 0;
+        if (sel == "pollEvent:") {
+            pollEventPopCnt++;
+            if (pollEventPopCnt <= 5 || pollEventPopCnt % 5000 == 1) {
+                long long savedFP = (frameDepth_ > 0)
+                    ? (long long)((Oop*)savedFrames_[frameDepth_ - 1].savedFP - stack_.data())
+                    : -1;
+                fprintf(stderr,
+                    "[A1-POP] #%zu popFrame(of #pollEvent:) "
+                    "sp_in=%lld fp_in=%lld savedFP=%lld fd=%zu\n",
+                    pollEventPopCnt,
+                    (long long)(stackPointer_ - stack_.data()),
+                    (long long)(framePointer_ - stack_.data()),
+                    savedFP, frameDepth_);
+            }
+        }
+    }
     // Restore previous execution state
     if (frameDepth_ == 0) {
         // No C++ frames to pop. This is NOT a fatal error — the process may
@@ -15103,8 +15146,46 @@ void Interpreter::tryJITResumeInCaller() {
     }
 
     int resumeIter = 0;
+    static const bool a1Trace2 =
+        std::getenv("PHARO_A1_TRACE") != nullptr;
     while (running_ && jitRuntime_.isInitialized()) {
         if (++resumeIter > 10000) break;  // Safety limit
+        if (__builtin_expect(a1Trace2, 0)
+            && method_.isObject()
+            && memory_.selectorOf(method_) == "pollEvent:") {
+            static size_t cnt = 0;
+            cnt++;
+            if (cnt <= 30 || cnt % 5000 == 1) {
+                long long spOff = stackPointer_ - stack_.data();
+                long long fpOff = framePointer_ - stack_.data();
+                long long ipOff = -1;
+                if (instructionPointer_) {
+                    ObjectHeader* mo = method_.asObjectPtr();
+                    Oop hdr = mo->slots()[0];
+                    int nLit = hdr.isSmallInteger()
+                        ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
+                    ipOff = (long long)(instructionPointer_ - bcBase);
+                }
+                long long j2jDepthRead = j2jPoolCursor_;
+                std::string callerSel = "?";
+                if (j2jPoolCursor_ > 0) {
+                    J2JSave& saved = j2jPool_[j2jPoolCursor_ - 1];
+                    if (saved.jitMethod) {
+                        Oop callerCM = Oop::fromRawBits(
+                            saved.jitMethod->compiledMethodOop);
+                        if (callerCM.isObject())
+                            callerSel = memory_.selectorOf(callerCM);
+                    }
+                }
+                fprintf(stderr,
+                    "[A1-RESUME-ITER] #%zu method=#pollEvent: "
+                    "sp_off=%lld fp_off=%lld ip_off=%lld fd=%zu "
+                    "j2jPoolCursor=%lld j2jCaller=#%s\n",
+                    cnt, spOff, fpOff, ipOff, frameDepth_,
+                    j2jDepthRead, callerSel.c_str());
+            }
+        }
         // Break out if checkCountdown_ expired — let interpret() periodic
         // checks run (GC, timer, process scheduling, test triggers, etc.)
         if (checkCountdown_ <= 0) break;
@@ -15958,19 +16039,44 @@ void Interpreter::tryJITResumeInCaller() {
                     : 1;
                 static size_t arrCreateCount = 0;
                 arrCreateCount++;
+                // Look up state.method to be sure
+                Oop sm = state.method;
+                std::string smSel = sm.isObject()
+                    ? memory_.selectorOf(sm) : "?";
                 if (arrCreateCount <= 4
                     || actualDelta != expectedDelta
                     || (arrCreateCount % 5000 == 0)) {
+                    long long ipOff = -1;
+                    uint8_t ipByte = 0;
+                    if (sm.isObject()) {
+                        ObjectHeader* mo = sm.asObjectPtr();
+                        Oop hdr = mo->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase = mo->bytes() + (1 + nLit) * 8;
+                        ipOff = (long long)(state.ip - bcBase);
+                        if (state.ip) ipByte = *state.ip;
+                    }
+                    // Also look up jitMethod's CompiledMethod
+                    Oop jmCM = Oop::nil();
+                    std::string jmSel = "?";
+                    if (state.jitMethod) {
+                        jmCM = Oop::fromRawBits(state.jitMethod->compiledMethodOop);
+                        if (jmCM.isObject()) jmSel = memory_.selectorOf(jmCM);
+                    }
                     fprintf(stderr,
-                        "[ARR-CREATE] #%zu desc=0x%x size=%d pop=%d "
-                        "actualDelta=%+lld expected=%+lld method=#%s "
-                        "sp_off=%lld\n",
+                        "[ARR-CREATE] #%zu desc=0x%x size=%d "
+                        "interp_method=#%s state.method=#%s "
+                        "jitMethod_method=#%s ip_off=%lld ip_byte=0x%02x "
+                        "sp_off=%lld fd=%zu\n",
                         arrCreateCount,
-                        desc, arraySize, popIntoArray ? 1 : 0,
-                        (long long)actualDelta,
-                        (long long)expectedDelta,
+                        desc, arraySize,
                         memory_.selectorOf(method_).c_str(),
-                        (long long)(stackPointer_ - stack_.data()));
+                        smSel.c_str(),
+                        jmSel.c_str(),
+                        ipOff, ipByte,
+                        (long long)(stackPointer_ - stack_.data()),
+                        frameDepth_);
                 }
             }
             instructionPointer_ += 2;  // Past PushArray (2 bytes)
