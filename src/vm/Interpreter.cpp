@@ -16011,8 +16011,18 @@ void Interpreter::tryJITResumeInCaller() {
         }
 
         case jit::ExitArrayCreate: {
-            // PushArray during resume: allocate array, then continue resume loop
-            instructionPointer_ = state.ip;
+            // PushArray during resume: allocate array, then continue resume loop.
+            //
+            // 2026-05-07 A1 FIX: stencil_pushArray does NOT update state.ip
+            // (it just sets exitReason and returns).  state.ip was initialized
+            // to bcBase=0 at the top of this loop, so `instructionPointer_ =
+            // state.ip` would set IP to offset 0, then `+= 2` would be offset 2,
+            // making the loop re-execute pollEvent:'s body forever.
+            //
+            // Don't reset instructionPointer_ from state.ip here — it already
+            // points at the PushArray bytecode (set by interp before JIT
+            // entered, or by previous handler).  The += 2 below correctly
+            // advances past the 2-byte PushArray.
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             int desc = static_cast<int>(state.cachedTarget.rawBits());
@@ -18432,7 +18442,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
         case jit::ExitArrayCreate: {
             // PushArray exit: allocate array, then resume JIT.
-            instructionPointer_ = state.ip;
+            //
+            // 2026-05-07 A1 FIX: stencil_pushArray doesn't update state.ip.
+            // Don't reset instructionPointer_ from state.ip (it would land
+            // at bcBase=0, then += 2 = offset 2 — looping forever and
+            // leaking +1 sp per cycle).  instructionPointer_ already
+            // points at the PushArray bytecode.
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
             int desc = static_cast<int>(state.cachedTarget.rawBits());
