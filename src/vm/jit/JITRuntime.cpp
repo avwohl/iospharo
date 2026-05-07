@@ -2319,6 +2319,15 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         // Hangs/asserts on second invocation in a tight loop.
                         // See memory/project_recipmodulo_jit_hang.md.
                         "reciprocalModulo:",
+                        // 2026-05-07: Number>>raisedTo: dispatches to
+                        // raisedToInteger: which has a whileTrue: loop with
+                        // multi-statement side-effect cond block (similar
+                        // pattern).  In IntegerTest harness post-warmup,
+                        // testNthRootTruncated hangs unless raisedTo: is
+                        // excluded.  raisedToInteger: alone isn't enough —
+                        // the chain raisedTo: → raisedToInteger: needs raisedTo:
+                        // excluded.
+                        "raisedTo:",
                         nullptr
                     };
                     // Chain-loop-only exclusions: only excluded when
