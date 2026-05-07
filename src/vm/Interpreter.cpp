@@ -16076,6 +16076,40 @@ void Interpreter::tryJITResumeInCaller() {
                     if (state.returnValue.rawBits() == targetOopJ
                         && hitJ < 60) {
                         hitJ++;
+                        // PHARO_TRAP_SYMCLS=1: SIGTRAP on first hit so
+                        // lldb catches the exact moment.  Useful for
+                        // examining stack/registers in lldb.
+                        static const bool trap = []() {
+                            const char* e = std::getenv("PHARO_TRAP_SYMCLS");
+                            return e && e[0] == '1';
+                        }();
+                        if (trap && hitJ == 1) {
+                            // Dump intern:'s code zone bounds — useful
+                            // for mapping LR back to a bytecode.
+                            if (state.jitMethod) {
+                                auto* jm = state.jitMethod;
+                                fprintf(stderr,
+                                    "[SYMCLS-CHAIN] state.jitMethod=%p "
+                                    "codeStart=%p codeSize=%u "
+                                    "numBytecodes=%u\n",
+                                    (void*)jm, (void*)jm->codeStart(),
+                                    jm->codeSize, jm->numBytecodes);
+                                const uint32_t* tab = jm->bcToCodeTable();
+                                if (tab) {
+                                    for (uint32_t b = 0;
+                                         b <= jm->numBytecodes && b < 30;
+                                         b++) {
+                                        fprintf(stderr,
+                                            "[SYMCLS-CHAIN]   bc[%u]"
+                                            " -> code+%u = %p\n",
+                                            b, tab[b],
+                                            (void*)(jm->codeStart()
+                                                    + tab[b]));
+                                    }
+                                }
+                            }
+                            __builtin_debugtrap();
+                        }
                         std::string msel = memory_.selectorOf(state.method);
                         Oop rcv = state.receiver;
                         std::string mcls = (rcv.isObject()
@@ -16093,11 +16127,63 @@ void Interpreter::tryJITResumeInCaller() {
                             uint8_t* bcS = mO->bytes() + (1 + nL) * 8;
                             ipOff = (long long)(state.ip - bcS);
                         }
+                        bool rcvrEqRet =
+                            (state.receiver.rawBits()
+                             == state.returnValue.rawBits());
                         fprintf(stderr,
                             "[SYMCLS-JIT] #%d JIT-method=#%s rcvrCls=%s "
-                            "fd=%zu ip=%lld (Symbol class returned)\n",
+                            "fd=%zu ip=%lld rcvr=0x%llx ret=0x%llx %s "
+                            "(Symbol class returned)\n",
                             hitJ, msel.c_str(), mcls.c_str(), frameDepth_,
-                            ipOff);
+                            ipOff,
+                            (unsigned long long)state.receiver.rawBits(),
+                            (unsigned long long)state.returnValue.rawBits(),
+                            rcvrEqRet ? "[rcvr==ret → returnSelf?]"
+                                      : "[rcvr!=ret]");
+                        // Dump IC entries for intern: to see if it has
+                        // a wrong returnsSelf classification.
+                        if (rcvrEqRet && msel == "intern:" && hitJ <= 3) {
+                            jit::JITMethod* internJM =
+                                jitRuntime_.methodMap().lookup(
+                                    state.method.rawBits());
+                            if (internJM && internJM->numICEntries > 0
+                                && internJM->icBuffer) {
+                                fprintf(stderr,
+                                    "[SYMCLS-IC] intern: IC dump (%u sites):\n",
+                                    internJM->numICEntries);
+                                uint8_t* base = internJM->icZoneStart();
+                                for (uint32_t s = 0; s < internJM->numICEntries; s++) {
+                                    uint64_t* ic = (uint64_t*)(base + s * jit::IC_BYTES_PER_SITE);
+                                    uint64_t selBits = ic[18];
+                                    Oop selOop = Oop::fromRawBits(selBits);
+                                    std::string sn = selOop.isObject()
+                                        && selBits >= 0x10000
+                                        ? memory_.oopToString(selOop) : "?";
+                                    fprintf(stderr,
+                                        "[SYMCLS-IC]   site=%u sel=#%s\n",
+                                        s, sn.c_str());
+                                    for (int e = 0; e < 6; e++) {
+                                        uint64_t key = ic[e * 3];
+                                        uint64_t mb = ic[e * 3 + 1];
+                                        uint64_t ex = ic[e * 3 + 2];
+                                        if (key == 0) continue;
+                                        fprintf(stderr,
+                                            "[SYMCLS-IC]     [%d] key=0x%llx mb=0x%llx extra=0x%llx "
+                                            "(b57=%d 58=%d 59=%d 60=%d 61=%d 62=%d 63=%d)\n",
+                                            e, (unsigned long long)key,
+                                            (unsigned long long)mb,
+                                            (unsigned long long)ex,
+                                            (int)((ex >> 57) & 1),
+                                            (int)((ex >> 58) & 1),
+                                            (int)((ex >> 59) & 1),
+                                            (int)((ex >> 60) & 1),
+                                            (int)((ex >> 61) & 1),
+                                            (int)((ex >> 62) & 1),
+                                            (int)((ex >> 63) & 1));
+                                    }
+                                }
+                            }
+                        }
                         for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
                             SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
                             std::string s = memory_.selectorOf(sf.savedMethod);
