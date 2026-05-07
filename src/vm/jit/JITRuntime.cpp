@@ -2312,6 +2312,13 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
                         "cannotReturn:",
                         "aboutToReturn:through:",
                         "noHandler:",
+                        // 2026-05-07: Integer>>reciprocalModulo: contains
+                        // `[v >= fPlusN] whileTrue: [v := u \\ (u := v)]`
+                        // — assignment side-effect in arg expression that
+                        // breaks register-cache invalidation in JIT codegen.
+                        // Hangs/asserts on second invocation in a tight loop.
+                        // See memory/project_recipmodulo_jit_hang.md.
+                        "reciprocalModulo:",
                         nullptr
                     };
                     // Chain-loop-only exclusions: only excluded when
