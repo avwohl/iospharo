@@ -10081,6 +10081,31 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                                 o, bcBase[o], o == ipOff ? " <-- IP" : "");
                         }
                     }
+                    // Print enclosing C++ frames with JIT status — if any
+                    // is JIT-compiled, that's likely the corruption source.
+                    fprintf(stderr, "[DNU-PROBE] enclosing frames (top=current):\n");
+                    for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
+                        SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
+                        std::string mSel = memory_.selectorOf(sf.savedMethod);
+                        std::string rCls = memory_.classNameOf(sf.savedReceiver);
+                        jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(
+                            sf.savedMethod.rawBits());
+                        // Compute saved IP offset
+                        long long savedIpOff = -1;
+                        if (sf.savedMethod.isObject()
+                            && sf.savedMethod.rawBits() > 0x10000) {
+                            ObjectHeader* sm = sf.savedMethod.asObjectPtr();
+                            Oop sh = sm->slots()[0];
+                            int snLits = sh.isSmallInteger()
+                                ? (sh.asSmallInteger() & 0x7FFF) : 0;
+                            uint8_t* sBC = sm->bytes() + (1 + snLits) * 8;
+                            if (sf.savedIP) savedIpOff = (long long)(sf.savedIP - sBC);
+                        }
+                        fprintf(stderr,
+                            "[DNU-PROBE]   [%zu] %s>>%s ip=%lld jit=%s\n",
+                            f, rCls.c_str(), mSel.c_str(), savedIpOff,
+                            fjm ? "YES" : "no");
+                    }
                     fprintf(stderr, "[DNU-PROBE] stack/temps (FP-2..FP+8):\n");
                     for (int s = -2; s <= 8; s++) {
                         Oop sv = framePointer_[s];
