@@ -266,10 +266,11 @@ Interpreter::Interpreter(ObjectMemory& memory)
     if (std::getenv("PHARO_TRACE_STACK_ORIGIN") != nullptr) {
         stackOriginEnabled_ = true;
         stackOrigins_.resize(stack_.size(), 0);
+        stackPushReturnAddr_.resize(stack_.size(), nullptr);
         fprintf(stderr,
-            "[STACK-ORIGIN] tracking enabled, parallel array %zu entries (%zu MB)\n",
+            "[STACK-ORIGIN] tracking enabled, parallel arrays %zu entries (%zu MB)\n",
             stackOrigins_.size(),
-            (stackOrigins_.size() * sizeof(uint64_t)) / (1024*1024));
+            (stackOrigins_.size() * (sizeof(uint64_t) + sizeof(void*))) / (1024*1024));
     }
 }
 
@@ -15910,6 +15911,11 @@ void Interpreter::tryJITResumeInCaller() {
             int arraySize = desc & 0x7F;
             bool popIntoArray = (desc >> 7) != 0;
 
+            // 2026-05-07 A1: trace ExitArrayCreate sp delta — this is where
+            // the leak originated according to origin tracking
+            Oop* spBeforeArr = stackPointer_;
+            (void)spBeforeArr;
+
             Oop arrayClass = memory_.specialObject(SpecialObjectIndex::ClassArray);
             uint32_t classIndex = memory_.indexOfClass(arrayClass);
             Oop array = memory_.allocateSlots(classIndex, arraySize, ObjectFormat::Indexable);
@@ -15918,6 +15924,28 @@ void Interpreter::tryJITResumeInCaller() {
                     memory_.storePointer(i, array, pop());
             }
             push(array);
+            if (__builtin_expect(stackOriginEnabled_, 0)) {
+                ptrdiff_t actualDelta = stackPointer_ - spBeforeArr;
+                ptrdiff_t expectedDelta = popIntoArray
+                    ? (ptrdiff_t)(1 - arraySize)
+                    : 1;
+                static size_t arrCreateCount = 0;
+                arrCreateCount++;
+                if (arrCreateCount <= 4
+                    || actualDelta != expectedDelta
+                    || (arrCreateCount % 5000 == 0)) {
+                    fprintf(stderr,
+                        "[ARR-CREATE] #%zu desc=0x%x size=%d pop=%d "
+                        "actualDelta=%+lld expected=%+lld method=#%s "
+                        "sp_off=%lld\n",
+                        arrCreateCount,
+                        desc, arraySize, popIntoArray ? 1 : 0,
+                        (long long)actualDelta,
+                        (long long)expectedDelta,
+                        memory_.selectorOf(method_).c_str(),
+                        (long long)(stackPointer_ - stack_.data()));
+                }
+            }
             instructionPointer_ += 2;  // Past PushArray (2 bytes)
             continue;  // Resume JIT at next bytecode
         }
@@ -16898,11 +16926,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             fprintf(stderr,
                 "[STACK-ORIGIN] sp_off=%lld fd=%zu — origin tag histogram for slots [3..%lld]:\n",
                 spOff, frameDepth_, spOff);
-            // Histogram: count distinct origin tags in slots 3..sp.
+            // Histogram: count distinct (origin, returnAddr) pairs.
+            // Group by return address so we get C++ caller resolution.
             std::unordered_map<uint64_t, size_t> histogram;
+            std::unordered_map<uint64_t, void*> tagToRa;
             for (long long i = 3; i < spOff; i++) {
                 uint64_t origin = stackOrigins_[i];
-                histogram[origin]++;
+                void* ra = stackPushReturnAddr_[i];
+                // Combine origin + ra into a tag.  Use ra as primary
+                // (since ra uniquely identifies the C++ push site).
+                uint64_t tag = (uint64_t)ra;
+                histogram[tag]++;
+                tagToRa[tag] = ra;
+                (void)origin;
             }
             // Sort by count descending, print top 10.
             std::vector<std::pair<uint64_t,size_t>> sorted(
@@ -16912,32 +16948,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     return a.second > b.second;
                 });
             for (size_t i = 0; i < std::min<size_t>(sorted.size(), 10); i++) {
-                uint64_t origin = sorted[i].first;
+                uint64_t tag = sorted[i].first;
                 size_t count = sorted[i].second;
-                if (origin == 0) {
+                void* ra = tagToRa[tag];
+                if (ra == nullptr) {
                     fprintf(stderr,
-                        "  origin=0 (UNSET — no push() recorded) count=%zu\n",
+                        "  ra=NULL (UNSET — no push() recorded) count=%zu\n",
                         count);
                     continue;
                 }
-                uint16_t bcOff = origin & 0xFFFF;
-                uint8_t kind = (origin >> 16) & 0xFF;
-                uint64_t methHash = origin >> 32;
-                // Find a method matching this hash by walking saved frames
-                std::string methName = "?";
-                for (size_t f = 0; f <= frameDepth_; f++) {
-                    Oop m = (f == frameDepth_) ? method_
-                                                : savedFrames_[f].savedMethod;
-                    if (m.isObject()
-                        && (m.rawBits() >> 4) == methHash) {
-                        methName = memory_.selectorOf(m);
-                        break;
-                    }
-                }
+                Dl_info info{};
+                int got = dladdr(ra, &info);
+                const char* sym = (got && info.dli_sname) ? info.dli_sname : "?";
+                ptrdiff_t off = got ? ((uint8_t*)ra - (uint8_t*)info.dli_saddr) : 0;
                 fprintf(stderr,
-                    "  origin=#%s bcOff=%u kind=%d hash=0x%llx count=%zu\n",
-                    methName.c_str(), bcOff, kind,
-                    (unsigned long long)methHash, count);
+                    "  ra=%p sym=%s+%lld count=%zu\n",
+                    ra, sym, (long long)off, count);
             }
         }
     }
