@@ -2905,33 +2905,25 @@ bool JITRuntime::tryResume(Oop compiledMethod, uint32_t bcOffset, JITState& stat
         }
     }
 
-    // 2026-05-07 A1: log sp delta across each tryResume call.
-    // If a specific (method, bcOffset) pair leaks +1, that's the bug.
+    // 2026-05-07 A1: optional sp-delta trace across each tryResume.
+    // PHARO_TRACE_RESUME_SP=1 enables; gated to keep zero overhead off.
     static const bool traceResume =
         std::getenv("PHARO_TRACE_RESUME_SP") != nullptr;
     Oop* spBefore = state.sp;
-    uint32_t exitReasonBefore = (uint32_t)state.exitReason;
-    (void)exitReasonBefore;
 
     entry(&state);
 
     if (__builtin_expect(traceResume, 0)) {
         ptrdiff_t delta = state.sp - spBefore;
-        // Only log non-zero deltas that aren't the obvious -nArgs+1 of a
-        // straight method-completion (which is typically -1 to -8).
-        // Anything > 0 with method=#pollEvent: is suspect.
         std::string sel = interp_ ? interp_->memory().selectorOf(compiledMethod) : "?";
-        bool interesting = (sel == "pollEvent:" || sel == "eventLoop");
-        if (interesting) {
-            static size_t cnt = 0;
-            cnt++;
-            if (cnt <= 16 || cnt % 2000 == 1) {
-                fprintf(stderr,
-                    "[RESUME-SP] #%zu method=#%s bcOff=%u "
-                    "spDelta=%+lld exitReason=%u\n",
-                    cnt, sel.c_str(), bcOffset,
-                    (long long)delta, (unsigned)state.exitReason);
-            }
+        static size_t cnt = 0;
+        cnt++;
+        if (cnt <= 30 || (delta != 0 && cnt < 200)) {
+            fprintf(stderr,
+                "[RESUME-SP] #%zu method=#%s bcOff=%u "
+                "delta=%+lld exit=%u\n",
+                cnt, sel.c_str(), bcOffset,
+                (long long)delta, (unsigned)state.exitReason);
         }
     }
     // Stay in X — codebase invariant.  W^X audit 2026-04-26.
