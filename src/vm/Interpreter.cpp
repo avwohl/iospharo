@@ -263,6 +263,14 @@ Interpreter::Interpreter(ObjectMemory& memory)
     if (std::getenv("PHARO_TRACE_PER_BC_SP") != nullptr) {
         tracePerBcSp_ = true;
     }
+    if (std::getenv("PHARO_TRACE_STACK_ORIGIN") != nullptr) {
+        stackOriginEnabled_ = true;
+        stackOrigins_.resize(stack_.size(), 0);
+        fprintf(stderr,
+            "[STACK-ORIGIN] tracking enabled, parallel array %zu entries (%zu MB)\n",
+            stackOrigins_.size(),
+            (stackOrigins_.size() * sizeof(uint64_t)) / (1024*1024));
+    }
 }
 
 bool Interpreter::initialize() {
@@ -16875,6 +16883,61 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     "[FD-BASELINE] baseline_count=%zu fd=%zu sp_off=%lld "
                     "delta_from_first=%+lld\n",
                     baselineCount, frameDepth_, spOff, delta);
+            }
+        }
+    }
+
+    // PHARO_DUMP_STACK_ORIGINS=1: when sp grows past 50K, dump origin
+    // tag for each slot (which method+bcOff pushed it, or "unset" if
+    // a JIT path wrote the slot without going through push()).
+    if (__builtin_expect(stackOriginEnabled_, 0)) {
+        long long spOff = stackPointer_ - stack_.data();
+        static long long lastDump = 0;
+        if (spOff > 1000 && spOff > lastDump + 5000) {
+            lastDump = spOff;
+            fprintf(stderr,
+                "[STACK-ORIGIN] sp_off=%lld fd=%zu — origin tag histogram for slots [3..%lld]:\n",
+                spOff, frameDepth_, spOff);
+            // Histogram: count distinct origin tags in slots 3..sp.
+            std::unordered_map<uint64_t, size_t> histogram;
+            for (long long i = 3; i < spOff; i++) {
+                uint64_t origin = stackOrigins_[i];
+                histogram[origin]++;
+            }
+            // Sort by count descending, print top 10.
+            std::vector<std::pair<uint64_t,size_t>> sorted(
+                histogram.begin(), histogram.end());
+            std::sort(sorted.begin(), sorted.end(),
+                [](const auto& a, const auto& b){
+                    return a.second > b.second;
+                });
+            for (size_t i = 0; i < std::min<size_t>(sorted.size(), 10); i++) {
+                uint64_t origin = sorted[i].first;
+                size_t count = sorted[i].second;
+                if (origin == 0) {
+                    fprintf(stderr,
+                        "  origin=0 (UNSET — no push() recorded) count=%zu\n",
+                        count);
+                    continue;
+                }
+                uint16_t bcOff = origin & 0xFFFF;
+                uint8_t kind = (origin >> 16) & 0xFF;
+                uint64_t methHash = origin >> 32;
+                // Find a method matching this hash by walking saved frames
+                std::string methName = "?";
+                for (size_t f = 0; f <= frameDepth_; f++) {
+                    Oop m = (f == frameDepth_) ? method_
+                                                : savedFrames_[f].savedMethod;
+                    if (m.isObject()
+                        && (m.rawBits() >> 4) == methHash) {
+                        methName = memory_.selectorOf(m);
+                        break;
+                    }
+                }
+                fprintf(stderr,
+                    "  origin=#%s bcOff=%u kind=%d hash=0x%llx count=%zu\n",
+                    methName.c_str(), bcOff, kind,
+                    (unsigned long long)methHash, count);
             }
         }
     }

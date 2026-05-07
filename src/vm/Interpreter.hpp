@@ -490,6 +490,10 @@ public:
             stopVM("Stack overflow in push()");
             return;
         }
+        // 2026-05-06 A1: record push origin
+        if (__builtin_expect(stackOriginEnabled_, 0)) {
+            recordOrigin(stackPointer_, /*kind=*/1);
+        }
         *stackPointer_++ = value;
     }
 
@@ -674,6 +678,37 @@ private:
     std::array<Oop, MaxStackDepth + StackSafetyZone> stack_;
     Oop* stackPointer_;
     Oop* stackBase_;
+
+    // 2026-05-06 A1: parallel array recording WHO pushed each stack
+    // slot.  Allocated only when PHARO_TRACE_STACK_ORIGIN=1 (16MB).
+    // Each entry packs: low 16 bits = bcOff, next 16 bits = pushKind
+    // (1=interp push, 2=temp init, 3=jit-stencil), high 32 bits = method
+    // bits hash (cmBits >> 4 & 0xFFFFFFFF). Slot 0 = "never written".
+    std::vector<uint64_t> stackOrigins_;
+    bool stackOriginEnabled_ = false;
+    uint64_t makeOrigin(uint8_t kind) const {
+        if (!stackOriginEnabled_) return 0;
+        uint64_t methHash = method_.rawBits() >> 4;
+        ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+        uint16_t bcOff = 0;
+        if (mObj && instructionPointer_) {
+            Oop hdr = mObj->slots()[0];
+            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+            const uint8_t* bcBase = mObj->bytes() + (1 + numLits) * 8;
+            ptrdiff_t off = instructionPointer_ - bcBase;
+            if (off >= 0 && off < 0xFFFF) bcOff = (uint16_t)off;
+        }
+        return ((methHash & 0xFFFFFFFFull) << 32)
+             | ((uint64_t)kind << 16)
+             | bcOff;
+    }
+    void recordOrigin(Oop* slot, uint8_t kind) {
+        if (!stackOriginEnabled_) return;
+        size_t idx = slot - stack_.data();
+        if (idx < stackOrigins_.size()) {
+            stackOrigins_[idx] = makeOrigin(kind);
+        }
+    }
 
     // Current frame
     Oop* framePointer_;
@@ -1325,6 +1360,9 @@ public:
         int totalTemps = jm->tempCount;
         if (__builtin_expect(nArgs < totalTemps, 0)) {
             for (int i = nArgs; i < totalTemps; i++) {
+                if (__builtin_expect(stackOriginEnabled_, 0)) {
+                    recordOrigin(stackPointer_, /*kind=*/2);
+                }
                 *stackPointer_ = nil;
                 stackPointer_++;
             }
