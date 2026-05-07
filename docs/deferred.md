@@ -673,41 +673,37 @@ converted harness:
 Preserved the `methodsFor:` shim at the top of the harness for
 belt-and-suspenders.
 
-### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **GATED 2026-04-28** (`13056933`), partially improved (`5d189328` + `db8e914d` 2026-05-05)
+### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **MOSTLY FIXED 2026-05-07** (`0bd8c501`)
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
-`PHARO_JIT_DEFER=0` (immediate JIT) hangs during the SessionManager
-startup chain — `[STARTUP-ST-FIRED]` never appears, the eval
-expression never executes, and the step counter freezes at ~1.7M
-(interp creeps at ~1K steps/sec post-defer while JIT spins between
-scheduler activations).  306 methods compile, 97.4 % IC hit rate —
-scheduling issue when JIT compile runs during the boot/eval
-handoff, not a correctness one.  Bisection 2026-04-28: DEFER=2s
-still hangs, DEFER=3s lets startup finish.
 
-**Mitigation in `13056933`**: in headless mode (without
-`PHARO_BENCH`), `PHARO_JIT_DEFER < 4s` is silently clamped to 4s
-with a warning.  Bench mode bypasses the clamp because
-`executeFromContext` doesn't use the startup.st path.
+**Status sweep with PHARO_NO_DEFER_CLAMP=1 (2026-05-07 post-fix)**:
+  DEFER=0:  hangs ~5M steps (process termination via resume:through: —
+            same pattern as A3, distinct bug)
+  DEFER=1:  works ✓ (was: hang)
+  DEFER=2:  works ✓ (was: SIGSEGV in JITCompiler::compile)
+  DEFER=3:  works ✓ (was: SIGSEGV in lookupInMethodDict)
+  DEFER=4:  works
+  DEFER=15: works
 
-**Partial improvement 2026-05-05** (`5d189328` queue-compile
-default-on + `db8e914d` lookupInMethodDict guards): with the
-clamp temporarily bypassed via PHARO_NO_DEFER_CLAMP=1 (test-only),
-queue-compile let interp progress 50× further before hanging
-(~85M steps stuck vs the original ~1.7M).  Each lower DEFER value
-exposes a different corruption:
-  DEFER=4: works (5s, result 1028457)
-  DEFER=3: SIGSEGV in lookupInMethodDict +236/+300 (corrupt IC
-           cache returns out-of-heap method dict oop — guards
-           catch one offset, the other's in key-array access)
-  DEFER=2: SIGSEGV in JITCompiler::compile +21700
-  DEFER=1: hangs ~85M steps (Morphic UI render cascade)
-  DEFER=0: hangs ~85M steps
+**Root cause of DEFER=1/2/3 issues** (commit `0bd8c501`): C++
+ExitArrayCreate handlers (lines 16013, 18443) did
+`instructionPointer_ = state.ip` before `+= 2`.  But
+`stencil_pushArray` doesn't update `state.ip` — it stays at bcBase
+(offset 0).  So IP ended up at offset 2 instead of past PushArray,
+and the JIT looped through pollEvent:'s body forever, leaking +1 sp
+slot per cycle.
 
-The lookupInMethodDict guards prevent one specific SIGSEGV but
-the underlying IC corruption (which produces the bad oop in the
-first place) remains.  Real fix needs a non-step-count "image
-initialization complete" signal — same architectural problem as
-project_jit_defer_queue_2026_05_05.md.  4s clamp still load-bearing.
+The leak only fired heavily at DEFER=1 + bench_suite image because
+that's when pollEvent: gets JIT-compiled (FFI sessions active).
+DEFER=2/3's SIGSEGVs were the same accumulating leak hitting
+overflow → corrupted IC cache during compile.
+
+**4s clamp** (`13056933`) was the original gate — now superseded by
+the actual fix.  Can probably be lowered to 1s or removed entirely.
+
+**Remaining DEFER=0 hang**: process termination at ~5M steps via
+resume:through:.  Same symptom as A3.  Architectural — needs a
+non-step-count "image initialization complete" signal.
 
 Earlier guess that `Context>>copyTo:` recursing at depth 4090+
 was the trigger turned out to be downstream of the same boot-chain
