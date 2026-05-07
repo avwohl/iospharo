@@ -9956,6 +9956,19 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
                         cls, (int)rH->format(), memory_.classNameOf(rcvr).c_str());
                 if (cls == 0) suspiciousRcvr = true;  // Invalid object
+                // 2026-05-07: full-JIT corruption probe — when we DNU on
+                // #asSymbol with a class object as receiver, the JIT
+                // pushed the wrong stack value (DEFER<2 corruption,
+                // see project_defer_clamp_2s_2026_05_07.md).  Opt-in
+                // via PHARO_DNU_ASSYM_PROBE=1.
+                static const bool asSymProbe =
+                    std::getenv("PHARO_DNU_ASSYM_PROBE") != nullptr;
+                if (asSymProbe && selName == "asSymbol"
+                    && rH->classIndex() != 0) {
+                    std::string rcname = memory_.classNameOf(rcvr);
+                    if (rcname.find(" class") != std::string::npos)
+                        suspiciousRcvr = true;
+                }
             } else if (rcvr.isSmallInteger()) {
                 fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
                 suspiciousRcvr = true;
@@ -10021,6 +10034,72 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         (long long)(rv - megaBase),
                         (long long)((rv - megaBase) / 32),
                         (long long)((rv - megaBase) % 32));
+                // 2026-05-07: Full-JIT corruption probe — dump current
+                // method's bytecodes around IP and stack/temps so we can
+                // see what was pushed where.  Limited to 1 dump.
+                static int probeDumpCount = 0;
+                if (selName == "asSymbol" && probeDumpCount < 3
+                    && method_.isObject()) {
+                    probeDumpCount++;
+                    ObjectHeader* mH = method_.asObjectPtr();
+                    Oop hdr = mH->slots()[0];
+                    int nLits = hdr.isSmallInteger()
+                        ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                    uint8_t* bcBase = mH->bytes() + (1 + nLits) * 8;
+                    uint8_t* bcEnd = mH->bytes() + mH->byteSize();
+                    long long ipOff = instructionPointer_
+                        ? (long long)(instructionPointer_ - bcBase) : -1;
+                    fprintf(stderr,
+                        "[DNU-PROBE] method=#%s(0x%llx) bcLen=%lld ipOff=%lld jit=%s\n",
+                        memory_.selectorOf(method_).c_str(),
+                        (unsigned long long)method_.rawBits(),
+                        (long long)(bcEnd - bcBase), ipOff,
+                        callerJM ? "YES" : "no");
+                    fprintf(stderr, "[DNU-PROBE] literals (first 12):\n");
+                    for (int i = 1; i <= nLits && i <= 12; i++) {
+                        Oop lit = mH->slots()[i];
+                        std::string ld;
+                        if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ld = memory_.classNameOf(lit);
+                            if (memory_.isValidPointer(lit)) {
+                                ObjectHeader* lh = lit.asObjectPtr();
+                                if (lh->isBytesObject() && lh->byteSize() < 32)
+                                    ld += " '" + std::string((char*)lh->bytes(), lh->byteSize()) + "'";
+                            }
+                        } else if (lit.isSmallInteger()) {
+                            ld = "SmI " + std::to_string(lit.asSmallInteger());
+                        } else if (lit.isNil()) ld = "nil";
+                        else ld = "?";
+                        fprintf(stderr, "[DNU-PROBE]   lit[%d]=0x%llx (%s)\n",
+                            i, (unsigned long long)lit.rawBits(), ld.c_str());
+                    }
+                    if (ipOff >= 0 && ipOff < (long long)(bcEnd - bcBase)) {
+                        fprintf(stderr, "[DNU-PROBE] bytecodes around IP (-12..+8):\n");
+                        for (long long o = std::max((long long)0, ipOff-12);
+                             o <= std::min(ipOff+8, (long long)(bcEnd - bcBase) - 1); o++) {
+                            fprintf(stderr, "[DNU-PROBE]   bc[%lld] = 0x%02x%s\n",
+                                o, bcBase[o], o == ipOff ? " <-- IP" : "");
+                        }
+                    }
+                    fprintf(stderr, "[DNU-PROBE] stack/temps (FP-2..FP+8):\n");
+                    for (int s = -2; s <= 8; s++) {
+                        Oop sv = framePointer_[s];
+                        std::string sd;
+                        if (sv.isObject() && sv.rawBits() > 0x10000
+                            && memory_.isValidPointer(sv)) {
+                            sd = memory_.classNameOf(sv);
+                        } else if (sv.isSmallInteger()) {
+                            sd = "SmI";
+                        } else if (sv.isNil()) sd = "nil";
+                        else sd = "?";
+                        const char* mark = "";
+                        if (framePointer_ + s == stackPointer_) mark = " <-- SP";
+                        if (framePointer_ + s == stackPointer_ - 1) mark = " (top)";
+                        fprintf(stderr, "[DNU-PROBE]   FP[%d]=0x%llx (%s)%s\n",
+                            s, (unsigned long long)sv.rawBits(),
+                            sd.c_str(), mark);
+                    }
+                }
             }
 #endif // PHARO_JIT_ENABLED
             // Dump args and frame info for debugging
