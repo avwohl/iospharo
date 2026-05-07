@@ -312,12 +312,36 @@ bisect because ISOLATED each test works.
 Mitigation: run tests with `PHARO_NO_JIT=1` (slow but correct), or run
 one-at-a-time from shell.
 
-## A4. IntegerTest hang under JIT — **NARROWED to one test** (2026-04-23 late)
+## A4. IntegerTest hang under JIT — **ROOT CAUSE FOUND 2026-05-07**
 
-**2026-05-07**: with the skip-list workaround, IntegerTest passes
-74/83 (3 skips) under our VM via the SUnit harness.  Worth retrying
-the skipped tests after commit `0bd8c501` to see if A4 is also
-fully fixed.
+Investigated post-A1-fix.  Standalone the skip-listed tests pass under
+default JIT in 4-6 seconds.  In harness context (IntegerTest run
+sequentially), they hang at the 80s watchdog.
+
+**Root cause** (`memory/project_recipmodulo_jit_hang.md`): JIT-compiled
+`Integer>>reciprocalModulo:` produces broken code on second invocation
+in a tight loop.  The method contains:
+```
+[v >= fPlusN] whileTrue:
+    [v := u \\ (u := v)].
+```
+The `u \\ (u := v)` pattern has a side-effect-in-argument that the
+JIT codegen probably doesn't handle correctly (likely register-cache
+invalidation issue when the receiver gets reassigned in the arg expr).
+
+**Workaround**: `JIT_EXCLUDE=reciprocalModulo:` lets both passes
+complete in 5s each.
+
+**Effect cascade**: testReciprocalModulo is the direct victim;
+testNthRootTruncated, testPrintStringBase, etc. hang because
+reciprocalModulo: gets JIT-compiled during the first IntegerTest
+test that uses it, and subsequent tests inherit the broken JIT.
+
+**Fix path**: trace the Sista/T1 lifter for the `u \\ (u := v)`
+pattern.  Likely the LargeInteger \\ stencil caches receiver in
+a register and doesn't flush after the argument's assignment.
+
+Original A4 entry preserved below for context:
 
 Originally flagged as IntegerTest + FloatTest + CharacterTest all
 hanging under JIT.  Re-tested each in isolation with default JIT on
