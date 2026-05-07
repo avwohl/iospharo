@@ -4709,6 +4709,40 @@ void Interpreter::pushSpecial(int which) {
 }
 
 void Interpreter::returnValue(Oop value) {
+    // 2026-05-07 DEFER<2 corruption probe — see returnFromMethod for
+    // explanation.  PHARO_TRACE_SYMCLS_RETURN=1.
+    static const bool symclsTrace2 =
+        std::getenv("PHARO_TRACE_SYMCLS_RETURN") != nullptr;
+    if (__builtin_expect(symclsTrace2, 0)) {
+        static const uint64_t targetOop2 = []() {
+            const char* e = std::getenv("PHARO_SYMCLS_OOP");
+            return e ? strtoull(e, nullptr, 0) : 0x300016550ULL;
+        }();
+        static int hitCount2 = 0;
+        if (value.rawBits() == targetOop2 && hitCount2 < 30) {
+            hitCount2++;
+            std::string msel = memory_.selectorOf(method_);
+            std::string mcls = memory_.classNameOf(receiver_);
+            jit::JITMethod* curJM = jitRuntime_.methodMap().lookup(
+                method_.rawBits());
+            fprintf(stderr,
+                "[SYMCLS-RV] #%d returnValue method=#%s rcvrCls=%s fd=%zu "
+                "curJM=%s (Symbol class 0x%llx)\n",
+                hitCount2, msel.c_str(), mcls.c_str(), frameDepth_,
+                curJM ? "YES" : "no",
+                (unsigned long long)value.rawBits());
+            for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
+                std::string s = memory_.selectorOf(sf.savedMethod);
+                std::string c = memory_.classNameOf(sf.savedReceiver);
+                jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(
+                    sf.savedMethod.rawBits());
+                fprintf(stderr,
+                    "[SYMCLS-RV]   [%zu] %s>>%s jit=%s\n",
+                    f, c.c_str(), s.c_str(), fjm ? "YES" : "no");
+            }
+        }
+    }
     // If no frames to pop, check if we have a sender context to return to
     if (frameDepth_ == 0) {
         // Check for pending NLR through ensure:.
@@ -5326,12 +5360,91 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
+    // 2026-05-07 DEFER<2 corruption probe — log when a method returns
+    // a known sentinel oop that shows up in the asSymbol DNU pattern.
+    // Opt-in via PHARO_TRACE_SYMCLS_RETURN=1.  Captures caller chain
+    // so we can identify which method is producing Symbol class as
+    // its return value.  Limited to first 20 hits to avoid log flood.
+    static const bool symclsTrace =
+        std::getenv("PHARO_TRACE_SYMCLS_RETURN") != nullptr;
+    if (__builtin_expect(symclsTrace, 0)) {
+        // 0x300016550 is the Symbol class oop in Pharo 13 clean image.
+        // Use env var PHARO_SYMCLS_OOP=0xN to override for other images.
+        static const uint64_t targetOop = []() {
+            const char* e = std::getenv("PHARO_SYMCLS_OOP");
+            return e ? strtoull(e, nullptr, 0) : 0x300016550ULL;
+        }();
+        static int hitCount = 0;
+        if (value.rawBits() == targetOop && hitCount < 20) {
+            hitCount++;
+            std::string msel = memory_.selectorOf(method_);
+            std::string mcls = memory_.classNameOf(receiver_);
+            fprintf(stderr,
+                "[SYMCLS-RET] #%d method=#%s rcvrCls=%s fd=%zu "
+                "(returning Symbol class 0x%llx)\n",
+                hitCount, msel.c_str(), mcls.c_str(), frameDepth_,
+                (unsigned long long)value.rawBits());
+            // Walk caller chain
+            for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
+                SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
+                std::string s = memory_.selectorOf(sf.savedMethod);
+                std::string c = memory_.classNameOf(sf.savedReceiver);
+                jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(
+                    sf.savedMethod.rawBits());
+                fprintf(stderr,
+                    "[SYMCLS-RET]   [%zu] %s>>%s jit=%s\n",
+                    f, c.c_str(), s.c_str(), fjm ? "YES" : "no");
+            }
+        }
+    }
+
     // Check if we're executing inside a block (CompiledBlock).
     // If so, a "return from method" (^) should actually return from the HOME method,
     // not just from this block.
 
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
+
+        // 2026-05-07 PHARO_TRACE_BLOCK_NLR=1: log when current method is a
+        // CompiledBlock at returnFromMethod entry — captures NLR triggers.
+        static const bool blockNlrEarly =
+            std::getenv("PHARO_TRACE_BLOCK_NLR") != nullptr;
+        if (__builtin_expect(blockNlrEarly, 0) && method_.isObject()
+            && method_.rawBits() > 0x10000) {
+            ObjectHeader* mH = method_.asObjectPtr();
+            if (mH->isCompiledMethod()) {
+                Oop hdr = memory_.fetchPointer(0, method_);
+                if (hdr.isSmallInteger()) {
+                    int nLits = hdr.asSmallInteger() & 0x7FFF;
+                    if (nLits >= 1) {
+                        Oop lastLit = memory_.fetchPointer(nLits, method_);
+                        // last literal == another CompiledMethod →
+                        // we're a CompiledBlock
+                        bool isBlk = false;
+                        if (lastLit.isObject()
+                            && lastLit.rawBits() > 0x10000
+                            && memory_.isValidPointer(lastLit)) {
+                            ObjectHeader* lH = lastLit.asObjectPtr();
+                            isBlk = lH->isCompiledMethod();
+                        }
+                        if (isBlk) {
+                            std::string mSel = memory_.selectorOf(method_);
+                            std::string oSel =
+                                memory_.selectorOf(lastLit);
+                            static int blkN = 0;
+                            if (blkN++ < 30) {
+                                fprintf(stderr,
+                                    "[BLOCK-RFM] block-method=#%s outerLit=#%s "
+                                    "homeFrameDepth=%zu fd=%zu value=0x%llx\n",
+                                    mSel.c_str(), oSel.c_str(),
+                                    homeFrame, frameDepth_,
+                                    (unsigned long long)value.rawBits());
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Inline NLR: homeFrame is a valid saved frame index.
         // homeFrameDepth is set by activateBlock (for block NLR) or by the
@@ -5435,6 +5548,24 @@ void Interpreter::returnFromMethod() {
                 }
             }
 
+            // 2026-05-07 NLR-trace probe: catches block-NLR cases where
+            // homeFrameDepth was lost via J2J materialize.  PHARO_TRACE_BLOCK_NLR=1.
+            static const bool blockNlrTrace =
+                std::getenv("PHARO_TRACE_BLOCK_NLR") != nullptr;
+            if (__builtin_expect(blockNlrTrace, 0) && method_.isObject()) {
+                std::string mSel = memory_.selectorOf(method_);
+                std::string hSel = homeMethodOop.isObject()
+                    && homeMethodOop.rawBits() > 0x10000
+                    ? memory_.selectorOf(homeMethodOop) : "?";
+                static int n = 0;
+                if (n++ < 30) {
+                    fprintf(stderr,
+                        "[BLOCK-NLR] method=#%s home=#%s value=0x%llx fd=%zu\n",
+                        mSel.c_str(), hSel.c_str(),
+                        (unsigned long long)value.rawBits(),
+                        frameDepth_);
+                }
+            }
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
                 // First check if home method is in context chain
@@ -5446,6 +5577,14 @@ void Interpreter::returnFromMethod() {
                 // might still be in inline frames if block was re-pushed after materialization)
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
+                        if (__builtin_expect(blockNlrTrace, 0)) {
+                            static int n2 = 0;
+                            if (n2++ < 30) {
+                                fprintf(stderr,
+                                    "[BLOCK-NLR-INLINE] found home in savedFrames_[%zu]\n",
+                                    si);
+                            }
+                        }
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         while (frameDepth_ > homeFrame) {
@@ -15761,6 +15900,38 @@ void Interpreter::tryJITResumeInCaller() {
                     Oop retVal = state.returnValue;
                     J2JSave& save = rj2jSaves[rj2jDepth];
 
+                    // 2026-05-07 DEFER<2 corruption probe (J2J chain path)
+                    {
+                        static const bool symclsTraceCh =
+                            std::getenv("PHARO_TRACE_SYMCLS_RETURN") != nullptr;
+                        if (__builtin_expect(symclsTraceCh, 0)) {
+                            static const uint64_t targetOopCh = []() {
+                                const char* e = std::getenv("PHARO_SYMCLS_OOP");
+                                return e ? strtoull(e, nullptr, 0)
+                                         : 0x300016550ULL;
+                            }();
+                            static int hitCh = 0;
+                            if (retVal.rawBits() == targetOopCh && hitCh < 30) {
+                                hitCh++;
+                                Oop calleeMethod = state.method;
+                                std::string csel = memory_.selectorOf(calleeMethod);
+                                Oop crcv = state.receiver;
+                                std::string cccls = (crcv.isObject()
+                                    && memory_.isValidPointer(crcv))
+                                    ? memory_.classNameOf(crcv) : "?";
+                                Oop callerMethod = save.jitMethod
+                                    ? Oop::fromRawBits(save.jitMethod->compiledMethodOop)
+                                    : Oop::nil();
+                                std::string callerSel = memory_.selectorOf(callerMethod);
+                                fprintf(stderr,
+                                    "[SYMCLS-CH] #%d J2J-chain return: callee=#%s "
+                                    "calleeRcvrCls=%s caller=#%s rj2jDepth=%d\n",
+                                    hitCh, csel.c_str(), cccls.c_str(),
+                                    callerSel.c_str(), rj2jDepth);
+                            }
+                        }
+                    }
+
                     state.sp = save.sp;
                     state.receiver = save.receiver;
                     state.tempBase = save.tempBase;
@@ -15891,6 +16062,56 @@ void Interpreter::tryJITResumeInCaller() {
 
         switch (state.exitReason) {
         case jit::ExitReturn:
+            // 2026-05-07 DEFER<2 corruption probe — see returnFromMethod
+            {
+                static const bool symclsTraceJ =
+                    std::getenv("PHARO_TRACE_SYMCLS_RETURN") != nullptr;
+                if (__builtin_expect(symclsTraceJ, 0)) {
+                    static const uint64_t targetOopJ = []() {
+                        const char* e = std::getenv("PHARO_SYMCLS_OOP");
+                        return e ? strtoull(e, nullptr, 0)
+                                 : 0x300016550ULL;
+                    }();
+                    static int hitJ = 0;
+                    if (state.returnValue.rawBits() == targetOopJ
+                        && hitJ < 60) {
+                        hitJ++;
+                        std::string msel = memory_.selectorOf(state.method);
+                        Oop rcv = state.receiver;
+                        std::string mcls = (rcv.isObject()
+                            && memory_.isValidPointer(rcv))
+                            ? memory_.classNameOf(rcv) : "?";
+                        // Compute IP offset within bytecode area
+                        long long ipOff = -1;
+                        if (state.method.isObject()
+                            && state.method.rawBits() > 0x10000
+                            && state.ip != nullptr) {
+                            ObjectHeader* mO = state.method.asObjectPtr();
+                            Oop hh = mO->slots()[0];
+                            int nL = hh.isSmallInteger()
+                                ? (hh.asSmallInteger() & 0x7FFF) : 0;
+                            uint8_t* bcS = mO->bytes() + (1 + nL) * 8;
+                            ipOff = (long long)(state.ip - bcS);
+                        }
+                        fprintf(stderr,
+                            "[SYMCLS-JIT] #%d JIT-method=#%s rcvrCls=%s "
+                            "fd=%zu ip=%lld (Symbol class returned)\n",
+                            hitJ, msel.c_str(), mcls.c_str(), frameDepth_,
+                            ipOff);
+                        for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
+                            SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
+                            std::string s = memory_.selectorOf(sf.savedMethod);
+                            std::string c = memory_.classNameOf(sf.savedReceiver);
+                            jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(
+                                sf.savedMethod.rawBits());
+                            fprintf(stderr,
+                                "[SYMCLS-JIT]   [%zu] %s>>%s jit=%s\n",
+                                f, c.c_str(), s.c_str(),
+                                fjm ? "YES" : "no");
+                        }
+                    }
+                }
+            }
             // Bug-14 diagnostic (tryResume path)
             if (g_debug.b5Trace) {
                 static size_t c12791 = 0;
@@ -16710,6 +16931,36 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     }
 
 
+    // 2026-05-07 IC patch probe — log what extra was computed for any
+    // selector matching PHARO_TRACE_PATCH_SEL.  Helps identify wrongly-
+    // classified IC entries.
+    {
+        static const char* probeSel =
+            std::getenv("PHARO_TRACE_PATCH_SEL");
+        if (probeSel) {
+            std::string sel = memory_.oopToString(selector);
+            if (sel == probeSel) {
+                std::string rcname = memory_.classNameOf(receiver);
+                std::string mcname = memory_.classNameOf(resolvedMethod);
+                fprintf(stderr,
+                    "[IC-PATCH-PROBE] sel=#%s rcvrCls=%s "
+                    "method=0x%llx extra=0x%llx (bit57=%d 58=%d 59=%d "
+                    "60=%d 61=%d 62=%d 63=%d primKind=%d)\n",
+                    sel.c_str(), rcname.c_str(),
+                    (unsigned long long)resolvedMethod.rawBits(),
+                    (unsigned long long)extra,
+                    (int)((extra >> 57) & 1),
+                    (int)((extra >> 58) & 1),
+                    (int)((extra >> 59) & 1),
+                    (int)((extra >> 60) & 1),
+                    (int)((extra >> 61) & 1),
+                    (int)((extra >> 62) & 1),
+                    (int)((extra >> 63) & 1),
+                    (int)((extra >> 48) & 0x1F));
+            }
+        }
+    }
+
     // Find the first empty slot and fill it
     for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == 0) {
@@ -16951,6 +17202,39 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             static const bool noGetterBit2 =
                 std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
             TrivialMethodInfo tmi = detectTrivialMethod(cachedMethod, memory_);
+            // 2026-05-07 IC upgrade probe — log when classification fires.
+            {
+                static const char* probeSel2 =
+                    std::getenv("PHARO_TRACE_PATCH_SEL");
+                if (probeSel2) {
+                    size_t nLits2 = memory_.numLiteralsOf(cachedMethod);
+                    Oop selOop;
+                    if (nLits2 >= 2) {
+                        selOop = memory_.fetchPointer(nLits2 - 1, cachedMethod);
+                        if (selOop.isObject() && selOop.rawBits() >= 0x10000) {
+                            ObjectHeader* h = selOop.asObjectPtr();
+                            if (!h->isBytesObject() && h->slotCount() > 1) {
+                                selOop = memory_.fetchPointer(0, selOop);
+                            }
+                        }
+                    }
+                    std::string sel = selOop.isObject()
+                        ? memory_.selectorOf(selOop) : "?";
+                    if (sel == probeSel2) {
+                        std::string mcname =
+                            memory_.classNameOf(cachedMethod);
+                        fprintf(stderr,
+                            "[IC-UPGRADE-PROBE] sel=#%s method=0x%llx "
+                            "tmi.getter=%d setter=%d retSelf=%d "
+                            "multiA=%d retLit=%d\n",
+                            sel.c_str(),
+                            (unsigned long long)cachedMethod.rawBits(),
+                            (int)tmi.getterIndex, (int)tmi.setterIndex,
+                            (int)tmi.returnsSelf, (int)tmi.multiSlotA,
+                            (int)tmi.returnsLiteral);
+                    }
+                }
+            }
             if (!noGetterBit2 && tmi.getterIndex >= 0)
                 newExtra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
             else if (!noGetterBit2 && tmi.setterIndex >= 0)
