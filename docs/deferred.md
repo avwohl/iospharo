@@ -722,39 +722,41 @@ belt-and-suspenders.
 ### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **MOSTLY FIXED 2026-05-07** (`0bd8c501`)
 Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
 
-**Status sweep (2026-05-07 post-fix)**:
+**Status sweep (2026-05-07, floor at 2s)**:
 
-With default clamp (1s floor):
-  DEFER=0:   OK (clamps to 1s)
-  DEFER=1:   OK
-  DEFER=2-15: OK
+With default clamp (2s floor):
+  DEFER=0:   OK (clamps to 2s)
+  DEFER=1:   OK (clamps to 2s)
+  DEFER=2-15: OK (10/10)
 
 With PHARO_NO_DEFER_CLAMP=1:
   DEFER=0:  HANGS (Morphic render loop / process scheduling)
-  DEFER=1:  flaky (timing-sensitive — some runs hang)
-  DEFER=2:  OK ✓ (was: SIGSEGV in JITCompiler::compile)
+  DEFER=1:  0/10 — terminates via resume:through: /
+            findNextHandlerContext / isHandlerContext with sender=nil.
+            An exception cascades during late-startup, hits a JIT-
+            compiled context-walk method, materialized sender chain
+            breaks → process terminates.  Distinct from the A1 +1 sp
+            leak that 0bd8c501 fixed.
+  DEFER=2:  OK ✓ 5/5 (was: SIGSEGV in JITCompiler::compile)
   DEFER=3:  OK ✓ (was: SIGSEGV in lookupInMethodDict)
   DEFER=4+: OK
 
-**Root cause of DEFER=1/2/3 issues** (commit `0bd8c501`): C++
-ExitArrayCreate handlers (lines 16013, 18443) did
-`instructionPointer_ = state.ip` before `+= 2`.  But
-`stencil_pushArray` doesn't update `state.ip` — it stays at bcBase
-(offset 0).  So IP ended up at offset 2 instead of past PushArray,
-and the JIT looped through pollEvent:'s body forever, leaking +1 sp
-slot per cycle.
+**Original A1 root cause** (commit `0bd8c501`): C++ ExitArrayCreate
+handlers (lines 16013, 18443) did `instructionPointer_ = state.ip`
+before `+= 2`.  But `stencil_pushArray` doesn't update `state.ip` —
+it stays at bcBase (offset 0).  So IP ended up at offset 2 instead
+of past PushArray, and the JIT looped through pollEvent:'s body
+forever, leaking +1 sp slot per cycle.  Fixed; verified.
 
-The leak only fired heavily at DEFER=1 + bench_suite image because
-that's when pollEvent: gets JIT-compiled (FFI sessions active).
-DEFER=2/3's SIGSEGVs were the same accumulating leak hitting
-overflow → corrupted IC cache during compile.
+**Remaining DEFER<2 flakiness**: with no clamp, DEFER=1 fails 10/10
+on clean image (eval `42 printString`).  Failures rotate between
+TERM-P60 via different exception/context-walk methods — the bug is
+not in any single method's miscompile but in how an early startup
+exception unwinds when JIT has compiled methods with sub-2s defer.
 
-**4s clamp** (`13056933`) was the original gate — now superseded by
-the actual fix.  Can probably be lowered to 1s or removed entirely.
-
-**Remaining DEFER=0 hang**: process termination at ~5M steps via
-resume:through:.  Same symptom as A3.  Architectural — needs a
-non-step-count "image initialization complete" signal.
+**4s clamp** (`13056933`) → 2s clamp (2026-05-07).  Floor was
+briefly lowered to 1s after 0bd8c501 but DEFER=1 broader testing
+showed it's still unreliable.
 
 Earlier guess that `Context>>copyTo:` recursing at depth 4090+
 was the trigger turned out to be downstream of the same boot-chain

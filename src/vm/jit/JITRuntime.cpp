@@ -2032,21 +2032,29 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         } else {
             deferSteps = 0;
         }
-        // 2026-05-07 (commit 0bd8c501): A1 +1 sp leak in
-        // ExitArrayCreate handlers fixed.  DEFER=1, 2, 3 all work
-        // now (was: 1=hang, 2=crash, 3=crash).  Lowered floor from
-        // 4s to 1s.  DEFER=0 still hangs (Morphic render-loop or
-        // process-scheduler issue, distinct from the +1 leak).
-        const int64_t kHeadlessFloor = 30000000; // ~1s
+        // 2026-05-07: floor at 2s.  Empirical sweep (clean image,
+        // 5+ runs each) shows:
+        //   DEFER=1: 0/6 succeed — process-termination cascade via
+        //     resume:through:/findNextHandlerContext/isHandlerContext
+        //     with sender=nil.  An exception thrown during late-startup
+        //     unwinds, hits a JIT-compiled context-walk method, the
+        //     materialized sender chain breaks, process terminates.
+        //     Distinct from the A1 +1 sp leak (fixed in 0bd8c501).
+        //   DEFER=2..15: 5/5 each succeed.
+        // The 1s floor (commit 8d60a1cc) was set on the assumption that
+        // 0bd8c501 closed all DEFER<2 paths; broader testing post-fix
+        // shows it didn't.  Re-raised to 2s.  PHARO_NO_DEFER_CLAMP=1
+        // still bypasses for investigation.
+        const int64_t kHeadlessFloor = 60000000; // ~2s
         // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for testing
-        // JIT correctness fixes that aim to make DEFER<1s safe.
+        // JIT correctness fixes that aim to make DEFER<2s safe.
         static const bool clampDisabled =
             std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
         if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
-                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 1.0s "
-                    "(headless mode; sub-1s defer hangs the startup chain).\n",
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 2.0s "
+                    "(headless mode; sub-2s defer flakes startup).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }
