@@ -2032,20 +2032,21 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         } else {
             deferSteps = 0;
         }
-        const int64_t kHeadlessFloor = 120000000; // ~4s
+        // 2026-05-07 (commit 0bd8c501): A1 +1 sp leak in
+        // ExitArrayCreate handlers fixed.  DEFER=1, 2, 3 all work
+        // now (was: 1=hang, 2=crash, 3=crash).  Lowered floor from
+        // 4s to 1s.  DEFER=0 still hangs (Morphic render-loop or
+        // process-scheduler issue, distinct from the +1 leak).
+        const int64_t kHeadlessFloor = 30000000; // ~1s
         // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for testing
-        // JIT correctness fixes that aim to make DEFER<4s safe
-        // (deferred.md A1).  Don't ship workloads with this set.
+        // JIT correctness fixes that aim to make DEFER<1s safe.
         static const bool clampDisabled =
             std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
         if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
-                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
-                    "(headless mode; sub-4s defer hangs the startup chain — "
-                    "see deferred.md A1.  Queue-compile (5d189328) reduced "
-                    "the symptom severity 50× but didn't fully fix it.  "
-                    "Set PHARO_BENCH to opt out.).\n",
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 1.0s "
+                    "(headless mode; sub-1s defer hangs the startup chain).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }
