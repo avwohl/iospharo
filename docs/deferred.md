@@ -749,19 +749,36 @@ post-init even with `PHARO_JIT_DEFER=0`.
 5 small evals (`42 printString`, inject:into: 1k, OC>>size, etc.)
 × both default and DEFER=0+NO_CLAMP all 3/3.
 
-**SUnit A/B (2026-05-08):** ArrayTest+StringTest+DictionaryTest+
-SetTest+DateAndTimeTest, fresh harness image:
+**SUnit A/B (2026-05-08):** 14 collection/number test classes
+(Array+String+Dict+Set+DateAndTime+OC+Symbol+SmallInteger+
+Fraction+Time+LargeInteger+ByteArray+Interval+SortedCollection),
+fresh harness image, JIT engages mid-test (defer lifts at step
+~120M):
 
-  default DEFER:           1197 tests, 1197 P, 0 F, 0 E
-  DEFER=0+NO_CLAMP:        1197 tests, 1197 P, 0 F, 0 E
+  default DEFER:           2485 tests, 2485 P, 0 F, 0 E
+  DEFER=0+NO_CLAMP:        2485 tests, 2485 P, 0 F, 0 E
 
-100% parity.  Resolver-buffer signal is reliable.
+100% parity.  Resolver-buffer signal at the new 4s default is
+reliable across both eval and SUnit-harness modes.
 
-**Resolver buffer length:** 3s is the empirical floor.  Sub-3s
-buffer (1s, 0.5s, 0) all hang 0/5 in DelayMicrosecondTicker —
-JIT-compiling methods inside the post-Resolver init window
-(~3s of bytecodes covering FileSystem + Delay subsystem setup)
-corrupts scheduler state.  See
+**Resolver buffer length:** 4s is the production default (was
+3s; bumped 2026-05-08).  Empirical sweep:
+
+  Cold-eval init (Resolver fires at step ~35M):
+    1s buffer  0/5  hangs in DelayMicrosecondTicker
+    3s buffer  5/5  passes
+    4s buffer  5/5  passes
+
+  SUnit-harness resume (Resolver fires at step ~181K because
+  the saved image is mid-session):
+    3s buffer  0/14 — SymbolTest `SubscriptOutOfBounds 1 in
+                       WeakArray` cascading to runSingleTest:
+                       termination
+    4s buffer  14/14 (2485/2485 tests pass)
+
+The two modes need different absolute lift-step values because
+Resolver-fire timing depends on whether init is cold or
+resuming a saved image.  4s buffer covers both.  See
 `memory/project_resolver_buffer_3s_floor_2026_05_08.md`.
 PHARO_RESOLVER_BUFFER=<seconds> for diagnostics.
 

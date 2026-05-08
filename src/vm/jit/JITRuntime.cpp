@@ -2192,20 +2192,34 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // also serve as a MINIMUM defer when DEFER=0 (where deferSteps==0
     // and would otherwise have no defer at all).
     //
-    // Buffer length: 3s is empirically the floor.  Buffer-sweep on
-    // 2026-05-08 confirmed buf={1.0, 0.5, 0} all fail 0/5 on the
-    // canonical `eval "42 printString"` (P80 hangs in
-    // DelayMicrosecondTicker — JIT engaged mid-Delay-subsystem init
-    // and corrupted scheduler state).  Override via
-    // PHARO_RESOLVER_BUFFER=<seconds> for diagnostics; production
-    // value is 3s.
+    // Buffer length: 4s is empirically the floor that covers BOTH:
+    //
+    //   - Cold eval-mode init.  Resolver fires at step ~35M (after
+    //     ~1s of normal startup), so eval lifts at ~155M steps.
+    //     Sub-3s buffer hangs in DelayMicrosecondTicker (sweep
+    //     2026-05-08 at NO_DEFER_CLAMP=1 DEFER=0: 1s/0.5s/0 all 0/5).
+    //
+    //   - SUnit-harness resume.  When SessionManager fires startUp:
+    //     handlers on a saved image, FileLocator's Resolver:= runs at
+    //     step ~181K (orders of magnitude earlier than cold init), so
+    //     resolverThreshold = 181K + buffer.  At buf=3s, JIT engaged
+    //     at step 90M during SUnitRunner's test setup; SymbolTest
+    //     hit `SubscriptOutOfBounds 1 in WeakArray` cascading to
+    //     P80 termination via runSingleTest:.  At buf=4s, JIT
+    //     engagement aligns with default `deferSteps=120M`, so
+    //     14-class SUnit (Array+String+Dict+Set+DateAndTime+OC+
+    //     Symbol+SmallInteger+Fraction+Time+LargeInteger+ByteArray+
+    //     Interval+SortedCollection) passes 2485/2485 — identical to
+    //     default DEFER.
+    //
+    // Override via PHARO_RESOLVER_BUFFER=<seconds> for diagnostics.
     static const int64_t kResolverBufferSteps = []() {
         const char* env = std::getenv("PHARO_RESOLVER_BUFFER");
         if (env) {
             double s = atof(env);
             if (s >= 0) return (int64_t)(s * 30000000.0);
         }
-        return (int64_t)90000000;  // ~3s default
+        return (int64_t)120000000;  // ~4s default
     }();
     if (!g_deferLifted) {
         const bool needsResolver = interp_ && interp_->isHeadless()
