@@ -200,6 +200,20 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             // 0x58-0x5C: method return bytecodes (return receiver/true/false/nil/top).
             // In a FullBlock these are Non-Local Returns (return from the enclosing
             // method, not just the block).  NLR is complex — deopt to interpreter.
+            // 2026-05-08 PHARO_TRACE_NLR_COMPILE=1: log when we see a
+            // return bytecode in a CompiledBlock — verifies NLR-deopt
+            // is being installed for blocks.
+            static const bool nlrTrace =
+                std::getenv("PHARO_TRACE_NLR_COMPILE") != nullptr;
+            if (__builtin_expect(nlrTrace, 0)) {
+                static int n_block = 0;
+                if (isFullBlock && n_block++ < 200) {
+                    fprintf(stderr,
+                        "[NLR-COMPILE] BLOCK op=0x%02x bcOff=%d "
+                        "→ stencil_send (NLR-deopt)\n",
+                        op, (int)bc.bcOffset);
+                }
+            }
             if (isFullBlock) {
                 bc.operand = bc.bcOffset;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
