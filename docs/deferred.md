@@ -852,33 +852,19 @@ pattern.  Upstream candidate: `TFCallbackSameProcessRunStrategy`
 should reuse the persistent process across successive calls instead
 of falling back to fork after the first one.
 
-### A1b. FFI `invokeFunction:withArguments:` receiver corruption under JIT
+### A1b. FFI `invokeFunction:withArguments:` receiver corruption — RESOLVED 2026-05-08
 
-**2026-04-22 update**: Original note referenced `EventSensor>>pollEvent:`
-but that class no longer exists in the current Pharo 13.1 image.  The
-current reproducer:
+Was: `FFICalloutAPITest>>testByteArrayToExternalAddress` hung at both
+default DEFER and DEFER=0.  Bisection had pinpointed compile #13 =
+`WriteStream>>nextPut:` as the trigger, and the doc said this was A1
+observed through a different path.
 
-    FFICalloutAPITest>>testByteArrayToExternalAddress
-      NO_JIT=1:        583 ms, 0 errors
-      DEFER=100+:      ~650 ms, 0 errors (JIT hasn't kicked in yet)
-      default (no DEFER / auto 4s): HANGS
-      DEFER=0:         HANGS
-
-Bisection against `JIT_MAX_COMPILE` pinpoints compile #13 as the
-trigger (MAX=12 → pass, MAX=13 → hang).  Compile #13 =
-`WriteStream>>nextPut:` at oop `0x30046ce80`.  This is the **same
-method and same compile-number** as the A1 eval-hang bisection —
-so A1b is not a distinct FFI bug, it's A1 observed through a
-different entry path.
-
-Stale original text preserved for history:
-
-> Under JIT with any defer setting, `EventSensor>>pollEvent:` triggers
-> DNU `#invokeFunction:withArguments: not understood by rcvr=0x300000000
-> class=nil` — the FFI function-pointer oop arrives as a sentinel/nil
-> at the call site.  This is the same "0x300000000 sentinel" pattern
-> as A1c; likely a JIT spill/reload bug around the FFI send.  Not the
-> "FFI is incomplete" — the function pointer is *lost*.
+Re-tested 2026-05-08 with the Resolver-buffer (4s) defer-lift signal
+in place: full `FFICalloutAPITest` passes 18/18 at BOTH default
+DEFER and `PHARO_NO_DEFER_CLAMP=1 PHARO_JIT_DEFER=0`.  The original
+"compile #13 hangs" reproducer no longer fires — A1's fix
+(2ee2495b Resolver signal + 33e2ae18/ac6df64d/498003df NLR-fallthru
+peephole + the buf=4s production default) covers this case too.
 
 ### A1c. `forkAt:` sentinel — RESOLVED 2026-04-19 (was scheduler starvation)
 The watchdog's `testProcess suspend` DNU with `rcvr=0x300000000` was
@@ -893,33 +879,23 @@ priority instead of same-or-lower, plus sleeping 10 ms unconditionally
 before considering transfer.  Fix in commit `a2b99f7` — a 2 ms
 `AIAstarTest` test now runs in 2 ms via `runSingleTest` (was 23.6 s).
 
-### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0
-At `PHARO_JIT_DEFER=0`, JIT compiles startup-path methods
-immediately and corrupts the J2J return stack on the
-`PositionableStream class>>on:` → `PositionableStream>>on:` chain,
-leaving `aCollection size` (SmallInt) where the stream instance
-should be.  `decodeBytes:` bc[2] `popStoreTemp 1` then stores the
-SmallInt into `byteStream`, producing DNU on `#atEnd`.
+### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
 
-Full diagnostic tooling is in tree (commits `f70ad55`, `cf6ffaf`,
-`b94c0a8` — `_HOLE_RT_J2J_TRACE`, 512-slot ring buffer, auto-
-trigger on SmallInt return to focus methods, DNU auto-dump).
-Root cause not pinpointed; next step needs lldb single-stepping
-through `stencil_popStoreTemp` at the buggy iteration.  Full plan
-in `memory/project_b5_j2j_onchain.md`.
+Was: at `PHARO_JIT_DEFER=0`, `decodeBytes:` `bc[2] popStoreTemp 1`
+stored a SmallInt into `byteStream` (PositionableStream J2J return-
+stack corruption on `class>>on:` → `>>on:` chain), producing DNU
+on `#atEnd`.  The 2026-04-22 finding had narrowed it to "Morphic
+preempting startup mid-`fields readStream`", concluding A2 ⊆ A1.
 
-**Mitigation:** default `PHARO_JIT_DEFER=4s` sidesteps it.  Only
-impacts `PHARO_JIT_DEFER=0`, which isn't a supported default.
+Re-tested 2026-05-08 — confirmed.  `eval "42 printString"` at
+`PHARO_NO_DEFER_CLAMP=1 PHARO_JIT_DEFER=0` passes 5/5 (PositionableStream
+init is now well before defer-lift, since Resolver+4s buffer holds
+JIT off until step ~155M, far past the early-startup window where
+the cascade triggered).
 
-**2026-04-22 finding**: In the Pharo 13.1 clean-image eval repro
-(`PHARO_JIT_DEFER=0 ... eval "42 printString"`), the `#atEnd on
-Array in parseFields:structure:` DNU disappears completely at
-`PHARO_JIT_DEFER=5` (5 ms) or higher.  Under DEFER=0 it appears
-deterministically once per run.  This is consistent with the
-hypothesis that the DNU is a *consequence* of Morphic preempting
-the startup process mid-`fields readStream`, not an independent
-miscompile.  The JIT runs correctly when given ~5ms head-start to
-let the startup process get past this code path.  So A2 ⊆ A1.
+Diagnostic tooling (`_HOLE_RT_J2J_TRACE`, 512-slot ring buffer,
+auto-trigger on SmallInt return) is still in tree from
+`f70ad55/cf6ffaf/b94c0a8` if the cascade ever re-emerges.
 
 ---
 
