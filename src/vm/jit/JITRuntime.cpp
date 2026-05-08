@@ -2032,29 +2032,30 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         } else {
             deferSteps = 0;
         }
-        // 2026-05-07: floor at 2s.  Empirical sweep (clean image,
-        // 5+ runs each) shows:
-        //   DEFER=1: 0/6 succeed — process-termination cascade via
-        //     resume:through:/findNextHandlerContext/isHandlerContext
-        //     with sender=nil.  An exception thrown during late-startup
-        //     unwinds, hits a JIT-compiled context-walk method, the
-        //     materialized sender chain breaks, process terminates.
-        //     Distinct from the A1 +1 sp leak (fixed in 0bd8c501).
-        //   DEFER=2..15: 5/5 each succeed.
-        // The 1s floor (commit 8d60a1cc) was set on the assumption that
-        // 0bd8c501 closed all DEFER<2 paths; broader testing post-fix
-        // shows it didn't.  Re-raised to 2s.  PHARO_NO_DEFER_CLAMP=1
-        // still bypasses for investigation.
-        const int64_t kHeadlessFloor = 60000000; // ~2s
-        // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for testing
-        // JIT correctness fixes that aim to make DEFER<2s safe.
+        // 2026-05-08: floor at 4s.  DEFER=2 was briefly the floor
+        // (commit 88dad345) but broader testing showed DEFER=2 also
+        // fails 0/10 with the same family of process-termination bugs:
+        // JIT-compiled `Symbol class>>intern:` returns Symbol class
+        // (its receiver) instead of an interned Symbol.  Source TBD —
+        // not in IC misclassification, not in block JIT compilation
+        // (PHARO_JIT_NO_BLOCKS=1 doesn't fix), not in Sista.  Probably
+        // some interaction between the J2J chain and NLR-from-block
+        // semantics in the critical: cascade.
+        // Re-raised floor back to 4s.  PHARO_NO_DEFER_CLAMP=1 still
+        // bypasses for investigation; that path now reproduces the
+        // intern: bug reliably.
+        const int64_t kHeadlessFloor = 120000000; // ~4s
+        // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for
+        // investigating JIT correctness bugs at low DEFER (currently
+        // a known intern:-returns-receiver bug, see
+        // memory/project_defer_clamp_2s_2026_05_07.md).
         static const bool clampDisabled =
             std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
         if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
-                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 2.0s "
-                    "(headless mode; sub-2s defer flakes startup).\n",
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
+                    "(headless mode; sub-4s defer flakes startup).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }
