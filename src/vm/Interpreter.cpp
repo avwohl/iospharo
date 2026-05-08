@@ -4049,9 +4049,29 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         push(memory_.nil());
         returnFromMethod();
         break;
-    case jit::SistaV1::ReturnTop:
+    case jit::SistaV1::ReturnTop: {
+        // 2026-05-08 PHARO_TRACE_RETURNTOP=1: log every ReturnTop
+        // dispatch so we can see whether intern:'s block ever
+        // hits this case.
+        static const bool retTopTrace =
+            std::getenv("PHARO_TRACE_RETURNTOP") != nullptr;
+        if (__builtin_expect(retTopTrace, 0) && method_.isObject()
+            && method_.rawBits() > 0x10000) {
+            ObjectHeader* mH = method_.asObjectPtr();
+            bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
+            if (isBlk) {
+                static int rtN = 0;
+                if (rtN++ < 60) {
+                    fprintf(stderr,
+                        "[RETURNTOP] BLOCK methodOop=0x%llx fd=%zu\n",
+                        (unsigned long long)method_.rawBits(),
+                        frameDepth_);
+                }
+            }
+        }
         returnFromMethod();
         break;
+    }
     case jit::SistaV1::BlockReturnNil: {
         bool inFullBlock = (method_.isObject() && method_.rawBits() > 0x10000 &&
                             method_.asObjectPtr()->classIndex() == compiledBlockClassIndex_);
@@ -5437,11 +5457,15 @@ void Interpreter::returnFromMethod() {
                 || mSel == "asSymbol" || mSel == "critical:"
                 || mSel == "rawIntern:" || mSel == "ensure:";
             if (relevant) {
+                // 0x300354be8 is Symbol class>>intern:'s critical: block
+                // — always log this one regardless of the rate limit.
+                bool internBlk = isBlk && method_.rawBits() == 0x300354be8;
                 static int blkN = 0;
-                if (blkN++ < 60) {
+                if (blkN++ < 60 || internBlk) {
                     fprintf(stderr,
-                        "[BLOCK-RFM] %s method=#%s methodOop=0x%llx "
+                        "[BLOCK-RFM]%s %s method=#%s methodOop=0x%llx "
                         "homeFrameDepth=%zu fd=%zu value=0x%llx\n",
+                        internBlk ? "[INTERN-BLK]" : "",
                         isBlk ? "BLOCK" : "method",
                         mSel.c_str(),
                         (unsigned long long)method_.rawBits(),
