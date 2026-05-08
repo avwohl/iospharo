@@ -919,7 +919,14 @@ int main(int argc, char* argv[]) {
     // In eval mode, don't forward args — startup.st handles everything, and
     // forwarding "eval" confuses Pharo's SessionAccessModeResolver.
     if (evalMode) {
-        interpreter.setImageArguments({"--interactive"});
+        // Was: {"--interactive"} (matched Cog bare behavior).  But that
+        // activates Morphic UI, whose World draw cycle DNUs on
+        // SpStyleEnvironmentColorProxy>>isTransparent (image bug — the
+        // class genuinely lacks isTransparent and inherits from
+        // ProtoObject which doesn't either).  In eval mode we don't
+        // want Morphic running; pass no args so startup.st's eval +
+        // exitSuccess is the entire session.  2026-05-08.
+        interpreter.setImageArguments({});
     } else if (imageArgs.empty()) {
         interpreter.setImageArguments({"--interactive"});
     } else {
