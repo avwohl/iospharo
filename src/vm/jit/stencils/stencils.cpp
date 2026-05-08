@@ -585,12 +585,6 @@ extern "C" void stencil_returnTop(JITState* s) {
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
     }
-    // 2026-05-08 event=202: fires when retVal is exactly the Symbol
-    // class oop (0x300016550 in this image).  Cheap pointer compare.
-    if (retVal.bits == 0x300016550ULL) {
-        _HOLE_RT_J2J_TRACE(s, 202, retVal.bits,
-                           (uint64_t)(uintptr_t)s->jitMethod);
-    }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
@@ -615,12 +609,6 @@ extern "C" void stencil_returnReceiver(JITState* s) {
             _HOLE_RT_J2J_TRACE(s, 4, retVal.bits,
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
-    }
-    // 2026-05-08 event=201: fires when retVal is exactly the Symbol
-    // class oop.  Cheap pointer compare; near-free when no match.
-    if (retVal.bits == 0x300016550ULL) {
-        _HOLE_RT_J2J_TRACE(s, 201, retVal.bits,
-                           (uint64_t)(uintptr_t)s->jitMethod);
     }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;

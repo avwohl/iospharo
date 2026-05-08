@@ -172,44 +172,10 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     // event=100: stencil_primAt unsupported-format fall-through.
     //   extra2 layout for event 99: limit/byteSize.
     //   extra2 layout for event 100: (fmt << 32) | classIdx.
-    // 2026-05-08 events 201/202: stencil_returnReceiver / stencil_returnTop
-    // fired.  extra1 = retVal.bits, extra2 = state.jitMethod pointer.
-    // Used to identify which methods + which stencils are producing
-    // the Symbol class corruption.
+    // events 201/202: previously used for SYMCLS investigation; the
+    // stencil-side calls have been removed but keep the placeholder so
+    // unexpected re-introductions from old stencils get cleanly ignored.
     if (event == 201 || event == 202) {
-        static bool recvRetTrace =
-            std::getenv("PHARO_TRACE_RECVRET") != nullptr;
-        if (recvRetTrace && state && state->interp) {
-            static const uint64_t targetRcvr = []() {
-                const char* e = std::getenv("PHARO_TRACE_RECVRET_OOP");
-                return e ? strtoull(e, nullptr, 0) : 0x300016550ULL;
-            }();
-            if (extra1 == targetRcvr) {
-                static int hits = 0;
-                hits++;
-                if (hits <= 60 || (hits & 0x3FF) == 0) {
-                    auto* jm = reinterpret_cast<JITMethod*>(extra2);
-                    Oop methodOop = jm
-                        ? Oop::fromRawBits(jm->compiledMethodOop)
-                        : Oop::nil();
-                    std::string sel = methodOop.isObject()
-                        ? state->interp->memory().selectorOf(methodOop) : "?";
-                    std::string cls = methodOop.isObject()
-                        ? state->interp->classNameOfMethod(methodOop) : "?";
-                    fprintf(stderr,
-                        "[RECVRET-TRACE] #%d evt=%d %s>>%s "
-                        "methodOop=0x%llx retVal=0x%llx\n",
-                        hits, (int)event, cls.c_str(), sel.c_str(),
-                        (unsigned long long)methodOop.rawBits(),
-                        (unsigned long long)extra1);
-                    if (event == 201 && sel == "intern:") {
-                        // Defer dumping to interp via PHARO_TRACE_RECVRET_DUMP
-                        // (handled in returnValue's symcls trap).
-                        state->interp->dumpFrameStackOnRecvRet(hits);
-                    }
-                }
-            }
-        }
         return;
     }
     if (event == 99 || event == 100) {
@@ -1769,8 +1735,7 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // ~10ms on the hot path.  PHARO_B5_TRACE / PHARO_PRIMAT_OOB flip to
     // the real impl.
     bool needTrace = g_debug.b5Trace
-                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr
-                   || std::getenv("PHARO_TRACE_RECVRET") != nullptr;
+                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr;
     helpers.j2jTrace = reinterpret_cast<void*>(needTrace
         ? &jit_rt_j2j_trace
         : &jit_rt_j2j_trace_noop);
