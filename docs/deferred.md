@@ -949,13 +949,18 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. JIT-compiled Delay subsystem hangs long-compute evals (2026-05-08)
+### A4. Long-compute eval intermittently terminates without printing result (2026-05-08)
+
+**Updated 2026-05-08 PM** — partially mitigated by Morphic-process
+suspension in startup.st (commit f497f115).  Before: 0/10 reliability
+on `36 benchFib` due to startup.st bracket-balance bug + a no-op
+Morphic kill.  After: 7/10 reliable.
 
 `eval "1 tinyBenchmarks"` on FRESH image hangs under JIT (always),
 passes under `PHARO_NO_JIT=1` (~1.5G bytecodes/sec).  `36 benchFib`
-is intermittent — sometimes succeeds, often hangs.  Common pattern:
-any eval that runs >2 seconds of compute with the World render
-loop active concurrently.
+is intermittent (~70% pass after the fix).  Common pattern: any eval
+that runs >2 seconds of compute with the World render loop active
+concurrently.
 
 **lldb investigation 2026-05-08 narrowed the trigger:**
 
