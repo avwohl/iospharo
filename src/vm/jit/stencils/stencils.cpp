@@ -585,6 +585,11 @@ extern "C" void stencil_returnTop(JITState* s) {
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
     }
+    // 2026-05-08 event=202: log stencil_returnTop's retVal.
+    // Companion to event=201 (returnReceiver).  Together they show
+    // which method+stencil combination produces wrong returns.
+    _HOLE_RT_J2J_TRACE(s, 202, retVal.bits,
+                       (uint64_t)(uintptr_t)s->jitMethod);
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
@@ -610,6 +615,12 @@ extern "C" void stencil_returnReceiver(JITState* s) {
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
     }
+    // 2026-05-08 event=201: log when stencil_returnReceiver fires
+    // for ANY method.  Used to identify which methods are returning
+    // their receiver (the Symbol class corruption pattern).
+    // Gated in jit_rt_j2j_trace by PHARO_TRACE_RECVRET=1.
+    _HOLE_RT_J2J_TRACE(s, 201, retVal.bits,
+                       (uint64_t)(uintptr_t)s->jitMethod);
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
