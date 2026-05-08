@@ -12261,6 +12261,48 @@ Oop Interpreter::materializeFrameStack() {
         }
     }
 
+    // 2026-05-08 PHARO_TRACE_MATERIALIZE=1: log materialize calls
+    // that involve intern:'s frame chain (intern:/asSymbol present).
+    // Verifies whether materialize loses NLR linkage in the buggy path.
+    static const bool matTrace =
+        std::getenv("PHARO_TRACE_MATERIALIZE") != nullptr;
+    if (__builtin_expect(matTrace, 0)) {
+        static int matN = 0;
+        // Find intern: or asSymbol or critical: in the chain
+        bool hasIntern = false;
+        for (size_t i = startFrame; i < frameDepth_; i++) {
+            Oop sm = savedFrames_[i].savedMethod;
+            if (sm.isObject() && sm.rawBits() > 0x10000) {
+                std::string sel = memory_.selectorOf(sm);
+                if (sel == "intern:" || sel == "asSymbol"
+                    || sel == "critical:" || sel == "rawIntern:") {
+                    hasIntern = true;
+                    break;
+                }
+            }
+        }
+        if (hasIntern && matN++ < 30) {
+            fprintf(stderr,
+                "[MATERIALIZE] #%d intern-chain frameDepth_=%zu startFrame=%zu\n",
+                matN, frameDepth_, startFrame);
+            for (size_t i = startFrame; i < frameDepth_; i++) {
+                SavedFrame& sf = savedFrames_[i];
+                std::string sel = memory_.selectorOf(sf.savedMethod);
+                bool isBlk = false;
+                if (sf.savedMethod.isObject()
+                    && sf.savedMethod.rawBits() > 0x10000) {
+                    isBlk = sf.savedMethod.asObjectPtr()->classIndex()
+                        == compiledBlockClassIndex_;
+                }
+                fprintf(stderr,
+                    "[MATERIALIZE]   fd=%zu %s%s home=%zu methodOop=0x%llx\n",
+                    i, isBlk ? "BLOCK " : "", sel.c_str(),
+                    sf.homeFrameDepth,
+                    (unsigned long long)sf.savedMethod.rawBits());
+            }
+        }
+    }
+
     for (size_t i = startFrame; i < frameDepth_; i++) {
         auto& frame = savedFrames_[i];  // non-const: may update materializedContext
 
