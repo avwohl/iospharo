@@ -5405,8 +5405,8 @@ void Interpreter::returnFromMethod() {
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
 
-        // 2026-05-07 PHARO_TRACE_BLOCK_NLR=1: log when current method is a
-        // CompiledBlock at returnFromMethod entry — captures NLR triggers.
+        // 2026-05-07 PHARO_TRACE_BLOCK_NLR=1: log every returnFromMethod
+        // entry — see whether intern:'s critical: block triggers it.
         static const bool blockNlrEarly =
             std::getenv("PHARO_TRACE_BLOCK_NLR") != nullptr;
         if (__builtin_expect(blockNlrEarly, 0) && method_.isObject()
@@ -5416,30 +5416,33 @@ void Interpreter::returnFromMethod() {
                 Oop hdr = memory_.fetchPointer(0, method_);
                 if (hdr.isSmallInteger()) {
                     int nLits = hdr.asSmallInteger() & 0x7FFF;
-                    if (nLits >= 1) {
-                        Oop lastLit = memory_.fetchPointer(nLits, method_);
-                        // last literal == another CompiledMethod →
-                        // we're a CompiledBlock
-                        bool isBlk = false;
-                        if (lastLit.isObject()
-                            && lastLit.rawBits() > 0x10000
-                            && memory_.isValidPointer(lastLit)) {
-                            ObjectHeader* lH = lastLit.asObjectPtr();
-                            isBlk = lH->isCompiledMethod();
-                        }
-                        if (isBlk) {
-                            std::string mSel = memory_.selectorOf(method_);
-                            std::string oSel =
-                                memory_.selectorOf(lastLit);
-                            static int blkN = 0;
-                            if (blkN++ < 30) {
-                                fprintf(stderr,
-                                    "[BLOCK-RFM] block-method=#%s outerLit=#%s "
-                                    "homeFrameDepth=%zu fd=%zu value=0x%llx\n",
-                                    mSel.c_str(), oSel.c_str(),
-                                    homeFrame, frameDepth_,
-                                    (unsigned long long)value.rawBits());
-                            }
+                    Oop lastLit = nLits >= 1
+                        ? memory_.fetchPointer(nLits, method_) : Oop::nil();
+                    bool isBlk = false;
+                    if (lastLit.isObject()
+                        && lastLit.rawBits() > 0x10000
+                        && memory_.isValidPointer(lastLit)) {
+                        ObjectHeader* lH = lastLit.asObjectPtr();
+                        isBlk = lH->isCompiledMethod();
+                    }
+                    std::string mSel = memory_.selectorOf(method_);
+                    std::string oSel = isBlk
+                        ? memory_.selectorOf(lastLit) : "(method)";
+                    // Filter to interesting NLR cases: blocks, OR returns
+                    // from intern:/asSymbol/critical:/rawIntern:.
+                    bool relevant = isBlk || mSel == "intern:"
+                        || mSel == "asSymbol" || mSel == "critical:"
+                        || mSel == "rawIntern:";
+                    if (relevant) {
+                        static int blkN = 0;
+                        if (blkN++ < 60) {
+                            fprintf(stderr,
+                                "[BLOCK-RFM] %s method=#%s outerLit=#%s "
+                                "homeFrameDepth=%zu fd=%zu value=0x%llx\n",
+                                isBlk ? "block" : "method",
+                                mSel.c_str(), oSel.c_str(),
+                                homeFrame, frameDepth_,
+                                (unsigned long long)value.rawBits());
                         }
                     }
                 }
