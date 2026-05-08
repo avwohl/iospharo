@@ -11633,6 +11633,21 @@ void Interpreter::terminateCurrentProcess() {
             fprintf(stderr, "[TERM-P%lld] PROCESS TERMINATING via #%s\n",
                     pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
                     termSel.c_str());
+            // 2026-05-08 A3 diag: dump method oop + class for the
+            // terminating method.  When the bug fires (sender=0x300000000
+            // sentinel), this identifies the JIT-compiled `ensure:` (or
+            // similar) whose activation got a corrupt sender slot.
+            {
+                std::string termCls = method_.isObject()
+                    ? classNameOfMethod(method_) : "?";
+                fprintf(stderr, "[TERM-P%lld]   method oop=0x%llx class=%s "
+                        "activeContext=0x%llx frameDepth=%zu\n",
+                        pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
+                        (unsigned long long)method_.rawBits(),
+                        termCls.c_str(),
+                        (unsigned long long)activeContext_.rawBits(),
+                        frameDepth_);
+            }
             // Walk the context chain to find the original error
             if (activeContext_.isObject() && !activeContext_.isNil()) {
                 Oop ctx = activeContext_;
