@@ -719,48 +719,57 @@ converted harness:
 Preserved the `methodsFor:` shim at the top of the harness for
 belt-and-suspenders.
 
-### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **MOSTLY FIXED 2026-05-07** (`0bd8c501`)
-Default `PHARO_JIT_DEFER=4s` boots cleanly end-to-end.
+### A1. JIT eval-mode hang at PHARO_JIT_DEFER=0 — **FIXED 2026-05-08** (`2ee2495b`)
+`eval "42 printString"` runs cleanly at every DEFER setting,
+including `PHARO_NO_DEFER_CLAMP=1 PHARO_JIT_DEFER=0` (5/5 stability
+in commit msg, re-verified 2026-05-08 after this build with the
+asmjit-patches CMake hook in place).
 
-**Status sweep (2026-05-07, floor at 2s)**:
+**Mechanism (Resolver class-var-set signal):** the C++ side sets
+`g_resolverClassVarSet` and `g_resolverSetAtStep` when interp /
+JIT see `popStoreLitVar` write a non-nil value into the class-var
+binding whose key is the Symbol `Resolver`.  That moment is line 1
+of `FileLocator class>>startUp:`:
 
-With default clamp (2s floor):
-  DEFER=0:   OK (clamps to 2s)
-  DEFER=1:   OK (clamps to 2s)
-  DEFER=2-15: OK (10/10)
+    Resolver := InteractiveResolver new.
 
-With PHARO_NO_DEFER_CLAMP=1:
-  DEFER=0:  HANGS (Morphic render loop / process scheduling)
-  DEFER=1:  0/10 — terminates via resume:through: /
-            findNextHandlerContext / isHandlerContext with sender=nil.
-            An exception cascades during late-startup, hits a JIT-
-            compiled context-walk method, materialized sender chain
-            breaks → process terminates.  Distinct from the A1 +1 sp
-            leak that 0bd8c501 fixed.
-  DEFER=2:  OK ✓ 5/5 (was: SIGSEGV in JITCompiler::compile)
-  DEFER=3:  OK ✓ (was: SIGSEGV in lookupInMethodDict)
-  DEFER=4+: OK
+`noteMethodEntry` then holds defer until step >= resolverSet +
+`kResolverBufferSteps` (~3s, env-tunable via `PHARO_RESOLVER_BUFFER=
+<seconds>`).  The remaining startup work — `addResolver:` calls,
+RFB display preferences — fits inside the buffer, so JIT engages
+post-init even with `PHARO_JIT_DEFER=0`.
 
-**Original A1 root cause** (commit `0bd8c501`): C++ ExitArrayCreate
-handlers (lines 16013, 18443) did `instructionPointer_ = state.ip`
-before `+= 2`.  But `stencil_pushArray` doesn't update `state.ip` —
-it stays at bcBase (offset 0).  So IP ended up at offset 2 instead
-of past PushArray, and the JIT looped through pollEvent:'s body
-forever, leaking +1 sp slot per cycle.  Fixed; verified.
+**Sweep at PHARO_NO_DEFER_CLAMP=1 (2026-05-08, post-2ee2495b):**
 
-**Remaining DEFER<2 flakiness**: with no clamp, DEFER=1 fails 10/10
-on clean image (eval `42 printString`).  Failures rotate between
-TERM-P60 via different exception/context-walk methods — the bug is
-not in any single method's miscompile but in how an early startup
-exception unwinds when JIT has compiled methods with sub-2s defer.
+  DEFER=0:   5/5 — Resolver+3s gates the lift cleanly
+  DEFER=1:   5/5
+  DEFER=2:   5/5
+  default:   5/5 (auto 4s deferSteps + Resolver+3s; Resolver wins)
 
-**4s clamp** (`13056933`) → 2s clamp (2026-05-07).  Floor was
-briefly lowered to 1s after 0bd8c501 but DEFER=1 broader testing
-showed it's still unreliable.
+5 small evals (`42 printString`, inject:into: 1k, OC>>size, etc.)
+× both default and DEFER=0+NO_CLAMP all 3/3.
 
-Earlier guess that `Context>>copyTo:` recursing at depth 4090+
-was the trigger turned out to be downstream of the same boot-chain
-hang — once startup is gated, that crash signature disappears too.
+**Headless 3s clamp floor** (`kHeadlessFloor` in
+`JITRuntime::noteMethodEntry`) is now redundant when Resolver
+fires (which it always does in headless+non-bench mode, since
+it's part of normal Pharo init).  Kept as belt-and-suspenders for
+the "Resolver never fires" fallback path.  Removal is safe to
+attempt once we've confirmed every headless path triggers
+Resolver.
+
+**Original +1 sp leak fix (commit `0bd8c501`):** C++ ExitArrayCreate
+handlers did `instructionPointer_ = state.ip` before `+= 2`, but
+`stencil_pushArray` doesn't update `state.ip` — IP ended up at
+offset 2 instead of past PushArray, looping through pollEvent:'s
+body forever and leaking +1 sp slot per cycle.
+
+**14-session NLR-fallthru bug (commit `33e2ae18` + `ac6df64d`):**
+JIT-compiled `Symbol class>>intern:` returned the receiver (Symbol
+class) via bc 99 returnSelf fall-through instead of bc 89 early-
+returnTop carrying the freshly-interned Symbol.  Mitigated by
+JIT-side compile-time rewrite of trailing `pop+returnSelf` as
+`returnTop` for FullClosure methods, plus an interp-side peephole
+at Pop dispatch.
 
 ### A1d. FFICallbackTest qsort tests slow under pure interpreter (2026-04-23)
 

@@ -8,6 +8,7 @@ Local.xcconfig
 *.a
 build/
 build-app/
+build-debug/
 build-macos/
 build-sim/
 build-vm/

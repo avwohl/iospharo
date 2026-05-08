@@ -2191,7 +2191,22 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     // signal can lift defer SOONER if init completes faster, AND can
     // also serve as a MINIMUM defer when DEFER=0 (where deferSteps==0
     // and would otherwise have no defer at all).
-    static const int64_t kResolverBufferSteps = 90000000;  // ~3s
+    //
+    // Buffer length: 3s is empirically the floor.  Buffer-sweep on
+    // 2026-05-08 confirmed buf={1.0, 0.5, 0} all fail 0/5 on the
+    // canonical `eval "42 printString"` (P80 hangs in
+    // DelayMicrosecondTicker — JIT engaged mid-Delay-subsystem init
+    // and corrupted scheduler state).  Override via
+    // PHARO_RESOLVER_BUFFER=<seconds> for diagnostics; production
+    // value is 3s.
+    static const int64_t kResolverBufferSteps = []() {
+        const char* env = std::getenv("PHARO_RESOLVER_BUFFER");
+        if (env) {
+            double s = atof(env);
+            if (s >= 0) return (int64_t)(s * 30000000.0);
+        }
+        return (int64_t)90000000;  // ~3s default
+    }();
     if (!g_deferLifted) {
         const bool needsResolver = interp_ && interp_->isHeadless()
             && !g_debug.bench;
