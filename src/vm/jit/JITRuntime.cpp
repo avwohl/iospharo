@@ -2091,25 +2091,27 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         } else {
             deferSteps = 0;
         }
-        // 2026-05-08: floor lowered 4s → 3s.  The NLR-fallthru bug
-        // (JIT-compiled `Symbol class>>intern:` returns Symbol class
-        // instead of the interned Symbol) is now mitigated by:
-        //   - JIT-side compile-time rewrite of pop+returnSelf at
-        //     method-end (commit ac6df64d / 498003df)
-        //   - Interp-side peephole at Pop dispatch (commit 33e2ae18)
-        // 3-run stability test at DEFER=3 shows 3/3 "Test Complete"
-        // with 0 asSymbol DNUs.  DEFER<3 still has the startup
-        // creep symptom (eval doesn't finish in 30s timeout) but
-        // the bug itself is no longer firing.
+        // 2026-05-08: floor aligned to the Resolver-buffer (4s).  The
+        // Resolver class-var-set + buffer signal is the load-bearing
+        // gate in headless+non-bench mode (see kResolverBufferSteps
+        // below).  This deferSteps clamp is the defensive fallback
+        // for the "Resolver never fires" corner case — it should
+        // match the buffer so JIT engagement aligns regardless of
+        // which gate wins.
+        // Earlier history: floor was lowered 4s → 3s on 2026-05-08
+        // morning after the NLR-fallthru bug was mitigated
+        // (33e2ae18 + ac6df64d + 498003df), then bumped back to 4s
+        // when the Resolver-buffer was bumped 3s → 4s to fix the
+        // SUnit-harness regression.
         // PHARO_NO_DEFER_CLAMP=1 bypasses the floor.
-        const int64_t kHeadlessFloor = 90000000; // ~3s
+        const int64_t kHeadlessFloor = 120000000; // ~4s
         static const bool clampDisabled =
             std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
         if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
-                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 3.0s "
-                    "(headless mode; sub-3s defer flakes startup).\n",
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
+                    "(headless mode; sub-4s defer flakes startup).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }
