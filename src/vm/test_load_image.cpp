@@ -798,12 +798,26 @@ int main(int argc, char* argv[]) {
             escaped += c;
             if (c == '\'') escaped += '\'';
         }
-        // Write startup.st next to the image (CWD is already image dir)
+        // Write startup.st next to the image (CWD is already image dir).
+        // Stop the WorldMorph render loop before eval so its doOneCycle
+        // doesn't compete with the eval and doesn't hit Morphic-related
+        // DNUs (e.g. SpStyleEnvironmentColorProxy>>isTransparent).
+        // 2026-05-08.
         startupStPath = "startup.st";
         {
             std::ofstream f(startupStPath);
             f << "| result |\n"
               << "Stdio stderr nextPutAll: '[STARTUP-ST-FIRED]'; lf; flush.\n"
+              << "[Smalltalk at: #MorphicRenderLoop ifPresent: [:cls |\n"
+              << "  cls allInstancesDo: [:rl |\n"
+              << "    [rl class instVarNamed: 'process' ifAbsent: [nil]] ifNotNil: [:proc |\n"
+              << "      [proc terminate] on: Error do: [:e |]]]].\n"
+              << " Process allInstances do: [:p |\n"
+              << "   p suspendedContext ifNotNil: [:c |\n"
+              << "     (#(#doOneCycle #doOneCycleNow #doOneCycleWhile: #runStepMethods\n"
+              << "        #fullDrawOn: #displayWorldSafely #fullDraw:)\n"
+              << "       includes: c method selector) ifTrue: [\n"
+              << "       [p terminate] on: Error do: [:e |]]]]] on: Error do: [:e |].\n"
               << "[\n"
               << "  result := OpalCompiler new evaluate: '" << escaped << "'.\n"
               << "  Stdio stdout nextPutAll: result printString; lf; flush.\n"
