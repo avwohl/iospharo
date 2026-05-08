@@ -782,25 +782,6 @@ resuming a saved image.  4s buffer covers both.  See
 `memory/project_resolver_buffer_3s_floor_2026_05_08.md`.
 PHARO_RESOLVER_BUFFER=<seconds> for diagnostics.
 
-**Stochastic SUnit TERM at 15+ classes** (2026-05-08): SUnit
-test runs of 15+ classes intermittently hit TERM-P80 via
-`#runSingleTest:` or `#ensure:` cleanup, with sender=0x300000000
-(nil sentinel) — sender-chain corruption in JIT-compiled
-methods.  3-run reliability check on a 15-class set:
-
-  default DEFER:           1/3 mid-test, 2/3 ensure: cleanup
-  NO_CLAMP DEFER=0:        1/3 mid-test, 2/3 ensure: cleanup
-
-Identical pattern in both modes — **not a no-defer regression**;
-NO_JIT=1 passes 3271/3273 cleanly on 30 classes.  Likely the
-same family as the original A1 NLR-fallthru bug (JIT-compiled
-ensure: block's sender chain breaks during exception unwind),
-but in broader patterns than the trailing-pop+returnSelf rewrite
-covers.  Multi-day lldb investigation; not urgent because tests
-themselves still pass cleanly (Pass=2319 in 2/3 runs) — only the
-runner cleanup terminates.  Workaround: keep validation runs at
-14 classes or smaller.
-
 **Headless 3s clamp floor** (`kHeadlessFloor` in
 `JITRuntime::noteMethodEntry`) is now redundant when Resolver
 fires (which it always does in headless+non-bench mode, since
@@ -897,6 +878,44 @@ Root cause was `primitiveRelinquishProcessor` yielding to highest
 priority instead of same-or-lower, plus sleeping 10 ms unconditionally
 before considering transfer.  Fix in commit `a2b99f7` — a 2 ms
 `AIAstarTest` test now runs in 2 ms via `runSingleTest` (was 23.6 s).
+
+### A3. Stochastic SUnit TERM at 15+ classes — JIT sender-chain corruption (2026-05-08)
+
+SUnit test runs of 15 or more classes intermittently hit TERM-P80
+via `#runSingleTest:` or `#ensure:` cleanup, with sender=0x300000000
+(nil sentinel = uninitialized header read).  Same pattern at
+default DEFER and NO_CLAMP DEFER=0, **not a no-defer regression**.
+
+3-run reliability check on a 15-class set:
+  default DEFER:           1/3 mid-test, 2/3 ensure: cleanup TERM
+  NO_CLAMP DEFER=0:        1/3 mid-test, 2/3 ensure: cleanup TERM
+  PHARO_NO_JIT=1:          0/1 (passes 3271/3273 on full 30 classes)
+
+When the runner survives, all tests pass (Pass=2319 in the 2/3
+"cleanup-only" runs).  When mid-test, the runner aborts ~half-way
+through a class.
+
+Kitchen-sink opt-out (PHARO_NO_J2J_INLINE_BUMP, NO_J2J_CALLEE_BUMP,
+NO_OSR_RECOMPILE, NO_LATE_SPEC_RECOMPILE, NO_SISTA_PER_BC,
+NO_BLOCK_VALUE_SPEC, NO_SISTA_HELPER_SENDS, NO_SISTA_DOACCUM_RESUME,
+NO_SISTA_INJECT_RESUME, NO_SISTA_COLLECT_RESUME,
+NO_SISTA_IV_DO_ACCUM, NO_SISTA_COLLECT, NO_SISTA_DO_SPLICE) does
+not change the rate — bug is in core JIT, not opt-in features.
+
+Likely the same family as the original A1 NLR-fallthru bug
+(sender-chain corruption in JIT-compiled `ensure:` blocks during
+exception unwind), but in broader patterns than the trailing-
+pop+returnSelf rewrite covers.
+
+**Workaround**: keep validation runs at 14 classes or smaller; the
+14-class collection/number set runs reliably 100% pass at both
+DEFER modes.
+
+**Real fix**: multi-day lldb investigation needed — attach during
+the TERM, capture the JIT-compiled method whose epilog leaves the
+saved-sender field corrupted, identify the bytecode/stencil path
+that mismatches.  Not urgent (functional tests pass; only runner
+cleanup terminates).
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
 
