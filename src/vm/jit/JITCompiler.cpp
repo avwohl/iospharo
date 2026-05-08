@@ -1686,6 +1686,35 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
+    // 2026-05-08 DEFER<4 root-cause workaround: skip JIT-compiling the
+    // few hand-confirmed problem methods.  These are:
+    //
+    //   Symbol class>>intern:     — bc 99 returnSelf fall-through when the
+    //                                critical: block's ^ doesn't NLR.
+    //
+    // Skipping them lets PHARO_NO_DEFER_CLAMP=1 startup work without the
+    // 4s clamp.  Opt out via PHARO_JIT_NO_PROBLEM_SKIP=1.
+    {
+        static const bool noProbSkip =
+            std::getenv("PHARO_JIT_NO_PROBLEM_SKIP") != nullptr;
+        if (!noProbSkip) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel == "intern:") {
+                std::string cls = interp_.classNameOfMethod(compiledMethod);
+                if (cls == "Symbol class") {
+                    static int n = 0;
+                    if (n++ < 3) {
+                        fprintf(stderr,
+                            "[JIT] Skipping #Symbol class>>intern: "
+                            "(known DEFER<4 NLR bug)\n");
+                    }
+                    compilationsFailed_++;
+                    return nullptr;
+                }
+            }
+        }
+    }
+
     // Bytecode dump for bisection (JIT_DUMP_BC env var)
     {
         static bool dumpBC = g_debug.jitDumpBC;

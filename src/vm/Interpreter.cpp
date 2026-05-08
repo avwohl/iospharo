@@ -5514,6 +5514,26 @@ void Interpreter::returnFromMethod() {
                     Oop rm = savedFrames_[frameDepth_ - 1].savedMethod;
                     if (rm.isObject() && !rm.isNil() &&
                         primitiveIndexOf(rm) == 198) {
+                        // 2026-05-08 PHARO_TRACE_NLR_PAUSE=1: count NLR pauses
+                        // at ensure: for intern:'s critical: block, to compare
+                        // against eventual NLR-resume (final returnValue at
+                        // home frame) below.  If pause-count > resume-count,
+                        // some NLRs are getting lost during ensure: cleanup.
+                        static const bool nlrPauseTrace =
+                            std::getenv("PHARO_TRACE_NLR_PAUSE") != nullptr;
+                        if (__builtin_expect(nlrPauseTrace, 0)
+                            && method_.rawBits() == 0x300354be8) {
+                            static int n = 0;
+                            n++;
+                            if (n <= 30 || (n & 0xFF) == 1) {
+                                fprintf(stderr,
+                                    "[NLR-PAUSE-INTERN] #%d fd=%zu homeFrame=%zu "
+                                    "value=0x%llx ensureMethod=#%s\n",
+                                    n, frameDepth_, homeFrame,
+                                    (unsigned long long)nlrVal.rawBits(),
+                                    memory_.selectorOf(rm).c_str());
+                            }
+                        }
                         // ensure: frame — pause NLR, run cleanup block.
                         // Save NLR state: both in the frame (robust against
                         // process switches) and as globals (fallback for fd=0).
@@ -5534,6 +5554,25 @@ void Interpreter::returnFromMethod() {
                 if (!popFrame()) return;
             }
             // At home frame — return from it. Clear NLR state.
+            // 2026-05-08 PHARO_TRACE_NLR_PAUSE=1: count NLR completions for
+            // intern:.  Pair with NLR-PAUSE-INTERN counter.
+            static const bool nlrCompleteTrace =
+                std::getenv("PHARO_TRACE_NLR_PAUSE") != nullptr;
+            if (__builtin_expect(nlrCompleteTrace, 0)
+                && frameDepth_ > 0
+                && savedFrames_[frameDepth_ - 1].savedMethod.rawBits()
+                    == 0x300349010) {
+                static int n = 0;
+                n++;
+                if (n <= 30 || (n & 0xFF) == 1) {
+                    fprintf(stderr,
+                        "[NLR-COMPLETE-INTERN] #%d fd=%zu nlrVal=0x%llx "
+                        "from method=#%s\n",
+                        n, frameDepth_,
+                        (unsigned long long)nlrVal.rawBits(),
+                        memory_.selectorOf(method_).c_str());
+                }
+            }
             nlrHomeMethod_ = Oop::nil();
             nlrValue_ = Oop::nil();
             returnValue(nlrVal);
