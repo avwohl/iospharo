@@ -103,6 +103,33 @@ list(APPEND VM_SOURCES ${PLUGIN_C_SOURCES})
 # Configure asmjit as a static library, embedded from the submodule.
 set(ASMJIT_STATIC ON CACHE BOOL "Build asmjit as static library")
 set(ASMJIT_TEST OFF CACHE BOOL "Skip asmjit's own test suite")
+
+# Apply local patches to asmjit submodule (idempotent).
+# See third_party/patches/ for the patch set + rationale.
+file(GLOB _asmjit_patches "${CMAKE_SOURCE_DIR}/third_party/patches/asmjit-*.patch")
+list(SORT _asmjit_patches)
+foreach(_patch IN LISTS _asmjit_patches)
+    # Already-applied? `git apply --reverse --check` exits 0 if so.
+    execute_process(
+        COMMAND git apply --reverse --check "${_patch}"
+        WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/asmjit"
+        RESULT_VARIABLE _already_applied
+        OUTPUT_QUIET ERROR_QUIET
+    )
+    if(NOT _already_applied EQUAL 0)
+        execute_process(
+            COMMAND git apply "${_patch}"
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/asmjit"
+            RESULT_VARIABLE _apply_result
+        )
+        if(NOT _apply_result EQUAL 0)
+            message(FATAL_ERROR "Failed to apply ${_patch}")
+        endif()
+        get_filename_component(_patch_name "${_patch}" NAME)
+        message(STATUS "Applied asmjit patch: ${_patch_name}")
+    endif()
+endforeach()
+
 add_subdirectory(third_party/asmjit EXCLUDE_FROM_ALL)
 
 # Per-platform implementation files.  Each function declared in
