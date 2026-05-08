@@ -949,6 +949,41 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
+### A4. JIT-compiled Delay subsystem hangs tinyBenchmarks (2026-05-08)
+
+`eval "1 tinyBenchmarks"` on FRESH image hangs under JIT, passes
+under `PHARO_NO_JIT=1` (~1.5G bytecodes/sec).  Hang signature:
+
+  [JIT-NLR-FIX] #7 Delay>>wait — rewriting trailing pop+returnSelf as returnTop
+  [JIT-NLR-FIX] #11 Delay>>wait — rewriting trailing pop+returnSelf as returnTop
+  [DIAG] P80 DelayMicrosecondTicker>>ifNotNil: ip=96 fd=1
+  [DIAG]   [-1] DelaySemaphoreScheduler>>ifNotNil:
+  [DIAG-QUEUE] P40 proc=... susp=Delay>>wait
+  [DIAG-QUEUE] P10 proc=... susp=ProcessorScheduler class>>idleProcess
+
+Eval process at P40 is suspended in `Delay>>wait`.  The timer
+ticker at P80 is in `DelayMicrosecondTicker>>ifNotNil:` /
+`DelaySemaphoreScheduler>>ifNotNil:` but never signals the
+Delay's semaphore — timer wakeup never fires.
+
+The NLR-fallthru fix is rewriting `Delay>>wait`'s trailing
+pop+returnSelf as returnTop, suggesting the same family of bugs
+the 14-session intern: investigation hit (interp+JIT peephole
+fixes 33e2ae18, ac6df64d, 498003df).  Maybe the rewrite isn't
+sufficient for this method, or the bug is in a different
+method (DelaySemaphoreScheduler / DelayMicrosecondTicker).
+
+**Real fix path**: lldb attach during `eval "1 tinyBenchmarks"`,
+break in `terminateCurrentProcess` and the timer-arm
+machinery, identify the JIT-compiled Delay method whose
+activation breaks the wakeup chain.  test_load_image is signed
+with get-task-allow + JIT entitlements (commit 5b715fc2), so
+attach works without macOS hangs.
+
+**Workaround**: `PHARO_NO_JIT=1` for tinyBenchmarks-style
+workloads.  Most JIT use cases don't depend on Delay-based
+benchmarking.
+
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
 
 Was: at `PHARO_JIT_DEFER=0`, `decodeBytes:` `bc[2] popStoreTemp 1`
