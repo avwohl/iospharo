@@ -879,53 +879,75 @@ priority instead of same-or-lower, plus sleeping 10 ms unconditionally
 before considering transfer.  Fix in commit `a2b99f7` — a 2 ms
 `AIAstarTest` test now runs in 2 ms via `runSingleTest` (was 23.6 s).
 
-### A3. SUnitRunner-setup interaction — TERM cascade after `--save fileIn` (2026-05-08)
+### A3. SUnitRunner-prepped image leaves stuck handler processes (2026-05-08)
 
-After `pharo Pharo.image eval --save "fileIn run_sunit_tests.st"`,
-ANY subsequent eval through our VM that uses `ensure:` triggers
-multiple TERM-P40/P80 events with sender=0x300000000 (nil
-sentinel = uninitialized header read).
+**Updated 2026-05-08 PM** — narrowed further from the morning finding:
+the issue is NOT a JIT correctness bug.  After `pharo Pharo.image eval
+--save "fileIn run_sunit_tests.st"`, the saved image has SUnitRunner
+registered as a SessionManager startUp handler.  On every resume —
+including non-test eval invocations — that handler fires and forks
+processes (typically 2: P80 + P60) that suspend in
+`SUnitRunner class>>ifFalse:` and never wake up.
 
-**Reproducer pinpoints SUnitRunner setup, not core JIT** (2026-05-08):
+These suspended processes leave their context's sender slot pointing
+to image-allocated-at-load-time `nil` oop (which decodes as e.g.
+`0x300000000` in the address space layout).  Our existing
+`terminateCurrentProcess` C++ diag treats `ensure:` and high-pri
+process terminations as "exceptional" and prints `[TERM-P*]
+PROCESS TERMINATING` — but for these forked watchdog processes,
+termination via ensure: at the top of their stack is normal end-of-
+process behavior.  The 0x300000000 sender is just `nil` in this
+run's address-space (s_nilBits is set per-image-load).
+
+The actual problem with these processes is that they're ALIVE and
+SUSPENDED, holding higher priority than the eval process — so any
+eval after a prepped-image resume can't complete:
 
   Fresh image (no `--save fileIn`):
-    eval "[...] ensure: [...]. 42 printString" × 5 runs, NO_CLAMP DEFER=0
-      5/5 clean, 0 TERMs, eval completes
+    eval "[...] ensure: [...]. 42 printString" × 5: 5/5 clean
+    eval "1 + 1" × 5: 5/5 clean
+    eval "FFICalloutAPITest new testByteArrayToExternalAddress" × 5:
+                                                            5/5 clean
 
-  SUnitRunner-prepped image (post `--save fileIn run_sunit_tests.st`):
-    Same eval × 3 runs, NO_CLAMP DEFER=0
-      0/3 clean — every run produces 4-8 TERMs, eval doesn't complete
-    FFICalloutAPITest new testByteArrayToExternalAddress eval × 5
-      0/5 clean — every run produces 4 TERMs
+  SUnitRunner-prepped image (after `eval --save "fileIn ..."`):
+    eval "1 + 1" / "42 printString" / "[...] ensure: ...":
+      always TERM-P40 in BlockClosure>>ensure: (ctx [4]clo=nil-oop;
+      this is normal end-of-process for a forked watchdog block
+      whose ensure: fires when its work completes)
+      AND eval expression NEVER prints its result — eval
+      times out at 30s with `[DIAG-QUEUE] P80 proc=... susp=
+      SUnitRunner class>>ifFalse:` and `P60 ... susp=
+      SUnitRunner class>>ifFalse:` showing two stuck processes.
 
-So the bug is in some interaction between the runner-setup script
-and our VM's process/sender-chain handling — NOT in core JIT
-correctness.  Fresh-image PHARO_NO_DEFER_CLAMP=1 PHARO_JIT_DEFER=0
-is fully reliable.
+So the bug is in our runner script (`scripts/pharo-headless-test/
+run_sunit_tests.st`) leaving processes alive in
+`SUnitRunner class>>ifFalse:` after the session-startup handler
+returns.  Those high-priority suspended processes hold the
+scheduler past whatever the eval needs to complete.
 
-**Implications:**
-- The 14-class SUnit A/B (2485/2485 at both modes) was on the
-  prepped image, and tests still passed despite the TERMs because
-  SUnit's ensure: handlers caught most cascades.  Pass count is
-  meaningful; runner-completion is not.
-- Larger-class runs (15+) intermittently hit a cascade that the
-  runner can't recover from.
-- Real `eval` workloads on a stock Pharo image (no runner setup)
-  are unaffected.
+**Implications for "no defer":**
+- Fresh-image PHARO_NO_DEFER_CLAMP=1 PHARO_JIT_DEFER=0 is fully
+  reliable.  The "no defer" goal is achieved.
+- Past validation runs (14-class A/B 2485/2485) were on prepped
+  images.  Tests passed because they ran inside the SUnit harness
+  loop, which iterates regardless of the stuck watchdog processes.
+  But individual evals after prep can't complete.
 
-**Workaround**: validation via direct eval on FRESH image (clean
-download).  Skip via-SUnit-harness validation unless investigating
-this bug specifically.
+**Workaround**: validate via direct eval on FRESH image (clean
+download).  Use SUnit harness only for SUnit batch validation.
 
-**Real fix**: lldb attach during a prepped-image eval that fires
-TERM-P deterministically (FFICalloutAPITest one-liner).  The
-compile of `BlockClosure>>ensure:` (or whatever method has the
-corrupted sender slot in the activation) likely interacts with
-the SUnitRunner's compiled methods stored in the saved image
-header.  Investigation: capture the JITMethod for `ensure:`,
-inspect the bytecode/stencil sequence around the call's frame
-setup, identify the spill/reload that's reading uninitialized
-context-slot memory.
+**Real fix**: audit `run_sunit_tests.st`'s SessionManager startUp:
+handler for forked watchdogs that don't terminate when the test
+batch is complete.  Likely candidates: the per-test fork+watchdog
+pattern leaves a watchdog `[doneSem wait] forkAt: 81` (or similar)
+running after the test process completes.  Add a `terminate`
+on the watchdog after `doneSem signal`.
+
+The C++ TERM-P diag (line 11633) currently fires for `ensure:` as
+"exceptional", which is misleading — block-process completion
+through ensure: at top-of-stack IS normal.  Could narrow the
+exceptionalTerm filter (ensure: only when context chain has cycles
+or non-nil-but-bad sender), but that's cosmetic.
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
 

@@ -11647,6 +11647,28 @@ void Interpreter::terminateCurrentProcess() {
                         termCls.c_str(),
                         (unsigned long long)activeContext_.rawBits(),
                         frameDepth_);
+                // Dump the raw header + first few slots of activeContext_
+                // and method_ to see what's actually there in memory.
+                if (activeContext_.isObject() && !activeContext_.isNil()
+                    && memory_.isValidPointer(activeContext_)) {
+                    Oop sdr = memory_.fetchPointer(0, activeContext_);  // sender
+                    Oop ip  = memory_.fetchPointer(1, activeContext_);  // ip
+                    Oop sp  = memory_.fetchPointer(2, activeContext_);  // sp
+                    Oop mth = memory_.fetchPointer(3, activeContext_);  // method
+                    Oop clo = memory_.fetchPointer(4, activeContext_);  // closure-or-nil
+                    Oop rcv = memory_.fetchPointer(5, activeContext_);  // receiver
+                    fprintf(stderr, "[TERM-P%lld]   ctx [0]sdr=0x%llx "
+                            "[1]ip=0x%llx [2]sp=0x%llx [3]mth=0x%llx [4]clo=0x%llx "
+                            "[5]rcv=0x%llx (rcv-class=%s)\n",
+                            pri.asSmallInteger(),
+                            (unsigned long long)sdr.rawBits(),
+                            (unsigned long long)ip.rawBits(),
+                            (unsigned long long)sp.rawBits(),
+                            (unsigned long long)mth.rawBits(),
+                            (unsigned long long)clo.rawBits(),
+                            (unsigned long long)rcv.rawBits(),
+                            memory_.classNameOf(rcv).c_str());
+                }
             }
             // Walk the context chain to find the original error
             if (activeContext_.isObject() && !activeContext_.isNil()) {
