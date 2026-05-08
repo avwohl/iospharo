@@ -949,39 +949,72 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. JIT-compiled Delay subsystem hangs tinyBenchmarks (2026-05-08)
+### A4. JIT-compiled Delay subsystem hangs long-compute evals (2026-05-08)
 
-`eval "1 tinyBenchmarks"` on FRESH image hangs under JIT, passes
-under `PHARO_NO_JIT=1` (~1.5G bytecodes/sec).  Hang signature:
+`eval "1 tinyBenchmarks"` on FRESH image hangs under JIT (always),
+passes under `PHARO_NO_JIT=1` (~1.5G bytecodes/sec).  `36 benchFib`
+is intermittent — sometimes succeeds, often hangs.  Common pattern:
+any eval that runs >2 seconds of compute with the World render
+loop active concurrently.
 
-  [JIT-NLR-FIX] #7 Delay>>wait — rewriting trailing pop+returnSelf as returnTop
-  [JIT-NLR-FIX] #11 Delay>>wait — rewriting trailing pop+returnSelf as returnTop
-  [DIAG] P80 DelayMicrosecondTicker>>ifNotNil: ip=96 fd=1
-  [DIAG]   [-1] DelaySemaphoreScheduler>>ifNotNil:
-  [DIAG-QUEUE] P40 proc=... susp=Delay>>wait
-  [DIAG-QUEUE] P10 proc=... susp=ProcessorScheduler class>>idleProcess
+**lldb investigation 2026-05-08 narrowed the trigger:**
 
-Eval process at P40 is suspended in `Delay>>wait`.  The timer
-ticker at P80 is in `DelayMicrosecondTicker>>ifNotNil:` /
-`DelaySemaphoreScheduler>>ifNotNil:` but never signals the
-Delay's semaphore — timer wakeup never fires.
+  Timer-fire trace (`PHARO_DELAY_DEBUG=1 PHARO_SEM_SIGNAL_TRACE=1`):
 
-The NLR-fallthru fix is rewriting `Delay>>wait`'s trailing
-pop+returnSelf as returnTop, suggesting the same family of bugs
-the 14-session intern: investigation hit (interp+JIT peephole
-fixes 33e2ae18, ac6df64d, 498003df).  Maybe the rewrite isn't
-sufficient for this method, or the bug is in a different
-method (DelaySemaphoreScheduler / DelayMicrosecondTicker).
+    [DELAY-FIRE] cur=... deadline=... lateUs=~10ms sema=0x300362d08
+    [DELAY-ARM]  pri=80 sema=0x300362d08 newDeadline=+1.000s deltaUs=999999
+    [DELAY-ARM]  pri=80 sema=0x300362d08 newDeadline=+0.013s deltaUs=12998
+                                                    ^^ overwrites the 1s arm
+    [DELAY-FIRE] ~13ms later, sema=0x300362d08
+    [DELAY-ARM]  +1.000s
+    [DELAY-ARM]  +13ms (overwrites)
+    ... pattern repeats ...
 
-**Real fix path**: lldb attach during `eval "1 tinyBenchmarks"`,
-break in `terminateCurrentProcess` and the timer-arm
-machinery, identify the JIT-compiled Delay method whose
-activation breaks the wakeup chain.  test_load_image is signed
-with get-task-allow + JIT entitlements (commit 5b715fc2), so
-attach works without macOS hangs.
+  The Pharo-side scheduler at P80 alternates between scheduling a
+  long deadline (~1s, the next "real" scheduled Delay's deadline)
+  and a short deadline (13ms = 60Hz frame, MorphicRenderLoop) —
+  the short one keeps overwriting the long one before it can fire.
+
+  This 13ms-over-1s pattern is normal for an active GUI session,
+  but in eval mode it should NOT be running because the World
+  shouldn't be drawing.  Our `--interactive`-removed change reduces
+  this but doesn't eliminate it — `WorldState>>whileFalse:` and
+  `NullWorldRenderer>>ifFalse:` keep running at P40 even without
+  --interactive (via Pharo's session-startup chain).
+
+  Sema 0x300362d08 fires every ~13ms with no waiter in
+  PHARO_SEM_SIGNAL_TRACE — the timer-sema is the SCHEDULER's wakeup
+  sema, not a user Delay's.  P80 wakes from its signal, dispatches
+  the next-due Delay, signals that Delay's user-facing sema, then
+  re-arms.  All cycle correctly.
+
+  Hung-process state on attach (lldb -p):
+    thread #1 in libsystem_kernel`__semwait_signal
+                <- libsystem_c`usleep
+                <- Interpreter::primitiveRelinquishProcessor
+    DIAG-QUEUE shows P10 idle, no other processes
+    -> all Smalltalk processes have terminated or completed; only
+       idle remains.  Eval expression's process either finished
+       (without printing result) or was preempted/terminated.
+
+**Hypothesis (next investigation step needed):** the JIT-compiled
+benchFib's recursive J2J-chain interacts with the periodic
+preemption check / scheduler, and at some boundary the eval
+process gets prematurely terminated.  Compute completed (so
+`36 benchFib` returns 48315633 in the lucky cases) but state
+that should propagate the result to stdout is lost in unlucky
+cases.
+
+**Concrete next step:** instrument `terminateCurrentProcess` to
+log the FULL bytecode chain of the terminating process whenever
+it's a non-low-priority termination, so we can identify which
+JIT-compiled method's epilog is dropping the eval's
+continuation.  The richer TERM-P diag (commit 44400d72) prints
+method oop + class + ctx slots but stops at fd=0 — extending
+to walk the savedFrames_ chain would identify the call site.
 
 **Workaround**: `PHARO_NO_JIT=1` for tinyBenchmarks-style
-workloads.  Most JIT use cases don't depend on Delay-based
+benchmarks.  Most JIT use cases don't depend on Delay-based
 benchmarking.
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
