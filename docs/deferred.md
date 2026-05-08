@@ -782,6 +782,25 @@ resuming a saved image.  4s buffer covers both.  See
 `memory/project_resolver_buffer_3s_floor_2026_05_08.md`.
 PHARO_RESOLVER_BUFFER=<seconds> for diagnostics.
 
+**Stochastic SUnit TERM at 15+ classes** (2026-05-08): SUnit
+test runs of 15+ classes intermittently hit TERM-P80 via
+`#runSingleTest:` or `#ensure:` cleanup, with sender=0x300000000
+(nil sentinel) — sender-chain corruption in JIT-compiled
+methods.  3-run reliability check on a 15-class set:
+
+  default DEFER:           1/3 mid-test, 2/3 ensure: cleanup
+  NO_CLAMP DEFER=0:        1/3 mid-test, 2/3 ensure: cleanup
+
+Identical pattern in both modes — **not a no-defer regression**;
+NO_JIT=1 passes 3271/3273 cleanly on 30 classes.  Likely the
+same family as the original A1 NLR-fallthru bug (JIT-compiled
+ensure: block's sender chain breaks during exception unwind),
+but in broader patterns than the trailing-pop+returnSelf rewrite
+covers.  Multi-day lldb investigation; not urgent because tests
+themselves still pass cleanly (Pass=2319 in 2/3 runs) — only the
+runner cleanup terminates.  Workaround: keep validation runs at
+14 classes or smaller.
+
 **Headless 3s clamp floor** (`kHeadlessFloor` in
 `JITRuntime::noteMethodEntry`) is now redundant when Resolver
 fires (which it always does in headless+non-bench mode, since
