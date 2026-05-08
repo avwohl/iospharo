@@ -149,6 +149,11 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
                         hits, (int)event, cls.c_str(), sel.c_str(),
                         (unsigned long long)methodOop.rawBits(),
                         (unsigned long long)extra1);
+                    if (event == 201 && sel == "intern:") {
+                        // Defer dumping to interp via PHARO_TRACE_RECVRET_DUMP
+                        // (handled in returnValue's symcls trap).
+                        state->interp->dumpFrameStackOnRecvRet(hits);
+                    }
                 }
             }
         }

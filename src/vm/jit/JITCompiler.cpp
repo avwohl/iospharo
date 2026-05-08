@@ -209,9 +209,9 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
                 static int n_block = 0;
                 if (isFullBlock && n_block++ < 200) {
                     fprintf(stderr,
-                        "[NLR-COMPILE] BLOCK op=0x%02x bcOff=%d "
+                        "[NLR-COMPILE] BLOCK op=0x%02x bcOff=%d bcLen=%zu "
                         "→ stencil_send (NLR-deopt)\n",
-                        op, (int)bc.bcOffset);
+                        op, (int)bc.bcOffset, length);
                 }
             }
             if (isFullBlock) {
@@ -1655,6 +1655,18 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (noBlocks) {
             compilationsFailed_++;
             return nullptr;
+        }
+        // PHARO_TRACE_NLR_COMPILE=1: log every FullBlock about to be JIT'd
+        // so we can correlate with the NLR-COMPILE log inside decodeBytecodes.
+        static const bool nlrCompileTrace =
+            std::getenv("PHARO_TRACE_NLR_COMPILE") != nullptr;
+        if (__builtin_expect(nlrCompileTrace, 0)) {
+            static int n = 0;
+            if (n++ < 200) {
+                fprintf(stderr,
+                    "[BLK-COMPILE] methodOop=0x%llx bcLen=%zu\n",
+                    (unsigned long long)compiledMethod.rawBits(), bcLen);
+            }
         }
     }
 

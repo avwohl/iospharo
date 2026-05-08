@@ -4736,6 +4736,30 @@ void Interpreter::pushSpecial(int which) {
     }
 }
 
+void Interpreter::dumpFrameStackOnRecvRet(int hitNum) {
+    fprintf(stderr,
+        "[RECVRET-FRAMES] hit#%d fd=%zu (active method=#%s rcvrCls=%s)\n",
+        hitNum, frameDepth_,
+        method_.isObject() ? memory_.selectorOf(method_).c_str() : "(nil)",
+        receiver_.isObject() && receiver_.rawBits() > 0x10000
+            ? memory_.classNameOf(receiver_).c_str() : "?");
+    size_t maxF = frameDepth_ < 12 ? frameDepth_ : 12;
+    for (size_t f = 0; f < maxF; f++) {
+        const SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
+        std::string s = sf.savedMethod.isObject()
+            ? memory_.selectorOf(sf.savedMethod) : "(nil)";
+        std::string c = sf.savedReceiver.isObject()
+            && sf.savedReceiver.rawBits() > 0x10000
+            ? memory_.classNameOf(sf.savedReceiver) : "?";
+        long long hfd =
+            sf.homeFrameDepth == SIZE_MAX ? -1 : (long long)sf.homeFrameDepth;
+        fprintf(stderr,
+            "[RECVRET-FRAMES]   [-%zu] %s>>%s methodOop=0x%llx homeFD=%lld\n",
+            f + 1, c.c_str(), s.c_str(),
+            (unsigned long long)sf.savedMethod.rawBits(), hfd);
+    }
+}
+
 void Interpreter::returnValue(Oop value) {
     // 2026-05-07 DEFER<2 corruption probe — see returnFromMethod for
     // explanation.  PHARO_TRACE_SYMCLS_RETURN=1.
@@ -9120,6 +9144,37 @@ void Interpreter::activateBlock(Oop block, int argCount) {
         }
 
         savedFrames_[frameDepth_ - 1].homeFrameDepth = homeFrame;
+
+        // 2026-05-08 PHARO_TRACE_INTERN_BLK_ACT=1: trace activateBlock for
+        // intern:'s critical: block (oop 0x300354be8) to verify NLR home
+        // is being set.  If homeFrame stays SIZE_MAX, the block's ^
+        // becomes a local return → falls through to bc 99 returnSelf.
+        static const bool internBlkActTrace =
+            std::getenv("PHARO_TRACE_INTERN_BLK_ACT") != nullptr;
+        if (__builtin_expect(internBlkActTrace, 0)
+            && methodToExecute.rawBits() == 0x300354be8) {
+            static int n = 0;
+            n++;
+            fprintf(stderr,
+                "[INTERN-BLK-ACT] #%d activateBlock fd=%zu homeFrame=%lld "
+                "homeMethodForNLR=#%s alt=#%s\n",
+                n, frameDepth_,
+                homeFrame == SIZE_MAX ? -1LL : (long long)homeFrame,
+                homeMethodForNLR.isObject()
+                    ? memory_.selectorOf(homeMethodForNLR).c_str() : "(nil)",
+                altHomeMethod.isObject()
+                    ? memory_.selectorOf(altHomeMethod).c_str() : "(nil)");
+            // Walk savedFrames_ to show what's there
+            for (size_t f = 0; f < frameDepth_ && f < 6; f++) {
+                size_t idx = frameDepth_ - 1 - f;
+                Oop sm = savedFrames_[idx].savedMethod;
+                fprintf(stderr,
+                    "[INTERN-BLK-ACT]   sF[-%zu] #%s methodOop=0x%llx\n",
+                    f + 1,
+                    sm.isObject() ? memory_.selectorOf(sm).c_str() : "(nil)",
+                    (unsigned long long)sm.rawBits());
+            }
+        }
     }
 
     method_ = methodToExecute;

@@ -2977,6 +2977,10 @@ private:
     void transferTo(Oop newProcess);
 
 public:
+    // 2026-05-08 DEFER<4 hunt: dump frame stack when intern: fires bc 99
+    // returnReceiver via stencil event 201.  Called from JITRuntime.
+    void dumpFrameStackOnRecvRet(int hitNum);
+
     // ===== FFI CALLBACK SUPPORT =====
     // sigsetjmp/siglongjmp mechanism for C-to-Smalltalk callbacks
 
