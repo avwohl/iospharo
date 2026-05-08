@@ -1705,24 +1705,35 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // bug-triggered paths reach it.
     //
     // Opt out: PHARO_JIT_NO_NLR_FALLTHRU_FIX=1
+    // PHARO_JIT_NLR_FALLTHRU_FIX_BROAD=1: also rewrite when no
+    // pushFullClosure is in the method (catches block-literal patterns
+    // and nested-call patterns).
     {
         static const bool noFix =
             std::getenv("PHARO_JIT_NO_NLR_FALLTHRU_FIX") != nullptr;
+        static const bool broadFix =
+            std::getenv("PHARO_JIT_NLR_FALLTHRU_FIX_BROAD") != nullptr;
         if (!noFix && decoded.size() >= 3 && !isFullBlock) {
             auto& last = decoded.back();
             auto& prev = decoded[decoded.size() - 2];
             // last must be ReturnReceiver (0x58), prev must be Pop (0xD8)
             if (last.opcode == SistaV1::ReturnReceiver
                 && prev.opcode == SistaV1::Pop) {
-                // Search for a pushFullClosure (0xF9) earlier
-                bool sawFullClosure = false;
-                for (size_t i = 0; i + 2 < decoded.size(); i++) {
-                    if (decoded[i].opcode == 0xF9) {
-                        sawFullClosure = true;
-                        break;
+                // Default: only rewrite if pushFullClosure (0xF9) is in
+                // the method (the canonical pattern).  Broad mode (opt
+                // in): always rewrite — covers block-literal and other
+                // patterns where the last `^` lives in a block whose
+                // NLR can be lost.
+                bool shouldRewrite = broadFix;
+                if (!shouldRewrite) {
+                    for (size_t i = 0; i + 2 < decoded.size(); i++) {
+                        if (decoded[i].opcode == 0xF9) {
+                            shouldRewrite = true;
+                            break;
+                        }
                     }
                 }
-                if (sawFullClosure) {
+                if (shouldRewrite) {
                     static int rewriteCount = 0;
                     rewriteCount++;
                     if (rewriteCount <= 5 || (rewriteCount & 0xFF) == 1) {
