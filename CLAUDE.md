@@ -136,6 +136,41 @@ test with freshly downloaded images, not saved ones.
 Xcode's "Check XCFramework Freshness" build phase auto-runs
 `build-xcframework.sh` if VM sources changed.
 
+## lldb is available — don't dismiss bugs as "needs lldb"
+
+This machine has full lldb tooling for live JIT debugging.  Multiple
+prior sessions have used it heavily.  Do NOT punt on a bug by saying
+"needs lldb, multi-day, out of scope" — attach lldb and investigate.
+
+What's wired up:
+- `scripts/lldb-mcp-start.sh` — Claude Code launches this automatically
+  via MCP, so lldb is reachable as MCP tools (`mcp__lldb__*`) when
+  the lldb MCP server is registered for the session.
+- `test_load_image` is codesigned with `get-task-allow` + JIT
+  entitlements via the CMake POST_BUILD step (commit `5b715fc2`),
+  so `lldb -p <pid>` and `lldb ./build/test_load_image` both attach
+  cleanly without the macOS task-port hang.
+- The MCP wrapper restarts lldb fresh per session to dodge a known
+  Apple lldb-2100 socket-leak bug (commit `00c93286`).
+
+Standard workflow for "JIT compiles wrong method, sender chain
+corrupts, P80 terminates" / sentinel-pattern bugs:
+1. Reproduce under lldb attach.  Set a breakpoint at the TERM
+   trace site (e.g. `Interpreter::terminateCurrentProcess` line
+   that prints `[TERM-P%lld] PROCESS TERMINATING via #%s`).
+2. When it fires, inspect `activeContext_`, `savedFrames_`, and
+   the JITMethod-map entry for `method_`.
+3. Walk the bytecode of the offending method, identify the
+   stencil whose epilog leaves the saved-sender slot corrupt.
+
+CLI invocation if MCP isn't loaded for some reason:
+
+    lldb -O 'b Interpreter::terminateCurrentProcess' \
+         ./build/test_load_image -- /tmp/harness/Pharo.image
+
+Memory: `project_jit_session_2026_05_06.md` documents prior
+lldb-driven JIT debug sessions.
+
 ## References
 
 - Sista V1 bytecode spec: `docs/SistaV1-Bytecode-Spec.md` (local copy — online
