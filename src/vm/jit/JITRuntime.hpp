@@ -33,6 +33,26 @@ class ObjectMemory;
 
 namespace jit {
 
+// 2026-05-08 image-init-complete signal (5th attempt): set by interp
+// and JIT stencil dispatch when storing a NON-NIL value into a
+// class-variable binding whose key is the Symbol #Resolver.
+//
+// The actual FileLocator class>>startUp: does:
+//   Resolver := InteractiveResolver new.
+//   Resolver addResolver: SystemResolver new.
+//   Resolver addResolver: PlatformResolver forCurrentPlatform.
+// The first store flips g_resolverClassVarSet, but the addResolver:
+// calls happen AFTER.  So the signal alone isn't enough — defer-lift
+// also waits g_resolverSetAtStep + buffer steps to allow those calls
+// to complete.
+extern volatile bool g_resolverClassVarSet;
+extern volatile uint64_t g_resolverSetAtStep;
+
+// Inline-checkable predicate.  Caller should test
+// g_resolverClassVarSet first to avoid the function-call overhead
+// after the flag is set.
+void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory);
+
 static constexpr size_t CountMapSize = 16384;
 
 class JITRuntime {

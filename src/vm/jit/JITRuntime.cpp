@@ -39,6 +39,59 @@ namespace pharo {
 namespace pharo {
 namespace jit {
 
+// 2026-05-08 image-init-complete signal — declared in JITRuntime.hpp.
+// Definition here so it can link against both Interpreter and the
+// JIT stencil helpers (via jit_rt_resolver_check_helper).
+volatile bool g_resolverClassVarSet = false;
+volatile uint64_t g_resolverSetAtStep = 0;
+
+void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory) {
+    Oop assoc = Oop::fromRawBits(assocBits);
+    if (!assoc.isObject() || assoc.rawBits() < 0x10000) return;
+    if (!memory.isValidPointer(assoc)) return;
+    ObjectHeader* aHdr = assoc.asObjectPtr();
+    if (aHdr->slotCount() < 2) return;
+    Oop value = aHdr->slots()[1];
+    Oop key = aHdr->slots()[0];
+    if (!key.isObject() || key.rawBits() < 0x10000) return;
+    if (!memory.symbolEquals(key, "Resolver")) return;
+    // Trace every Resolver store to see the actual init pattern.
+    static const bool resolverTrace =
+        std::getenv("PHARO_TRACE_RESOLVER_STORE") != nullptr;
+    if (__builtin_expect(resolverTrace, 0)) {
+        static int n = 0;
+        n++;
+        if (n <= 30) {
+            fprintf(stderr,
+                "[RESOLVER-STORE] #%d value=0x%llx (%s)\n",
+                n, (unsigned long long)value.rawBits(),
+                value.isNil() ? "nil" : (value.isObject() ? "object" : "imm"));
+        }
+    }
+    // Only flip flag for non-nil stores.
+    if (g_resolverClassVarSet) return;
+    if (value.isNil()) return;
+    g_resolverClassVarSet = true;
+    g_resolverSetAtStep = g_stepNum;
+    static int n = 0;
+    if (n++ < 3) {
+        fprintf(stderr,
+            "[INIT-RESOLVER] #%d Resolver class var set non-nil at "
+            "step %llu (value=0x%llx) — defer will lift after buffer\n",
+            n, (unsigned long long)g_stepNum,
+            (unsigned long long)value.rawBits());
+    }
+}
+
+// JIT-side helper called from stencil_popStoreLitVar when
+// g_resolverClassVarSet is false.  Wraps noteLitVarStore so the
+// stencil only needs to know about JITState.
+extern "C" void jit_rt_check_resolver_store(JITState* state, uint64_t assocBits) {
+    if (g_resolverClassVarSet) return;
+    if (!state || !state->interp) return;
+    noteLitVarStore(assocBits, state->interp->memory());
+}
+
 // ===== RUNTIME HELPER IMPLEMENTATIONS =====
 
 // These are the C functions that JIT stencils branch to when they
@@ -2161,8 +2214,72 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
             }
         }
     }
-    if (deferSteps > 0 && !g_deferLifted
-        && (int64_t)g_stepNum < deferSteps) return;
+    // 2026-05-08 image-init-complete signal (5th attempt).  Hold defer
+    // until BOTH Resolver class var has been set non-nil AND
+    // kResolverBufferSteps additional steps have elapsed (so the
+    // addResolver: calls in FileLocator class>>startUp: complete).
+    // Or until deferSteps has elapsed (fallback for bench mode where
+    // Resolver might never be touched).
+    //
+    // The default `deferSteps` from PHARO_JIT_DEFER acts as a MAXIMUM
+    // wait — JIT engages no later than that.  The Resolver+buffer
+    // signal can lift defer SOONER if init completes faster, AND can
+    // also serve as a MINIMUM defer when DEFER=0 (where deferSteps==0
+    // and would otherwise have no defer at all).
+    static const int64_t kResolverBufferSteps = 90000000;  // ~3s
+    if (!g_deferLifted) {
+        const bool needsResolver = interp_ && interp_->isHeadless()
+            && !g_debug.bench;
+        // Resolver-buffer threshold: when did the buffer end, in
+        // step count.  Only meaningful once Resolver has fired.
+        int64_t resolverThreshold = -1;
+        if (g_resolverClassVarSet) {
+            resolverThreshold = (int64_t)g_resolverSetAtStep
+                + kResolverBufferSteps;
+        }
+        bool shouldLift = false;
+        const char* reason = nullptr;
+        if (needsResolver) {
+            // Headless-non-bench: gate on max(deferSteps, resolver+buffer).
+            // If Resolver hasn't fired, only deferSteps can lift (for
+            // backward-compat with bench-style runs that bypass startup).
+            int64_t threshold = deferSteps;
+            if (resolverThreshold > threshold) threshold = resolverThreshold;
+            if (resolverThreshold > 0
+                && (int64_t)g_stepNum >= threshold) {
+                shouldLift = true;
+                reason = "Resolver+buffer (headless)";
+            } else if (resolverThreshold < 0 && deferSteps > 0
+                       && (int64_t)g_stepNum >= deferSteps) {
+                // Resolver never fired — fall back to deferSteps alone.
+                shouldLift = true;
+                reason = "deferSteps (Resolver never fired)";
+            }
+        } else {
+            // Bench/GUI: just respect deferSteps as before.  deferSteps==0
+            // means lift immediately.
+            if (deferSteps == 0
+                || (int64_t)g_stepNum >= deferSteps) {
+                shouldLift = true;
+                reason = "deferSteps elapsed (bench/GUI)";
+            }
+        }
+        if (shouldLift) {
+            g_deferLifted = true;
+            for (size_t ci = 0; ci < CountMapSize; ci++) {
+                countMap_[ci].key = 0;
+                countMap_[ci].count = 0;
+            }
+            fprintf(stderr,
+                "[JIT] Defer lifted: %s (step=%llu, resolverAt=%llu, "
+                "deferSteps=%lld)\n",
+                reason,
+                (unsigned long long)g_stepNum,
+                (unsigned long long)g_resolverSetAtStep,
+                (long long)deferSteps);
+        }
+    }
+    if (!g_deferLifted) return;
 
     // Sista already owns this method via a counted-loop splice — don't
     // race with it.  Without this check, ~50% of bench-panel runs T1

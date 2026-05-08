@@ -4570,8 +4570,15 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         extA_ = 0;
         Oop value = pop();
         Oop assoc = literal(fullIndex);
-        if (assoc.isObject())
+        if (assoc.isObject()) {
             memory_.storePointer(1, assoc, value);
+            // 2026-05-08 image-init-complete signal: detect when
+            // FileLocator class>>startUp: stores into the Resolver
+            // class variable.  Cheap branch when flag already set.
+            // noteLitVarStore self-gates on g_resolverClassVarSet; cheap
+            // when already set.  Always call for trace-mode coverage.
+            jit::noteLitVarStore(assoc.rawBits(), memory_);
+        }
         break;
     }
     case jit::SistaV1::ExtPopStoreTemp: { // Pop and Store Temporary Variable #i
@@ -4592,8 +4599,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         int fullIndex = (extA_ << 8) | indexByte;
         extA_ = 0;
         Oop assoc = literal(fullIndex);
-        if (assoc.isObject())
+        if (assoc.isObject()) {
             memory_.storePointer(1, assoc, stackTop());
+            // noteLitVarStore self-gates on g_resolverClassVarSet; cheap
+            // when already set.  Always call for trace-mode coverage.
+            jit::noteLitVarStore(assoc.rawBits(), memory_);
+        }
         break;
     }
     case jit::SistaV1::ExtStoreTemp: { // Store Temporary Variable #i - no pop
