@@ -4050,23 +4050,18 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         returnFromMethod();
         break;
     case jit::SistaV1::ReturnTop: {
-        // 2026-05-08 PHARO_TRACE_RETURNTOP=1: log every ReturnTop
-        // dispatch so we can see whether intern:'s block ever
-        // hits this case.
+        // 2026-05-08 PHARO_TRACE_RETURNTOP=1: count how often intern:'s
+        // block (oop 0x300354be8) reaches interp's case ReturnTop.
         static const bool retTopTrace =
             std::getenv("PHARO_TRACE_RETURNTOP") != nullptr;
-        if (__builtin_expect(retTopTrace, 0) && method_.isObject()
-            && method_.rawBits() > 0x10000) {
-            ObjectHeader* mH = method_.asObjectPtr();
-            bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
-            if (isBlk) {
-                static int rtN = 0;
-                if (rtN++ < 60) {
-                    fprintf(stderr,
-                        "[RETURNTOP] BLOCK methodOop=0x%llx fd=%zu\n",
-                        (unsigned long long)method_.rawBits(),
-                        frameDepth_);
-                }
+        if (__builtin_expect(retTopTrace, 0)
+            && method_.rawBits() == 0x300354be8) {
+            static int internBlkRT = 0;
+            internBlkRT++;
+            if ((internBlkRT & 0x7F) == 1) {  // Every 128
+                fprintf(stderr,
+                    "[RETURNTOP-INTERN] count=%d fd=%zu\n",
+                    internBlkRT, frameDepth_);
             }
         }
         returnFromMethod();
@@ -16499,6 +16494,35 @@ void Interpreter::tryJITResumeInCaller() {
                             msel.c_str(),
                             (unsigned long long)state.method.rawBits(),
                             ipOff, bcOp);
+                        // Special: intern:'s block (oop 0x300354be8)
+                        // returnTop bail.  Dump full chain to verify
+                        // homeFrameDepth setup.
+                        if (state.method.rawBits() == 0x300354be8
+                            && bcOp == 0x5C) {
+                            fprintf(stderr,
+                                "[INTERN-BAIL]   *** intern: critical: block at returnTop ***\n");
+                            fprintf(stderr,
+                                "[INTERN-BAIL]   frameDepth_=%zu state.sp=%p\n",
+                                frameDepth_, (void*)state.sp);
+                            for (int f = (int)frameDepth_ - 1;
+                                 f >= 0 && f >= (int)frameDepth_ - 12; f--) {
+                                SavedFrame& sf = savedFrames_[f];
+                                std::string s2 = memory_.selectorOf(sf.savedMethod);
+                                std::string c2 = memory_.classNameOf(sf.savedReceiver);
+                                bool isBlk2 = false;
+                                if (sf.savedMethod.isObject()
+                                    && sf.savedMethod.rawBits() > 0x10000) {
+                                    isBlk2 = sf.savedMethod.asObjectPtr()->classIndex()
+                                        == compiledBlockClassIndex_;
+                                }
+                                fprintf(stderr,
+                                    "[INTERN-BAIL]   sf[%d] %s%s>>%s home=%zu methodOop=0x%llx\n",
+                                    f, isBlk2 ? "BLOCK " : "",
+                                    c2.c_str(), s2.c_str(),
+                                    sf.homeFrameDepth,
+                                    (unsigned long long)sf.savedMethod.rawBits());
+                            }
+                        }
                     }
                 }
             }
