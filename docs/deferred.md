@@ -749,6 +749,22 @@ post-init even with `PHARO_JIT_DEFER=0`.
 5 small evals (`42 printString`, inject:into: 1k, OC>>size, etc.)
 × both default and DEFER=0+NO_CLAMP all 3/3.
 
+**SUnit A/B (2026-05-08):** ArrayTest+StringTest+DictionaryTest+
+SetTest+DateAndTimeTest, fresh harness image:
+
+  default DEFER:           1197 tests, 1197 P, 0 F, 0 E
+  DEFER=0+NO_CLAMP:        1197 tests, 1197 P, 0 F, 0 E
+
+100% parity.  Resolver-buffer signal is reliable.
+
+**Resolver buffer length:** 3s is the empirical floor.  Sub-3s
+buffer (1s, 0.5s, 0) all hang 0/5 in DelayMicrosecondTicker —
+JIT-compiling methods inside the post-Resolver init window
+(~3s of bytecodes covering FileSystem + Delay subsystem setup)
+corrupts scheduler state.  See
+`memory/project_resolver_buffer_3s_floor_2026_05_08.md`.
+PHARO_RESOLVER_BUFFER=<seconds> for diagnostics.
+
 **Headless 3s clamp floor** (`kHeadlessFloor` in
 `JITRuntime::noteMethodEntry`) is now redundant when Resolver
 fires (which it always does in headless+non-bench mode, since
