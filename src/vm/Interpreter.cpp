@@ -16201,6 +16201,69 @@ void Interpreter::tryJITResumeInCaller() {
                                     g_symclsTrap_bc18_codeOff = tab[18];
                                 }
                             }
+
+                            // Print all the rich state we can capture
+                            // before trapping.  This gives a full picture
+                            // even if the lldb script can't read globals.
+                            fprintf(stderr,
+                                "\n=== SYMCLS TRAP DUMP ===\n"
+                                "state.method=0x%llx state.receiver=0x%llx "
+                                "state.returnValue=0x%llx\n"
+                                "state.exitReason=%d state.ip=%p state.sp=%p\n"
+                                "frameDepth_=%zu j2jPoolCursor_=%lld\n",
+                                (unsigned long long)state.method.rawBits(),
+                                (unsigned long long)state.receiver.rawBits(),
+                                (unsigned long long)state.returnValue.rawBits(),
+                                (int)state.exitReason,
+                                (void*)state.ip, (void*)state.sp,
+                                frameDepth_, (long long)j2jPoolCursor_);
+                            // Dump savedFrames_[] — the C++ frame chain
+                            fprintf(stderr, "C++ saved frames (newest first):\n");
+                            for (int f = (int)frameDepth_ - 1;
+                                 f >= 0 && f >= (int)frameDepth_ - 16; f--) {
+                                SavedFrame& sf = savedFrames_[f];
+                                std::string sel =
+                                    memory_.selectorOf(sf.savedMethod);
+                                std::string rcl =
+                                    memory_.classNameOf(sf.savedReceiver);
+                                bool isBlk = false;
+                                if (sf.savedMethod.isObject()
+                                    && sf.savedMethod.rawBits() > 0x10000) {
+                                    auto* mh = sf.savedMethod.asObjectPtr();
+                                    isBlk = mh->classIndex()
+                                        == compiledBlockClassIndex_;
+                                }
+                                fprintf(stderr,
+                                    "  fd=%d %s%s>>%s home=%zu fp=%p ip=%p\n",
+                                    f, isBlk ? "BLOCK " : "",
+                                    rcl.c_str(), sel.c_str(),
+                                    sf.homeFrameDepth,
+                                    (void*)sf.savedFP,
+                                    (void*)sf.savedIP);
+                            }
+                            // Dump j2jPool_ contents
+                            fprintf(stderr,
+                                "j2j pool entries 0..min(cursor,16):\n");
+                            for (int i = 0;
+                                 i < j2jPoolCursor_ && i < 16; i++) {
+                                J2JSave& sv = j2jPool_[i];
+                                std::string sn = sv.jitMethod
+                                    ? memory_.selectorOf(Oop::fromRawBits(
+                                        sv.jitMethod->compiledMethodOop))
+                                    : "?";
+                                fprintf(stderr,
+                                    "  [%d] sel=#%s ip=%p sp=%p "
+                                    "resumeAddr=%p sendArgCount=%d\n",
+                                    i, sn.c_str(),
+                                    (void*)sv.ip, (void*)sv.sp,
+                                    (void*)sv.resumeAddr,
+                                    sv.sendArgCount);
+                            }
+                            // Recent process priority transfers — whether
+                            // a process switch happened recently.
+                            // (Already logged via [XFER-N] events earlier;
+                            // no need to dump here since stderr has them.)
+                            fflush(stderr);
                             __builtin_debugtrap();
                         }
                         std::string msel = memory_.selectorOf(state.method);
