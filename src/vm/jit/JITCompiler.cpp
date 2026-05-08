@@ -1686,30 +1686,63 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    // 2026-05-08 DEFER<4 root-cause workaround: skip JIT-compiling the
-    // few hand-confirmed problem methods.  These are:
+    // 2026-05-08 DEFER<4 NLR-bug workaround.  Pattern:
     //
-    //   Symbol class>>intern:     — bc 99 returnSelf fall-through when the
-    //                                critical: block's ^ doesn't NLR.
+    //     ... pushFullClosure ... send: critical: ...  pop, returnSelf
     //
-    // Skipping them lets PHARO_NO_DEFER_CLAMP=1 startup work without the
-    // 4s clamp.  Opt out via PHARO_JIT_NO_PROBLEM_SKIP=1.
+    // The trailing `pop, returnSelf` (bc 0xD8 0x58) is supposed to be
+    // unreachable because the critical: block always does `^ X`, NLR'ing
+    // out of the method.  But at low PHARO_JIT_DEFER, the block's NLR
+    // can fail to unwind through the critical: cascade — falls through
+    // to bc 99 returnSelf, returning the receiver instead of the
+    // intended value (the `Symbol class` corruption).
+    //
+    // Mitigation: if the LAST two bytecodes of a method are `pop;
+    // returnSelf` AND the method contains a `pushFullClosure` earlier,
+    // rewrite the trailing pair as a single `returnTop` so the lost-NLR
+    // value is returned instead of the receiver.  Safe because the
+    // pop+returnSelf pair is dead-code in normal flow; only
+    // bug-triggered paths reach it.
+    //
+    // Opt out: PHARO_JIT_NO_NLR_FALLTHRU_FIX=1
     {
-        static const bool noProbSkip =
-            std::getenv("PHARO_JIT_NO_PROBLEM_SKIP") != nullptr;
-        if (!noProbSkip) {
-            std::string sel = interp_.memory().selectorOf(compiledMethod);
-            if (sel == "intern:") {
-                std::string cls = interp_.classNameOfMethod(compiledMethod);
-                if (cls == "Symbol class") {
-                    static int n = 0;
-                    if (n++ < 3) {
-                        fprintf(stderr,
-                            "[JIT] Skipping #Symbol class>>intern: "
-                            "(known DEFER<4 NLR bug)\n");
+        static const bool noFix =
+            std::getenv("PHARO_JIT_NO_NLR_FALLTHRU_FIX") != nullptr;
+        if (!noFix && decoded.size() >= 3 && !isFullBlock) {
+            auto& last = decoded.back();
+            auto& prev = decoded[decoded.size() - 2];
+            // last must be ReturnReceiver (0x58), prev must be Pop (0xD8)
+            if (last.opcode == SistaV1::ReturnReceiver
+                && prev.opcode == SistaV1::Pop) {
+                // Search for a pushFullClosure (0xF9) earlier
+                bool sawFullClosure = false;
+                for (size_t i = 0; i + 2 < decoded.size(); i++) {
+                    if (decoded[i].opcode == 0xF9) {
+                        sawFullClosure = true;
+                        break;
                     }
-                    compilationsFailed_++;
-                    return nullptr;
+                }
+                if (sawFullClosure) {
+                    static int rewriteCount = 0;
+                    rewriteCount++;
+                    if (rewriteCount <= 5 || (rewriteCount & 0xFF) == 1) {
+                        std::string sel =
+                            interp_.memory().selectorOf(compiledMethod);
+                        std::string cls =
+                            interp_.classNameOfMethod(compiledMethod);
+                        fprintf(stderr,
+                            "[JIT-NLR-FIX] #%d %s>>%s — rewriting "
+                            "trailing pop+returnSelf as returnTop\n",
+                            rewriteCount, cls.c_str(), sel.c_str());
+                    }
+                    // Replace `pop; returnSelf` with `returnTop` by
+                    // changing the prev bytecode to returnTop and
+                    // removing the last entry.  prev keeps its bcOffset
+                    // (so any branch target into prev still resolves).
+                    prev.opcode = SistaV1::ReturnTop;
+                    prev.stencilIdx = static_cast<uint16_t>(
+                        StencilID::stencil_returnTop);
+                    decoded.pop_back();
                 }
             }
         }
