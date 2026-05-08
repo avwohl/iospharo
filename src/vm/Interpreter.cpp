@@ -15923,6 +15923,44 @@ void Interpreter::tryJITResumeInCaller() {
                             }
                         }
                     }
+                    // 2026-05-08 PHARO_TRACE_BLOCK_CHAIN=1: log every
+                    // chain ExitReturn — to see what methods return
+                    // via chain (vs deopt to interp).
+                    {
+                        static const bool blockChainTrace =
+                            std::getenv("PHARO_TRACE_BLOCK_CHAIN") != nullptr;
+                        if (__builtin_expect(blockChainTrace, 0)
+                            && state.method.isObject()
+                            && state.method.rawBits() > 0x10000) {
+                            ObjectHeader* mH = state.method.asObjectPtr();
+                            uint32_t cIdx = mH->classIndex();
+                            bool isBlk = (cIdx == compiledBlockClassIndex_);
+                            std::string csel = memory_.selectorOf(state.method);
+                            // Filter: any block, OR intern:-related method.
+                            bool relevant = isBlk || csel == "intern:"
+                                || csel == "asSymbol" || csel == "rawIntern:"
+                                || csel == "critical:" || csel == "ensure:"
+                                || csel == "value";
+                            if (relevant) {
+                                static int blockChN = 0;
+                                if (blockChN++ < 30) {
+                                    Oop callerMethod = save.jitMethod
+                                        ? Oop::fromRawBits(
+                                            save.jitMethod->compiledMethodOop)
+                                        : Oop::nil();
+                                    std::string callerSel =
+                                        memory_.selectorOf(callerMethod);
+                                    fprintf(stderr,
+                                        "[BLOCK-CHAIN] #%d %s callee=#%s "
+                                        "caller=#%s rj2jDepth=%d retVal=0x%llx\n",
+                                        blockChN, isBlk ? "BLOCK" : "method",
+                                        csel.c_str(), callerSel.c_str(),
+                                        rj2jDepth,
+                                        (unsigned long long)retVal.rawBits());
+                                }
+                            }
+                        }
+                    }
 
                     state.sp = save.sp;
                     state.receiver = save.receiver;
@@ -16258,6 +16296,44 @@ void Interpreter::tryJITResumeInCaller() {
             continue;  // Try to resume in the next caller
 
         case jit::ExitSend: {
+            // 2026-05-08 PHARO_TRACE_INTERN_BAIL=1: log when intern:
+            // bails to interp at any send.  Plus log compiledBlock
+            // bails (block deopt at returnTop).  Tells us which
+            // bytecodes intern: actually executes vs skips.
+            {
+                static const bool internBail =
+                    std::getenv("PHARO_TRACE_INTERN_BAIL") != nullptr;
+                if (__builtin_expect(internBail, 0)
+                    && state.method.isObject()
+                    && state.method.rawBits() > 0x10000) {
+                    std::string msel = memory_.selectorOf(state.method);
+                    ObjectHeader* mH = state.method.asObjectPtr();
+                    bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
+                    bool relevant = isBlk || msel == "intern:"
+                        || msel == "asSymbol" || msel == "rawIntern:";
+                    static int bailN = 0;
+                    if (relevant && bailN < 80) {
+                        bailN++;
+                        // Compute IP offset within bytecode area
+                        long long ipOff = -1;
+                        Oop hh = mH->slots()[0];
+                        int nL = hh.isSmallInteger()
+                            ? (hh.asSmallInteger() & 0x7FFF) : 0;
+                        uint8_t* bcS = mH->bytes() + (1 + nL) * 8;
+                        if (state.ip) ipOff = (long long)(state.ip - bcS);
+                        uint8_t bcOp = (state.ip && ipOff >= 0
+                            && ipOff < (long long)mH->byteSize())
+                            ? state.ip[0] : 0xFF;
+                        fprintf(stderr,
+                            "[INTERN-BAIL] %s method=#%s methodOop=0x%llx "
+                            "ipOff=%lld bcOp=0x%02x\n",
+                            isBlk ? "BLOCK" : "method",
+                            msel.c_str(),
+                            (unsigned long long)state.method.rawBits(),
+                            ipOff, bcOp);
+                    }
+                }
+            }
             // JIT hit a send. Let interpreter handle it.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
@@ -18697,6 +18773,40 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitSend: {
+            // 2026-05-08 PHARO_TRACE_INTERN_BAIL=1 (tryJITActivation path)
+            {
+                static const bool internBailA =
+                    std::getenv("PHARO_TRACE_INTERN_BAIL") != nullptr;
+                if (__builtin_expect(internBailA, 0)
+                    && state.method.isObject()
+                    && state.method.rawBits() > 0x10000) {
+                    std::string msel = memory_.selectorOf(state.method);
+                    ObjectHeader* mH = state.method.asObjectPtr();
+                    bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
+                    bool relevant = isBlk || msel == "intern:"
+                        || msel == "asSymbol" || msel == "rawIntern:";
+                    static int bailNA = 0;
+                    if (relevant && bailNA < 80) {
+                        bailNA++;
+                        long long ipOff = -1;
+                        Oop hh = mH->slots()[0];
+                        int nL = hh.isSmallInteger()
+                            ? (hh.asSmallInteger() & 0x7FFF) : 0;
+                        uint8_t* bcS = mH->bytes() + (1 + nL) * 8;
+                        if (state.ip) ipOff = (long long)(state.ip - bcS);
+                        uint8_t bcOp = (state.ip && ipOff >= 0
+                            && ipOff < (long long)mH->byteSize())
+                            ? state.ip[0] : 0xFF;
+                        fprintf(stderr,
+                            "[INTERN-BAIL-A] %s method=#%s methodOop=0x%llx "
+                            "ipOff=%lld bcOp=0x%02x\n",
+                            isBlk ? "BLOCK" : "method",
+                            msel.c_str(),
+                            (unsigned long long)state.method.rawBits(),
+                            ipOff, bcOp);
+                    }
+                }
+            }
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
             instructionPointer_ = state.ip;
