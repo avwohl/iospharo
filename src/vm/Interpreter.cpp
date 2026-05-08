@@ -107,6 +107,19 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
+// 2026-05-08 globals for SYMCLS trap diagnostic — populated at trap time
+// so lldb can read them despite -O3 optimization of locals.
+// __attribute__((used)) prevents the linker from dead-stripping them.
+__attribute__((used)) volatile uint64_t g_symclsTrap_method = 0;
+__attribute__((used)) volatile uint64_t g_symclsTrap_receiver = 0;
+__attribute__((used)) volatile uint64_t g_symclsTrap_returnValue = 0;
+__attribute__((used)) void* volatile  g_symclsTrap_jitMethod = nullptr;
+__attribute__((used)) volatile uint64_t g_symclsTrap_codeStart = 0;
+__attribute__((used)) volatile uint32_t g_symclsTrap_codeSize = 0;
+__attribute__((used)) volatile uint32_t g_symclsTrap_numBytecodes = 0;
+__attribute__((used)) volatile uint32_t g_symclsTrap_bc8_codeOff = 0;
+__attribute__((used)) volatile uint32_t g_symclsTrap_bc18_codeOff = 0;
+
 #if PHARO_JIT_ENABLED
 // Handle to the Sista runtime created lazily inside activateMethod.
 // recoverJITAfterGC() clears its cache — raw oop keys become stale
@@ -16136,6 +16149,32 @@ void Interpreter::tryJITResumeInCaller() {
                                             (void*)(jm->codeStart()
                                                     + tab[b]));
                                     }
+                                }
+                            }
+                            // Save key state into globals so lldb can
+                            // read them despite -O3 optimization.
+                            extern volatile uint64_t g_symclsTrap_method;
+                            extern volatile uint64_t g_symclsTrap_receiver;
+                            extern volatile uint64_t g_symclsTrap_returnValue;
+                            extern void* volatile g_symclsTrap_jitMethod;
+                            extern volatile uint64_t g_symclsTrap_codeStart;
+                            extern volatile uint32_t g_symclsTrap_codeSize;
+                            extern volatile uint32_t g_symclsTrap_numBytecodes;
+                            extern volatile uint32_t g_symclsTrap_bc8_codeOff;
+                            extern volatile uint32_t g_symclsTrap_bc18_codeOff;
+                            g_symclsTrap_method = state.method.rawBits();
+                            g_symclsTrap_receiver = state.receiver.rawBits();
+                            g_symclsTrap_returnValue = state.returnValue.rawBits();
+                            g_symclsTrap_jitMethod = state.jitMethod;
+                            if (state.jitMethod) {
+                                auto* jm = state.jitMethod;
+                                g_symclsTrap_codeStart = (uint64_t)jm->codeStart();
+                                g_symclsTrap_codeSize = jm->codeSize;
+                                g_symclsTrap_numBytecodes = jm->numBytecodes;
+                                const uint32_t* tab = jm->bcToCodeTable();
+                                if (tab && jm->numBytecodes > 18) {
+                                    g_symclsTrap_bc8_codeOff = tab[8];
+                                    g_symclsTrap_bc18_codeOff = tab[18];
                                 }
                             }
                             __builtin_debugtrap();
