@@ -2073,30 +2073,25 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
         } else {
             deferSteps = 0;
         }
-        // 2026-05-08: floor at 4s.  DEFER=2 was briefly the floor
-        // (commit 88dad345) but broader testing showed DEFER=2 also
-        // fails 0/10 with the same family of process-termination bugs:
-        // JIT-compiled `Symbol class>>intern:` returns Symbol class
-        // (its receiver) instead of an interned Symbol.  Source TBD —
-        // not in IC misclassification, not in block JIT compilation
-        // (PHARO_JIT_NO_BLOCKS=1 doesn't fix), not in Sista.  Probably
-        // some interaction between the J2J chain and NLR-from-block
-        // semantics in the critical: cascade.
-        // Re-raised floor back to 4s.  PHARO_NO_DEFER_CLAMP=1 still
-        // bypasses for investigation; that path now reproduces the
-        // intern: bug reliably.
-        const int64_t kHeadlessFloor = 120000000; // ~4s
-        // PHARO_NO_DEFER_CLAMP=1 bypasses the floor — used for
-        // investigating JIT correctness bugs at low DEFER (currently
-        // a known intern:-returns-receiver bug, see
-        // memory/project_defer_clamp_2s_2026_05_07.md).
+        // 2026-05-08: floor lowered 4s → 3s.  The NLR-fallthru bug
+        // (JIT-compiled `Symbol class>>intern:` returns Symbol class
+        // instead of the interned Symbol) is now mitigated by:
+        //   - JIT-side compile-time rewrite of pop+returnSelf at
+        //     method-end (commit ac6df64d / 498003df)
+        //   - Interp-side peephole at Pop dispatch (commit 33e2ae18)
+        // 3-run stability test at DEFER=3 shows 3/3 "Test Complete"
+        // with 0 asSymbol DNUs.  DEFER<3 still has the startup
+        // creep symptom (eval doesn't finish in 30s timeout) but
+        // the bug itself is no longer firing.
+        // PHARO_NO_DEFER_CLAMP=1 bypasses the floor.
+        const int64_t kHeadlessFloor = 90000000; // ~3s
         static const bool clampDisabled =
             std::getenv("PHARO_NO_DEFER_CLAMP") != nullptr;
         if (!clampDisabled && interp_ && interp_->isHeadless() && !g_debug.bench
             && deferSteps < kHeadlessFloor) {
             fprintf(stderr,
-                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 4.0s "
-                    "(headless mode; sub-4s defer flakes startup).\n",
+                    "[JIT] Clamping PHARO_JIT_DEFER from %.1fs to 3.0s "
+                    "(headless mode; sub-3s defer flakes startup).\n",
                     (double)deferSteps / 30000000.0);
             deferSteps = kHeadlessFloor;
         }
