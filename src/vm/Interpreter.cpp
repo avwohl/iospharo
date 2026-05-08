@@ -4229,6 +4229,35 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         // JITCompiler.cpp.  Opt out: PHARO_INTERP_NO_NLR_FIX=1.
         static const bool noFix =
             std::getenv("PHARO_INTERP_NO_NLR_FIX") != nullptr;
+        // Pre-trace probe: log when method=intern: enters Pop, even
+        // if the peephole doesn't trigger.  PHARO_TRACE_INTERP_POP=1.
+        {
+            static const bool popTrace =
+                std::getenv("PHARO_TRACE_INTERP_POP") != nullptr;
+            if (__builtin_expect(popTrace, 0)
+                && method_.isObject() && method_.rawBits() > 0x10000) {
+                std::string sel = memory_.selectorOf(method_);
+                if (sel == "intern:") {
+                    static int n = 0;
+                    n++;
+                    if (n <= 30 || (n & 0xFFF) == 1) {
+                        const uint8_t* ip = instructionPointer_;
+                        bool hasReturnSelf = (ip < bytecodeEnd_)
+                            && (*ip == jit::SistaV1::ReturnReceiver);
+                        fprintf(stderr,
+                            "[INTERP-POP-INTERN] #%d ip-bcStart=%lld "
+                            "nextByte=0x%02x bytecodeEnd-ip=%lld "
+                            "hasReturnSelf=%d\n",
+                            n,
+                            (long long)(ip - (method_.asObjectPtr()->bytes()
+                                + (method_.asObjectPtr()->slots()[0].asSmallInteger() & 0x7FFF) * 8 + 8)),
+                            (unsigned)(ip < bytecodeEnd_ ? *ip : 0xFF),
+                            (long long)(bytecodeEnd_ - ip),
+                            hasReturnSelf);
+                    }
+                }
+            }
+        }
         if (__builtin_expect(!noFix, 1)
             && instructionPointer_ < bytecodeEnd_
             && *instructionPointer_ == jit::SistaV1::ReturnReceiver) {

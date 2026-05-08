@@ -1736,9 +1736,20 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
                 if (shouldRewrite) {
                     static int rewriteCount = 0;
                     rewriteCount++;
-                    if (rewriteCount <= 5 || (rewriteCount & 0xFF) == 1) {
-                        std::string sel =
-                            interp_.memory().selectorOf(compiledMethod);
+                    // Always log if intern: or if it's the first 30
+                    // total — provides better visibility into rewrites
+                    // during the DEFER<4 investigation.
+                    bool logIt = rewriteCount <= 30
+                                 || (rewriteCount & 0x1FF) == 1;
+                    std::string sel;
+                    if (logIt
+                        || std::getenv("PHARO_TRACE_NLR_FIX") != nullptr) {
+                        sel = interp_.memory().selectorOf(compiledMethod);
+                        if (sel == "intern:") logIt = true;
+                    }
+                    if (logIt) {
+                        if (sel.empty())
+                            sel = interp_.memory().selectorOf(compiledMethod);
                         std::string cls =
                             interp_.classNameOfMethod(compiledMethod);
                         fprintf(stderr,

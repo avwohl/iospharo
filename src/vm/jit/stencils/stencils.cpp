@@ -585,16 +585,11 @@ extern "C" void stencil_returnTop(JITState* s) {
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
     }
-    // 2026-05-08 event=202: gated on retVal being a heap Oop matching
-    // a specific class — only fires for diagnostic, otherwise free.
-    // Avoids per-return overhead that breaks bug timing.
-    if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
-        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
-        uint32_t cIdx = hdr & 0x3FFFFF;
-        if (cIdx == 3094) {
-            _HOLE_RT_J2J_TRACE(s, 202, retVal.bits,
-                               (uint64_t)(uintptr_t)s->jitMethod);
-        }
+    // 2026-05-08 event=202: fires when retVal is exactly the Symbol
+    // class oop (0x300016550 in this image).  Cheap pointer compare.
+    if (retVal.bits == 0x300016550ULL) {
+        _HOLE_RT_J2J_TRACE(s, 202, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
     }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
@@ -621,15 +616,11 @@ extern "C" void stencil_returnReceiver(JITState* s) {
                                (uint64_t)(uintptr_t)s->jitMethod);
         }
     }
-    // 2026-05-08 event=201: gated on retVal class to avoid per-return
-    // overhead.  classIdx 3094 = Symbol class (only diagnostic target).
-    if ((retVal.bits & 7) == 0 && retVal.bits >= 0x10000) {
-        uint64_t hdr = *reinterpret_cast<uint64_t*>(retVal.bits);
-        uint32_t cIdx = hdr & 0x3FFFFF;
-        if (cIdx == 3094) {
-            _HOLE_RT_J2J_TRACE(s, 201, retVal.bits,
-                               (uint64_t)(uintptr_t)s->jitMethod);
-        }
+    // 2026-05-08 event=201: fires when retVal is exactly the Symbol
+    // class oop.  Cheap pointer compare; near-free when no match.
+    if (retVal.bits == 0x300016550ULL) {
+        _HOLE_RT_J2J_TRACE(s, 201, retVal.bits,
+                           (uint64_t)(uintptr_t)s->jitMethod);
     }
     J2J_INLINE_RETURN(s, retVal);
     s->returnValue = retVal;
