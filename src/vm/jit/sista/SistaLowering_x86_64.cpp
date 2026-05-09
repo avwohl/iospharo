@@ -214,18 +214,25 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         }
     };
 
-    // Emit a deopt sequence: spill v.operands[2..] onto the runtime
-    // stack, set state.ip to bcOffset, set exitReason = EXIT_SEND, ret.
-    // Used by overflow / tag-check deopt branches.
-    auto emitDeopt = [&](const Value& v, uint32_t bcOffset) -> bool {
+    // Emit a deopt sequence: spill v.operands[stackBase..] onto the
+    // runtime stack, set state.ip to bcOffset, set exitReason = EXIT_SEND,
+    // ret.  Used by overflow / tag-check deopt branches.
+    //
+    // stackBase varies by op: kPrim{Add,Sub,Mul}Int uses 2 (operand 0/1
+    // are a/b, 2..N are the simulated stack); kPrimTagCheckInt and
+    // kGuardClass use 1 (operand 0 is the value/receiver, 1..N are the
+    // stack).  Wrong stackBase mis-spills the deopt frame.
+    auto emitDeopt = [&](const Value& v, uint32_t bcOffset,
+                         size_t stackBase) -> bool {
         Gp sp = cc.new_gp64("dpsp");
         cc.mov(sp, ptr(state, OFF_SP));
-        for (size_t opIdx = 2; opIdx < v.operands.size(); opIdx++) {
+        for (size_t opIdx = stackBase; opIdx < v.operands.size(); opIdx++) {
             auto opIt = regFor.find(v.operands[opIdx]);
             if (opIt == regFor.end()) return false;
-            cc.mov(ptr(sp, static_cast<int>(opIdx - 2) * 8), opIt->second);
+            cc.mov(ptr(sp, static_cast<int>(opIdx - stackBase) * 8),
+                   opIt->second);
         }
-        size_t numStackOps = v.operands.size() - 2;
+        size_t numStackOps = v.operands.size() - stackBase;
         if (numStackOps > 0) {
             cc.add(sp, Imm(static_cast<int>(numStackOps) * 8));
         }
@@ -470,6 +477,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 if (v.operands.empty()) return bail(v.id);
                 auto it = regFor.find(v.operands[0]);
                 if (it == regFor.end()) return bail(v.id);
+                // Type narrowing: if the operand is already known-SmI
+                // (kConstantOop SmI, arith result, or a kLoadTemp narrowed
+                // by the post-build pass), the runtime check is dead code.
+                // Mirrors the arm64 fast-path.
+                if (method.values[v.operands[0]].type
+                    == Type::kOopSmallInt) {
+                    regFor[v.id] = it->second;
+                    break;
+                }
                 uint32_t bcOffset = static_cast<uint32_t>(v.literal);
                 Gp tag = cc.new_gp64("tagchk");
                 cc.mov(tag, it->second);
@@ -477,7 +493,10 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.cmp(tag, Imm(1));
                 Label cont = cc.new_label();
                 cc.je(cont);
-                if (!emitDeopt(v, bcOffset)) return bail(v.id);
+                // TagCheck deopt-stack starts at operand[1] (operand[0] is
+                // the value being checked, not part of the stack).
+                if (!emitDeopt(v, bcOffset, /*stackBase=*/1))
+                    return bail(v.id);
                 cc.bind(cont);
                 regFor[v.id] = it->second;
                 break;
@@ -500,16 +519,20 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 Label cont = needOvCheck ? cc.new_label() : Label();
 
                 if (v.op == Op::kPrimAddInt) {
-                    // a + b - 1 (tag-preserving on tag=1 SmallInts).
-                    // 64-bit OF set ⇔ SmallInt overflow.
+                    // tagged a + tagged b - 1 = ((a+b)<<3) | 1.
+                    // SmallInt fits in 60-bit signed (bits 60-63 must
+                    // sign-extend bit 59).  After tagging, that means
+                    // the encoded result's bit 62 must equal bit 63.
+                    // 64-bit `jo` is too permissive (catches overflow
+                    // of the tagged 64-bit value, not of the 60-bit
+                    // SmallInt range), so use the bit-62/63 mismatch
+                    // check.  See arm64 sibling.
                     cc.mov(dst, ita->second);
-                    cc.add(dst, itb->second);  // sets OF on overflow
-                    if (needOvCheck) cc.jo(miss);
+                    cc.add(dst, itb->second);
                     cc.sub(dst, Imm(1));
                 } else if (v.op == Op::kPrimSubInt) {
                     cc.mov(dst, ita->second);
-                    cc.sub(dst, itb->second);  // sets OF on overflow
-                    if (needOvCheck) cc.jo(miss);
+                    cc.sub(dst, itb->second);
                     cc.add(dst, Imm(1));
                 } else {  // kPrimMulInt
                     // (a >> 3) * (b >> 3); imul sets OF on 64-bit
@@ -538,10 +561,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                     cc.mov(dst, prod);
                 }
                 if (needOvCheck) {
+                    if (v.op == Op::kPrimAddInt
+                     || v.op == Op::kPrimSubInt) {
+                        // Bit 62 != bit 63 ⇔ result outside SmallInt range.
+                        //   sh = dst << 1   (bit 62 → bit 63)
+                        //   xor sh, dst    (bit 63 of sh := bit62 ^ bit63)
+                        //   js miss        (bit 63 set ⇔ mismatch)
+                        Gp sh = cc.new_gp64("ovsh");
+                        cc.mov(sh, dst);
+                        cc.shl(sh, Imm(1));
+                        cc.xor_(sh, dst);
+                        cc.js(miss);
+                    }
                     cc.jmp(cont);
                     cc.bind(miss);
                     uint32_t bcOffset = static_cast<uint32_t>(v.literal);
-                    if (!emitDeopt(v, bcOffset)) return bail(v.id);
+                    if (!emitDeopt(v, bcOffset, /*stackBase=*/2))
+                        return bail(v.id);
                     cc.bind(cont);
                 }
                 regFor[v.id] = dst;
@@ -607,6 +643,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
             default:
                 return bail(v.id);
             }
+        }
+        // Implicit fall-through: block didn't end in an explicit
+        // terminator op (kBranch / kBranchIf{True,False} / kReturn /
+        // kSendUnspeculated).  Control flows naturally to
+        // b.successors[0]'s label, but its phi regs still need their
+        // inputs filled from this block's outgoing stack first.
+        // Without this, the successor reads stale (or never-written)
+        // phi regs and produces garbage values that propagate as
+        // cascading DNUs once they're sent #isInteger / #+ / etc.
+        bool endsInTerminator = false;
+        if (!b.values.empty()) {
+            Op lastOp = method.valueAt(b.values.back()).op;
+            endsInTerminator = OpInfo::isTerminator(lastOp)
+                            || lastOp == Op::kSendUnspeculated;
+        }
+        if (!endsInTerminator && !b.successors.empty()) {
+            fillPhis(b, b.successors[0]);
         }
     }
 
