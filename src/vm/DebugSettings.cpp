@@ -127,12 +127,21 @@ DebugSettings::DebugSettings() {
     jitTraceOop            = envStr("PHARO_JIT_TRACE_OOP");
     jitTop                 = envStr("PHARO_JIT_TOP");
     sistaCompile           = envPresent("PHARO_SISTA_COMPILE");
-    // Default ON — override to OFF only if PHARO_NO_SISTA is set.
-    // PHARO_SISTA_DISPATCH still forces ON (backward compat).
+    // Default ON on arm64 hosts (where SistaLowering/Tier2Compiler emit
+    // working asmjit::a64 code).  Default OFF elsewhere — the lowering
+    // path still hardcodes asmjit::a64 instructions on every host, so
+    // running it on x86_64 hits a SIGSEGV at fault 0x358.  PHARO_NO_SISTA
+    // forces OFF on any host; PHARO_SISTA_DISPATCH=1 forces ON (useful
+    // when bisecting Sista-x86_64 lowering work in progress).
     {
+#if defined(__aarch64__)
+        constexpr bool kDefaultSistaOn = true;
+#else
+        constexpr bool kDefaultSistaOn = false;
+#endif
         const bool noSista = envPresent("PHARO_NO_SISTA");
         const bool explicitOn = envPresent("PHARO_SISTA_DISPATCH");
-        sistaDispatch = explicitOn || !noSista;
+        sistaDispatch = explicitOn || (kDefaultSistaOn && !noSista);
     }
     sistaVerbose           = envPresent("PHARO_SISTA_VERBOSE");
     sistaAllowSends        = envPresent("PHARO_SISTA_ALLOW_SENDS");
