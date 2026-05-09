@@ -1377,23 +1377,13 @@ void Interpreter::interpret() {
     // --- Dispatch macro ---
     // Countdown check is BEFORE inExtension_ reset so periodic_checks can
     // see extension state from the previous handler.
-#if PROFILE_BYTECODE_PAIRS
-    #define DISPATCH_NEXT() do { \
-        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
-        prevBytecode = bytecode; \
-        bytecode = *instructionPointer_++; \
-        pairCounts[prevBytecode * 256 + bytecode]++; \
-        if constexpr (ENABLE_DEBUG_LOGGING) { \
-            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
-            recentBytecodeIdx_++; \
-            lastBytecode_ = bytecode; \
-        } \
-        inExtension_ = false; \
-        goto *dispatchTable[bytecode]; \
-    } while(0)
-#else
-    #define DISPATCH_NEXT() do { \
-        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
+
+    // Per-bytecode hot-path diagnostics.  Compiled out by default —
+    // they were investigation aids for A1/A4 sender-chain corruption
+    // and per-bc SP watermarking.  Both bugs are now resolved at root
+    // cause; rebuild with -DPHARO_HOT_PATH_DIAG=1 to re-enable.
+#if PHARO_HOT_PATH_DIAG
+    #define DISPATCH_NEXT_HOT_PATH_DIAG \
         if (__builtin_expect(traceSpCorrupt_, 0)) { \
             uint64_t _spB = (uint64_t)stackPointer_; \
             uint64_t _fpB = (uint64_t)framePointer_; \
@@ -1417,38 +1407,62 @@ void Interpreter::interpret() {
                 } \
             } \
         } \
-        /* 2026-05-06 A1 — per-bc sp-delta tracker.  Records sp BEFORE \
-         * each bytecode and then verifies the delta after. \
-         * PHARO_TRACE_PER_BC_SP=1 enables; gates on a counter so we \
-         * only sample at intervals to keep cost manageable. */ \
         if (__builtin_expect(tracePerBcSp_, 0) && framePointer_) { \
             static thread_local int64_t _sample = 0; \
             _sample++; \
-            if ((_sample & 0xFF) == 0) {  /* every 256 bcs */ \
+            if ((_sample & 0xFF) == 0) { \
                 long long _spOff = (long long)(stackPointer_ - stack_.data()); \
                 long long _spFp  = (long long)(stackPointer_ - framePointer_); \
                 static long long _maxSpOff = 0; \
                 static long long _maxSpFp = 0; \
                 if (_spOff > _maxSpOff) { \
                     _maxSpOff = _spOff; \
-                    fprintf(stderr, \
-                        "[PER-BC-SP] sample=%lld new max sp_off=%lld " \
+                    fprintf(stderr, "[PER-BC-SP] sample=%lld new max sp_off=%lld " \
                         "sp-fp=%lld lastBC=0x%02x method=#%s fd=%zu\n", \
                         (long long)_sample, _spOff, _spFp, \
-                        bytecode, memory_.selectorOf(method_).c_str(), \
-                        frameDepth_); \
+                        bytecode, memory_.selectorOf(method_).c_str(), frameDepth_); \
                 } \
                 if (_spFp > _maxSpFp) { \
                     _maxSpFp = _spFp; \
-                    fprintf(stderr, \
-                        "[PER-BC-SP] sample=%lld new max sp-fp=%lld " \
+                    fprintf(stderr, "[PER-BC-SP] sample=%lld new max sp-fp=%lld " \
                         "sp_off=%lld lastBC=0x%02x method=#%s fd=%zu\n", \
                         (long long)_sample, _spFp, _spOff, \
-                        bytecode, memory_.selectorOf(method_).c_str(), \
-                        frameDepth_); \
+                        bytecode, memory_.selectorOf(method_).c_str(), frameDepth_); \
                 } \
             } \
+        }
+#else
+    #define DISPATCH_NEXT_HOT_PATH_DIAG /* nothing */
+#endif
+
+#if PROFILE_BYTECODE_PAIRS
+    #define DISPATCH_NEXT() do { \
+        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
+        prevBytecode = bytecode; \
+        bytecode = *instructionPointer_++; \
+        pairCounts[prevBytecode * 256 + bytecode]++; \
+        if constexpr (ENABLE_DEBUG_LOGGING) { \
+            recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
+            recentBytecodeIdx_++; \
+            lastBytecode_ = bytecode; \
         } \
+        inExtension_ = false; \
+        goto *dispatchTable[bytecode]; \
+    } while(0)
+#else
+    /* PHARO_HOT_PATH_DIAG (compile-time, default off):
+     *   - per-bytecode SP/FP corruption detector (traceSpCorrupt_)
+     *   - per-bc sp watermark sampler (tracePerBcSp_)
+     *   - dispatch trace at stack-leak depth (dispatchTraceLeakOn_, also
+     *     gated by ENABLE_DEBUG_LOGGING below)
+     * These were diagnostic aids during the A1/A4 investigations.  In a
+     * production build they cost ~2 extra branches per bytecode (40M+
+     * iterations on a benchFib(36) eval).  Default-compile-out for
+     * release; opt back in via -DPHARO_HOT_PATH_DIAG=1 when reproducing
+     * the same class of bug. */
+    #define DISPATCH_NEXT() do { \
+        if (__builtin_expect(--checkCountdown_ <= 0, 0)) goto periodic_checks; \
+        DISPATCH_NEXT_HOT_PATH_DIAG \
         bytecode = *instructionPointer_++; \
         if constexpr (ENABLE_DEBUG_LOGGING) { \
             recentBytecodes_[recentBytecodeIdx_ % 256] = bytecode; \
