@@ -785,8 +785,26 @@ int main(int argc, char* argv[]) {
     // In eval mode, write a startup.st that evaluates the expression and exits.
     // Pharo's StartupPreferencesLoader automatically loads startup.st from the
     // image directory during session startup — no stock Pharo VM needed.
+    //
+    // Also touch /tmp/sunit_run_completed.txt so that if the image was
+    // prepped via `pharo image eval --save "fileIn run_sunit_tests.st"`,
+    // SUnitRunner>>startUp: sees the marker and returns early instead of
+    // calling runAllTests (which would fork watchdog/test processes that
+    // hang at high priority and block the eval).  Coupled to our runner
+    // script's marker convention; harmless on images without it.
     std::string startupStPath;
     if (evalMode) {
+        // Touch /tmp/sunit_run_completed.txt so that if the image was
+        // prepped via `pharo image eval --save "fileIn run_sunit_tests.st"`,
+        // SUnitRunner>>startUp: sees the marker and returns early instead
+        // of calling runAllTests (which forks watchdog/test processes that
+        // hang at high priority and block the eval from completing).
+        // Coupled to our runner-script's marker convention; harmless on
+        // images without it.  2026-05-09 A3 fix.
+        if (FILE* f = std::fopen("/tmp/sunit_run_completed.txt", "w")) {
+            std::fprintf(f, "eval-mode marker — set by test_load_image to skip SUnitRunner auto-restart\n");
+            std::fclose(f);
+        }
         std::string expr;
         for (size_t i = 1; i < imageArgs.size(); i++) {
             if (!expr.empty()) expr += ' ';
