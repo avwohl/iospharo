@@ -44,12 +44,19 @@
 #include <unordered_map>
 #include <vector>
 
-// Sista runtime helper invoked by kStoreInstVar setter-inline branch.
-// Defined in src/vm/jit/JITRuntime.cpp.
+// Sista runtime helpers.  Defined in src/vm/jit/JITRuntime.cpp.
 extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
                                             uint64_t valBits);
+extern "C" uint64_t jit_rt_sista_call_send(void* state,
+                                             uint64_t selBits,
+                                             uint64_t nArgs);
+extern "C" uint64_t jit_rt_sista_special_call_send(void* state,
+                                                    uint64_t ssIdx,
+                                                    uint64_t nArgs);
+extern "C" uint64_t jit_rt_sista_alloc_array(void* state,
+                                               uint64_t size);
 
 namespace pharo {
 namespace sista {
@@ -82,6 +89,7 @@ constexpr int OFF_IP           = 48;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
 constexpr int OFF_ICDATAPTR    = 96;
+constexpr int OFF_SENDARGCOUNT = 104;
 constexpr int OFF_TRUEOOP      = 128;
 constexpr int OFF_FALSEOOP     = 136;
 
@@ -640,6 +648,196 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            // ---- Sends ----
+            // Common helper: emit a "bail to interpreter at bcOffset"
+            // sequence that includes state.sendArgCount.  Used by
+            // kSendUnspeculated terminator and kSend{,Special}CallHelper
+            // deopt-on-zero branches.  spillIds = the values to push
+            // onto interp.sp; spIsAlreadyShifted = whether the helper
+            // pre-pushed the operands and we need to roll sp back first.
+            case Op::kSendCallHelper:
+            case Op::kSendCallHelperSpecial: {
+                static bool noSends =
+                    getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
+                if (noSends) return bail(v.id);
+                if (v.operands.empty()) return bail(v.id);
+
+                bool isSpecial = (v.op == Op::kSendCallHelperSpecial);
+                uint32_t selOrSsIdx = (uint32_t)(v.literal & 0xFFFFFFFFu);
+                uint32_t nArgs      = (uint32_t)((v.literal >> 32) & 0xFFFFu);
+                uint32_t bcOffset   = (uint32_t)((v.literal >> 48) & 0xFFFFu);
+
+                // Push rcvr + args onto interp stack.  Helper expects
+                // them at state.sp.
+                {
+                    Gp sp = cc.new_gp64("send_sp");
+                    cc.mov(sp, ptr(state, OFF_SP));
+                    for (size_t i = 0; i < v.operands.size(); i++) {
+                        auto it = regFor.find(v.operands[i]);
+                        if (it == regFor.end()) return bail(v.id);
+                        cc.mov(ptr(sp, static_cast<int>(i) * 8),
+                               it->second);
+                    }
+                    cc.add(sp,
+                           Imm(static_cast<int>(v.operands.size()) * 8));
+                    cc.mov(ptr(state, OFF_SP), sp);
+                }
+
+                // Resolve helper arg "selector" — for the regular helper
+                // it's literals[selIdx]; for the special one it's the
+                // ssIdx itself (the helper resolves the symbol).
+                Gp selReg = cc.new_gp64("send_sel");
+                if (isSpecial) {
+                    cc.mov(selReg, Imm((uint64_t)selOrSsIdx));
+                } else {
+                    cc.mov(selReg,
+                           ptr(litBaseHoisted,
+                               static_cast<int>(selOrSsIdx) * 8));
+                }
+                Gp nArgsReg = cc.new_gp64("send_nargs");
+                cc.mov(nArgsReg, Imm((uint64_t)nArgs));
+
+                Gp fnReg = cc.new_gp64("send_fn");
+                cc.mov(fnReg,
+                       Imm(isSpecial
+                           ? (uint64_t)&jit_rt_sista_special_call_send
+                           : (uint64_t)&jit_rt_sista_call_send));
+                InvokeNode* invokeNode = nullptr;
+                Error invErr = cc.invoke(
+                    Out(invokeNode), fnReg,
+                    FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t>());
+                if (invErr != kErrorOk || !invokeNode) return bail(v.id);
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, selReg);
+                invokeNode->set_arg(2, nArgsReg);
+                Gp dst = cc.new_gp64("send_result");
+                invokeNode->set_ret(0, dst);
+
+                // Deopt-on-zero: helper returns 0 on NLR / abnormal.
+                // Replay the FULL framepoint stack to interp.sp so the
+                // resumed interpreter sees every live IR value, then
+                // bail at source bcOffset.
+                const std::vector<uint32_t>* fpStack = nullptr;
+                for (const auto& fp : method.framepoints) {
+                    if (fp.valueId == v.id) {
+                        fpStack = &fp.stackValueIds;
+                        break;
+                    }
+                }
+                Label noDeopt = cc.new_label();
+                cc.test(dst, dst);
+                cc.jnz(noDeopt);
+                {
+                    // Roll back the pre-helper push of v.operands
+                    // (helper failure paths don't pop them) before
+                    // overwriting with the framepoint replay.
+                    Gp sp2 = cc.new_gp64("send_sp_dz");
+                    cc.mov(sp2, ptr(state, OFF_SP));
+                    cc.sub(sp2,
+                           Imm(static_cast<int>(v.operands.size()) * 8));
+                    const std::vector<uint32_t>& flushIds =
+                        fpStack ? *fpStack : v.operands;
+                    for (size_t i = 0; i < flushIds.size(); i++) {
+                        auto it = regFor.find(flushIds[i]);
+                        if (it == regFor.end()) return bail(v.id);
+                        cc.mov(ptr(sp2, static_cast<int>(i) * 8),
+                               it->second);
+                    }
+                    cc.add(sp2,
+                           Imm(static_cast<int>(flushIds.size()) * 8));
+                    cc.mov(ptr(state, OFF_SP), sp2);
+
+                    Gp ipReg = cc.new_gp64("send_ip_dz");
+                    if (bytecodeBase) {
+                        uintptr_t addr =
+                            reinterpret_cast<uintptr_t>(bytecodeBase)
+                            + bcOffset;
+                        cc.mov(ipReg, Imm((uint64_t)addr));
+                    } else {
+                        cc.mov(ipReg, Imm(bcOffset));
+                    }
+                    cc.mov(ptr(state, OFF_IP), ipReg);
+                    Gp argCountReg = cc.new_gp32("send_argc_dz");
+                    cc.mov(argCountReg, Imm(nArgs));
+                    cc.mov(ptr(state, OFF_SENDARGCOUNT), argCountReg);
+                    Gp zero64 = cc.new_gp64("send_zero_dz");
+                    cc.xor_(zero64, zero64);
+                    cc.mov(ptr(state, OFF_ICDATAPTR), zero64);
+                    Gp exitR = cc.new_gp32("send_exit_dz");
+                    cc.mov(exitR, Imm(EXIT_SEND));
+                    cc.mov(ptr(state, OFF_EXIT), exitR);
+                    cc.ret();
+                }
+                cc.bind(noDeopt);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            case Op::kSendUnspeculated: {
+                static bool noSends =
+                    getenv("PHARO_SISTA_NO_LOWER_SENDS") != nullptr;
+                if (noSends) return bail(v.id);
+                // Bail to the interpreter at the send bytecode.  Operands
+                // are [rcvr, arg0, ..., arg_{nArgs-1}] for sends, or the
+                // whole IR stack for generic mid-method bails.
+                uint32_t nArgs    = (uint32_t)((v.literal >> 16) & 0xFFu);
+                uint32_t bcOffset =
+                    (uint32_t)((v.literal >> 24) & 0xFFFFFFFFu);
+
+                Gp sp = cc.new_gp64("usp");
+                cc.mov(sp, ptr(state, OFF_SP));
+                for (size_t i = 0; i < v.operands.size(); i++) {
+                    auto it = regFor.find(v.operands[i]);
+                    if (it == regFor.end()) return bail(v.id);
+                    cc.mov(ptr(sp, static_cast<int>(i) * 8), it->second);
+                }
+                cc.add(sp,
+                       Imm(static_cast<int>(v.operands.size()) * 8));
+                cc.mov(ptr(state, OFF_SP), sp);
+
+                Gp ipReg = cc.new_gp64("uip");
+                if (bytecodeBase) {
+                    uintptr_t addr =
+                        reinterpret_cast<uintptr_t>(bytecodeBase) + bcOffset;
+                    cc.mov(ipReg, Imm((uint64_t)addr));
+                } else {
+                    cc.mov(ipReg, Imm(bcOffset));
+                }
+                cc.mov(ptr(state, OFF_IP), ipReg);
+                Gp argCountReg = cc.new_gp32("uargc");
+                cc.mov(argCountReg, Imm(nArgs));
+                cc.mov(ptr(state, OFF_SENDARGCOUNT), argCountReg);
+                Gp zero64 = cc.new_gp64("uzero");
+                cc.xor_(zero64, zero64);
+                cc.mov(ptr(state, OFF_ICDATAPTR), zero64);
+                Gp exit = cc.new_gp32("uexit");
+                cc.mov(exit, Imm(EXIT_SEND));
+                cc.mov(ptr(state, OFF_EXIT), exit);
+                cc.ret();
+                break;
+            }
+
+            // ---- Allocations ----
+            case Op::kAllocArray: {
+                uint32_t size = (uint32_t)v.literal;
+                Gp argSize = cc.new_gp64("aa_size");
+                cc.mov(argSize, Imm((uint64_t)size));
+                Gp fnReg = cc.new_gp64("aa_fn");
+                cc.mov(fnReg, Imm((uint64_t)&jit_rt_sista_alloc_array));
+                InvokeNode* invokeNode = nullptr;
+                Error invErr = cc.invoke(
+                    Out(invokeNode), fnReg,
+                    FuncSignature::build<uint64_t, void*, uint64_t>());
+                if (invErr != kErrorOk || !invokeNode) return bail(v.id);
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, argSize);
+                Gp dst = cc.new_gp64("aa_arr");
+                invokeNode->set_ret(0, dst);
+                regFor[v.id] = dst;
+                break;
+            }
+
             default:
                 return bail(v.id);
             }
@@ -679,6 +877,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     if (getenv("PHARO_SISTA_X86_TRACE_OK")) {
         // Dump op kinds present in the compiled method.
         bool hasCmp=false, hasBranch=false, hasArith=false;
+        bool hasSend=false, hasAlloc=false;
         for (const auto& vv : method.values) {
             switch (vv.op) {
               case Op::kPrimLtInt: case Op::kPrimLeInt:
@@ -691,15 +890,23 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
               case Op::kPrimAddInt: case Op::kPrimSubInt:
               case Op::kPrimMulInt:
                 hasArith = true; break;
+              case Op::kSendCallHelper:
+              case Op::kSendCallHelperSpecial:
+              case Op::kSendUnspeculated:
+                hasSend = true; break;
+              case Op::kAllocArray:
+                hasAlloc = true; break;
               default: break;
             }
         }
         fprintf(stderr,
-                "[SISTA-x86] OK fn=%p ops=%s%s%s blocks=%zu values=%zu\n",
+                "[SISTA-x86] OK fn=%p ops=%s%s%s%s%s blocks=%zu values=%zu\n",
                 (void*)out,
                 hasCmp ? "C" : "-",
                 hasBranch ? "B" : "-",
                 hasArith ? "A" : "-",
+                hasSend ? "S" : "-",
+                hasAlloc ? "L" : "-",
                 method.blocks.size(), method.values.size());
     }
     return out;
