@@ -879,7 +879,25 @@ priority instead of same-or-lower, plus sleeping 10 ms unconditionally
 before considering transfer.  Fix in commit `a2b99f7` — a 2 ms
 `AIAstarTest` test now runs in 2 ms via `runSingleTest` (was 23.6 s).
 
-### A3. SUnitRunner-prepped image leaves stuck handler processes (2026-05-08)
+### A3. SUnitRunner-prepped image leaves stuck handler processes — RESOLVED 2026-05-09 (commit 56ab93ce)
+
+**Fix**: in eval mode, test_load_image touches
+`/tmp/sunit_run_completed.txt` BEFORE launching the image.
+SUnitRunner>>startUp: sees the marker and returns early
+without forking watchdog/test processes.  SessionManager
+completes the startup chain; StartupPreferencesLoader runs
+our startup.st; eval completes.
+
+  prepped 42 printString:    0/3 → 3/3
+  prepped 36 benchFib:       0/3 → 3/3
+  SUnit 5-class harness:     1197/1197 unchanged
+
+The fix is coupled to our runner-script's marker convention,
+but the runner script and test_load_image are sister components
+of the harness — they share other conventions (e.g. startup.st
+generation).  Acceptable coupling.
+
+**Original analysis** (preserved):
 
 **Updated 2026-05-08 PM** — narrowed further from the morning finding:
 the issue is NOT a JIT correctness bug.  After `pharo Pharo.image eval
