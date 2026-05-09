@@ -3292,11 +3292,22 @@ void ObjectHeader::slot_tripwire_fire(const ObjectHeader* hdr, Oop oldSender, Oo
 void ObjectMemory::rebuildFreeListAfterCompact() {
     clearFreeLists();
 
-    // The gap between oldSpaceFree_ and oldSpaceEnd_ is one big free chunk
+    // The gap between oldSpaceFree_ and oldSpaceEnd_ is one big free chunk.
+    // No scanner walks past oldSpaceFree_, so the gap doesn't need to be
+    // zeroed.  Asking the kernel to drop physical pages keeps RSS bounded
+    // by live-heap size instead of the 4 GB mmap reservation, and avoids
+    // multi-second memset-the-whole-tail cost on every fullGC.
     size_t freeBytes = oldSpaceEnd_ - oldSpaceFree_;
-    if (freeBytes >= 16) {
-        // Zero the free area first (for clean scanning later)
-        std::memset(oldSpaceFree_, 0, freeBytes);
+    if (oldSpaceUseMmap_ && freeBytes >= 4096) {
+        constexpr uintptr_t kPageSize = 4096;
+        uintptr_t pageStart = (reinterpret_cast<uintptr_t>(oldSpaceFree_)
+                               + (kPageSize - 1)) & ~(kPageSize - 1);
+        uintptr_t pageEnd = reinterpret_cast<uintptr_t>(oldSpaceEnd_)
+                            & ~(kPageSize - 1);
+        if (pageEnd > pageStart) {
+            ::madvise(reinterpret_cast<void*>(pageStart),
+                      pageEnd - pageStart, MADV_DONTNEED);
+        }
     }
     // We don't need to create a free list entry for the trailing gap —
     // the bump pointer allocator already handles this via oldSpaceFree_.
