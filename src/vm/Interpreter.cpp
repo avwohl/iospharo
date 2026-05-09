@@ -16134,7 +16134,7 @@ void Interpreter::tryJITResumeInCaller() {
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
                     frame.savedClosure = nil;
-                    frame.savedActiveContext = nil;
+                    frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
                     frame.savedArgCount = saveJM->argCount;
@@ -18301,7 +18301,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 frame.savedHomeMethod = saveMethod;
                 frame.savedReceiver = save.receiver;
                 frame.savedClosure = nil;
-                frame.savedActiveContext = nil;
+                frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                 frame.materializedContext = nil;
                 frame.savedFP = save.tempBase - 1;
                 frame.savedArgCount = saveJM->argCount;
@@ -18446,7 +18446,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             frame.savedHomeMethod = saveMethod;
             frame.savedReceiver = save.receiver;
             frame.savedClosure = nil;
-            frame.savedActiveContext = nil;
+            frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
             frame.materializedContext = nil;
             frame.savedFP = save.tempBase - 1;
             frame.savedArgCount = saveJM->argCount;
@@ -18640,7 +18640,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         frame.savedHomeMethod = saveMethod;
                         frame.savedReceiver = save.receiver;
                         frame.savedClosure = nil;
-                        frame.savedActiveContext = nil;
+                        frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                         frame.materializedContext = nil;
                         frame.savedFP = save.tempBase - 1;
                         frame.savedArgCount = saveJM->argCount;
@@ -19154,7 +19154,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     frame.savedHomeMethod = saveMethod;
                     frame.savedReceiver = save.receiver;
                     frame.savedClosure = nil;
-                    frame.savedActiveContext = nil;
+                    frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                     frame.materializedContext = nil;
                     frame.savedFP = save.tempBase - 1;
                     frame.savedArgCount = saveJM->argCount;
@@ -19442,7 +19442,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                         frame.savedHomeMethod = saveMethod;
                                         frame.savedReceiver = save.receiver;
                                         frame.savedClosure = nil;
-                                        frame.savedActiveContext = nil;
+                                        frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                                         frame.materializedContext = nil;
                                         frame.savedFP = save.tempBase - 1;
                                         frame.savedArgCount = saveJM->argCount;
@@ -19522,7 +19522,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             frame.savedHomeMethod = savedMethod;
                             frame.savedReceiver = savedRecv;
                             frame.savedClosure = memory_.nil();
-                            frame.savedActiveContext = memory_.nil();
+                            frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                             frame.materializedContext = memory_.nil();
                             frame.savedFP = savedTempBase - 1;
                             frame.savedArgCount = savedArgCount;
@@ -19551,7 +19551,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 frame.savedHomeMethod = saveMethod;
                                 frame.savedReceiver = save.receiver;
                                 frame.savedClosure = nil;
-                                frame.savedActiveContext = nil;
+                                frame.savedActiveContext = activeContext_;  // 2026-05-09 was nil; A4 fix
                                 frame.materializedContext = nil;
                                 frame.savedFP = save.tempBase - 1;
                                 frame.savedArgCount = saveJM->argCount;
