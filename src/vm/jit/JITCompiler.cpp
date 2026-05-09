@@ -1686,89 +1686,14 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
 
-    // 2026-05-08 DEFER<4 NLR-bug workaround.  Pattern:
-    //
-    //     ... pushFullClosure ... send: critical: ...  pop, returnSelf
-    //
-    // The trailing `pop, returnSelf` (bc 0xD8 0x58) is supposed to be
-    // unreachable because the critical: block always does `^ X`, NLR'ing
-    // out of the method.  But at low PHARO_JIT_DEFER, the block's NLR
-    // can fail to unwind through the critical: cascade — falls through
-    // to bc 99 returnSelf, returning the receiver instead of the
-    // intended value (the `Symbol class` corruption).
-    //
-    // Mitigation: if the LAST two bytecodes of a method are `pop;
-    // returnSelf` AND the method contains a `pushFullClosure` earlier,
-    // rewrite the trailing pair as a single `returnTop` so the lost-NLR
-    // value is returned instead of the receiver.  Safe because the
-    // pop+returnSelf pair is dead-code in normal flow; only
-    // bug-triggered paths reach it.
-    //
-    // Opt out: PHARO_JIT_NO_NLR_FALLTHRU_FIX=1
-    // PHARO_JIT_NLR_FALLTHRU_FIX_BROAD=1: also rewrite when no
-    // pushFullClosure is in the method (catches block-literal patterns
-    // and nested-call patterns).
-    {
-        static const bool noFix =
-            std::getenv("PHARO_JIT_NO_NLR_FALLTHRU_FIX") != nullptr;
-        static const bool broadFix =
-            std::getenv("PHARO_JIT_NLR_FALLTHRU_FIX_BROAD") != nullptr;
-        if (!noFix && decoded.size() >= 3 && !isFullBlock) {
-            auto& last = decoded.back();
-            auto& prev = decoded[decoded.size() - 2];
-            // last must be ReturnReceiver (0x58), prev must be Pop (0xD8)
-            if (last.opcode == SistaV1::ReturnReceiver
-                && prev.opcode == SistaV1::Pop) {
-                // Default: only rewrite if pushFullClosure (0xF9) is in
-                // the method (the canonical pattern).  Broad mode (opt
-                // in): always rewrite — covers block-literal and other
-                // patterns where the last `^` lives in a block whose
-                // NLR can be lost.
-                bool shouldRewrite = broadFix;
-                if (!shouldRewrite) {
-                    for (size_t i = 0; i + 2 < decoded.size(); i++) {
-                        if (decoded[i].opcode == 0xF9) {
-                            shouldRewrite = true;
-                            break;
-                        }
-                    }
-                }
-                if (shouldRewrite) {
-                    static int rewriteCount = 0;
-                    rewriteCount++;
-                    // Always log if intern: or if it's the first 30
-                    // total — provides better visibility into rewrites
-                    // during the DEFER<4 investigation.
-                    bool logIt = rewriteCount <= 30
-                                 || (rewriteCount & 0x1FF) == 1;
-                    std::string sel;
-                    if (logIt
-                        || std::getenv("PHARO_TRACE_NLR_FIX") != nullptr) {
-                        sel = interp_.memory().selectorOf(compiledMethod);
-                        if (sel == "intern:") logIt = true;
-                    }
-                    if (logIt) {
-                        if (sel.empty())
-                            sel = interp_.memory().selectorOf(compiledMethod);
-                        std::string cls =
-                            interp_.classNameOfMethod(compiledMethod);
-                        fprintf(stderr,
-                            "[JIT-NLR-FIX] #%d %s>>%s — rewriting "
-                            "trailing pop+returnSelf as returnTop\n",
-                            rewriteCount, cls.c_str(), sel.c_str());
-                    }
-                    // Replace `pop; returnSelf` with `returnTop` by
-                    // changing the prev bytecode to returnTop and
-                    // removing the last entry.  prev keeps its bcOffset
-                    // (so any branch target into prev still resolves).
-                    prev.opcode = SistaV1::ReturnTop;
-                    prev.stencilIdx = static_cast<uint16_t>(
-                        StencilID::stencil_returnTop);
-                    decoded.pop_back();
-                }
-            }
-        }
-    }
+    // (Removed 2026-05-09: NLR-fallthru pop+returnSelf rewrite.  This was
+    // a workaround for the depth-≥36 sender-chain corruption that turned
+    // out to be A4 — savedActiveContext propagating nil through J2J-push
+    // sites.  With A4 fixed at root cause (commit 16bc4ff7), the rewrite
+    // is unnecessary and was changing semantics of all methods ending
+    // in `<expr>. ^ self` (returning expr's value instead of self).
+    // Validated 2026-05-09: full eval suite + 14-class SUnit pass with
+    // BOTH JIT and INTERP NLR-fixes disabled.)
 
     // Bytecode dump for bisection (JIT_DUMP_BC env var)
     {

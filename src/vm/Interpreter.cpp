@@ -4193,53 +4193,15 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
     }
 
     // 0xD8: Pop stack (discard top)
-    case jit::SistaV1::Pop: {
-        // 2026-05-08 DEFER<4 NLR-bug peephole: if next bytecode is
-        // ReturnReceiver (0x58) and the IP is at method-end, the
-        // `pop; returnSelf` pair is the dead-code fall-through.
-        // Treat it as returnTop instead — return the popped value.
-        // This mirrors the JIT-side compile-time rewrite in
-        // JITCompiler.cpp.  Opt out: PHARO_INTERP_NO_NLR_FIX=1.
-        static const bool noFix =
-            std::getenv("PHARO_INTERP_NO_NLR_FIX") != nullptr;
-        if (__builtin_expect(!noFix, 1)
-            && instructionPointer_ < bytecodeEnd_
-            && *instructionPointer_ == jit::SistaV1::ReturnReceiver) {
-            // Check this is actually method-end: the byte AFTER
-            // returnSelf is past bytecodeEnd_, OR the only thing
-            // following is padding.  Check method_ class — only
-            // applies to methods (not blocks).
-            bool isMethodNotBlock = method_.isObject()
-                && method_.rawBits() > 0x10000
-                && method_.asObjectPtr()->classIndex()
-                    != compiledBlockClassIndex_;
-            if (isMethodNotBlock) {
-                // Use the value being popped instead of the receiver.
-                Oop value = pop();
-                static int rewriteCount = 0;
-                rewriteCount++;
-                static const bool nlrFixTrace =
-                    std::getenv("PHARO_TRACE_INTERP_NLR_FIX") != nullptr;
-                if (__builtin_expect(nlrFixTrace, 0)
-                    && (rewriteCount <= 30
-                        || (rewriteCount & 0xFFF) == 1)) {
-                    fprintf(stderr,
-                        "[INTERP-NLR-FIX] #%d %s>>%s — pop+returnSelf "
-                        "intercepted, returning value=0x%llx\n",
-                        rewriteCount,
-                        classNameOfMethod(method_).c_str(),
-                        memory_.selectorOf(method_).c_str(),
-                        (unsigned long long)value.rawBits());
-                }
-                instructionPointer_++;  // consume the returnSelf byte
-                push(value);
-                returnFromMethod();
-                break;
-            }
-        }
+    case jit::SistaV1::Pop:
+        // (Removed 2026-05-09: NLR-fallthru pop+returnSelf peephole.
+        // Was workaround for the depth-≥36 sender-chain bug that turned
+        // out to be A4 — savedActiveContext nil propagation.  With A4
+        // fixed at root cause (commit 16bc4ff7), the peephole is
+        // unnecessary and was changing return semantics for all
+        // methods ending in `<expr>. ^ self`.)
         pop();
         break;
-    }
 
     // 0xD9: Unconditional trap (debugging)
     case 0xD9:
