@@ -258,12 +258,14 @@ Interpreter::Interpreter(ObjectMemory& memory)
     if (g_debug.debugDispLeak) {
         dispatchTraceLeakOn_ = true;
     }
+#if PHARO_HOT_PATH_DIAG
     if (std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr) {
         traceSpCorrupt_ = true;
     }
     if (std::getenv("PHARO_TRACE_PER_BC_SP") != nullptr) {
         tracePerBcSp_ = true;
     }
+#endif
     if (std::getenv("PHARO_TRACE_STACK_ORIGIN") != nullptr) {
         stackOriginEnabled_ = true;
         stackOrigins_.resize(stack_.size(), 0);
@@ -6519,6 +6521,7 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+#if PHARO_HOT_PATH_DIAG
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
         if ((spB & 7) == 1) {
@@ -6535,6 +6538,7 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
             }
         }
     }
+#endif
     Oop rcvr = stackValue(argCount);
 
     // PHARO_DETECT_ERRORS=1: catch the moment any "this is an error

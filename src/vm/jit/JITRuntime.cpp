@@ -2300,14 +2300,9 @@ void JITRuntime::noteMethodEntry(Oop compiledMethod) {
     static size_t totalEntries = 0;
     totalEntries++;
 
-    // Debug: log first few entries for specific selectors
-    if (totalEntries <= 5000 && interp_) {
-        std::string sel = interp_->memory().selectorOf(compiledMethod);
-        if (sel == "benchFib" || sel.find("fib") != std::string::npos || sel.find("Fib") != std::string::npos) {
-            fprintf(stderr, "[NOTE] #%zu #%s method=0x%llx\n",
-                    totalEntries, sel.c_str(), (unsigned long long)compiledMethod.rawBits());
-        }
-    }
+    // (Removed 2026-05-09: per-entry [NOTE] log for #benchFib that was
+    // an A4 investigation aid.  A4 is resolved at root cause; the
+    // selectorOf() call per method entry was needless overhead.)
 
     // Periodic stats (every ~64K entries)
     if ((totalEntries & 0xFFFF) == 0) {
