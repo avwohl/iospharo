@@ -949,10 +949,27 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. JIT compile of `benchFib` corrupts state at recursion depth ≥ 36 (2026-05-08)
+### A4. J2J chain materialization corrupts sender at recursion depth ≥ J2JSlotPerEntry (2026-05-08) — MITIGATED
 
-**Final narrowing 2026-05-08 PM** (lldb-driven investigation, ~6
-sessions): the bug is in our JIT compilation of `Integer>>benchFib`.
+**Mitigation 2026-05-08 PM (commit 836c3392)**: bumped
+`J2JSlotPerEntry` from 32 to 64.  benchFib(30..40) now 5/5 each;
+tinyBenchmarks 3/3 (was 0/3).  No regressions on small workloads.
+
+The underlying bug is in the J2J chain fallback / materialization
+path: when J2J chain depth exceeds the per-tryJITActivation slot
+limit, materialization takes over and one of the materialized
+contexts gets a corrupt sender field (=nil).  The activation
+returns to nil-sender → top-of-chain → terminate.
+
+This commit doesn't FIX the materialization bug, just raises the
+trigger threshold so most workloads don't hit it (typical
+benchmark depth ≤ 64).  benchFib(64+) would still fail.
+
+**Pre-mitigation finding** (preserved for the real-fix
+investigation):
+
+The bug is in our JIT compilation of `Integer>>benchFib` via the
+J2J chain materialization path.
 
 **Reproducer + trigger condition:**
 
