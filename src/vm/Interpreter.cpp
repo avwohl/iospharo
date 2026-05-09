@@ -11629,6 +11629,13 @@ void Interpreter::terminateCurrentProcess() {
                                 termSel == "cannotReturn:" ||
                                 termSel == "ensure:" ||
                                 termSel == "aboutToReturn:through:");
+        // 2026-05-08 A4 diag: also fire for benchFib (the bug is
+        // recursive-return chain corruption at depth 36+).
+        // Also force-fire when PHARO_TERM_TRACE_ALL=1 is set.
+        static bool termTraceAll =
+            std::getenv("PHARO_TERM_TRACE_ALL") != nullptr;
+        if (termSel == "benchFib") exceptionalTerm = true;
+        if (termTraceAll) exceptionalTerm = true;
         if (highPri || exceptionalTerm) {
             fprintf(stderr, "[TERM-P%lld] PROCESS TERMINATING via #%s\n",
                     pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
