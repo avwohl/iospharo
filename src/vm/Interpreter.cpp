@@ -30,6 +30,7 @@
 #include <cmath>
 #include <csetjmp>
 #include <csignal>
+#include <execinfo.h>
 #include <iostream>
 #include <iomanip>
 #include <thread>
@@ -11753,6 +11754,22 @@ void Interpreter::terminateCurrentProcess() {
             fprintf(stderr, "[TERM]   C++ caller: %s+%ld\n", info.dli_sname,
                     (long)((char*)callsite - (char*)info.dli_saddr));
         }
+        // 2026-05-09 A4 diag: PHARO_TERM_BT=1 walks additional frames
+        // for finding the C++ origin of the terminate call.  Used in
+        // the A4 deep-dive (commit 42422729) to identify the
+        // dispatchBytecode → returnFromMethod → returnValue path.
+        static const bool termBt = std::getenv("PHARO_TERM_BT") != nullptr;
+        if (termBt) {
+            void* frames[20] = {0};
+            int n = backtrace(frames, 20);
+            for (int f = 1; f < n && f < 12; f++) {
+                Dl_info fi;
+                if (dladdr(frames[f], &fi) && fi.dli_sname) {
+                    fprintf(stderr, "[TERM]   bt[%d]: %s+%ld\n", f, fi.dli_sname,
+                            (long)((char*)frames[f] - (char*)fi.dli_saddr));
+                }
+            }
+        }
     }
     // Clear any pending NLR state
     nlrTargetCtx_ = Oop::nil();
@@ -12145,10 +12162,23 @@ Oop Interpreter::materializeFrameStack() {
     // savedFrames_[0].savedActiveContext as the sender for frame[0]. This
     // reconnects the context chain so exception handlers in ancestor contexts
     // can be found during exception propagation.
+    //
+    // 2026-05-09 A4 fix: extend the lookup — savedFrames_[0] often has
+    // savedActiveContext=nil too (many JIT-activation paths set it
+    // explicitly to nil; see grep "savedActiveContext = nil").  Walk
+    // forward through ALL savedFrames_ to find the first non-nil
+    // savedActiveContext.  This is the real "context active before any
+    // of these JIT frames were pushed" anchor.  Without this fix,
+    // frame[0]'s context gets sender=nil, propagating to a top-of-chain
+    // termination at the next return — the depth-≥36 benchFib bug.
     if (sender.isNil() && frameDepth_ > 0) {
-        Oop savedCtx = savedFrames_[0].savedActiveContext;
-        if (savedCtx.isObject() && savedCtx.rawBits() > 0x10000) {
-            sender = savedCtx;
+        for (size_t fi = 0; fi < frameDepth_; fi++) {
+            Oop savedCtx = savedFrames_[fi].savedActiveContext;
+            if (savedCtx.isObject() && savedCtx.rawBits() > 0x10000
+                && !savedCtx.isNil()) {
+                sender = savedCtx;
+                break;
+            }
         }
     }
 
