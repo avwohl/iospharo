@@ -24,15 +24,12 @@ namespace pharo {
 
 struct DebugSettings {
     // --- General debug/trace booleans ---
-    bool debugFrameLeak = false;      // PHARO_DEBUG_FRAME_LEAK
-    bool debugDispLeak = false;       // PHARO_DEBUG_DISP_LEAK (checks == '1')
     bool delayDebug = false;          // PHARO_DELAY_DEBUG
     bool gcEphDebug = false;          // PHARO_GC_EPH_DEBUG
     bool reflectProfile = false;      // PHARO_REFLECT_PROFILE
     bool timerDebug = false;          // PHARO_TIMER_DEBUG
     bool callbackDebug = false;       // PHARO_CALLBACK_DEBUG
     bool bench = false;               // PHARO_BENCH (presence)
-    bool debugArithExit = false;      // PHARO_DEBUG_ARITH_EXIT
 
     // --- JIT on/off switches ---
     bool noJit = false;               // PHARO_NO_JIT or PHARO_NOJIT

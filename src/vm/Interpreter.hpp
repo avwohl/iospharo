@@ -322,31 +322,6 @@ public:
 
     /// Push a value onto the stack
     inline void push(Oop value) {
-        // Diagnostic (PHARO_DEBUG_FRAME_LEAK=1): fire when sp grows abnormally
-        // far above the current FP. Once sp-fp crosses 500, log EVERY push
-        // with the value and return address so we can identify the caller.
-        if (__builtin_expect(g_debug.debugFrameLeak, 0) && framePointer_) {
-            long long spAboveFP = (long long)(stackPointer_ - framePointer_);
-            if (spAboveFP >= 500 && spAboveFP <= 600) {
-                void* ra = __builtin_return_address(0);
-                ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
-                const uint8_t* bcBase = nullptr;
-                if (mObj) {
-                    Oop hdr = mObj->slots()[0];
-                    int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                    bcBase = mObj->bytes() + (1 + numLits) * 8;
-                }
-                long long bcOff = (bcBase && instructionPointer_)
-                    ? (long long)(instructionPointer_ - bcBase) : -1;
-                fprintf(stderr, "[FRAME-LEAK] sp-fp=%lld val=0x%llx ra=%p method=#%s rcvr=0x%llx bcOff=%lld bc=%02x fd=%zu\n",
-                        spAboveFP, (unsigned long long)value.rawBits(), ra,
-                        memory_.selectorOf(method_).c_str(),
-                        (unsigned long long)receiver_.rawBits(),
-                        bcOff,
-                        (instructionPointer_ ? *instructionPointer_ : 0),
-                        frameDepth_);
-            }
-        }
         // Detect a corrupted stackPointer_ pointing outside both the C++
         // stack array AND any known Smalltalk heap region.  Tracking A3:
         // under JIT, after many activations and GCs, stackPointer_
@@ -805,7 +780,7 @@ private:
 
     int checkCountdown_ = 1024;           // Periodic check countdown (shared with JIT for scheduling)
     bool inExtension_ = false;  // True after extension byte (0xE0/0xE1), prevents forceYield from splitting extension+target
-    bool dispatchTraceLeakOn_ = false;  // Diagnostic: PHARO_DEBUG_DISP_LEAK=1 enables bytecode dispatch tracing during stack leaks
+    static constexpr bool dispatchTraceLeakOn_ = false;
     // SP-corruption / per-bc sp-watermark diagnostics: investigation aids
     // for A1/A4 (resolved at root cause).  When PHARO_HOT_PATH_DIAG is
     // off, these are constexpr false — the 17+ `if (traceSpCorrupt_)`

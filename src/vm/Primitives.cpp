@@ -2119,32 +2119,6 @@ PrimitiveResult Interpreter::primitiveAtPut(int argCount) {
             }
         }
         if (!value.isSmallInteger()) {
-            // P0 diagnostic: PHARO_TRACE_NEXTPUT_BUG=1 logs the nextPut:
-            // bug from deferred.md A1.  When JIT-compiled
-            // WriteStream>>nextPut: calls at:put: with a non-byte value
-            // into a CompiledMethod (or other byte-object) buffer,
-            // log receiver/value/active method.
-            static const bool diag =
-                std::getenv("PHARO_TRACE_NEXTPUT_BUG") != nullptr;
-            if (__builtin_expect(diag, 0)) {
-                static int n = 0;
-                if (++n <= 5) {
-                    std::string rcls = memory_.classNameOf(rcvr);
-                    std::string vcls = value.isObject()
-                        ? memory_.classNameOf(value) : "(immediate)";
-                    std::string mSel = memory_.selectorOf(method_);
-                    std::string nSel = memory_.selectorOf(newMethod_);
-                    fprintf(stderr,
-                        "[NEXTPUT-BUG #%d] rcvr=%s(0x%llx,fmt=%d,bytes=%zu) "
-                        "idx=%lld value=%s(0x%llx) active=#%s invoked=#%s\n",
-                        n, rcls.c_str(),
-                        (unsigned long long)rcvr.rawBits(),
-                        (int)header->format(), header->byteSize(),
-                        (long long)idx, vcls.c_str(),
-                        (unsigned long long)value.rawBits(),
-                        mSel.c_str(), nSel.c_str());
-                }
-            }
             return PrimitiveResult::Failure;
         }
         int64_t byteValue = value.asSmallInteger();

@@ -50,25 +50,12 @@ void DebugSettings::reload() {
 
 DebugSettings::DebugSettings() {
     // --- General debug/trace ---
-    // These two use strict `== '1'` historically — "=0" should not turn on.
-    {
-        const char* v = std::getenv("PHARO_DEBUG_FRAME_LEAK");
-        debugFrameLeak = (v != nullptr && *v == '1');
-    }
-    {
-        const char* v = std::getenv("PHARO_DEBUG_DISP_LEAK");
-        debugDispLeak = (v != nullptr && *v == '1');
-    }
     delayDebug       = envTruthy("PHARO_DELAY_DEBUG");
     gcEphDebug       = envTruthy("PHARO_GC_EPH_DEBUG");
     reflectProfile   = envPresent("PHARO_REFLECT_PROFILE");
     timerDebug       = envTruthy("PHARO_TIMER_DEBUG");
     callbackDebug    = envPresent("PHARO_CALLBACK_DEBUG");
     bench            = envPresent("PHARO_BENCH");
-    {
-        const char* v = std::getenv("PHARO_DEBUG_ARITH_EXIT");
-        debugArithExit = (v != nullptr && *v == '1');
-    }
 
     // --- JIT on/off switches ---
     noJit            = envPresent("PHARO_NO_JIT") || envPresent("PHARO_NOJIT");

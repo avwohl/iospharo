@@ -200,20 +200,6 @@ bool JITCompiler::decodeBytecodes(const uint8_t* bytecodes, size_t length,
             // 0x58-0x5C: method return bytecodes (return receiver/true/false/nil/top).
             // In a FullBlock these are Non-Local Returns (return from the enclosing
             // method, not just the block).  NLR is complex — deopt to interpreter.
-            // 2026-05-08 PHARO_TRACE_NLR_COMPILE=1: log when we see a
-            // return bytecode in a CompiledBlock — verifies NLR-deopt
-            // is being installed for blocks.
-            static const bool nlrTrace =
-                std::getenv("PHARO_TRACE_NLR_COMPILE") != nullptr;
-            if (__builtin_expect(nlrTrace, 0)) {
-                static int n_block = 0;
-                if (isFullBlock && n_block++ < 200) {
-                    fprintf(stderr,
-                        "[NLR-COMPILE] BLOCK op=0x%02x bcOff=%d bcLen=%zu "
-                        "→ stencil_send (NLR-deopt)\n",
-                        op, (int)bc.bcOffset, length);
-                }
-            }
             if (isFullBlock) {
                 bc.operand = bc.bcOffset;
                 bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_send);
@@ -1283,22 +1269,6 @@ void JITCompiler::applyICSpecialization(std::vector<DecodedBC>& decoded,
         uint64_t extra0 = ic[2];
         uint64_t classKey1 = ic[3];
 
-        // PHARO_TRACE_IC_EXTRA=1: log extra0 bits for every monomorphic
-        // send site during specialization, so we can see which bits are
-        // actually set and why a particular branch did/didn't fire.
-        static const bool traceExtra =
-            std::getenv("PHARO_TRACE_IC_EXTRA") != nullptr;
-        if (traceExtra && classKey0 != 0 && classKey1 == 0) {
-            fprintf(stderr,
-                    "[IC-EXTRA] site=%u extra0=0x%llx (b57=%d b58=%d b59=%d "
-                    "b60=%d b61=%d b62=%d b63=%d kind=%llu)\n",
-                    sendIdx, (unsigned long long)extra0,
-                    (int)((extra0 >> 57) & 1), (int)((extra0 >> 58) & 1),
-                    (int)((extra0 >> 59) & 1), (int)((extra0 >> 60) & 1),
-                    (int)((extra0 >> 61) & 1), (int)((extra0 >> 62) & 1),
-                    (int)((extra0 >> 63) & 1),
-                    (unsigned long long)((extra0 >> 48) & 0x7));
-        }
         if (classKey0 != 0 && classKey1 == 0) {
             // Monomorphic site — check for trivial method patterns
             // Pack literal index (for selector recovery on bail) into bits 48-63
@@ -1655,18 +1625,6 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (noBlocks) {
             compilationsFailed_++;
             return nullptr;
-        }
-        // PHARO_TRACE_NLR_COMPILE=1: log every FullBlock about to be JIT'd
-        // so we can correlate with the NLR-COMPILE log inside decodeBytecodes.
-        static const bool nlrCompileTrace =
-            std::getenv("PHARO_TRACE_NLR_COMPILE") != nullptr;
-        if (__builtin_expect(nlrCompileTrace, 0)) {
-            static int n = 0;
-            if (n++ < 200) {
-                fprintf(stderr,
-                    "[BLK-COMPILE] methodOop=0x%llx bcLen=%zu\n",
-                    (unsigned long long)compiledMethod.rawBits(), bcLen);
-            }
         }
     }
 

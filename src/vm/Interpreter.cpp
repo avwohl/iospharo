@@ -255,9 +255,6 @@ Interpreter::Interpreter(ObjectMemory& memory)
 
     initializePrimitives();
 
-    if (g_debug.debugDispLeak) {
-        dispatchTraceLeakOn_ = true;
-    }
 #if PHARO_HOT_PATH_DIAG
     if (std::getenv("PHARO_TRACE_SP_CORRUPT") != nullptr) {
         traceSpCorrupt_ = true;
@@ -2289,10 +2286,9 @@ void Interpreter::interpret() {
 }
 
 void Interpreter::handleForceYield() {
-    // Periodic diagnostic: default 10s, but PHARO_DIAG_FAST=1 cuts to 1s
-    // for finding suspended high-pri processes during chain-loop hangs.
+    // Periodic diagnostic (every 10s).
     {
-        static int diagInterval = std::getenv("PHARO_DIAG_FAST") != nullptr ? 1 : 10;
+        static int diagInterval = 10;
         static auto lastDiagTime = std::chrono::steady_clock::now();
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - lastDiagTime).count();
@@ -4617,28 +4613,6 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
 
 void Interpreter::pushReceiverVariable(int index) {
     Oop result = memory_.fetchPointerUnchecked(index, receiver_);
-    // Legacy ReadStream instVar trace — left-over from B5 debugging.
-    // Gated on PHARO_RS_READ_TRACE=1 now; was always-on noise before.
-    static const bool rsTrace = std::getenv("PHARO_RS_READ_TRACE") != nullptr;
-    if (__builtin_expect(rsTrace, 0)) {
-        static int rsReadCount = 0;
-        if (rsReadCount < 50 && index <= 2) {
-            std::string rcls = memory_.classNameOf(receiver_);
-            if (rcls.find("ReadStream") != std::string::npos) {
-                rsReadCount++;
-                if (result.isSmallInteger()) {
-                    fprintf(stderr, "[RS-READ] %s slot[%d] = %lld (method=%s)\n",
-                            rcls.c_str(), index, result.asSmallInteger(),
-                            memory_.selectorOf(method_).c_str());
-                } else {
-                    fprintf(stderr, "[RS-READ] %s slot[%d] = 0x%llx non-int (method=%s class=%s)\n",
-                            rcls.c_str(), index, (unsigned long long)result.rawBits(),
-                            memory_.selectorOf(method_).c_str(),
-                            memory_.classNameOf(result).c_str());
-                }
-            }
-        }
-    }
     push(result);
 }
 
@@ -4789,25 +4763,6 @@ void Interpreter::returnValue(Oop value) {
             // Get sender of current context BEFORE killing it
             Oop senderOfCurrent = memory_.fetchPointer(0, activeContext_);
 
-            // PHARO_NLR_NULL_TRACE diag: log NLR ensure-cleanup that nulls
-            // the activeContext_'s sender — this is one of several sites.
-            static bool nlrNullTrace = std::getenv("PHARO_NLR_NULL_TRACE") != nullptr;
-            if (nlrNullTrace) {
-                Oop p = getActiveProcess();
-                Oop pri = p.isObject() ? memory_.fetchPointer(ProcessPriorityIndex, p) : Oop::nil();
-                long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
-                if (pVal >= 60) {
-                    static int n4603 = 0;
-                    n4603++;
-                    if (n4603 <= 30)
-                        fprintf(stderr,
-                                "[NLR-NULL@4603] proc-pri=%ld activeCtx=0x%llx senderWas=0x%llx\n",
-                                pVal,
-                                (unsigned long long)activeContext_.rawBits(),
-                                (unsigned long long)senderOfCurrent.rawBits());
-                }
-            }
-
             // Kill the current context (ensure: is done)
             memory_.storePointer(0, activeContext_, nilObj);  // sender = nil
             memory_.storePointer(1, activeContext_, nilObj);  // pc = nil (dead)
@@ -4893,50 +4848,6 @@ void Interpreter::returnValue(Oop value) {
                     if (pastVal > stackPointer_) stackPointer_ = pastVal;
                     return;
                 } else {
-                    // No valid sender — terminate process.  Diagnostic
-                    // (PHARO_TERM_TRACE=1): dump homeCtx info, value
-                    // being NLR'd, and active context's method/receiver
-                    // so we can find what NLR is killing the bench process.
-                    static bool termTrace2 = std::getenv("PHARO_TERM_TRACE") != nullptr;
-                    if (termTrace2) {
-                        Oop proc = getActiveProcess();
-                        Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
-                        long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
-                        if (pVal >= 60) {
-                            Oop hcMethod = memory_.fetchPointer(3, homeCtx);
-                            std::string hsel = hcMethod.isObject()
-                                ? memory_.selectorOf(hcMethod) : "?";
-                            std::string hcls = "?";
-                            {
-                                Oop hcRecv = memory_.fetchPointer(5, homeCtx);
-                                if (hcRecv.isObject() && hcRecv.rawBits() > 0x10000)
-                                    hcls = memory_.classNameOf(hcRecv);
-                                else if (hcRecv.isSmallInteger()) hcls = "SmI";
-                            }
-                            Oop acMethod = activeContext_.isObject()
-                                ? memory_.fetchPointer(3, activeContext_) : Oop::nil();
-                            std::string asel = acMethod.isObject()
-                                ? memory_.selectorOf(acMethod) : "?";
-                            std::string vcls = "?";
-                            if (value.isSmallInteger()) vcls = "SmI";
-                            else if (value.isObject() && value.rawBits() > 0x10000)
-                                vcls = memory_.classNameOf(value);
-                            fprintf(stderr,
-                                    "[TERM-NLR-P%ld] NLR fd=0: home=#%s rcvr=%s "
-                                    "homeCtx=0x%llx homeSender=0x%llx(%s) "
-                                    "active=#%s value=0x%llx(%s) — terminating\n",
-                                    pVal, hsel.c_str(), hcls.c_str(),
-                                    (unsigned long long)homeCtx.rawBits(),
-                                    (unsigned long long)homeSender.rawBits(),
-                                    homeSender.isNil() ? "nil"
-                                        : !homeSender.isObject() ? "imm"
-                                        : !memory_.isValidPointer(homeSender) ? "INVALID"
-                                        : "?",
-                                    asel.c_str(),
-                                    (unsigned long long)value.rawBits(),
-                                    vcls.c_str());
-                        }
-                    }
                     terminateCurrentProcess();
                     return;
                 }
@@ -5146,42 +5057,7 @@ terminate_process:
         if (frameDepth_ == 0 && activeContext_.isObject() && !activeContext_.isNil()) {
             Oop sender = memory_.fetchPointer(0, activeContext_);
             if (sender.isNil() || sender.rawBits() == 0 || sender.rawBits() == memory_.nil().rawBits()) {
-                // Top of process chain — terminate directly.  Diagnostic
-                // (PHARO_TERM_TRACE=1): if the to-be-terminated process is
-                // at high priority (>= 60), dump value being returned and
-                // active context's method/receiver so we can find what
-                // sent control to the bench's top context prematurely.
-                static bool termTrace = std::getenv("PHARO_TERM_TRACE") != nullptr;
-                if (termTrace) {
-                    Oop proc = getActiveProcess();
-                    Oop pri = memory_.fetchPointer(ProcessPriorityIndex, proc);
-                    long pVal = pri.isSmallInteger() ? pri.asSmallInteger() : -1;
-                    if (pVal >= 60) {
-                        Oop methodOop = memory_.fetchPointer(3, activeContext_);
-                        std::string sel = methodOop.isObject()
-                            ? memory_.selectorOf(methodOop) : "?";
-                        Oop recv = memory_.fetchPointer(5, activeContext_);
-                        std::string rcls = recv.isObject() && recv.rawBits() > 0x10000
-                            ? memory_.classNameOf(recv) : "imm";
-                        // value being returned (the NLR/return value)
-                        Oop valOop = value;
-                        std::string vcls = "?";
-                        if (valOop.isSmallInteger()) vcls = "SmI";
-                        else if (valOop.isObject() && valOop.rawBits() > 0x10000)
-                            vcls = memory_.classNameOf(valOop);
-                        fprintf(stderr,
-                                "[TERM-TOP-P%ld] returning value=0x%llx(%s) "
-                                "from active=#%s rcvr=%s ctx=0x%llx — "
-                                "this is the top context (sender=nil), "
-                                "process about to terminate\n",
-                                pVal,
-                                (unsigned long long)valOop.rawBits(),
-                                vcls.c_str(),
-                                sel.c_str(),
-                                rcls.c_str(),
-                                (unsigned long long)activeContext_.rawBits());
-                    }
-                }
+                // Top of process chain — terminate directly.
                 terminateCurrentProcess();
                 if (tryReschedule()) return;
                 if (bootstrapStartup()) return;
@@ -5373,43 +5249,6 @@ void Interpreter::returnFromMethod() {
     if (frameDepth_ > 0) {
         size_t homeFrame = savedFrames_[frameDepth_ - 1].homeFrameDepth;
 
-        // 2026-05-07 PHARO_TRACE_BLOCK_NLR=1: log every returnFromMethod
-        // entry where method is a CompiledBlock OR a method we're
-        // interested in.  Block detection by class (compiledBlockClassIndex_),
-        // not by last-literal (which is unreliable — blocks can have
-        // any oop as last literal).
-        static const bool blockNlrEarly =
-            std::getenv("PHARO_TRACE_BLOCK_NLR") != nullptr;
-        if (__builtin_expect(blockNlrEarly, 0) && method_.isObject()
-            && method_.rawBits() > 0x10000) {
-            ObjectHeader* mH = method_.asObjectPtr();
-            uint32_t cIdx = mH->classIndex();
-            bool isBlk = (cIdx == compiledBlockClassIndex_);
-            std::string mSel = memory_.selectorOf(method_);
-            // Filter to interesting NLR cases: any block, OR a few
-            // intern:-family methods.
-            bool relevant = isBlk || mSel == "intern:"
-                || mSel == "asSymbol" || mSel == "critical:"
-                || mSel == "rawIntern:" || mSel == "ensure:";
-            if (relevant) {
-                // 0x300354be8 is Symbol class>>intern:'s critical: block
-                // — always log this one regardless of the rate limit.
-                bool internBlk = isBlk && method_.rawBits() == 0x300354be8;
-                static int blkN = 0;
-                if (blkN++ < 60 || internBlk) {
-                    fprintf(stderr,
-                        "[BLOCK-RFM]%s %s method=#%s methodOop=0x%llx "
-                        "homeFrameDepth=%zu fd=%zu value=0x%llx\n",
-                        internBlk ? "[INTERN-BLK]" : "",
-                        isBlk ? "BLOCK" : "method",
-                        mSel.c_str(),
-                        (unsigned long long)method_.rawBits(),
-                        homeFrame, frameDepth_,
-                        (unsigned long long)value.rawBits());
-                }
-            }
-        }
-
         // Inline NLR: homeFrame is a valid saved frame index.
         // homeFrameDepth is set by activateBlock (for block NLR) or by the
         // ensure: NLR handler (for NLR continuation after ensure: cleanup).
@@ -5512,24 +5351,6 @@ void Interpreter::returnFromMethod() {
                 }
             }
 
-            // 2026-05-07 NLR-trace probe: catches block-NLR cases where
-            // homeFrameDepth was lost via J2J materialize.  PHARO_TRACE_BLOCK_NLR=1.
-            static const bool blockNlrTrace =
-                std::getenv("PHARO_TRACE_BLOCK_NLR") != nullptr;
-            if (__builtin_expect(blockNlrTrace, 0) && method_.isObject()) {
-                std::string mSel = memory_.selectorOf(method_);
-                std::string hSel = homeMethodOop.isObject()
-                    && homeMethodOop.rawBits() > 0x10000
-                    ? memory_.selectorOf(homeMethodOop) : "?";
-                static int n = 0;
-                if (n++ < 30) {
-                    fprintf(stderr,
-                        "[BLOCK-NLR] method=#%s home=#%s value=0x%llx fd=%zu\n",
-                        mSel.c_str(), hSel.c_str(),
-                        (unsigned long long)value.rawBits(),
-                        frameDepth_);
-                }
-            }
             // If we found a home method, search context chain and do context-based NLR
             if (homeMethodOop.isObject() && !homeMethodOop.isNil()) {
                 // First check if home method is in context chain
@@ -5541,14 +5362,6 @@ void Interpreter::returnFromMethod() {
                 // might still be in inline frames if block was re-pushed after materialization)
                 for (size_t si = 0; si < frameDepth_; si++) {
                     if (savedFrames_[si].savedMethod.rawBits() == homeMethodOop.rawBits()) {
-                        if (__builtin_expect(blockNlrTrace, 0)) {
-                            static int n2 = 0;
-                            if (n2++ < 30) {
-                                fprintf(stderr,
-                                    "[BLOCK-NLR-INLINE] found home in savedFrames_[%zu]\n",
-                                    si);
-                            }
-                        }
                         // Home method IS in savedFrames_ — use inline NLR
                         size_t homeFrame = si;
                         while (frameDepth_ > homeFrame) {
@@ -6822,33 +6635,6 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
 
     Oop rcvrClass = memory_.classOf(rcvr);
 
-    // Legacy trace of #matches: sends — left-over from regex debugging.
-    // Gated on PHARO_MATCH_TRACE=1.
-    static const bool matchTrace = std::getenv("PHARO_MATCH_TRACE") != nullptr;
-    if (__builtin_expect(matchTrace, 0)) {
-        static int matchTraceCount = 0;
-        if (matchTraceCount < 20 && selector.isObject() && selector.rawBits() > 0x10000) {
-            ObjectHeader* selHdr = selector.asObjectPtr();
-            if (selHdr->isBytesObject() && selHdr->byteSize() == 8) {
-                if (memcmp(selHdr->bytes(), "matches:", 8) == 0) {
-                    matchTraceCount++;
-                    std::string rcvrCls = memory_.classNameOf(rcvr);
-                    std::string argCls = memory_.classNameOf(stackValue(0));
-                    std::string argStr = "";
-                    if (stackValue(0).isObject() && stackValue(0).rawBits() > 0x10000) {
-                        ObjectHeader* ah = stackValue(0).asObjectPtr();
-                        if (ah->isBytesObject() && ah->byteSize() <= 40) {
-                            argStr = std::string((char*)ah->bytes(), ah->byteSize());
-                        }
-                    }
-                    fprintf(stderr, "[MATCH-SEND] #matches: rcvr=%s arg='%s'(%s) method=%s\n",
-                            rcvrCls.c_str(), argStr.c_str(), argCls.c_str(),
-                            memory_.selectorOf(method_).c_str());
-                }
-            }
-        }
-    }
-
     // === GLOBAL METHOD CACHE: 2-way set-associative ===
     MethodCacheEntry* cached = probeCache(selector, rcvrClass);
 
@@ -7992,32 +7778,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                         break;
                     }
                 }
-                // DIAG: log methods with remote-temp ops on first
-                // admission.  Tells us which methods the
-                // NO_REMOTE_TEMP fix excludes.
-                static const bool logRemoteTemp =
-                    std::getenv("PHARO_SISTA_LOG_REMOTE_TEMP") != nullptr;
-                if (logRemoteTemp) {
-                    if (op == jit::SistaV1::PushTempAtInVec
-                     || op == 0xFC
-                     || op == 0xFD) {
-                        static std::unordered_set<uint64_t> loggedMethods_;
-                        if (loggedMethods_.insert(gateKey).second) {
-                            fprintf(stderr,
-                                "[SISTA-HAS-REMOTE-TEMP] method=0x%llx "
-                                "sel=#%s op=0x%02x offset=%zu bcLen=%zu bc=[",
-                                (unsigned long long)gateKey,
-                                memory_.selectorOf(method).c_str(),
-                                (unsigned)op, i, bcLen);
-                            for (size_t j = 0; j < std::min(bcLen, (size_t)64); j++) {
-                                fprintf(stderr, " %02x",
-                                    methodBytes[bytecodeStart + j]);
-                                if (j == i) fprintf(stderr, "|");
-                            }
-                            fprintf(stderr, "]\n");
-                        }
-                    }
-                }
                 // Finer-grained: only block READS (no effect on state)
                 // versus only block WRITES (store side).
                 static const bool noRemoteTempRead =
@@ -8228,46 +7988,7 @@ void Interpreter::activateMethod(Oop method, int argCount) {
                     }
                 }
             }
-            // PHARO_TRACE_SISTA_LEAK=1: per-Sista-exit sp-delta tracker.
-            // Captures sp at entry, runs Sista, compares to sstate.sp at
-            // exit.  For ExitSend, expected delta = IR stack size at bail
-            // (encoded in the bail's literal).  For ExitReturn, expected
-            // delta = 1 (one return value pushed).  Mismatch = leak.
-            static const bool traceSistaLeak =
-                std::getenv("PHARO_TRACE_SISTA_LEAK") != nullptr;
-            Oop* spBeforeSista = stackPointer_;
             fn(&sstate);
-            if (__builtin_expect(traceSistaLeak, 0)) {
-                ptrdiff_t actualDelta = sstate.sp - spBeforeSista;
-                // Estimate expected: for ExitSend, parse the bail bc to
-                // determine IR stack size.  For ExitReturn, we expect
-                // sstate.sp to be at most receiver-relative; actual
-                // popFrame happens in interp.
-                if (sstate.exitReason == jit::ExitSend) {
-                    // The bail's literal encoded stackSize at bits 16-23.
-                    // Without re-decoding the literal, just log the delta
-                    // and the bail bc — we'll match patterns afterward.
-                    uint8_t bailOp = 0;
-                    if (sstate.ip >= methodBytes + bytecodeStart
-                     && sstate.ip < methodBytes + totalBytes) {
-                        bailOp = *sstate.ip;
-                    }
-                    static size_t n = 0;
-                    n++;
-                    // Log first 30, then every 5000th — captures both
-                    // startup pattern and steady-state.
-                    if (n <= 30 || n % 5000 == 0) {
-                        fprintf(stderr,
-                            "[SISTA-EXIT] #%zu sel=#%s exitReason=Send "
-                            "spDelta=%+lld bailOp=0x%02x argc=%d "
-                            "sp_off=%lld\n",
-                            n, memory_.selectorOf(method).c_str(),
-                            (long long)actualDelta, bailOp,
-                            (int)sstate.sendArgCount,
-                            (long long)(stackPointer_ - stack_.data()));
-                    }
-                }
-            }
             jit::makeExecutable(jitRuntime_.codeZone().rawStart(),
                                 jitRuntime_.codeZone().totalBytes());
             if (invariantCheck && __builtin_expect(
@@ -8483,26 +8204,6 @@ void Interpreter::activateMethod(Oop method, int argCount) {
 
             switch (sstate.exitReason) {
             case jit::ExitReturn: {
-                // 2026-05-06 A1: trace ExitReturn sp-balance.  Sista's
-                // kReturn lowering doesn't sync state.sp before exit,
-                // so sstate.sp reflects the value at Sista entry, not
-                // the post-pop position.  This is benign here because
-                // popFrame() (below) overwrites stackPointer_ from
-                // framePointer_ regardless.  PHARO_TRACE_SISTA_LEAK=1
-                // logs the divergence — most methods show delta=+1
-                // (not synced after popping return value).
-                if (__builtin_expect(traceSistaLeak, 0)) {
-                    Oop* expected = framePointer_ + 1;
-                    if (sstate.sp != expected) {
-                        static size_t n = 0;
-                        if (++n <= 10) {
-                            fprintf(stderr,
-                                "[SISTA-RET] #%zu sel=#%s delta=%+lld\n",
-                                n, memory_.selectorOf(method).c_str(),
-                                (long long)(sstate.sp - expected));
-                        }
-                    }
-                }
                 sistaReturns++;
                 // Reset this method's bail counter — it completed
                 // successfully, so don't blacklist it.  Erase
@@ -10069,19 +9770,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
                         cls, (int)rH->format(), memory_.classNameOf(rcvr).c_str());
                 if (cls == 0) suspiciousRcvr = true;  // Invalid object
-                // 2026-05-07: full-JIT corruption probe — when we DNU on
-                // #asSymbol with a class object as receiver, the JIT
-                // pushed the wrong stack value (DEFER<2 corruption,
-                // see project_defer_clamp_2s_2026_05_07.md).  Opt-in
-                // via PHARO_DNU_ASSYM_PROBE=1.
-                static const bool asSymProbe =
-                    std::getenv("PHARO_DNU_ASSYM_PROBE") != nullptr;
-                if (asSymProbe && selName == "asSymbol"
-                    && rH->classIndex() != 0) {
-                    std::string rcname = memory_.classNameOf(rcvr);
-                    if (rcname.find(" class") != std::string::npos)
-                        suspiciousRcvr = true;
-                }
             } else if (rcvr.isSmallInteger()) {
                 fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
                 suspiciousRcvr = true;
@@ -10147,97 +9835,6 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                         (long long)(rv - megaBase),
                         (long long)((rv - megaBase) / 32),
                         (long long)((rv - megaBase) % 32));
-                // 2026-05-07: Full-JIT corruption probe — dump current
-                // method's bytecodes around IP and stack/temps so we can
-                // see what was pushed where.  Limited to 1 dump.
-                static int probeDumpCount = 0;
-                if (selName == "asSymbol" && probeDumpCount < 3
-                    && method_.isObject()) {
-                    probeDumpCount++;
-                    ObjectHeader* mH = method_.asObjectPtr();
-                    Oop hdr = mH->slots()[0];
-                    int nLits = hdr.isSmallInteger()
-                        ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                    uint8_t* bcBase = mH->bytes() + (1 + nLits) * 8;
-                    uint8_t* bcEnd = mH->bytes() + mH->byteSize();
-                    long long ipOff = instructionPointer_
-                        ? (long long)(instructionPointer_ - bcBase) : -1;
-                    fprintf(stderr,
-                        "[DNU-PROBE] method=#%s(0x%llx) bcLen=%lld ipOff=%lld jit=%s\n",
-                        memory_.selectorOf(method_).c_str(),
-                        (unsigned long long)method_.rawBits(),
-                        (long long)(bcEnd - bcBase), ipOff,
-                        callerJM ? "YES" : "no");
-                    fprintf(stderr, "[DNU-PROBE] literals (first 12):\n");
-                    for (int i = 1; i <= nLits && i <= 12; i++) {
-                        Oop lit = mH->slots()[i];
-                        std::string ld;
-                        if (lit.isObject() && lit.rawBits() > 0x10000) {
-                            ld = memory_.classNameOf(lit);
-                            if (memory_.isValidPointer(lit)) {
-                                ObjectHeader* lh = lit.asObjectPtr();
-                                if (lh->isBytesObject() && lh->byteSize() < 32)
-                                    ld += " '" + std::string((char*)lh->bytes(), lh->byteSize()) + "'";
-                            }
-                        } else if (lit.isSmallInteger()) {
-                            ld = "SmI " + std::to_string(lit.asSmallInteger());
-                        } else if (lit.isNil()) ld = "nil";
-                        else ld = "?";
-                        fprintf(stderr, "[DNU-PROBE]   lit[%d]=0x%llx (%s)\n",
-                            i, (unsigned long long)lit.rawBits(), ld.c_str());
-                    }
-                    if (ipOff >= 0 && ipOff < (long long)(bcEnd - bcBase)) {
-                        fprintf(stderr, "[DNU-PROBE] bytecodes around IP (-12..+8):\n");
-                        for (long long o = std::max((long long)0, ipOff-12);
-                             o <= std::min(ipOff+8, (long long)(bcEnd - bcBase) - 1); o++) {
-                            fprintf(stderr, "[DNU-PROBE]   bc[%lld] = 0x%02x%s\n",
-                                o, bcBase[o], o == ipOff ? " <-- IP" : "");
-                        }
-                    }
-                    // Print enclosing C++ frames with JIT status — if any
-                    // is JIT-compiled, that's likely the corruption source.
-                    fprintf(stderr, "[DNU-PROBE] enclosing frames (top=current):\n");
-                    for (size_t f = 0; f < frameDepth_ && f < 8; f++) {
-                        SavedFrame& sf = savedFrames_[frameDepth_ - 1 - f];
-                        std::string mSel = memory_.selectorOf(sf.savedMethod);
-                        std::string rCls = memory_.classNameOf(sf.savedReceiver);
-                        jit::JITMethod* fjm = jitRuntime_.methodMap().lookup(
-                            sf.savedMethod.rawBits());
-                        // Compute saved IP offset
-                        long long savedIpOff = -1;
-                        if (sf.savedMethod.isObject()
-                            && sf.savedMethod.rawBits() > 0x10000) {
-                            ObjectHeader* sm = sf.savedMethod.asObjectPtr();
-                            Oop sh = sm->slots()[0];
-                            int snLits = sh.isSmallInteger()
-                                ? (sh.asSmallInteger() & 0x7FFF) : 0;
-                            uint8_t* sBC = sm->bytes() + (1 + snLits) * 8;
-                            if (sf.savedIP) savedIpOff = (long long)(sf.savedIP - sBC);
-                        }
-                        fprintf(stderr,
-                            "[DNU-PROBE]   [%zu] %s>>%s ip=%lld jit=%s\n",
-                            f, rCls.c_str(), mSel.c_str(), savedIpOff,
-                            fjm ? "YES" : "no");
-                    }
-                    fprintf(stderr, "[DNU-PROBE] stack/temps (FP-2..FP+8):\n");
-                    for (int s = -2; s <= 8; s++) {
-                        Oop sv = framePointer_[s];
-                        std::string sd;
-                        if (sv.isObject() && sv.rawBits() > 0x10000
-                            && memory_.isValidPointer(sv)) {
-                            sd = memory_.classNameOf(sv);
-                        } else if (sv.isSmallInteger()) {
-                            sd = "SmI";
-                        } else if (sv.isNil()) sd = "nil";
-                        else sd = "?";
-                        const char* mark = "";
-                        if (framePointer_ + s == stackPointer_) mark = " <-- SP";
-                        if (framePointer_ + s == stackPointer_ - 1) mark = " (top)";
-                        fprintf(stderr, "[DNU-PROBE]   FP[%d]=0x%llx (%s)%s\n",
-                            s, (unsigned long long)sv.rawBits(),
-                            sd.c_str(), mark);
-                    }
-                }
             }
 #endif // PHARO_JIT_ENABLED
             // Dump args and frame info for debugging
@@ -11626,13 +11223,6 @@ void Interpreter::terminateCurrentProcess() {
                                 termSel == "cannotReturn:" ||
                                 termSel == "ensure:" ||
                                 termSel == "aboutToReturn:through:");
-        // 2026-05-08 A4 diag: also fire for benchFib (the bug is
-        // recursive-return chain corruption at depth 36+).
-        // Also force-fire when PHARO_TERM_TRACE_ALL=1 is set.
-        static bool termTraceAll =
-            std::getenv("PHARO_TERM_TRACE_ALL") != nullptr;
-        if (termSel == "benchFib") exceptionalTerm = true;
-        if (termTraceAll) exceptionalTerm = true;
         if (highPri || exceptionalTerm) {
             fprintf(stderr, "[TERM-P%lld] PROCESS TERMINATING via #%s\n",
                     pri.isSmallInteger() ? pri.asSmallInteger() : -1L,
@@ -12278,48 +11868,6 @@ Oop Interpreter::materializeFrameStack() {
             // (no separate context was created for frame[0]). This caused
             // thisContext sender == nil inside Context>>jump, crashing startup.
             savedFrames_[0].materializedContext = activeContext_;
-        }
-    }
-
-    // 2026-05-08 PHARO_TRACE_MATERIALIZE=1: log materialize calls
-    // that involve intern:'s frame chain (intern:/asSymbol present).
-    // Verifies whether materialize loses NLR linkage in the buggy path.
-    static const bool matTrace =
-        std::getenv("PHARO_TRACE_MATERIALIZE") != nullptr;
-    if (__builtin_expect(matTrace, 0)) {
-        static int matN = 0;
-        // Find intern: or asSymbol or critical: in the chain
-        bool hasIntern = false;
-        for (size_t i = startFrame; i < frameDepth_; i++) {
-            Oop sm = savedFrames_[i].savedMethod;
-            if (sm.isObject() && sm.rawBits() > 0x10000) {
-                std::string sel = memory_.selectorOf(sm);
-                if (sel == "intern:" || sel == "asSymbol"
-                    || sel == "critical:" || sel == "rawIntern:") {
-                    hasIntern = true;
-                    break;
-                }
-            }
-        }
-        if (hasIntern && matN++ < 30) {
-            fprintf(stderr,
-                "[MATERIALIZE] #%d intern-chain frameDepth_=%zu startFrame=%zu\n",
-                matN, frameDepth_, startFrame);
-            for (size_t i = startFrame; i < frameDepth_; i++) {
-                SavedFrame& sf = savedFrames_[i];
-                std::string sel = memory_.selectorOf(sf.savedMethod);
-                bool isBlk = false;
-                if (sf.savedMethod.isObject()
-                    && sf.savedMethod.rawBits() > 0x10000) {
-                    isBlk = sf.savedMethod.asObjectPtr()->classIndex()
-                        == compiledBlockClassIndex_;
-                }
-                fprintf(stderr,
-                    "[MATERIALIZE]   fd=%zu %s%s home=%zu methodOop=0x%llx\n",
-                    i, isBlk ? "BLOCK " : "", sel.c_str(),
-                    sf.homeFrameDepth,
-                    (unsigned long long)sf.savedMethod.rawBits());
-            }
         }
     }
 
@@ -15991,45 +15539,6 @@ void Interpreter::tryJITResumeInCaller() {
                     Oop retVal = state.returnValue;
                     J2JSave& save = rj2jSaves[rj2jDepth];
 
-                    // 2026-05-08 PHARO_TRACE_BLOCK_CHAIN=1: log every
-                    // chain ExitReturn — to see what methods return
-                    // via chain (vs deopt to interp).
-                    {
-                        static const bool blockChainTrace =
-                            std::getenv("PHARO_TRACE_BLOCK_CHAIN") != nullptr;
-                        if (__builtin_expect(blockChainTrace, 0)
-                            && state.method.isObject()
-                            && state.method.rawBits() > 0x10000) {
-                            ObjectHeader* mH = state.method.asObjectPtr();
-                            uint32_t cIdx = mH->classIndex();
-                            bool isBlk = (cIdx == compiledBlockClassIndex_);
-                            std::string csel = memory_.selectorOf(state.method);
-                            // Filter: any block, OR intern:-related method.
-                            bool relevant = isBlk || csel == "intern:"
-                                || csel == "asSymbol" || csel == "rawIntern:"
-                                || csel == "critical:" || csel == "ensure:"
-                                || csel == "value";
-                            if (relevant) {
-                                static int blockChN = 0;
-                                if (blockChN++ < 30) {
-                                    Oop callerMethod = save.jitMethod
-                                        ? Oop::fromRawBits(
-                                            save.jitMethod->compiledMethodOop)
-                                        : Oop::nil();
-                                    std::string callerSel =
-                                        memory_.selectorOf(callerMethod);
-                                    fprintf(stderr,
-                                        "[BLOCK-CHAIN] #%d %s callee=#%s "
-                                        "caller=#%s rj2jDepth=%d retVal=0x%llx\n",
-                                        blockChN, isBlk ? "BLOCK" : "method",
-                                        csel.c_str(), callerSel.c_str(),
-                                        rj2jDepth,
-                                        (unsigned long long)retVal.rawBits());
-                                }
-                            }
-                        }
-                    }
-
                     state.sp = save.sp;
                     state.receiver = save.receiver;
                     state.tempBase = save.tempBase;
@@ -16228,73 +15737,6 @@ void Interpreter::tryJITResumeInCaller() {
             continue;  // Try to resume in the next caller
 
         case jit::ExitSend: {
-            // 2026-05-08 PHARO_TRACE_INTERN_BAIL=1: log when intern:
-            // bails to interp at any send.  Plus log compiledBlock
-            // bails (block deopt at returnTop).  Tells us which
-            // bytecodes intern: actually executes vs skips.
-            {
-                static const bool internBail =
-                    std::getenv("PHARO_TRACE_INTERN_BAIL") != nullptr;
-                if (__builtin_expect(internBail, 0)
-                    && state.method.isObject()
-                    && state.method.rawBits() > 0x10000) {
-                    std::string msel = memory_.selectorOf(state.method);
-                    ObjectHeader* mH = state.method.asObjectPtr();
-                    bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
-                    bool relevant = isBlk || msel == "intern:"
-                        || msel == "asSymbol" || msel == "rawIntern:";
-                    static int bailN = 0;
-                    if (relevant && bailN < 80) {
-                        bailN++;
-                        // Compute IP offset within bytecode area
-                        long long ipOff = -1;
-                        Oop hh = mH->slots()[0];
-                        int nL = hh.isSmallInteger()
-                            ? (hh.asSmallInteger() & 0x7FFF) : 0;
-                        uint8_t* bcS = mH->bytes() + (1 + nL) * 8;
-                        if (state.ip) ipOff = (long long)(state.ip - bcS);
-                        uint8_t bcOp = (state.ip && ipOff >= 0
-                            && ipOff < (long long)mH->byteSize())
-                            ? state.ip[0] : 0xFF;
-                        fprintf(stderr,
-                            "[INTERN-BAIL] %s method=#%s methodOop=0x%llx "
-                            "ipOff=%lld bcOp=0x%02x\n",
-                            isBlk ? "BLOCK" : "method",
-                            msel.c_str(),
-                            (unsigned long long)state.method.rawBits(),
-                            ipOff, bcOp);
-                        // Special: intern:'s block (oop 0x300354be8)
-                        // returnTop bail.  Dump full chain to verify
-                        // homeFrameDepth setup.
-                        if (state.method.rawBits() == 0x300354be8
-                            && bcOp == 0x5C) {
-                            fprintf(stderr,
-                                "[INTERN-BAIL]   *** intern: critical: block at returnTop ***\n");
-                            fprintf(stderr,
-                                "[INTERN-BAIL]   frameDepth_=%zu state.sp=%p\n",
-                                frameDepth_, (void*)state.sp);
-                            for (int f = (int)frameDepth_ - 1;
-                                 f >= 0 && f >= (int)frameDepth_ - 12; f--) {
-                                SavedFrame& sf = savedFrames_[f];
-                                std::string s2 = memory_.selectorOf(sf.savedMethod);
-                                std::string c2 = memory_.classNameOf(sf.savedReceiver);
-                                bool isBlk2 = false;
-                                if (sf.savedMethod.isObject()
-                                    && sf.savedMethod.rawBits() > 0x10000) {
-                                    isBlk2 = sf.savedMethod.asObjectPtr()->classIndex()
-                                        == compiledBlockClassIndex_;
-                                }
-                                fprintf(stderr,
-                                    "[INTERN-BAIL]   sf[%d] %s%s>>%s home=%zu methodOop=0x%llx\n",
-                                    f, isBlk2 ? "BLOCK " : "",
-                                    c2.c_str(), s2.c_str(),
-                                    sf.homeFrameDepth,
-                                    (unsigned long long)sf.savedMethod.rawBits());
-                            }
-                        }
-                    }
-                }
-            }
             // JIT hit a send. Let interpreter handle it.
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
@@ -16534,26 +15976,6 @@ void Interpreter::tryJITResumeInCaller() {
         }
 
         case jit::ExitArithOverflow:
-            {
-                const bool dbgOn = g_debug.debugArithExit;
-                if (__builtin_expect(dbgOn, 0) && framePointer_) {
-                    long long spFromFP = (long long)(state.sp - framePointer_);
-                    if (spFromFP >= 400 && spFromFP <= 700) {
-                        ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
-                        const uint8_t* bcBase = nullptr;
-                        if (mObj) {
-                            Oop hdr = mObj->slots()[0];
-                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                            bcBase = mObj->bytes() + (1 + numLits) * 8;
-                        }
-                        long long bcOff = (bcBase && state.ip) ? (long long)(state.ip - bcBase) : -1;
-                        fprintf(stderr, "[ARITH-EXIT-R] fd=%zu sp-fp=%lld state.ip bcOff=%lld bc=%02x method=#%s\n",
-                                frameDepth_, spFromFP, bcOff,
-                                (state.ip ? *state.ip : 0),
-                                memory_.selectorOf(method_).c_str());
-                    }
-                }
-            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             inJITResume_ = false;
@@ -17046,36 +16468,6 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     }
 
 
-    // 2026-05-07 IC patch probe — log what extra was computed for any
-    // selector matching PHARO_TRACE_PATCH_SEL.  Helps identify wrongly-
-    // classified IC entries.
-    {
-        static const char* probeSel =
-            std::getenv("PHARO_TRACE_PATCH_SEL");
-        if (probeSel) {
-            std::string sel = memory_.oopToString(selector);
-            if (sel == probeSel) {
-                std::string rcname = memory_.classNameOf(receiver);
-                std::string mcname = memory_.classNameOf(resolvedMethod);
-                fprintf(stderr,
-                    "[IC-PATCH-PROBE] sel=#%s rcvrCls=%s "
-                    "method=0x%llx extra=0x%llx (bit57=%d 58=%d 59=%d "
-                    "60=%d 61=%d 62=%d 63=%d primKind=%d)\n",
-                    sel.c_str(), rcname.c_str(),
-                    (unsigned long long)resolvedMethod.rawBits(),
-                    (unsigned long long)extra,
-                    (int)((extra >> 57) & 1),
-                    (int)((extra >> 58) & 1),
-                    (int)((extra >> 59) & 1),
-                    (int)((extra >> 60) & 1),
-                    (int)((extra >> 61) & 1),
-                    (int)((extra >> 62) & 1),
-                    (int)((extra >> 63) & 1),
-                    (int)((extra >> 48) & 0x1F));
-            }
-        }
-    }
-
     // Find the first empty slot and fill it
     for (int e = 0; e < 6; e++) {
         if (icData[e * 3] == 0) {
@@ -17317,39 +16709,6 @@ void Interpreter::upgradeICToJ2J(uint64_t* icData, Oop cachedMethod, int sendArg
             static const bool noGetterBit2 =
                 std::getenv("PHARO_NO_GETTER_BIT") != nullptr;
             TrivialMethodInfo tmi = detectTrivialMethod(cachedMethod, memory_);
-            // 2026-05-07 IC upgrade probe — log when classification fires.
-            {
-                static const char* probeSel2 =
-                    std::getenv("PHARO_TRACE_PATCH_SEL");
-                if (probeSel2) {
-                    size_t nLits2 = memory_.numLiteralsOf(cachedMethod);
-                    Oop selOop;
-                    if (nLits2 >= 2) {
-                        selOop = memory_.fetchPointer(nLits2 - 1, cachedMethod);
-                        if (selOop.isObject() && selOop.rawBits() >= 0x10000) {
-                            ObjectHeader* h = selOop.asObjectPtr();
-                            if (!h->isBytesObject() && h->slotCount() > 1) {
-                                selOop = memory_.fetchPointer(0, selOop);
-                            }
-                        }
-                    }
-                    std::string sel = selOop.isObject()
-                        ? memory_.selectorOf(selOop) : "?";
-                    if (sel == probeSel2) {
-                        std::string mcname =
-                            memory_.classNameOf(cachedMethod);
-                        fprintf(stderr,
-                            "[IC-UPGRADE-PROBE] sel=#%s method=0x%llx "
-                            "tmi.getter=%d setter=%d retSelf=%d "
-                            "multiA=%d retLit=%d\n",
-                            sel.c_str(),
-                            (unsigned long long)cachedMethod.rawBits(),
-                            (int)tmi.getterIndex, (int)tmi.setterIndex,
-                            (int)tmi.returnsSelf, (int)tmi.multiSlotA,
-                            (int)tmi.returnsLiteral);
-                    }
-                }
-            }
             if (!noGetterBit2 && tmi.getterIndex >= 0)
                 newExtra = (1ULL << 63) | (uint16_t)tmi.getterIndex;
             else if (!noGetterBit2 && tmi.setterIndex >= 0)
@@ -17520,207 +16879,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (noJit) return false;
     jitActivations_++;
 
-    // 2026-05-06 A1 root-cause work: sp-delta assertion per JIT
-    // activation.  Records sp at entry; if PHARO_TRACE_SP_DELTA=1 is
-    // set, checks at each return path that sp moved by exactly
-    // -argCount (consumed args+receiver, pushed 1 result).  Methods
-    // with non-zero deviation are the JIT stencil bug source from
-    // memory/project_a1_oopforobject_2026_05_06.md.
-    Oop* spAtEntry = stackPointer_;
-    Oop* fpAtEntry = framePointer_;
-    size_t fdAtEntry = frameDepth_;
-
-    // Track sp at low-fd checkpoints — finds the slow expression-
-    // stack leak that's not at the per-method level.  Gated on
-    // PHARO_TRACE_FD_TREND=1.  Logs sp at the lowest fd seen (the
-    // "baseline" — should be a constant in absence of leak).
-    static const bool traceFdTrend =
-        std::getenv("PHARO_TRACE_FD_TREND") != nullptr;
-    if (__builtin_expect(traceFdTrend, 0)) {
-        static size_t callCount = 0;
-        static size_t baselineFd = SIZE_MAX;
-        static long long firstSpAtBaseline = -1;
-        ++callCount;
-        if (frameDepth_ < baselineFd) {
-            baselineFd = frameDepth_;
-            firstSpAtBaseline = stackPointer_ - stack_.data();
-            fprintf(stderr,
-                "[FD-BASELINE] new fd_baseline=%zu sp_off=%lld call=%zu\n",
-                baselineFd, firstSpAtBaseline, callCount);
-        } else if (frameDepth_ == baselineFd) {
-            long long spOff = stackPointer_ - stack_.data();
-            static size_t baselineCount = 0;
-            ++baselineCount;
-            if (baselineCount % 50 == 0) {
-                long long delta = spOff - firstSpAtBaseline;
-                fprintf(stderr,
-                    "[FD-BASELINE] baseline_count=%zu fd=%zu sp_off=%lld "
-                    "delta_from_first=%+lld\n",
-                    baselineCount, frameDepth_, spOff, delta);
-            }
-        }
-    }
-
-    // PHARO_DUMP_STACK_ORIGINS=1: when sp grows past 50K, dump origin
-    // tag for each slot (which method+bcOff pushed it, or "unset" if
-    // a JIT path wrote the slot without going through push()).
-    if (__builtin_expect(stackOriginEnabled_, 0)) {
-        long long spOff = stackPointer_ - stack_.data();
-        static long long lastDump = 0;
-        if (spOff > 1000 && spOff > lastDump + 5000) {
-            lastDump = spOff;
-            fprintf(stderr,
-                "[STACK-ORIGIN] sp_off=%lld fd=%zu — origin tag histogram for slots [3..%lld]:\n",
-                spOff, frameDepth_, spOff);
-            // Histogram: count distinct (origin, returnAddr) pairs.
-            // Group by return address so we get C++ caller resolution.
-            std::unordered_map<uint64_t, size_t> histogram;
-            std::unordered_map<uint64_t, void*> tagToRa;
-            for (long long i = 3; i < spOff; i++) {
-                uint64_t origin = stackOrigins_[i];
-                void* ra = stackPushReturnAddr_[i];
-                // Combine origin + ra into a tag.  Use ra as primary
-                // (since ra uniquely identifies the C++ push site).
-                uint64_t tag = (uint64_t)ra;
-                histogram[tag]++;
-                tagToRa[tag] = ra;
-                (void)origin;
-            }
-            // Sort by count descending, print top 10.
-            std::vector<std::pair<uint64_t,size_t>> sorted(
-                histogram.begin(), histogram.end());
-            std::sort(sorted.begin(), sorted.end(),
-                [](const auto& a, const auto& b){
-                    return a.second > b.second;
-                });
-            for (size_t i = 0; i < std::min<size_t>(sorted.size(), 10); i++) {
-                uint64_t tag = sorted[i].first;
-                size_t count = sorted[i].second;
-                void* ra = tagToRa[tag];
-                if (ra == nullptr) {
-                    fprintf(stderr,
-                        "  ra=NULL (UNSET — no push() recorded) count=%zu\n",
-                        count);
-                    continue;
-                }
-                Dl_info info{};
-                int got = dladdr(ra, &info);
-                const char* sym = (got && info.dli_sname) ? info.dli_sname : "?";
-                ptrdiff_t off = got ? ((uint8_t*)ra - (uint8_t*)info.dli_saddr) : 0;
-                fprintf(stderr,
-                    "  ra=%p sym=%s+%lld count=%zu\n",
-                    ra, sym, (long long)off, count);
-            }
-        }
-    }
-
-    // PHARO_DUMP_LEAKED_SP=1: when sp grows past a threshold, dump
-    // the leaked stack values to identify their types.  Helps find
-    // which bytecode/primitive is producing the leaked values.
-    static const bool dumpLeakedSp =
-        std::getenv("PHARO_DUMP_LEAKED_SP") != nullptr;
-    if (__builtin_expect(dumpLeakedSp, 0)) {
-        long long spOff = stackPointer_ - stack_.data();
-        static long long lastDumpAt = 0;
-        if (spOff > 100000 && spOff > lastDumpAt + 5000) {
-            lastDumpAt = spOff;
-            fprintf(stderr,
-                "[LEAKED-SP] sp_off=%lld fd=%zu method=#%s — dumping last 24 leaked slots:\n",
-                spOff, frameDepth_, memory_.selectorOf(method).c_str());
-            // Walk stack downward from sp printing values + classes
-            for (int i = 0; i < 24 && (stackPointer_ - 1 - i) >= stack_.data(); i++) {
-                Oop val = stackPointer_[-1 - i];
-                std::string cls = "?";
-                if (val.isSmallInteger()) {
-                    cls = "SmI " + std::to_string(val.asSmallInteger());
-                } else if (val.isNil()) {
-                    cls = "nil";
-                } else if (val.isObject() && val.rawBits() > 0x10000) {
-                    if (memory_.isValidPointer(val)) {
-                        cls = memory_.classNameOf(val);
-                    } else {
-                        cls = "(out-of-heap)";
-                    }
-                } else {
-                    cls = "(unknown)";
-                }
-                fprintf(stderr, "[LEAKED-SP]   sp[-%d] = 0x%llx (%s)\n",
-                        i + 1, (unsigned long long)val.rawBits(),
-                        cls.c_str());
-            }
-        }
-    }
-    static const bool traceSpDelta =
-        std::getenv("PHARO_TRACE_SP_DELTA") != nullptr;
-    static const bool traceFdDelta =
-        std::getenv("PHARO_TRACE_FD_DELTA") != nullptr;
-    auto checkSpDelta = [this, spAtEntry, fpAtEntry, fdAtEntry, method, argCount](const char* exitTag) {
-        // FD-DELTA tracker: flag exits where frame depth GREW beyond
-        // entry value.  fd_exit == fdAtEntry: bailed mid-method (OK).
-        // fd_exit == fdAtEntry - 1: clean popFrame + return (OK).
-        // fd_exit > fdAtEntry: chained inline activations didn't
-        // fully unwind — leak suspect.
-        if (traceFdDelta && frameDepth_ > fdAtEntry) {
-            static int nFd = 0;
-            if (nFd++ < 16) {
-                fprintf(stderr,
-                    "[FD-LEAK] method=#%s argCount=%d "
-                    "fdAtEntry=%zu fd_exit=%zu (+%lld frames leaked)\n",
-                    memory_.selectorOf(method).c_str(),
-                    argCount, fdAtEntry, frameDepth_,
-                    (long long)(frameDepth_ - fdAtEntry));
-                // Dump the saved frames for the leaked range
-                for (size_t f = fdAtEntry; f <= frameDepth_ && f < fdAtEntry + 8; f++) {
-                    SavedFrame& sf = savedFrames_[f];
-                    fprintf(stderr,
-                        "  [%zu] method=#%s rcvr_class=%s\n",
-                        f,
-                        memory_.selectorOf(sf.savedMethod).c_str(),
-                        memory_.classNameOf(sf.savedReceiver).c_str());
-                }
-            }
-        }
-        if (!traceSpDelta) return;
-        if (frameDepth_ != fdAtEntry) return;
-        long long actualDelta = stackPointer_ - spAtEntry;
-        long long expectedDelta = -(long long)argCount;
-        if (actualDelta == expectedDelta) return;
-        // 2026-05-06 A1: detect ANY leak (was: only |delta|>8).  A1's
-        // leak per-call is small (+1 to +7) per JIT-activated method.
-        if (actualDelta != expectedDelta) {
-            static int n = 0;
-            if (n++ < 16) {
-                fprintf(stderr,
-                    "[SP-DELTA] tag=%s method=#%s argCount=%d "
-                    "actualDelta=%+lld expected=%+lld fd=%zu (same as entry)\n"
-                    "  ENTRY: sp=%p fp=%p\n"
-                    "  EXIT:  sp=%p fp=%p\n",
-                    exitTag,
-                    memory_.selectorOf(method).c_str(),
-                    argCount, actualDelta, expectedDelta,
-                    frameDepth_,
-                    (void*)spAtEntry, (void*)fpAtEntry,
-                    (void*)stackPointer_, (void*)framePointer_);
-            }
-        }
-    };
-    // We'll invoke checkSpDelta at the function-exit by capturing it
-    // in a guard struct.  For inline returns within the body, the
-    // C++ scope guard won't fire — but the major exits (popFrame +
-    // push retVal paths) are uniform enough that we can rely on the
-    // C++ destructor.
-    struct SpDeltaGuard {
-        std::function<void(const char*)>& fn;
-        const char* tag;
-        bool armed = true;
-        ~SpDeltaGuard() { if (armed) fn(tag); }
-    };
-    std::function<void(const char*)> checkFn =
-        [this, spAtEntry, method, argCount, &checkSpDelta](const char* tag) {
-            checkSpDelta(tag);
-        };
-    SpDeltaGuard spGuard{checkFn, "tryJIT-exit"};
-    (void)spGuard;  // suppress unused warning
 
     // PHARO_BASICAT_TRACE=1: log basicAt: activations from JIT'd
     // scanFor: callers, with the receiver+index args.  Catches the
@@ -18734,40 +17892,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitSend: {
-            // 2026-05-08 PHARO_TRACE_INTERN_BAIL=1 (tryJITActivation path)
-            {
-                static const bool internBailA =
-                    std::getenv("PHARO_TRACE_INTERN_BAIL") != nullptr;
-                if (__builtin_expect(internBailA, 0)
-                    && state.method.isObject()
-                    && state.method.rawBits() > 0x10000) {
-                    std::string msel = memory_.selectorOf(state.method);
-                    ObjectHeader* mH = state.method.asObjectPtr();
-                    bool isBlk = mH->classIndex() == compiledBlockClassIndex_;
-                    bool relevant = isBlk || msel == "intern:"
-                        || msel == "asSymbol" || msel == "rawIntern:";
-                    static int bailNA = 0;
-                    if (relevant && bailNA < 80) {
-                        bailNA++;
-                        long long ipOff = -1;
-                        Oop hh = mH->slots()[0];
-                        int nL = hh.isSmallInteger()
-                            ? (hh.asSmallInteger() & 0x7FFF) : 0;
-                        uint8_t* bcS = mH->bytes() + (1 + nL) * 8;
-                        if (state.ip) ipOff = (long long)(state.ip - bcS);
-                        uint8_t bcOp = (state.ip && ipOff >= 0
-                            && ipOff < (long long)mH->byteSize())
-                            ? state.ip[0] : 0xFF;
-                        fprintf(stderr,
-                            "[INTERN-BAIL-A] %s method=#%s methodOop=0x%llx "
-                            "ipOff=%lld bcOp=0x%02x\n",
-                            isBlk ? "BLOCK" : "method",
-                            msel.c_str(),
-                            (unsigned long long)state.method.rawBits(),
-                            ipOff, bcOp);
-                    }
-                }
-            }
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
             instructionPointer_ = state.ip;
@@ -19036,26 +18160,6 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         }
 
         case jit::ExitArithOverflow: {
-            {
-                const bool dbgOn = g_debug.debugArithExit;
-                if (__builtin_expect(dbgOn, 0) && framePointer_) {
-                    long long spFromFP = (long long)(state.sp - framePointer_);
-                    if (spFromFP >= 400 && spFromFP <= 700) {
-                        ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
-                        const uint8_t* bcBase = nullptr;
-                        if (mObj) {
-                            Oop hdr = mObj->slots()[0];
-                            int numLits = hdr.isSmallInteger() ? (hdr.asSmallInteger() & 0x7FFF) : 0;
-                            bcBase = mObj->bytes() + (1 + numLits) * 8;
-                        }
-                        long long bcOff = (bcBase && state.ip) ? (long long)(state.ip - bcBase) : -1;
-                        fprintf(stderr, "[ARITH-EXIT] fd=%zu sp-fp=%lld state.ip bcOff=%lld bc=%02x method=#%s\n",
-                                frameDepth_, spFromFP, bcOff,
-                                (state.ip ? *state.ip : 0),
-                                memory_.selectorOf(method_).c_str());
-                    }
-                }
-            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             return false;

@@ -2247,9 +2247,7 @@ public:
         // — safe.  Set PHARO_NO_SISTA_WHILETRUE=1 to opt out.
         static const bool whileTrueSpliceEnabled =
             std::getenv("PHARO_NO_SISTA_WHILETRUE") == nullptr;
-        static const bool probeWhileTrue =
-            std::getenv("PHARO_SISTA_PROBE_WHILETRUE") != nullptr;
-        if (whileTrueSpliceEnabled || probeWhileTrue) {
+        if (whileTrueSpliceEnabled) {
             size_t i = 0;
             while (i + 4 <= len_) {
                 // Look for ExtendB + ExtJump (4-byte long jump back).
@@ -2587,33 +2585,6 @@ public:
                                         accumTemp = (uint32_t)(y0 - jit::SistaV1::PushTempBase);
                                         arithCode = (y2 == jit::SistaV1::ArithBase) ? 0 : 1;
                                         constValue = 0;  // unused for series
-                                    }
-                                }
-                                if (probeWhileTrue) {
-                                    static int probeCount = 0;
-                                    if (probeCount++ < 32) {
-                                        std::fprintf(stderr,
-                                            "[SISTA-WHILETRUE-PROBE] "
-                                            "preLoop=%zu loopHead=%zu "
-                                            "jumpTo=%zu endPop=%zu "
-                                            "loopTemp=%u limitLitIdx=%u "
-                                            "body_len=%zu preLoopOk=%d "
-                                            "endPopOk=%d bodyOk=%d "
-                                            "method_len=%zu\n",
-                                            preLoopStart, t, i, i + 4,
-                                            loopTemp,
-                                            (unsigned)(b1 - jit::SistaV1::PushLitConstBase),
-                                            bodyLen, preLoopOk ? 1 : 0,
-                                            endPopOk ? 1 : 0, bodyOk ? 1 : 0,
-                                            len_);
-                                        std::fprintf(stderr,
-                                            "[SISTA-WHILETRUE-PROBE]   body:");
-                                        for (size_t bi = bodyStart;
-                                             bi < bodyEnd && bi < len_; bi++) {
-                                            std::fprintf(stderr, " %02x",
-                                                bc_[bi]);
-                                        }
-                                        std::fprintf(stderr, "\n");
                                     }
                                 }
                                 if (whileTrueSpliceEnabled
@@ -6327,23 +6298,6 @@ LiftResult Builder::build(Oop compiledMethod, ObjectMemory& memory,
         std::getenv("PHARO_NO_SISTA_INLINE_IDENTITY_EQ") == nullptr;
     static const bool injectIntoSplice =
         std::getenv("PHARO_NO_SISTA_DO_SPLICE") == nullptr;
-    // 2026-05-01 diagnostic: dump bench method bytecodes to trace
-    // what shape Pharo emits for inlined timesRepeat:.  Gated.
-    if (std::getenv("PHARO_SISTA_DUMP_BENCH") != nullptr) {
-        std::string sel = memory.selectorOf(compiledMethod);
-        if (sel == "runBlock" || sel == "runInstVar"
-            || sel == "runFibonacci" || sel == "runFactorial"
-            || sel == "runSum") {
-            std::fprintf(stderr,
-                "[SISTA-BENCH-DUMP] method=#%s numLits=%u bcLen=%zu\n",
-                sel.c_str(), numLiterals, bytecodeSize);
-            std::fprintf(stderr, "[SISTA-BENCH-DUMP]   bc:");
-            for (size_t i = 0; i < bytecodeSize; i++) {
-                std::fprintf(stderr, " %02x", bytecodes[i]);
-            }
-            std::fprintf(stderr, "\n");
-        }
-    }
     uint16_t injectIntoMask = 0;
     uint16_t toMask = 0;
     uint16_t collectMask = 0;

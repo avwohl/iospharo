@@ -43,9 +43,6 @@ extern "C" uint64_t jit_rt_store_inst_var(void* state,
                                             uint64_t recvBits,
                                             uint64_t ivarIdx,
                                             uint64_t valBits);
-extern "C" void jit_rt_sista_trace_splice_entry(uint64_t rcv,
-                                                uint64_t vec,
-                                                uint64_t slot);
 extern "C" uint64_t jit_rt_sista_complete_array_do_accum(
     void* state,
     uint64_t rcvBits,
@@ -3828,28 +3825,6 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 // critical values.
                 cc.str(rcvReg, ptr(state, OFF_SPLICE_SPILL0));
                 cc.str(vecReg, ptr(state, OFF_SPLICE_SPILL1));
-
-                // 2026-05-06 diagnostic: when PHARO_TRACE_SPLICE_ENTRY=1
-                // is set, call a C helper at splice entry that dumps rcv
-                // and vec values to stderr.  Used to verify whether the
-                // splice receives correct operands (vs corrupted vec
-                // post-GC re-compile).
-                if (std::getenv("PHARO_TRACE_SPLICE_ENTRY") != nullptr) {
-                    Gp slotR = cc.new_gp64("acc_dbg_slot");
-                    cc.mov(slotR, Imm((uint64_t)slot));
-                    Gp dbgFn = cc.new_gp64("acc_dbg_fn");
-                    cc.mov(dbgFn, Imm((uint64_t)
-                        &jit_rt_sista_trace_splice_entry));
-                    asmjit::InvokeNode* dbgInv = nullptr;
-                    cc.invoke(asmjit::Out(dbgInv), dbgFn,
-                        asmjit::FuncSignature::build<
-                            void, uint64_t, uint64_t, uint64_t>());
-                    if (dbgInv) {
-                        dbgInv->set_arg(0, rcvReg);
-                        dbgInv->set_arg(1, vecReg);
-                        dbgInv->set_arg(2, slotR);
-                    }
-                }
 
                 auto emitDeopt = [&](Gp /*savedRcv*/, Gp /*savedVec*/,
                                       uint32_t bc) {

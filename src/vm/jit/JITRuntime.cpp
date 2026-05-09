@@ -55,19 +55,6 @@ void noteLitVarStore(uint64_t assocBits, ObjectMemory& memory) {
     Oop key = aHdr->slots()[0];
     if (!key.isObject() || key.rawBits() < 0x10000) return;
     if (!memory.symbolEquals(key, "Resolver")) return;
-    // Trace every Resolver store to see the actual init pattern.
-    static const bool resolverTrace =
-        std::getenv("PHARO_TRACE_RESOLVER_STORE") != nullptr;
-    if (__builtin_expect(resolverTrace, 0)) {
-        static int n = 0;
-        n++;
-        if (n <= 30) {
-            fprintf(stderr,
-                "[RESOLVER-STORE] #%d value=0x%llx (%s)\n",
-                n, (unsigned long long)value.rawBits(),
-                value.isNil() ? "nil" : (value.isObject() ? "object" : "imm"));
-        }
-    }
     // Only flip flag for non-nil stores.
     if (g_resolverClassVarSet) return;
     if (value.isNil()) return;
@@ -542,17 +529,6 @@ void JITRuntime::noteLateSpecBit(JITMethod* callerJM, uint64_t newExtra) {
         }
         g_recompileQueue[head] = methBits;
         g_recompileQueueHead = head + 1;
-    }
-
-    static const bool traceLate =
-        std::getenv("PHARO_TRACE_LATE_SPEC") != nullptr;
-    if (traceLate && interp_) {
-        std::string sel = interp_->memory().selectorOf(
-            Oop::fromRawBits(methBits));
-        fprintf(stderr,
-                "[LATE-SPEC] queued %s (count=%u extra=0x%llx)\n",
-                sel.c_str(), callerJM->stats->lateSpecCount,
-                (unsigned long long)newExtra);
     }
 }
 
@@ -1428,42 +1404,6 @@ extern "C" uint64_t jit_rt_store_inst_var(JITState* state,
     return state->interp->jitStoreInstVar(
         Oop::fromRawBits(recvBits), ivarIdx,
         Oop::fromRawBits(valBits));
-}
-
-// Sista deopt-with-resume completion helper for kCountedLoopArrayDoAccum.
-// 2026-05-06 diagnostic: trace splice entry rcv/vec.  Set
-// PHARO_TRACE_SPLICE_ENTRY=1 to enable the call site in
-// SistaLowering.cpp.  Used to confirm whether the splice receives
-// correct operands when re-compiled post-GC.
-extern "C" void jit_rt_sista_trace_splice_entry(
-    uint64_t rcv, uint64_t vec, uint64_t slot) {
-    static int n = 0;
-    if (++n > 32) return;
-    uint64_t vecSlotVal = 0;
-    uint64_t rcvSlot0 = 0;
-    uint32_t vecHdrFmt = 0xFFFF;
-    uint32_t vecHdrSize = 0;
-    if ((vec & 7) == 0 && vec > 0x10000) {
-        uint64_t* vecHdr = (uint64_t*)vec;
-        vecHdrFmt = (*vecHdr >> 24) & 0x1F;
-        vecHdrSize = (*vecHdr >> 0) & 0xFF;
-        uint64_t* vecSlots = (uint64_t*)(vec + 8 + slot * 8);
-        vecSlotVal = *vecSlots;
-    }
-    if ((rcv & 7) == 0 && rcv > 0x10000) {
-        uint64_t* rcvSlots = (uint64_t*)(rcv + 8);
-        rcvSlot0 = *rcvSlots;
-    }
-    std::fprintf(stderr,
-        "[SPLICE-ENTRY] #%d rcv=0x%llx (rcv[0]=0x%llx) "
-        "vec=0x%llx (fmt=%u sz=%u) vec[%llu]=0x%llx\n",
-        n,
-        (unsigned long long)rcv,
-        (unsigned long long)rcvSlot0,
-        (unsigned long long)vec,
-        vecHdrFmt, vecHdrSize,
-        (unsigned long long)slot,
-        (unsigned long long)vecSlotVal);
 }
 
 // Compiled splice's per-iter SmI tag-check, on miss, invokes this helper
