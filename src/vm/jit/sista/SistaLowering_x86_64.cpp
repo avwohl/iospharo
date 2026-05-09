@@ -6,15 +6,27 @@
  * native machine code via asmjit.
  *
  * Status (op-by-op port in progress).  Supported IR ops:
- *   kLoadReceiver, kLoadTrueOop, kLoadFalseOop
- *   kLoadTemp, kStoreTemp
- *   kLoadLiteral
- *   kConstantOop
- *   kReturn
+ *   Loads/stores:   kLoadReceiver, kLoadTrueOop, kLoadFalseOop,
+ *                   kLoadTemp, kStoreTemp, kLoadLiteral, kLoadInstVar,
+ *                   kStoreInstVar (helper-emit branch only),
+ *                   kConstantOop
+ *   Arith (with overflow deopt):
+ *                   kPrimAddInt, kPrimSubInt, kPrimMulInt
+ *                   (uses x86 OF flag + jo for the deopt branch)
+ *   Compare:        kPrimLtInt, kPrimLeInt, kPrimGtInt, kPrimGeInt,
+ *                   kPrimEqInt, kPrimNeqInt
+ *                   kPrimIdentityEq, kPrimIdentityNeq
+ *                   (cmp + cmovcc against trueOop/falseOop, with
+ *                    fused cmp→branch optimisation)
+ *   Tag check:      kPrimTagCheckInt
+ *   Control:        kBranch, kBranchIfTrue, kBranchIfFalse
+ *   Phi:            kPhi (pre-alloc; fillPhis at predecessor terminators)
+ *   Block stack:    kLoadStackSlot
+ *   Return:         kReturn
  *
- * Any other op causes lowering to bail via *failedAtValue — the
- * containing method falls back to tier-1.  Add the next op when it
- * actually appears as a Sista-bail in profiling.
+ * Any op without an emit branch above bails via *failedAtValue —
+ * the containing method falls back to tier-1.  Add the next op when
+ * profiling shows it as a Sista bail bottleneck.
  *
  * Calling convention matches Tier 1 / Tier 2 arm64:
  *   void fn(JITState* state)   — state in rdi (SysV) / rcx (Win64)
@@ -32,6 +44,13 @@
 #include <unordered_map>
 #include <vector>
 
+// Sista runtime helper invoked by kStoreInstVar setter-inline branch.
+// Defined in src/vm/jit/JITRuntime.cpp.
+extern "C" uint64_t jit_rt_store_inst_var(void* state,
+                                            uint64_t recvBits,
+                                            uint64_t ivarIdx,
+                                            uint64_t valBits);
+
 namespace pharo {
 namespace sista {
 
@@ -39,7 +58,6 @@ namespace {
 
 // Diagnostic: how many methods Sista-compiled vs bailed during this
 // run.  Printed every 64 calls so we see it without a clean dtor.
-// Removed once op coverage is complete and stats become uninteresting.
 struct LowerStats {
     std::atomic<size_t> ok{0};
     std::atomic<size_t> bail{0};
@@ -63,11 +81,43 @@ constexpr int OFF_TEMPBASE     = 24;
 constexpr int OFF_IP           = 48;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
+constexpr int OFF_ICDATAPTR    = 96;
 constexpr int OFF_TRUEOOP      = 128;
 constexpr int OFF_FALSEOOP     = 136;
 
 // ExitReason values (src/vm/jit/JITState.hpp).
 constexpr int EXIT_RETURN  = 1;
+constexpr int EXIT_SEND    = 2;
+
+// Map an integer-compare IR op to an x86 condition code.  Used by
+// both kPrimLtInt-and-friends emit (cmovcc / setcc) and the
+// fused-cmp-into-branch optimisation (jcc).
+asmjit::x86::CondCode condOfIntCmp(Op op, bool* ok) {
+    using namespace asmjit::x86;
+    *ok = true;
+    switch (op) {
+      case Op::kPrimLtInt:  return CondCode::kL;
+      case Op::kPrimLeInt:  return CondCode::kLE;
+      case Op::kPrimGtInt:  return CondCode::kG;
+      case Op::kPrimGeInt:  return CondCode::kGE;
+      case Op::kPrimEqInt:  return CondCode::kE;
+      case Op::kPrimNeqInt: return CondCode::kNE;
+      default: *ok = false; return CondCode::kE;
+    }
+}
+
+asmjit::x86::CondCode negateCond(asmjit::x86::CondCode c) {
+    using namespace asmjit::x86;
+    switch (c) {
+      case CondCode::kL:  return CondCode::kGE;
+      case CondCode::kLE: return CondCode::kG;
+      case CondCode::kG:  return CondCode::kLE;
+      case CondCode::kGE: return CondCode::kL;
+      case CondCode::kE:  return CondCode::kNE;
+      case CondCode::kNE: return CondCode::kE;
+      default:            return c;
+    }
+}
 
 }  // namespace
 
@@ -81,7 +131,7 @@ Lowering::~Lowering() {
 
 Lowering::CompiledFn Lowering::lower(const Method& method,
                                        uint32_t* failedAtValue,
-                                       const uint8_t* /*bytecodeBase*/) {
+                                       const uint8_t* bytecodeBase) {
     using namespace asmjit;
     using namespace asmjit::x86;
 
@@ -90,9 +140,24 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         if (failedAtValue) *failedAtValue = 0;
         return nullptr;
     }
+    static bool noArith = getenv("PHARO_SISTA_NO_LOWER_ARITH") != nullptr;
+    static bool noArithMath = getenv("PHARO_SISTA_NO_LOWER_ARITH_MATH") != nullptr;
+    static bool noArithCmp  = getenv("PHARO_SISTA_NO_LOWER_ARITH_CMP")  != nullptr;
+    static bool noBranch    = getenv("PHARO_SISTA_NO_LOWER_BRANCH")     != nullptr;
+    static bool noFuse      = getenv("PHARO_SISTA_NO_LOWER_FUSE")       != nullptr;
 
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
+
+    // PHARO_SISTA_ASMJIT_LOG=1: dump every emitted method's asmjit IR
+    // and final machine code to stderr.  Useful to inspect codegen
+    // when chasing miscompiles.
+    static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
+        if (getenv("PHARO_SISTA_ASMJIT_LOG"))
+            return new asmjit::FileLogger(stderr);
+        return nullptr;
+    }();
+    if (asmjitLogger) code.set_logger(asmjitLogger);
 
     Compiler cc(&code);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
@@ -107,7 +172,7 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     Gp litBaseHoisted = cc.new_gp64("litBaseH");
     cc.mov(litBaseHoisted, ptr(state, OFF_LITERALS));
 
-    // Map each SSA value id -> the virtual register holding its value.
+    // SSA value id -> the virtual register holding its value.
     std::unordered_map<uint32_t, Gp> regFor;
 
     // Pre-create labels for every block.
@@ -117,6 +182,15 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         blockLabels.push_back(cc.new_label());
     }
 
+    // Pre-allocate phi regs so predecessors can reference them.
+    for (const Block& b : method.blocks) {
+        for (uint32_t vid : b.values) {
+            const Value& v = method.valueAt(vid);
+            if (v.op != Op::kPhi) break;  // phis are always block-leading
+            regFor[v.id] = cc.new_gp64("phi");
+        }
+    }
+
     auto bail = [&](uint32_t vid) -> CompiledFn {
         if (failedAtValue) *failedAtValue = vid;
         g_lowerStats.bail.fetch_add(1, std::memory_order_relaxed);
@@ -124,16 +198,96 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
         return nullptr;
     };
 
+    // Copy this block's outgoingStack into successor's phi regs.
+    auto fillPhis = [&](const Block& from, uint32_t succId) {
+        const Block& succ = method.blockAt(succId);
+        size_t phiIdx = 0;
+        for (uint32_t phiVid : succ.values) {
+            const Value& pv = method.valueAt(phiVid);
+            if (pv.op != Op::kPhi) break;
+            if (phiIdx >= from.outgoingStack.size()) break;
+            auto srcIt = regFor.find(from.outgoingStack[phiIdx]);
+            if (srcIt != regFor.end()) {
+                cc.mov(regFor[phiVid], srcIt->second);
+            }
+            phiIdx++;
+        }
+    };
+
+    // Emit a deopt sequence: spill v.operands[2..] onto the runtime
+    // stack, set state.ip to bcOffset, set exitReason = EXIT_SEND, ret.
+    // Used by overflow / tag-check deopt branches.
+    auto emitDeopt = [&](const Value& v, uint32_t bcOffset) -> bool {
+        Gp sp = cc.new_gp64("dpsp");
+        cc.mov(sp, ptr(state, OFF_SP));
+        for (size_t opIdx = 2; opIdx < v.operands.size(); opIdx++) {
+            auto opIt = regFor.find(v.operands[opIdx]);
+            if (opIt == regFor.end()) return false;
+            cc.mov(ptr(sp, static_cast<int>(opIdx - 2) * 8), opIt->second);
+        }
+        size_t numStackOps = v.operands.size() - 2;
+        if (numStackOps > 0) {
+            cc.add(sp, Imm(static_cast<int>(numStackOps) * 8));
+        }
+        cc.mov(ptr(state, OFF_SP), sp);
+        Gp ipReg = cc.new_gp64("dpip");
+        if (bytecodeBase) {
+            uintptr_t addr = reinterpret_cast<uintptr_t>(bytecodeBase) + bcOffset;
+            cc.mov(ipReg, Imm((uint64_t)addr));
+        } else {
+            cc.mov(ipReg, Imm(bcOffset));
+        }
+        cc.mov(ptr(state, OFF_IP), ipReg);
+        Gp zero64 = cc.new_gp64("dpzero");
+        cc.xor_(zero64, zero64);
+        cc.mov(ptr(state, OFF_ICDATAPTR), zero64);
+        Gp exit = cc.new_gp32("dpexit");
+        cc.mov(exit, Imm(EXIT_SEND));
+        cc.mov(ptr(state, OFF_EXIT), exit);
+        cc.ret();
+        return true;
+    };
+
     // Walk blocks in ID order (builder emits them in source-bytecode order).
     for (const Block& b : method.blocks) {
         cc.bind(blockLabels[b.id]);
 
-        // Per-block CSE for temp loads — same shape as arm64.
+        // Compare-into-branch fusion: if block ends with kPrimXxxInt
+        // followed by kBranchIf{True,False} on its result, skip the
+        // cmovcc materialisation and emit cmp+jcc directly.
+        uint32_t fusedCmpId = UINT32_MAX;
+        CondCode fusedCond = CondCode::kE;
+        if (b.values.size() >= 2) {
+            uint32_t lastVid = b.values[b.values.size() - 1];
+            uint32_t prevVid = b.values[b.values.size() - 2];
+            const Value& lastV = method.valueAt(lastVid);
+            const Value& prevV = method.valueAt(prevVid);
+            if ((lastV.op == Op::kBranchIfTrue
+              || lastV.op == Op::kBranchIfFalse)
+                && lastV.operands.size() == 1
+                && lastV.operands[0] == prevVid) {
+                bool isCmp = false;
+                CondCode trueCond = condOfIntCmp(prevV.op, &isCmp);
+                if (noFuse) isCmp = false;
+                if (isCmp) {
+                    fusedCmpId = prevVid;
+                    fusedCond = (lastV.op == Op::kBranchIfTrue)
+                        ? trueCond
+                        : negateCond(trueCond);
+                }
+            }
+        }
+
+        // Per-block CSE for temp loads.
         std::unordered_map<uint64_t, Gp> tempCache;
 
         for (uint32_t vid : b.values) {
             const Value& v = method.valueAt(vid);
             switch (v.op) {
+
+            case Op::kPhi:
+                // Pre-allocated; predecessors fill in via fillPhis.
+                break;
 
             case Op::kLoadReceiver: {
                 Gp dst = cc.new_gp64("recv");
@@ -181,6 +335,19 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kLoadStackSlot: {
+                // Load sstate.sp[-(slot+1)] — multi-entry-point
+                // loaders use this to materialize phi inputs from
+                // the runtime stack.
+                uint32_t slot = (uint32_t)v.literal;
+                Gp sp = cc.new_gp64("lsslot_sp");
+                cc.mov(sp, ptr(state, OFF_SP));
+                Gp dst = cc.new_gp64("lsslot");
+                cc.mov(dst, ptr(sp, -(int)(slot + 1) * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+
             case Op::kLoadLiteral: {
                 Gp dst = cc.new_gp64("lit");
                 cc.mov(dst, ptr(litBaseHoisted,
@@ -189,9 +356,194 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 break;
             }
 
+            case Op::kLoadInstVar: {
+                if (v.operands.size() != 1) return bail(v.id);
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) return bail(v.id);
+                Gp dst = cc.new_gp64("ivar");
+                // Slots live at [obj + 8 + N*8]; +8 because
+                // sizeof(ObjectHeader) == 8.
+                cc.mov(dst, ptr(it->second,
+                                8 + static_cast<int>(v.literal) * 8));
+                regFor[v.id] = dst;
+                break;
+            }
+
+            case Op::kStoreInstVar: {
+                // Mirrors the arm64 selective lowering: bit 63 of the
+                // literal must be set (setter-inline emission); plain
+                // bytecode-driven stores still bail.
+                if (v.operands.size() != 2) return bail(v.id);
+                bool useHelper = (v.literal >> 63) & 1;
+                if (!useHelper) return bail(v.id);
+                auto recvIt = regFor.find(v.operands[0]);
+                auto valIt  = regFor.find(v.operands[1]);
+                if (recvIt == regFor.end() || valIt == regFor.end())
+                    return bail(v.id);
+                uint64_t ivarIdx = v.literal & 0x7FFFFFFFFFFFFFFFULL;
+                Gp ivarReg = cc.new_gp64("siv_ivar");
+                cc.mov(ivarReg, Imm(ivarIdx));
+                Gp fnReg = cc.new_gp64("siv_helper");
+                cc.mov(fnReg, Imm((uint64_t)&jit_rt_store_inst_var));
+                InvokeNode* invokeNode = nullptr;
+                Error invErr = cc.invoke(
+                    Out(invokeNode), fnReg,
+                    FuncSignature::build<
+                        uint64_t, void*, uint64_t, uint64_t, uint64_t>());
+                if (invErr != kErrorOk || !invokeNode)
+                    return bail(v.id);
+                invokeNode->set_arg(0, state);
+                invokeNode->set_arg(1, recvIt->second);
+                invokeNode->set_arg(2, ivarReg);
+                invokeNode->set_arg(3, valIt->second);
+                Gp dummyRet = cc.new_gp64("siv_ret");
+                invokeNode->set_ret(0, dummyRet);
+                break;
+            }
+
             case Op::kConstantOop: {
                 Gp dst = cc.new_gp64("const");
                 cc.mov(dst, Imm(v.literal));
+                regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- Integer compares (kPrim<cmp>Int) ----
+            case Op::kPrimLtInt:
+            case Op::kPrimLeInt:
+            case Op::kPrimGtInt:
+            case Op::kPrimGeInt:
+            case Op::kPrimEqInt:
+            case Op::kPrimNeqInt: {
+                if (noArith || noArithCmp) return bail(v.id);
+                if (v.operands.size() != 2) return bail(v.id);
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end())
+                    return bail(v.id);
+                cc.cmp(ita->second, itb->second);
+                if (v.id == fusedCmpId) {
+                    // Result never read — the branch will use the flags.
+                    regFor[v.id] = ita->second;
+                    break;
+                }
+                bool ok = false;
+                CondCode cond = condOfIntCmp(v.op, &ok);
+                if (!ok) return bail(v.id);
+                // Use branch-based select rather than cmov — asmjit's
+                // RA can insert reg-allocation moves between cmp and a
+                // following cmov (or reuse phys regs in a way that makes
+                // the cmov read the wrong operand).  jcc + mov is more
+                // resilient and only marginally larger code.
+                Gp dst = cc.new_gp64("intcmp");
+                cc.mov(dst, ptr(state, OFF_FALSEOOP));
+                Label skip = cc.new_label();
+                cc.j(negateCond(cond), skip);
+                cc.mov(dst, ptr(state, OFF_TRUEOOP));
+                cc.bind(skip);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            case Op::kPrimIdentityEq:
+            case Op::kPrimIdentityNeq: {
+                if (v.operands.size() != 2) return bail(v.id);
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end())
+                    return bail(v.id);
+                Gp dst = cc.new_gp64("idcmp");
+                cc.cmp(ita->second, itb->second);
+                CondCode neg = (v.op == Op::kPrimIdentityEq)
+                    ? CondCode::kNE : CondCode::kE;
+                cc.mov(dst, ptr(state, OFF_FALSEOOP));
+                Label skip = cc.new_label();
+                cc.j(neg, skip);
+                cc.mov(dst, ptr(state, OFF_TRUEOOP));
+                cc.bind(skip);
+                regFor[v.id] = dst;
+                break;
+            }
+
+            // ---- Tag check (deopts to bcOffset on miss) ----
+            case Op::kPrimTagCheckInt: {
+                if (v.operands.empty()) return bail(v.id);
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) return bail(v.id);
+                uint32_t bcOffset = static_cast<uint32_t>(v.literal);
+                Gp tag = cc.new_gp64("tagchk");
+                cc.mov(tag, it->second);
+                cc.and_(tag, Imm(7));
+                cc.cmp(tag, Imm(1));
+                Label cont = cc.new_label();
+                cc.je(cont);
+                if (!emitDeopt(v, bcOffset)) return bail(v.id);
+                cc.bind(cont);
+                regFor[v.id] = it->second;
+                break;
+            }
+
+            // ---- Inline arithmetic on tagged SmallInts ----
+            case Op::kPrimAddInt:
+            case Op::kPrimSubInt:
+            case Op::kPrimMulInt: {
+                if (noArith || noArithMath) return bail(v.id);
+                if (v.operands.size() < 2) return bail(v.id);
+                auto ita = regFor.find(v.operands[0]);
+                auto itb = regFor.find(v.operands[1]);
+                if (ita == regFor.end() || itb == regFor.end())
+                    return bail(v.id);
+
+                Gp dst = cc.new_gp64("arith");
+                bool needOvCheck = (v.operands.size() > 2);
+                Label miss = needOvCheck ? cc.new_label() : Label();
+                Label cont = needOvCheck ? cc.new_label() : Label();
+
+                if (v.op == Op::kPrimAddInt) {
+                    // a + b - 1 (tag-preserving on tag=1 SmallInts).
+                    // 64-bit OF set ⇔ SmallInt overflow.
+                    cc.mov(dst, ita->second);
+                    cc.add(dst, itb->second);  // sets OF on overflow
+                    if (needOvCheck) cc.jo(miss);
+                    cc.sub(dst, Imm(1));
+                } else if (v.op == Op::kPrimSubInt) {
+                    cc.mov(dst, ita->second);
+                    cc.sub(dst, itb->second);  // sets OF on overflow
+                    if (needOvCheck) cc.jo(miss);
+                    cc.add(dst, Imm(1));
+                } else {  // kPrimMulInt
+                    // (a >> 3) * (b >> 3); imul sets OF on 64-bit
+                    // signed overflow.  60-bit fit additionally
+                    // checked via shl 4 / sar 4 round-trip.
+                    Gp au = cc.new_gp64("au");
+                    Gp bu = cc.new_gp64("bu");
+                    cc.mov(au, ita->second);
+                    cc.sar(au, Imm(3));
+                    cc.mov(bu, itb->second);
+                    cc.sar(bu, Imm(3));
+                    Gp prod = cc.new_gp64("prod");
+                    cc.mov(prod, au);
+                    cc.imul(prod, bu);
+                    if (needOvCheck) {
+                        cc.jo(miss);
+                        Gp shifted = cc.new_gp64("ovsh");
+                        cc.mov(shifted, prod);
+                        cc.shl(shifted, Imm(4));
+                        cc.sar(shifted, Imm(4));
+                        cc.cmp(shifted, prod);
+                        cc.jne(miss);
+                    }
+                    cc.shl(prod, Imm(3));
+                    cc.or_(prod, Imm(1));
+                    cc.mov(dst, prod);
+                }
+                if (needOvCheck) {
+                    cc.jmp(cont);
+                    cc.bind(miss);
+                    uint32_t bcOffset = static_cast<uint32_t>(v.literal);
+                    if (!emitDeopt(v, bcOffset)) return bail(v.id);
+                    cc.bind(cont);
+                }
                 regFor[v.id] = dst;
                 break;
             }
@@ -205,11 +557,54 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
                 cc.mov(exit, Imm(EXIT_RETURN));
                 cc.mov(ptr(state, OFF_EXIT), exit);
                 cc.ret();
-                break;  // Per-block return; keep emitting other blocks.
+                break;
+            }
+
+            case Op::kBranch: {
+                if (noBranch) return bail(v.id);
+                if (b.successors.empty()) return bail(v.id);
+                fillPhis(b, b.successors[0]);
+                if (b.successors[0] != b.id + 1) {
+                    cc.jmp(blockLabels[b.successors[0]]);
+                }
+                break;
+            }
+
+            case Op::kBranchIfTrue:
+            case Op::kBranchIfFalse: {
+                if (noBranch) return bail(v.id);
+                if (v.operands.size() != 1 || b.successors.size() != 2)
+                    return bail(v.id);
+                fillPhis(b, b.successors[0]);
+                fillPhis(b, b.successors[1]);
+                if (v.operands[0] == fusedCmpId) {
+                    // cmp's flags are still live from the kPrim<cmp>Int.
+                    cc.j(fusedCond, blockLabels[b.successors[0]]);
+                    if (b.successors[1] != b.id + 1) {
+                        cc.jmp(blockLabels[b.successors[1]]);
+                    }
+                    break;
+                }
+                auto it = regFor.find(v.operands[0]);
+                if (it == regFor.end()) return bail(v.id);
+                Gp trueOop = cc.new_gp64("true");
+                cc.mov(trueOop, ptr(state, OFF_TRUEOOP));
+                cc.cmp(it->second, trueOop);
+                if (v.op == Op::kBranchIfTrue) {
+                    cc.je(blockLabels[b.successors[0]]);
+                    if (b.successors[1] != b.id + 1) {
+                        cc.jmp(blockLabels[b.successors[1]]);
+                    }
+                } else {
+                    cc.je(blockLabels[b.successors[1]]);
+                    if (b.successors[0] != b.id + 1) {
+                        cc.jmp(blockLabels[b.successors[0]]);
+                    }
+                }
+                break;
             }
 
             default:
-                // Unsupported op — bail.  Caller falls back to tier-1.
                 return bail(v.id);
             }
         }
@@ -228,6 +623,32 @@ Lowering::CompiledFn Lowering::lower(const Method& method,
     }
     g_lowerStats.ok.fetch_add(1, std::memory_order_relaxed);
     g_lowerStats.tick();
+    if (getenv("PHARO_SISTA_X86_TRACE_OK")) {
+        // Dump op kinds present in the compiled method.
+        bool hasCmp=false, hasBranch=false, hasArith=false;
+        for (const auto& vv : method.values) {
+            switch (vv.op) {
+              case Op::kPrimLtInt: case Op::kPrimLeInt:
+              case Op::kPrimGtInt: case Op::kPrimGeInt:
+              case Op::kPrimEqInt: case Op::kPrimNeqInt:
+                hasCmp = true; break;
+              case Op::kBranch: case Op::kBranchIfTrue:
+              case Op::kBranchIfFalse:
+                hasBranch = true; break;
+              case Op::kPrimAddInt: case Op::kPrimSubInt:
+              case Op::kPrimMulInt:
+                hasArith = true; break;
+              default: break;
+            }
+        }
+        fprintf(stderr,
+                "[SISTA-x86] OK fn=%p ops=%s%s%s blocks=%zu values=%zu\n",
+                (void*)out,
+                hasCmp ? "C" : "-",
+                hasBranch ? "B" : "-",
+                hasArith ? "A" : "-",
+                method.blocks.size(), method.values.size());
+    }
     return out;
 }
 
