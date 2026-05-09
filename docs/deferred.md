@@ -949,58 +949,44 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. Deep-recursion eval-termination cascade (2026-05-08) — MITIGATED
+### A4. J2J-frame-push sites discarded activeContext_ — RESOLVED 2026-05-09 (commit 16bc4ff7)
 
-**Mitigation 2026-05-08 PM (commit 836c3392)**: bumped
-`J2JSlotPerEntry` from 32 to 64.  benchFib(30..40) now 5/5 each;
-tinyBenchmarks 3/3 (was 0/3).  No regressions on small workloads.
+**Root cause**: 8 sites in Interpreter.cpp that push savedFrames_
+entries for J2J-activated methods set
+`frame.savedActiveContext = nil` unconditionally, throwing away
+the real activeContext_ at the time of activation.  When popFrame
+later restored from these frames, activeContext_ became nil; the
+nil propagated through subsequent pushes and pops; eventually
+`materializeFrameStack` ran with activeContext_ = nil; frame[0]'s
+new context got sender = nil; the next return bytecode hit the
+top-of-chain check → terminate.
 
-**Real root cause (per popFrame diag 2026-05-08)**: the
-terminating context (`ctx[0]: SmallInteger>>benchFib`,
-`sender=nil`) is NOT a corruption of benchFib's sender chain.
-It's the eval process being terminated normally (via
-`Process>>endProcess` after `Smalltalk exitSuccess`) WHILE the
-benchFib recursion is still in flight.  Diag at popFrame's
-restore site shows:
+**Fix**: each of the 8 J2J-push sites now saves activeContext_
+instead of nil.  popFrame restores correctly.  Sender chain
+through deep J2J recursion stays intact.
 
-  [A4-POPFRAME-NILSDR] activeContext=0x... ctx-method=#endProcess
-                       ctx-rcvr-cls=Process saved-method=#ensure: ...
+**Validation at J2JSlotPerEntry=32** (the original value, restored
+because the bug is now fixed at root):
 
-`Process>>endProcess` is the bottom of every process's stack —
-its sender is legitimately nil.  As the terminate unwind walks
-ensure: handlers, popFrame restores activeContext_ to the
-endProcess context, then we step through hasPrimitive, primitive,
-isUnwindContext, unwindTo: — all with activeContext_=endProcess.
+  benchFib(28..40):     each 3/3 (was: ≥36 failed ~80%)
+  1 tinyBenchmarks:     3/3 (was: 0/3)
+  42 printString:       3/3 unchanged
+  inject:into: 1M:      3/3 unchanged
+  FFICalloutAPITest:    3/3 unchanged
+  SUnit 5-class:        1197/1197 unchanged
 
-When the unwind reaches a materialized benchFib frame and tries
-to return from it (via the top-of-chain check at line 5161),
-fetchPointer(0, activeContext_) returns nil → terminate.  But
-this is the SECONDARY termination — we're already mid-unwind
-from a primary termination upstream.
+**Earlier ~mitigations~ now redundant** (kept for safety):
 
-**Why does it fire at depth ≥ 36 specifically?** The materialization
-boundary is at J2JSlotPerEntry.  At depth ≥ J2JSlotPerEntry, the
-J2J chain falls back, materializes the chain to savedFrames_, and
-returns to the interpreter loop.  The interpreter loop then hits
-some condition (perhaps a process-switch check at the
-materialization boundary) that interrupts the eval mid-recursion.
-The TERMination upstream is never directly visible — it appears
-in our diag as "the eval finished without printing its result".
+- J2JSlotPerEntry 32→64 (commit 836c3392): worked by avoiding the
+  J2J-fallback materialization path that triggered the bug.
+  Reverted to 32 in the root-cause fix.
+- materializeFrameStack walks all savedFrames_ for sender anchor
+  (commit 20108c77): when activeContext_ was nil at materialize
+  time, this walked forward to find any non-nil savedActiveContext.
+  No longer load-bearing (savedActiveContext is no longer nil),
+  but kept as defensive belt-and-suspenders.
 
-**Why doesn't `savedFrames_[*].savedActiveContext = preJ2JActiveCtx`
-fix it?** Tried 2026-05-08 (reverted): savedActiveContext is
-already restored correctly via popFrame; the issue isn't there.
-The problem is that the EVAL ITSELF doesn't return its value
-before something terminates the process.
-
-**Real fix path (still pending):** capture WHICH process
-preempts the eval at the materialization boundary, and fix the
-JIT/scheduler interaction so the eval can complete its full
-recursion.  Multi-day; needs lldb attach during a failing run
-with a watchpoint on `getActiveProcess()`'s priority field.
-
-**Pre-mitigation finding** (preserved for the real-fix
-investigation):
+**Pre-fix investigation findings** (preserved for archaeology):
 
 The bug is in our JIT compilation of `Integer>>benchFib` via the
 J2J chain materialization path.
