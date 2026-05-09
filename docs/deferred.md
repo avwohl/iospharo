@@ -949,21 +949,55 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. J2J chain materialization corrupts sender at recursion depth ≥ J2JSlotPerEntry (2026-05-08) — MITIGATED
+### A4. Deep-recursion eval-termination cascade (2026-05-08) — MITIGATED
 
 **Mitigation 2026-05-08 PM (commit 836c3392)**: bumped
 `J2JSlotPerEntry` from 32 to 64.  benchFib(30..40) now 5/5 each;
 tinyBenchmarks 3/3 (was 0/3).  No regressions on small workloads.
 
-The underlying bug is in the J2J chain fallback / materialization
-path: when J2J chain depth exceeds the per-tryJITActivation slot
-limit, materialization takes over and one of the materialized
-contexts gets a corrupt sender field (=nil).  The activation
-returns to nil-sender → top-of-chain → terminate.
+**Real root cause (per popFrame diag 2026-05-08)**: the
+terminating context (`ctx[0]: SmallInteger>>benchFib`,
+`sender=nil`) is NOT a corruption of benchFib's sender chain.
+It's the eval process being terminated normally (via
+`Process>>endProcess` after `Smalltalk exitSuccess`) WHILE the
+benchFib recursion is still in flight.  Diag at popFrame's
+restore site shows:
 
-This commit doesn't FIX the materialization bug, just raises the
-trigger threshold so most workloads don't hit it (typical
-benchmark depth ≤ 64).  benchFib(64+) would still fail.
+  [A4-POPFRAME-NILSDR] activeContext=0x... ctx-method=#endProcess
+                       ctx-rcvr-cls=Process saved-method=#ensure: ...
+
+`Process>>endProcess` is the bottom of every process's stack —
+its sender is legitimately nil.  As the terminate unwind walks
+ensure: handlers, popFrame restores activeContext_ to the
+endProcess context, then we step through hasPrimitive, primitive,
+isUnwindContext, unwindTo: — all with activeContext_=endProcess.
+
+When the unwind reaches a materialized benchFib frame and tries
+to return from it (via the top-of-chain check at line 5161),
+fetchPointer(0, activeContext_) returns nil → terminate.  But
+this is the SECONDARY termination — we're already mid-unwind
+from a primary termination upstream.
+
+**Why does it fire at depth ≥ 36 specifically?** The materialization
+boundary is at J2JSlotPerEntry.  At depth ≥ J2JSlotPerEntry, the
+J2J chain falls back, materializes the chain to savedFrames_, and
+returns to the interpreter loop.  The interpreter loop then hits
+some condition (perhaps a process-switch check at the
+materialization boundary) that interrupts the eval mid-recursion.
+The TERMination upstream is never directly visible — it appears
+in our diag as "the eval finished without printing its result".
+
+**Why doesn't `savedFrames_[*].savedActiveContext = preJ2JActiveCtx`
+fix it?** Tried 2026-05-08 (reverted): savedActiveContext is
+already restored correctly via popFrame; the issue isn't there.
+The problem is that the EVAL ITSELF doesn't return its value
+before something terminates the process.
+
+**Real fix path (still pending):** capture WHICH process
+preempts the eval at the materialization boundary, and fix the
+JIT/scheduler interaction so the eval can complete its full
+recursion.  Multi-day; needs lldb attach during a failing run
+with a watchpoint on `getActiveProcess()`'s priority field.
 
 **Pre-mitigation finding** (preserved for the real-fix
 investigation):
