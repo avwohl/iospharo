@@ -14,6 +14,9 @@
  */
 
 #include "Platform.hpp"
+#include "../vm/jit/JITConfig.hpp"
+
+#if PHARO_JIT_ENABLED
 #include "../vm/jit/JITMethod.hpp"
 
 namespace pharo {
@@ -27,3 +30,4 @@ uint64_t jitTrampolineJMSize() {
 
 }  // namespace platform
 }  // namespace pharo
+#endif // PHARO_JIT_ENABLED

@@ -43,6 +43,19 @@
 #include <dlfcn.h>
 #include <pthread.h>
 
+// Portable debug-trap: __builtin_debugtrap is clang/MSVC only.  GCC has no
+// direct equivalent, so emit a software breakpoint instruction per arch.
+// Both call sites are env-var gated diagnostics, never on the hot path.
+#if defined(__has_builtin) && __has_builtin(__builtin_debugtrap)
+#  define PHARO_DEBUGTRAP() __builtin_debugtrap()
+#elif defined(__i386__) || defined(__x86_64__)
+#  define PHARO_DEBUGTRAP() __asm__ __volatile__("int3")
+#elif defined(__aarch64__)
+#  define PHARO_DEBUGTRAP() __asm__ __volatile__("brk #0")
+#else
+#  define PHARO_DEBUGTRAP() __builtin_trap()
+#endif
+
 // Flag set by FFI.cpp when Emergency Debugger window is created
 extern std::atomic<bool> g_emergencyDebuggerTriggered;
 
@@ -1402,7 +1415,7 @@ void Interpreter::interpret() {
                     fprintf(stderr, "\n"); \
                     static const bool corruptTrap = \
                         std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr; \
-                    if (corruptTrap) __builtin_debugtrap(); \
+                    if (corruptTrap) PHARO_DEBUGTRAP(); \
                 } \
             } \
         } \
@@ -9392,7 +9405,7 @@ bool Interpreter::popFrame() {
             static const bool corruptTrap =
                 std::getenv("PHARO_SP_CORRUPT_TRAP") != nullptr;
             if (corruptTrap) {
-                __builtin_debugtrap();
+                PHARO_DEBUGTRAP();
             }
         }
     }
