@@ -58,9 +58,19 @@ set(VM_SOURCES
     src/vm/jit/TrampolineAsm.S
     src/vm/jit/sista/SistaIR.cpp
     src/vm/jit/sista/SistaBuilder.cpp
-    src/vm/jit/sista/SistaLowering.cpp
     src/vm/jit/sista/SistaRuntime.cpp
 )
+
+# Sista IR lowering (asmjit-emitted machine code) is per-arch.  The arm64
+# implementation is the original full lowerer; the x86_64 implementation
+# is being filled in op by op (start with stub that defers everything to
+# tier-1).  Selected by CMAKE_SYSTEM_PROCESSOR / CMAKE_OSX_ARCHITECTURES,
+# matching the same pattern used elsewhere in this file.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_arm64.cpp)
+else()
+    list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_x86_64.cpp)
+endif()
 
 # Ensure the .S file is treated as a C-preprocessed assembly source so the
 # #define constants inside resolve at build time.
