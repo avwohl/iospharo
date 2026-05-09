@@ -940,6 +940,13 @@ private:
     // (Members, not static locals, so delete+new resets them for VM relaunch)
     int stepCheckCounter_ = 0;
     bool deferredPeriodicCheck_ = false;
+    // B-1: set true while driving step() inside jitSistaCallSend so
+    // step()'s periodic check skips process-switch-triggering work
+    // (timer, signals, preemption).  Always false when JIT is
+    // disabled.  Lives here (not in the JIT-only block) so the
+    // periodic-check code can read it without #if PHARO_JIT_ENABLED
+    // guards everywhere.
+    bool inSyncSend_ = false;
     Oop trackedProcess_ = Oop::nil();
     std::chrono::steady_clock::time_point trackStartTime_{};
     int64_t cumulativeMs_ = 0;
@@ -1173,14 +1180,8 @@ private:
     // 0) when depth would exceed the cap.
     int sistaHelperDepth_ = 0;
 
-    // B-1: set true while driving step() inside jitSistaCallSend so
-    // step()'s periodic check skips process-switch-triggering work
-    // (timer, signals, preemption).  Without this, a process switch
-    // mid-helper resets frameDepth_ to 0 and invalidates our saved
-    // pointers.  Cost: Smalltalk Delays don't fire during the
-    // synchronous-send drive.  Acceptable because the helper is
-    // bounded to single-method callees.
-    bool inSyncSend_ = false;
+    // (inSyncSend_ moved outside the JIT block — see below; it's a
+    // plain bool referenced from non-JIT-guarded periodic-check code.)
 
     // IC statistics
     size_t jitICHits_ = 0;        // ExitSendCached exits (IC hit, skip lookup)

@@ -2071,8 +2071,10 @@ void Interpreter::interpret() {
             // PHARO_QUEUE_COMPILE=1).  Compiling between bytecodes
             // avoids the mid-bytecode compile race that breaks sender
             // chains in eval-DoIt mode (deferred.md E.0).
+#if PHARO_JIT_ENABLED
             jitRuntime_.drainRecompileQueue();
             jitRuntime_.drainInitialCompileQueue();
+#endif
 
             // Stuck process termination (wall-clock based)
             {
@@ -3609,6 +3611,7 @@ bool Interpreter::step() {
         // 1024 steps for responsiveness.
         if ((stepCheckCounter_ & 0xFFFF) == 0) {
             checkForPreemption();
+#if PHARO_JIT_ENABLED
             // Drain the J2J inline-bump recompile queue.  At this point
             // we're in the interp loop's safe-point (between bytecodes
             // of the active process); no Sista splice is mid-execution
@@ -3623,6 +3626,7 @@ bool Interpreter::step() {
             // mode (see JITRuntime.cpp drainInitialCompileQueue + the
             // 7 prior JIT_DEFER attempt history).
             jitRuntime_.drainInitialCompileQueue();
+#endif
         }
 
         // Signal finalization periodically for auto-GC mourners (not handled by the
@@ -4478,12 +4482,12 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop assoc = literal(fullIndex);
         if (assoc.isObject()) {
             memory_.storePointer(1, assoc, value);
+#if PHARO_JIT_ENABLED
             // 2026-05-08 image-init-complete signal: detect when
             // FileLocator class>>startUp: stores into the Resolver
             // class variable.  Cheap branch when flag already set.
-            // noteLitVarStore self-gates on g_resolverClassVarSet; cheap
-            // when already set.  Always call for trace-mode coverage.
             jit::noteLitVarStore(assoc.rawBits(), memory_);
+#endif
         }
         break;
     }
@@ -4507,9 +4511,11 @@ void Interpreter::dispatchBytecode(uint8_t bytecode) {
         Oop assoc = literal(fullIndex);
         if (assoc.isObject()) {
             memory_.storePointer(1, assoc, stackTop());
+#if PHARO_JIT_ENABLED
             // noteLitVarStore self-gates on g_resolverClassVarSet; cheap
             // when already set.  Always call for trace-mode coverage.
             jit::noteLitVarStore(assoc.rawBits(), memory_);
+#endif
         }
         break;
     }
@@ -6641,8 +6647,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                         }
                         std::string mc = classNameOfMethod(method_);
                         std::string ms = memory_.selectorOf(method_);
+#if PHARO_JIT_ENABLED
                         bool isJIT = jitRuntime_.methodMap().lookup(
                             method_.rawBits()) != nullptr;
+#else
+                        bool isJIT = false;
+#endif
                         fprintf(stderr,
                             "  caller: %s>>%s bcOff=%lld JIT=%s\n",
                             mc.c_str(), ms.c_str(), bcOff,
@@ -6658,8 +6668,12 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                             std::string fmc = classNameOfMethod(f.savedMethod);
                             std::string fms =
                                 memory_.selectorOf(f.savedMethod);
+#if PHARO_JIT_ENABLED
                             bool fJIT = jitRuntime_.methodMap().lookup(
                                 f.savedMethod.rawBits()) != nullptr;
+#else
+                            bool fJIT = false;
+#endif
                             fprintf(stderr,
                                 "    [%d] %s>>%s JIT=%s\n",
                                 (int)(i - 1), fmc.c_str(), fms.c_str(),
@@ -10734,6 +10748,7 @@ void Interpreter::createFullBlockWithLiteral(int litIndex, int numCopied, bool r
     push(block);
 }
 
+#if PHARO_JIT_ENABLED
 uint64_t Interpreter::jitSistaBasicSize(jit::JITState* state,
                                          uint64_t rcvBits) {
     (void)state;
@@ -11406,6 +11421,7 @@ uint64_t Interpreter::jitSistaCreateFullBlock(jit::JITState* state,
     stackPointer_ = savedSP;
     return block.rawBits();
 }
+#endif  // PHARO_JIT_ENABLED — jitSista* helpers (need jit::JITState type)
 
 void Interpreter::createBlockWithArgs(int numArgs, int numCopied, int blockSize) {
     // Sista V1 0xFA: Push Closure (inline block)

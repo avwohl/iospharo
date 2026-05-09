@@ -1873,7 +1873,11 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
             Oop m = savedFrames_[j].savedMethod;
             std::string cs = memory_.selectorOf(m);
             std::string cc = classNameOfMethod(m);
+#if PHARO_JIT_ENABLED
             bool jj = jitRuntime_.methodMap().lookup(m.rawBits()) != nullptr;
+#else
+            bool jj = false;
+#endif
             fprintf(stderr, "[PRIM-AT %s]   [%zu] %s>>%s JIT=%s\n",
                 tag, j, cc.c_str(), cs.c_str(), jj ? "yes" : "no");
         }
