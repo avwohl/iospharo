@@ -949,78 +949,82 @@ through ensure: at top-of-stack IS normal.  Could narrow the
 exceptionalTerm filter (ensure: only when context chain has cycles
 or non-nil-but-bad sender), but that's cosmetic.
 
-### A4. Long-compute eval intermittently terminates without printing result (2026-05-08)
+### A4. JIT compile of `benchFib` corrupts state at recursion depth ≥ 36 (2026-05-08)
 
-**Updated 2026-05-08 PM** — partially mitigated by Morphic-process
-suspension in startup.st (commit f497f115).  Before: 0/10 reliability
-on `36 benchFib` due to startup.st bracket-balance bug + a no-op
-Morphic kill.  After: 7/10 reliable.
+**Final narrowing 2026-05-08 PM** (lldb-driven investigation, ~6
+sessions): the bug is in our JIT compilation of `Integer>>benchFib`.
 
-`eval "1 tinyBenchmarks"` on FRESH image hangs under JIT (always),
-passes under `PHARO_NO_JIT=1` (~1.5G bytecodes/sec).  `36 benchFib`
-is intermittent (~70% pass after the fix).  Common pattern: any eval
-that runs >2 seconds of compute with the World render loop active
-concurrently.
+**Reproducer + trigger condition:**
 
-**lldb investigation 2026-05-08 narrowed the trigger:**
+  `eval "N benchFib"` with default JIT, fresh image:
+    N=30..35:  5/5 always succeed
+    N=36:      1/5 succeed (4/5 fail)
+    N=37+:     fail rate increases
 
-  Timer-fire trace (`PHARO_DELAY_DEBUG=1 PHARO_SEM_SIGNAL_TRACE=1`):
+  Adding `benchFib` to JITRuntime's `alwaysExcluded` list:
+    N=36:      10/10 — confirmed JIT-compiled benchFib is the bug
 
-    [DELAY-FIRE] cur=... deadline=... lateUs=~10ms sema=0x300362d08
-    [DELAY-ARM]  pri=80 sema=0x300362d08 newDeadline=+1.000s deltaUs=999999
-    [DELAY-ARM]  pri=80 sema=0x300362d08 newDeadline=+0.013s deltaUs=12998
-                                                    ^^ overwrites the 1s arm
-    [DELAY-FIRE] ~13ms later, sema=0x300362d08
-    [DELAY-ARM]  +1.000s
-    [DELAY-ARM]  +13ms (overwrites)
-    ... pattern repeats ...
+  Running with PHARO_NO_JIT=1: works always, all N.
 
-  The Pharo-side scheduler at P80 alternates between scheduling a
-  long deadline (~1s, the next "real" scheduled Delay's deadline)
-  and a short deadline (13ms = 60Hz frame, MorphicRenderLoop) —
-  the short one keeps overwriting the long one before it can fire.
+**Failure signature:**
 
-  This 13ms-over-1s pattern is normal for an active GUI session,
-  but in eval mode it should NOT be running because the World
-  shouldn't be drawing.  Our `--interactive`-removed change reduces
-  this but doesn't eliminate it — `WorldState>>whileFalse:` and
-  `NullWorldRenderer>>ifFalse:` keep running at P40 even without
-  --interactive (via Pharo's session-startup chain).
+  [TERM] terminateCurrentProcess: proc=... pri=40 fd=0 method=#benchFib
+  [TERM]   fd=0 #benchFib (current)
+  [TERM]   C++ caller: Interpreter::returnValue(Oop)+7184
 
-  Sema 0x300362d08 fires every ~13ms with no waiter in
-  PHARO_SEM_SIGNAL_TRACE — the timer-sema is the SCHEDULER's wakeup
-  sema, not a user Delay's.  P80 wakes from its signal, dispatches
-  the next-due Delay, signals that Delay's user-facing sema, then
-  re-arms.  All cycle correctly.
+  The eval process terminates while EXECUTING benchFib.  The
+  C++ caller offset corresponds to the top-of-call-chain
+  termination path in `Interpreter::returnValue` (line ~5200),
+  fired when `activeContext_` has nil sender at return time.
 
-  Hung-process state on attach (lldb -p):
-    thread #1 in libsystem_kernel`__semwait_signal
-                <- libsystem_c`usleep
-                <- Interpreter::primitiveRelinquishProcessor
-    DIAG-QUEUE shows P10 idle, no other processes
-    -> all Smalltalk processes have terminated or completed; only
-       idle remains.  Eval expression's process either finished
-       (without printing result) or was preempted/terminated.
+  At the recursion-depth boundary (36), one of the recursive
+  benchFib activations gets a corrupt sender slot (=nil) when
+  it should chain back to the outer call.  When that
+  activation returns, the runtime sees nil sender → top of
+  chain → terminate process.
 
-**Hypothesis (next investigation step needed):** the JIT-compiled
-benchFib's recursive J2J-chain interacts with the periodic
-preemption check / scheduler, and at some boundary the eval
-process gets prematurely terminated.  Compute completed (so
-`36 benchFib` returns 48315633 in the lucky cases) but state
-that should propagate the result to stdout is lost in unlucky
-cases.
+**JIT stats (success vs fail are nearly identical):**
 
-**Concrete next step:** instrument `terminateCurrentProcess` to
-log the FULL bytecode chain of the terminating process whenever
-it's a non-low-priority termination, so we can identify which
-JIT-compiled method's epilog is dropping the eval's
-continuation.  The richer TERM-P diag (commit 44400d72) prints
-method oop + class + ctx slots but stops at fd=0 — extending
-to walk the savedFrames_ chain would identify the call site.
+  compiled: 1 method
+  J2J stencil: calls=40.95M, returns=0, patches=0-2
+  activations: ~48-49 hits/100%
+  resume (J2J-r): 3-9 chains/100%
+  materialize: count=0
+  chain: actChain=0 actFall=0 | primChain=0 primFall=0
 
-**Workaround**: `PHARO_NO_JIT=1` for tinyBenchmarks-style
-benchmarks.  Most JIT use cases don't depend on Delay-based
-benchmarking.
+  J2J calls at 40.95M ≈ benchFib(36) result (48.3M) × ~0.85.
+  Counter overflow possibility (32-bit at 32M, 24-bit at 16M)
+  unconfirmed.  The j2jDepthLimit adaptation (2→8 over clean
+  runs) and materializeJ2J may interact poorly at the
+  recursion-depth-36 boundary.
+
+**Bisection that did NOT find the cause** (all neutral or
+slightly worse at small samples):
+  - PHARO_NO_OSR_RECOMPILE=1
+  - PHARO_NO_J2J_INLINE_BUMP=1
+  - PHARO_NO_J2J_CALLEE_BUMP=1
+  - PHARO_NO_LATE_SPEC_RECOMPILE=1
+  - PHARO_NO_QUEUE_COMPILE=1
+  - PHARO_NO_SISTA=1
+
+**Real fix path:** lldb single-step a benchFib(36) failing
+run inside the JIT-compiled stencil on the recursive call's
+return path; identify which activation has the corrupted
+saved-sender field, find the offset/expression in the JIT
+output that miscomputed it.  Multi-day work; the binary is
+codesigned for attach.
+
+**Mitigation in tree (not a fix):** Morphic-process
+suspension in startup.st (commit f497f115) eliminated the
+non-bug-related `36 benchFib` failures (0/10 → 7/10).  The
+remaining ~3/10 are this real JIT bug.  PHARO_NO_JIT=1 is
+the workaround for benchmark-style workloads.
+
+**tinyBenchmarks status:** still 0/3 even with
+benchFib-excluded.  A different bug — probably in
+`Integer>>benchmark` (called by tinyBenchmarks first) or in
+the `[t < 1000] whileTrue: [n := n * 2]` loop pattern.  Not
+investigated.
 
 ### A2. B5 cold-IC DNU cascade at PHARO_JIT_DEFER=0 — RESOLVED 2026-05-08
 
