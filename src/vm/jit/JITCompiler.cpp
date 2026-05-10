@@ -1996,6 +1996,32 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
     }
 #endif
+
+    // Cross-arch dump (x86_64 + aarch64) — useful for debugging miscompiles
+    // on the Linux side.  No SimStack entry state on x86 (variable is empty),
+    // so st=0 across the board.
+    {
+        static const char* dumpSel = g_debug.jitDumpBCPost;
+        if (dumpSel && *dumpSel) {
+            std::string sel = interp_.memory().selectorOf(compiledMethod);
+            if (sel == dumpSel) {
+                fprintf(stderr, "[JIT-BC-POST] #%s post-decode stencils (size=%zu):\n",
+                        sel.c_str(), decoded.size());
+                for (size_t d = 0; d < decoded.size(); d++) {
+                    int entrySt = (d < simStackEntryState.size()) ? simStackEntryState[d] : -1;
+                    const char* name = (decoded[d].stencilIdx < NumStencils)
+                                       ? stencilTable[decoded[d].stencilIdx].name
+                                       : "???";
+                    fprintf(stderr,
+                            "[JIT-BC-POST]   [%zu] st=%d %s(id=%u) op=%d op2=%d bc=%d br=%d\n",
+                            d, entrySt, name, decoded[d].stencilIdx,
+                            decoded[d].operand, decoded[d].operand2,
+                            decoded[d].bcOffset, decoded[d].branchTarget);
+                }
+            }
+        }
+    }
+
     // Ensure entryState has a valid size even when SimStack was skipped or
     // compiled on a non-ARM64 host (no register-caching variants exist).
     if (simStackEntryState.size() != decoded.size())
