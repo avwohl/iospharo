@@ -17132,20 +17132,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             ? Oop::fromRawBits(state.icDataPtr[18])
                             : state.cachedTarget;
                         std::string sel = sendSel.isObject() ? memory_.selectorOf(sendSel) : "?";
-                        std::string meth = memory_.selectorOf(method);
-                        std::string mcls = classNameOfMethod(method);
+                        // J2J descent updates state.jitMethod but NOT state.method.
+                        // Recover the actually-executing method from
+                        // state.jitMethod->compiledMethodOop (offset 0).
+                        Oop activeMethod;
+                        if (state.jitMethod) {
+                            uint64_t cmoBits = *(uint64_t*)state.jitMethod;
+                            activeMethod = Oop::fromRawBits(cmoBits);
+                        } else {
+                            activeMethod = method;
+                        }
+                        std::string meth = memory_.selectorOf(activeMethod);
+                        std::string mcls = classNameOfMethod(activeMethod);
                         long ipOff = -1;
-                        if (state.jitMethod && state.ip && method.isObject()) {
-                            ObjectHeader* mObj = method.asObjectPtr();
-                            size_t numLits = memory_.numLiteralsOf(method);
+                        if (state.ip && activeMethod.isObject()) {
+                            ObjectHeader* mObj = activeMethod.asObjectPtr();
+                            size_t numLits = memory_.numLiteralsOf(activeMethod);
                             uint8_t* bcStart = mObj->bytes() + (1 + numLits) * 8;
                             ipOff = state.ip - bcStart;
                         }
+                        std::string outerMeth = memory_.selectorOf(method);
+                        std::string outerCls = classNameOfMethod(method);
+                        bool sameMeth = (activeMethod.rawBits() == method.rawBits());
                         fprintf(stderr, "[JIT-SEND-SMALLRCVR] #%zu send=#%s rcvr=%lld "
-                                "in=%s>>%s ipOff=%ld methodOop=0x%llx\n",
+                                "in=%s>>%s ipOff=%ld methodOop=0x%llx%s\n",
                                 sendSmallCount, sel.c_str(), (long long)rv,
                                 mcls.c_str(), meth.c_str(), ipOff,
-                                (unsigned long long)method.rawBits());
+                                (unsigned long long)activeMethod.rawBits(),
+                                sameMeth ? "" : (" (entry was " + outerCls + ">>" + outerMeth + ")").c_str());
                     }
                 }
             }
