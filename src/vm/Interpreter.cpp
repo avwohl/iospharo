@@ -17133,8 +17133,19 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             : state.cachedTarget;
                         std::string sel = sendSel.isObject() ? memory_.selectorOf(sendSel) : "?";
                         std::string meth = memory_.selectorOf(method);
-                        fprintf(stderr, "[JIT-SEND-SMALLRCVR] #%zu send=#%s rcvr=%lld method=#%s\n",
-                                sendSmallCount, sel.c_str(), (long long)rv, meth.c_str());
+                        std::string mcls = classNameOfMethod(method);
+                        long ipOff = -1;
+                        if (state.jitMethod && state.ip && method.isObject()) {
+                            ObjectHeader* mObj = method.asObjectPtr();
+                            size_t numLits = memory_.numLiteralsOf(method);
+                            uint8_t* bcStart = mObj->bytes() + (1 + numLits) * 8;
+                            ipOff = state.ip - bcStart;
+                        }
+                        fprintf(stderr, "[JIT-SEND-SMALLRCVR] #%zu send=#%s rcvr=%lld "
+                                "in=%s>>%s ipOff=%ld methodOop=0x%llx\n",
+                                sendSmallCount, sel.c_str(), (long long)rv,
+                                mcls.c_str(), meth.c_str(), ipOff,
+                                (unsigned long long)method.rawBits());
                     }
                 }
             }
