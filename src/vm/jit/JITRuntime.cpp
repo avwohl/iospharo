@@ -165,6 +165,34 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (event == 201 || event == 202) {
         return;
     }
+    if (event == 102) {
+        // primSize stencil debug.  extra1 = retVal.bits, extra2 = (fmt<<48) | (slots<<32) | rcvBits&0xFFFFFFFF (low 32 of rcvBits).
+        static bool primSizeDbg = std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
+        if (primSizeDbg) {
+            static int psLog = 0;
+            // Print: first 30, then every 100th up to 200, then every 1000th.
+            psLog++;
+            bool emit = (psLog <= 30) ||
+                        (psLog <= 200 && (psLog % 100 == 0)) ||
+                        (psLog % 1000 == 0);
+            // Also: emit any case where fmt is byte format with small slot count
+            // (potential ByteString of small size — what translateWith: uses).
+            uint64_t fmt_ = (extra2 >> 48) & 0xFF;
+            uint64_t slots_ = (extra2 >> 32) & 0xFFFF;
+            bool smallBS = (fmt_ >= 16 && fmt_ <= 23) && slots_ < 4;
+            if (emit || smallBS) {
+                uint64_t rcvLow = extra2 & 0xFFFFFFFFu;
+                fprintf(stderr,
+                    "[PRIMSIZE-STENCIL #%d] retVal=0x%llx fmt=%llu slots=%llu rcvLow=0x%llx j2jDepth=%d%s\n",
+                    psLog, (unsigned long long)extra1,
+                    (unsigned long long)fmt_, (unsigned long long)slots_,
+                    (unsigned long long)rcvLow,
+                    state ? state->j2jDepth : -1,
+                    smallBS ? " smallBS" : "");
+            }
+        }
+        return;
+    }
     if (event == 99 || event == 100) {
         static bool primAtOob = std::getenv("PHARO_PRIMAT_OOB") != nullptr;
         if (primAtOob) {
@@ -1694,7 +1722,8 @@ bool JITRuntime::initialize(ObjectMemory& memory, Interpreter& interp) {
     // ~10ms on the hot path.  PHARO_B5_TRACE / PHARO_PRIMAT_OOB flip to
     // the real impl.
     bool needTrace = g_debug.b5Trace
-                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr;
+                   || std::getenv("PHARO_PRIMAT_OOB") != nullptr
+                   || std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
     helpers.j2jTrace = reinterpret_cast<void*>(needTrace
         ? &jit_rt_j2j_trace
         : &jit_rt_j2j_trace_noop);

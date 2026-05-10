@@ -3712,6 +3712,10 @@ extern "C" void stencil_primSize(JITState* s) {
     }
     Oop retVal;
     retVal.bits = (size << 3) | 1;  // SmallInteger encoding
+    // Diagnostic trace via existing J2J_TRACE helper (event=102): retVal +
+    // packed fmt/slots/rcvBits.  No-op when PHARO_PRIMSIZE_STENCIL_DBG unset.
+    _HOLE_RT_J2J_TRACE(s, 102, retVal.bits,
+        (fmt << 48) | (slotCount << 32) | (rcvr.bits & 0xFFFFFFFFu));
     J2J_INLINE_RETURN_NO_TRACE(s, retVal);
     s->returnValue = retVal;
     s->exitReason = EXIT_RETURN;
