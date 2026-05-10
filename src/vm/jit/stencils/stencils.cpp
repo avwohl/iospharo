@@ -722,37 +722,58 @@ extern "C" void stencil_jumpBack(JITState* s) {
 // Conditional backward jump (true) with yield check.  Per Smalltalk spec
 // (CLAUDE.md "Hard rules"), non-Boolean conditions must signal
 // mustBeBoolean — the silent-fallthrough older behavior was wrong.
+// OPERAND  = bcOffset of the branch target (used for yield-resume).
+// OPERAND2 = bcOffset of THIS jumpBack (used to point ip back here on
+//            the must-bool bail so interp re-executes).
 extern "C" void stencil_jumpTrueBack(JITState* s) {
-    s->sp--;
-    Oop cond = *(s->sp);
+    Oop cond = s->sp[-1];
     Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
     if (cond.bits == trueObj.bits) {
+        s->sp--;
         if (--s->yieldCountdown <= 0) {
             s->ip = s->ip + OPERAND;
             s->exitReason = EXIT_YIELD;
             return;
         }
         _HOLE_BRANCH_TARGET(s);
-    } else {
-        _HOLE_CONTINUE(s);
+        return;
     }
-}
-
-// Conditional backward jump (false) with yield check
-extern "C" void stencil_jumpFalseBack(JITState* s) {
-    s->sp--;
-    Oop cond = *(s->sp);
     Oop falseObj = *(Oop*)&_HOLE_FALSE_OOP;
     if (cond.bits == falseObj.bits) {
+        s->sp--;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->returnValue = cond;
+    s->ip = s->ip + OPERAND2;
+    s->exitReason = EXIT_MUSTBOOL;
+}
+
+// Conditional backward jump (false) with yield check.
+// OPERAND  = bcOffset of the branch target.
+// OPERAND2 = bcOffset of THIS jumpBack (must-bool bail target).
+extern "C" void stencil_jumpFalseBack(JITState* s) {
+    Oop cond = s->sp[-1];
+    Oop falseObj = *(Oop*)&_HOLE_FALSE_OOP;
+    if (cond.bits == falseObj.bits) {
+        s->sp--;
         if (--s->yieldCountdown <= 0) {
             s->ip = s->ip + OPERAND;
             s->exitReason = EXIT_YIELD;
             return;
         }
         _HOLE_BRANCH_TARGET(s);
-    } else {
-        _HOLE_CONTINUE(s);
+        return;
     }
+    Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
+    if (cond.bits == trueObj.bits) {
+        s->sp--;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->returnValue = cond;
+    s->ip = s->ip + OPERAND2;
+    s->exitReason = EXIT_MUSTBOOL;
 }
 
 // ----- ARITHMETIC STENCILS -----

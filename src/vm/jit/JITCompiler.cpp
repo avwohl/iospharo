@@ -1806,9 +1806,12 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         } else if (sid == StencilID::stencil_jumpTrue) {
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpTrueBack);
             bc.operand = bc.branchTarget;
+            // OPERAND2 = bcOffset of this jumpBack (must-bool bail target).
+            bc.operand2 = bc.bcOffset;
         } else if (sid == StencilID::stencil_jumpFalse) {
             bc.stencilIdx = static_cast<uint16_t>(StencilID::stencil_jumpFalseBack);
             bc.operand = bc.branchTarget;
+            bc.operand2 = bc.bcOffset;
         }
     }
 
@@ -1816,9 +1819,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // OPERAND as the bcOffset of THIS conditional, so on a non-Boolean
     // condition the stencil can set s->ip = bcStart + bcOffset and exit
     // with ExitMustBool — the interpreter then re-executes the
-    // conditional and fires sendMustBeBoolean per spec.  (Backward
-    // variants already use OPERAND for their yield-resume target and
-    // would need OPERAND2 if we ever add the same check there.)
+    // conditional and fires sendMustBeBoolean per spec.  Backward
+    // variants use OPERAND for the yield-resume target and OPERAND2
+    // for the same must-bool bail bcOffset.
     for (size_t bi = 0; bi < decoded.size(); bi++) {
         auto& bc = decoded[bi];
         auto sid = static_cast<StencilID>(bc.stencilIdx);
