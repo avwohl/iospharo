@@ -21,8 +21,11 @@
  *
  *   SmallInt fast paths (EXIT_RETURN on success, EXIT_SEND on bail):
  *     <pushA> <pushB> + (0x60/0x61) + ReturnTop  (^ a +/- b)
+ *     <pushA> <pushB> + 0x68        + ReturnTop  (^ a * b — 128-bit OF check)
  *     <pushA> <pushB> + (0x62..0x67) + ReturnTop (^ a cmp b — six ops)
  *     <pushA> <pushB> + (0x6E/0x6F) + ReturnTop  (^ a bitAnd:/bitOr: b)
+ *     PushRecvVar(M) <pushB> (0x60/0x61) PopStoreRecv(M) RetRecv
+ *                                                (ivar +/- ; ^ self, 5 bytes)
  *
  * Anything else returns nullptr; runtime falls through to tier-1.
  * Adding ops: mirror the arm64 sibling's matcher / emitter, swapping
@@ -101,8 +104,10 @@ enum class ReturnKind {
     InitRecvVar,         // x := <const>; ^ self
     IntArithAddReturn,   // ^ a + b (SmallInt fast path)
     IntArithSubReturn,   // ^ a - b
+    IntArithMulReturn,   // ^ a * b (SmallInt with 128-bit OF check)
     IntCmpReturn,        // ^ a cmp b (SmallInt; 6 ops)
     IntBitOpReturn,      // ^ a bitAnd:/bitOr: b
+    IntAccumRecvVar,     // ivar[M] := ivar[M] +/- b; ^ self  (5 bytes)
 };
 
 // Where a "push" bytecode reads its value from.  Used by IntArith /
@@ -307,6 +312,23 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         else if (b0 == SistaV1::PushNil)   immBits = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
         else if (b0 == SistaV1::PushTrue)  immBits = memory_.specialObject(SpecialObjectIndex::TrueObject).rawBits();
         else /* PushFalse */                immBits = memory_.specialObject(SpecialObjectIndex::FalseObject).rawBits();
+    } else if (bodyLen >= 5 && SistaV1::isPushRecvVar(b0)
+                            && (b2 == 0x60 || b2 == 0x61)
+                            && SistaV1::isPopStoreRecv(bytes[bcStart + 3])
+                            && bytes[bcStart + 4] == SistaV1::ReturnReceiver
+                            && decodePush(b1, pushes[1])
+                            && (b0 - SistaV1::PushRecvVarBase)
+                                 == (bytes[bcStart + 3] - SistaV1::PopStoreRecvBase)) {
+        // ivar[M] := ivar[M] +/- <b>; ^ self
+        // 5 bytes: PushRecvVar(M); <pushB>; arith; PopStoreRecv(M); RetRecv.
+        // The Push/PopStore indices must match (same instVar).  Match
+        // precedes IntArith{Add,Sub} below since this 5-byte shape would
+        // otherwise be a prefix of `^ ivar +/- b` followed by trailing
+        // dead code.
+        kind = ReturnKind::IntAccumRecvVar;
+        slotIndex = b0 - SistaV1::PushRecvVarBase;
+        sendIPOff = 2;
+        arithOp = b2;
     } else if (bodyLen >= 4 && (b2 == 0x60 || b2 == 0x61)
                             && bytes[bcStart + 3] == SistaV1::ReturnTop
                             && decodePush(b0, pushes[0])
@@ -314,6 +336,14 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         // ^ <a> + <b>  or  ^ <a> - <b>  (SmallInt fast path)
         kind = (b2 == 0x60) ? ReturnKind::IntArithAddReturn
                             : ReturnKind::IntArithSubReturn;
+        sendIPOff = 2;
+        arithOp = b2;
+    } else if (bodyLen >= 4 && b2 == 0x68
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // ^ <a> * <b>  (SmallInt fast path with 128-bit OF check)
+        kind = ReturnKind::IntArithMulReturn;
         sendIPOff = 2;
         arithOp = b2;
     } else if (bodyLen >= 4 && b2 >= 0x62 && b2 <= 0x67
@@ -518,6 +548,128 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
         // Fast path: store tagged result, EXIT_RETURN.
         cc.mov(ptr(state, OFF_RETVAL), result);
+        Gp exitOk = cc.new_gp32("exitOk");
+        cc.mov(exitOk, Imm(EXIT_RETURN));
+        cc.mov(ptr(state, OFF_EXIT), exitOk);
+        cc.jmp(lblDone);
+
+        cc.bind(lblBail);
+        emitArithBail(a, b);
+
+        cc.bind(lblDone);
+        cc.ret();
+        cc.end_func();
+        fullEmit = true;
+        break;
+    }
+
+    case ReturnKind::IntArithMulReturn: {
+        // ^ <a> * <b> — SmallInt multiply.  Untag both operands, signed
+        // multiply, check int64 overflow via x86 OF flag (jo), check
+        // SmallInt range via shl-3 / sar-3 round-trip, retag.
+        Gp a = loadPush(pushes[0]);
+        Gp b = loadPush(pushes[1]);
+
+        Label lblBail = cc.new_label();
+        Label lblDone = cc.new_label();
+
+        Gp aTag = cc.new_gp64("aTag");
+        cc.mov(aTag, a);
+        cc.and_(aTag, Imm(7));
+        cc.cmp(aTag, Imm(1));
+        cc.jne(lblBail);
+        Gp bTag = cc.new_gp64("bTag");
+        cc.mov(bTag, b);
+        cc.and_(bTag, Imm(7));
+        cc.cmp(bTag, Imm(1));
+        cc.jne(lblBail);
+
+        // Untag (arithmetic shift right by 3).
+        Gp prod = cc.new_gp64("prod");
+        cc.mov(prod, a);
+        cc.sar(prod, Imm(3));
+        Gp bVal = cc.new_gp64("bVal");
+        cc.mov(bVal, b);
+        cc.sar(bVal, Imm(3));
+
+        // Signed 64-bit multiply.  imul (2-op) sets OF if the int64
+        // result doesn't fit signed.
+        cc.imul(prod, bVal);
+        cc.jo(lblBail);
+
+        // SmallInt range check: prod * 8 must fit in int64 signed too
+        // (i.e., bits 60..63 of prod must all be 0 or all be 1).
+        // Verify via shl 3 / sar 3 round-trip — if the round-tripped
+        // value differs, range was exceeded.
+        Gp shifted = cc.new_gp64("shifted");
+        cc.mov(shifted, prod);
+        cc.shl(shifted, Imm(3));
+        Gp back = cc.new_gp64("back");
+        cc.mov(back, shifted);
+        cc.sar(back, Imm(3));
+        cc.cmp(back, prod);
+        cc.jne(lblBail);
+
+        // Retag (set bit 0).
+        cc.or_(shifted, Imm(1));
+
+        cc.mov(ptr(state, OFF_RETVAL), shifted);
+        Gp exitOk = cc.new_gp32("exitOk");
+        cc.mov(exitOk, Imm(EXIT_RETURN));
+        cc.mov(ptr(state, OFF_EXIT), exitOk);
+        cc.jmp(lblDone);
+
+        cc.bind(lblBail);
+        emitArithBail(a, b);
+
+        cc.bind(lblDone);
+        cc.ret();
+        cc.end_func();
+        fullEmit = true;
+        break;
+    }
+
+    case ReturnKind::IntAccumRecvVar: {
+        // ivar[M] := ivar[M] +/- <b>; ^ self.  5-byte sequence.
+        // Load `a` from receiver.slot[M], `b` from pushes[1], do the
+        // tagged add/sub with overflow, store back to ivar[M], return
+        // receiver.  Bail mirrors the 4-byte arith path: push a + b,
+        // bump ip by 2 (to arith byte), sendArgCount=1, ExitSend.
+        Gp recvPtr = cc.new_gp64("recvPtr");
+        cc.mov(recvPtr, ptr(state, OFF_RECEIVER));
+        int slotOff = OBJ_SLOT_0 + slotIndex * 8;
+        Gp a = cc.new_gp64("ivarA");
+        cc.mov(a, ptr(recvPtr, slotOff));
+        Gp b = loadPush(pushes[1]);
+
+        Label lblBail = cc.new_label();
+        Label lblDone = cc.new_label();
+
+        Gp aTag = cc.new_gp64("aTag");
+        cc.mov(aTag, a);
+        cc.and_(aTag, Imm(7));
+        cc.cmp(aTag, Imm(1));
+        cc.jne(lblBail);
+        Gp bTag = cc.new_gp64("bTag");
+        cc.mov(bTag, b);
+        cc.and_(bTag, Imm(7));
+        cc.cmp(bTag, Imm(1));
+        cc.jne(lblBail);
+
+        Gp result = cc.new_gp64("accumResult");
+        cc.mov(result, a);
+        if (arithOp == 0x60) {
+            cc.sub(result, Imm(1));
+            cc.add(result, b);
+        } else {
+            cc.sub(result, b);
+            cc.add(result, Imm(1));
+        }
+        cc.jo(lblBail);
+
+        // Store result back to receiver.slot[M], then return receiver.
+        cc.mov(ptr(recvPtr, slotOff), result);
+        cc.mov(ptr(state, OFF_RETVAL), recvPtr);
         Gp exitOk = cc.new_gp32("exitOk");
         cc.mov(exitOk, Imm(EXIT_RETURN));
         cc.mov(ptr(state, OFF_EXIT), exitOk);
