@@ -1749,6 +1749,17 @@ j2j_direct_call:
             _save->ip = s->ip + bcOffset + bcLen;
             _save->sendArgCount = nArgs;
             _save->resumeAddr = RESUME_ADDR;
+            // Diagnostic trace (event=103): on every J2J descent, log nArgs +
+            // arg1+arg2 packed.  No-op unless PHARO_PRIMSIZE_STENCIL_DBG set.
+            // arg1 = sp[-(nArgs-1)] (second arg) — meaningful only for nArgs>=2.
+            // arg2 = sp[-(nArgs-2)] (third arg)  — meaningful only for nArgs>=3.
+            if (nArgs >= 2) {
+                uint64_t a1 = (uint64_t)s->sp[-(nArgs - 1)].bits;
+                uint64_t a2 = nArgs >= 3 ? (uint64_t)s->sp[-(nArgs - 2)].bits : 0;
+                _HOLE_RT_J2J_TRACE(s, 103,
+                    ((uint64_t)nArgs << 56) | (a1 & 0x00FFFFFFFFFFFFFFULL),
+                    a2);
+            }
             // B5 trace removed from hot J2J save path 2026-04-30 — was
             // an unconditional indirect call to jit_rt_j2j_trace_noop
             // (set when no diagnostic flag is on), costing ~6 cycles

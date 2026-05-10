@@ -165,6 +165,24 @@ extern "C" void jit_rt_j2j_trace(JITState* state, uint64_t event,
     if (event == 201 || event == 202) {
         return;
     }
+    if (event == 103) {
+        // J2J descent trace.  extra1 = (nArgs<<56) | (arg1.bits & ...),
+        // extra2 = arg2.bits.  Only fires for nArgs>=2.
+        static bool dbg = std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
+        if (dbg) {
+            static int log103 = 0;
+            uint64_t nA = (extra1 >> 56) & 0xFF;
+            // Only log 3- or 4-arg descents (likely translate:from:to:table:).
+            if ((nA == 3 || nA == 4) && ++log103 <= 100) {
+                uint64_t a1 = extra1 & 0x00FFFFFFFFFFFFFFULL;
+                fprintf(stderr,
+                    "[J2J-DESCEND #%d] nArgs=%llu arg1=0x%llx arg2=0x%llx\n",
+                    log103, (unsigned long long)nA,
+                    (unsigned long long)a1, (unsigned long long)extra2);
+            }
+        }
+        return;
+    }
     if (event == 102) {
         // primSize stencil debug.  extra1 = retVal.bits, extra2 = (fmt<<48) | (slots<<32) | rcvBits&0xFFFFFFFF (low 32 of rcvBits).
         static bool primSizeDbg = std::getenv("PHARO_PRIMSIZE_STENCIL_DBG") != nullptr;
