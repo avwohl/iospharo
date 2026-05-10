@@ -54,7 +54,6 @@ set(VM_SOURCES
     src/vm/jit/CodeZone.cpp
     src/vm/jit/JITCompiler.cpp
     src/vm/jit/JITRuntime.cpp
-    src/vm/jit/Tier2Compiler.cpp
     src/vm/jit/TrampolineAsm.S
     src/vm/jit/sista/SistaIR.cpp
     src/vm/jit/sista/SistaBuilder.cpp
@@ -70,6 +69,16 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MAT
     list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_arm64.cpp)
 else()
     list(APPEND VM_SOURCES src/vm/jit/sista/SistaLowering_x86_64.cpp)
+endif()
+
+# Tier-2 asmjit-emitted machine code, same arch-split pattern as
+# SistaLowering above.  The arm64 path is the original Tier2Compiler.cpp;
+# the x86_64 sibling starts as a stub that bails every method to tier-1
+# and gets filled in op by op.
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64" OR CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    list(APPEND VM_SOURCES src/vm/jit/Tier2Compiler_arm64.cpp)
+else()
+    list(APPEND VM_SOURCES src/vm/jit/Tier2Compiler_x86_64.cpp)
 endif()
 
 # Ensure the .S file is treated as a C-preprocessed assembly source so the
