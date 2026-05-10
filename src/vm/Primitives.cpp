@@ -1843,6 +1843,39 @@ PrimitiveResult Interpreter::primitiveAt(int argCount) {
                 std::string c = memory_.classNameOf(r);
                 fprintf(stderr, "[PRIM-AT-BADIDX]   [%zu] %s>>%s\n", j, c.c_str(), s.c_str());
             }
+            // Dump the active method's temps (args 0..3 + locals 4..7).  For
+            // String class>>translate:from:to:table: this is aString, start,
+            // stop, table, char, i — confirms whether the J2J argument-frame
+            // layout is correct.
+            if (framePointer_) {
+                auto descr = [&](Oop v) -> std::string {
+                    if (v.isSmallInteger()) {
+                        return std::string("SmallInt(") +
+                            std::to_string((long long)v.asSmallInteger()) + ")";
+                    }
+                    if (v.isSmallFloat()) return "SmallFloat";
+                    if (v.isCharacter()) return "Character";
+                    if (v.isNil()) return "nil";
+                    if (v.rawBits() == memory_.trueObject().rawBits()) return "true";
+                    if (v.rawBits() == memory_.falseObject().rawBits()) return "false";
+                    if (v.isObject() && v.rawBits() > 0x10000) {
+                        std::string c = memory_.classNameOf(v);
+                        ObjectHeader* h = v.asObjectPtr();
+                        return c + "[" + std::to_string(h->byteSize()) + "B]";
+                    }
+                    return "?";
+                };
+                for (int t = 0; t < 8; t++) {
+                    Oop tv = *(framePointer_ + 1 + t);
+                    fprintf(stderr, "[PRIM-AT-BADIDX]   temp[%d]=0x%llx %s\n",
+                            t, (unsigned long long)tv.rawBits(), descr(tv).c_str());
+                }
+                // Receiver (just below FP+0 traditionally, but the C++ VM keeps it
+                // in receiver_).  Also log it.
+                fprintf(stderr, "[PRIM-AT-BADIDX]   receiver_=0x%llx %s\n",
+                        (unsigned long long)receiver_.rawBits(),
+                        descr(receiver_).c_str());
+            }
         }
         return PrimitiveResult::Failure;
     }
