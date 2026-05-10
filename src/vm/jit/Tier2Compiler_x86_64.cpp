@@ -27,15 +27,11 @@
  *     PushRecvVar(M) <pushB> (0x60/0x61) PopStoreRecv(M) RetRecv
  *                                                (ivar +/- ; ^ self, 5 bytes)
  *
- *   Inline-IC sends (gated; PHARO_T2_X86_INLINE_IC=1 to opt in.
- *   Hit-path produces wrong cachedTarget under load on x86 — dispatches
- *   to mistargeted methods causing DNU errors.  PHARO_T2_FORCE_MISS=1
- *   eliminates the errors, narrowing to the 6-way probe sequence;
- *   arm64 sibling's identical-looking code works fine, so the bug is
- *   x86-specific — likely an asmjit immediate-encoding subtlety in the
- *   lookupKey OR-mask path.  Code retained for the next debug pass):
- *     <push> Send0(N) ReturnTop                 (^ rcvr foo)
+ *   Inline-IC sends (probe → ExitSendCached on hit, ExitSend on miss):
  *     <pushA> <pushB> Send1(N) ReturnTop        (^ a foo: b)
+ *     <push> Send0(N) ReturnTop                 (^ rcvr foo, gated:
+ *                                                PHARO_T2_ZEROARG_IC=1
+ *                                                — also gated on arm64)
  *
  * Anything else returns nullptr; runtime falls through to tier-1.
  * Adding ops: mirror the arm64 sibling's matcher / emitter, swapping
@@ -385,41 +381,27 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         kind = ReturnKind::IntBitOpReturn;
         sendIPOff = 2;
         arithOp = b2;
+    } else if (bodyLen >= 4 && SistaV1::isSend1(b2)
+                            && bytes[bcStart + 3] == SistaV1::ReturnTop
+                            && decodePush(b0, pushes[0])
+                            && decodePush(b1, pushes[1])) {
+        // ^ <a> foo: <b>  — 1-arg send with inline IC probe.
+        kind = ReturnKind::OneArgSendInlineIC;
+        numPushes = 2;
+        sendIPOff = 2;
     } else {
-        // Inline-IC sends.  Both shapes are gated until the IC hit-path
-        // is debugged on x86_64 — the emit code below is correct on its
-        // face but produces wrong cachedTarget under load (Object>>foo:
-        // dispatches to mistargeted methods, manifesting as e.g.
-        // "SmallInteger did not understand #setToEnd" DNUs).
-        // PHARO_T2_FORCE_MISS=1 forces the miss path and the errors
-        // disappear, narrowing the bug to the 6-way probe / IC-hit
-        // sequence.  Suspected: lookupKey computation diverging from
-        // the runtime's classIndex format somewhere we haven't found
-        // yet.  arm64 sibling's identical-looking code works in
-        // production, so the bug is x86-specific (likely an asmjit
-        // immediate-encoding subtlety).  Gate behind opt-in so the
-        // matcher / emit code stays in place for the next debug pass.
-        //
-        //   PHARO_T2_ZEROARG_IC=1    enable 0-arg shape (also gated on arm64)
-        //   PHARO_T2_X86_INLINE_IC=1 enable 1-arg shape (and the 0-arg one)
-        static bool t2InlineIC =
-            std::getenv("PHARO_T2_X86_INLINE_IC") != nullptr;
+        // ZeroArgSendInlineIC stays gated — matches the arm64 sibling
+        // which left it gated after measured perf regression on tier
+        // interaction (see Tier2Compiler_arm64.cpp:412+).  Set
+        // PHARO_T2_ZEROARG_IC=1 to opt in.
         static bool t2ZeroargIC =
             std::getenv("PHARO_T2_ZEROARG_IC") != nullptr;
-        if (t2InlineIC && t2ZeroargIC && bodyLen >= 3
-                       && SistaV1::isSend0(b1)
-                       && b2 == SistaV1::ReturnTop
-                       && decodePush(b0, pushes[0])) {
+        if (t2ZeroargIC && bodyLen >= 3 && SistaV1::isSend0(b1)
+                        && b2 == SistaV1::ReturnTop
+                        && decodePush(b0, pushes[0])) {
             kind = ReturnKind::ZeroArgSendInlineIC;
             numPushes = 1;
             sendIPOff = 1;
-        } else if (t2InlineIC && bodyLen >= 4 && SistaV1::isSend1(b2)
-                        && bytes[bcStart + 3] == SistaV1::ReturnTop
-                        && decodePush(b0, pushes[0])
-                        && decodePush(b1, pushes[1])) {
-            kind = ReturnKind::OneArgSendInlineIC;
-            numPushes = 2;
-            sendIPOff = 2;
         } else {
             return bail("no pattern match");
         }
@@ -435,6 +417,15 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
 
     CodeHolder code;
     code.init(runtime_->environment(), runtime_->cpu_features());
+
+    // PHARO_T2_X86_LOG=1 — dump asmjit IR + final machine code per
+    // compile.  Heavy; only enable when actively debugging T2 emit.
+    static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
+        if (std::getenv("PHARO_T2_X86_LOG"))
+            return new asmjit::FileLogger(stderr);
+        return nullptr;
+    }();
+    if (asmjitLogger) code.set_logger(asmjitLogger);
 
     Compiler cc(&code);
     FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
