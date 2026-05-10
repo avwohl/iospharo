@@ -46,12 +46,16 @@
 
 #include "Tier2Compiler.hpp"
 #include "JITRuntime.hpp"
+#include "JITCompiler.hpp"
 #include "JITMethod.hpp"
 #include "SistaV1.hpp"
 #include "../ObjectMemory.hpp"
 
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <set>
+#include <vector>
 
 #if PHARO_JIT_ENABLED
 
@@ -77,6 +81,7 @@ constexpr int OFF_ICDATAPTR    = 96;
 constexpr int OFF_SENDARGCOUNT = 104;
 constexpr int OFF_TRUEOOP      = 128;
 constexpr int OFF_FALSEOOP     = 136;
+constexpr int OFF_YIELDCD      = 176;  // int32_t yieldCountdown
 
 // ObjectHeader classIndex layout (low 22 bits).
 constexpr uint64_t CLASS_INDEX_MASK = 0x3FFFFFULL;
@@ -90,6 +95,7 @@ constexpr int ASSOC_VALUE = 16;
 constexpr int EXIT_RETURN       = 1;
 constexpr int EXIT_SEND         = 2;
 constexpr int EXIT_SEND_CACHED  = 7;
+constexpr int EXIT_YIELD        = 11;  // backward-jump yield bail
 
 // IC data layout (mirror JITMethod.hpp): 6 entries × 24 bytes (key,
 // methodBits, extra) + 8 bytes selectorBits at slot 18.
@@ -102,6 +108,59 @@ constexpr int IC_METHOD_OFF(int i) { return i * 3 * 8 + 8;   }
 // per-arch g_lowerStats pattern).
 size_t g_compiled = 0;
 size_t g_bailed   = 0;
+
+// Multi-bytecode compile counters (separate from g_compiled/g_bailed
+// so we can attribute MBC-vs-template throughput).
+size_t g_mbcCompiled = 0;
+size_t g_mbcBailed   = 0;
+
+// PHARO_T2_MBC_JUMPS=0 disables short jumps + ExtJump variants in MBC
+// compilation.  Default-on (matches arm64 sibling 2026-04-18 flip after
+// SmallIntegerTest + whileTrue/ifTrue:ifFalse: stress validation).
+bool jumpsEnabledByEnv() {
+    const char* env = std::getenv("PHARO_T2_MBC_JUMPS");
+    return !(env && env[0] == '0');
+}
+
+// Bytecodes the multi-bc walker knows how to emit inline.  Anything
+// outside this set causes the whole method to bail (return nullptr).
+// Short jumps gated by PHARO_T2_MBC_JUMPS.
+bool isMBCSupported(uint8_t op) {
+    if (op <= 0x4B) return true;                 // Push{RecvVar,LitVar,LitConst,Temp}
+    if (op == SistaV1::PushReceiver) return true;
+    if (op >= 0x4D && op <= 0x51) return true;   // Push{True,False,Nil,Zero,One}
+    if (op == SistaV1::Dup) return true;
+    if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) return true;
+    if (op >= 0x60 && op <= 0x6F) return true;   // arith
+    if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) return true;
+    if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) return true;
+    if (op == SistaV1::Pop) return true;
+    if (SistaV1::isAnyShortJump(op) && jumpsEnabledByEnv()) return true;
+    return false;
+}
+
+// Send bytecodes that the multi-bc walker can emit a "bail to
+// interpreter at this byte" prefix for.  Gated separately
+// (PHARO_T2_MBC_SENDS / PHARO_T2_MBC_IC); default off.
+bool isMBCBailableSend(uint8_t op) {
+    return (op >= 0x70 && op <= 0xAF);
+}
+
+// Number of args the bailable send takes.  -1 means "don't support"
+// (SpecialSelectors don't carry an arg count we can use here).
+int mbcSendArgCount(uint8_t op) {
+    if (op >= 0x70 && op <= 0x7F) return -1;     // SpecialSelector — skip
+    if (op >= 0x80 && op <= 0x8F) return 0;      // Send0
+    if (op >= 0x90 && op <= 0x9F) return 1;      // Send1
+    if (op >= 0xA0 && op <= 0xAF) return 2;      // Send2
+    return -1;
+}
+
+// Byte length of a supported bytecode at offset i.  Always 1 here;
+// the multi-bc walker handles 2-byte ExtJump variants separately
+// (i += 2 / i += 4 in those branches) so this only fires for the
+// 1-byte ops that fall through the default-step path.
+int mbcOpLen(uint8_t op) { (void)op; return 1; }
 
 // What kind of return-shape method this is.  Maps onto the load-Oop
 // emit branch in compile().  Mirrors the arm64 sibling's enum.
@@ -206,6 +265,16 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         return nullptr;
     }
     size_t bodyLen = totalBytes - bcStart - (size_t)unusedBytes;
+
+    // Try the multi-bytecode walker first — it covers methods with
+    // arbitrary push/pop/store/arith/jump mixes that don't fit any of
+    // the leading-pattern templates below.  Returns nullptr if it
+    // can't handle the method (unsupported op, no return, etc.).
+    if (void* mbcFunc = tryCompileMultiBC(compiledMethod, bytes, bcStart, bodyLen)) {
+        methodsCompiled_++;
+        g_compiled++;
+        return mbcFunc;
+    }
 
     // ---- Pattern match -----------------------------------------------------
     //
@@ -992,15 +1061,692 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     return func;
 }
 
+// Walk the full bytecode sequence of a method and emit asmjit code
+// per op.  Two passes:
+//   1. Validate — every op must be in the supported set, jumps must be
+//      forward-or-validated-backward, methods must reach a return or a
+//      bailable send.
+//   2. Emit — straight linear walk over the bytecode, with labels at
+//      jump targets (pre-allocated from the validation pass).
+//
+// Mirrors the arm64 sibling at Tier2Compiler_arm64.cpp:1462+; the
+// only x86-specific bits are jcc-based-select-instead-of-cmov, the
+// 2-op `mov dst, src; sar dst, imm` style for arith vs arm64's 3-op
+// form, and the `mov keyOrMask, Imm(0x80000000); or lookupKey, keyOrMask`
+// dance for the IC lookupKey OR mask (32-bit imm sign-extends on x86).
 void* Tier2Compiler::tryCompileMultiBC(Oop compiledMethod,
                                         const uint8_t* bytes,
                                         size_t bcStart,
                                         size_t bodyLen) {
-    (void)compiledMethod;
-    (void)bytes;
-    (void)bcStart;
-    (void)bodyLen;
-    return nullptr;
+    if (bodyLen < 2) return nullptr;
+
+    // ---- Pass 1: validate ----
+    bool sawReturn = false;
+    bool willBailAtSend = false;
+    size_t bailSendOffset = 0;
+    uint8_t bailSendOp = 0;
+    std::set<size_t> jumpTargets;
+    auto shortJumpTarget = [](uint8_t op, size_t i) -> size_t {
+        uint8_t base = SistaV1::isShortJump(op)      ? SistaV1::ShortJumpBase
+                     : SistaV1::isShortJumpTrue(op)  ? SistaV1::ShortJumpTrueBase
+                                                    : SistaV1::ShortJumpFalseBase;
+        return i + 2 + (size_t)(op - base);
+    };
+    const bool jumpsEnabled = jumpsEnabledByEnv();
+    auto isExtForwardJump = [](uint8_t op) {
+        return op == SistaV1::ExtJump
+            || op == SistaV1::ExtJumpTrue
+            || op == SistaV1::ExtJumpFalse;
+    };
+
+    for (size_t i = 0; i < bodyLen;) {
+        uint8_t op = bytes[bcStart + i];
+        if (SistaV1::isAnyShortJump(op) && jumpsEnabled) {
+            size_t target = shortJumpTarget(op, i);
+            if (target >= bodyLen || target <= i) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            jumpTargets.insert(target);
+            i += mbcOpLen(op);
+            continue;
+        }
+        if (isExtForwardJump(op) && jumpsEnabled) {
+            if (i + 1 >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            uint8_t offByte = bytes[bcStart + i + 1];
+            size_t target = i + 2 + (size_t)offByte;
+            if (target >= bodyLen || target <= i) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            jumpTargets.insert(target);
+            i += 2;
+            continue;
+        }
+        if (op == SistaV1::ExtendB && jumpsEnabled) {
+            // ExtB <extByte> ExtJump <offByte> — backward unconditional
+            // jump.  ExtB before any other op is unsupported here.
+            if (i + 3 >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            uint8_t extByte = bytes[bcStart + i + 1];
+            uint8_t nextOp  = bytes[bcStart + i + 2];
+            uint8_t offByte = bytes[bcStart + i + 3];
+            if (nextOp != SistaV1::ExtJump) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            int extBVal = (extByte >= 128) ? ((int)extByte | ~0xFF) : (int)extByte;
+            int offset = (extBVal << 8) | (int)offByte;
+            int64_t targetSigned = (int64_t)i + 2 + 2 + offset;
+            if (targetSigned < 0 || (size_t)targetSigned >= bodyLen) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            jumpTargets.insert((size_t)targetSigned);
+            i += 4;
+            continue;
+        }
+        if (isMBCSupported(op)) {
+            if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+                sawReturn = true;
+                break;
+            }
+            i += mbcOpLen(op);
+            continue;
+        }
+        if (isMBCBailableSend(op)) {
+            // Sends are gated.  PHARO_T2_MBC_SENDS=1 → simple bail.
+            // PHARO_T2_MBC_IC=1 → inline IC probe with hit/miss exit.
+            // Default off — both regress IC hit rate when T1's warmup
+            // is intercepted by T2 at this site.
+            static bool t2MbcSends =
+                std::getenv("PHARO_T2_MBC_SENDS") != nullptr;
+            static bool t2MbcIC =
+                std::getenv("PHARO_T2_MBC_IC") != nullptr;
+            if (!t2MbcSends && !t2MbcIC) {
+                g_mbcBailed++;
+                return nullptr;
+            }
+            int nArgs = mbcSendArgCount(op);
+            if (nArgs < 0) { g_mbcBailed++; return nullptr; }
+            willBailAtSend = true;
+            bailSendOffset = i;
+            bailSendOp = op;
+            (void)bailSendOp;
+            break;
+        }
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    if (!sawReturn && !willBailAtSend) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    ObjectHeader* methodObj =
+        reinterpret_cast<ObjectHeader*>(compiledMethod.rawBits());
+    uint64_t nilBits  = memory_.specialObject(SpecialObjectIndex::NilObject).rawBits();
+    uint64_t oneBits  = Oop::fromSmallInteger(1).rawBits();
+    uint64_t zeroBits = Oop::fromSmallInteger(0).rawBits();
+    int numLiterals = 0;
+    {
+        Oop hdrOop = methodObj->slotAt(0);
+        if (hdrOop.isSmallInteger()) {
+            numLiterals = (int)(hdrOop.asSmallInteger() & 0x7FFF);
+        }
+    }
+
+    // ---- Pass 2: emit ----
+    using namespace asmjit;
+    using namespace asmjit::x86;
+
+    CodeHolder code;
+    code.init(runtime_->environment(), runtime_->cpu_features());
+    static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
+        if (std::getenv("PHARO_T2_X86_LOG"))
+            return new asmjit::FileLogger(stderr);
+        return nullptr;
+    }();
+    if (asmjitLogger) code.set_logger(asmjitLogger);
+
+    Compiler cc(&code);
+    FuncNode* fn = cc.add_func(FuncSignature::build<void, void*>());
+    Gp state = cc.new_gp64("state");
+    fn->set_arg(0, state);
+
+    // Live sp: loaded once at entry, written back to state.sp on every
+    // arith bail / send bail / return (plus before back-edge yield).
+    Gp sp = cc.new_gp64("sp");
+    cc.mov(sp, ptr(state, OFF_SP));
+
+    auto emitPush = [&](Gp v) {
+        cc.mov(ptr(sp, 0), v);
+        cc.add(sp, Imm(8));
+    };
+    auto emitPop = [&]() -> Gp {
+        cc.sub(sp, Imm(8));
+        Gp v = cc.new_gp64("popV");
+        cc.mov(v, ptr(sp, 0));
+        return v;
+    };
+
+    Label lblBailTail = cc.new_label();
+    Gp bailIPOff = cc.new_gp64("bailIPOff");
+    Label lblFuncEnd = cc.new_label();
+
+    std::map<size_t, Label> offsetLabels;
+    for (size_t t : jumpTargets) offsetLabels[t] = cc.new_label();
+
+    bool emittedReturn = false;
+    bool emittedSendBail = false;
+
+    for (size_t i = 0; i < bodyLen && !emittedReturn && !emittedSendBail;) {
+        uint8_t op = bytes[bcStart + i];
+        size_t opStart = i;
+
+        {
+            auto it = offsetLabels.find(i);
+            if (it != offsetLabels.end()) cc.bind(it->second);
+        }
+
+        // ---- bailable send (gated; mirrors arm64 1699-1848) ----
+        if (willBailAtSend && i == bailSendOffset) {
+            cc.mov(ptr(state, OFF_SP), sp);
+
+            int nArgs = mbcSendArgCount(op);
+
+            Gp ip = cc.new_gp64("sendIp");
+            cc.mov(ip, ptr(state, OFF_IP));
+            cc.add(ip, Imm(static_cast<int>(i)));
+            cc.mov(ptr(state, OFF_IP), ip);
+
+            Gp wArgs = cc.new_gp32("wArgs");
+            cc.mov(wArgs, Imm(nArgs));
+            cc.mov(ptr(state, OFF_SENDARGCOUNT), wArgs);
+
+            static bool t2MbcSends =
+                std::getenv("PHARO_T2_MBC_SENDS") != nullptr;
+            if (t2MbcSends) {
+                Gp zero64 = cc.new_gp64("zero64");
+                cc.xor_(zero64, zero64);
+                cc.mov(ptr(state, OFF_ICDATAPTR), zero64);
+                Gp exitV = cc.new_gp32("exitV");
+                cc.mov(exitV, Imm(EXIT_SEND));
+                cc.mov(ptr(state, OFF_EXIT), exitV);
+                emittedSendBail = true;
+                break;
+            }
+
+            // Inline-IC mode (PHARO_T2_MBC_IC=1).  Try shared-IC with T1
+            // first; private buffer fallback.  Mirrors arm64 1742-1787.
+            uint64_t icAddr = 0;
+            if (t1Compiler_) {
+                const std::vector<uint16_t>* sites =
+                    t1Compiler_->getSendSiteBCOffsets(compiledMethod.rawBits());
+                JITMethod* t1Method = methodMap_.lookup(compiledMethod.rawBits());
+                if (sites && t1Method && t1Method->numICEntries > 0) {
+                    uint16_t sendIdx = UINT16_MAX;
+                    for (size_t s = 0; s < sites->size(); s++) {
+                        if ((*sites)[s] == (uint16_t)i) {
+                            sendIdx = static_cast<uint16_t>(s);
+                            break;
+                        }
+                    }
+                    if (sendIdx < t1Method->numICEntries) {
+                        uint8_t* icStart = t1Method->icZoneStart();
+                        uint8_t* icBase  = icStart +
+                                            sendIdx * IC_BYTES_PER_SITE;
+                        icAddr = reinterpret_cast<uint64_t>(icBase);
+                    }
+                }
+            }
+            if (icAddr == 0) {
+                auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
+                std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
+                icAddr = reinterpret_cast<uint64_t>(ic.get());
+                icBuffers_.push_back(std::move(ic));
+                int sendBase = 0x80;
+                if (op >= 0x90 && op <= 0x9F) sendBase = 0x90;
+                else if (op >= 0xA0 && op <= 0xAF) sendBase = 0xA0;
+                int selIdx = op - sendBase;
+                if (selIdx >= 0 && selIdx < numLiterals) {
+                    icBuffers_.back()[18] =
+                        methodObj->slotAt(1 + selIdx).rawBits();
+                }
+            }
+
+            // Get receiver from stack: sp[-(nArgs+1)*8].
+            Gp recv = cc.new_gp64("recvIC");
+            cc.mov(recv, ptr(sp, -(nArgs + 1) * 8));
+
+            Label lblHeap   = cc.new_label();
+            Label lblCheck  = cc.new_label();
+            Label lblMiss   = cc.new_label();
+            Label lblEpi    = cc.new_label();
+            Label lblHit[IC_ENTRIES];
+            for (int k = 0; k < IC_ENTRIES; k++) lblHit[k] = cc.new_label();
+
+            Gp tag = cc.new_gp64("tag");
+            Gp lookupKey = cc.new_gp64("lookupKey");
+            cc.mov(tag, recv);
+            cc.and_(tag, Imm(7));
+            cc.test(tag, tag);
+            cc.jz(lblHeap);
+            cc.mov(lookupKey, tag);
+            // 32-bit imm sign-extends on `or r64, imm32`; materialize.
+            Gp keyOrMask = cc.new_gp64("keyOrMask");
+            cc.mov(keyOrMask, Imm(0x80000000ULL));
+            cc.or_(lookupKey, keyOrMask);
+            cc.jmp(lblCheck);
+
+            cc.bind(lblHeap);
+            cc.test(recv, recv);
+            cc.jz(lblMiss);   // nil → bail
+            Gp header = cc.new_gp64("hdr");
+            cc.mov(header, ptr(recv, 0));
+            cc.mov(lookupKey, header);
+            cc.and_(lookupKey, Imm(CLASS_INDEX_MASK));
+
+            cc.bind(lblCheck);
+            Gp icData = cc.new_gp64("icData");
+            cc.mov(icData, Imm(icAddr));
+            for (int k = 0; k < IC_ENTRIES; k++) {
+                Gp key = cc.new_gp64("key");
+                cc.mov(key, ptr(icData, IC_KEY_OFF(k)));
+                cc.cmp(lookupKey, key);
+                cc.je(lblHit[k]);
+            }
+            cc.jmp(lblMiss);
+
+            Gp exitCode = cc.new_gp32("exitIC");
+            for (int k = 0; k < IC_ENTRIES; k++) {
+                cc.bind(lblHit[k]);
+                Gp method = cc.new_gp64("methodIC");
+                cc.mov(method, ptr(icData, IC_METHOD_OFF(k)));
+                cc.mov(ptr(state, OFF_CACHEDTARGET), method);
+                cc.mov(exitCode, Imm(EXIT_SEND_CACHED));
+                cc.jmp(lblEpi);
+            }
+
+            cc.bind(lblMiss);
+            cc.mov(exitCode, Imm(EXIT_SEND));
+
+            cc.bind(lblEpi);
+            cc.mov(ptr(state, OFF_ICDATAPTR), icData);
+            cc.mov(ptr(state, OFF_EXIT), exitCode);
+
+            emittedSendBail = true;
+            break;
+        }
+
+        // ---- pushes ----
+        if (op >= SistaV1::PushRecvVarBase && op <= SistaV1::PushRecvVarLast) {
+            int idx = op - SistaV1::PushRecvVarBase;
+            Gp recv = cc.new_gp64("recv");
+            cc.mov(recv, ptr(state, OFF_RECEIVER));
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(recv, OBJ_SLOT_0 + idx * 8));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
+            int idx = op - SistaV1::PushLitVarBase;
+            Gp lp = cc.new_gp64("lp");
+            cc.mov(lp, ptr(state, OFF_LITERALS));
+            Gp as = cc.new_gp64("as");
+            cc.mov(as, ptr(lp, idx * 8));
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(as, ASSOC_VALUE));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushLitConstBase && op <= SistaV1::PushLitConstLast) {
+            int idx = op - SistaV1::PushLitConstBase;
+            Oop lit = methodObj->slotAt(1 + idx);
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, Imm(lit.rawBits()));
+            emitPush(v);
+        }
+        else if (op >= SistaV1::PushTempBase && op <= SistaV1::PushTempLast) {
+            int idx = op - SistaV1::PushTempBase;
+            Gp tp = cc.new_gp64("tp");
+            cc.mov(tp, ptr(state, OFF_TEMPBASE));
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(tp, idx * 8));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushReceiver) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(state, OFF_RECEIVER));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushTrue) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(state, OFF_TRUEOOP));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushFalse) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, ptr(state, OFF_FALSEOOP));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushNil) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, Imm(nilBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushZero) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, Imm(zeroBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::PushOne) {
+            Gp v = cc.new_gp64("v");
+            cc.mov(v, Imm(oneBits));
+            emitPush(v);
+        }
+        else if (op == SistaV1::Dup) {
+            Gp v = cc.new_gp64("dupv");
+            cc.mov(v, ptr(sp, -8));
+            emitPush(v);
+        }
+        // ---- arith (0x60-0x6F) ----
+        else if (op >= 0x60 && op <= 0x6F) {
+            cc.mov(ptr(state, OFF_SP), sp);
+
+            Gp b = cc.new_gp64("b");
+            Gp a = cc.new_gp64("a");
+            cc.mov(b, ptr(sp, -8));
+            cc.mov(a, ptr(sp, -16));
+
+            Label lblLocalBail = cc.new_label();
+
+            Gp tA = cc.new_gp64("tA");
+            cc.mov(tA, a);
+            cc.and_(tA, Imm(7));
+            cc.cmp(tA, Imm(1));
+            cc.jne(lblLocalBail);
+            Gp tB = cc.new_gp64("tB");
+            cc.mov(tB, b);
+            cc.and_(tB, Imm(7));
+            cc.cmp(tB, Imm(1));
+            cc.jne(lblLocalBail);
+
+            Gp result = cc.new_gp64("result");
+            bool isComp = (op >= 0x62 && op <= 0x67);
+            bool isBit  = (op == 0x6E || op == 0x6F);
+
+            if (op == 0x60) {
+                cc.mov(result, a);
+                cc.sub(result, Imm(1));
+                cc.add(result, b);
+                cc.jo(lblLocalBail);
+            }
+            else if (op == 0x61) {
+                cc.mov(result, a);
+                cc.sub(result, b);
+                cc.add(result, Imm(1));
+                cc.jo(lblLocalBail);
+            }
+            else if (op == 0x68) {
+                Gp prod = cc.new_gp64("prod");
+                cc.mov(prod, a);
+                cc.sar(prod, Imm(3));
+                Gp bVal = cc.new_gp64("bVal");
+                cc.mov(bVal, b);
+                cc.sar(bVal, Imm(3));
+                cc.imul(prod, bVal);
+                cc.jo(lblLocalBail);
+                Gp shifted = cc.new_gp64("shifted");
+                cc.mov(shifted, prod);
+                cc.shl(shifted, Imm(3));
+                Gp back = cc.new_gp64("back");
+                cc.mov(back, shifted);
+                cc.sar(back, Imm(3));
+                cc.cmp(back, prod);
+                cc.jne(lblLocalBail);
+                cc.or_(shifted, Imm(1));
+                cc.mov(result, shifted);
+            }
+            else if (isBit) {
+                cc.mov(result, a);
+                if (op == 0x6E) cc.and_(result, b);
+                else            cc.or_(result, b);
+            }
+            else if (isComp) {
+                cc.cmp(a, b);
+                cc.mov(result, ptr(state, OFF_FALSEOOP));
+                Label lblSkip = cc.new_label();
+                switch (op) {
+                case 0x62: cc.jge(lblSkip); break;   // <  → skip if !( <)
+                case 0x63: cc.jle(lblSkip); break;   // >  → skip if !( >)
+                case 0x64: cc.jg(lblSkip);  break;   // <= → skip if !(<=)
+                case 0x65: cc.jl(lblSkip);  break;   // >= → skip if !(>=)
+                case 0x66: cc.jne(lblSkip); break;   // =  → skip if !( =)
+                case 0x67: cc.je(lblSkip);  break;   // ~= → skip if !(~=)
+                }
+                cc.mov(result, ptr(state, OFF_TRUEOOP));
+                cc.bind(lblSkip);
+            }
+            else {
+                // Unsupported arith op (/, //, \\, @, bitShift:) — bail.
+                cc.jmp(lblLocalBail);
+                cc.bind(lblLocalBail);
+                cc.mov(bailIPOff, Imm(static_cast<int>(opStart)));
+                cc.jmp(lblBailTail);
+                i += mbcOpLen(op);
+                continue;
+            }
+
+            // Replace top 2 stack entries with 1 result.
+            cc.sub(sp, Imm(8));
+            cc.mov(ptr(sp, -8), result);
+            Label lblArithDone = cc.new_label();
+            cc.jmp(lblArithDone);
+
+            cc.bind(lblLocalBail);
+            cc.mov(bailIPOff, Imm(static_cast<int>(opStart)));
+            cc.jmp(lblBailTail);
+
+            cc.bind(lblArithDone);
+        }
+        // ---- stores + pop ----
+        else if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+            int idx = op - SistaV1::PopStoreRecvBase;
+            Gp v = emitPop();
+            Gp recv = cc.new_gp64("recv");
+            cc.mov(recv, ptr(state, OFF_RECEIVER));
+            cc.mov(ptr(recv, OBJ_SLOT_0 + idx * 8), v);
+        }
+        else if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
+            int idx = op - SistaV1::PopStoreTempBase;
+            Gp v = emitPop();
+            Gp tp = cc.new_gp64("tp");
+            cc.mov(tp, ptr(state, OFF_TEMPBASE));
+            cc.mov(ptr(tp, idx * 8), v);
+        }
+        else if (op == SistaV1::Pop) {
+            cc.sub(sp, Imm(8));
+        }
+        // ---- returns ----
+        else if (op >= SistaV1::ReturnReceiver && op <= SistaV1::ReturnTop) {
+            cc.mov(ptr(state, OFF_SP), sp);
+            Gp ret = cc.new_gp64("ret");
+            switch (op) {
+            case SistaV1::ReturnReceiver:
+                cc.mov(ret, ptr(state, OFF_RECEIVER));
+                break;
+            case SistaV1::ReturnTrue:
+                cc.mov(ret, ptr(state, OFF_TRUEOOP));
+                break;
+            case SistaV1::ReturnFalse:
+                cc.mov(ret, ptr(state, OFF_FALSEOOP));
+                break;
+            case SistaV1::ReturnNil:
+                cc.mov(ret, Imm(nilBits));
+                break;
+            case SistaV1::ReturnTop:
+                cc.mov(ret, ptr(sp, -8));
+                break;
+            }
+            cc.mov(ptr(state, OFF_RETVAL), ret);
+            Gp exitCode = cc.new_gp32("exit");
+            cc.mov(exitCode, Imm(EXIT_RETURN));
+            cc.mov(ptr(state, OFF_EXIT), exitCode);
+            emittedReturn = true;
+        }
+        // ---- short jumps ----
+        else if (SistaV1::isShortJump(op)) {
+            size_t target = i + 2 + (size_t)(op - SistaV1::ShortJumpBase);
+            cc.jmp(offsetLabels.at(target));
+        }
+        else if (SistaV1::isConditionalShortJump(op) ||
+                 op == SistaV1::ExtJumpTrue ||
+                 op == SistaV1::ExtJumpFalse) {
+            bool jumpIfTrue;
+            size_t target;
+            int opLen;
+            if (SistaV1::isShortJumpTrue(op)) {
+                jumpIfTrue = true;
+                target = i + 2 + (size_t)(op - SistaV1::ShortJumpTrueBase);
+                opLen = 1;
+            } else if (SistaV1::isShortJumpFalse(op)) {
+                jumpIfTrue = false;
+                target = i + 2 + (size_t)(op - SistaV1::ShortJumpFalseBase);
+                opLen = 1;
+            } else {
+                jumpIfTrue = (op == SistaV1::ExtJumpTrue);
+                target = i + 2 + (size_t)bytes[bcStart + i + 1];
+                opLen = 2;
+            }
+
+            cc.mov(ptr(state, OFF_SP), sp);
+
+            Gp v = cc.new_gp64("jv");
+            cc.mov(v, ptr(sp, -8));
+            Gp tOop = cc.new_gp64("tOop");
+            Gp fOop = cc.new_gp64("fOop");
+            cc.mov(tOop, ptr(state, OFF_TRUEOOP));
+            cc.mov(fOop, ptr(state, OFF_FALSEOOP));
+
+            Label lblJumpTaken   = cc.new_label();
+            Label lblFallThrough = cc.new_label();
+            Label lblNonBool     = cc.new_label();
+
+            cc.cmp(v, jumpIfTrue ? tOop : fOop);
+            cc.je(lblJumpTaken);
+            cc.cmp(v, jumpIfTrue ? fOop : tOop);
+            cc.jne(lblNonBool);
+
+            cc.sub(sp, Imm(8));
+            cc.jmp(lblFallThrough);
+
+            cc.bind(lblJumpTaken);
+            cc.sub(sp, Imm(8));
+            cc.jmp(offsetLabels.at(target));
+
+            cc.bind(lblNonBool);
+            cc.mov(bailIPOff, Imm(static_cast<int>(opStart)));
+            cc.jmp(lblBailTail);
+
+            cc.bind(lblFallThrough);
+
+            if (opLen == 2) {
+                i += 2;
+                continue;
+            }
+        }
+        else if (op == SistaV1::ExtJump) {
+            size_t target = i + 2 + (size_t)bytes[bcStart + i + 1];
+            cc.jmp(offsetLabels.at(target));
+            i += 2;
+            continue;
+        }
+        else if (op == SistaV1::ExtendB) {
+            // ExtB <extByte> ExtJump <offByte> — backward unconditional
+            // jump with yield-countdown.
+            uint8_t extByte = bytes[bcStart + i + 1];
+            uint8_t offByte = bytes[bcStart + i + 3];
+            int extBVal = (extByte >= 128) ? ((int)extByte | ~0xFF) : (int)extByte;
+            int offset = (extBVal << 8) | (int)offByte;
+            size_t target = (size_t)((int64_t)i + 2 + 2 + offset);
+
+            cc.mov(ptr(state, OFF_SP), sp);
+
+            // yieldCountdown-- ; if <= 0 → ExitYield.
+            Gp yc = cc.new_gp32("yc");
+            cc.mov(yc, ptr(state, OFF_YIELDCD));
+            cc.sub(yc, Imm(1));
+            cc.mov(ptr(state, OFF_YIELDCD), yc);
+            Label lblYieldBail = cc.new_label();
+            cc.jle(lblYieldBail);
+
+            cc.jmp(offsetLabels.at(target));
+
+            cc.bind(lblYieldBail);
+            Gp ipYld = cc.new_gp64("ipYld");
+            cc.mov(ipYld, ptr(state, OFF_IP));
+            cc.add(ipYld, Imm(static_cast<int>(target)));
+            cc.mov(ptr(state, OFF_IP), ipYld);
+            Gp exitY = cc.new_gp32("exitY");
+            cc.mov(exitY, Imm(EXIT_YIELD));
+            cc.mov(ptr(state, OFF_EXIT), exitY);
+            cc.jmp(lblFuncEnd);
+            i += 4;
+            continue;
+        }
+        else {
+            // Should have been caught in pass 1.
+            g_mbcBailed++;
+            return nullptr;
+        }
+
+        i += mbcOpLen(op);
+    }
+
+    // Skip past the bail tail on normal flow.
+    cc.jmp(lblFuncEnd);
+
+    cc.bind(lblBailTail);
+    Gp ip = cc.new_gp64("ip");
+    cc.mov(ip, ptr(state, OFF_IP));
+    cc.add(ip, bailIPOff);
+    cc.mov(ptr(state, OFF_IP), ip);
+
+    Gp sendArgs = cc.new_gp32("sendArgs");
+    cc.mov(sendArgs, Imm(1));   // arith / mustBeBoolean is 1-arg
+    cc.mov(ptr(state, OFF_SENDARGCOUNT), sendArgs);
+
+    Gp zero64 = cc.new_gp64("zero64");
+    cc.xor_(zero64, zero64);
+    cc.mov(ptr(state, OFF_ICDATAPTR), zero64);
+
+    Gp exitBail = cc.new_gp32("exitBail");
+    cc.mov(exitBail, Imm(EXIT_SEND));
+    cc.mov(ptr(state, OFF_EXIT), exitBail);
+
+    cc.bind(lblFuncEnd);
+    cc.ret();
+    cc.end_func();
+
+    Error err = cc.finalize();
+    if (err != kErrorOk) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+    void* func = nullptr;
+    err = runtime_->add(&func, &code);
+    if (err != kErrorOk) {
+        g_mbcBailed++;
+        return nullptr;
+    }
+
+    g_mbcCompiled++;
+    return func;
 }
 
 }  // namespace jit
