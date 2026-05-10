@@ -2005,8 +2005,18 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         if (dumpSel && *dumpSel) {
             std::string sel = interp_.memory().selectorOf(compiledMethod);
             if (sel == dumpSel) {
-                fprintf(stderr, "[JIT-BC-POST] #%s post-decode stencils (size=%zu):\n",
-                        sel.c_str(), decoded.size());
+                std::string cls = interp_.classNameOfMethod(compiledMethod);
+                fprintf(stderr, "[JIT-BC-POST] #%s>>%s methodOop=0x%llx post-decode stencils (size=%zu):\n",
+                        cls.c_str(), sel.c_str(),
+                        (unsigned long long)compiledMethod.rawBits(),
+                        decoded.size());
+                // Dump the raw bytecode bytes too — needed to verify whether
+                // the decoder is reading what we think it's reading.
+                fprintf(stderr, "[JIT-BC-POST]   raw bytecodes (%zu bytes):", bcLen);
+                for (size_t b = 0; b < bcLen; b++) {
+                    fprintf(stderr, " %02x", bytecodes[b]);
+                }
+                fprintf(stderr, "\n");
                 for (size_t d = 0; d < decoded.size(); d++) {
                     int entrySt = (d < simStackEntryState.size()) ? simStackEntryState[d] : -1;
                     const char* name = (decoded[d].stencilIdx < NumStencils)

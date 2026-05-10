@@ -1147,7 +1147,26 @@ extern "C" uint64_t jit_rt_array_prim(JITState* s, uint64_t info) {
         } else if (fmt >= 16 && fmt <= 23) {
             size = slotCount * 8 - (fmt - 16);
         } else {
+            static bool sizeDbg = std::getenv("PHARO_PRIMSIZE_DEBUG") != nullptr;
+            static int sizeFailLog = 0;
+            if (sizeDbg && ++sizeFailLog <= 20) {
+                fprintf(stderr,
+                    "[INLINE-SIZE-FAIL #%d] rcvBits=0x%llx fmt=%llu slots=%llu\n",
+                    sizeFailLog, (unsigned long long)rcvBits,
+                    (unsigned long long)fmt, (unsigned long long)slotCount);
+            }
             return 0;
+        }
+        static bool sizeDbg = std::getenv("PHARO_PRIMSIZE_DEBUG") != nullptr;
+        static int sizeLog = 0;
+        if (sizeDbg && ++sizeLog <= 30) {
+            fprintf(stderr,
+                "[INLINE-SIZE #%d] rcvBits=0x%llx fmt=%llu slots=%llu -> size=%llu sp[-1] was 0x%llx now=0x%llx\n",
+                sizeLog, (unsigned long long)rcvBits,
+                (unsigned long long)fmt, (unsigned long long)slotCount,
+                (unsigned long long)size,
+                (unsigned long long)s->sp[-(nArgs + 1)].rawBits(),
+                (unsigned long long)((size << 3) | 1));
         }
         s->sp[-(nArgs + 1)] = Oop::fromRawBits((size << 3) | 1);
         s->sp -= nArgs;
