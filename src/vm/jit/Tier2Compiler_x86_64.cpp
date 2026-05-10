@@ -27,6 +27,16 @@
  *     PushRecvVar(M) <pushB> (0x60/0x61) PopStoreRecv(M) RetRecv
  *                                                (ivar +/- ; ^ self, 5 bytes)
  *
+ *   Inline-IC sends (gated; PHARO_T2_X86_INLINE_IC=1 to opt in.
+ *   Hit-path produces wrong cachedTarget under load on x86 — dispatches
+ *   to mistargeted methods causing DNU errors.  PHARO_T2_FORCE_MISS=1
+ *   eliminates the errors, narrowing to the 6-way probe sequence;
+ *   arm64 sibling's identical-looking code works fine, so the bug is
+ *   x86-specific — likely an asmjit immediate-encoding subtlety in the
+ *   lookupKey OR-mask path.  Code retained for the next debug pass):
+ *     <push> Send0(N) ReturnTop                 (^ rcvr foo)
+ *     <pushA> <pushB> Send1(N) ReturnTop        (^ a foo: b)
+ *
  * Anything else returns nullptr; runtime falls through to tier-1.
  * Adding ops: mirror the arm64 sibling's matcher / emitter, swapping
  * a64::* for asmjit::x86::*.  Each new op should land with a SUnit
@@ -66,10 +76,14 @@ constexpr int OFF_TEMPBASE     = 24;
 constexpr int OFF_IP           = 48;
 constexpr int OFF_EXIT         = 76;
 constexpr int OFF_RETVAL       = 80;
+constexpr int OFF_CACHEDTARGET = 88;
 constexpr int OFF_ICDATAPTR    = 96;
 constexpr int OFF_SENDARGCOUNT = 104;
 constexpr int OFF_TRUEOOP      = 128;
 constexpr int OFF_FALSEOOP     = 136;
+
+// ObjectHeader classIndex layout (low 22 bits).
+constexpr uint64_t CLASS_INDEX_MASK = 0x3FFFFFULL;
 
 // Object slot layout: ObjectHeader is 8 bytes; slot[N] starts at
 // byte 8 + N*8.  Association.value is slot[1].
@@ -77,12 +91,16 @@ constexpr int OBJ_SLOT_0  = 8;
 constexpr int ASSOC_VALUE = 16;
 
 // ExitReason values (JITState.hpp).
-constexpr int EXIT_RETURN = 1;
-constexpr int EXIT_SEND   = 2;
+constexpr int EXIT_RETURN       = 1;
+constexpr int EXIT_SEND         = 2;
+constexpr int EXIT_SEND_CACHED  = 7;
 
-// IC data layout (mirror JITMethod.hpp).  Used by flushAllICs().
+// IC data layout (mirror JITMethod.hpp): 6 entries × 24 bytes (key,
+// methodBits, extra) + 8 bytes selectorBits at slot 18.
 constexpr int IC_ENTRIES = 6;
 constexpr int IC_SLOTS   = IC_ENTRIES * 3 + 1;
+constexpr int IC_KEY_OFF(int i)    { return i * 3 * 8;       }
+constexpr int IC_METHOD_OFF(int i) { return i * 3 * 8 + 8;   }
 
 // Bail / compile counters.  Per-arch (matches the SistaLowering
 // per-arch g_lowerStats pattern).
@@ -108,6 +126,8 @@ enum class ReturnKind {
     IntCmpReturn,        // ^ a cmp b (SmallInt; 6 ops)
     IntBitOpReturn,      // ^ a bitAnd:/bitOr: b
     IntAccumRecvVar,     // ivar[M] := ivar[M] +/- b; ^ self  (5 bytes)
+    ZeroArgSendInlineIC, // ^ <push> selector  (3 bytes; gated)
+    OneArgSendInlineIC,  // ^ <a> selector: <b>  (4 bytes)
 };
 
 // Where a "push" bytecode reads its value from.  Used by IntArith /
@@ -203,9 +223,10 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     ReturnKind kind;
     int slotIndex   = 0;          // recvVar / temp / litVar / setter index
     uint64_t immBits = 0;         // for NilImm / ImmediateOop / InitRecvVar
-    Push pushes[2];               // IntArith / IntCmp / IntBitOp operands
-    int sendIPOff   = 0;          // bail-to-interp: byte offset of arith op
+    Push pushes[2];               // IntArith / IntCmp / IntBitOp / SendIC operands
+    int sendIPOff   = 0;          // bail-to-interp: byte offset of arith / send op
     int arithOp     = 0;          // SistaV1 arith bytecode (0x60..0x6F)
+    int numPushes   = 0;          // SendIC: # of values to push (1 or 2)
 
     auto bail = [&](const char* why) -> void* {
         if (trace) fprintf(stderr, "[T2-x86]   bail: %s bodyLen=%zu b0=0x%02x\n",
@@ -365,7 +386,43 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         sendIPOff = 2;
         arithOp = b2;
     } else {
-        return bail("no pattern match");
+        // Inline-IC sends.  Both shapes are gated until the IC hit-path
+        // is debugged on x86_64 — the emit code below is correct on its
+        // face but produces wrong cachedTarget under load (Object>>foo:
+        // dispatches to mistargeted methods, manifesting as e.g.
+        // "SmallInteger did not understand #setToEnd" DNUs).
+        // PHARO_T2_FORCE_MISS=1 forces the miss path and the errors
+        // disappear, narrowing the bug to the 6-way probe / IC-hit
+        // sequence.  Suspected: lookupKey computation diverging from
+        // the runtime's classIndex format somewhere we haven't found
+        // yet.  arm64 sibling's identical-looking code works in
+        // production, so the bug is x86-specific (likely an asmjit
+        // immediate-encoding subtlety).  Gate behind opt-in so the
+        // matcher / emit code stays in place for the next debug pass.
+        //
+        //   PHARO_T2_ZEROARG_IC=1    enable 0-arg shape (also gated on arm64)
+        //   PHARO_T2_X86_INLINE_IC=1 enable 1-arg shape (and the 0-arg one)
+        static bool t2InlineIC =
+            std::getenv("PHARO_T2_X86_INLINE_IC") != nullptr;
+        static bool t2ZeroargIC =
+            std::getenv("PHARO_T2_ZEROARG_IC") != nullptr;
+        if (t2InlineIC && t2ZeroargIC && bodyLen >= 3
+                       && SistaV1::isSend0(b1)
+                       && b2 == SistaV1::ReturnTop
+                       && decodePush(b0, pushes[0])) {
+            kind = ReturnKind::ZeroArgSendInlineIC;
+            numPushes = 1;
+            sendIPOff = 1;
+        } else if (t2InlineIC && bodyLen >= 4 && SistaV1::isSend1(b2)
+                        && bytes[bcStart + 3] == SistaV1::ReturnTop
+                        && decodePush(b0, pushes[0])
+                        && decodePush(b1, pushes[1])) {
+            kind = ReturnKind::OneArgSendInlineIC;
+            numPushes = 2;
+            sendIPOff = 2;
+        } else {
+            return bail("no pattern match");
+        }
     }
 
     if (trace) fprintf(stderr,
@@ -779,6 +836,135 @@ void* Tier2Compiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         emitArithBail(a, b);
 
         cc.bind(lblDone);
+        cc.ret();
+        cc.end_func();
+        fullEmit = true;
+        break;
+    }
+
+    case ReturnKind::ZeroArgSendInlineIC:
+    case ReturnKind::OneArgSendInlineIC: {
+        // ^ <push0> [foo: <push1>] — 1 or 2 pushes + inline IC probe.
+        //   hit:  cachedTarget = icData[N*3+1], exitReason = ExitSendCached
+        //   miss: cachedTarget left alone, exitReason = ExitSend
+        // Both paths set icDataPtr, sendArgCount=(numPushes-1),
+        // ip += sendIPOff.  Mirrors arm64 sibling at Tier2Compiler
+        // _arm64.cpp:1193+; the only x86-specific bits are jcc instead
+        // of cbz/b_eq and the explicit mov-then-and 2-op forms.
+        int sendByteOff = sendIPOff;
+        uint8_t sendOp = bytes[bcStart + sendByteOff];
+        uint8_t sendBase = (numPushes == 1) ? SistaV1::Send0Base
+                                            : SistaV1::Send1Base;
+        int selIdx = sendOp - sendBase;
+
+        auto ic = std::make_unique<uint64_t[]>(IC_SLOTS);
+        std::memset(ic.get(), 0, IC_SLOTS * sizeof(uint64_t));
+        uint64_t icAddr = reinterpret_cast<uint64_t>(ic.get());
+        icBuffers_.push_back(std::move(ic));
+        // Seed selectorBits at slot 18 so runtime miss path can resolve.
+        icBuffers_.back()[18] = methodObj->slotAt(1 + selIdx).rawBits();
+
+        // Load receiver — keep two copies in independent virtual regs
+        // so asmjit's RA doesn't alias the push and lookupKey uses
+        // (fixed flakiness on arm64; safe to mirror here).
+        Gp recvLoaded = loadPush(pushes[0]);
+        Gp recvForPush = cc.new_gp64("recvForPush");
+        Gp recvForKey  = cc.new_gp64("recvForKey");
+        cc.mov(recvForPush, recvLoaded);
+        cc.mov(recvForKey,  recvLoaded);
+
+        Label lblHeap   = cc.new_label();
+        Label lblCheck  = cc.new_label();
+        Label lblMiss   = cc.new_label();
+        Label lblHit[IC_ENTRIES];
+        for (int i = 0; i < IC_ENTRIES; i++) lblHit[i] = cc.new_label();
+        Label lblEpi    = cc.new_label();
+
+        // Compute lookupKey:
+        //   tag = recv & 7
+        //   if tag == 0  → use header.classIndex (heap object)
+        //   else         → use tag | 0x80000000   (immediate)
+        Gp tag = cc.new_gp64("tag");
+        Gp lookupKey = cc.new_gp64("lookupKey");
+        cc.mov(tag, recvForKey);
+        cc.and_(tag, Imm(7));
+        cc.test(tag, tag);
+        cc.jz(lblHeap);
+
+        cc.mov(lookupKey, tag);
+        // x86 `or r64, imm32` sign-extends imm32 → setting bit 31 from
+        // a 32-bit imm would also set bits 32-63.  Materialize the OR
+        // mask into a 64-bit reg first so asmjit picks `movabs` and
+        // the upper bits stay zero.
+        Gp keyOrMask = cc.new_gp64("keyOrMask");
+        cc.mov(keyOrMask, Imm(0x80000000ULL));
+        cc.or_(lookupKey, keyOrMask);
+        cc.jmp(lblCheck);
+
+        cc.bind(lblHeap);
+        Gp header = cc.new_gp64("header");
+        cc.mov(header, ptr(recvForKey, 0));
+        cc.mov(lookupKey, header);
+        cc.and_(lookupKey, Imm(CLASS_INDEX_MASK));
+
+        cc.bind(lblCheck);
+        // Push receiver + (any args) onto interp stack.
+        Gp sp = cc.new_gp64("sp");
+        cc.mov(sp, ptr(state, OFF_SP));
+        cc.mov(ptr(sp, 0), recvForPush);
+        cc.add(sp, Imm(8));
+        if (numPushes >= 2) {
+            Gp arg = loadPush(pushes[1]);
+            cc.mov(ptr(sp, 0), arg);
+            cc.add(sp, Imm(8));
+        }
+        cc.mov(ptr(state, OFF_SP), sp);
+
+        Gp icData = cc.new_gp64("icData");
+        cc.mov(icData, Imm(icAddr));
+
+        // 6-way IC probe.  PHARO_T2_FORCE_MISS=1 skips it (forces miss
+        // path) — matches arm64 diagnostic flag.
+        static bool t2ForceMiss =
+            std::getenv("PHARO_T2_FORCE_MISS") != nullptr;
+        if (!t2ForceMiss) {
+            for (int i = 0; i < IC_ENTRIES; i++) {
+                Gp key = cc.new_gp64("key");
+                cc.mov(key, ptr(icData, IC_KEY_OFF(i)));
+                cc.cmp(lookupKey, key);
+                cc.je(lblHit[i]);
+            }
+        }
+        cc.jmp(lblMiss);
+
+        // Hit paths: load method oop, set ExitSendCached, jump epilogue.
+        Gp method   = cc.new_gp64("method");
+        Gp exitCode = cc.new_gp32("exitCode");
+        for (int i = 0; i < IC_ENTRIES; i++) {
+            cc.bind(lblHit[i]);
+            cc.mov(method, ptr(icData, IC_METHOD_OFF(i)));
+            cc.mov(exitCode, Imm(EXIT_SEND_CACHED));
+            cc.mov(ptr(state, OFF_CACHEDTARGET), method);
+            cc.jmp(lblEpi);
+        }
+
+        // Miss path: ExitSend (runtime resolves via icData->selectorBits).
+        cc.bind(lblMiss);
+        cc.mov(exitCode, Imm(EXIT_SEND));
+
+        // Shared epilogue: store icData ptr, sendArgCount, advance ip,
+        // store exit code.  Then ret.
+        cc.bind(lblEpi);
+        cc.mov(ptr(state, OFF_ICDATAPTR), icData);
+        Gp argCount = cc.new_gp32("argCount");
+        cc.mov(argCount, Imm(numPushes - 1));
+        cc.mov(ptr(state, OFF_SENDARGCOUNT), argCount);
+        Gp ip = cc.new_gp64("ip");
+        cc.mov(ip, ptr(state, OFF_IP));
+        cc.add(ip, Imm(sendIPOff));
+        cc.mov(ptr(state, OFF_IP), ip);
+        cc.mov(ptr(state, OFF_EXIT), exitCode);
+
         cc.ret();
         cc.end_func();
         fullEmit = true;
