@@ -17106,9 +17106,12 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 retSmallCount++;
                 if (retSmallCount <= 50 || (retSmallCount & 0xFFF) == 0) {
                     std::string sel = memory_.selectorOf(method);
-                    fprintf(stderr, "[JIT-RETVAL] #%zu method=#%s retVal=%lld(0x%llx) exit=Return\n",
-                            retSmallCount, sel.c_str(), (long long)rv,
-                            (unsigned long long)state.returnValue.rawBits());
+                    std::string cls = classNameOfMethod(method);
+                    fprintf(stderr, "[JIT-RETVAL] #%zu cls=%s method=#%s retVal=%lld(0x%llx) "
+                            "methodOop=0x%llx exit=Return\n",
+                            retSmallCount, cls.c_str(), sel.c_str(), (long long)rv,
+                            (unsigned long long)state.returnValue.rawBits(),
+                            (unsigned long long)method.rawBits());
                 }
             }
         }
