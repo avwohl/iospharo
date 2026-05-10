@@ -164,6 +164,11 @@ enum ExitReason : int {
                           //   Trampoline pushes frame, sets up callee, re-enters JIT.
     ExitYield       = 11, // Backward-jump yield — ip points to branch target bytecode.
                           //   Chain loop resets yieldCountdown and resumes JIT.
+    ExitMustBool    = 12, // Conditional jump received a non-Boolean.  returnValue
+                          //   holds the offending value; ip points to the
+                          //   conditional-jump bytecode.  Trampoline pushes the
+                          //   value back onto the interp stack and calls
+                          //   sendMustBeBoolean per the Smalltalk spec.
 };
 
 // ===== TRAMPOLINE HELPER =====

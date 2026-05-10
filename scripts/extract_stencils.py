@@ -56,8 +56,20 @@ CFLAGS_COMMON = [
     # flip this knob.
 ]
 
-CFLAGS_ARM64 = CFLAGS_COMMON + ["-target", "arm64-apple-macos14"]
-CFLAGS_X86_64 = CFLAGS_COMMON + ["-target", "x86_64-apple-macos14"]
+# Host-OS-aware target triple selection.  Mac side (used when this script
+# runs on macOS) uses Apple-darwin targets so the output is Mach-O.  Linux
+# side uses linux-gnu so clang emits ELF objects.  Both feed the same
+# extractor because the parser dispatches on the file's magic bytes.
+import platform
+_IS_DARWIN = platform.system() == "Darwin"
+_IS_LINUX = platform.system() == "Linux"
+if _IS_DARWIN:
+    CFLAGS_ARM64 = CFLAGS_COMMON + ["-target", "arm64-apple-macos14"]
+    CFLAGS_X86_64 = CFLAGS_COMMON + ["-target", "x86_64-apple-macos14"]
+else:
+    # Linux (or anything non-Darwin): emit ELF for the requested arch.
+    CFLAGS_ARM64 = CFLAGS_COMMON + ["-target", "aarch64-linux-gnu"]
+    CFLAGS_X86_64 = CFLAGS_COMMON + ["-target", "x86_64-linux-gnu"]
 
 # ===== MACH-O CONSTANTS =====
 
@@ -353,6 +365,262 @@ class MachOParser:
         return result
 
 
+# ===== ELF CONSTANTS =====
+# ELF64 little-endian — sufficient for x86_64-linux-gnu and
+# aarch64-linux-gnu object files emitted by clang.
+
+ELF_MAGIC = b"\x7fELF"
+
+# e_machine values
+EM_X86_64 = 62
+EM_AARCH64 = 183
+
+# Section header types
+SHT_NULL     = 0
+SHT_PROGBITS = 1
+SHT_SYMTAB   = 2
+SHT_STRTAB   = 3
+SHT_RELA     = 4
+SHT_NOBITS   = 8
+
+# Symbol info: low nibble of st_info = type, high nibble = bind
+STT_NOTYPE = 0
+STT_OBJECT = 1
+STT_FUNC   = 2
+STT_SECTION = 3
+
+# x86_64 ELF relocation types (relevant subset, from elf.h)
+R_X86_64_NONE          = 0
+R_X86_64_64            = 1
+R_X86_64_PC32          = 2
+R_X86_64_PLT32         = 4
+R_X86_64_GOTPCREL      = 9
+R_X86_64_GOTPCRELX     = 41
+R_X86_64_REX_GOTPCRELX = 42
+
+# aarch64 ELF relocation types (relevant subset)
+R_AARCH64_CALL26          = 283
+R_AARCH64_JUMP26          = 282
+R_AARCH64_ADR_PREL_PG_HI21 = 275
+R_AARCH64_ADD_ABS_LO12_NC  = 277
+R_AARCH64_LDST64_ABS_LO12_NC = 286
+R_AARCH64_ADR_GOT_PAGE     = 311
+R_AARCH64_LD64_GOT_LO12_NC = 312
+
+# Mapping ELF reloc type → the Mach-O equivalent we already pass to the
+# generated header.  The runtime header treats x86_64 BRANCH/GOT_LOAD/GOT
+# all as RelocType::X86_64_PC32 (a single rel32 patch site), so for the
+# Linux build any rel32-style reloc maps to the same X86_64_RELOC_BRANCH
+# constant used on the Mac path.  For aarch64, ELF and Mach-O have
+# separate but similar enums; map them so the same downstream logic
+# (HoleKind selection, addend handling) keeps working.
+ELF_X86_64_TO_MACHO = {
+    R_X86_64_PC32:          X86_64_RELOC_BRANCH,
+    R_X86_64_PLT32:         X86_64_RELOC_BRANCH,
+    R_X86_64_GOTPCREL:      X86_64_RELOC_GOT_LOAD,
+    R_X86_64_GOTPCRELX:     X86_64_RELOC_GOT_LOAD,
+    R_X86_64_REX_GOTPCRELX: X86_64_RELOC_GOT_LOAD,
+}
+ELF_AARCH64_TO_MACHO = {
+    R_AARCH64_CALL26:              ARM64_RELOC_BRANCH26,
+    R_AARCH64_JUMP26:              ARM64_RELOC_BRANCH26,
+    R_AARCH64_ADR_PREL_PG_HI21:    ARM64_RELOC_PAGE21,
+    R_AARCH64_ADD_ABS_LO12_NC:     ARM64_RELOC_PAGEOFF12,
+    R_AARCH64_ADR_GOT_PAGE:        ARM64_RELOC_GOT_LOAD_PAGE21,
+    R_AARCH64_LD64_GOT_LO12_NC:    ARM64_RELOC_GOT_LOAD_PAGEOFF12,
+}
+
+
+class ELFParser:
+    """Minimal ELF64 little-endian parser, modeled to expose the same shape
+    of information the rest of this script reads from MachOParser:
+
+      - parser.symbols           list of {name,type,sect,desc,value}
+      - parser.sections          list of section dicts
+      - parser.text_section      the .text section dict (with key "size"
+                                 + "fileoff" — same names MachOParser uses,
+                                 mapped from sh_size / sh_offset)
+      - parser.get_text_code()   raw bytes of .text
+      - parser.get_relocations() list of {offset,type,pcrel,extern,length,
+                                         symbol,addend} where `type` is the
+                                 Mach-O equivalent (so the existing reloc
+                                 type maps just work).
+    """
+
+    def __init__(self, data: bytes):
+        self.data = data
+        self.symbols: List[dict] = []
+        self.sections: List[dict] = []
+        self.section_names: List[str] = []  # by index
+        self.text_section: Optional[dict] = None
+        self._text_idx = -1
+        self._symtab_idx = -1
+        self._strtab_idx = -1
+        self._reloc_sections: List[dict] = []  # SHT_RELA targeting .text
+        self._machine = 0
+        self._parse()
+
+    def _parse(self):
+        if self.data[:4] != ELF_MAGIC:
+            raise ValueError("Not an ELF file")
+        ei_class = self.data[4]
+        ei_data = self.data[5]
+        if ei_class != 2 or ei_data != 1:
+            raise ValueError(
+                f"Only ELF64 little-endian supported (class={ei_class}, data={ei_data})")
+
+        # Elf64_Ehdr after e_ident (16 bytes):
+        # H e_type, H e_machine, I e_version, Q e_entry, Q e_phoff,
+        # Q e_shoff, I e_flags, H e_ehsize, H e_phentsize, H e_phnum,
+        # H e_shentsize, H e_shnum, H e_shstrndx
+        e_type, e_machine, e_version, e_entry, e_phoff, \
+        e_shoff, e_flags, e_ehsize, e_phentsize, e_phnum, \
+        e_shentsize, e_shnum, e_shstrndx = struct.unpack_from(
+            "<HHIQQQIHHHHHH", self.data, 16)
+        self._machine = e_machine
+
+        # Section header string table — names of sections live in this
+        # SHT_STRTAB.  Read it first so we can name sections as we parse.
+        shstr_off, shstr_size = struct.unpack_from(
+            "<QQ", self.data, e_shoff + e_shstrndx * e_shentsize + 24)
+        shstrtab = self.data[shstr_off:shstr_off + shstr_size]
+
+        # Pass 1: collect sections.
+        for i in range(e_shnum):
+            sh = e_shoff + i * e_shentsize
+            sh_name, sh_type, sh_flags, sh_addr, sh_offset, \
+            sh_size, sh_link, sh_info, sh_addralign, sh_entsize = \
+                struct.unpack_from("<IIQQQQIIQQ", self.data, sh)
+            name_end = shstrtab.index(b"\0", sh_name)
+            name = shstrtab[sh_name:name_end].decode("ascii")
+            sec = {
+                "index":    i,
+                "name":     name,
+                "type":     sh_type,
+                "flags":    sh_flags,
+                "addr":     sh_addr,
+                # MachOParser-compatible aliases:
+                "fileoff":  sh_offset,
+                "size":     sh_size,
+                "sectname": name,
+                "segname":  "",  # ELF has no segname; leave blank
+                "reloff":   0,   # filled when we walk relocs
+                "nreloc":   0,
+                # ELF-specific:
+                "sh_link":  sh_link,
+                "sh_info":  sh_info,
+                "sh_entsize": sh_entsize,
+            }
+            self.sections.append(sec)
+            self.section_names.append(name)
+            if sh_type == SHT_SYMTAB:
+                self._symtab_idx = i
+                self._strtab_idx = sh_link
+            if name == ".text" and sh_type == SHT_PROGBITS:
+                self._text_idx = i
+                self.text_section = sec
+
+        # Pass 2: collect relocation sections targeting .text.
+        for sec in self.sections:
+            if sec["type"] == SHT_RELA and sec["sh_info"] == self._text_idx:
+                self._reloc_sections.append(sec)
+
+        # Parse symbol table.
+        if self._symtab_idx >= 0:
+            symtab = self.sections[self._symtab_idx]
+            strtab = self.sections[self._strtab_idx]
+            strdata = self.data[strtab["fileoff"]:
+                                strtab["fileoff"] + strtab["size"]]
+            ent = symtab["sh_entsize"] or 24  # Elf64_Sym is 24 bytes
+            n = symtab["size"] // ent
+            for i in range(n):
+                so = symtab["fileoff"] + i * ent
+                st_name, st_info, st_other, st_shndx, st_value, st_size = \
+                    struct.unpack_from("<IBBHQQ", self.data, so)
+                ne = strdata.index(b"\0", st_name)
+                name = strdata[st_name:ne].decode("ascii")
+                # Normalize symbol names to the Mach-O convention the
+                # rest of the script expects.  Mach-O prepends `_` to
+                # every C symbol, so `stencil_pushTemp` becomes
+                # `_stencil_pushTemp` and `_HOLE_CONTINUE` becomes
+                # `__HOLE_CONTINUE`.  ELF leaves the C name unchanged,
+                # so always prepend `_` here for parity.
+                if name:
+                    name = "_" + name
+                # Translate to MachOParser's symbol fields so the rest of
+                # the script can ignore the difference.  N_SECT for Mach-O
+                # was 0x0E; we mirror that for symbols defined in any
+                # ELF section (st_shndx != SHN_UNDEF=0).
+                type_byte = N_SECT if st_shndx != 0 else 0
+                self.symbols.append({
+                    "name":  name,
+                    "type":  type_byte,
+                    "sect":  st_shndx,
+                    "desc":  st_info,  # repurposed: ELF st_info
+                    "value": st_value,
+                    "_elf_st_size": st_size,
+                })
+
+    def get_text_code(self) -> bytes:
+        sec = self.text_section
+        if not sec:
+            raise ValueError("No .text section found")
+        return self.data[sec["fileoff"]:sec["fileoff"] + sec["size"]]
+
+    def get_relocations(self) -> List[dict]:
+        """Return relocations for .text in MachOParser-compatible shape."""
+        result = []
+        for relsec in self._reloc_sections:
+            ent = relsec["sh_entsize"] or 24  # Elf64_Rela is 24 bytes
+            n = relsec["size"] // ent
+            for i in range(n):
+                ro = relsec["fileoff"] + i * ent
+                r_offset, r_info, r_addend = struct.unpack_from(
+                    "<QQq", self.data, ro)  # addend is signed
+                r_sym = (r_info >> 32) & 0xFFFFFFFF
+                r_type_elf = r_info & 0xFFFFFFFF
+
+                # Symbol name from symbol table.
+                sym_name = ""
+                if r_sym < len(self.symbols):
+                    sym_name = self.symbols[r_sym]["name"]
+
+                # Map ELF reloc type → Mach-O code so downstream code
+                # (HoleKind/RelocType selection) just works.
+                if self._machine == EM_X86_64:
+                    macho_type = ELF_X86_64_TO_MACHO.get(r_type_elf)
+                elif self._machine == EM_AARCH64:
+                    macho_type = ELF_AARCH64_TO_MACHO.get(r_type_elf)
+                else:
+                    macho_type = None
+                if macho_type is None:
+                    # Skip relocs we don't know how to translate.  Could
+                    # be SHT_RELA-style absolute relocs we don't need.
+                    continue
+
+                result.append({
+                    "offset":  r_offset,
+                    "type":    macho_type,
+                    "pcrel":   True,   # all rel32-class relocs are pcrel
+                    "extern":  True,
+                    "length":  2,      # 32-bit displacement
+                    "symbol":  sym_name,
+                    "addend":  r_addend,
+                })
+        return result
+
+
+def detect_object_format(data: bytes) -> str:
+    """Return 'macho' or 'elf' based on the file's magic."""
+    if len(data) >= 4:
+        magic32 = struct.unpack_from("<I", data, 0)[0]
+        if magic32 in (MH_MAGIC_64, MH_CIGAM_64):
+            return "macho"
+        if data[:4] == ELF_MAGIC:
+            return "elf"
+    raise ValueError(f"Unknown object-file format (first 4 bytes: {data[:4]!r})")
+
+
 # ===== STENCIL EXTRACTION =====
 
 def compile_stencils(arch: str) -> Path:
@@ -469,29 +737,42 @@ def verify_simstack_register_safety(stencils: List[StencilInfo], arch: str):
 
 
 def detect_arch(data: bytes) -> str:
-    """Detect the architecture from the Mach-O header."""
-    cputype = struct.unpack_from("<I", data, 4)[0]
-    if cputype == CPU_TYPE_ARM64:
-        return "arm64"
-    elif cputype == CPU_TYPE_X86_64:
-        return "x86_64"
-    else:
-        raise ValueError(f"Unknown CPU type: 0x{cputype:08X}")
+    """Detect the architecture from a Mach-O or ELF header."""
+    fmt = detect_object_format(data)
+    if fmt == "macho":
+        cputype = struct.unpack_from("<I", data, 4)[0]
+        if cputype == CPU_TYPE_ARM64:
+            return "arm64"
+        elif cputype == CPU_TYPE_X86_64:
+            return "x86_64"
+        raise ValueError(f"Unknown Mach-O CPU type: 0x{cputype:08X}")
+    else:  # ELF
+        e_machine = struct.unpack_from("<H", data, 18)[0]
+        if e_machine == EM_AARCH64:
+            return "arm64"
+        if e_machine == EM_X86_64:
+            return "x86_64"
+        raise ValueError(f"Unknown ELF e_machine: {e_machine}")
 
 
 def extract_stencils(obj_path: Path, arch: str = None) -> List[StencilInfo]:
     """Parse the object file and extract stencil info."""
     data = obj_path.read_bytes()
+    fmt = detect_object_format(data)
     if arch is None:
         arch = detect_arch(data)
-    parser = MachOParser(data)
+    if fmt == "macho":
+        parser = MachOParser(data)
+    else:
+        parser = ELFParser(data)
     text_code = parser.get_text_code()
     relocs = parser.get_relocations()
 
-    # Find stencil functions (symbols starting with _stencil_)
-    # Skip .cold.N fragments — these are compiler-split cold paths that must
-    # remain part of their parent stencil (they're reached via branches that
-    # are already in the parent's code range).
+    # Find stencil functions.  Both Mach-O and ELF symbol streams now
+    # carry a leading `_` (ELF parser re-adds it) so a single prefix
+    # matches both formats.  Skip .cold.N fragments — compiler-split
+    # cold paths that must remain part of their parent stencil (they're
+    # reached via branches already inside the parent's code range).
     stencil_syms = []
     for sym in parser.symbols:
         if sym["name"].startswith("_stencil_") and (sym["type"] & 0x0E) == N_SECT:
@@ -660,7 +941,13 @@ static inline const StencilDef* findStencil(const char* name) {
 
 
 def generate_dispatcher_header(architectures: List[str]) -> str:
-    """Generate a dispatcher header that includes the right arch-specific header."""
+    """Generate a dispatcher header that includes the right arch-specific header.
+
+    The dispatcher always references both arm64 and x86_64 — the inner
+    #if guards select at build time.  This way, regenerating just one
+    arch (e.g. --arch x86_64 on a Linux host) doesn't strip the other
+    arch's include from the dispatcher.
+    """
     lines = []
     lines.append("""\
 /*
@@ -675,7 +962,7 @@ def generate_dispatcher_header(architectures: List[str]) -> str:
 #ifndef PHARO_GENERATED_STENCILS_HPP
 #define PHARO_GENERATED_STENCILS_HPP
 """)
-    for arch in architectures:
+    for arch in ("arm64", "x86_64"):
         guard = "__aarch64__" if arch == "arm64" else "__x86_64__"
         lines.append(f"#if defined({guard})")
         lines.append(f'  #include "generated_stencils_{arch}.hpp"')
@@ -714,7 +1001,8 @@ def main():
         print()
 
         # Step 2: Extract
-        print(f"[2/{steps}] Extracting stencils from Mach-O ({arch})...")
+        fmt_label = "Mach-O" if _IS_DARWIN else "ELF"
+        print(f"[2/{steps}] Extracting stencils from {fmt_label} ({arch})...")
         stencils = extract_stencils(obj_path, arch)
         print(f"  Found {len(stencils)} stencils:")
         total_code = 0

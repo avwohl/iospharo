@@ -15994,6 +15994,17 @@ void Interpreter::tryJITResumeInCaller() {
             inJITResume_ = false;
             return;
 
+        case jit::ExitMustBool:
+            // JIT-compiled conditional jump received a non-Boolean.  The
+            // stencil left the value on the stack (didn't pop) and set
+            // state.ip to the conditional bytecode.  Hand back to the
+            // interpreter so its shortJumpIf{True,False} re-executes
+            // and calls sendMustBeBoolean per spec.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            inJITResume_ = false;
+            return;
+
         case jit::ExitYield: {
             // Backward-jump yield during resume — charge countdown and continue
             jitYieldCount_++;
@@ -18200,6 +18211,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             break;  // → shared send-chain code after switch
         }
 
+        case jit::ExitMustBool:
+            // Conditional received non-Boolean.  Stencil left it on the
+            // stack and set ip to the conditional bytecode.  Bail to
+            // interp; the conditional re-executes there and fires
+            // sendMustBeBoolean per spec.
+            instructionPointer_ = state.ip;
+            stackPointer_ = state.sp;
+            return false;
+
         case jit::ExitYield: {
             // Backward-jump yield: JIT decremented yieldCountdown to 0.
             // Charge checkCountdown_ for the elapsed JIT bytecodes, reset
@@ -18937,7 +18957,11 @@ jit_loop_exit:
     case jit::ExitSend:
     case jit::ExitSendCached:
     case jit::ExitArithOverflow:
-        // Sync interpreter state from JIT and let interpreter handle
+    case jit::ExitMustBool:
+        // Sync interpreter state from JIT and let interpreter handle.
+        // For ExitMustBool: stencil left the offending value on the
+        // stack and ip points to the conditional-jump bytecode; interp
+        // re-executes it and calls sendMustBeBoolean per spec.
         instructionPointer_ = state.ip;
         stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
         return false;

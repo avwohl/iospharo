@@ -250,6 +250,7 @@ extern "C" void (*_HOLE_RT_J2J_TRACE)(
 // ===== EXIT REASONS (must match ExitReason enum) =====
 static constexpr int EXIT_RETURN = 1;
 static constexpr int EXIT_SEND = 2;
+static constexpr int EXIT_MUSTBOOL = 12;  // Conditional received non-Boolean
 static constexpr int EXIT_SEND_CACHED = 7;
 static constexpr int EXIT_BLOCK_CREATE = 8;
 static constexpr int EXIT_YIELD = 11;
@@ -657,29 +658,50 @@ extern "C" void stencil_jump(JITState* s) {
 // Jump if false (pop condition)
 // Bytecodes: 0xC0-0xC7 (short), extended
 extern "C" void stencil_jumpFalse(JITState* s) {
-    s->sp--;
-    Oop cond = *(s->sp);
-    // In Smalltalk, false is the only false value
-    // Compare against the false object
+    // Peek the condition without popping.  On the Boolean fast paths we
+    // pop normally; on the non-Boolean path we leave the value on the
+    // stack and bail to the interpreter so its conditional-jump handler
+    // can re-execute and call sendMustBeBoolean per the Smalltalk spec
+    // (CLAUDE.md "Hard rules" — silently treating non-Boolean as the
+    // fall-through branch is "ALWAYS wrong").  OPERAND = bcOffset of
+    // THIS jumpFalse bytecode.
+    Oop cond = s->sp[-1];
     Oop falseObj = *(Oop*)&_HOLE_FALSE_OOP;
     if (cond.bits == falseObj.bits) {
+        s->sp--;
         _HOLE_BRANCH_TARGET(s);
-    } else {
-        _HOLE_CONTINUE(s);
+        return;
     }
+    Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
+    if (cond.bits == trueObj.bits) {
+        s->sp--;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->returnValue = cond;
+    s->ip = s->ip + OPERAND;
+    s->exitReason = EXIT_MUSTBOOL;
 }
 
 // Jump if true (pop condition)
 // Bytecodes: 0xB8-0xBF (short), extended
 extern "C" void stencil_jumpTrue(JITState* s) {
-    s->sp--;
-    Oop cond = *(s->sp);
+    Oop cond = s->sp[-1];
     Oop trueObj = *(Oop*)&_HOLE_TRUE_OOP;
     if (cond.bits == trueObj.bits) {
+        s->sp--;
         _HOLE_BRANCH_TARGET(s);
-    } else {
-        _HOLE_CONTINUE(s);
+        return;
     }
+    Oop falseObj = *(Oop*)&_HOLE_FALSE_OOP;
+    if (cond.bits == falseObj.bits) {
+        s->sp--;
+        _HOLE_CONTINUE(s);
+        return;
+    }
+    s->returnValue = cond;
+    s->ip = s->ip + OPERAND;
+    s->exitReason = EXIT_MUSTBOOL;
 }
 
 // ----- BACKWARD JUMP STENCILS (yield check) -----
@@ -697,7 +719,9 @@ extern "C" void stencil_jumpBack(JITState* s) {
     _HOLE_BRANCH_TARGET(s);
 }
 
-// Conditional backward jump (true) with yield check
+// Conditional backward jump (true) with yield check.  Per Smalltalk spec
+// (CLAUDE.md "Hard rules"), non-Boolean conditions must signal
+// mustBeBoolean — the silent-fallthrough older behavior was wrong.
 extern "C" void stencil_jumpTrueBack(JITState* s) {
     s->sp--;
     Oop cond = *(s->sp);
