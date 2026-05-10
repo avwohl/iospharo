@@ -1849,6 +1849,50 @@ size_t JITRuntime::drainInitialCompileQueue() {
         compiler_->compile(method);
         processed++;
         g_initialCompileQueueDrained++;
+
+        // Tier-2 (asmjit) hook on the queue-compile drain path.  The
+        // legacy non-queue compile path (line 2607+) invokes T2 right
+        // after T1 finishes; without this hook, T2 only fires under
+        // PHARO_NO_QUEUE_COMPILE=1 (which has its own flakiness — see
+        // memory/early_defer_lift_flaky.md).  Same gate set as legacy:
+        //   - PHARO_T2=1                 strict opt-in
+        //   - !tier2Lookup               not already T2-compiled
+        //   - methodsCompiled < t2Limit  PHARO_T2_LIMIT cap
+        //   - !skipCoexist               PHARO_T2_REPLACE=1 needed when
+        //                                 the just-compiled T1 method is
+        //                                 executable (which it usually is
+        //                                 here — drain just compiled it)
+        //   - warmup gate                PHARO_T2_WARMUP=0 to bypass; at
+        //                                 drain time stats->executionCount
+        //                                 is 0 so warmup blocks otherwise
+        if (tier2Compiler_) {
+            static bool noT2 = []() {
+                const char* v = std::getenv("PHARO_T2");
+                return !(v && v[0] == '1');
+            }();
+            static int t2Limit  = g_debug.t2Limit;
+            static int t2Warmup = g_debug.t2Warmup;
+            static bool t2ReplaceNote = g_debug.t2Replace;
+            uint64_t key = method.rawBits();
+            if (!noT2 && !tier2Lookup(key)
+                && (int)tier2Compiler_->methodsCompiled() < t2Limit) {
+                JITMethod* jm = methodMap_.lookup(key);
+                bool skipCoexist = !t2ReplaceNote && jm && jm->isExecutable();
+                bool warmupBlocks = (t2Warmup > 0 && jm && jm->stats
+                    && (int)jm->stats->executionCount < t2Warmup);
+                if (!skipCoexist && !warmupBlocks) {
+                    void* t2code = tier2Compiler_->compile(method, jm);
+                    tier2Insert(key, t2code ? t2code : (void*)1);
+                    if (t2code && interp_) {
+                        std::string sel = interp_->memory().selectorOf(method);
+                        fprintf(stderr,
+                            "[JIT] Tier 2 compiled method %p '%s' (%zu total) [drain]\n",
+                            (void*)key, sel.c_str(),
+                            tier2Compiler_->methodsCompiled());
+                    }
+                }
+            }
+        }
     }
     return processed;
 }
