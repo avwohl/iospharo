@@ -481,6 +481,9 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
         a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
         a.mov(rax, ptr(rdi, OFF_METHOD));
+        // state.ip = AT the send opcode.  The chain loop reads
+        // *instructionPointer_ (Interpreter.cpp:18702-18711) to
+        // determine send length, then advances itself.
         a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -663,6 +666,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.mov(w3, asmjit::Imm(nArgs));
         a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
         a.ldr(x6, ptr(x0, OFF_METHOD));
+        // state.ip = AT the send opcode (see x86 version).
         a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
         a.str(x6, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_SEND));

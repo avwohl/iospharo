@@ -435,13 +435,51 @@ iteration which re-processes ExitSend.  Somewhere in this
 nesting, state diverges from what the chain loop's caller-state
 restore expects.
 
+2026-05-11 follow-up — the suspected cause above is wrong:
+
+  - With FORCE_RESUME_FOR_SENDS=1, `resume (J2J-r): 0/0` in the
+    final stats and `chain: actChain=0 actFall=150`.  Inline
+    activation FIRES 0 times for our T1 methods.
+  - Why: Interpreter.cpp:18731-18732 gates inline activation on
+    `if (!chainHasPrim || chainJM->hasPrimPrologue)`.  Our T1
+    sets `hasPrimPrologue=false` in AsmjitT1.cpp:1003, so any
+    callee that has a primitive is skipped.  In practice that
+    covers virtually every hot callee (`printString`, `+`, `class`,
+    `=`, etc., all have primitives).
+  - So the mustBeBoolean cascade with FORCE_RESUME_FOR_SENDS=1
+    does NOT come from the resume code path at line 18900 — that
+    path never fires.  It must come from a different side-effect
+    of advertising `numBytecodes>0` / `bcToCodeTableOffset>0`.
+  - Candidate side-effects (need verification):
+      * `frame.savedBytecodeEnd = saveJM->bcStart() + numBytecodes`
+        at line 18933 — used by interp dispatch end-of-method check.
+        If our methods' frames get materialized with wrong end,
+        interp may overrun into trailer bytes (literal pool).
+      * `tryResume` and `findMethodByPC` use bcToCodeTable; if our
+        table's per-bytecode offsets land OUTSIDE the actual emitted
+        machine code (e.g., compute-live-length truncated bcLen
+        differs from what we wrote into the table) the runtime
+        derives bogus code addresses.
+      * Test that ruled out off-by-one on state.ip directly
+        (2026-05-11): tried `state.ip = bcOffsetFromMethObj + 1`,
+        broke 3/3 in safe config — chain loop reads
+        `*instructionPointer_` at Interpreter.cpp:18702-18711 to
+        determine send length and advances itself, so state.ip
+        must point AT the send opcode.
+
 Next-investigation steps:
-  - Add a printf in the resume code path that prints state for
-    every JIT_CALL(savedResumeEntry, &state) — capture state.sp,
-    state.method, state.cachedTarget at entry and after the call.
-  - Find the first divergence point.
-  - Likely fix: more state to save/restore, or chainCallDepth
-    needs to track our inline activations.
+  - Verify bcToCode table contents: dump bcToCodeOut[] after
+    flatten and check each per-bytecode offset lies inside
+    [0, codeSize).
+  - Look at where stencil JIT differs: it sets hasPrimPrologue=true
+    when applicable so inline activation fires.  Adding a prim
+    prologue emit to our T1 is a bigger feature, but might be the
+    key — without it, the chain loop's fast path can't activate
+    our methods inline, and we rely on the slower
+    activateMethod-recursive path for every call.
+  - Bisect FORCE_RESUME with single isolated changes
+    (numBytecodes only vs. bcToCodeTableOffset only) to determine
+    which advertisement triggers the failure.
 
 #### Phase 4b.2 partial-resume (commit `<NEXT>`)
 
