@@ -62,14 +62,16 @@ constexpr int OFF_SP        = 0;
 constexpr int OFF_RECEIVER  = 8;
 constexpr int OFF_LITERALS  = 16;
 constexpr int OFF_TEMPBASE  = 24;
+constexpr int OFF_IP        = 48;
 constexpr int OFF_EXIT      = 76;
 constexpr int OFF_RETVAL    = 80;
 constexpr int OFF_TRUEOOP   = 128;
 constexpr int OFF_FALSEOOP  = 136;
 
 // ExitReason values (JITState.hpp).
-constexpr int EXIT_RETURN = 1;
-constexpr int EXIT_SEND   = 2;
+constexpr int EXIT_RETURN          = 1;
+constexpr int EXIT_SEND            = 2;
+constexpr int EXIT_ARITH_OVERFLOW  = 6;
 
 // Oop tag for SmallInteger: low 3 bits = 001.
 //   fromSmallInteger(N) = (N << 3) | 1
@@ -87,12 +89,25 @@ size_t g_compiledReal   = 0;   // of which actually emitted real code
 size_t g_compiledStub   = 0;   // of which used the bail-on-entry stub
 size_t g_failed         = 0;
 
+// Phase 3 supported arithmetic ops (all bail to arith_overflow on
+// non-SmI or signed overflow):
+//   0x60 +     0x61 -     0x62 <     0x63 >
+//   0x64 <=    0x65 >=    0x66 =     0x67 ~=
+// Phase 3 explicitly does NOT support * / // \\ bitAnd: bitOr:
+// bitShift: @ — those have edge cases (multiply overflow detection,
+// divide-by-zero, exact-divide check, point allocation) that need
+// dedicated emit + bail logic.  Methods using them fall through to
+// the bail stub.
+inline bool isPhase3ArithOp(uint8_t op) {
+    return op >= 0x60 && op <= 0x67;
+}
+
 // Bytecode pre-scan: returns true iff every byte in [bc, bc+bcLen)
-// is a single-byte opcode in our Phase 2 supported set.
+// is a single-byte opcode in our supported set (Phases 2 + 3).
 //
 // Rejects multi-byte opcodes (sends, jumps, ext-prefixes), arithmetic
-// (which requires arith_overflow bail emit), and any single-byte op
-// outside the explicit allowlist.
+// outside the Phase 3 allowlist, and any single-byte op outside the
+// explicit allowlist.
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
@@ -103,10 +118,11 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= 0x4D && op <= 0x51) continue;       // pushTrue/False/Nil/Zero/One
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
+        if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
         if (op == SistaV1::Pop) continue;             // 0xD8
-        // Anything else (sends, arith, jumps, ext-prefixes,
-        // pushLitVar, pushThisContext, dup, blockReturn,
-        // popStoreRecv/Temp, ext bytecodes E0+, etc.) → unsupported.
+        // Anything else (sends, jumps, ext-prefixes, pushLitVar,
+        // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
+        // mul/div/bit ops, ext bytecodes E0+, etc.) → unsupported.
         return false;
     }
     return true;
@@ -139,8 +155,15 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 // `nilBits` is the raw bits of the special-objects nil — passed in
 // so push-nil can bake it as a 64-bit immediate (nil is image-local,
 // not a JITState field).
-bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op, uint64_t nilBits) {
+//
+// `bcAddrAbs` is the absolute address of THIS bytecode in the image
+// (= methObj->bytes() + bcStart + i).  Arith bails set state.ip to
+// this address so the interpreter re-executes the failing op via
+// the regular bytecode dispatch.
+bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
+                  uint64_t nilBits, uint64_t bcAddrAbs) {
     using namespace asmjit::x86;
+    (void)bcAddrAbs;
 
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
@@ -251,6 +274,86 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op, uint64_t nilBits) {
         a.ret();
         return true;
     }
+    // Phase 3 arithmetic: 0x60..0x67 (+, -, <, >, <=, >=, =, ~=).
+    // All share the same prologue (load operands + SmI check + bail
+    // setup) and epilogue (write result, advance SP, fall through).
+    if (isPhase3ArithOp(op)) {
+        // Pattern (x86-64 SysV; rdi = state):
+        //   rax = state.sp;  rcx = a = sp[-2];  rdx = b = sp[-1]
+        //   r8 = a XOR 1;  r9 = b XOR 1;  r8 |= r9
+        //   if (r8 & 7) goto bail
+        //   sar rcx, 3;  sar rdx, 3   ; untag (signed)
+        //   then op-specific body
+        //   write result to sp[-2];  sp -= 8
+        //   jmp end
+        // bail:
+        //   movabs r8, bcAddrAbs;  mov [rdi+OFF_IP], r8
+        //   mov dword [rdi+OFF_EXIT], EXIT_ARITH_OVERFLOW
+        //   ret
+        // end:
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+
+        a.mov(rax, ptr(rdi, OFF_SP));
+        a.mov(rcx, ptr(rax, -16));   // a
+        a.mov(rdx, ptr(rax, -8));    // b
+        a.mov(r8,  rcx);
+        a.xor_(r8, asmjit::Imm(1));
+        a.mov(r9,  rdx);
+        a.xor_(r9, asmjit::Imm(1));
+        a.or_(r8, r9);
+        a.test(r8.r8(), asmjit::Imm(7));
+        a.jne(bail);
+
+        a.sar(rcx, asmjit::Imm(3));  // untag (signed)
+        a.sar(rdx, asmjit::Imm(3));
+
+        if (op == 0x60) {            // +
+            a.add(rcx, rdx);
+            a.jo(bail);
+            a.shl(rcx, asmjit::Imm(3));
+            a.or_(rcx, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rax, -16), rcx);
+            a.sub(rax, 8);
+            a.mov(ptr(rdi, OFF_SP), rax);
+        } else if (op == 0x61) {     // -
+            a.sub(rcx, rdx);
+            a.jo(bail);
+            a.shl(rcx, asmjit::Imm(3));
+            a.or_(rcx, asmjit::Imm(SMI_TAG));
+            a.mov(ptr(rax, -16), rcx);
+            a.sub(rax, 8);
+            a.mov(ptr(rdi, OFF_SP), rax);
+        } else {
+            // Comparison ops.  cmp signed; cmov true/false.
+            a.cmp(rcx, rdx);
+            a.mov(rsi, ptr(rdi, OFF_FALSEOOP));   // default: false
+            a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
+            switch (op) {
+                case 0x62: a.cmovl(rsi, r8); break;   // <
+                case 0x63: a.cmovg(rsi, r8); break;   // >
+                case 0x64: a.cmovle(rsi, r8); break;  // <=
+                case 0x65: a.cmovge(rsi, r8); break;  // >=
+                case 0x66: a.cmove(rsi, r8); break;   // =
+                case 0x67: a.cmovne(rsi, r8); break;  // ~=
+            }
+            a.mov(ptr(rax, -16), rsi);
+            a.sub(rax, 8);
+            a.mov(ptr(rdi, OFF_SP), rax);
+        }
+        a.jmp(end);
+
+        a.bind(bail);
+        // movabs r8, <bcAddrAbs> — 64-bit immediate load.
+        a.mov(r8, asmjit::Imm(bcAddrAbs));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+
+        a.bind(end);
+        return true;
+    }
     return false;  // pre-scan failed to filter — bug in allBytecodesSupported
 }
 
@@ -270,8 +373,10 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     a.str(x2, ptr(x0, OFF_SP));
 }
 
-bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op, uint64_t nilBits) {
+bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
+                    uint64_t nilBits, uint64_t bcAddrAbs) {
     using namespace asmjit::a64;
+    (void)bcAddrAbs;
 
     if (op <= 0x0F) {
         int n = op & 0x0F;
@@ -337,7 +442,75 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op, uint64_t nilBits) {
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);
-    return true;
+        return true;
+    }
+    // Phase 3 arithmetic on ARM64 (mirror of x86).
+    //   x2 = sp;  x1 = a (sp[-2]);  x4 = b (sp[-1])
+    //   eor x5, x1, #1;  eor x6, x4, #1;  orr x5, x5, x6
+    //   tst x5, #7;  b.ne bail
+    //   asr x1, x1, #3;  asr x4, x4, #3
+    //   then op-specific
+    //   write at sp[-2];  sp -= 8
+    if (isPhase3ArithOp(op)) {
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2, -16));
+        a.ldr(x4, ptr(x2, -8));
+        a.eor(x5, x1, asmjit::Imm(1));
+        a.eor(x6, x4, asmjit::Imm(1));
+        a.orr(x5, x5, x6);
+        a.tst(x5, asmjit::Imm(7));
+        a.b_ne(bail);
+
+        a.asr(x1, x1, asmjit::Imm(3));
+        a.asr(x4, x4, asmjit::Imm(3));
+
+        if (op == 0x60) {        // +
+            a.adds(x1, x1, x4);
+            a.b_vs(bail);
+            a.lsl(x1, x1, asmjit::Imm(3));
+            a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+            a.str(x1, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+        } else if (op == 0x61) { // -
+            a.subs(x1, x1, x4);
+            a.b_vs(bail);
+            a.lsl(x1, x1, asmjit::Imm(3));
+            a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+            a.str(x1, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+        } else {
+            // Comparisons: csel false/true based on signed flags.
+            a.cmp(x1, x4);
+            a.ldr(x5, ptr(x0, OFF_FALSEOOP));
+            a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+            switch (op) {
+                case 0x62: a.csel(x5, x6, x5, CondCode::kLT); break;
+                case 0x63: a.csel(x5, x6, x5, CondCode::kGT); break;
+                case 0x64: a.csel(x5, x6, x5, CondCode::kLE); break;
+                case 0x65: a.csel(x5, x6, x5, CondCode::kGE); break;
+                case 0x66: a.csel(x5, x6, x5, CondCode::kEQ); break;
+                case 0x67: a.csel(x5, x6, x5, CondCode::kNE); break;
+            }
+            a.str(x5, ptr(x2, -16));
+            a.sub(x2, x2, asmjit::Imm(8));
+            a.str(x2, ptr(x0, OFF_SP));
+        }
+        a.b(end);
+
+        a.bind(bail);
+        a.mov(x5, asmjit::Imm(bcAddrAbs));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+
+        a.bind(end);
+        return true;
     }
     return false;
 }
@@ -348,6 +521,7 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op, uint64_t nilBits) {
 // `out` (caller buffer of `outCap` bytes); on success sets *outSize
 // and *isReal (true if real codegen, false if bail stub).
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
+                     uint64_t bcBaseAbs,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal) {
     using namespace asmjit;
@@ -383,7 +557,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     x86::Assembler a(&code);
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
-            if (!emitOne_x86(a, bc[i], nilBits)) {
+            if (!emitOne_x86(a, bc[i], nilBits, bcBaseAbs + i)) {
                 // pre-scan said yes but emit said no.  Abort —
                 // safer than emitting partial garbage; caller sees
                 // failure and the method goes uncompiled.
@@ -409,7 +583,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     a64::Assembler a(&code);
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
-            if (!emitOne_arm64(a, bc[i], nilBits)) {
+            if (!emitOne_arm64(a, bc[i], nilBits, bcBaseAbs + i)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
                     i, bc[i]);
@@ -499,8 +673,15 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     size_t emitted = 0;
     bool   isReal  = false;
     uint64_t nilBits = memory.nil().rawBits();
-    if (!emitMethodBytes(bc, bcLen, nilBits, buf.data(), cap, &emitted,
-                          &isReal)) {
+    // Absolute address of the method's first bytecode, used by arith
+    // bails to set state.ip so the interpreter re-executes the
+    // failing op via the regular dispatch.  Note: GC compaction would
+    // invalidate this address; the runtime is expected to discard
+    // JITMethods on compaction (same constraint the stencil JIT
+    // operates under).
+    uint64_t bcBaseAbs = reinterpret_cast<uint64_t>(bc);
+    if (!emitMethodBytes(bc, bcLen, nilBits, bcBaseAbs,
+                         buf.data(), cap, &emitted, &isReal)) {
         g_failed++;
         return nullptr;
     }
