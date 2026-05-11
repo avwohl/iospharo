@@ -493,6 +493,14 @@ if(NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     # every CompiledMethod, reporting success rate + top blocking ops.
     add_executable(test_sista_survey src/vm/jit/sista/test_sista_survey.cpp)
     target_link_libraries(test_sista_survey PharoVMCore asmjit::asmjit)
+
+    # asmjit-T1 Phase 0 stub: standalone proof that asmjit can emit a
+    # void(JITState*) function whose write of state.exitReason is
+    # observable.  Foundation for replacing the stencil JIT per
+    # scripts/jit-diff/plan_asmjit_replacement.md.  No PharoVMCore
+    # link — runs hermetic with a mock state struct.
+    add_executable(test_asmjit_t1_stub src/vm/jit/asmjit/test_asmjit_t1_stub.cpp)
+    target_link_libraries(test_asmjit_t1_stub asmjit::asmjit)
 endif()
 
 message(STATUS "PharoVM Clean C++ configured")
