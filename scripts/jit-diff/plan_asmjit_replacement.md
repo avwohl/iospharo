@@ -196,11 +196,75 @@ stencil decoder's `maxBranchTarget` logic (see
 
 **Memory:** see `memory/jit_pivot_2026_05_10.md` for context.
 
-### Phase 4 (retry): TBD
-Pick option 1 or 2 above.  Add a stencil-decoder-style pre-scan
-that respects branch targets.  Consider running with a tiny
-3-test corpus first (`(3+4) printString`, `1 class name`, `nil
-isNil`) so the bug surfaces at compile #1, not #1400.
+### Phase 4 (retry): bail-mid-method, with proper trailer trim
+
+Findings from reading the interp dispatch in detail (2026-05-11):
+
+- `Interpreter.cpp:15281-15287` — ExitSend handler just `return`s;
+  the outer dispatch loop picks up at `instructionPointer_`.
+- `Interpreter.cpp:18547-18551` — ExitArithOverflow handler does
+  the same: `instructionPointer_ = state.ip; stackPointer_ =
+  state.sp; return false`.
+- `Interpreter.cpp:18041-18056` — both reasons share a state-
+  validation check; both expect `state.ip` and `state.sp` valid.
+
+**Bail-mid-method semantics ARE supported by the existing
+contract.**  The Phase 4 hang was NOT caused by ExitArithOverflow
+vs ExitSend confusion — both exits route through the same shape
+of "set ip+sp, return to interp dispatch."
+
+So what DID cause the hang at compile #1 (`Object>>on:`) and the
+SIGSEGV at #1400?  Likely candidates, in order of suspicion:
+
+1. **Trailer-byte miscompile.**  Without the `liveBytecodeLength()`
+   trim, methods whose post-return trailer bytes happen to fall in
+   0x70..0xAF emit bail-to-trailer-byte sequences.  A subsequent
+   real bytecode then fall-throughs into the bail code.  Could
+   produce both hang (loop re-bailing on the trailer byte's "ip")
+   and SIGSEGV (executing past the emitted code into garbage).
+2. **state.sp drift past method exit.**  If the bail's `ret`
+   leaves state.sp at a position the interp dispatch doesn't
+   expect (e.g. JIT pushed receiver before bailing, but interp
+   re-runs the receiver-push too), every iteration of dispatch
+   pushes another receiver until stack overflow.
+3. **Exception machinery in Object>>on:**  `on:do:` uses the
+   exception block + handler context.  If the JIT's bail-mid
+   leaves the activeContext_ in the wrong shape, the exception
+   raise/handle dance gets confused.
+
+**Concrete next-session steps:**
+
+1. **Build a 3-test mini-corpus** at `scripts/jit-diff/mini.txt`:
+   - `(3 + 4) printString` (must print '7')
+   - `1 class name` (must print 'SmallInteger')
+   - `#a isString` (must print 'true')
+   Add a `--mini` flag to `run.sh` to use it instead of corpus.txt.
+   Bugs that surface at compile #1 are easier to debug than #1400.
+
+2. **Fix trailer pollution PROPERLY.**  Don't use the
+   `liveBytecodeLength()` walk-to-first-return shortcut.  Instead,
+   compute the live bytecode length using the same logic as the
+   stencil decoder (see `JITCompiler.cpp:648` which reads the
+   bytecode header / iterates respecting `maxBranchTarget`).
+   Factor that into a `BytecodeBounds::computeLiveLength(...)`
+   helper that both the stencil and asmjit paths use.
+
+3. **Then re-attempt bail-mid-method** with bcLen properly
+   trimmed.  If hang persists, add `PHARO_TRACE_ASMJIT_T1=1`
+   instrumentation:
+   - log every bail with (method oop, bc offset, state.sp before/
+     after the JIT call)
+   - log every interp re-dispatch of a bytecode within a JIT
+     method with bail-able sends
+   The first method to bail twice in a row at the same ip is
+   the smoking gun.
+
+4. **If bail-mid-method still doesn't work**, fall back to the
+   bail-on-entry rule for any method containing a send.  Keep
+   Phase 3 acceptance.  Defer real send support to Phase 4b
+   (proper IC dispatch + J2J chaining — the original plan).
+
+**Effort:** 1 session for steps 1-3, possibly another for step 4.
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,
