@@ -216,6 +216,8 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             if (sendNArgs(op) > maxSendNArgs) return false;
             continue;                                  // 0x70..0xAF
         }
+        if (op >= SistaV1::PopStoreRecvBase
+                && op <= SistaV1::PopStoreRecvLast) continue;  // 0xC8..0xCF
         if (op >= SistaV1::PopStoreTempBase
                 && op <= SistaV1::PopStoreTempLast) continue;  // 0xD0..0xD7
         if (op == SistaV1::Pop) continue;             // 0xD8
@@ -516,6 +518,20 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(rax, ptr(rcx));
         a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
         a.mov(ptr(rdx, n * 8), rax);
+        return true;
+    }
+    // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
+    // Direct heap write — no GC barrier (the stencil JIT writes inline too;
+    // see stencils.cpp::stencil_popStoreRecvVar).  If a generational GC
+    // is added later, both paths need barriers.
+    if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+        int n = op - SistaV1::PopStoreRecvBase;
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        a.mov(rax, ptr(rcx));
+        a.mov(rdx, ptr(rdi, OFF_RECEIVER));
+        a.mov(ptr(rdx, OBJ_SLOT_0 + n * 8), rax);
         return true;
     }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
@@ -870,6 +886,18 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x1, ptr(x2));
         a.ldr(x4, ptr(x0, OFF_TEMPBASE));
         a.str(x1, ptr(x4, n * 8));
+        return true;
+    }
+    // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
+    // No write barrier — matches stencil_popStoreRecvVar.
+    if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
+        int n = op - SistaV1::PopStoreRecvBase;
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2));
+        a.ldr(x4, ptr(x0, OFF_RECEIVER));
+        a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
         return true;
     }
     auto emitReturnPtr = [&](int srcOff) {
