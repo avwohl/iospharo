@@ -315,18 +315,135 @@ SIGSEGV at #1400?  Likely candidates, in order of suspicion:
 
 **Effort:** Steps 1-4 done in ~1 session.
 
-### Phase 4b: real IC + J2J chaining
+### Phase 4b: real IC + J2J chaining — DESIGN
 
-The current send emit bails on every send.  Real wins come from
-inline IC + J2J chaining.  Approach:
-  - Per-send 5-6 inline cmp+je probes against cached classes.
-  - On hit, J2J chain to target's entry.
-  - On miss, fall through to `jit_rt_ic_miss` runtime helper.
-  - Keep IC table layout compatible with stencil JIT's existing
-    runtime helpers (no churn in JITRuntime.cpp).
-  - This is where the stencil JIT's `findElementOrNil:` stack-
-    corruption bug lived — centralize SP save in a `StackHelper`
-    so it's correct in exactly one place.
+**Scope.** Current send emit bails on every send.  Real perf wins
+come from inline IC + J2J chaining.  This is a multi-session task:
+~500-1000 lines of new code touching `AsmjitT1.cpp`, `JITMethod.hpp`
+allocation paths, and possibly `CodeZone.hpp`.  The stencil JIT
+spends 2862 lines on the equivalent — we can be much smaller (no
+per-arch generators, no copy-and-patch) but the runtime contract
+is the same.
+
+**Reference.** Read `stencils.cpp:1167-1310` (`stencil_sendJ2J`'s
+inline IC probe + megacache logic).  That's the contract we
+match.
+
+**Infrastructure pieces (do these first, in order):**
+
+1. **bcToCode table.**  uint32_t[bcLen + 1] mapping each bytecode
+   offset to its emit start in the JIT code.  Lives at
+   `codeStart() + bcToCodeTableOffset`.  Set
+   `jm->numBytecodes = bcLen` and `jm->bcToCodeTableOffset`.
+   Without this, the chain loop can't resume our method
+   post-send.
+
+2. **IC site allocation.**  Count single-byte sends in the method
+   (range 0x70..0xAF) during the pre-scan.  Set
+   `jm->numICEntries` and allocate via `CodeZone::allocate` (it
+   already calloc()s `icBuffer`).  Each site is 160 bytes
+   (`IC_BYTES_PER_SITE`).
+
+3. **selBitsArray init.**  uint64_t[numICEntries] at
+   `codeStart() + selBitsArrayOffset`.  For each send site, pull
+   the selector Symbol Oop from:
+     - Special selectors (0x70-0x7F): `SpecialSelectors[op-0x70]`
+       from special-objects table.
+     - Literal sends 0-args (0x80-0x8F): `literals[op & 0x0F]`.
+     - Literal sends 1-arg (0x90-0x9F): `literals[op & 0x0F]`.
+     - Literal sends 2-args (0xA0-0xAF): `literals[op & 0x0F]`.
+   Also write to `icBuffer[siteIdx * 20 + 18]` (the in-IC
+   selectorBits slot — kept for stencil compatibility, but
+   GC-zeroed; runtime falls back to `selBitsArray`).
+
+**Per-send emit (replacing the current bail):**
+
+4. **Compute receiver classIndex (lookupKey).**
+   ```
+   ; receiver = sp[-(nArgs+1)]
+   mov rax, [rdi+OFF_SP]
+   mov rbx, [rax - 8*(nArgs+1)]   ; rbx = receiver
+   mov rcx, rbx
+   and rcx, 7                      ; tag bits
+   test rcx, rcx
+   jz tag_zero                     ; object
+   or  rcx, 0x80000000             ; immediate: tag|0x80000000
+   jmp have_key
+ tag_zero:
+   test rbx, rbx
+   jz miss_helper                  ; nil object — fall to helper
+   mov rdx, [rbx]                  ; header word
+   mov ecx, edx                    ; low 32 bits
+   and ecx, 0x3FFFFF               ; classIndex (22 bits)
+ have_key:                         ; rcx = lookupKey
+   ```
+
+5. **6-slot inline probe.**  For each slot i in 0..5:
+   ```
+   cmp rcx, [icDataPtr + i*24]     ; icData[i*3] = key
+   je  hit_i
+   ```
+   On hit: load `methodBits = icData[i*3 + 1]`, set
+   `state.cachedTarget = methodBits`, `state.icDataPtr =
+   icDataPtr`, `state.sendArgCount = nArgs`,
+   `state.ip = state.method + post_send_offset`, `state.exitReason
+   = ExitSendCached`, ret.
+
+   Optional inline fast paths (extra word at `icData[i*3+2]`):
+   getter (bit 63), setter (bit 62), returnsSelf (bit 61).  These
+   handle ~30% of sends without exiting to interp.  Skip for v1.
+
+6. **Megacache probe.**  After 6 IC slot misses, probe the
+   megacache:
+   ```
+   mov rax, [icDataPtr + 18*8]    ; selectorBits
+   ...primary hash...
+   ...secondary hash...
+   ```
+   On hit: same as IC hit (ExitSendCached + ret).
+
+7. **Final miss.**  Set `state.icDataPtr`, `state.sendArgCount`,
+   `state.ip = method + post_send_offset`, `state.exitReason =
+   ExitSend`, ret.  The interp's slow path handles full method
+   lookup and IC fill via `jit_rt_ic_miss`.
+
+**Chain-loop resume path.**  Already works for the stencil JIT
+(`Interpreter.cpp:18062-18207` — the `chainCallDepth > 0` branch
+of ExitReturn).  Pre-conditions for resume:
+   - `callerJM->codeOffsetForBC(bcOffset)` returns non-zero in-range
+     → requires bcToCode table from step 1.
+   - `callerJM->isExecutable()` → already true for our methods.
+
+**Risk areas:**
+
+- **Stack discipline during IC hit.**  Receiver+args are on the
+  stack; the cached method's activation pops them.  Our emit
+  before the send pushed them — we must NOT have touched
+  state.sp after the last push.  Centralize SP discipline in a
+  `StackHelper` (per the original Phase 4 plan).
+- **GC of IC entries.**  The runtime already handles this
+  (`forEachRoot` visits `selBitsArray` and `icBuffer` methodBits
+  via `recoverAfterGC`).  Stay compatible.
+- **IC poisoning across method recompile.**  If the cached target
+  gets recompiled, its `jitEntry` address changes.  Existing
+  stencil-JIT helpers (`upgradeICToJ2J`, `patchJITICAfterSend`)
+  handle this — call them or replicate the contract.
+
+**Testing strategy.**
+
+- Step-by-step: add bcToCode + numBytecodes first, verify 37/37
+  still PASS (no chain-loop resume yet — same behavior as today).
+- Add IC site allocation + selBitsArray init.  Test with
+  `PHARO_JIT_STALE_LOG=1` to verify selBits Oops are GC-stable.
+- Switch one send (e.g. 0-arg literal sends) to inline IC probe.
+  Verify mini 3/3 still PASS.  Verify some megacache hits.
+- Extend to remaining send shapes.  Verify full 37/37.
+- Grow the corpus with collection-heavy tests (`#(1 2 3) do: [:x|
+  Transcript show: x]`) that should now run substantially in JIT.
+
+**Effort estimate:** 2-3 focused sessions (~1500 lines new code).
+The big wins: 5-10x speedup on send-heavy methods (the common
+case).
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,
