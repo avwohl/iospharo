@@ -83,21 +83,21 @@ Estimated final size: 12-15K lines of JIT code (down from 41K).
 
 ## Migration path (incremental, fuzzer-driven)
 
-### Phase 0: gate
-- Add `PHARO_USE_ASMJIT_T1=1` env flag.  Default OFF.  When ON,
-  `JITRuntime::compileMethod` routes to `asmjit::Compiler` instead
-  of the stencil JIT.  Both paths compile and link, so we can A/B.
+### Phase 0: gate ✓ DONE 2026-05-10 (commit b508c089)
+- Standalone test `test_asmjit_t1_stub` proves asmjit emit + call
+  works on Linux x86_64.
 
-### Phase 1: emit-and-bail skeleton
-- Create `asmjit::Compiler` that:
-  - For ANY method, emits a single trampoline that immediately
-    returns `ExitSend` (back to interp).
-  - Allocates a JITMethod struct so the rest of the runtime sees
-    "yes, this is JIT-compiled."
-  - This lets us prove the asmjit↔runtime plumbing works without
-    needing a single bytecode emitter.
-- Run fuzzer.  Should: zero pass (everything bails to interp every
-  time, but no JIT crashes).  Goal: zero `JIT_TIMEOUT`, no segfaults.
+### Phase 1: emit-and-bail skeleton ✓ DONE 2026-05-10 (commit 715fead5)
+- `PHARO_USE_ASMJIT_T1=1` env flag routes every method through
+  `compileViaAsmjit` in `src/vm/jit/asmjit/AsmjitT1.cpp`.
+- Trampoline is 8 bytes (`mov dword [rdi+76], 2; ret`) — sets
+  state.exitReason = ExitSend; the interp catches the exit and
+  runs the method.
+- Differential fuzzer: **0/37 PASS → 37/37 PASS** (every test
+  now functionally interp-equivalent, but the JIT runtime layers
+  are exercised).
+- Goal exceeded: instead of "no crashes," everything works (because
+  bail-to-interp on every entry equals interp-only behavior).
 
 ### Phase 2: pure pushes/pops/returns
 - Implement: pushReceiver, pushTemp, pushRecvVar, pushLitConst,
