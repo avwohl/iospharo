@@ -205,6 +205,7 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= 0x40 && op <= 0x4B) continue;       // pushTemp 0..11
         if (op == SistaV1::PushReceiver) continue;    // 0x4C
         if (op >= 0x4D && op <= 0x51) continue;       // pushTrue/False/Nil/Zero/One
+        if (op == SistaV1::Dup) continue;             // 0x53
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
@@ -213,6 +214,8 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             if (sendNArgs(op) > maxSendNArgs) return false;
             continue;                                  // 0x70..0xAF
         }
+        if (op >= SistaV1::PopStoreTempBase
+                && op <= SistaV1::PopStoreTempLast) continue;  // 0xD0..0xD7
         if (op == SistaV1::Pop) continue;             // 0xD8
         // Anything else (jumps, ext-prefixes, pushLitVar,
         // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
@@ -295,6 +298,13 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         emitPushReg(a, rax);
         return true;
     }
+    // Dup: read sp[-1], push it (stack [..., v] → [..., v, v]).
+    if (op == SistaV1::Dup) {
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.mov(rax, ptr(rcx, -8));
+        emitPushReg(a, rax);
+        return true;
+    }
     // pushTrue: push state.trueOop.
     if (op == 0x4D) {
         a.mov(rax, ptr(rdi, OFF_TRUEOOP));
@@ -330,6 +340,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(rcx, ptr(rdi, OFF_SP));
         a.sub(rcx, 8);
         a.mov(ptr(rdi, OFF_SP), rcx);
+        return true;
+    }
+    // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
+    if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
+        int n = op - SistaV1::PopStoreTempBase;
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        a.mov(rax, ptr(rcx));
+        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        a.mov(ptr(rdx, n * 8), rax);
         return true;
     }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
@@ -551,6 +572,24 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ldr(x2, ptr(x0, OFF_SP));
         a.sub(x2, x2, asmjit::Imm(8));
         a.str(x2, ptr(x0, OFF_SP));
+        return true;
+    }
+    // Dup: read sp[-1], push it.
+    if (op == SistaV1::Dup) {
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldur(x1, a64::ptr(x2, -8));
+        emitPushReg(a, x1);
+        return true;
+    }
+    // popStoreTemp N (0xD0..0xD7): pop TOS, store into tempBase[N].
+    if (op >= SistaV1::PopStoreTempBase && op <= SistaV1::PopStoreTempLast) {
+        int n = op - SistaV1::PopStoreTempBase;
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2));
+        a.ldr(x4, ptr(x0, OFF_TEMPBASE));
+        a.str(x1, ptr(x4, n * 8));
         return true;
     }
     auto emitReturnPtr = [&](int srcOff) {
