@@ -112,15 +112,17 @@ Estimated final size: 12-15K lines of JIT code (down from 41K).
 - Critical fix: keep JITMethod.numBytecodes = 0 (the runtime expects
   a bcToCode table when non-zero).
 
-### Phase 3: arithmetic
-- `addSmallInt`, `subSmallInt`, `mulSmallInt`, `lessThanSmallInt`,
-  `equalSmallInt`, etc.  About 14 opcodes.
-- Each emits the SmallInt fast path and bails to `arith_overflow`
-  helper on non-SmI.  Bail must restore SP to point past the
-  args (the same place the stencil version did, but explicit and
-  in `StackHelper`).
-- Fuzzer should now pass `(3+4) printString`, all the `arith_*`
-  tests, and most `cond_*` tests.
+### Phase 3: arithmetic ✓ DONE 2026-05-11 (commit b121788a)
+- 8 ops: + - < > <= >= = ~=  (skip * / // \\ bitAnd:|Or:|Shift: @
+  for Phase 3.5 — they have edge cases needing dedicated emit).
+- SmI check via XOR-with-1 trick (`(a^1) | (b^1)` has low 3 bits 0
+  iff both are SmI).
+- +/- have signed-overflow check; compares use cmov.
+- Bail sets state.ip = absolute bytecode addr; ExitArithOverflow=6;
+  ret.  Interp catches ExitArithOverflow and re-executes via the
+  regular dispatch.
+- Fuzzer: 37/37 PASS held; ~5 methods/eval get real codegen (one
+  more than Phase 2).
 
 ### Phase 4: sends
 - `stencil_sendJ2J` is the workhorse — implement equivalent.  It's
