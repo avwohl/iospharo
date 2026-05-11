@@ -124,15 +124,83 @@ Estimated final size: 12-15K lines of JIT code (down from 41K).
 - Fuzzer: 37/37 PASS held; ~5 methods/eval get real codegen (one
   more than Phase 2).
 
-### Phase 4: sends
-- `stencil_sendJ2J` is the workhorse — implement equivalent.  It's
-  the highest-risk emit because it has J2J inline frame save/restore.
-- Approach: keep IC table layout; emit IC probe inline (5-6
-  comparisons) and bail to `jit_rt_ic_miss` on miss.
-- This is where the `findElementOrNil:` bug lived — get it right by
-  centralizing the SP save in `StackHelper::beginCall(nArgs)` and
-  restore in `StackHelper::endCall(nArgs, retReg)`.
-- Fuzzer should pass `coll_*` and `iter_*` tests.
+### Phase 4: sends — ATTEMPTED 2026-05-11, REVERTED
+
+First attempt (naive bail-to-interp-on-send) didn't work.  Reverted
+to Phase 3 baseline.  What was tried and what blocked it:
+
+**The naive approach.**  When the JIT pre-scan saw a send opcode
+(0x70..0xAF), real-emit the method up to but not past the send;
+when control reached the send byte, set `state.ip = bcAddrAbs`,
+`state.exitReason = ExitArithOverflow` (= 6, used as a generic
+"re-execute at ip" marker), and `ret`.  The interp catches the
+exit and dispatches the send normally.  This sidesteps all IC and
+J2J infrastructure for v1.
+
+**Two coupled problems.**
+
+(a) Bytecode-trailer pollution.  The method's
+`totalBytes - bcStart - unusedBytes` includes selector/temp-name
+trailer bytes past the last return.  In Phases 2+3 those bytes
+were almost always rejected by the pre-scan (they're random
+literal bytes that don't match the strict allowlist), so the
+method bailed-on-entry and the trailer never mattered.  In Phase
+4, the send range 0x70..0xAF accepts ~25% of random byte values,
+so the pre-scan started passing methods whose post-return
+trailers contained "send-looking" bytes.  The emit then generated
+bail-to-interp-at-trailer-byte sequences that confused the runtime.
+
+Fix attempt: walk forward to the first return and trim there
+(`liveBytecodeLength()`).  This is correct in principle for the
+Phase 4 opcode set (no forward jumps yet means no branch targets
+past the return).
+
+(b) Even with (a) fixed, the bcLen trim alone produces a SIGSEGV
+~1400 compiles in.  Some method whose live bytecodes WERE in the
+push/return/arith allowlist but whose trailers had previously
+disqualified it now passes the pre-scan and real-emits — and the
+real-emit path has a latent bug that didn't surface in Phases
+2+3 (because that exact methodshape had been rejected for the
+wrong reason all along).  Couldn't pin the exact mechanism
+within the Phase 4 session.
+
+(c) With sends enabled (no bcLen trim, just trust the allowlist),
+the eval hangs from compile #1 (`Object>>on:`).  Likely the
+interp dispatcher loops re-bailing on the same send because some
+JIT-side state (the JIT prefix on the Smalltalk stack? state.sp?)
+is in a shape the interp's send dispatch doesn't tolerate.
+
+**What the next Phase 4 attempt should do differently.**
+
+Two options, both bigger than the bail-to-interp shortcut:
+
+1. **Real IC dispatch + J2J chaining.**  Emit the IC probe inline
+   (5-6 cmp+je against cached classes), J2J chain to the IC's
+   target on hit, fall through to `jit_rt_ic_miss` on miss.  No
+   bail semantics needed mid-method.  This is the proper Phase 4
+   from the original plan, and matches what the stencil JIT does.
+
+2. **Real bcToCode table + new ExitReason.**  Build the bcToCode
+   array (per-bytecode entry-point offsets) and add a new
+   `ExitJITResume` exit reason that the runtime understands as
+   "JIT bailed mid-method; here's the bc index to resume at."
+   The interp runs the send, then re-enters the JIT at the
+   bcToCode[ip+sendlen] address.  Lets us bail-to-interp for
+   sends while keeping the rest of the method JIT-emitted.
+
+Option 1 is the long-term right answer; option 2 is a stepping
+stone.  Either way, the trailer/`bcLen` issue from (a) needs
+resolving first — the pre-scan should explicitly use the
+stencil decoder's `maxBranchTarget` logic (see
+`JITCompiler.cpp:648`) rather than the byte-count subtraction.
+
+**Memory:** see `memory/jit_pivot_2026_05_10.md` for context.
+
+### Phase 4 (retry): TBD
+Pick option 1 or 2 above.  Add a stencil-decoder-style pre-scan
+that respects branch targets.  Consider running with a tiny
+3-test corpus first (`(3+4) printString`, `1 class name`, `nil
+isNil`) so the bug surfaces at compile #1, not #1400.
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,
