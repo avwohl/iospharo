@@ -1363,6 +1363,21 @@ extern "C" uint64_t jit_rt_new_prim(JITState* s, uint64_t info) {
     // Convert to Oop
     Oop newObj = mem.oopFromPointer(obj);
 
+    // PHARO_MNU_ALLOC_DBG=1: trace JIT-fast-path allocations of MNU.
+    static const bool dbgMnuJit = std::getenv("PHARO_MNU_ALLOC_DBG") != nullptr;
+    if (dbgMnuJit && classIndex == 4307) {
+        static int n = 0;
+        n++;
+        if (n <= 200 || (n % 1000 == 0)) {
+            uint64_t methOop = s->jitMethod ? s->jitMethod->compiledMethodOop : 0;
+            std::string sel = s->interp ?
+                s->interp->memory().selectorOf(Oop::fromRawBits(methOop)) : "?";
+            fprintf(stderr,
+                "[MNU-JIT-NEW] #%d oop=0x%llx classIdx=%u in JIT method=#%s\n",
+                n, (unsigned long long)newObj.rawBits(), classIndex, sel.c_str());
+        }
+    }
+
     // Push result: replace receiver (and arg for new:) with new object
     s->sp[-(nArgs + 1)] = newObj;
     s->sp -= nArgs;

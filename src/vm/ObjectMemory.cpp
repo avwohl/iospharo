@@ -18,6 +18,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <unordered_set>
+#include <dlfcn.h>
 #include <functional>
 #include <sys/mman.h>
 
@@ -164,7 +165,32 @@ Oop ObjectMemory::allocateSlots(uint32_t classIndex, size_t slotCount,
     }
 
     bytesAllocated_ += totalSize;
-    return oopFromPointer(obj);
+    Oop result = oopFromPointer(obj);
+
+    // PHARO_MNU_ALLOC_DBG=1: print every allocation of a
+    // MessageNotUnderstood (classIndex == 4307 in the Pharo 13 image).
+    // Used to find which call site leaks an empty MNU through to the
+    // Set>>fullCheck JIT bug.
+    static const bool dbgMnu = std::getenv("PHARO_MNU_ALLOC_DBG") != nullptr;
+    if (dbgMnu && classIndex == 4307) {
+        static int n = 0;
+        n++;
+        if (n <= 30) {
+            void* ra1 = __builtin_return_address(0);
+            void* ra2 = __builtin_extract_return_addr(__builtin_return_address(1));
+            Dl_info i1{}, i2{};
+            int got1 = dladdr(ra1, &i1);
+            int got2 = dladdr(ra2, &i2);
+            fprintf(stderr,
+                "[MNU-ALLOC] #%d oop=0x%llx slotCount=%zu callers: %s+%lld <- %s+%lld\n",
+                n, (unsigned long long)result.rawBits(), slotCount,
+                got1 && i1.dli_sname ? i1.dli_sname : "?",
+                got1 ? (long long)((uint8_t*)ra1 - (uint8_t*)i1.dli_saddr) : 0LL,
+                got2 && i2.dli_sname ? i2.dli_sname : "?",
+                got2 ? (long long)((uint8_t*)ra2 - (uint8_t*)i2.dli_saddr) : 0LL);
+        }
+    }
+    return result;
 }
 
 Oop ObjectMemory::allocateBytes(uint32_t classIndex, size_t byteCount) {
@@ -338,7 +364,24 @@ Oop ObjectMemory::shallowCopy(Oop original) {
     copy->setPinned(false);
 
     bytesAllocated_ += size;
-    return oopFromPointer(copy);
+    Oop copyResult = oopFromPointer(copy);
+    static const bool dbgMnuCopy = std::getenv("PHARO_MNU_ALLOC_DBG") != nullptr;
+    if (dbgMnuCopy && src->classIndex() == 4307) {
+        static int n = 0;
+        n++;
+        if (n <= 30) {
+            void* ra1 = __builtin_return_address(0);
+            Dl_info i1{};
+            int got1 = dladdr(ra1, &i1);
+            fprintf(stderr,
+                "[MNU-COPY] #%d new=0x%llx src=0x%llx caller=%s+%lld\n",
+                n, (unsigned long long)copyResult.rawBits(),
+                (unsigned long long)original.rawBits(),
+                got1 && i1.dli_sname ? i1.dli_sname : "?",
+                got1 ? (long long)((uint8_t*)ra1 - (uint8_t*)i1.dli_saddr) : 0LL);
+        }
+    }
+    return copyResult;
 }
 
 // ===== CLASS TABLE =====
