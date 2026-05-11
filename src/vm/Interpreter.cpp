@@ -6502,11 +6502,22 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                             mc.c_str(), ms.c_str(), bcOff,
                             isJIT ? "yes" : "no");
                     }
-                    // Recent frames (up to 10)
+                    // Recent frames (up to 30) — include receiver class.
+                    // Bumped from 10 to find upstream chain for
+                    // ShouldNotImplement triggers.
                     fprintf(stderr, "  stack frames (top → bottom):\n");
                     int dumpedFrames = 0;
-                    for (size_t i = frameDepth_; i > 0 && dumpedFrames < 10; i--) {
+                    for (size_t i = frameDepth_; i > 0 && dumpedFrames < 30; i--) {
                         SavedFrame& f = savedFrames_[i - 1];
+                        std::string rcvCls = "?";
+                        if (f.savedReceiver.isObject() &&
+                            f.savedReceiver.rawBits() > 0x10000) {
+                            rcvCls = memory_.classNameOf(f.savedReceiver);
+                        } else if (f.savedReceiver.isSmallInteger()) {
+                            rcvCls = "SmallInteger";
+                        } else if (f.savedReceiver.isNil()) {
+                            rcvCls = "nil";
+                        }
                         if (f.savedMethod.isObject() &&
                             f.savedMethod.rawBits() > 0x10000) {
                             std::string fmc = classNameOfMethod(f.savedMethod);
@@ -6519,13 +6530,281 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
                             bool fJIT = false;
 #endif
                             fprintf(stderr,
-                                "    [%d] %s>>%s JIT=%s\n",
-                                (int)(i - 1), fmc.c_str(), fms.c_str(),
+                                "    [%d] (rcv=%s)>>%s JIT=%s\n",
+                                (int)(i - 1), rcvCls.c_str(), fms.c_str(),
                                 fJIT ? "yes" : "no");
+                            (void)fmc;
                             dumpedFrames++;
+                        } else {
+                            fprintf(stderr,
+                                "    [%d] (rcv=%s) <invalid method oop>\n",
+                                (int)(i - 1), rcvCls.c_str());
                         }
                     }
                     fprintf(stderr, "=== end ERROR-DETECT #%d ===\n\n", hits);
+                }
+            }
+        }
+    }
+
+    // PHARO_TRACE_SHOULDNOTIMPL=1: log every send of #shouldNotImplement.
+    // Use to find which method calls nil shouldNotImplement (the trigger
+    // that cascades into the privHandlerContext DNU loop under JIT).
+    {
+        static const bool traceSni =
+            std::getenv("PHARO_TRACE_SHOULDNOTIMPL") != nullptr;
+        if (traceSni && argCount == 0 && selector.isObject() &&
+            selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() == 18 &&
+                memcmp(sh->bytes(), "shouldNotImplement", 18) == 0) {
+                static int n = 0;
+                n++;
+                if (n <= 10) {
+                    long bcOff = -1;
+                    if (method_.isObject() && instructionPointer_) {
+                        ObjectHeader* mh = method_.asObjectPtr();
+                        Oop hdr = mh->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase =
+                            mh->bytes() + (1 + nLit) * 8;
+                        bcOff = instructionPointer_ - bcBase;
+                    }
+                    std::string callerCls = classNameOfMethod(method_);
+                    std::string callerSel = memory_.selectorOf(method_);
+#if PHARO_JIT_ENABLED
+                    bool callerJIT =
+                        jitRuntime_.methodMap().lookup(method_.rawBits())
+                        != nullptr;
+#else
+                    bool callerJIT = false;
+#endif
+                    std::string rcvDesc;
+                    if (rcvr.isNil()) rcvDesc = "nil";
+                    else if (rcvr.isSmallInteger()) {
+                        rcvDesc = "SmI(" + std::to_string(
+                            (long long)rcvr.asSmallInteger()) + ")";
+                    } else if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                        rcvDesc = memory_.classNameOf(rcvr);
+                    } else rcvDesc = "?";
+                    fprintf(stderr,
+                        "[SNI] #%d rcvr=%s caller=%s>>%s bcOff=%ld JIT=%s "
+                        "fd=%zu\n", n, rcvDesc.c_str(),
+                        callerCls.c_str(), callerSel.c_str(), bcOff,
+                        callerJIT ? "yes" : "no", frameDepth_);
+                    // Dump bytecodes near the call site to identify the
+                    // expression that pushed nil onto the stack.
+                    if (method_.isObject() && bcOff >= 0) {
+                        ObjectHeader* mh = method_.asObjectPtr();
+                        Oop hdr = mh->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase =
+                            mh->bytes() + (1 + nLit) * 8;
+                        long lo = std::max(0L, bcOff - 12);
+                        long hi = bcOff + 4;
+                        fprintf(stderr, "[SNI]   bytecodes [%ld..%ld]:",
+                                lo, hi);
+                        for (long bi = lo; bi <= hi; bi++) {
+                            fprintf(stderr, " %02x", bcBase[bi]);
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                    // Dump full stack frames with receiver classes.
+                    // For Set receivers, also dump array+tally slots
+                    // — the bug suspect is array==nil during grow.
+                    for (size_t i = frameDepth_; i > 0; i--) {
+                        SavedFrame& f = savedFrames_[i - 1];
+                        std::string rcl = "?";
+                        std::string extra;
+                        if (f.savedReceiver.isNil()) rcl = "nil";
+                        else if (f.savedReceiver.isSmallInteger())
+                            rcl = "SmI";
+                        else if (f.savedReceiver.isObject() &&
+                                 f.savedReceiver.rawBits() > 0x10000) {
+                            rcl = memory_.classNameOf(f.savedReceiver);
+                            // For Set/HashedCollection: dump tally + array.
+                            if (rcl == "Set" || rcl == "Dictionary" ||
+                                rcl == "IdentitySet" || rcl == "WeakSet") {
+                                ObjectHeader* rh =
+                                    f.savedReceiver.asObjectPtr();
+                                if (rh->slotCount() >= 2) {
+                                    Oop tallyOop = rh->slotAt(0);
+                                    Oop arrayOop = rh->slotAt(1);
+                                    std::string aDesc = "?";
+                                    if (arrayOop.isNil()) aDesc = "nil";
+                                    else if (arrayOop.isObject() &&
+                                             arrayOop.rawBits() > 0x10000) {
+                                        ObjectHeader* ah =
+                                            arrayOop.asObjectPtr();
+                                        char buf[64];
+                                        snprintf(buf, sizeof(buf),
+                                            "%s(slots=%zu)",
+                                            memory_.nameOfClass(
+                                                memory_.classOf(arrayOop))
+                                                .c_str(),
+                                            ah->slotCount());
+                                        aDesc = buf;
+                                    }
+                                    char tbuf[64];
+                                    snprintf(tbuf, sizeof(tbuf),
+                                        " tally=%lld array=%s",
+                                        tallyOop.isSmallInteger()
+                                            ? (long long)
+                                                tallyOop.asSmallInteger()
+                                            : -1LL,
+                                        aDesc.c_str());
+                                    extra = tbuf;
+                                }
+                            }
+                        }
+                        std::string sm = f.savedMethod.isObject()
+                            ? memory_.selectorOf(f.savedMethod) : "?";
+                        fprintf(stderr,
+                            "[SNI]   frame[%zu] rcv=%s>>%s%s\n",
+                            i - 1, rcl.c_str(), sm.c_str(),
+                            extra.c_str());
+                    }
+                    // Also dump the IMMEDIATE receiver of the
+                    // shouldNotImplement send (the caller method's
+                    // receiver) — for nil at:put:, this is nil itself
+                    // but we already know that.  Dump receiver_ for the
+                    // current method = UndefinedObject>>at:put:.
+                    fprintf(stderr,
+                        "[SNI]   current method receiver_=0x%llx (%s)\n",
+                        (unsigned long long)receiver_.rawBits(),
+                        receiver_.isNil() ? "nil"
+                            : memory_.classNameOf(receiver_).c_str());
+                    // Dump literals of the closest frame (the parent
+                    // that sent at:put: to nil) — selector at literal
+                    // index N reveals what the bytecode really does.
+                    if (frameDepth_ > 0) {
+                        Oop parentMeth =
+                            savedFrames_[frameDepth_ - 1].savedMethod;
+                        if (parentMeth.isObject() &&
+                            parentMeth.rawBits() > 0x10000) {
+                            ObjectHeader* pmh = parentMeth.asObjectPtr();
+                            Oop hdr = pmh->slots()[0];
+                            int nLit = hdr.isSmallInteger()
+                                ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                            fprintf(stderr,
+                                "[SNI]   parent #%s has %d literals:\n",
+                                memory_.selectorOf(parentMeth).c_str(), nLit);
+                            for (int li = 0; li < nLit && li < 12; li++) {
+                                Oop lit = pmh->slots()[1 + li];
+                                std::string ld;
+                                if (lit.isObject() && lit.rawBits() > 0x10000) {
+                                    ObjectHeader* lh = lit.asObjectPtr();
+                                    if (lh->isBytesObject() &&
+                                        lh->byteSize() < 80) {
+                                        ld.assign((const char*)lh->bytes(),
+                                                  lh->byteSize());
+                                    } else {
+                                        ld = memory_.nameOfClass(
+                                            memory_.classOf(lit));
+                                    }
+                                } else if (lit.isSmallInteger()) {
+                                    ld = "SmI(" + std::to_string(
+                                        (long long)lit.asSmallInteger())
+                                        + ")";
+                                } else if (lit.isNil()) {
+                                    ld = "nil";
+                                }
+                                fprintf(stderr,
+                                    "[SNI]     lit[%d]=0x%llx '%s'\n",
+                                    li, (unsigned long long)lit.rawBits(),
+                                    ld.c_str());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // PHARO_TRACE_EXCEPTION_SEL=1: log every send of #exception (the
+    // selector at the heart of the privHandlerContext DNU loop).  For
+    // each call: receiver class, dispatched method (which class
+    // defines #exception), caller's method + bcOff + JIT flag, recent
+    // frames.  Compare interp vs JIT runs to see whether JIT
+    // dispatches a different method than interp would.
+    {
+        static const bool traceExc =
+            std::getenv("PHARO_TRACE_EXCEPTION_SEL") != nullptr;
+        if (traceExc && argCount == 0 && selector.isObject() &&
+            selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            if (sh->isBytesObject() && sh->byteSize() == 9 &&
+                memcmp(sh->bytes(), "exception", 9) == 0) {
+                static int n = 0;
+                n++;
+                if (n <= 30 || n % 100 == 0) {
+                    Oop rcvrClass = memory_.classOf(rcvr);
+                    std::string rcls = memory_.nameOfClass(rcvrClass);
+                    Oop dispatched = lookupMethod(selector, rcvrClass);
+                    std::string dispCls = "?";
+                    if (dispatched.isObject() &&
+                        dispatched.rawBits() > 0x10000) {
+                        dispCls = classNameOfMethod(dispatched);
+                    } else {
+                        dispCls = "<not found>";
+                    }
+                    long bcOff = -1;
+                    if (method_.isObject() && instructionPointer_) {
+                        ObjectHeader* mh = method_.asObjectPtr();
+                        Oop hdr = mh->slots()[0];
+                        int nLit = hdr.isSmallInteger()
+                            ? (hdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcBase =
+                            mh->bytes() + (1 + nLit) * 8;
+                        bcOff = instructionPointer_ - bcBase;
+                    }
+                    std::string callerCls = classNameOfMethod(method_);
+                    std::string callerSel = memory_.selectorOf(method_);
+#if PHARO_JIT_ENABLED
+                    bool callerJIT =
+                        jitRuntime_.methodMap().lookup(method_.rawBits())
+                        != nullptr;
+#else
+                    bool callerJIT = false;
+#endif
+                    fprintf(stderr,
+                        "[EXC-SEND] #%d rcvr.cls=%s dispatched=%s>>exception "
+                        "(meth=0x%llx) caller=%s>>%s bcOff=%ld JIT=%s fd=%zu\n",
+                        n, rcls.c_str(), dispCls.c_str(),
+                        (unsigned long long)dispatched.rawBits(),
+                        callerCls.c_str(), callerSel.c_str(), bcOff,
+                        callerJIT ? "yes" : "no", frameDepth_);
+                    if (n <= 5) {
+                        // Dump receiver's first 4 slots — useful when
+                        // receiver is a Context (slot 0=sender, 3=method,
+                        // 5=stackp, 6+=temps).
+                        if (rcvr.isObject() && rcvr.rawBits() > 0x10000) {
+                            ObjectHeader* rh = rcvr.asObjectPtr();
+                            size_t toShow = std::min(rh->slotCount(),
+                                                       (size_t)6);
+                            for (size_t si = 0; si < toShow; si++) {
+                                Oop slot = rh->slots()[si];
+                                std::string vc = "?";
+                                if (slot.isSmallInteger()) {
+                                    vc = "SmI(" + std::to_string(
+                                        (long long)slot.asSmallInteger())
+                                        + ")";
+                                } else if (slot.isNil()) {
+                                    vc = "nil";
+                                } else if (slot.isObject() &&
+                                           slot.rawBits() > 0x10000) {
+                                    vc = memory_.nameOfClass(
+                                        memory_.classOf(slot));
+                                }
+                                fprintf(stderr,
+                                    "[EXC-SEND]   rcvr.slot[%zu]=0x%llx (%s)\n",
+                                    si, (unsigned long long)slot.rawBits(),
+                                    vc.c_str());
+                            }
+                        }
+                    }
                 }
             }
         }
