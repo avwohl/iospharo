@@ -227,6 +227,21 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     return true;
 }
 
+// If the method has a primitive whose JIT prologue we can emit,
+// return the primitive index.  Otherwise return -1.  Caller is
+// responsible for handing us a primitive method (header bit 16 set)
+// whose first 3 bytes are the CallPrimitive (0xF8 lo hi) bytecode.
+//
+// Currently only prim 1 (SmallInteger>>#+).  More to follow.
+inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
+    if (bcLen < 3 || bc[0] != SistaV1::CallPrimitive) return -1;
+    int primIndex = bc[1] | ((bc[2] & 0x1F) << 8);
+    switch (primIndex) {
+    case 1: return primIndex;   // SmallInteger>>+
+    default: return -1;
+    }
+}
+
 #if defined(__x86_64__) || defined(_M_X64)
 
 // Emit a "push value into Smalltalk stack" sequence on x86_64.  The
@@ -246,6 +261,55 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
     a.mov(ptr(rcx), valReg);
     a.add(rcx, 8);
     a.mov(ptr(rdi, OFF_SP), rcx);
+}
+
+// Emit the JIT prologue for primitive 1 (SmallInteger>>#+).
+// On entry:
+//   rdi = state ptr
+//   state.receiver = SmI candidate
+//   state.tempBase[0] = SmI candidate (the argument)
+// On SmI+SmI success: set state.returnValue, set ExitReturn, ret.
+// On failure (non-SmI, overflow): fall through (no state mutation).
+//
+// Matches stencil_primAdd (stencils/stencils.cpp:3231).  Used as a
+// fast path when the chain loop inline-activates this method —
+// without it, hasPrimPrologue=false blocks inline activation entirely
+// (Interpreter.cpp:18731-18732).
+void emitPrimAdd_x86(asmjit::x86::Assembler& a) {
+    using namespace asmjit::x86;
+    asmjit::Label fail = a.new_label();
+
+    // Load receiver and arg.
+    a.mov(rcx, ptr(rdi, OFF_RECEIVER));   // rcx = receiver
+    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));   // rdx = &tempBase[0]
+    a.mov(rdx, ptr(rdx));                 // rdx = tempBase[0] = arg
+
+    // SmI check: both low 3 bits must be 001.  Pattern from arith emit.
+    a.mov(r8,  rcx);
+    a.xor_(r8, asmjit::Imm(1));
+    a.mov(r9,  rdx);
+    a.xor_(r9, asmjit::Imm(1));
+    a.or_(r8, r9);
+    a.test(r8.r8(), asmjit::Imm(7));
+    a.jne(fail);
+
+    // Untag (arithmetic shift right by 3).
+    a.sar(rcx, asmjit::Imm(3));
+    a.sar(rdx, asmjit::Imm(3));
+
+    // Add with overflow check.
+    a.add(rcx, rdx);
+    a.jo(fail);
+
+    // Re-tag and store as return value.
+    a.shl(rcx, asmjit::Imm(3));
+    a.or_(rcx, asmjit::Imm(SMI_TAG));
+    a.mov(ptr(rdi, OFF_RETVAL), rcx);
+    a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+    a.ret();
+
+    a.bind(fail);
+    // Fall through — caller's emit continues with the fallback bytecode.
 }
 
 // Emit per-bytecode code on x86_64.  Returns true if the opcode was
@@ -542,6 +606,41 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     a.str(x2, ptr(x0, OFF_SP));
 }
 
+// ARM64 mirror of emitPrimAdd_x86.  See that function for context.
+void emitPrimAdd_arm64(asmjit::a64::Assembler& a) {
+    using namespace asmjit::a64;
+    asmjit::Label fail = a.new_label();
+
+    a.ldr(x1, ptr(x0, OFF_RECEIVER));   // x1 = receiver
+    a.ldr(x2, ptr(x0, OFF_TEMPBASE));   // x2 = &tempBase[0]
+    a.ldr(x2, ptr(x2));                 // x2 = arg
+
+    // SmI check.
+    a.eor(x5, x1, asmjit::Imm(1));
+    a.eor(x6, x2, asmjit::Imm(1));
+    a.orr(x5, x5, x6);
+    a.tst(x5, asmjit::Imm(7));
+    a.b_ne(fail);
+
+    // Untag.
+    a.asr(x1, x1, asmjit::Imm(3));
+    a.asr(x2, x2, asmjit::Imm(3));
+
+    // Add with overflow check using ADDS + b.vs.
+    a.adds(x1, x1, x2);
+    a.b_vs(fail);
+
+    // Re-tag.
+    a.lsl(x1, x1, asmjit::Imm(3));
+    a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+    a.str(x1, ptr(x0, OFF_RETVAL));
+    a.mov(w3, asmjit::Imm(EXIT_RETURN));
+    a.str(w3, ptr(x0, OFF_EXIT));
+    a.ret(x30);
+
+    a.bind(fail);
+}
+
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t nilBits, int bcOffsetFromMethObj,
                     int siteIdx) {
@@ -756,8 +855,12 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 // per the runtime contract (JITMethod.hpp::codeOffsetForBC).  For
 // stub-only methods this is left as zeros except slot 0 = 0 and
 // slot bcLen = emitted_size.
+// `primIndex`: if > 0, emit the JIT prologue for this primitive at the
+// start of code.  Caller guarantees bc[0..2] is the CallPrimitive
+// bytecode for this primIndex and asks us to skip those 3 bytes from
+// the fallback-emit pass.  bcToCode[0..2] stay 0 (not valid re-entry).
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
-                     int bcOffsetBase,
+                     int bcOffsetBase, int primIndex,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal,
                      uint32_t* bcToCodeOut) {
@@ -768,7 +871,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     Error err = code.init(env);
     if (err != kErrorOk) return false;
 
-    bool real = (bcLen > 0) && allBytecodesSupported(bc, bcLen);
+    // When emitting a prim prologue we skip the CallPrimitive bytes
+    // (bc[0..2]) for the fallback emit — they're consumed by the
+    // prologue.  The pre-scan + emit operate on bc + emitSkip.
+    int emitSkip = (primIndex > 0) ? 3 : 0;
+    const uint8_t* bcReal = bc + emitSkip;
+    size_t bcRealLen = (bcLen >= (size_t)emitSkip) ? (bcLen - emitSkip) : 0;
+    bool real = (bcRealLen > 0) && allBytecodesSupported(bcReal, bcRealLen);
     // PHARO_ASMJIT_T1_STUB_ONLY=1: kill switch — force every method to
     // the bail-on-entry stub regardless of bytecode support.  Used to
     // bisect Phase 2 emit bugs against the known-good Phase 1 behavior.
@@ -803,27 +912,28 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
+    // Emit prim prologue first (if any).  Fall-through enters the
+    // fallback bytecode emit below.
+    if (primIndex == 1) {
+        emitPrimAdd_x86(a);
+    }
     if (real) {
         int siteIdx = 0;
-        for (size_t i = 0; i < bcLen; i++) {
-            if (bcToCodeOut) a.bind(bcLabels[i]);
-            if (!emitOne_x86(a, bc[i], nilBits,
-                             bcOffsetBase + (int)i, siteIdx)) {
-                // pre-scan said yes but emit said no.  Abort —
-                // safer than emitting partial garbage; caller sees
-                // failure and the method goes uncompiled.
+        for (size_t i = 0; i < bcRealLen; i++) {
+            int globalIdx = (int)i + emitSkip;
+            if (bcToCodeOut) a.bind(bcLabels[globalIdx]);
+            if (!emitOne_x86(a, bcReal[i], nilBits,
+                             bcOffsetBase + globalIdx, siteIdx)) {
                 std::fprintf(stderr,
-                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
-                    i, bc[i]);
+                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
+                    globalIdx, bcReal[i]);
                 return false;
             }
-            if (isPhase4SendOp(bc[i])) siteIdx++;
+            if (isPhase4SendOp(bcReal[i])) siteIdx++;
         }
-        // Defensive epilogue if the method's last bytecode wasn't a
-        // return (well-formed methods always end in return).
-        if (bcLen == 0
-                || bc[bcLen-1] < SistaV1::ReturnReceiver
-                || bc[bcLen-1] > SistaV1::ReturnTop) {
+        if (bcRealLen == 0
+                || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
+                || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
             a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
             a.ret();
         }
@@ -837,22 +947,26 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
+    if (primIndex == 1) {
+        emitPrimAdd_arm64(a);
+    }
     if (real) {
         int siteIdx = 0;
-        for (size_t i = 0; i < bcLen; i++) {
-            if (bcToCodeOut) a.bind(bcLabels[i]);
-            if (!emitOne_arm64(a, bc[i], nilBits,
-                                bcOffsetBase + (int)i, siteIdx)) {
+        for (size_t i = 0; i < bcRealLen; i++) {
+            int globalIdx = (int)i + emitSkip;
+            if (bcToCodeOut) a.bind(bcLabels[globalIdx]);
+            if (!emitOne_arm64(a, bcReal[i], nilBits,
+                                bcOffsetBase + globalIdx, siteIdx)) {
                 std::fprintf(stderr,
-                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
-                    i, bc[i]);
+                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
+                    globalIdx, bcReal[i]);
                 return false;
             }
-            if (isPhase4SendOp(bc[i])) siteIdx++;
+            if (isPhase4SendOp(bcReal[i])) siteIdx++;
         }
-        if (bcLen == 0
-                || bc[bcLen-1] < SistaV1::ReturnReceiver
-                || bc[bcLen-1] > SistaV1::ReturnTop) {
+        if (bcRealLen == 0
+                || bcReal[bcRealLen-1] < SistaV1::ReturnReceiver
+                || bcReal[bcRealLen-1] > SistaV1::ReturnTop) {
             a.mov(a64::w1, Imm(EXIT_SEND));
             a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
             a.ret(a64::x30);
@@ -929,12 +1043,6 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     int  numLiterals = static_cast<int>(headerBits & 0x7FFF);
     bool hasPrimitive = (headerBits >> 16) & 1;
 
-    if (hasPrimitive) {
-        // Phase 2 doesn't emit primitive prologues; bail at compile.
-        g_failed++;
-        return nullptr;
-    }
-
     uint8_t* bytes = methObj->bytes();
     size_t bcStart = (1 + numLiterals) * 8;
     size_t totalBytes = methObj->slotCount() * 8;
@@ -946,6 +1054,23 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     }
     size_t bcLenRaw = totalBytes - bcStart - (size_t)unusedBytes;
     const uint8_t* bc = bytes + bcStart;
+
+    // Detect a supported primitive prologue.  If hasPrimitive is set
+    // but the primitive isn't in our supported set (or the first 3
+    // bytes aren't CallPrimitive), bail — we'd otherwise route through
+    // a bail-stub which doesn't try the prim, and the chain loop's
+    // inline-activation gate (Interpreter.cpp:18731-18732) blocks
+    // hasPrimPrologue=false callees with primitives anyway.  Bail to
+    // C++ so the prim runs via the standard activateMethod path.
+    int primIdx = -1;
+    if (hasPrimitive) {
+        primIdx = supportedPrimIndex(bc, bcLenRaw);
+        if (primIdx < 0) {
+            // Unsupported prim: bail compile, let C++ handle it.
+            g_failed++;
+            return nullptr;
+        }
+    }
     // Trim trailer bytes past the method's last unconditional return,
     // mirroring the stencil decoder's logic (JITCompiler.cpp:639-660):
     // post-return bytes are dead code — selector/temp-name oop trailers
@@ -981,7 +1106,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // by emitMethodBytes from per-bytecode labels.  Slot [bcLen] gets
     // the end-of-machine-code offset after emit.
     std::vector<uint32_t> bcToCode(bcLen + 1, 0);
-    if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase,
+    if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase, primIdx,
                          buf.data(), cap, &emitted, &isReal,
                          bcToCode.data())) {
         g_failed++;
@@ -1060,7 +1185,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->selBitsArrayOffset =
         numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->tier              = 1;
-    jm->hasPrimPrologue   = false;
+    // hasPrimPrologue = true means the chain loop's inline-activation
+    // path (Interpreter.cpp:18731-18732) will activate this method
+    // without a separate C++ primitive try.  Our prologue does the
+    // SmI fast path inline and rets on success; on failure falls
+    // through to the bytecode emit.
+    jm->hasPrimPrologue   = (primIdx > 0);
     jm->isBlock           = false;
     jm->pinned            = false;
     jm->hasSends          = false;
