@@ -58,21 +58,37 @@ namespace jit {
 namespace {
 
 // JITState field offsets — guarded by static_assert in JITState.hpp.
-constexpr int OFF_SP        = 0;
-constexpr int OFF_RECEIVER  = 8;
-constexpr int OFF_LITERALS  = 16;
-constexpr int OFF_TEMPBASE  = 24;
-constexpr int OFF_IP        = 48;
-constexpr int OFF_METHOD    = 64;
-constexpr int OFF_EXIT      = 76;
-constexpr int OFF_RETVAL    = 80;
-constexpr int OFF_TRUEOOP   = 128;
-constexpr int OFF_FALSEOOP  = 136;
+constexpr int OFF_SP             = 0;
+constexpr int OFF_RECEIVER       = 8;
+constexpr int OFF_LITERALS       = 16;
+constexpr int OFF_TEMPBASE       = 24;
+constexpr int OFF_IP             = 48;
+constexpr int OFF_JITMETHOD      = 56;
+constexpr int OFF_METHOD         = 64;
+constexpr int OFF_EXIT           = 76;
+constexpr int OFF_RETVAL         = 80;
+constexpr int OFF_CACHED_TARGET  = 88;
+constexpr int OFF_ICDATAPTR      = 96;
+constexpr int OFF_SENDARGCOUNT   = 104;
+constexpr int OFF_TRUEOOP        = 128;
+constexpr int OFF_FALSEOOP       = 136;
 
 // ExitReason values (JITState.hpp).
 constexpr int EXIT_RETURN          = 1;
 constexpr int EXIT_SEND            = 2;
 constexpr int EXIT_ARITH_OVERFLOW  = 6;
+constexpr int EXIT_SEND_CACHED     = 7;
+
+// nArgs per special selector 0x70..0x7F (index = op - 0x70).
+//   at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
+constexpr uint8_t kSpecialNArgs[16] =
+    {1,2,0,0,1,0,1,0,1,0,1,1,0,1,0,0};
+inline int sendNArgs(uint8_t op) {
+    if (op <= 0x7F) return kSpecialNArgs[op - 0x70];
+    if (op <= 0x8F) return 0;   // literal send 0 args
+    if (op <= 0x9F) return 1;   // literal send 1 arg
+    return 2;                   // 0xA0..0xAF: literal send 2 args
+}
 
 // Oop tag for SmallInteger: low 3 bits = 001.
 //   fromSmallInteger(N) = (N << 3) | 1
@@ -233,9 +249,11 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 // dangle.  Mirrors the stencil JIT, which uses `s->ip = s->ip +
 // bcOffset` and relies on `afterGC()` updating state.ip.
 bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
-                  uint64_t nilBits, int bcOffsetFromMethObj) {
+                  uint64_t nilBits, int bcOffsetFromMethObj,
+                  int siteIdx) {
     using namespace asmjit::x86;
     (void)bcOffsetFromMethObj;
+    (void)siteIdx;
 
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
@@ -430,17 +448,32 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
-    // Phase 4 single-byte sends: bail to interp at this send byte.
-    // state.sp already holds the receiver+args from preceding pushes;
-    // interp resumes dispatch at the send byte (which is what state.ip
-    // now points to) and runs the send via its normal machinery.  Same
-    // GC-safe `state.method + offset` pattern as arith bail.
+    // Phase 4b.2 (partial): set up IC context and ExitSend.  The
+    // chain loop's ExitSend handler does method lookup, patches the
+    // IC for next time via patchJITICAfterSend, and inline-activates
+    // the callee — significantly faster than the prior bail-with-
+    // ExitArithOverflow which went through full interp send dispatch.
+    //
+    // Inline IC HIT probe + ExitSendCached emit is NOT enabled in
+    // this step.  Empirical bisect: even with valid IC context, the
+    // chain loop's resume path after callee return interacts with
+    // our methods in ways that cause mustBeBoolean cascades.
+    // Resolving requires deeper J2JSave/SavedFrame protocol work.
+    // For now we get IC management without the inline probe.
     if (isPhase4SendOp(op)) {
-        a.mov(r8, ptr(rdi, OFF_METHOD));
-        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
-        a.mov(ptr(rdi, OFF_IP), r8);
-        a.mov(dword_ptr(rdi, OFF_EXIT),
-              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        int nArgs = sendNArgs(op);
+
+        // Per-site icData address: jm->icBuffer + siteIdx*IC_BYTES_PER_SITE.
+        a.mov(rdx, ptr(rdi, OFF_JITMETHOD));
+        a.mov(rsi, ptr(rdx, (int)offsetof(JITMethod, icBuffer)));
+        a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+
+        a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
+        a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
+        a.mov(rax, ptr(rdi, OFF_METHOD));
+        a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
         a.ret();
         return true;
     }
@@ -464,9 +497,11 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
 }
 
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
-                    uint64_t nilBits, int bcOffsetFromMethObj) {
+                    uint64_t nilBits, int bcOffsetFromMethObj,
+                    int siteIdx) {
     using namespace asmjit::a64;
     (void)bcOffsetFromMethObj;
+    (void)siteIdx;
 
     if (op <= 0x0F) {
         int n = op & 0x0F;
@@ -604,12 +639,23 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
-    // Phase 4 single-byte sends on ARM64: bail to interp at the send.
+    // Phase 4b.2 (partial) single-byte sends on ARM64: set up IC
+    // context and ExitSend.  See x86 version for rationale.
     if (isPhase4SendOp(op)) {
-        a.ldr(x5, ptr(x0, OFF_METHOD));
-        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
-        a.str(x5, ptr(x0, OFF_IP));
-        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        int nArgs = sendNArgs(op);
+
+        // Per-site IC address.
+        a.ldr(x5, ptr(x0, OFF_JITMETHOD));
+        a.ldr(x5, ptr(x5, (int)offsetof(JITMethod, icBuffer)));
+        a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
+
+        a.str(x5, ptr(x0, OFF_ICDATAPTR));
+        a.mov(w3, asmjit::Imm(nArgs));
+        a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
+        a.ldr(x6, ptr(x0, OFF_METHOD));
+        a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x6, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_SEND));
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);
         return true;
@@ -684,9 +730,11 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
     if (real) {
+        int siteIdx = 0;
         for (size_t i = 0; i < bcLen; i++) {
             if (bcToCodeOut) a.bind(bcLabels[i]);
-            if (!emitOne_x86(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
+            if (!emitOne_x86(a, bc[i], nilBits,
+                             bcOffsetBase + (int)i, siteIdx)) {
                 // pre-scan said yes but emit said no.  Abort —
                 // safer than emitting partial garbage; caller sees
                 // failure and the method goes uncompiled.
@@ -695,6 +743,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                     i, bc[i]);
                 return false;
             }
+            if (isPhase4SendOp(bc[i])) siteIdx++;
         }
         // Defensive epilogue if the method's last bytecode wasn't a
         // return (well-formed methods always end in return).
@@ -715,14 +764,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
     if (real) {
+        int siteIdx = 0;
         for (size_t i = 0; i < bcLen; i++) {
             if (bcToCodeOut) a.bind(bcLabels[i]);
-            if (!emitOne_arm64(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
+            if (!emitOne_arm64(a, bc[i], nilBits,
+                                bcOffsetBase + (int)i, siteIdx)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
                     i, bc[i]);
                 return false;
             }
+            if (isPhase4SendOp(bc[i])) siteIdx++;
         }
         if (bcLen == 0
                 || bc[bcLen-1] < SistaV1::ReturnReceiver
@@ -824,13 +876,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         std::getenv("PHARO_ASMJIT_T1_NO_TRIM") != nullptr;
     size_t bcLen = noTrim ? bcLenRaw : computeLiveLength(bc, bcLenRaw);
 
-    // Buffer for emitted bytes.  Per-bytecode max is ~30 bytes
-    // (push/return × 5-7 instructions × ~5 bytes/insn on x86_64).
-    // Cap at ~60 bytes per bytecode to accommodate ARM64 (4 bytes/insn,
-    // up to 8 insns per push).  Add a 64-byte epilogue allowance.
-    size_t cap = bcLen * 64 + 64;
-    if (cap > 8192) cap = 8192;  // refuse oversized methods (rare)
-    if (bcLen * 64 + 64 > cap) {
+    // Buffer for emitted bytes.  Send emit (1-slot IC probe + miss path)
+    // takes ~25 instructions ≈ 100 bytes; arith ≈ 70 bytes; pushes ≈ 30
+    // bytes.  128 bytes/bytecode is a comfortable upper bound.
+    size_t cap = bcLen * 128 + 128;
+    if (cap > 16384) cap = 16384;
+    if (bcLen * 128 + 128 > cap) {
         g_failed++;
         return nullptr;
     }
@@ -900,23 +951,17 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // for i where re-entry is invalid (the convention; entry-by-default
     // is via codeStart()).  slot [numBytecodes] holds the
     // end-of-machine-code offset for findMethodByPC.
-    // numBytecodes intentionally kept at 0 for now.  The bcToCode +
-    // selBitsArray are allocated and populated, but advertising them
-    // via numBytecodes+bcToCodeTableOffset would enable interp
-    // resume paths (chain loop's J2J descent, savedBytecodeEnd
-    // computation) that we don't yet support correctly — interp ends
-    // up taking a frame's bytecodeEnd = bcStart + live-region-len and
-    // dispatches past it.  Step 4b.2 will flip these on once inline
-    // IC dispatch is in place.
-    //
-    // What's live now:
-    //   - numICEntries: set so CodeZone allocates icBuffer
-    //   - icBuffer:     calloc'd by CodeZone; selBits written below
-    //   - selBitsArray: populated below; GC-stable via
-    //                   selBitsArrayOffset and forEachRoot
+    // Phase 4b.2 (partial): IC sites populated, send emit sets up
+    // icDataPtr/sendArgCount/ExitSend so the chain loop manages IC
+    // patching and inline-activates the callee.  bcToCode table is
+    // built but not advertised — chain-loop resume after callee
+    // return interacts with our trim's live-region semantics in
+    // ways that produce mustBeBoolean cascades.  Future step would
+    // enable resume; for now we still benefit from inline activation
+    // + IC patching vs the prior ExitArithOverflow bail.
     jm->numBytecodes      = 0;
     jm->numICEntries      = numSendSites;
-    jm->bcToCodeTableOffset = 0;  // not advertised until step 4b.2
+    jm->bcToCodeTableOffset = 0;
     jm->selBitsArrayOffset =
         numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->tier              = 1;

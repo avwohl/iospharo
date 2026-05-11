@@ -359,56 +359,45 @@ match.
    Also seeded into `icBuffer[siteIdx*20 + 18]` (IC_SELBITS_SLOT
    — the in-IC slot the stencil-style probe expects).
 
-**Per-send emit (replacing the current bail):**
+**Per-send emit (4b.2 partial, commit `<NEXT>`):**
 
-4. **Compute receiver classIndex (lookupKey).**
+4. ✓ **IC context setup + ExitSend.**  Each single-byte send now
+   emits:
    ```
-   ; receiver = sp[-(nArgs+1)]
-   mov rax, [rdi+OFF_SP]
-   mov rbx, [rax - 8*(nArgs+1)]   ; rbx = receiver
-   mov rcx, rbx
-   and rcx, 7                      ; tag bits
-   test rcx, rcx
-   jz tag_zero                     ; object
-   or  rcx, 0x80000000             ; immediate: tag|0x80000000
-   jmp have_key
- tag_zero:
-   test rbx, rbx
-   jz miss_helper                  ; nil object — fall to helper
-   mov rdx, [rbx]                  ; header word
-   mov ecx, edx                    ; low 32 bits
-   and ecx, 0x3FFFFF               ; classIndex (22 bits)
- have_key:                         ; rcx = lookupKey
+   mov rdx, [rdi+OFF_JITMETHOD]
+   mov rsi, [rdx+offsetof(JITMethod, icBuffer)]
+   add rsi, siteIdx * IC_BYTES_PER_SITE
+   mov [rdi+OFF_ICDATAPTR], rsi
+   mov dword [rdi+OFF_SENDARGCOUNT], nArgs
+   mov rax, [rdi+OFF_METHOD]
+   add rax, bcOffsetFromMethObj
+   mov [rdi+OFF_IP], rax
+   mov dword [rdi+OFF_EXIT], EXIT_SEND
+   ret
    ```
+   The chain loop's ExitSend handler does method lookup, calls
+   patchJITICAfterSend (now sees a real IC site with proper
+   selectorBits), and inline-activates the callee.  Measurable
+   improvement: ~2500 IC patches per eval (was 0); J2J calls
+   ~540K (was 0).
 
-5. **6-slot inline probe.**  For each slot i in 0..5:
-   ```
-   cmp rcx, [icDataPtr + i*24]     ; icData[i*3] = key
-   je  hit_i
-   ```
-   On hit: load `methodBits = icData[i*3 + 1]`, set
-   `state.cachedTarget = methodBits`, `state.icDataPtr =
-   icDataPtr`, `state.sendArgCount = nArgs`,
-   `state.ip = state.method + post_send_offset`, `state.exitReason
-   = ExitSendCached`, ret.
+5. ⚠ **Inline IC HIT probe + ExitSendCached** — DEFERRED.
+   The 1-slot probe code works in isolation (verified by bisect:
+   making HIT fall through to miss = 3/3 PASS, while a real HIT
+   that emits ExitSendCached → mustBeBoolean cascade somewhere
+   downstream).  The chain loop's `ExitSendCached → inline
+   activate → resume caller via codeOffsetForBC` path interacts
+   with our methods in ways that produce wrong values.  Same
+   root issue blocks enabling `numBytecodes>0` /
+   `bcToCodeTableOffset>0` advertisement.
+   Requires deeper J2JSave/SavedFrame protocol work — what
+   exactly does the chain loop expect on resume that we aren't
+   providing?  Add `PHARO_B5_TRACE=1` instrumentation and trace
+   the exact bytecode/state at the first wrong-value point.
 
-   Optional inline fast paths (extra word at `icData[i*3+2]`):
-   getter (bit 63), setter (bit 62), returnsSelf (bit 61).  These
-   handle ~30% of sends without exiting to interp.  Skip for v1.
+6. **Megacache inline probe** — DEFERRED (depends on #5).
 
-6. **Megacache probe.**  After 6 IC slot misses, probe the
-   megacache:
-   ```
-   mov rax, [icDataPtr + 18*8]    ; selectorBits
-   ...primary hash...
-   ...secondary hash...
-   ```
-   On hit: same as IC hit (ExitSendCached + ret).
-
-7. **Final miss.**  Set `state.icDataPtr`, `state.sendArgCount`,
-   `state.ip = method + post_send_offset`, `state.exitReason =
-   ExitSend`, ret.  The interp's slow path handles full method
-   lookup and IC fill via `jit_rt_ic_miss`.
+7. ✓ **Final miss** = step 4 above.
 
 **Chain-loop resume path.**  Already works for the stencil JIT
 (`Interpreter.cpp:18062-18207` — the `chainCallDepth > 0` branch
