@@ -239,63 +239,44 @@ SIGSEGV at #1400?  Likely candidates, in order of suspicion:
    `1 class name`, `#a isString`.  Compiles within ~10 method
    compiles so bugs surface at compile #1 instead of #1400.
 
-2. ✓ **Trim helper landed; gated off** (commit `<NEXT>`).
+2. ✓ **Trim helper landed and enabled by default** (commit `<NEXT>`).
    `SistaV1::bytecodeLength()` + `computeLiveLength()` mirror the
    stencil decoder's `maxBranchTarget` logic at
-   `JITCompiler.cpp:639-660`.  Set
-   `PHARO_ASMJIT_T1_TRIM_AGGRESSIVE=1` to enable.
-   **Status: trim is mechanically correct, but exposes a latent
-   downstream bug.**  Bisect details:
-   - Default (trim OFF): 5 real-emits/eval, 37/37 PASS.
-   - Trim ON: ~170 real-emits/eval, 0/37 PASS.
-   - Bisecting via `PHARO_ASMJIT_T1_REAL_CAP=N`: cap=170 PASSes,
-     cap=171 FAILs → the 171st real-emit is the trigger.
-   - That 171st method is `Float>>isFinite`-shape:
-     `4c 4c 61 20 66 5c` = `^ self - self = lit[0]`.
-   - Subtract bytecode bails on SmI-check (Float receiver), interp
-     resumes at the bail point, completes the method.  The
-     handoff superficially matches the stencil JIT contract but
-     something downstream returns the wrong value, eventually
-     surfacing as a DNU on `#isEmpty` with a wrong-typed receiver.
-   - Bisects that fix it: NO_ARITH (disable arith emit), or
-     NO_LITCONST (disable pushLitConst from prescan), or just cap
-     real-emits to ≤170.  All three work because they all prevent
-     the 171st-method shape from real-emitting.
+   `JITCompiler.cpp:639-660`.  Set `PHARO_ASMJIT_T1_NO_TRIM=1`
+   to disable for bisection.
 
-3. **Find the resume-mid-method bug.**  The bisect points at
-   arith bail mid-method.  The `Float>>isFinite` shape
-   (`pushReceiver, pushReceiver, sub, pushLitConst 0, eq,
-   returnTop`) bails at `sub` because both operands are non-SmI;
-   interp must dispatch sub then continue with pushLitConst, eq,
-   returnTop.  Hypotheses to investigate:
-   - **interp doesn't know to re-dispatch the JIT-bailed bytecode
-     correctly.**  Look at how `instructionPointer_` interacts
-     with the activated frame's bytecodeStart: maybe state.ip
-     (an absolute address into the method's bytes) doesn't match
-     what interp dispatch expects (a frame-relative offset?).
-   - **state.sp set by JIT bail is one slot off** when the JIT
-     pushed N values before bailing.  Stack discipline check:
-     does interp's `stackValue(0)` see the correct TOS after sp
-     resync?
-   - **chain loop's ExitArithOverflow path returns false**
-     (Interpreter.cpp:18547) which exits tryJITActivation and
-     bubbles up to interp dispatch.  But the activate frame may
-     have additional state that needs reset (homeMethod_,
-     bytecodeEnd_, etc.).
-   Add lldb breakpoints on `terminateCurrentProcess` and the
-   `[DNU]` print site; trace back to the activate of the buggy
-   shape.  ~1 session of focused debug.
+3. ✓ **Resume-mid-method bug found and fixed** (same commit).
+   Root cause: arith bail emitted `mov r8, Imm(bcAddrAbs); mov
+   [rdi+OFF_IP], r8` — baking the **absolute** bytecode address
+   into the JIT machine code at compile time.  When GC compaction
+   moved the CompiledMethod, the baked address dangled into stale
+   memory; on bail, `state.ip` pointed at garbage and interp
+   dispatched random bytecodes from the old location, producing
+   wrong return values that surfaced downstream as DNUs on
+   selectors like `#isEmpty` with wrong-typed receivers.
 
-4. **If bail-mid-method still doesn't work**, fall back to the
-   bail-on-entry rule for any method that COULD bail mid-stream
-   (i.e., contains arith, sends, jumps, or anything else that
-   calls back into interp).  Keep Phase 3 acceptance.  Defer
-   real send support to Phase 4b (proper IC dispatch + J2J
-   chaining — the original plan).
+   Fix: bail computes `state.ip = state.method.rawBits() +
+   bcOffsetFromMethObj` at runtime.  `state.method` is a
+   GC-tracked Oop that gets updated in-place during compaction
+   (forEachRoot → afterGC), so the resulting address is always
+   the post-GC bytecode location.  Mirrors the stencil JIT's
+   approach (`s->ip = s->ip + bcOffset`).
 
-**Effort:** Step 3 is the unknown — could be quick (1 session)
-or could uncover deeper resume-protocol issues that send us
-straight to step 4.
+   Two extra instructions per bail (load+add vs movabs).  Worth
+   the correctness.
+
+   Pre-fix: trim ON → 0/37 PASS.
+   Post-fix: trim ON → 37/37 PASS, mini 3/3 PASS.
+
+4. **Phase 4 retry, take two: actual sends.**  Now that arith
+   bail-mid-method works, the same pattern (state.method-relative
+   ip set by emit) can extend to real send dispatch.  Approach:
+   keep IC table layout as in the stencil JIT, emit IC probe
+   inline (5-6 cmp+je against cached classes), bail to runtime
+   helper on miss.  See "Phase 4: sends" earlier in this file.
+
+**Effort:** Steps 1-3 took ~1 session.  Step 4 (real sends) is
+the original Phase 4 work — likely 2 sessions.
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,

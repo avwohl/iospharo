@@ -63,6 +63,7 @@ constexpr int OFF_RECEIVER  = 8;
 constexpr int OFF_LITERALS  = 16;
 constexpr int OFF_TEMPBASE  = 24;
 constexpr int OFF_IP        = 48;
+constexpr int OFF_METHOD    = 64;
 constexpr int OFF_EXIT      = 76;
 constexpr int OFF_RETVAL    = 80;
 constexpr int OFF_TRUEOOP   = 128;
@@ -208,14 +209,18 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 // so push-nil can bake it as a 64-bit immediate (nil is image-local,
 // not a JITState field).
 //
-// `bcAddrAbs` is the absolute address of THIS bytecode in the image
-// (= methObj->bytes() + bcStart + i).  Arith bails set state.ip to
-// this address so the interpreter re-executes the failing op via
-// the regular bytecode dispatch.
+// `bcOffsetFromMethObj` is the byte offset of THIS bytecode from the
+// CompiledMethod object's address.  Arith bails compute
+// `state.ip = state.method.rawBits() + bcOffsetFromMethObj` at
+// runtime, NOT at JIT-compile time.  This survives GC compaction:
+// `state.method` is a GC-tracked Oop that gets updated in place when
+// the CompiledMethod moves, while a baked absolute address would
+// dangle.  Mirrors the stencil JIT, which uses `s->ip = s->ip +
+// bcOffset` and relies on `afterGC()` updating state.ip.
 bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
-                  uint64_t nilBits, uint64_t bcAddrAbs) {
+                  uint64_t nilBits, int bcOffsetFromMethObj) {
     using namespace asmjit::x86;
-    (void)bcAddrAbs;
+    (void)bcOffsetFromMethObj;
 
     // pushRecvVar N: push receiver.slot[N].
     if (op <= 0x0F) {
@@ -339,7 +344,8 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         //   write result to sp[-2];  sp -= 8
         //   jmp end
         // bail:
-        //   movabs r8, bcAddrAbs;  mov [rdi+OFF_IP], r8
+        //   r8 = state.method + bcOffsetFromMethObj   ; ip-relative-to-method
+        //   mov [rdi+OFF_IP], r8
         //   mov dword [rdi+OFF_EXIT], EXIT_ARITH_OVERFLOW
         //   ret
         // end:
@@ -396,8 +402,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.jmp(end);
 
         a.bind(bail);
-        // movabs r8, <bcAddrAbs> — 64-bit immediate load.
-        a.mov(r8, asmjit::Imm(bcAddrAbs));
+        // r8 = state.method.rawBits + bcOffsetFromMethObj
+        // (state.method is GC-tracked Oop; this is the post-GC-safe
+        // address of the failing bytecode.)
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), r8);
         a.mov(dword_ptr(rdi, OFF_EXIT),
               asmjit::Imm(EXIT_ARITH_OVERFLOW));
@@ -426,9 +435,9 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
 }
 
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
-                    uint64_t nilBits, uint64_t bcAddrAbs) {
+                    uint64_t nilBits, int bcOffsetFromMethObj) {
     using namespace asmjit::a64;
-    (void)bcAddrAbs;
+    (void)bcOffsetFromMethObj;
 
     if (op <= 0x0F) {
         int n = op & 0x0F;
@@ -555,7 +564,9 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.b(end);
 
         a.bind(bail);
-        a.mov(x5, asmjit::Imm(bcAddrAbs));
+        // x5 = state.method.rawBits + bcOffsetFromMethObj  (post-GC safe)
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
         a.str(x5, ptr(x0, OFF_IP));
         a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
         a.str(w3, ptr(x0, OFF_EXIT));
@@ -572,8 +583,13 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 // (returns ExitSend immediately).  Writes the resulting bytes into
 // `out` (caller buffer of `outCap` bytes); on success sets *outSize
 // and *isReal (true if real codegen, false if bail stub).
+//
+// `bcOffsetBase` is the offset of bc[0] from the CompiledMethod
+// object's address (i.e., 8 [object header] + 8*(1+numLiterals)).
+// Per-bytecode bail emit uses `bcOffsetBase + i` so state.ip can be
+// computed as `state.method.rawBits() + offset` at runtime — GC-safe.
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
-                     uint64_t bcBaseAbs,
+                     int bcOffsetBase,
                      uint8_t* out, size_t outCap,
                      size_t* outSize, bool* isReal) {
     using namespace asmjit;
@@ -609,7 +625,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     x86::Assembler a(&code);
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
-            if (!emitOne_x86(a, bc[i], nilBits, bcBaseAbs + i)) {
+            if (!emitOne_x86(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
                 // pre-scan said yes but emit said no.  Abort —
                 // safer than emitting partial garbage; caller sees
                 // failure and the method goes uncompiled.
@@ -635,7 +651,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     a64::Assembler a(&code);
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
-            if (!emitOne_arm64(a, bc[i], nilBits, bcBaseAbs + i)) {
+            if (!emitOne_arm64(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
                     i, bc[i]);
@@ -714,28 +730,12 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // mirroring the stencil decoder's logic (JITCompiler.cpp:639-660):
     // post-return bytes are dead code — selector/temp-name oop trailers
     // that the image packs into CompiledMethod.bytes() — and treating
-    // them as bytecodes pollutes the pre-scan.
+    // them as bytecodes would pollute the pre-scan.
     //
-    // GATED OFF BY DEFAULT.  Mechanically the trim is correct (verified
-    // by hand-comparing trimmed vs raw for many methods), but enabling
-    // it expands the real-emit set ~30x — and somewhere in that bigger
-    // set is a latent emit bug that produces wrong return values
-    // downstream.  Bisected to roughly the 171st real-emit; the shape
-    // is `^ self - self = lit[0]` style (Float>>isFinite et al.) where
-    // the JIT bails mid-method on the SmI check at the subtract,
-    // interp resumes at the bail point, completes the method.  The
-    // resume-mid-method handoff superficially matches the stencil JIT
-    // contract (state.ip + state.sp left at the bail, interp dispatches
-    // from there) — yet something downstream breaks.
-    //
-    // Set PHARO_ASMJIT_T1_TRIM_AGGRESSIVE=1 to enable while debugging.
-    // Phase 3 baseline (37/37 PASS) requires the trim OFF.  See
-    // scripts/jit-diff/plan_asmjit_replacement.md "Phase 4 (retry)".
-    static const bool trimAggressive =
-        std::getenv("PHARO_ASMJIT_T1_TRIM_AGGRESSIVE") != nullptr;
-    size_t bcLen = trimAggressive
-                       ? computeLiveLength(bc, bcLenRaw)
-                       : bcLenRaw;
+    // Set PHARO_ASMJIT_T1_NO_TRIM=1 to disable for bisection.
+    static const bool noTrim =
+        std::getenv("PHARO_ASMJIT_T1_NO_TRIM") != nullptr;
+    size_t bcLen = noTrim ? bcLenRaw : computeLiveLength(bc, bcLenRaw);
 
     // Buffer for emitted bytes.  Per-bytecode max is ~30 bytes
     // (push/return × 5-7 instructions × ~5 bytes/insn on x86_64).
@@ -751,14 +751,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     size_t emitted = 0;
     bool   isReal  = false;
     uint64_t nilBits = memory.nil().rawBits();
-    // Absolute address of the method's first bytecode, used by arith
-    // bails to set state.ip so the interpreter re-executes the
-    // failing op via the regular dispatch.  Note: GC compaction would
-    // invalidate this address; the runtime is expected to discard
-    // JITMethods on compaction (same constraint the stencil JIT
-    // operates under).
-    uint64_t bcBaseAbs = reinterpret_cast<uint64_t>(bc);
-    if (!emitMethodBytes(bc, bcLen, nilBits, bcBaseAbs,
+    // Offset of bc[0] from the CompiledMethod object's address.
+    //   methObj layout:  [ObjectHeader 8B][slot 0 = header][slot 1..N = lits][bytes...]
+    //   bc[0] address  = methObj + 8 (header) + 8 * (1 + numLiterals)
+    // Bail emit uses `state.method.rawBits() + (bcOffsetBase + i)` so
+    // state.ip survives GC compaction (the alternative — baking the
+    // absolute bytecode address — dangles when the method moves).
+    int bcOffsetBase = 8 + (int)((1 + numLiterals) * 8);
+    if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase,
                          buf.data(), cap, &emitted, &isReal)) {
         g_failed++;
         return nullptr;
