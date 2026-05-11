@@ -161,6 +161,20 @@ size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
 // Rejects multi-byte opcodes (sends, jumps, ext-prefixes), arithmetic
 // outside the Phase 3 allowlist, and any single-byte op outside the
 // explicit allowlist.
+// Phase 4 single-byte sends: 0x70-0xAF (special + literal sends).
+// Each emits a bail-to-interp at the send byte; interp dispatches
+// the send normally, then continues with the rest of the method.
+// Same GC-safe state.ip computation as arith bail (state.method +
+// bcOffsetFromMethObj).  See emitOne_x86 / emitOne_arm64 below.
+inline bool isPhase4SendOp(uint8_t op) {
+    // Skip arith range (0x60..0x6F) — those have their own fast path.
+    // 0x70..0x7F: special selectors 16..31
+    // 0x80..0x8F: literal send 0 args
+    // 0x90..0x9F: literal send 1 arg
+    // 0xA0..0xAF: literal send 2 args
+    return op >= 0x70 && op <= 0xAF;
+}
+
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
@@ -172,8 +186,9 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
+        if (isPhase4SendOp(op)) continue;             // 0x70..0xAF
         if (op == SistaV1::Pop) continue;             // 0xD8
-        // Anything else (sends, jumps, ext-prefixes, pushLitVar,
+        // Anything else (jumps, ext-prefixes, pushLitVar,
         // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
         // mul/div/bit ops, ext bytecodes E0+, etc.) → unsupported.
         return false;
@@ -415,6 +430,20 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
+    // Phase 4 single-byte sends: bail to interp at this send byte.
+    // state.sp already holds the receiver+args from preceding pushes;
+    // interp resumes dispatch at the send byte (which is what state.ip
+    // now points to) and runs the send via its normal machinery.  Same
+    // GC-safe `state.method + offset` pattern as arith bail.
+    if (isPhase4SendOp(op)) {
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+        return true;
+    }
     return false;  // pre-scan failed to filter — bug in allBytecodesSupported
 }
 
@@ -573,6 +602,16 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ret(x30);
 
         a.bind(end);
+        return true;
+    }
+    // Phase 4 single-byte sends on ARM64: bail to interp at the send.
+    if (isPhase4SendOp(op)) {
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
         return true;
     }
     return false;

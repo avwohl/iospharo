@@ -124,7 +124,41 @@ Estimated final size: 12-15K lines of JIT code (down from 41K).
 - Fuzzer: 37/37 PASS held; ~5 methods/eval get real codegen (one
   more than Phase 2).
 
-### Phase 4: sends — ATTEMPTED 2026-05-11, REVERTED
+### Phase 4: sends — DONE 2026-05-11 (bail-to-interp)
+
+After steps 1-3 fixed the GC-staleness bug that blocked the first
+attempt, send bail-to-interp works the same as arith bail.
+
+Single-byte sends now real-emit:
+  - 0x70..0x7F: special selectors 16..31 (at:, at:put:, size, etc.)
+  - 0x80..0x8F: literal send 0 args
+  - 0x90..0x9F: literal send 1 arg
+  - 0xA0..0xAF: literal send 2 args
+
+Emit pattern (x86; ARM64 same shape):
+  mov r8, [rdi+OFF_METHOD]
+  add r8, Imm(bcOffsetFromMethObj)
+  mov [rdi+OFF_IP], r8
+  mov dword [rdi+OFF_EXIT], EXIT_ARITH_OVERFLOW
+  ret
+
+The interp catches the exit, dispatches the send via its normal
+machinery, then continues at the next bytecode.  Same contract as
+arith bail — and now correct because state.method is GC-tracked.
+
+What's NOT included yet:
+  - 2-byte ExtSend (0xEA) and ExtSuperSend (0xEB): need
+    multi-byte decode in pre-scan + bcOffsetBase math for the
+    second byte.  Methods containing them bail-on-entry.
+  - Real IC dispatch + J2J chaining (the perf-win Phase 4b).
+    Every send still pays the interp-dispatch cost; we just
+    win on the prefix bytecodes (pushReceiver, pushTemp,
+    pushLitConst, returnTop, arith) before the first send.
+
+Results: 37/37 PASS, mini 3/3 PASS.
+
+### Phase 4: original "real send" notes (deferred to Phase 4b)
+
 
 First attempt (naive bail-to-interp-on-send) didn't work.  Reverted
 to Phase 3 baseline.  What was tried and what blocked it:
@@ -268,15 +302,31 @@ SIGSEGV at #1400?  Likely candidates, in order of suspicion:
    Pre-fix: trim ON → 0/37 PASS.
    Post-fix: trim ON → 37/37 PASS, mini 3/3 PASS.
 
-4. **Phase 4 retry, take two: actual sends.**  Now that arith
-   bail-mid-method works, the same pattern (state.method-relative
-   ip set by emit) can extend to real send dispatch.  Approach:
-   keep IC table layout as in the stencil JIT, emit IC probe
-   inline (5-6 cmp+je against cached classes), bail to runtime
-   helper on miss.  See "Phase 4: sends" earlier in this file.
+4. ✓ **Send bail-to-interp** (same commit as step 3 + follow-up).
+   Single-byte sends (0x70..0xAF) now real-emit using the same
+   GC-safe bail pattern as arith.  Methods like `^ self foo`,
+   `^ self foo: x`, `^ self at: i` now have their prefix
+   bytecodes (pushReceiver, pushTemp/pushLitConst, etc.) compiled
+   to machine code; only the send itself bails to interp.
+   - 37/37 PASS, mini 3/3 PASS.
+   - ~30+ real-emit methods per eval (was ~5 in Phase 3).
+   - Send still pays interp-dispatch cost; real IC + J2J in
+     Phase 4b.
 
-**Effort:** Steps 1-3 took ~1 session.  Step 4 (real sends) is
-the original Phase 4 work — likely 2 sessions.
+**Effort:** Steps 1-4 done in ~1 session.
+
+### Phase 4b: real IC + J2J chaining
+
+The current send emit bails on every send.  Real wins come from
+inline IC + J2J chaining.  Approach:
+  - Per-send 5-6 inline cmp+je probes against cached classes.
+  - On hit, J2J chain to target's entry.
+  - On miss, fall through to `jit_rt_ic_miss` runtime helper.
+  - Keep IC table layout compatible with stencil JIT's existing
+    runtime helpers (no churn in JITRuntime.cpp).
+  - This is where the stencil JIT's `findElementOrNil:` stack-
+    corruption bug lived — centralize SP save in a `StackHelper`
+    so it's correct in exactly one place.
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,
