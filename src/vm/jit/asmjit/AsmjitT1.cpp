@@ -201,6 +201,8 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
         if (op <= 0x0F) continue;                     // pushRecvVar 0..15
+        if (op >= SistaV1::PushLitVarBase
+                && op <= SistaV1::PushLitVarLast) continue;  // 0x10..0x1F
         if (op >= 0x20 && op <= 0x3F) continue;       // pushLitConst 0..31
         if (op >= 0x40 && op <= 0x4B) continue;       // pushTemp 0..11
         if (op == SistaV1::PushReceiver) continue;    // 0x4C
@@ -281,6 +283,16 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         int n = op - 0x20;
         a.mov(rax, ptr(rdi, OFF_LITERALS));
         a.mov(rax, ptr(rax, n * 8));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushLitVar N (0x10..0x1F): literals[N] is an Association;
+    // push Association.value (slot 1).
+    if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
+        int n = op - SistaV1::PushLitVarBase;
+        a.mov(rax, ptr(rdi, OFF_LITERALS));
+        a.mov(rax, ptr(rax, n * 8));                     // Association oop
+        a.mov(rax, ptr(rax, OBJ_SLOT_0 + 8));            // slot[1] = value
         emitPushReg(a, rax);
         return true;
     }
@@ -548,6 +560,15 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         int n = op - 0x20;
         a.ldr(x1, ptr(x0, OFF_LITERALS));
         a.ldr(x1, ptr(x1, n * 8));
+        emitPushReg(a, x1);
+        return true;
+    }
+    // pushLitVar N (0x10..0x1F): push literals[N].value (Association.slot[1]).
+    if (op >= SistaV1::PushLitVarBase && op <= SistaV1::PushLitVarLast) {
+        int n = op - SistaV1::PushLitVarBase;
+        a.ldr(x1, ptr(x0, OFF_LITERALS));
+        a.ldr(x1, ptr(x1, n * 8));
+        a.ldr(x1, ptr(x1, OBJ_SLOT_0 + 8));
         emitPushReg(a, x1);
         return true;
     }
