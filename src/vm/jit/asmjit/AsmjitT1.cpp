@@ -245,6 +245,7 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 6:  return primIndex;   // SmallInteger>>>=
     case 7:  return primIndex;   // SmallInteger>>=
     case 8:  return primIndex;   // SmallInteger>>~=
+    case 9:  return primIndex;   // SmallInteger>>*
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -350,14 +351,26 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.sar(rdx, asmjit::Imm(3));
     if (primIndex == 1) {
         a.add(rcx, rdx);
+        a.jo(fail);
     } else if (primIndex == 2) {
         a.sub(rcx, rdx);
+        a.jo(fail);
+    } else if (primIndex == 9) {
+        // a * b: imul sets OF on 64-bit signed overflow.  After that
+        // we also need to confirm the result fits in 61-bit SmI range:
+        // ((result << 3) >> 3) must equal result.
+        a.imul(rcx, rdx);
+        a.jo(fail);
+        a.mov(r8, rcx);
+        a.shl(r8, asmjit::Imm(3));
+        a.sar(r8, asmjit::Imm(3));
+        a.cmp(r8, rcx);
+        a.jne(fail);
     } else {
         // Shouldn't happen — supportedPrimIndex gates this.
         a.bind(fail);
         return;
     }
-    a.jo(fail);
     a.shl(rcx, asmjit::Imm(3));
     a.or_(rcx, asmjit::Imm(SMI_TAG));
     a.mov(ptr(rdi, OFF_RETVAL), rcx);
@@ -720,13 +733,27 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     a.asr(x2, x2, asmjit::Imm(3));
     if (primIndex == 1) {
         a.adds(x1, x1, x2);
+        a.b_vs(fail);
     } else if (primIndex == 2) {
         a.subs(x1, x1, x2);
+        a.b_vs(fail);
+    } else if (primIndex == 9) {
+        // mul: detect 64-bit overflow via smulh (high 64 bits of 128-bit
+        // signed product) — must equal sign-extension of low 64 bits.
+        a.mul(x6, x1, x2);
+        a.smulh(x7, x1, x2);
+        a.cmp(x7, x6, asmjit::a64::asr(63));
+        a.b_ne(fail);
+        // Also confirm fits in 61-bit SmI range.
+        a.mov(x1, x6);
+        a.lsl(x4, x1, asmjit::Imm(3));
+        a.asr(x4, x4, asmjit::Imm(3));
+        a.cmp(x4, x1);
+        a.b_ne(fail);
     } else {
         a.bind(fail);
         return;
     }
-    a.b_vs(fail);
     a.lsl(x1, x1, asmjit::Imm(3));
     a.orr(x1, x1, asmjit::Imm(SMI_TAG));
     a.str(x1, ptr(x0, OFF_RETVAL));
