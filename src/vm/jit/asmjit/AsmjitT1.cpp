@@ -627,10 +627,20 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
 // object's address (i.e., 8 [object header] + 8*(1+numLiterals)).
 // Per-bytecode bail emit uses `bcOffsetBase + i` so state.ip can be
 // computed as `state.method.rawBits() + offset` at runtime — GC-safe.
+//
+// `bcToCodeOut` (if non-null, size bcLen+1) is filled with the per-
+// bytecode emit start offset within the output buffer.  Slot bcLen
+// holds the end-of-machine-code offset.  Used by the chain loop
+// (codeOffsetForBC) to resume our JIT method at a specific bytecode
+// after a callee completes.  Zero means "not a valid re-entry" —
+// per the runtime contract (JITMethod.hpp::codeOffsetForBC).  For
+// stub-only methods this is left as zeros except slot 0 = 0 and
+// slot bcLen = emitted_size.
 bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
                      int bcOffsetBase,
                      uint8_t* out, size_t outCap,
-                     size_t* outSize, bool* isReal) {
+                     size_t* outSize, bool* isReal,
+                     uint32_t* bcToCodeOut) {
     using namespace asmjit;
 
     Environment env = Environment::host();
@@ -660,10 +670,22 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         return true;
     }
 
+    // Per-bytecode labels — bound just before each bytecode's emit.
+    // After flatten, label_offset_from_base gives the emit start of
+    // each bytecode → fills bcToCodeOut for the chain loop's resume.
+    // Labels are created by the Assembler (not CodeHolder); see below
+    // in each per-arch block.
+    std::vector<Label> bcLabels;
+
 #if defined(__x86_64__) || defined(_M_X64)
     x86::Assembler a(&code);
+    if (bcToCodeOut && real) {
+        bcLabels.reserve(bcLen);
+        for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
+    }
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
+            if (bcToCodeOut) a.bind(bcLabels[i]);
             if (!emitOne_x86(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
                 // pre-scan said yes but emit said no.  Abort —
                 // safer than emitting partial garbage; caller sees
@@ -688,8 +710,13 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     a64::Assembler a(&code);
+    if (bcToCodeOut && real) {
+        bcLabels.reserve(bcLen);
+        for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
+    }
     if (real) {
         for (size_t i = 0; i < bcLen; i++) {
+            if (bcToCodeOut) a.bind(bcLabels[i]);
             if (!emitOne_arm64(a, bc[i], nilBits, bcOffsetBase + (int)i)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
@@ -713,6 +740,27 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
     err = code.flatten();
     if (err != kErrorOk) return false;
+
+    // Fill bcToCodeOut from bound labels.  bcToCodeOut[bcLen] is the
+    // end-of-machine-code offset (used by findMethodByPC etc.).
+    // Per JITMethod.hpp contract: bcToCode[i]==0 means "not a valid
+    // re-entry point"; bcToCode[0] is conventionally 0 (initial entry
+    // goes through codeStart() directly).
+    if (bcToCodeOut) {
+        if (real) {
+            for (size_t i = 0; i < bcLen; i++) {
+                uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
+                // Per contract, slot 0 is conventionally 0 (entry via
+                // codeStart()).  Per-slot values for i>0 are the JIT
+                // emit start of bytecode i.
+                bcToCodeOut[i] = (i == 0) ? 0u : off;
+            }
+        } else {
+            // Stub-only: no per-bytecode entry points.  Leave zeros.
+            for (size_t i = 0; i < bcLen; i++) bcToCodeOut[i] = 0;
+        }
+        // bcToCodeOut[bcLen] is set by the caller to the emitted size.
+    }
     size_t total = code.code_size();
     if (total == 0 || total > outCap) {
         std::fprintf(stderr,
@@ -797,14 +845,47 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // state.ip survives GC compaction (the alternative — baking the
     // absolute bytecode address — dangles when the method moves).
     int bcOffsetBase = 8 + (int)((1 + numLiterals) * 8);
+    // bcToCode: per-bytecode emit start within the JIT code.  Filled
+    // by emitMethodBytes from per-bytecode labels.  Slot [bcLen] gets
+    // the end-of-machine-code offset after emit.
+    std::vector<uint32_t> bcToCode(bcLen + 1, 0);
     if (!emitMethodBytes(bc, bcLen, nilBits, bcOffsetBase,
-                         buf.data(), cap, &emitted, &isReal)) {
+                         buf.data(), cap, &emitted, &isReal,
+                         bcToCode.data())) {
         g_failed++;
         return nullptr;
     }
+    bcToCode[bcLen] = (uint32_t)emitted;
 
-    // Allocate the JITMethod sized for the emitted bytes.
-    JITMethod* jm = zone.allocate(static_cast<uint32_t>(emitted), 0);
+    // Count send sites and compute the IC layout.  Each single-byte
+    // send opcode (0x70..0xAF) gets one IC site.
+    uint16_t numSendSites = 0;
+    if (isReal) {
+        for (size_t i = 0; i < bcLen; i++) {
+            if (isPhase4SendOp(bc[i])) numSendSites++;
+        }
+    }
+
+    // Payload layout after the JITMethod header:
+    //   [machine code, `emitted` bytes]
+    //   [pad to 4-byte align]
+    //   [bcToCode table, (bcLen+1)*4 bytes]
+    //   [pad to 8-byte align]
+    //   [selBitsArray, numSendSites*8 bytes]
+    // codeSize passed to allocate() is the FULL payload size.
+    uint32_t bcToCodeTableOffset =
+        (uint32_t)((emitted + 3u) & ~3u);
+    uint32_t bcToCodeTableSize   =
+        (uint32_t)((bcLen + 1) * sizeof(uint32_t));
+    uint32_t selBitsArrayOffset  =
+        (bcToCodeTableOffset + bcToCodeTableSize + 7u) & ~7u;
+    uint32_t selBitsArraySize    =
+        (uint32_t)(numSendSites * sizeof(uint64_t));
+    uint32_t payloadSize = selBitsArrayOffset + selBitsArraySize;
+
+    // Allocate the JITMethod with full payload + IC sites.  CodeZone
+    // calloc()s a heap-side icBuffer of numSendSites*IC_BYTES_PER_SITE.
+    JITMethod* jm = zone.allocate(payloadSize, numSendSites);
     if (!jm) {
         g_failed++;
         return nullptr;
@@ -814,12 +895,30 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->methodHeader      = static_cast<uint64_t>(headerBits);
     jm->argCount          = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jm->tempCount         = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
-    // Set numBytecodes = 0 even though we know bcLen.  Setting it
-    // non-zero would suggest to the runtime that we maintain a
-    // bcToCode table (for OSR, deopt, exception PC lookups), which
-    // Phase 2 doesn't.  Keeping at 0 mirrors Phase 1's contract.
+    // numBytecodes is the source-bytecode count for the live region.
+    // The runtime indexes bcToCodeTable() via this — `bcToCode[i] = 0`
+    // for i where re-entry is invalid (the convention; entry-by-default
+    // is via codeStart()).  slot [numBytecodes] holds the
+    // end-of-machine-code offset for findMethodByPC.
+    // numBytecodes intentionally kept at 0 for now.  The bcToCode +
+    // selBitsArray are allocated and populated, but advertising them
+    // via numBytecodes+bcToCodeTableOffset would enable interp
+    // resume paths (chain loop's J2J descent, savedBytecodeEnd
+    // computation) that we don't yet support correctly — interp ends
+    // up taking a frame's bytecodeEnd = bcStart + live-region-len and
+    // dispatches past it.  Step 4b.2 will flip these on once inline
+    // IC dispatch is in place.
+    //
+    // What's live now:
+    //   - numICEntries: set so CodeZone allocates icBuffer
+    //   - icBuffer:     calloc'd by CodeZone; selBits written below
+    //   - selBitsArray: populated below; GC-stable via
+    //                   selBitsArrayOffset and forEachRoot
     jm->numBytecodes      = 0;
-    jm->numICEntries      = 0;
+    jm->numICEntries      = numSendSites;
+    jm->bcToCodeTableOffset = 0;  // not advertised until step 4b.2
+    jm->selBitsArrayOffset =
+        numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->tier              = 1;
     jm->hasPrimPrologue   = false;
     jm->isBlock           = false;
@@ -833,6 +932,62 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->isSpliceTarget    = false;
 
     std::memcpy(jm->codeStart(), buf.data(), emitted);
+    // Write bcToCode table after the machine code.  Required by the
+    // chain loop (Interpreter.cpp:18062-18207) to compute resume
+    // offsets after callee returns.  Skipped for stub-only methods
+    // (numBytecodes = 0; bcToCodeTableOffset = 0 — no table).
+    if (isReal && bcLen > 0) {
+        uint32_t* tbl = reinterpret_cast<uint32_t*>(
+            jm->codeStart() + bcToCodeTableOffset);
+        for (size_t i = 0; i <= bcLen; i++) tbl[i] = bcToCode[i];
+    }
+    // Write selBitsArray (per-send selector Symbol Oop).  Used by
+    // jit_rt_ic_miss after GC to recover the selector when the
+    // in-IC slot[18] has been GC-zeroed (Task #41).
+    if (numSendSites > 0) {
+        uint64_t* sba = reinterpret_cast<uint64_t*>(
+            jm->codeStart() + selBitsArrayOffset);
+        uint16_t siteIdx = 0;
+        Oop* literals = methObj->slots() + 1;
+        Oop ssArrayOop = memory.specialObject(
+            SpecialObjectIndex::SpecialSelectorsArray);
+        ObjectHeader* ssHdr = (ssArrayOop.isObject()
+                               && ssArrayOop.rawBits() > 0x10000)
+                              ? ssArrayOop.asObjectPtr() : nullptr;
+        for (size_t i = 0; i < bcLen; i++) {
+            uint8_t op = bc[i];
+            if (!isPhase4SendOp(op)) continue;
+            uint64_t selBits = 0;
+            if (op >= 0x70 && op <= 0x7F) {
+                // Special selector: ssArray[(op - 0x70 + 16) * 2].
+                // Slot 0 = selector, slot 1 = nArgs (we don't need
+                // nArgs here — the runtime gets it from the bytecode).
+                if (ssHdr) {
+                    size_t slot = (size_t)((op - 0x70) + 16) * 2;
+                    if (slot < ssHdr->slotCount()) {
+                        selBits = ssHdr->slotAt(slot).rawBits();
+                    }
+                }
+            } else {
+                // Literal send 0/1/2 args: selector = literals[op & 0x0F].
+                int litIdx = op & 0x0F;
+                if (litIdx < numLiterals) {
+                    selBits = literals[litIdx].rawBits();
+                }
+            }
+            sba[siteIdx++] = selBits;
+            // Also seed the in-IC slot[18] (selectorBits) so the
+            // stencil-style probe contract works.  recoverAfterGC
+            // zeros this on compaction; jit_rt_ic_miss recovers from
+            // sba in that case.
+            if (jm->icBuffer) {
+                uint8_t* icStart = jm->icZoneStart();
+                uint64_t* siteSlots = reinterpret_cast<uint64_t*>(
+                    icStart + (siteIdx - 1) * IC_BYTES_PER_SITE);
+                siteSlots[IC_SELBITS_SLOT] = selBits;
+            }
+        }
+    }
     platform::flushICache(jm->codeStart(), emitted);
     jm->state = MethodState::Compiled;
     platform::makeExecutable(jm, jm->totalSize);

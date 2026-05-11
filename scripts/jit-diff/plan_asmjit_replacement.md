@@ -331,30 +331,33 @@ match.
 
 **Infrastructure pieces (do these first, in order):**
 
-1. **bcToCode table.**  uint32_t[bcLen + 1] mapping each bytecode
-   offset to its emit start in the JIT code.  Lives at
-   `codeStart() + bcToCodeTableOffset`.  Set
-   `jm->numBytecodes = bcLen` and `jm->bcToCodeTableOffset`.
-   Without this, the chain loop can't resume our method
-   post-send.
+1. ✓ **bcToCode table** (4b.1, commit `<NEXT>`).  uint32_t[bcLen+1]
+   mapping each bytecode offset to its emit start in the JIT code.
+   Built via per-bytecode asmjit labels +
+   `code.label_offset_from_base()`.  Lives at
+   `codeStart() + bcToCodeTableOffset`.
+   - **Allocated and populated**, but NOT advertised via
+     `numBytecodes` / `bcToCodeTableOffset` yet.  Setting those
+     non-zero triggers the chain loop's J2J descent path and
+     savedBytecodeEnd computation; both interact with our trim's
+     live-region semantics in ways that produce mustBeBoolean
+     cascades and stack corruption.  4b.2 will enable both once
+     inline IC dispatch produces ExitSendCached.
 
-2. **IC site allocation.**  Count single-byte sends in the method
-   (range 0x70..0xAF) during the pre-scan.  Set
-   `jm->numICEntries` and allocate via `CodeZone::allocate` (it
-   already calloc()s `icBuffer`).  Each site is 160 bytes
-   (`IC_BYTES_PER_SITE`).
+2. ✓ **IC site allocation** (4b.1, same commit).  Count single-byte
+   sends in the live region; set `jm->numICEntries` so
+   `CodeZone::allocate` calloc()s the heap-side icBuffer
+   (numSites × IC_BYTES_PER_SITE).
 
-3. **selBitsArray init.**  uint64_t[numICEntries] at
-   `codeStart() + selBitsArrayOffset`.  For each send site, pull
-   the selector Symbol Oop from:
-     - Special selectors (0x70-0x7F): `SpecialSelectors[op-0x70]`
-       from special-objects table.
-     - Literal sends 0-args (0x80-0x8F): `literals[op & 0x0F]`.
-     - Literal sends 1-arg (0x90-0x9F): `literals[op & 0x0F]`.
-     - Literal sends 2-args (0xA0-0xAF): `literals[op & 0x0F]`.
-   Also write to `icBuffer[siteIdx * 20 + 18]` (the in-IC
-   selectorBits slot — kept for stencil compatibility, but
-   GC-zeroed; runtime falls back to `selBitsArray`).
+3. ✓ **selBitsArray init** (4b.1, same commit).
+   uint64_t[numICEntries] at `codeStart() + selBitsArrayOffset`.
+   For each send site, the selector Symbol Oop is pulled from:
+   - Special selectors (0x70-0x7F):
+     `SpecialSelectorsArray[(op-0x70+16)*2]`.
+   - Literal sends 0/1/2 args (0x80-0xAF):
+     `literals[op & 0x0F]`.
+   Also seeded into `icBuffer[siteIdx*20 + 18]` (IC_SELBITS_SLOT
+   — the in-IC slot the stencil-style probe expects).
 
 **Per-send emit (replacing the current bail):**
 
