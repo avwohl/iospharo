@@ -1,0 +1,53 @@
+# JIT-vs-interp differential corpus.
+# TAB-separated: <id>\t<expression>\t<expected-pattern-or-empty>
+# Lines starting with '#' are comments.
+# <expected-pattern>: optional egrep pattern that the OUTPUT must match.
+#   When empty, only interp-vs-JIT equivalence is checked.
+#
+# Tab is the field separator because Smalltalk source uses '|' for
+# blocks (`[:x | x + 1]`) and they don't parse cleanly with pipe.
+#
+# === smallinteger arithmetic (stencil_addSmallInt etc.) ===
+arith_001	(3 + 4) printString	^'7'$
+arith_002	(1 + 2 * 3) printString	^'9'$
+arith_003	(100 - 7) printString	^'93'$
+arith_004	(20 // 3) printString	^'6'$
+arith_005	(17 \\\\ 5) printString	^'2'$
+arith_006	((1 + 2) * (3 + 4)) printString	^'21'$
+arith_007	(5 < 10) printString	^'true'$
+arith_008	(10 < 5) printString	^'false'$
+arith_009	(7 = 7) printString	^'true'$
+arith_010	(2 raisedTo: 10) printString	^'1024'$
+# === conditionals (mustBeBoolean territory) ===
+cond_001	((3 + 4) = 7 ifTrue: ['yes'] ifFalse: ['no']) printString	^'''yes'''$
+cond_002	((1 + 1) > 5 ifTrue: [42] ifFalse: [99]) printString	^'99'$
+cond_003	(true and: [false]) printString	^'false'$
+cond_004	(false or: [true]) printString	^'true'$
+# === string ops ===
+str_001	'hello' printString	^'''hello'''$
+str_002	('foo' , 'bar') printString	^'''foobar'''$
+str_003	'abc' size printString	^'3'$
+str_004	'HELLO' asLowercase printString	^'''hello'''$
+str_005	'hello' asUppercase printString	^'''HELLO'''$
+str_006	'hello' reversed printString	^'''olleh'''$
+# === collection construction (Set/OC/Array) ===
+coll_001	#(1 2 3) size printString	^'3'$
+coll_002	#(10 20 30) sum printString	^'60'$
+coll_003	(Array with: 1 with: 2) printString	^'#\(1 2\)'$
+coll_004	(OrderedCollection new add: 1; add: 2; yourself) size printString	^'2'$
+coll_005	(Set new add: 1; add: 1; add: 2; yourself) size printString	^'2'$
+coll_006	(Set with: 1 with: 2 with: 3) size printString	^'3'$
+coll_007	(Dictionary new at: 'k' put: 'v'; yourself) size printString	^'1'$
+# === iteration (uses '|' in block syntax — needed tab separator) ===
+iter_001	((1 to: 10) inject: 0 into: [:a :b | a + b]) printString	^'55'$
+iter_002	(#(1 2 3 4 5) collect: [:x | x * 2]) printString	^'#\(2 4 6 8 10\)'$
+iter_003	(#(1 2 3 4 5) select: [:x | x > 2]) printString	^'#\(3 4 5\)'$
+iter_004	(#(1 2 3) reject: [:x | x > 1]) printString	^'#\(1\)'$
+# === blocks ===
+block_001	[42] value printString	^'42'$
+block_002	([:x | x * x] value: 7) printString	^'49'$
+block_003	([:x :y | x + y] value: 3 value: 4) printString	^'7'$
+# === exceptions ===
+exc_001	([1/0] on: ZeroDivide do: [:e | 'caught']) printString	^'''caught'''$
+exc_002	([nil foo] on: MessageNotUnderstood do: [:e | 'mnu']) printString	^'''mnu'''$
+exc_003	([Error signal: 'boom'] on: Error do: [:e | e messageText]) printString	^'''boom'''$
