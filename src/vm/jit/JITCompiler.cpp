@@ -8,6 +8,7 @@
 #include "PlatformJIT.hpp"
 #include "SistaV1.hpp"
 #include "sista/SistaRuntime.hpp"
+#include "asmjit/AsmjitT1.hpp"
 #include "../DebugSettings.hpp"
 #include "../ObjectMemory.hpp"
 #include "../Interpreter.hpp"
@@ -1534,6 +1535,30 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
     }
 
+    // PHARO_USE_ASMJIT_T1=1: route through the asmjit-emitted Tier-1
+    // path instead of the stencil pipeline.  Phase 1 of the JIT
+    // rebuild (see scripts/jit-diff/plan_asmjit_replacement.md).
+    // Every method compiles to a tiny "set ExitSend; ret" trampoline,
+    // so the runtime sees a JIT-compiled method but execution
+    // immediately bails to the interpreter on entry.  Goal: prove
+    // the integration plumbing works end-to-end before adding real
+    // bytecode emit functions in Phase 2+.
+    {
+        static const bool useAsmjitT1 =
+            std::getenv("PHARO_USE_ASMJIT_T1") != nullptr;
+        if (useAsmjitT1) {
+            JITMethod* jm = compileViaAsmjit(zone_, methodMap_, memory_,
+                                              interp_, compiledMethod);
+            if (jm) {
+                methodsCompiled_++;
+            } else {
+                compilationsFailed_++;
+            }
+            return jm;
+        }
+    }
+
+    // Stencil compile path follows.
     // Get bytecode range from CompiledMethod
     ObjectHeader* methObj = compiledMethod.asObjectPtr();
     Oop headerOop = methObj->slotAt(0);
