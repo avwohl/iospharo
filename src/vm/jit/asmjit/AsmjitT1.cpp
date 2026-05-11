@@ -246,6 +246,8 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 7:  return primIndex;   // SmallInteger>>=
     case 8:  return primIndex;   // SmallInteger>>~=
     case 9:  return primIndex;   // SmallInteger>>*
+    case 14: return primIndex;   // SmallInteger>>bitAnd:
+    case 15: return primIndex;   // SmallInteger>>bitOr:
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -340,6 +342,19 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
             case 8: a.cmovne(rax, r8); break;  // ~=
         }
         a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        a.bind(fail);
+        return;
+    }
+
+    if (primIndex == 14 || primIndex == 15) {
+        // bitAnd / bitOr: SmI tag is preserved by both ops because
+        // both operands have low 3 bits = 001, so AND/OR keeps it 001.
+        // Operate on tagged values directly — no untag/retag.
+        if (primIndex == 14) a.and_(rcx, rdx);
+        else                 a.or_(rcx, rdx);
+        a.mov(ptr(rdi, OFF_RETVAL), rcx);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
         a.bind(fail);
@@ -721,6 +736,18 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
             case 8: cc = CondCode::kNE; break;  // ~=
         }
         a.csel(x1, x6, x7, cc);
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(fail);
+        return;
+    }
+
+    if (primIndex == 14 || primIndex == 15) {
+        // bitAnd / bitOr on tagged bits — tag preserved (see x86 version).
+        if (primIndex == 14) a.and_(x1, x1, x2);
+        else                 a.orr (x1, x1, x2);
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
