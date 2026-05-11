@@ -245,6 +245,7 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 6:  return primIndex;   // SmallInteger>>>=
     case 7:  return primIndex;   // SmallInteger>>=
     case 8:  return primIndex;   // SmallInteger>>~=
+    case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
 }
@@ -287,12 +288,29 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 //   prim 1 = #+   prim 2 = #-                       (arith, overflow check)
 //   prim 3 = #<   prim 4 = #>   prim 5 = #<=
 //   prim 6 = #>=  prim 7 = #=   prim 8 = #~=        (compare, return bool)
+//   prim 110 = #==                                  (identical: oop bit-compare)
 //
 // Signed comparison of tagged SmI bits gives the same ordering as
 // untagged values (tag is the same low 3 bits, so shifting preserves
 // order).  So all comparisons skip the untag step.
 void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     using namespace asmjit::x86;
+
+    // prim 110 (#==): no type check — compare raw oop bits.
+    if (primIndex == 110) {
+        a.mov(rcx, ptr(rdi, OFF_RECEIVER));
+        a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
+        a.mov(rdx, ptr(rdx));
+        a.mov(rax, ptr(rdi, OFF_FALSEOOP));
+        a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
+        a.cmp(rcx, rdx);
+        a.cmove(rax, r8);
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return;  // never falls through (always succeeds)
+    }
+
     asmjit::Label fail = a.new_label();
 
     // Shared SmI check: load receiver + arg, OR'd-XOR'd low bits.
@@ -646,6 +664,23 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
 // ARM64 mirror of emitPrimProlog_x86.  See that function for context.
 void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     using namespace asmjit::a64;
+
+    if (primIndex == 110) {
+        // #== : compare raw oop bits.
+        a.ldr(x1, ptr(x0, OFF_RECEIVER));
+        a.ldr(x2, ptr(x0, OFF_TEMPBASE));
+        a.ldr(x2, ptr(x2));
+        a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+        a.ldr(x7, ptr(x0, OFF_FALSEOOP));
+        a.cmp(x1, x2);
+        a.csel(x1, x6, x7, CondCode::kEQ);
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        return;
+    }
+
     asmjit::Label fail = a.new_label();
 
     a.ldr(x1, ptr(x0, OFF_RECEIVER));
