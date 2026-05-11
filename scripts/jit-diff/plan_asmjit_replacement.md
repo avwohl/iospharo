@@ -382,22 +382,82 @@ match.
    ~540K (was 0).
 
 5. ⚠ **Inline IC HIT probe + ExitSendCached** — DEFERRED.
-   The 1-slot probe code works in isolation (verified by bisect:
-   making HIT fall through to miss = 3/3 PASS, while a real HIT
-   that emits ExitSendCached → mustBeBoolean cascade somewhere
-   downstream).  The chain loop's `ExitSendCached → inline
-   activate → resume caller via codeOffsetForBC` path interacts
-   with our methods in ways that produce wrong values.  Same
-   root issue blocks enabling `numBytecodes>0` /
-   `bcToCodeTableOffset>0` advertisement.
-   Requires deeper J2JSave/SavedFrame protocol work — what
-   exactly does the chain loop expect on resume that we aren't
-   providing?  Add `PHARO_B5_TRACE=1` instrumentation and trace
-   the exact bytecode/state at the first wrong-value point.
-
 6. **Megacache inline probe** — DEFERRED (depends on #5).
-
 7. ✓ **Final miss** = step 4 above.
+
+#### Phase 4b.2 resume protocol gap — diagnostic findings
+
+The chain loop's resume path
+(`Interpreter.cpp:18900-18965` "Direct resume — no hash lookup or
+codeOffsetForBC") fires when our T1 method bails ExitSend, the
+chain loop inline-activates the callee, the callee returns, and
+the chain loop tries to resume us at
+`callerJM->codeStart() + codeOffsetForBC(pastSendOff)`.
+
+Bisect matrix (numBytecodes / bcToCodeTableOffset):
+  - Both 0:                            3/3 PASS  (4b.1 baseline)
+  - numBytecodes set, bcToCode = 0:    3/3 PASS  (resume bails on
+                                       codeOff==0)
+  - numBytecodes = 0, bcToCode set:    3/3 PASS  (resume bails on
+                                       codeOff>=codeSize since
+                                       codeOffsetForBC returns
+                                       codeSize when bcOff >=
+                                       numBytecodes)
+  - Both set + send-free methods only: 37/37 PASS (no resume
+                                       triggers for these)
+  - Both set, send methods included:   0/3 FAIL  (mustBeBoolean
+                                       cascade; nil reaches
+                                       conditional jump in some
+                                       downstream method)
+
+So the resume mechanically works for methods that don't bail.
+The failure is specifically when the chain loop resumes a method
+that contains sends — the method runs to the resume entry, may
+hit another send, bails, chain loop nests another activation.
+
+Things ruled out:
+  - Sign-extension in lookupKey computation (fixed)
+  - state.method / state.literals / state.receiver corruption
+    (lines 18884-18890 restore them from saved locals)
+  - state.sp wrong post-pop+push (line 18893-18894 is correct)
+  - state.ip = bcStart on resume (line 18901) — irrelevant for
+    our T1 since we don't read state.ip until a bail, and bails
+    use `state.method + bcOffsetFromMethObj`
+  - IC site selBits stale (selBitsArray populated at compile)
+
+Suspected: the chain loop's inline-activate path uses local
+variables (savedSP, etc.) instead of J2JSave entries on x86
+(asm trampoline path is arm64-only).  No SavedFrame is pushed
+for inline activations.  chainCallDepth stays 0 because our
+methods don't increment j2jDepth.  When our resumed method bails
+again with ExitSend, the chain loop enters its for-loop
+iteration which re-processes ExitSend.  Somewhere in this
+nesting, state diverges from what the chain loop's caller-state
+restore expects.
+
+Next-investigation steps:
+  - Add a printf in the resume code path that prints state for
+    every JIT_CALL(savedResumeEntry, &state) — capture state.sp,
+    state.method, state.cachedTarget at entry and after the call.
+  - Find the first divergence point.
+  - Likely fix: more state to save/restore, or chainCallDepth
+    needs to track our inline activations.
+
+#### Phase 4b.2 partial-resume (commit `<NEXT>`)
+
+Advertised `numBytecodes` + `bcToCodeTableOffset` for **send-free
+real-emit methods only**.  For methods containing sends, those
+fields stay 0 (matching 4b.1's safe behavior).
+
+Knobs:
+  - `PHARO_ASMJIT_T1_NO_BCTOCODE=1` / `NO_NUMBC=1` — fully disable
+  - `PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1` — re-enable for
+    sends (KNOWN BROKEN; for debugging only)
+  - `PHARO_ASMJIT_T1_NO_SENDS_BISECT=1` — disable send real-emit
+  - `PHARO_ASMJIT_T1_MAX_SEND_NARGS=N` — only real-emit sends
+    with ≤ N args
+  - `PHARO_ASMJIT_T1_BCTOCODE_ZERO=1` — populate bcToCode with
+    zeros (chain loop bails on `codeOff==0` check)
 
 **Chain-loop resume path.**  Already works for the stencil JIT
 (`Interpreter.cpp:18062-18207` — the `chainCallDepth > 0` branch

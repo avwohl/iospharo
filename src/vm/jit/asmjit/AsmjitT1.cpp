@@ -192,6 +192,12 @@ inline bool isPhase4SendOp(uint8_t op) {
 }
 
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
+    static const bool noSendsBisect =
+        std::getenv("PHARO_ASMJIT_T1_NO_SENDS_BISECT") != nullptr;
+    static const int maxSendNArgs = []() {
+        const char* v = std::getenv("PHARO_ASMJIT_T1_MAX_SEND_NARGS");
+        return v ? atoi(v) : 99;
+    }();
     for (size_t i = 0; i < bcLen; i++) {
         uint8_t op = bc[i];
         if (op <= 0x0F) continue;                     // pushRecvVar 0..15
@@ -202,7 +208,11 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= SistaV1::ReturnReceiver
                 && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
         if (isPhase3ArithOp(op)) continue;            // 0x60..0x67
-        if (isPhase4SendOp(op)) continue;             // 0x70..0xAF
+        if (isPhase4SendOp(op)) {
+            if (noSendsBisect) return false;
+            if (sendNArgs(op) > maxSendNArgs) return false;
+            continue;                                  // 0x70..0xAF
+        }
         if (op == SistaV1::Pop) continue;             // 0xD8
         // Anything else (jumps, ext-prefixes, pushLitVar,
         // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
@@ -798,17 +808,24 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     // Per JITMethod.hpp contract: bcToCode[i]==0 means "not a valid
     // re-entry point"; bcToCode[0] is conventionally 0 (initial entry
     // goes through codeStart() directly).
+    //
+    // PHARO_ASMJIT_T1_BCTOCODE_ZERO=1: write all zeros except [bcLen]
+    // (the end-of-mc sentinel).  Chain loop's resume check
+    // `if (codeOff == 0 || codeOff >= codeSize) bail;` then always
+    // bails to interp — effectively disabling JIT-side resume while
+    // still advertising numBytecodes.  Bisect helper.
+    static const bool zeroBcToCode =
+        std::getenv("PHARO_ASMJIT_T1_BCTOCODE_ZERO") != nullptr;
     if (bcToCodeOut) {
-        if (real) {
+        if (real && !zeroBcToCode) {
             for (size_t i = 0; i < bcLen; i++) {
                 uint32_t off = (uint32_t)code.label_offset_from_base(bcLabels[i]);
-                // Per contract, slot 0 is conventionally 0 (entry via
-                // codeStart()).  Per-slot values for i>0 are the JIT
-                // emit start of bytecode i.
+                // Per contract, slot 0 is conventionally 0 (initial entry
+                // goes through codeStart() directly).
                 bcToCodeOut[i] = (i == 0) ? 0u : off;
             }
         } else {
-            // Stub-only: no per-bytecode entry points.  Leave zeros.
+            // Stub-only OR zeroBcToCode: no per-bytecode entry points.
             for (size_t i = 0; i < bcLen; i++) bcToCodeOut[i] = 0;
         }
         // bcToCodeOut[bcLen] is set by the caller to the emitted size.
@@ -951,17 +968,31 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // for i where re-entry is invalid (the convention; entry-by-default
     // is via codeStart()).  slot [numBytecodes] holds the
     // end-of-machine-code offset for findMethodByPC.
-    // Phase 4b.2 (partial): IC sites populated, send emit sets up
-    // icDataPtr/sendArgCount/ExitSend so the chain loop manages IC
-    // patching and inline-activates the callee.  bcToCode table is
-    // built but not advertised — chain-loop resume after callee
-    // return interacts with our trim's live-region semantics in
-    // ways that produce mustBeBoolean cascades.  Future step would
-    // enable resume; for now we still benefit from inline activation
-    // + IC patching vs the prior ExitArithOverflow bail.
-    jm->numBytecodes      = 0;
+    // 4b.2: advertise numBytecodes + bcToCodeTableOffset for chain-loop
+    // resume — but ONLY for methods that contain no sends.  Methods
+    // with sends fail post-resume with mustBeBoolean cascades; the
+    // protocol mismatch is not yet understood (see plan_asmjit_replacement.md
+    // §"Phase 4b.2 resume protocol gap").  Send-free methods are safe
+    // to resume because there's no inline activation in their flow.
+    //
+    // Bisect knobs (default = off):
+    //   PHARO_ASMJIT_T1_NO_BCTOCODE=1   — never advertise bcToCode
+    //   PHARO_ASMJIT_T1_NO_NUMBC=1      — never advertise numBytecodes
+    //   PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS=1
+    //                                   — advertise resume even for
+    //                                     send-containing methods
+    //                                     (KNOWN BROKEN; for debug)
+    static const bool noBcToCode =
+        std::getenv("PHARO_ASMJIT_T1_NO_BCTOCODE") != nullptr;
+    static const bool noNumBc =
+        std::getenv("PHARO_ASMJIT_T1_NO_NUMBC") != nullptr;
+    static const bool forceResumeForSends =
+        std::getenv("PHARO_ASMJIT_T1_FORCE_RESUME_FOR_SENDS") != nullptr;
+    bool advertiseResume = isReal && !noNumBc && !noBcToCode && bcLen > 0;
+    if (numSendSites > 0 && !forceResumeForSends) advertiseResume = false;
+    jm->numBytecodes      = advertiseResume ? (uint16_t)bcLen : 0;
     jm->numICEntries      = numSendSites;
-    jm->bcToCodeTableOffset = 0;
+    jm->bcToCodeTableOffset = advertiseResume ? bcToCodeTableOffset : 0;
     jm->selBitsArrayOffset =
         numSendSites > 0 ? selBitsArrayOffset : 0;
     jm->tier              = 1;
