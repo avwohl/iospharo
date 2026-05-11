@@ -239,7 +239,12 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     switch (primIndex) {
     case 1:  return primIndex;   // SmallInteger>>+
     case 2:  return primIndex;   // SmallInteger>>-
+    case 3:  return primIndex;   // SmallInteger>><
+    case 4:  return primIndex;   // SmallInteger>>>
+    case 5:  return primIndex;   // SmallInteger>><=
+    case 6:  return primIndex;   // SmallInteger>>>=
     case 7:  return primIndex;   // SmallInteger>>=
+    case 8:  return primIndex;   // SmallInteger>>~=
     default: return -1;
     }
 }
@@ -279,9 +284,13 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
 // continues with the fallback bytecode.
 //
 // Mirrors the stencil prologues at stencils/stencils.cpp:3231+.
-//   prim 1 = #+  (add, overflow check)
-//   prim 2 = #-  (sub, overflow check)
-//   prim 7 = #=  (compare raw bits; return true/false oop)
+//   prim 1 = #+   prim 2 = #-                       (arith, overflow check)
+//   prim 3 = #<   prim 4 = #>   prim 5 = #<=
+//   prim 6 = #>=  prim 7 = #=   prim 8 = #~=        (compare, return bool)
+//
+// Signed comparison of tagged SmI bits gives the same ordering as
+// untagged values (tag is the same low 3 bits, so shifting preserves
+// order).  So all comparisons skip the untag step.
 void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     using namespace asmjit::x86;
     asmjit::Label fail = a.new_label();
@@ -298,18 +307,19 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     a.test(r8.r8(), asmjit::Imm(7));
     a.jne(fail);
 
-    if (primIndex == 7) {
-        // #= : compare tagged bits directly.  Both have same tag,
-        // so equal iff untagged values equal.
-        asmjit::Label isFalse = a.new_label();
-        asmjit::Label done    = a.new_label();
-        a.cmp(rcx, rdx);
-        a.jne(isFalse);
-        a.mov(rax, ptr(rdi, OFF_TRUEOOP));
-        a.jmp(done);
-        a.bind(isFalse);
+    if (primIndex >= 3 && primIndex <= 8) {
+        // Comparison: cmp + cmov pattern.
         a.mov(rax, ptr(rdi, OFF_FALSEOOP));
-        a.bind(done);
+        a.mov(r8,  ptr(rdi, OFF_TRUEOOP));
+        a.cmp(rcx, rdx);
+        switch (primIndex) {
+            case 3: a.cmovl (rax, r8); break;  // <
+            case 4: a.cmovg (rax, r8); break;  // >
+            case 5: a.cmovle(rax, r8); break;  // <=
+            case 6: a.cmovge(rax, r8); break;  // >=
+            case 7: a.cmove (rax, r8); break;  // =
+            case 8: a.cmovne(rax, r8); break;  // ~=
+        }
         a.mov(ptr(rdi, OFF_RETVAL), rax);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -649,12 +659,20 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     a.tst(x5, asmjit::Imm(7));
     a.b_ne(fail);
 
-    if (primIndex == 7) {
-        // #= : compare tagged bits, csel true/false oop.
+    if (primIndex >= 3 && primIndex <= 8) {
         a.ldr(x6, ptr(x0, OFF_TRUEOOP));
         a.ldr(x7, ptr(x0, OFF_FALSEOOP));
         a.cmp(x1, x2);
-        a.csel(x1, x6, x7, CondCode::kEQ);
+        CondCode cc = CondCode::kEQ;  // default; overridden below
+        switch (primIndex) {
+            case 3: cc = CondCode::kLT; break;  // signed <
+            case 4: cc = CondCode::kGT; break;  // signed >
+            case 5: cc = CondCode::kLE; break;  // signed <=
+            case 6: cc = CondCode::kGE; break;  // signed >=
+            case 7: cc = CondCode::kEQ; break;  // =
+            case 8: cc = CondCode::kNE; break;  // ~=
+        }
+        a.csel(x1, x6, x7, cc);
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
