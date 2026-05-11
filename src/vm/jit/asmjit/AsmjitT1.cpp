@@ -1,27 +1,30 @@
 /*
- * AsmjitT1.cpp - Phase 1 of the asmjit-based Tier-1 JIT compiler.
+ * AsmjitT1.cpp - Phase 2 of the asmjit-based Tier-1 JIT compiler.
  *
- * Per scripts/jit-diff/plan_asmjit_replacement.md.  See AsmjitT1.hpp
- * for the high-level role.  This file:
+ * Per scripts/jit-diff/plan_asmjit_replacement.md.  See AsmjitT1.hpp.
  *
- *   1. Asmjit-emits a tiny `void fn(JITState* state)` function whose
- *      whole body is `state->exitReason = ExitSend; return;`.
- *   2. Allocates a JITMethod in the existing code zone, sized to hold
- *      the emitted bytes (no IC entries, no bcToCode table — Phase 1
- *      doesn't dispatch any sends).
- *   3. Copies the emitted bytes into codeStart() so the existing
- *      `JIT_CALL(jm->codeStart(), state)` dispatch path invokes them
- *      unchanged.
- *   4. Registers the JITMethod in the MethodMap.
+ * compileViaAsmjit() does:
+ *   1. Pre-scan the method's bytecodes.  If every byte is in the
+ *      Phase 2 supported set, emit real per-bytecode code.  Else
+ *      fall back to the Phase 1 bail-on-entry trampoline (which
+ *      makes the method run in the interpreter via ExitSend dispatch).
+ *   2. Allocate a JITMethod sized for the emitted bytes; copy bytes
+ *      into codeStart(); flushICache + makeExecutable; register in
+ *      MethodMap.
  *
- * No relocations needed because the emitted code has no external
- * references (no helper calls, no rip-relative loads — just an
- * immediate store and a return).
+ * Supported in Phase 2 (no IC dispatch, no arithmetic, no control
+ * flow):
  *
- * Once Phase 2 starts emitting real bytecodes (pushes, returns), it
- * will need to coordinate with the runtime helpers (push_frame,
- * arith_overflow, etc.) and that's where relocations / runtime
- * helper addresses come back into play.  See the plan doc.
+ *   pushReceiver, pushTemp(0..11), pushRecvVar(0..15),
+ *   pushLitConst(0..31), pushTrue, pushFalse, pushNil,
+ *   pushZero, pushOne, pop,
+ *   returnReceiver, returnTrue, returnFalse, returnNil, returnTop
+ *
+ * Methods that contain anything else compile to the Phase 1 stub.
+ *
+ * Stack discipline matches the stencil JIT: state.sp points to the
+ * next-free slot (one past TOS).  Push writes to *sp then sp++; pop
+ * is sp--; returnTop reads *(--sp).
  */
 
 #include "AsmjitT1.hpp"
@@ -31,6 +34,7 @@
 #include "../CodeZone.hpp"
 #include "../JITState.hpp"
 #include "../PlatformJIT.hpp"
+#include "../SistaV1.hpp"
 #include "../../ObjectMemory.hpp"
 
 #include <cstdio>
@@ -53,94 +57,392 @@ namespace jit {
 
 namespace {
 
-// JITState field offset for `exitReason` — guarded by static_assert
-// in JITState.hpp.
-constexpr int OFF_EXIT = 76;
+// JITState field offsets — guarded by static_assert in JITState.hpp.
+constexpr int OFF_SP        = 0;
+constexpr int OFF_RECEIVER  = 8;
+constexpr int OFF_LITERALS  = 16;
+constexpr int OFF_TEMPBASE  = 24;
+constexpr int OFF_EXIT      = 76;
+constexpr int OFF_RETVAL    = 80;
+constexpr int OFF_TRUEOOP   = 128;
+constexpr int OFF_FALSEOOP  = 136;
 
-// ExitReason value the trampoline writes.  The interpreter sees
-// ExitSend and re-runs the method via the interp dispatch path.
-constexpr int EXIT_SEND = 2;
+// ExitReason values (JITState.hpp).
+constexpr int EXIT_RETURN = 1;
+constexpr int EXIT_SEND   = 2;
 
-size_t g_compiled = 0;
-size_t g_failed   = 0;
+// Oop tag for SmallInteger: low 3 bits = 001.
+//   fromSmallInteger(N) = (N << 3) | 1
+constexpr uint64_t SMI_TAG = 0x1;
+constexpr uint64_t smiBits(int64_t n) {
+    return (static_cast<uint64_t>(n) << 3) | SMI_TAG;
+}
 
-// Emit the Phase 1 bail-to-interp trampoline into a CodeHolder and
-// return the raw bytes via `out`/`outSize`.  Bytes are copied into
-// `out` (caller-owned, must be at least `kBufSize` bytes).  Returns
-// true on success.
-constexpr size_t kBufSize = 64;  // generous; actual stub is ~6-12 bytes
+// Pharo ObjectHeader is 8 bytes; slot N starts at byte 8 + N*8.
+constexpr int OBJ_SLOT_0 = 8;
 
-bool emitTrampolineBytes(uint8_t* out, size_t* outSize) {
+// Stats.
+size_t g_compiled       = 0;   // total compileViaAsmjit successes
+size_t g_compiledReal   = 0;   // of which actually emitted real code
+size_t g_compiledStub   = 0;   // of which used the bail-on-entry stub
+size_t g_failed         = 0;
+
+// Bytecode pre-scan: returns true iff every byte in [bc, bc+bcLen)
+// is a single-byte opcode in our Phase 2 supported set.
+//
+// Rejects multi-byte opcodes (sends, jumps, ext-prefixes), arithmetic
+// (which requires arith_overflow bail emit), and any single-byte op
+// outside the explicit allowlist.
+bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
+    for (size_t i = 0; i < bcLen; i++) {
+        uint8_t op = bc[i];
+        if (op <= 0x0F) continue;                     // pushRecvVar 0..15
+        if (op >= 0x20 && op <= 0x3F) continue;       // pushLitConst 0..31
+        if (op >= 0x40 && op <= 0x4B) continue;       // pushTemp 0..11
+        if (op == SistaV1::PushReceiver) continue;    // 0x4C
+        if (op >= 0x4D && op <= 0x51) continue;       // pushTrue/False/Nil/Zero/One
+        if (op >= SistaV1::ReturnReceiver
+                && op <= SistaV1::ReturnTop) continue; // 0x58..0x5C
+        if (op == SistaV1::Pop) continue;             // 0xD8
+        // Anything else (sends, arith, jumps, ext-prefixes,
+        // pushLitVar, pushThisContext, dup, blockReturn,
+        // popStoreRecv/Temp, ext bytecodes E0+, etc.) → unsupported.
+        return false;
+    }
+    return true;
+}
+
+#if defined(__x86_64__) || defined(_M_X64)
+
+// Emit a "push value into Smalltalk stack" sequence on x86_64.  The
+// value to push must already be in `valReg` (any 64-bit gp reg
+// other than rdi/rcx).  Sequence:
+//
+//   mov rcx, [rdi+OFF_SP]       ; load sp
+//   mov [rcx], valReg           ; *sp = value
+//   add rcx, 8                  ; sp++
+//   mov [rdi+OFF_SP], rcx       ; store sp back
+//
+// rcx is clobbered.  (If we ever cache sp across multiple bytecodes
+// we'll factor this differently; Phase 2 reloads on every push.)
+void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
+    using namespace asmjit::x86;
+    a.mov(rcx, ptr(rdi, OFF_SP));
+    a.mov(ptr(rcx), valReg);
+    a.add(rcx, 8);
+    a.mov(ptr(rdi, OFF_SP), rcx);
+}
+
+// Emit per-bytecode code on x86_64.  Returns true if the opcode was
+// handled.  The pre-scan guarantees we'll see only supported ops.
+//
+// `nilBits` is the raw bits of the special-objects nil — passed in
+// so push-nil can bake it as a 64-bit immediate (nil is image-local,
+// not a JITState field).
+bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op, uint64_t nilBits) {
+    using namespace asmjit::x86;
+
+    // pushRecvVar N: push receiver.slot[N].
+    if (op <= 0x0F) {
+        int n = op & 0x0F;
+        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        a.mov(rax, ptr(rax, OBJ_SLOT_0 + n * 8));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushLitConst N: push literals[N].
+    if (op >= 0x20 && op <= 0x3F) {
+        int n = op - 0x20;
+        a.mov(rax, ptr(rdi, OFF_LITERALS));
+        a.mov(rax, ptr(rax, n * 8));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushTemp N: push tempBase[N].
+    if (op >= 0x40 && op <= 0x4B) {
+        int n = op - 0x40;
+        a.mov(rax, ptr(rdi, OFF_TEMPBASE));
+        a.mov(rax, ptr(rax, n * 8));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushReceiver: push state.receiver.
+    if (op == SistaV1::PushReceiver) {
+        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushTrue: push state.trueOop.
+    if (op == 0x4D) {
+        a.mov(rax, ptr(rdi, OFF_TRUEOOP));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushFalse: push state.falseOop.
+    if (op == 0x4E) {
+        a.mov(rax, ptr(rdi, OFF_FALSEOOP));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushNil: push baked nil immediate.
+    if (op == 0x4F) {
+        a.mov(rax, asmjit::Imm(nilBits));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushZero: push fromSmallInteger(0) = 1.
+    if (op == 0x50) {
+        a.mov(rax, asmjit::Imm(smiBits(0)));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pushOne: push fromSmallInteger(1) = 9.
+    if (op == 0x51) {
+        a.mov(rax, asmjit::Imm(smiBits(1)));
+        emitPushReg(a, rax);
+        return true;
+    }
+    // pop: state.sp--.
+    if (op == SistaV1::Pop) {
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        return true;
+    }
+    // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
+    if (op == SistaV1::ReturnReceiver) {
+        a.mov(rax, ptr(rdi, OFF_RECEIVER));
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return true;
+    }
+    // returnTrue / returnFalse: similar with bake-via-state.
+    if (op == 0x59) {
+        a.mov(rax, ptr(rdi, OFF_TRUEOOP));
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return true;
+    }
+    if (op == 0x5A) {
+        a.mov(rax, ptr(rdi, OFF_FALSEOOP));
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return true;
+    }
+    // returnNil: bake nil immediate.
+    if (op == 0x5B) {
+        a.mov(rax, asmjit::Imm(nilBits));
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return true;
+    }
+    // returnTop: pop into rax (sp--, then *sp), store as retVal.
+    if (op == SistaV1::ReturnTop) {
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        a.mov(rax, ptr(rcx));
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        return true;
+    }
+    return false;  // pre-scan failed to filter — bug in allBytecodesSupported
+}
+
+#elif defined(__aarch64__) || defined(_M_ARM64)
+
+// Equivalent ARM64 emitters.  Same stack discipline; uses w/x regs.
+//   x0 = state ptr (input, preserved)
+//   x1 = scratch value
+//   x2 = scratch sp
+//   w3 = scratch int (for exitReason store)
+
+void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
+    using namespace asmjit::a64;
+    a.ldr(x2, ptr(x0, OFF_SP));
+    a.str(valReg, ptr(x2));
+    a.add(x2, x2, asmjit::Imm(8));
+    a.str(x2, ptr(x0, OFF_SP));
+}
+
+bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op, uint64_t nilBits) {
+    using namespace asmjit::a64;
+
+    if (op <= 0x0F) {
+        int n = op & 0x0F;
+        a.ldr(x1, ptr(x0, OFF_RECEIVER));
+        a.ldr(x1, ptr(x1, OBJ_SLOT_0 + n * 8));
+        emitPushReg(a, x1);
+        return true;
+    }
+    if (op >= 0x20 && op <= 0x3F) {
+        int n = op - 0x20;
+        a.ldr(x1, ptr(x0, OFF_LITERALS));
+        a.ldr(x1, ptr(x1, n * 8));
+        emitPushReg(a, x1);
+        return true;
+    }
+    if (op >= 0x40 && op <= 0x4B) {
+        int n = op - 0x40;
+        a.ldr(x1, ptr(x0, OFF_TEMPBASE));
+        a.ldr(x1, ptr(x1, n * 8));
+        emitPushReg(a, x1);
+        return true;
+    }
+    if (op == SistaV1::PushReceiver) {
+        a.ldr(x1, ptr(x0, OFF_RECEIVER));
+        emitPushReg(a, x1);
+        return true;
+    }
+    if (op == 0x4D) { a.ldr(x1, ptr(x0, OFF_TRUEOOP));  emitPushReg(a, x1); return true; }
+    if (op == 0x4E) { a.ldr(x1, ptr(x0, OFF_FALSEOOP)); emitPushReg(a, x1); return true; }
+    if (op == 0x4F) { a.mov(x1, asmjit::Imm(nilBits));  emitPushReg(a, x1); return true; }
+    if (op == 0x50) { a.mov(x1, asmjit::Imm(smiBits(0))); emitPushReg(a, x1); return true; }
+    if (op == 0x51) { a.mov(x1, asmjit::Imm(smiBits(1))); emitPushReg(a, x1); return true; }
+    if (op == SistaV1::Pop) {
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        return true;
+    }
+    auto emitReturnPtr = [&](int srcOff) {
+        a.ldr(x1, ptr(x0, srcOff));
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+    };
+    auto emitReturnImm = [&](uint64_t imm) {
+        a.mov(x1, asmjit::Imm(imm));
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+    };
+    if (op == SistaV1::ReturnReceiver) { emitReturnPtr(OFF_RECEIVER); return true; }
+    if (op == 0x59) { emitReturnPtr(OFF_TRUEOOP);  return true; }
+    if (op == 0x5A) { emitReturnPtr(OFF_FALSEOOP); return true; }
+    if (op == 0x5B) { emitReturnImm(nilBits);      return true; }
+    if (op == SistaV1::ReturnTop) {
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.ldr(x1, ptr(x2));
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+    return true;
+    }
+    return false;
+}
+#endif
+
+// Emit either real per-bytecode code OR the bail-to-interp stub
+// (returns ExitSend immediately).  Writes the resulting bytes into
+// `out` (caller buffer of `outCap` bytes); on success sets *outSize
+// and *isReal (true if real codegen, false if bail stub).
+bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
+                     uint8_t* out, size_t outCap,
+                     size_t* outSize, bool* isReal) {
     using namespace asmjit;
 
-    // Use host environment (matches the running architecture).
     Environment env = Environment::host();
-
     CodeHolder code;
     Error err = code.init(env);
-    if (err != kErrorOk) {
-        std::fprintf(stderr, "[asmjit-t1] code.init: %s\n",
-                     DebugUtils::error_as_string(err));
-        return false;
+    if (err != kErrorOk) return false;
+
+    bool real = (bcLen > 0) && allBytecodesSupported(bc, bcLen);
+    // PHARO_ASMJIT_T1_STUB_ONLY=1: kill switch — force every method to
+    // the bail-on-entry stub regardless of bytecode support.  Used to
+    // bisect Phase 2 emit bugs against the known-good Phase 1 behavior.
+    static const bool stubOnly = std::getenv("PHARO_ASMJIT_T1_STUB_ONLY") != nullptr;
+    if (stubOnly) real = false;
+    // PHARO_ASMJIT_T1_HARDCODE_STUB=1: emit the stub by hardcoding the
+    // bytes (mov dword [rdi+76], 2; ret).  Bypasses asmjit emit/copy
+    // entirely so we can isolate whether the bug is in the asmjit
+    // codegen path or in the integration plumbing.
+    static const bool hardcodeStub = std::getenv("PHARO_ASMJIT_T1_HARDCODE_STUB") != nullptr;
+    if (hardcodeStub && !real) {
+        static const uint8_t kStubBytes[8] = {
+            0xC7, 0x47, 0x4C, 0x02, 0x00, 0x00, 0x00, 0xC3
+        };
+        if (outCap < 8) return false;
+        std::memcpy(out, kStubBytes, 8);
+        *outSize = 8;
+        *isReal = false;
+        return true;
     }
 
 #if defined(__x86_64__) || defined(_M_X64)
     x86::Assembler a(&code);
-    // SysV AMD64: state* in rdi (callee saves nothing — we touch
-    // only rax-class, no restore needed here).
-    // mov DWORD PTR [rdi + 76], 2
-    // ret
-    a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
-    a.ret();
+    if (real) {
+        for (size_t i = 0; i < bcLen; i++) {
+            if (!emitOne_x86(a, bc[i], nilBits)) {
+                // pre-scan said yes but emit said no.  Abort —
+                // safer than emitting partial garbage; caller sees
+                // failure and the method goes uncompiled.
+                std::fprintf(stderr,
+                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
+                    i, bc[i]);
+                return false;
+            }
+        }
+        // Defensive epilogue if the method's last bytecode wasn't a
+        // return (well-formed methods always end in return).
+        if (bcLen == 0
+                || bc[bcLen-1] < SistaV1::ReturnReceiver
+                || bc[bcLen-1] > SistaV1::ReturnTop) {
+            a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
+            a.ret();
+        }
+    } else {
+        a.mov(x86::dword_ptr(x86::rdi, OFF_EXIT), Imm(EXIT_SEND));
+        a.ret();
+    }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     a64::Assembler a(&code);
-    // AArch64: state* in x0; exitReason is int32_t.
-    // mov w1, #2
-    // str w1, [x0, #76]
-    // ret
-    a.mov(a64::w1, Imm(EXIT_SEND));
-    a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
-    a.ret(a64::x30);
+    if (real) {
+        for (size_t i = 0; i < bcLen; i++) {
+            if (!emitOne_arm64(a, bc[i], nilBits)) {
+                std::fprintf(stderr,
+                    "[asmjit-t1] BUG: prescan/emit disagree at bc[%zu]=0x%02x\n",
+                    i, bc[i]);
+                return false;
+            }
+        }
+        if (bcLen == 0
+                || bc[bcLen-1] < SistaV1::ReturnReceiver
+                || bc[bcLen-1] > SistaV1::ReturnTop) {
+            a.mov(a64::w1, Imm(EXIT_SEND));
+            a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
+            a.ret(a64::x30);
+        }
+    } else {
+        a.mov(a64::w1, Imm(EXIT_SEND));
+        a.str(a64::w1, a64::ptr(a64::x0, OFF_EXIT));
+        a.ret(a64::x30);
+    }
 #endif
 
     err = code.flatten();
-    if (err != kErrorOk) {
-        std::fprintf(stderr, "[asmjit-t1] code.flatten: %s\n",
-                     DebugUtils::error_as_string(err));
-        return false;
-    }
-
+    if (err != kErrorOk) return false;
     size_t total = code.code_size();
-    if (total == 0 || total > kBufSize) {
+    if (total == 0 || total > outCap) {
         std::fprintf(stderr,
                      "[asmjit-t1] code.code_size=%zu out of [1, %zu]\n",
-                     total, kBufSize);
+                     total, outCap);
         return false;
     }
-    err = code.copy_flattened_data(out, kBufSize, CopySectionFlags::kPadSectionBuffer);
-    if (err != kErrorOk) {
-        std::fprintf(stderr, "[asmjit-t1] copy_flattened_data: %s\n",
-                     DebugUtils::error_as_string(err));
-        return false;
-    }
+    err = code.copy_flattened_data(out, outCap, CopySectionFlags::kPadSectionBuffer);
+    if (err != kErrorOk) return false;
     *outSize = total;
-    return true;
-}
-
-// Cached emitted bytes — every compile produces the SAME bytes since
-// the trampoline has no per-method specialization.  Emit once,
-// memcpy on every compile.
-struct CachedBytes {
-    uint8_t data[kBufSize];
-    size_t  size;
-    bool    ready;
-};
-CachedBytes g_cached = { {}, 0, false };
-
-bool ensureCachedBytes() {
-    if (g_cached.ready) return true;
-    if (!emitTrampolineBytes(g_cached.data, &g_cached.size)) return false;
-    g_cached.ready = true;
+    *isReal = real;
     return true;
 }
 
@@ -149,17 +451,8 @@ bool ensureCachedBytes() {
 JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                              ObjectMemory& memory, Interpreter& interp,
                              Oop compiledMethod) {
-    (void)memory;
     (void)interp;
 
-    if (!ensureCachedBytes()) {
-        g_failed++;
-        return nullptr;
-    }
-
-    // Pull method header / arg count etc. so the JITMethod's
-    // bookkeeping fields are correct.  The runtime depends on
-    // argCount/tempCount being consistent with the CompiledMethod.
     if (!compiledMethod.isObject() || compiledMethod.rawBits() < 0x10000) {
         g_failed++;
         return nullptr;
@@ -171,23 +464,63 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         return nullptr;
     }
     int64_t headerBits = headerOop.asSmallInteger();
+    int  numLiterals = static_cast<int>(headerBits & 0x7FFF);
+    bool hasPrimitive = (headerBits >> 16) & 1;
 
-    // Allocate code region in the existing JIT code zone, sized to
-    // the cached trampoline bytes.  No IC entries (Phase 1 has no
-    // sends).
-    JITMethod* jm = zone.allocate(static_cast<uint32_t>(g_cached.size), 0);
+    if (hasPrimitive) {
+        // Phase 2 doesn't emit primitive prologues; bail at compile.
+        g_failed++;
+        return nullptr;
+    }
+
+    uint8_t* bytes = methObj->bytes();
+    size_t bcStart = (1 + numLiterals) * 8;
+    size_t totalBytes = methObj->slotCount() * 8;
+    uint8_t fmt = static_cast<uint8_t>(methObj->format());
+    int unusedBytes = (fmt >= 24) ? (fmt - 24) : 0;
+    if (bcStart + (size_t)unusedBytes >= totalBytes) {
+        g_failed++;
+        return nullptr;
+    }
+    size_t bcLen = totalBytes - bcStart - (size_t)unusedBytes;
+    const uint8_t* bc = bytes + bcStart;
+
+    // Buffer for emitted bytes.  Per-bytecode max is ~30 bytes
+    // (push/return × 5-7 instructions × ~5 bytes/insn on x86_64).
+    // Cap at ~60 bytes per bytecode to accommodate ARM64 (4 bytes/insn,
+    // up to 8 insns per push).  Add a 64-byte epilogue allowance.
+    size_t cap = bcLen * 64 + 64;
+    if (cap > 8192) cap = 8192;  // refuse oversized methods (rare)
+    if (bcLen * 64 + 64 > cap) {
+        g_failed++;
+        return nullptr;
+    }
+    std::vector<uint8_t> buf(cap);
+    size_t emitted = 0;
+    bool   isReal  = false;
+    uint64_t nilBits = memory.nil().rawBits();
+    if (!emitMethodBytes(bc, bcLen, nilBits, buf.data(), cap, &emitted,
+                          &isReal)) {
+        g_failed++;
+        return nullptr;
+    }
+
+    // Allocate the JITMethod sized for the emitted bytes.
+    JITMethod* jm = zone.allocate(static_cast<uint32_t>(emitted), 0);
     if (!jm) {
         g_failed++;
         return nullptr;
     }
 
-    // Initialize fields the runtime reads.  Many are already zeroed
-    // by allocate()'s memset.
     jm->compiledMethodOop = compiledMethod.rawBits();
     jm->methodHeader      = static_cast<uint64_t>(headerBits);
     jm->argCount          = static_cast<uint8_t>((headerBits >> 24) & 0x0F);
     jm->tempCount         = static_cast<uint8_t>((headerBits >> 18) & 0x3F);
-    jm->numBytecodes      = 0;       // Phase 1 stub doesn't track bytecodes
+    // Set numBytecodes = 0 even though we know bcLen.  Setting it
+    // non-zero would suggest to the runtime that we maintain a
+    // bcToCode table (for OSR, deopt, exception PC lookups), which
+    // Phase 2 doesn't.  Keeping at 0 mirrors Phase 1's contract.
+    jm->numBytecodes      = 0;
     jm->numICEntries      = 0;
     jm->tier              = 1;
     jm->hasPrimPrologue   = false;
@@ -201,28 +534,26 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->maxRecvFieldIndex = 0;
     jm->isSpliceTarget    = false;
 
-    // Copy the emitted bytes into the code region.
-    std::memcpy(jm->codeStart(), g_cached.data, g_cached.size);
-
-    // Flush icache for the newly written code, then mark
-    // executable + Compiled.  Mirrors the stencil JIT's tail in
-    // JITCompiler::compile around line 2720.
-    platform::flushICache(jm->codeStart(), g_cached.size);
+    std::memcpy(jm->codeStart(), buf.data(), emitted);
+    platform::flushICache(jm->codeStart(), emitted);
     jm->state = MethodState::Compiled;
     platform::makeExecutable(jm, jm->totalSize);
 
-    // Register so dispatch can find it.
     methodMap.insert(compiledMethod.rawBits(), jm);
 
     g_compiled++;
+    if (isReal) g_compiledReal++;
+    else        g_compiledStub++;
 
     static const bool trace = std::getenv("PHARO_USE_ASMJIT_T1_TRACE") != nullptr;
-    if (trace && (g_compiled <= 10 || (g_compiled % 100 == 0))) {
+    bool emitTrace = trace && (g_compiled <= 10 || (g_compiled % 100 == 0)
+                                || (isReal && g_compiledReal <= 30));
+    if (emitTrace) {
         std::fprintf(stderr,
-                     "[asmjit-t1] #%zu compiled %llu -> jm=%p code=%p (%zu bytes)\n",
-                     g_compiled,
+                     "[asmjit-t1] #%zu (%s) compiled %llu -> jm=%p code=%p (%zu bytes, %zu bc)\n",
+                     g_compiled, isReal ? "real" : "stub",
                      static_cast<unsigned long long>(compiledMethod.rawBits()),
-                     (void*)jm, (void*)jm->codeStart(), g_cached.size);
+                     (void*)jm, (void*)jm->codeStart(), emitted, bcLen);
     }
 
     return jm;
