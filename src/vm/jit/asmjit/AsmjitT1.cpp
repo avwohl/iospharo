@@ -237,7 +237,9 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     if (bcLen < 3 || bc[0] != SistaV1::CallPrimitive) return -1;
     int primIndex = bc[1] | ((bc[2] & 0x1F) << 8);
     switch (primIndex) {
-    case 1: return primIndex;   // SmallInteger>>+
+    case 1:  return primIndex;   // SmallInteger>>+
+    case 2:  return primIndex;   // SmallInteger>>-
+    case 7:  return primIndex;   // SmallInteger>>=
     default: return -1;
     }
 }
@@ -263,28 +265,31 @@ void emitPushReg(asmjit::x86::Assembler& a, asmjit::x86::Gp valReg) {
     a.mov(ptr(rdi, OFF_SP), rcx);
 }
 
-// Emit the JIT prologue for primitive 1 (SmallInteger>>#+).
+// Emit the JIT prologue for a supported primitive.  Used as a fast
+// path when the chain loop inline-activates this method — without
+// it, hasPrimPrologue=false blocks inline activation entirely
+// (Interpreter.cpp:18731-18732).
+//
 // On entry:
 //   rdi = state ptr
 //   state.receiver = SmI candidate
 //   state.tempBase[0] = SmI candidate (the argument)
-// On SmI+SmI success: set state.returnValue, set ExitReturn, ret.
-// On failure (non-SmI, overflow): fall through (no state mutation).
+// On success: set state.returnValue, set ExitReturn, ret.
+// On failure (non-SmI, arith overflow): fall through.  Caller's emit
+// continues with the fallback bytecode.
 //
-// Matches stencil_primAdd (stencils/stencils.cpp:3231).  Used as a
-// fast path when the chain loop inline-activates this method —
-// without it, hasPrimPrologue=false blocks inline activation entirely
-// (Interpreter.cpp:18731-18732).
-void emitPrimAdd_x86(asmjit::x86::Assembler& a) {
+// Mirrors the stencil prologues at stencils/stencils.cpp:3231+.
+//   prim 1 = #+  (add, overflow check)
+//   prim 2 = #-  (sub, overflow check)
+//   prim 7 = #=  (compare raw bits; return true/false oop)
+void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
     using namespace asmjit::x86;
     asmjit::Label fail = a.new_label();
 
-    // Load receiver and arg.
+    // Shared SmI check: load receiver + arg, OR'd-XOR'd low bits.
     a.mov(rcx, ptr(rdi, OFF_RECEIVER));   // rcx = receiver
-    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));   // rdx = &tempBase[0]
+    a.mov(rdx, ptr(rdi, OFF_TEMPBASE));
     a.mov(rdx, ptr(rdx));                 // rdx = tempBase[0] = arg
-
-    // SmI check: both low 3 bits must be 001.  Pattern from arith emit.
     a.mov(r8,  rcx);
     a.xor_(r8, asmjit::Imm(1));
     a.mov(r9,  rdx);
@@ -293,15 +298,38 @@ void emitPrimAdd_x86(asmjit::x86::Assembler& a) {
     a.test(r8.r8(), asmjit::Imm(7));
     a.jne(fail);
 
-    // Untag (arithmetic shift right by 3).
+    if (primIndex == 7) {
+        // #= : compare tagged bits directly.  Both have same tag,
+        // so equal iff untagged values equal.
+        asmjit::Label isFalse = a.new_label();
+        asmjit::Label done    = a.new_label();
+        a.cmp(rcx, rdx);
+        a.jne(isFalse);
+        a.mov(rax, ptr(rdi, OFF_TRUEOOP));
+        a.jmp(done);
+        a.bind(isFalse);
+        a.mov(rax, ptr(rdi, OFF_FALSEOOP));
+        a.bind(done);
+        a.mov(ptr(rdi, OFF_RETVAL), rax);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
+        a.ret();
+        a.bind(fail);
+        return;
+    }
+
+    // Arith path: untag, do op, overflow check, retag.
     a.sar(rcx, asmjit::Imm(3));
     a.sar(rdx, asmjit::Imm(3));
-
-    // Add with overflow check.
-    a.add(rcx, rdx);
+    if (primIndex == 1) {
+        a.add(rcx, rdx);
+    } else if (primIndex == 2) {
+        a.sub(rcx, rdx);
+    } else {
+        // Shouldn't happen — supportedPrimIndex gates this.
+        a.bind(fail);
+        return;
+    }
     a.jo(fail);
-
-    // Re-tag and store as return value.
     a.shl(rcx, asmjit::Imm(3));
     a.or_(rcx, asmjit::Imm(SMI_TAG));
     a.mov(ptr(rdi, OFF_RETVAL), rcx);
@@ -309,7 +337,6 @@ void emitPrimAdd_x86(asmjit::x86::Assembler& a) {
     a.ret();
 
     a.bind(fail);
-    // Fall through — caller's emit continues with the fallback bytecode.
 }
 
 // Emit per-bytecode code on x86_64.  Returns true if the opcode was
@@ -606,14 +633,14 @@ void emitPushReg(asmjit::a64::Assembler& a, asmjit::a64::Gp valReg) {
     a.str(x2, ptr(x0, OFF_SP));
 }
 
-// ARM64 mirror of emitPrimAdd_x86.  See that function for context.
-void emitPrimAdd_arm64(asmjit::a64::Assembler& a) {
+// ARM64 mirror of emitPrimProlog_x86.  See that function for context.
+void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
     using namespace asmjit::a64;
     asmjit::Label fail = a.new_label();
 
-    a.ldr(x1, ptr(x0, OFF_RECEIVER));   // x1 = receiver
-    a.ldr(x2, ptr(x0, OFF_TEMPBASE));   // x2 = &tempBase[0]
-    a.ldr(x2, ptr(x2));                 // x2 = arg
+    a.ldr(x1, ptr(x0, OFF_RECEIVER));
+    a.ldr(x2, ptr(x0, OFF_TEMPBASE));
+    a.ldr(x2, ptr(x2));
 
     // SmI check.
     a.eor(x5, x1, asmjit::Imm(1));
@@ -622,15 +649,31 @@ void emitPrimAdd_arm64(asmjit::a64::Assembler& a) {
     a.tst(x5, asmjit::Imm(7));
     a.b_ne(fail);
 
-    // Untag.
+    if (primIndex == 7) {
+        // #= : compare tagged bits, csel true/false oop.
+        a.ldr(x6, ptr(x0, OFF_TRUEOOP));
+        a.ldr(x7, ptr(x0, OFF_FALSEOOP));
+        a.cmp(x1, x2);
+        a.csel(x1, x6, x7, CondCode::kEQ);
+        a.str(x1, ptr(x0, OFF_RETVAL));
+        a.mov(w3, asmjit::Imm(EXIT_RETURN));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(fail);
+        return;
+    }
+
     a.asr(x1, x1, asmjit::Imm(3));
     a.asr(x2, x2, asmjit::Imm(3));
-
-    // Add with overflow check using ADDS + b.vs.
-    a.adds(x1, x1, x2);
+    if (primIndex == 1) {
+        a.adds(x1, x1, x2);
+    } else if (primIndex == 2) {
+        a.subs(x1, x1, x2);
+    } else {
+        a.bind(fail);
+        return;
+    }
     a.b_vs(fail);
-
-    // Re-tag.
     a.lsl(x1, x1, asmjit::Imm(3));
     a.orr(x1, x1, asmjit::Imm(SMI_TAG));
     a.str(x1, ptr(x0, OFF_RETVAL));
@@ -914,8 +957,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
     // Emit prim prologue first (if any).  Fall-through enters the
     // fallback bytecode emit below.
-    if (primIndex == 1) {
-        emitPrimAdd_x86(a);
+    if (primIndex > 0) {
+        emitPrimProlog_x86(a, primIndex);
     }
     if (real) {
         int siteIdx = 0;
@@ -947,8 +990,8 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
-    if (primIndex == 1) {
-        emitPrimAdd_arm64(a);
+    if (primIndex > 0) {
+        emitPrimProlog_arm64(a, primIndex);
     }
     if (real) {
         int siteIdx = 0;
