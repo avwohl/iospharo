@@ -1,0 +1,15 @@
+# JIT-vs-interp differential MINI corpus.
+#
+# Three tiny tests, each exercising a send chain that's likely to
+# trigger Phase 4 bail-mid-method.  These compile within the first
+# ~10 method compiles, so any new emit bug surfaces immediately
+# instead of showing up at compile #1400 in the full corpus.
+#
+# Format matches corpus.txt: TAB-separated <id>\t<expr>\t<egrep-pattern>.
+#
+# Usage:
+#   bash scripts/jit-diff/run.sh scripts/jit-diff/mini.txt
+#
+mini_arith	(3 + 4) printString	^'7'$
+mini_class	1 class name	^#SmallInteger$
+mini_symbol	#a isString	^true$
