@@ -203,6 +203,27 @@ constexpr bool isThreeByteBytecode(uint8_t op) {
     return op >= CallPrimitive && op <= PopStoreTempAtInVec;
 }
 
+// Bytecode encoded length in bytes (1, 2, or 3).
+// Matches the byte-advance the JITCompiler.cpp decoder uses.
+// Unassigned opcodes (0xF6, 0xF7, 0xFE, 0xFF) follow their range.
+constexpr int bytecodeLength(uint8_t op) {
+    if (op <= 0xDF) return 1;        // pushes/pops/returns/sends/jumps/trap/reserved
+    if (op <= 0xF7) return 2;        // 0xE0..0xF7: 2-byte extended
+    return 3;                        // 0xF8..0xFF: 3-byte
+}
+
+// Compute the branch target byte index for a jump opcode at position `i`.
+// Caller must have verified the opcode is a jump (isAnyShortJump or
+// one of ExtJump/ExtJumpTrue/ExtJumpFalse).  For ExtJump*, pass the
+// signed offset already decoded from extB+next-byte.
+//
+// Short jumps: target = i + bcLength(=1) + (op & 0x07) + 1
+//   (matches JITCompiler.cpp:261-265 — the +1 makes 0xB0 a "skip one
+//    byte" jump.  Conservative: short-jump range is +2..+9 from `i`.)
+constexpr int shortJumpTarget(uint8_t op, int i) {
+    return i + 1 + (op & 0x07) + 1;
+}
+
 }  // namespace SistaV1
 }  // namespace jit
 }  // namespace pharo

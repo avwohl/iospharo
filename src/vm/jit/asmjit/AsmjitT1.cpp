@@ -102,8 +102,60 @@ inline bool isPhase3ArithOp(uint8_t op) {
     return op >= 0x60 && op <= 0x67;
 }
 
+// Compute the live bytecode length: walk forward decoding bytecodes
+// using SistaV1::bytecodeLength().  Tracks max forward branch target
+// so a `return` only terminates decoding when no jump points past it.
+//
+// Mirrors the stencil decoder's logic (JITCompiler.cpp:639-660): the
+// stencil JIT also stops decoding at the first unconditional return
+// whose position exceeds maxBranchTarget.  Without this, the trailer
+// bytes past the last return (selector/temp-name oops packed into the
+// CompiledMethod's bytes) get scanned as if they were bytecodes —
+// which masquerades as random opcodes and breaks downstream emit.
+//
+// Returns the live byte count (≤ bcLen).  If the bytecode stream is
+// malformed (a multi-byte op runs past bcLen), returns the count up
+// to that point (effectively trims the malformed tail).
+size_t computeLiveLength(const uint8_t* bc, size_t bcLen) {
+    int maxBranchTarget = 0;
+    size_t i = 0;
+    while (i < bcLen) {
+        uint8_t op = bc[i];
+        int len = SistaV1::bytecodeLength(op);
+        if (i + (size_t)len > bcLen) {
+            // Multi-byte op truncated — treat the truncated bytes as
+            // dead.  (The stencil decoder does `goto done`.)
+            return i;
+        }
+        // Track forward branch targets for short jumps.  ExtJump*
+        // (0xED..0xEF) need extB which we don't decode here; for now,
+        // assume any ExtJump points forward and pessimistically extend
+        // maxBranchTarget to bcLen so we DON'T trim past an ExtJump.
+        // (Phase 4 doesn't yet emit jumps anyway, so any method with
+        // ExtJump bails-on-entry via the pre-scan; this is just for
+        // safety against future Phase-5 work.)
+        if (SistaV1::isAnyShortJump(op)) {
+            int tgt = SistaV1::shortJumpTarget(op, (int)i);
+            if (tgt > maxBranchTarget) maxBranchTarget = tgt;
+        } else if (op == SistaV1::ExtJump
+                || op == SistaV1::ExtJumpTrue
+                || op == SistaV1::ExtJumpFalse) {
+            maxBranchTarget = (int)bcLen;  // unknown forward, conservative
+        }
+        i += (size_t)len;
+        // Stop at first unconditional return if no branches point past us.
+        if (SistaV1::isReturn(op) && (int)i > maxBranchTarget) {
+            return i;
+        }
+    }
+    return bcLen;
+}
+
 // Bytecode pre-scan: returns true iff every byte in [bc, bc+bcLen)
 // is a single-byte opcode in our supported set (Phases 2 + 3).
+// Caller must pass bcLen = computeLiveLength(...) so trailer bytes
+// past the method's last return don't get scanned (they're not
+// real bytecodes — they're packed selector/temp-name oop trailers).
 //
 // Rejects multi-byte opcodes (sends, jumps, ext-prefixes), arithmetic
 // outside the Phase 3 allowlist, and any single-byte op outside the
@@ -656,8 +708,34 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         g_failed++;
         return nullptr;
     }
-    size_t bcLen = totalBytes - bcStart - (size_t)unusedBytes;
+    size_t bcLenRaw = totalBytes - bcStart - (size_t)unusedBytes;
     const uint8_t* bc = bytes + bcStart;
+    // Trim trailer bytes past the method's last unconditional return,
+    // mirroring the stencil decoder's logic (JITCompiler.cpp:639-660):
+    // post-return bytes are dead code — selector/temp-name oop trailers
+    // that the image packs into CompiledMethod.bytes() — and treating
+    // them as bytecodes pollutes the pre-scan.
+    //
+    // GATED OFF BY DEFAULT.  Mechanically the trim is correct (verified
+    // by hand-comparing trimmed vs raw for many methods), but enabling
+    // it expands the real-emit set ~30x — and somewhere in that bigger
+    // set is a latent emit bug that produces wrong return values
+    // downstream.  Bisected to roughly the 171st real-emit; the shape
+    // is `^ self - self = lit[0]` style (Float>>isFinite et al.) where
+    // the JIT bails mid-method on the SmI check at the subtract,
+    // interp resumes at the bail point, completes the method.  The
+    // resume-mid-method handoff superficially matches the stencil JIT
+    // contract (state.ip + state.sp left at the bail, interp dispatches
+    // from there) — yet something downstream breaks.
+    //
+    // Set PHARO_ASMJIT_T1_TRIM_AGGRESSIVE=1 to enable while debugging.
+    // Phase 3 baseline (37/37 PASS) requires the trim OFF.  See
+    // scripts/jit-diff/plan_asmjit_replacement.md "Phase 4 (retry)".
+    static const bool trimAggressive =
+        std::getenv("PHARO_ASMJIT_T1_TRIM_AGGRESSIVE") != nullptr;
+    size_t bcLen = trimAggressive
+                       ? computeLiveLength(bc, bcLenRaw)
+                       : bcLenRaw;
 
     // Buffer for emitted bytes.  Per-bytecode max is ~30 bytes
     // (push/return × 5-7 instructions × ~5 bytes/insn on x86_64).

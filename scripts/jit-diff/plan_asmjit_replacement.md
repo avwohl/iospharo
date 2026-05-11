@@ -234,37 +234,68 @@ SIGSEGV at #1400?  Likely candidates, in order of suspicion:
 
 **Concrete next-session steps:**
 
-1. **Build a 3-test mini-corpus** at `scripts/jit-diff/mini.txt`:
-   - `(3 + 4) printString` (must print '7')
-   - `1 class name` (must print 'SmallInteger')
-   - `#a isString` (must print 'true')
-   Add a `--mini` flag to `run.sh` to use it instead of corpus.txt.
-   Bugs that surface at compile #1 are easier to debug than #1400.
+1. ✓ **Build a 3-test mini-corpus** at `scripts/jit-diff/mini.txt`
+   (commit `0d094765`).  Three tests: arith+`printString`,
+   `1 class name`, `#a isString`.  Compiles within ~10 method
+   compiles so bugs surface at compile #1 instead of #1400.
 
-2. **Fix trailer pollution PROPERLY.**  Don't use the
-   `liveBytecodeLength()` walk-to-first-return shortcut.  Instead,
-   compute the live bytecode length using the same logic as the
-   stencil decoder (see `JITCompiler.cpp:648` which reads the
-   bytecode header / iterates respecting `maxBranchTarget`).
-   Factor that into a `BytecodeBounds::computeLiveLength(...)`
-   helper that both the stencil and asmjit paths use.
+2. ✓ **Trim helper landed; gated off** (commit `<NEXT>`).
+   `SistaV1::bytecodeLength()` + `computeLiveLength()` mirror the
+   stencil decoder's `maxBranchTarget` logic at
+   `JITCompiler.cpp:639-660`.  Set
+   `PHARO_ASMJIT_T1_TRIM_AGGRESSIVE=1` to enable.
+   **Status: trim is mechanically correct, but exposes a latent
+   downstream bug.**  Bisect details:
+   - Default (trim OFF): 5 real-emits/eval, 37/37 PASS.
+   - Trim ON: ~170 real-emits/eval, 0/37 PASS.
+   - Bisecting via `PHARO_ASMJIT_T1_REAL_CAP=N`: cap=170 PASSes,
+     cap=171 FAILs → the 171st real-emit is the trigger.
+   - That 171st method is `Float>>isFinite`-shape:
+     `4c 4c 61 20 66 5c` = `^ self - self = lit[0]`.
+   - Subtract bytecode bails on SmI-check (Float receiver), interp
+     resumes at the bail point, completes the method.  The
+     handoff superficially matches the stencil JIT contract but
+     something downstream returns the wrong value, eventually
+     surfacing as a DNU on `#isEmpty` with a wrong-typed receiver.
+   - Bisects that fix it: NO_ARITH (disable arith emit), or
+     NO_LITCONST (disable pushLitConst from prescan), or just cap
+     real-emits to ≤170.  All three work because they all prevent
+     the 171st-method shape from real-emitting.
 
-3. **Then re-attempt bail-mid-method** with bcLen properly
-   trimmed.  If hang persists, add `PHARO_TRACE_ASMJIT_T1=1`
-   instrumentation:
-   - log every bail with (method oop, bc offset, state.sp before/
-     after the JIT call)
-   - log every interp re-dispatch of a bytecode within a JIT
-     method with bail-able sends
-   The first method to bail twice in a row at the same ip is
-   the smoking gun.
+3. **Find the resume-mid-method bug.**  The bisect points at
+   arith bail mid-method.  The `Float>>isFinite` shape
+   (`pushReceiver, pushReceiver, sub, pushLitConst 0, eq,
+   returnTop`) bails at `sub` because both operands are non-SmI;
+   interp must dispatch sub then continue with pushLitConst, eq,
+   returnTop.  Hypotheses to investigate:
+   - **interp doesn't know to re-dispatch the JIT-bailed bytecode
+     correctly.**  Look at how `instructionPointer_` interacts
+     with the activated frame's bytecodeStart: maybe state.ip
+     (an absolute address into the method's bytes) doesn't match
+     what interp dispatch expects (a frame-relative offset?).
+   - **state.sp set by JIT bail is one slot off** when the JIT
+     pushed N values before bailing.  Stack discipline check:
+     does interp's `stackValue(0)` see the correct TOS after sp
+     resync?
+   - **chain loop's ExitArithOverflow path returns false**
+     (Interpreter.cpp:18547) which exits tryJITActivation and
+     bubbles up to interp dispatch.  But the activate frame may
+     have additional state that needs reset (homeMethod_,
+     bytecodeEnd_, etc.).
+   Add lldb breakpoints on `terminateCurrentProcess` and the
+   `[DNU]` print site; trace back to the activate of the buggy
+   shape.  ~1 session of focused debug.
 
 4. **If bail-mid-method still doesn't work**, fall back to the
-   bail-on-entry rule for any method containing a send.  Keep
-   Phase 3 acceptance.  Defer real send support to Phase 4b
-   (proper IC dispatch + J2J chaining — the original plan).
+   bail-on-entry rule for any method that COULD bail mid-stream
+   (i.e., contains arith, sends, jumps, or anything else that
+   calls back into interp).  Keep Phase 3 acceptance.  Defer
+   real send support to Phase 4b (proper IC dispatch + J2J
+   chaining — the original plan).
 
-**Effort:** 1 session for steps 1-3, possibly another for step 4.
+**Effort:** Step 3 is the unknown — could be quick (1 session)
+or could uncover deeper resume-protocol issues that send us
+straight to step 4.
 
 ### Phase 5: control flow
 - `jumpFalse`, `jumpTrue`, `jumpFalseBack`, `jumpTrueBack`,
