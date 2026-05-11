@@ -248,6 +248,7 @@ inline int supportedPrimIndex(const uint8_t* bc, size_t bcLen) {
     case 9:  return primIndex;   // SmallInteger>>*
     case 14: return primIndex;   // SmallInteger>>bitAnd:
     case 15: return primIndex;   // SmallInteger>>bitOr:
+    case 16: return primIndex;   // SmallInteger>>bitXor:
     case 110: return primIndex;  // ProtoObject>>==
     default: return -1;
     }
@@ -348,12 +349,17 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
         return;
     }
 
-    if (primIndex == 14 || primIndex == 15) {
+    if (primIndex == 14 || primIndex == 15 || primIndex == 16) {
         // bitAnd / bitOr: SmI tag is preserved by both ops because
         // both operands have low 3 bits = 001, so AND/OR keeps it 001.
-        // Operate on tagged values directly — no untag/retag.
+        // bitXor: low 3 = 001 XOR 001 = 000, so we re-OR the SMI_TAG.
+        // Either way: operate on tagged values, no untag.
         if (primIndex == 14) a.and_(rcx, rdx);
-        else                 a.or_(rcx, rdx);
+        else if (primIndex == 15) a.or_(rcx, rdx);
+        else {
+            a.xor_(rcx, rdx);
+            a.or_(rcx, asmjit::Imm(SMI_TAG));
+        }
         a.mov(ptr(rdi, OFF_RETVAL), rcx);
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_RETURN));
         a.ret();
@@ -744,10 +750,14 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
         return;
     }
 
-    if (primIndex == 14 || primIndex == 15) {
-        // bitAnd / bitOr on tagged bits — tag preserved (see x86 version).
+    if (primIndex == 14 || primIndex == 15 || primIndex == 16) {
+        // bitAnd / bitOr / bitXor on tagged bits — see x86 version.
         if (primIndex == 14) a.and_(x1, x1, x2);
-        else                 a.orr (x1, x1, x2);
+        else if (primIndex == 15) a.orr (x1, x1, x2);
+        else {
+            a.eor(x1, x1, x2);
+            a.orr(x1, x1, asmjit::Imm(SMI_TAG));
+        }
         a.str(x1, ptr(x0, OFF_RETVAL));
         a.mov(w3, asmjit::Imm(EXIT_RETURN));
         a.str(w3, ptr(x0, OFF_EXIT));
