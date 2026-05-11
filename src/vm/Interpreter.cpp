@@ -10075,6 +10075,26 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 }
                 fprintf(stderr, "\n");
             }
+            // Dump receiver slots — find why a Set instance might lead
+            // its size/tally chain to produce an empty MNU.
+            if (receiver_.isObject() && receiver_.rawBits() >= 0x10000) {
+                ObjectHeader* rh = receiver_.asObjectPtr();
+                size_t rSlots = rh->slotCount();
+                fprintf(stderr, "[MUSTBOOL] receiver slotCount=%zu class=%s\n",
+                        rSlots, memory_.classNameOf(receiver_).c_str());
+                for (size_t i = 0; i < rSlots && i < 8; i++) {
+                    Oop sv = rh->slotAt(i);
+                    std::string sc = "?";
+                    if (sv.isSmallInteger()) {
+                        sc = "SmI(" + std::to_string((long long)sv.asSmallInteger()) + ")";
+                    } else if (sv.isNil()) sc = "nil";
+                    else if (sv.isObject() && sv.rawBits() >= 0x10000) {
+                        sc = memory_.nameOfClass(memory_.classOf(sv));
+                    }
+                    fprintf(stderr, "[MUSTBOOL]   recv.slot[%zu]=0x%llx (%s)\n",
+                            i, (unsigned long long)sv.rawBits(), sc.c_str());
+                }
+            }
             // Dump stack neighborhood
             fprintf(stderr, "[MUSTBOOL] stack: sp=%p fp=%p depth=%zu\n",
                     (void*)stackPointer_, (void*)framePointer_, frameDepth_);
@@ -10095,6 +10115,40 @@ void Interpreter::sendMustBeBoolean(Oop value) {
                 fprintf(stderr, "[MUSTBOOL]   recent[%zu] %s>>%s\n", f,
                         memory_.classNameOf(sf.savedReceiver).c_str(),
                         memory_.selectorOf(sf.savedMethod).c_str());
+            }
+        }
+        // If the bad value is a MessageNotUnderstood, dump ALL slots —
+        // we want to find the embedded Message (selector+args+lookupClass)
+        // that tells us which prior send produced this MNU.
+        if (valClass == "MessageNotUnderstood" && value.isObject()) {
+            ObjectHeader* vh = value.asObjectPtr();
+            size_t vSlots = vh->slotCount();
+            fprintf(stderr, "[MUSTBOOL]   MNU slotCount=%zu\n", vSlots);
+            for (size_t s = 0; s < vSlots && s < 16; s++) {
+                Oop slotV = vh->slotAt(s);
+                std::string sCls = "?";
+                if (slotV.isSmallInteger()) sCls = "SmallInt";
+                else if (slotV.isObject() && slotV.rawBits() >= 0x10000)
+                    sCls = memory_.nameOfClass(memory_.classOf(slotV));
+                else if (slotV.isNil()) sCls = "nil";
+                fprintf(stderr, "[MUSTBOOL]   MNU.slot[%zu]=0x%llx (%s)",
+                        s, (unsigned long long)slotV.rawBits(), sCls.c_str());
+                // If this slot looks like a Message (3 slots: selector, args, lookupClass),
+                // expand it.
+                if (slotV.isObject() && slotV.rawBits() >= 0x10000) {
+                    ObjectHeader* mh2 = slotV.asObjectPtr();
+                    if (mh2->slotCount() >= 3 && sCls == "Message") {
+                        Oop sel = mh2->slotAt(0);
+                        Oop lookupClass = mh2->slotAt(2);
+                        std::string selStr = sel.isObject()
+                            ? memory_.selectorOf(sel) : "?";
+                        std::string lookupStr = lookupClass.isObject()
+                            ? memory_.nameOfClass(lookupClass) : "?";
+                        fprintf(stderr, " => Message #%s lookupClass=%s",
+                                selStr.c_str(), lookupStr.c_str());
+                    }
+                }
+                fprintf(stderr, "\n");
             }
         }
     }

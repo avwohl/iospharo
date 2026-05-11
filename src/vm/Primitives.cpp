@@ -9984,6 +9984,50 @@ PrimitiveResult Interpreter::primitiveContextAt(int argCount) {
 
     Oop value = memory_.fetchPointer(actualSlot, context);
 
+    // PHARO_CTX_TEMPAT_DBG=1: log Context>>tempAt: calls.  Goal: find why
+    // `context exception` (tempAt: 1 on a signaling Context) returns
+    // `Exception class` instead of the Exception instance.  When the
+    // returned value is itself a class metaobject, that's the smoking gun.
+    static bool dbg = std::getenv("PHARO_CTX_TEMPAT_DBG") != nullptr;
+    if (dbg) {
+        static int log = 0;
+        // Quick is-class check: classOf(value)'s class name ends with " class"
+        // (i.e., the returned value's class is a Metaclass).
+        bool valueIsClass = false;
+        std::string valueClassName;
+        std::string valueDescr;
+        if (value.isObject() && value.rawBits() > 0x10000) {
+            valueClassName = memory_.classNameOf(value);
+            valueIsClass = valueClassName.size() >= 6 &&
+                valueClassName.compare(valueClassName.size() - 6, 6, " class") == 0;
+            valueDescr = valueClassName;
+        } else if (value.isSmallInteger()) {
+            valueDescr = "SmI(" + std::to_string((long long)value.asSmallInteger()) + ")";
+        } else if (value.isNil()) {
+            valueDescr = "nil";
+        } else {
+            valueDescr = "?";
+        }
+        // Bound: print first 30 calls, then any class-valued returns up to 100.
+        log++;
+        bool emit = (log <= 30) || (valueIsClass && log <= 100);
+        if (emit) {
+            std::string ctxCls = memory_.classNameOf(context);
+            Oop ctxMethod = memory_.fetchPointer(3, context);
+            std::string ctxMethodSel = ctxMethod.isObject()
+                ? memory_.selectorOf(ctxMethod) : "?";
+            std::string ctxMethodCls = ctxMethod.isObject()
+                ? classNameOfMethod(ctxMethod) : "?";
+            fprintf(stderr,
+                "[CTX-TEMPAT #%d] ctx=0x%llx (%s, method=%s>>%s) index=%lld value=0x%llx (%s)%s\n",
+                log, (unsigned long long)context.rawBits(), ctxCls.c_str(),
+                ctxMethodCls.c_str(), ctxMethodSel.c_str(),
+                (long long)index, (unsigned long long)value.rawBits(),
+                valueDescr.c_str(),
+                valueIsClass ? " <-- CLASS RETURNED" : "");
+        }
+    }
+
     popN(2);
     push(value);
     return PrimitiveResult::Success;
