@@ -99,12 +99,18 @@ Estimated final size: 12-15K lines of JIT code (down from 41K).
 - Goal exceeded: instead of "no crashes," everything works (because
   bail-to-interp on every entry equals interp-only behavior).
 
-### Phase 2: pure pushes/pops/returns
-- Implement: pushReceiver, pushTemp, pushRecvVar, pushLitConst,
-  pushTrue/False/Nil, pushZero/One, pop, returnReceiver, returnTop.
-- About 12 opcodes.  Stack discipline lives in `StackHelper`.
-- Fuzzer should now pass simple tests like `1 printString` (a single
-  literal returned from the activation).
+### Phase 2: pure pushes/pops/returns ✓ DONE 2026-05-10 (commit bcc4b26b)
+- Implemented in `src/vm/jit/asmjit/AsmjitT1.cpp`:
+  pushRecvVar, pushLitConst, pushTemp, pushReceiver,
+  pushTrue/False/Nil/Zero/One, pop, returnReceiver/Top/True/False/Nil.
+- Methods with anything else (sends, arith, jumps, ext-prefixes,
+  pushLitVar, pushThisContext, blockReturn, popStore) compile to
+  the Phase 1 bail stub.
+- ~5-10% of methods qualify for real codegen during eval startup
+  (mostly getters/setters and trivial ^self / ^literal).
+- Differential fuzzer: 37/37 PASS, ~4 real-codegen compiles per eval.
+- Critical fix: keep JITMethod.numBytecodes = 0 (the runtime expects
+  a bcToCode table when non-zero).
 
 ### Phase 3: arithmetic
 - `addSmallInt`, `subSmallInt`, `mulSmallInt`, `lessThanSmallInt`,
