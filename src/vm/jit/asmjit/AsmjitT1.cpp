@@ -78,6 +78,7 @@ constexpr int EXIT_RETURN          = 1;
 constexpr int EXIT_SEND            = 2;
 constexpr int EXIT_ARITH_OVERFLOW  = 6;
 constexpr int EXIT_SEND_CACHED     = 7;
+constexpr int EXIT_MUST_BOOL       = 12;
 
 // nArgs per special selector 0x70..0x7F (index = op - 0x70).
 //   at: at:put: size next nextPut: atEnd == class ~~ value value: do: new new: x y
@@ -221,6 +222,59 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         if (op >= SistaV1::PopStoreTempBase
                 && op <= SistaV1::PopStoreTempLast) continue;  // 0xD0..0xD7
         if (op == SistaV1::Pop) continue;             // 0xD8
+        // Short forward jumps: 0xB0..0xC7 (uncond / true / false).
+        // Only forward jumps in this range (offset 1..8).  Verify the
+        // jump target lands at a valid bytecode position within [0, bcLen).
+        // Out-of-range targets indicate a malformed method or a target
+        // we'd need to handle specially (e.g., past the live region).
+        if (op >= SistaV1::ShortJumpBase
+                && op <= SistaV1::ShortJumpFalseLast) {
+            // Conditional jumps default-DISABLED because of a real
+            // architectural issue: when our T1 method gets inline-
+            // activated by the chain loop (Interpreter.cpp:18807-18809
+            // JIT_CALL with no C++ frame push), a mid-method bail with
+            // ExitMustBool can't return cleanly to interp — the
+            // chain-loop handler at line 18575 just sets ip+sp and
+            // returns false, but no SavedFrame was pushed for the
+            // callee.  Interp then dispatches the callee's bytecodes
+            // in the CALLER's frame (wrong) → infinite loop or worse.
+            // Verified via bisect 2026-05-11 (mini.txt FAILS even with
+            // ALWAYS_BAIL, narrowed to bcLen ∈ [11, ?]).
+            //
+            // ExitArithOverflow has the same theoretical problem but
+            // rarely triggers (SmI fast path almost always wins),
+            // so it has been latent.  ExitMustBool fires on every
+            // if/while which exposes it.
+            //
+            // PHARO_ASMJIT_T1_ENABLE_JUMPS=1: forces enable for further
+            // investigation.  Default = bail-stub the method.
+            static const bool enableJumps =
+                std::getenv("PHARO_ASMJIT_T1_ENABLE_JUMPS") != nullptr;
+            // Bisect knobs (only meaningful with ENABLE_JUMPS=1).
+            static const bool noCondJumps =
+                std::getenv("PHARO_ASMJIT_T1_NO_COND_JUMPS") != nullptr;
+            static const bool noJumpTrue =
+                std::getenv("PHARO_ASMJIT_T1_NO_JUMP_TRUE") != nullptr;
+            static const bool noJumpFalse =
+                std::getenv("PHARO_ASMJIT_T1_NO_JUMP_FALSE") != nullptr;
+            static const int maxBcLenForJumps = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_MAX_BCLEN_FOR_JUMPS");
+                return v ? atoi(v) : 9999;
+            }();
+            if (!enableJumps) return false;
+            if (noCondJumps && op > SistaV1::ShortJumpLast) return false;
+            if (noJumpTrue && op >= SistaV1::ShortJumpTrueBase
+                           && op <= SistaV1::ShortJumpTrueLast) return false;
+            if (noJumpFalse && op >= SistaV1::ShortJumpFalseBase
+                            && op <= SistaV1::ShortJumpFalseLast) return false;
+            if ((int)bcLen > maxBcLenForJumps) return false;
+            int target = SistaV1::shortJumpTarget(op, (int)i);
+            if (target < 0 || (size_t)target >= bcLen) return false;
+            if (op > SistaV1::ShortJumpLast && (size_t)(i + 1) >= bcLen) {
+                return false;
+            }
+            continue;
+        }
         // Anything else (jumps, ext-prefixes, pushLitVar,
         // pushThisContext, dup, blockReturn, popStoreRecv/Temp,
         // mul/div/bit ops, ext bytecodes E0+, etc.) → unsupported.
@@ -420,7 +474,9 @@ void emitPrimProlog_x86(asmjit::x86::Assembler& a, int primIndex) {
 // bcOffset` and relies on `afterGC()` updating state.ip.
 bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
                   uint64_t nilBits, int bcOffsetFromMethObj,
-                  int siteIdx) {
+                  int siteIdx,
+                  const std::vector<asmjit::Label>& bcLabels,
+                  int globalIdx) {
     using namespace asmjit::x86;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
@@ -660,6 +716,65 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
+    // Short forward jumps (0xB0..0xC7).
+    //   0xB0..0xB7 = unconditional
+    //   0xB8..0xBF = jumpTrue  (pop; jump if was true)
+    //   0xC0..0xC7 = jumpFalse (pop; jump if was false)
+    if (op >= SistaV1::ShortJumpBase && op <= SistaV1::ShortJumpFalseLast) {
+        int targetIdx = SistaV1::shortJumpTarget(op, globalIdx);
+        if (op <= SistaV1::ShortJumpLast) {
+            // Unconditional forward jump — safe even from inline-activated
+            // contexts because no bail involved.
+            a.jmp(bcLabels[targetIdx]);
+            return true;
+        }
+        // Conditional jumps: gated by allBytecodesSupported on
+        // PHARO_ASMJIT_T1_ENABLE_JUMPS, since the mid-method
+        // ExitMustBool bail breaks chain-loop inline-activated callees
+        // (no SavedFrame for the caller — see the comment in
+        // allBytecodesSupported).  This emit code is reachable only
+        // when ENABLE_JUMPS is set (debug/bisect path).
+        bool jumpOnTrue = (op >= SistaV1::ShortJumpTrueBase
+                           && op <= SistaV1::ShortJumpTrueLast);
+        asmjit::Label notBoolean = a.new_label();
+        asmjit::Label fallThru   = a.new_label();
+
+        a.mov(rcx, ptr(rdi, OFF_SP));
+        a.mov(rax, ptr(rcx, -8));               // TOS (don't pop)
+
+        // First cmp: against the "branch-taken" boolean.
+        // For jumpTrue: branch when TOS == trueOop.
+        // For jumpFalse: branch when TOS == falseOop.
+        int takeBranchOop = jumpOnTrue ? OFF_TRUEOOP : OFF_FALSEOOP;
+        int fallThruOop   = jumpOnTrue ? OFF_FALSEOOP : OFF_TRUEOOP;
+        asmjit::Label takeBranch = a.new_label();
+        a.cmp(rax, ptr(rdi, takeBranchOop));
+        a.je(takeBranch);
+        a.cmp(rax, ptr(rdi, fallThruOop));
+        a.jne(notBoolean);
+
+        // Was the fall-through boolean.  Pop and fall through.
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        a.jmp(fallThru);
+
+        a.bind(takeBranch);
+        // Was the take-branch boolean.  Pop and jump.
+        a.sub(rcx, 8);
+        a.mov(ptr(rdi, OFF_SP), rcx);
+        a.jmp(bcLabels[targetIdx]);
+
+        a.bind(notBoolean);
+        // Don't pop — interp re-runs and sends mustBeBoolean.
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_MUST_BOOL));
+        a.ret();
+
+        a.bind(fallThru);
+        return true;
+    }
     // Phase 4b.2 (partial): set up IC context and ExitSend.  The
     // chain loop's ExitSend handler does method lookup, patches the
     // IC for next time via patchJITICAfterSend, and inline-activates
@@ -819,7 +934,9 @@ void emitPrimProlog_arm64(asmjit::a64::Assembler& a, int primIndex) {
 
 bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
                     uint64_t nilBits, int bcOffsetFromMethObj,
-                    int siteIdx) {
+                    int siteIdx,
+                    const std::vector<asmjit::Label>& bcLabels,
+                    int globalIdx) {
     using namespace asmjit::a64;
     (void)bcOffsetFromMethObj;
     (void)siteIdx;
@@ -999,6 +1116,49 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.bind(end);
         return true;
     }
+    // Short forward jumps (0xB0..0xC7) — see x86 version for protocol.
+    if (op >= SistaV1::ShortJumpBase && op <= SistaV1::ShortJumpFalseLast) {
+        int targetIdx = SistaV1::shortJumpTarget(op, globalIdx);
+        if (op <= SistaV1::ShortJumpLast) {
+            a.b(bcLabels[targetIdx]);
+            return true;
+        }
+        bool jumpOnTrue = (op >= SistaV1::ShortJumpTrueBase
+                           && op <= SistaV1::ShortJumpTrueLast);
+        asmjit::Label mustBoolBail = a.new_label();
+        asmjit::Label takeBranch   = a.new_label();
+        asmjit::Label fallThrough  = a.new_label();
+
+        a.ldr(x2, ptr(x0, OFF_SP));
+        a.ldur(x1, asmjit::a64::ptr(x2, -8));   // x1 = TOS (not popped)
+
+        a.ldr(x4, ptr(x0, OFF_TRUEOOP));
+        a.cmp(x1, x4);
+        a.b_eq(jumpOnTrue ? takeBranch : fallThrough);
+        a.ldr(x4, ptr(x0, OFF_FALSEOOP));
+        a.cmp(x1, x4);
+        a.b_ne(mustBoolBail);
+        a.b(jumpOnTrue ? fallThrough : takeBranch);
+
+        a.bind(takeBranch);
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(bcLabels[targetIdx]);
+
+        a.bind(fallThrough);
+        a.sub(x2, x2, asmjit::Imm(8));
+        a.str(x2, ptr(x0, OFF_SP));
+        a.b(bcLabels[globalIdx + 1]);
+
+        a.bind(mustBoolBail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_MUST_BOOL));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        return true;
+    }
     // Phase 4b.2 (partial) single-byte sends on ARM64: set up IC
     // context and ExitSend.  See x86 version for rationale.
     if (isPhase4SendOp(op)) {
@@ -1096,7 +1256,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
 
 #if defined(__x86_64__) || defined(_M_X64)
     x86::Assembler a(&code);
-    if (bcToCodeOut && real) {
+    // Always allocate per-bytecode labels when emitting real code.
+    // Conditional jumps need them even if bcToCodeOut is null (which
+    // doesn't happen in practice but is API-safe).
+    if (real) {
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
@@ -1109,9 +1272,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         int siteIdx = 0;
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
-            if (bcToCodeOut) a.bind(bcLabels[globalIdx]);
+            a.bind(bcLabels[globalIdx]);
             if (!emitOne_x86(a, bcReal[i], nilBits,
-                             bcOffsetBase + globalIdx, siteIdx)) {
+                             bcOffsetBase + globalIdx, siteIdx,
+                             bcLabels, globalIdx)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);
@@ -1131,7 +1295,7 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     }
 #elif defined(__aarch64__) || defined(_M_ARM64)
     a64::Assembler a(&code);
-    if (bcToCodeOut && real) {
+    if (real) {
         bcLabels.reserve(bcLen);
         for (size_t i = 0; i < bcLen; i++) bcLabels.push_back(a.new_label());
     }
@@ -1142,9 +1306,10 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         int siteIdx = 0;
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
-            if (bcToCodeOut) a.bind(bcLabels[globalIdx]);
+            a.bind(bcLabels[globalIdx]);
             if (!emitOne_arm64(a, bcReal[i], nilBits,
-                                bcOffsetBase + globalIdx, siteIdx)) {
+                                bcOffsetBase + globalIdx, siteIdx,
+                                bcLabels, globalIdx)) {
                 std::fprintf(stderr,
                     "[asmjit-t1] BUG: prescan/emit disagree at bc[%d]=0x%02x\n",
                     globalIdx, bcReal[i]);

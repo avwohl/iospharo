@@ -541,6 +541,56 @@ case).
   on non-Boolean.
 - Block creation, block evaluation.
 
+#### Phase 5a finding (2026-05-11): mid-method bail blocked by inline-activate
+
+Implementing conditional jumps surfaced a real architectural issue.
+The chain loop's inline-activation path
+(`Interpreter.cpp:18807-18809`, `JIT_CALL(chainJM->codeStart(), &state)`)
+does NOT push a C++ frame for the callee.  Caller state lives in
+local variables (`savedSP`, `savedRecv`, …); the chain loop's
+ExitReturn handler restores them after the callee rets.
+
+For ExitReturn that's fine.  For mid-method bails (ExitMustBool,
+ExitArithOverflow), the chain loop's switch handler at line 18575
+just sets `instructionPointer_ = state.ip; stackPointer_ = state.sp;
+return false;` — **no SavedFrame is pushed for the callee** and no
+restoration happens.  Returning false from tryJITActivation drops
+back to interp dispatch.  Interp then runs the *callee's* bytecodes
+in the *caller's* C++ frame — wrong frame state → infinite loop.
+
+Bisect (2026-05-11):
+  - PHARO_ASMJIT_T1_NO_JUMPS — corpus 37/37 PASS
+  - jumpTrue only — corpus PASS (less common; rare hot-path
+    methods exercise the broken case)
+  - jumpFalse — mini.txt 0/3 (infinite loop ~120M steps)
+  - Even ALWAYS_BAIL on jumpFalse fails — proves the bug is the
+    bail mechanism, not the cmp logic
+  - Bisect by bcLen: methods with live bcLen ≤ 10 PASS;
+    bcLen=11 FAIL (some specific common method triggers the case)
+
+ExitArithOverflow theoretically has the same bug but rarely fires
+(the SmI fast path almost always wins) so it's been latent.  Sends
+work because the ExitSend path explicitly pushes a SavedFrame
+(`Interpreter.cpp:19011-19024`) for the fallback case.
+
+**Default behavior:** PHARO_ASMJIT_T1_ENABLE_JUMPS gates conditional
+jumps off.  Unconditional ShortJump (0xB0..0xB7) is safe (no bail)
+and could be enabled — currently also gated by ENABLE_JUMPS for
+simplicity.
+
+**Fixes (in order of preference):**
+
+1. Push a SavedFrame for the callee in the chain loop's
+   ExitMustBool/ExitArithOverflow handlers (mirroring the
+   ExitSend fallback path at line 19011).  Symmetric, but
+   needs care to preserve the callee's framePointer + tempBase.
+2. Refuse to inline-activate methods that contain conditional
+   jumps.  Add `hasConditionalJumps` to JITMethod; check in
+   the chain loop alongside `!chainHasPrim || hasPrimPrologue`.
+   Loses optimization for if/while-heavy methods.
+3. Compile conditional jumps as full bail-on-entry stubs
+   (degrade to current default).
+
 ### Phase 6: GC integration
 - Pin the JIT frames so GC can walk them.  Use existing
   `pushFrameForJIT` / `popFrameForJIT` hooks.
