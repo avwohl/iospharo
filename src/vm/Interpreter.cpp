@@ -17395,23 +17395,38 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_ENTRY") != nullptr, 0)) {
         static size_t entryCount = 0;
         std::string sel = memory_.selectorOf(method);
-        if (sel == "cull:" && entryCount < 10) {
+        if (sel == "cull:" && entryCount < 5) {
             entryCount++;
-            Oop arg = state.tempBase[0];
             std::string rcvCls = memory_.classNameOf(receiver_);
-            std::string argCls = memory_.classNameOf(arg);
-            Oop rcvSlot2 = (receiver_.isObject()
-                            && receiver_.rawBits() > 0x10000
-                            && receiver_.asObjectPtr()->slotCount() > 2)
-              ? receiver_.asObjectPtr()->slotAt(2) : Oop::nil();
+            char buf[512] = {0};
+            int off = 0;
+            if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
+                ObjectHeader* h = receiver_.asObjectPtr();
+                // slot 1 = CompiledBlock
+                if (h->slotCount() > 1) {
+                    Oop cb = h->slotAt(1);
+                    if (cb.isObject() && cb.rawBits() > 0x10000) {
+                        ObjectHeader* cbObj = cb.asObjectPtr();
+                        Oop cbHdr = cbObj->slotAt(0);
+                        int nLit = cbHdr.isSmallInteger()
+                          ? (cbHdr.asSmallInteger() & 0x7FFF) : 0;
+                        const uint8_t* bcStart = cbObj->bytes() + (1+nLit)*8;
+                        size_t totalBytes = cbObj->slotCount() * 8;
+                        uint8_t fmt = static_cast<uint8_t>(cbObj->format());
+                        int unusedBytes = (fmt >= 24) ? (fmt - 24) : 0;
+                        size_t bcLen = totalBytes - (1+nLit)*8 - unusedBytes;
+                        off += snprintf(buf+off, sizeof(buf)-off,
+                                        "CB=0x%llx nLit=%d bcLen=%zu bc=",
+                                        (unsigned long long)cb.rawBits(),
+                                        nLit, bcLen);
+                        for (size_t i = 0; i < bcLen && i < 24; i++)
+                            off += snprintf(buf+off, sizeof(buf)-off,
+                                            "%02x ", bcStart[i]);
+                    }
+                }
+            }
             fprintf(stderr,
-                    "[CULL-ENTRY #%zu] rcvrCls=%s rcvr.slot[2]=0x%llx(%s) "
-                    "argCls=%s\n",
-                    entryCount,
-                    rcvCls.c_str(),
-                    (unsigned long long)rcvSlot2.rawBits(),
-                    rcvSlot2.isSmallInteger() ? "SmI" : "obj",
-                    argCls.c_str());
+                    "[CULL-ENTRY #%zu] %s\n", entryCount, buf);
         }
     }
 
