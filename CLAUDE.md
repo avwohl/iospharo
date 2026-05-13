@@ -24,6 +24,12 @@ Key paths:
 - Never skip hooks (`--no-verify`), force-push to main, or run destructive git
   operations without asking first.
 - Only use emojis if the user explicitly requests them.
+- Never call `std::getenv(...)` for new VM debug/control knobs. Every
+  env-var lookup goes through `g_debug.<field>` (defined in
+  `src/vm/DebugSettings.{hpp,cpp}`), which reads each variable ONCE at
+  static-init. Add a field + initializer there, then read
+  `g_debug.fieldName` at the call site. The `static const bool x =
+  getenv(...)` lazy-init pattern is also banned — use DebugSettings.
 
 ## Workflow
 

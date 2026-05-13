@@ -7,6 +7,7 @@
 #include "ObjectMemory.hpp"
 #include "ImageLoader.hpp"
 #include "Interpreter.hpp"
+#include "DebugSettings.hpp"
 #include "../platform/DisplaySurface.hpp"
 #include "../platform/EventQueue.hpp"
 #include <iostream>
@@ -1089,8 +1090,7 @@ int main(int argc, char* argv[]) {
         // lower-priority processes get CPU time even when high-priority
         // processes (like FFI struct compilation at pri-79) run for minutes.
         // Skip in bench mode — heartbeat causes process switches that preempt benchFib.
-        if (!heartbeatStarted && !benchMode
-                && !std::getenv("PHARO_NO_HEARTBEAT")) {
+        if (!heartbeatStarted && !benchMode && !pharo::g_debug.noHeartbeat) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }

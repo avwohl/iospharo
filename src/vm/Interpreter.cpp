@@ -5229,7 +5229,7 @@ terminate_process:
                             stackPointer_, framePointer_);
                 }
             }
-            if (__builtin_expect(std::getenv("PHARO_NO_JIT_RESUME_AFTER_RETURN") != nullptr, 0)) {
+            if (__builtin_expect(g_debug.noJITResumeAfterReturn, 0)) {
                 // bisect: skip JIT re-entry to see if it's the trigger
             } else {
                 tryJITResumeInCaller();
@@ -19248,9 +19248,11 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // method_, ip_, sp_, receiver_ for the block.
                             // ExitReturn from a block is always a local return
                             // (NLR compiles to stencil_send, not a return).
-                            static const bool forceSimple =
-                                std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr;
-                            if (!forceSimple && (primIdx == 207 || primIdx == 209)) {
+                            // g_debug.t1NoBlockResume disables the chain-loop
+                            // block-resume tryExecute fast path (block runs
+                            // via interp dispatch).  See DebugSettings.hpp.
+                            if (!g_debug.t1NoBlockResume
+                                    && (primIdx == 207 || primIdx == 209)) {
                                 // Block evaluation: instead of bailing, switch
                                 // the chain loop to execute the block's code.
                                 // activateBlock has set up method_, ip_, sp_
@@ -19329,9 +19331,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
                         {
-                            static const bool forceSimple =
-                                std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr;
-                            if (forceSimple) {
+                            // g_debug.t1NoPostPrimResume disables the
+                            // post-prim tryResume specialization.
+                            if (g_debug.t1NoPostPrimResume) {
                                 // Skip JIT resume; let interp dispatcher
                                 // pick up the next bytecode.
                                 return true;

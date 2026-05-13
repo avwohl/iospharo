@@ -37,6 +37,7 @@
 #include "../SistaV1.hpp"
 #include "../../ObjectMemory.hpp"
 #include "../../Interpreter.hpp"
+#include "../../DebugSettings.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -1480,21 +1481,19 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         if (cls == interp.compiledBlockClassIndex()) {
             static int blockCount = 0;
             blockCount++;
-            const char* noBlocks   = std::getenv("PHARO_T1_NO_BLOCKS");
-            const char* firstN     = std::getenv("PHARO_T1_BLOCKS_FIRST_N");
-            const char* onlyN      = std::getenv("PHARO_T1_BLOCKS_ONLY_N");
-            const char* skipFrom   = std::getenv("PHARO_T1_BLOCKS_SKIP_FROM");
-            const char* skipTo     = std::getenv("PHARO_T1_BLOCKS_SKIP_TO");
-            const char* trace      = std::getenv("PHARO_T1_BLOCKS_TRACE");
             bool reject = false;
-            if (noBlocks) reject = true;
-            if (firstN  && blockCount > atoi(firstN)) reject = true;
-            if (onlyN   && blockCount != atoi(onlyN)) reject = true;
-            if (skipFrom && skipTo) {
-                int a = atoi(skipFrom), b = atoi(skipTo);
-                if (blockCount >= a && blockCount <= b) reject = true;
+            if (g_debug.t1NoBlocks) reject = true;
+            if (g_debug.t1BlocksFirstN >= 0
+                    && blockCount > g_debug.t1BlocksFirstN) reject = true;
+            if (g_debug.t1BlocksOnlyN >= 0
+                    && blockCount != g_debug.t1BlocksOnlyN) reject = true;
+            if (g_debug.t1BlocksSkipFrom >= 0
+                    && g_debug.t1BlocksSkipTo >= 0
+                    && blockCount >= g_debug.t1BlocksSkipFrom
+                    && blockCount <= g_debug.t1BlocksSkipTo) {
+                reject = true;
             }
-            if (trace) {
+            if (g_debug.t1BlocksTrace) {
                 fprintf(stderr,
                         "[T1-BLOCK] #%d oop=0x%llx bcLen=%zu %s bc=",
                         blockCount,
@@ -1659,12 +1658,10 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
         jm->canBailMidMethod = hasCondJump;
-        // PHARO_T1_FORCE_SIMPLE=1: force ALL JIT methods to be treated
-        // as if they can bail mid-method.  Skips the chain loop's
-        // inline-activate optimization for every method, routing every
-        // send through activateMethod + interp dispatch.  Used to test
-        // "one path like Cog" simplification before doing the rewrite.
-        if (std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr) {
+        // g_debug.t1ForceBailMid (set by PHARO_T1_FORCE_BAIL_MID or
+        // PHARO_T1_FORCE_SIMPLE) — force canBailMidMethod on every
+        // method to disable the chain-loop inline-activate fast path.
+        if (g_debug.t1ForceBailMid) {
             jm->canBailMidMethod = true;
         }
         if (hasCondJump) {
@@ -1769,7 +1766,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     // PHARO_T1_DUMP_SEL=<selector>: dump raw emitted bytes for the
     // named method to /tmp/jit_<sel>.bin (overwrites).  Useful for
     // objdump-ing the exact code that ran.
-    if (const char* dumpSel = std::getenv("PHARO_T1_DUMP_SEL")) {
+    if (const char* dumpSel = g_debug.t1DumpSel) {
         std::string sel = memory.selectorOf(compiledMethod);
         if (sel == dumpSel) {
             static int dumpIdx = 0;

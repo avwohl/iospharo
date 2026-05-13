@@ -42,6 +42,26 @@ struct DebugSettings {
     bool noResume = false;            // PHARO_NO_RESUME
     bool resumeJ2J = false;           // PHARO_RESUME_J2J (external resume trampoline)
 
+    // --- asmjit-T1 simplification / bisect knobs ---
+    // Splits of the original PHARO_T1_FORCE_SIMPLE which set all three.
+    bool t1ForceSimple = false;       // PHARO_T1_FORCE_SIMPLE (enables all three below)
+    bool t1ForceBailMid = false;      // PHARO_T1_FORCE_BAIL_MID — force canBailMidMethod=true
+    bool t1NoBlockResume = false;     // PHARO_T1_NO_BLOCK_RESUME — skip chain-loop block-resume tryExecute
+    bool t1NoPostPrimResume = false;  // PHARO_T1_NO_POST_PRIM_RESUME — skip post-prim tryResume
+    // Block-compile bisect.
+    bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
+    int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N
+    int  t1BlocksOnlyN = -1;          // PHARO_T1_BLOCKS_ONLY_N
+    int  t1BlocksSkipFrom = -1;       // PHARO_T1_BLOCKS_SKIP_FROM
+    int  t1BlocksSkipTo = -1;         // PHARO_T1_BLOCKS_SKIP_TO
+    bool t1BlocksTrace = false;       // PHARO_T1_BLOCKS_TRACE
+    // Method-dump for objdump inspection.
+    const char* t1DumpSel = nullptr;  // PHARO_T1_DUMP_SEL (selector to dump)
+    // Skip JIT re-entry after a method return (returns to interp dispatch).
+    bool noJITResumeAfterReturn = false; // PHARO_NO_JIT_RESUME_AFTER_RETURN
+    // Skip auto-start of the heartbeat thread.
+    bool noHeartbeat = false;         // PHARO_NO_HEARTBEAT
+
     // --- JIT debug/trace ---
     bool jitDumpBC = false;           // JIT_DUMP_BC
     bool jitSpillWarn = false;        // PHARO_JIT_SPILL_WARN (presence)

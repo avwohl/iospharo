@@ -68,6 +68,21 @@ DebugSettings::DebugSettings() {
     noResume         = envPresent("PHARO_NO_RESUME");
     resumeJ2J        = envPresent("PHARO_RESUME_J2J");
 
+    // --- asmjit-T1 simplification / bisect knobs ---
+    t1ForceSimple       = envPresent("PHARO_T1_FORCE_SIMPLE");
+    t1ForceBailMid      = t1ForceSimple || envPresent("PHARO_T1_FORCE_BAIL_MID");
+    t1NoBlockResume     = t1ForceSimple || envPresent("PHARO_T1_NO_BLOCK_RESUME");
+    t1NoPostPrimResume  = t1ForceSimple || envPresent("PHARO_T1_NO_POST_PRIM_RESUME");
+    t1NoBlocks          = envPresent("PHARO_T1_NO_BLOCKS");
+    t1BlocksFirstN      = envInt("PHARO_T1_BLOCKS_FIRST_N", -1);
+    t1BlocksOnlyN       = envInt("PHARO_T1_BLOCKS_ONLY_N", -1);
+    t1BlocksSkipFrom    = envInt("PHARO_T1_BLOCKS_SKIP_FROM", -1);
+    t1BlocksSkipTo      = envInt("PHARO_T1_BLOCKS_SKIP_TO", -1);
+    t1BlocksTrace       = envPresent("PHARO_T1_BLOCKS_TRACE");
+    t1DumpSel           = envStr("PHARO_T1_DUMP_SEL");
+    noJITResumeAfterReturn = envPresent("PHARO_NO_JIT_RESUME_AFTER_RETURN");
+    noHeartbeat         = envPresent("PHARO_NO_HEARTBEAT");
+
     // --- JIT debug/trace ---
     jitDumpBC        = envPresent("JIT_DUMP_BC");
     jitSpillWarn     = envPresent("PHARO_JIT_SPILL_WARN");
