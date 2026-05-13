@@ -5229,7 +5229,11 @@ terminate_process:
                             stackPointer_, framePointer_);
                 }
             }
-            tryJITResumeInCaller();
+            if (__builtin_expect(std::getenv("PHARO_NO_JIT_RESUME_AFTER_RETURN") != nullptr, 0)) {
+                // bisect: skip JIT re-entry to see if it's the trigger
+            } else {
+                tryJITResumeInCaller();
+            }
             if (__builtin_expect(dispatchTraceLeakOn_, 0) && framePointer_) {
                 long long _spAfter = (long long)(stackPointer_ - framePointer_);
                 long long _bcAfter = -1;
