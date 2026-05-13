@@ -18315,7 +18315,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_BAIL") != nullptr, 0)) {
                 static size_t cullTraceCount = 0;
                 std::string activeSel = memory_.selectorOf(state.method);
-                if (activeSel == "cull:" && cullTraceCount < 30) {
+                if (activeSel == "cull:" && cullTraceCount < 500) {
                     cullTraceCount++;
                     int nArgs = state.sendArgCount;
                     Oop sl0 = state.sp[-1];
@@ -18324,16 +18324,22 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     int bcOff = state.method.isObject()
                       ? (int)(state.ip - state.method.asObjectPtr()->bytes())
                       : -1;
+                    std::string callerSel;
+                    if (frameDepth_ > 0) {
+                        callerSel = memory_.selectorOf(
+                          savedFrames_[frameDepth_ - 1].savedMethod);
+                    }
                     fprintf(stderr,
                             "[CULL-BAIL #%zu] bcOff=%d nArgs=%d "
                             "sp=%p tempBase=%p temp[0]=0x%llx "
-                            "sp[-1]=0x%llx sp[-2]=0x%llx fd=%zu\n",
+                            "sp[-1]=0x%llx sp[-2]=0x%llx fd=%zu "
+                            "caller=#%s\n",
                             cullTraceCount, bcOff, nArgs,
                             (void*)state.sp, (void*)state.tempBase,
                             (unsigned long long)t0.rawBits(),
                             (unsigned long long)sl0.rawBits(),
                             (unsigned long long)sl1.rawBits(),
-                            frameDepth_);
+                            frameDepth_, callerSel.c_str());
                 }
             }
             instructionPointer_ = state.ip;
