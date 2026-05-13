@@ -16537,6 +16537,19 @@ void Interpreter::patchJITICAfterSend(Oop resolvedMethod, Oop receiver, Oop sele
     // 2026-05-03: IC data moved out of MAP_JIT into heap-side
     // icBuffer.  No W^X flip needed.
 
+    // PHARO_NO_CULL_IC_FILL=1: bisect knob.  Skip patching the IC for any
+    // send originating from cull:.  Lets us test whether the cull: bug
+    // is triggered by IC accumulation.
+    if (__builtin_expect(std::getenv("PHARO_NO_CULL_IC_FILL") != nullptr, 0)) {
+        Oop ownerMeth = pendingICOwnerMethod_;
+        if (ownerMeth.isObject() && ownerMeth.rawBits() > 0x10000) {
+            std::string ownerSel = memory_.selectorOf(ownerMeth);
+            if (ownerSel == "cull:") {
+                return;
+            }
+        }
+    }
+
     // DEBUG: Selector-based J2J fill skip (PHARO_J2J_SKIP_SELECTORS).
     // Same skip used by upgradeICToJ2J — uses the IC's send-site selector
     // (passed in directly here), which is reliable.
@@ -18461,6 +18474,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             }
 
             if (!isSuperSend) {
+                // PHARO_NO_CULL_MEGA=1: bisect knob — skip mega-cache add
+                // when send originates from cull:.
+                bool skipMega = false;
+                if (__builtin_expect(std::getenv("PHARO_NO_CULL_MEGA") != nullptr, 0)) {
+                    if (state.method.isObject() && state.method.rawBits() > 0x10000) {
+                        std::string s = memory_.selectorOf(state.method);
+                        if (s == "cull:") skipMega = true;
+                    }
+                }
                 // Patch IC immediately so next hit is ExitSendCached
                 // (super sends don't use ICs — lookup always starts from superclass)
                 pendingICPatch_ = state.icDataPtr;
@@ -18469,7 +18491,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 patchJITICAfterSend(resolved, rcvr, sendSel);
 
                 // Populate mega cache for JIT stencil probes
-                {
+                if (!skipMega) {
                     uint64_t tag = rcvr.rawBits() & 0x7;
                     uint64_t megaKey = (tag == 0 && rcvr.rawBits() >= 0x10000)
                         ? static_cast<uint64_t>(rcvr.asObjectPtr()->classIndex())
