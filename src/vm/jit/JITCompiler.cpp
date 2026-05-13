@@ -1463,6 +1463,22 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
     if (!old || old->numICEntries == 0)
         return nullptr;
 
+    static const bool trace =
+        std::getenv("PHARO_TRACE_RECOMPILE_FLOW") != nullptr;
+    std::string sel;
+    int oldTier = old->tier;
+    uint8_t* oldCode = old->codeStart();
+    if (trace) {
+        sel = interp_.memory().selectorOf(compiledMethod);
+        fprintf(stderr,
+                "[RECOMP-IN] sel=#%s methOop=0x%llx oldTier=%d oldCode=%p "
+                "oldNumIC=%u oldExecCount=%u\n",
+                sel.c_str(),
+                (unsigned long long)compiledMethod.rawBits(),
+                oldTier, (void*)oldCode, old->numICEntries,
+                old->stats ? old->stats->executionCount : 0);
+    }
+
     // Temporarily remove from map so compile() doesn't short-circuit
     methodMap_.remove(compiledMethod.rawBits());
 
@@ -1475,9 +1491,21 @@ JITMethod* JITCompiler::recompile(Oop compiledMethod) {
         newMethod->tier = 2;  // Mark as recompiled
         makeExecutable(newMethod, newMethod->totalSize);
         recompilations_++;
+        if (trace) {
+            fprintf(stderr,
+                    "[RECOMP-OUT] sel=#%s newCode=%p newCanBail=%d "
+                    "newNumIC=%u\n",
+                    sel.c_str(), (void*)newMethod->codeStart(),
+                    (int)newMethod->canBailMidMethod,
+                    newMethod->numICEntries);
+        }
     } else {
         // Recompilation failed — restore old version
         methodMap_.insert(compiledMethod.rawBits(), old);
+        if (trace) {
+            fprintf(stderr, "[RECOMP-FAIL] sel=#%s — restored old\n",
+                    sel.c_str());
+        }
     }
 
     return newMethod;

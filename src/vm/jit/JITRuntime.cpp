@@ -2097,6 +2097,10 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
     constexpr uint64_t kJ2JEntryBit  = 1ULL << 60;
     constexpr uint64_t kJ2JAddrMask  = 0x0000FFFFFFFFFFFFULL;
 
+    static const bool trace =
+        std::getenv("PHARO_TRACE_REWRITE_IC") != nullptr;
+    size_t methodsWalked = 0, slotsRewritten = 0, slotsWithJ2J = 0;
+
     // 2026-05-03: IC zone moved to heap; no W^X flip required.  Single
     // pass over methods, write directly to heap-side icBuffer.
     while (m) {
@@ -2112,19 +2116,35 @@ void JITRuntime::rewriteIcEntriesAfterRecompile(uint64_t methodBits,
                             extra = (extra & ~kJ2JAddrMask)
                                   | (newEntryAddr & kJ2JAddrMask);
                             slots[e * 3 + 2] = extra;
+                            slotsRewritten++;
+                        } else {
+                            slotsWithJ2J++;
                         }
                     }
                 }
             }
         }
+        methodsWalked++;
         m = m->nextInZone;
     }
 
+    size_t megaRewrites = 0;
     for (size_t k = 0; k < MegaCacheSize; k++) {
         if (megaCache_[k].methodBits == methodBits
             && megaCache_[k].jitEntry != 0) {
             megaCache_[k].jitEntry = newEntryAddr;
+            megaRewrites++;
         }
+    }
+
+    if (trace) {
+        fprintf(stderr,
+                "[REWRITE-IC] methodBits=0x%llx newEntry=0x%llx "
+                "methodsWalked=%zu slotsRewritten=%zu slotsNoJ2J=%zu "
+                "megaRewrites=%zu\n",
+                (unsigned long long)methodBits,
+                (unsigned long long)newEntryAddr,
+                methodsWalked, slotsRewritten, slotsWithJ2J, megaRewrites);
     }
 }
 

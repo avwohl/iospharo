@@ -1601,10 +1601,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             g_condJumpRealCompiles++;
             if (std::getenv("PHARO_ASMJIT_T1_TRACE_COND")) {
                 fprintf(stderr,
-                        "[T1-COND-COMPILE] #%zu sel=#%s bcLen=%zu oop=0x%llx\n",
+                        "[T1-COND-COMPILE] #%zu sel=#%s bcLen=%zu oop=0x%llx bc=",
                         g_condJumpRealCompiles,
                         memory.selectorOf(compiledMethod).c_str(),
                         bcLen, (unsigned long long)compiledMethod.rawBits());
+                for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
+                    fprintf(stderr, "%02x ", bc[bi]);
+                fprintf(stderr, "primIdx=%d argCount=%d tempCount=%d\n",
+                        primIdx, jm->argCount, jm->tempCount);
             }
         }
     }
