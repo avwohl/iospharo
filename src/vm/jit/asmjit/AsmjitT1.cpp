@@ -277,13 +277,27 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
                 const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_N");
                 return v ? atoi(v) : -1;
             }();
-            if (jumpsFirstN >= 0 || jumpsOnlyN >= 0 || jumpsSkipN >= 0) {
+            // PHARO_ASMJIT_T1_JUMPS_SKIP_FROM / SKIP_TO — range skip.
+            static const int jumpsSkipFrom = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_FROM");
+                return v ? atoi(v) : -1;
+            }();
+            static const int jumpsSkipTo = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_TO");
+                return v ? atoi(v) : -1;
+            }();
+            if (jumpsFirstN >= 0 || jumpsOnlyN >= 0 || jumpsSkipN >= 0
+                    || jumpsSkipFrom >= 0) {
                 size_t next = g_condJumpRealCompiles + 1;
                 if (jumpsFirstN >= 0 && (int)next > jumpsFirstN)
                     return false;
                 if (jumpsOnlyN >= 0 && (int)next != jumpsOnlyN)
                     return false;
                 if (jumpsSkipN >= 0 && (int)next == jumpsSkipN)
+                    return false;
+                if (jumpsSkipFrom >= 0 && jumpsSkipTo >= 0
+                        && (int)next >= jumpsSkipFrom
+                        && (int)next <= jumpsSkipTo)
                     return false;
             }
             int target = SistaV1::shortJumpTarget(op, (int)i);
