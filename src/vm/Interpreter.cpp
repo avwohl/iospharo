@@ -18861,8 +18861,13 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     jitRuntime_.methodMap().lookup(chainTarget.rawBits());
                 if (chainJM && chainJM->isExecutable()) {
                     bool chainHasPrim = (chainJM->methodHeader >> 16) & 1;
+                    // Skip inline-activate on stub-on-entry methods: the
+                    // stub bail with EXIT_SEND would be misread as a real
+                    // send by the chain loop with stale icDataPtr (the
+                    // cull:-bug pattern, fix in phase4b.31).
                     if ((!chainHasPrim || chainJM->hasPrimPrologue)
-                            && !chainJM->canBailMidMethod) {
+                            && !chainJM->canBailMidMethod
+                            && !chainJM->isStubOnEntry) {
                         // --- Save caller state + precompute resume ---
                         Oop* savedSP = state.sp;
                         Oop savedRecv = state.receiver;
