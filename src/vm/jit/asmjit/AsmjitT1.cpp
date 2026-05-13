@@ -51,6 +51,7 @@
 #endif
 
 #include <asmjit/core/codeholder.h>
+#include <asmjit/core/logger.h>  // FileLogger (PHARO_ASMJIT_T1_LOG=1 dump)
 
 namespace pharo {
 namespace jit {
@@ -192,6 +193,11 @@ inline bool isPhase4SendOp(uint8_t op) {
     return op >= 0x70 && op <= 0xAF;
 }
 
+// Counter of methods successfully real-emitted with conditional jumps.
+// Used by the FIRST_N / ONLY_N / SKIP_N bisect knobs.  Incremented in
+// compileViaAsmjit after the JITMethod is finalized.
+size_t g_condJumpRealCompiles = 0;
+
 bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
     static const bool noSendsBisect =
         std::getenv("PHARO_ASMJIT_T1_NO_SENDS_BISECT") != nullptr;
@@ -245,6 +251,40 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
             static const bool enableJumps =
                 std::getenv("PHARO_ASMJIT_T1_ENABLE_JUMPS") != nullptr;
             if (!enableJumps) return false;
+            // PHARO_ASMJIT_T1_JUMPS_FIRST_N — bisect knob: only allow
+            // cond-jumps for the first N methods that contain one.
+            // Reject the rest (compile as bail-on-entry stub).  Counter
+            // counts methods (incremented once per call) — see local
+            // `seenInThisCall` below.
+            static const int jumpsFirstN = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_FIRST_N");
+                return v ? atoi(v) : -1;
+            }();
+            // PHARO_ASMJIT_T1_JUMPS_ONLY_N — opposite bisect: only allow
+            // cond-jumps for the Nth method (skip earlier and later).
+            static const int jumpsOnlyN = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_ONLY_N");
+                return v ? atoi(v) : -1;
+            }();
+            // PHARO_ASMJIT_T1_JUMPS_SKIP_N — bisect knob: skip cond-jumps
+            // for the Nth method.  Combined with FIRST_N, lets us test
+            // "first 110 + skip 111" to see if removing only method 111
+            // restores correctness.  Counter g_condJumpRealCompiles
+            // tracks successful real-compiles, so the 1-based index here
+            // matches the T1-COND-COMPILE log.
+            static const int jumpsSkipN = []() {
+                const char* v = std::getenv("PHARO_ASMJIT_T1_JUMPS_SKIP_N");
+                return v ? atoi(v) : -1;
+            }();
+            if (jumpsFirstN >= 0 || jumpsOnlyN >= 0 || jumpsSkipN >= 0) {
+                size_t next = g_condJumpRealCompiles + 1;
+                if (jumpsFirstN >= 0 && (int)next > jumpsFirstN)
+                    return false;
+                if (jumpsOnlyN >= 0 && (int)next != jumpsOnlyN)
+                    return false;
+                if (jumpsSkipN >= 0 && (int)next == jumpsSkipN)
+                    return false;
+            }
             int target = SistaV1::shortJumpTarget(op, (int)i);
             if (target < 0 || (size_t)target >= bcLen) return false;
             if (op > SistaV1::ShortJumpLast && (size_t)(i + 1) >= bcLen) {
@@ -1194,6 +1234,15 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
     Error err = code.init(env);
     if (err != kErrorOk) return false;
 
+    // PHARO_ASMJIT_T1_LOG=1 — dump asmjit asm to stderr per compile.
+    // Heavy; only enable when actively debugging emit.
+    static asmjit::FileLogger* asmjitLogger = []() -> asmjit::FileLogger* {
+        if (std::getenv("PHARO_ASMJIT_T1_LOG"))
+            return new asmjit::FileLogger(stderr);
+        return nullptr;
+    }();
+    if (asmjitLogger) code.set_logger(asmjitLogger);
+
     // When emitting a prim prologue we skip the CallPrimitive bytes
     // (bc[0..2]) for the fallback emit — they're consumed by the
     // prologue.  The pre-scan + emit operate on bc + emitSkip.
@@ -1548,6 +1597,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
         jm->canBailMidMethod = hasCondJump;
+        if (hasCondJump) {
+            g_condJumpRealCompiles++;
+            if (std::getenv("PHARO_ASMJIT_T1_TRACE_COND")) {
+                fprintf(stderr,
+                        "[T1-COND-COMPILE] #%zu sel=#%s bcLen=%zu oop=0x%llx\n",
+                        g_condJumpRealCompiles,
+                        memory.selectorOf(compiledMethod).c_str(),
+                        bcLen, (unsigned long long)compiledMethod.rawBits());
+            }
+        }
     }
 
     std::memcpy(jm->codeStart(), buf.data(), emitted);
