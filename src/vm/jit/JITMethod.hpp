@@ -198,6 +198,15 @@ struct JITMethod {
                                     // and infinite-loops.  When this flag is set the chain loop
                                     // falls back to activateMethod-recursive activation, which
                                     // does push a frame.
+    bool        isStubOnEntry;      // asmjit-T1 stub: the JIT code body is
+                                    // just `mov [rdi+OFF_EXIT], ExitSend; ret`
+                                    // (compiled when bytecodes are unsupported or
+                                    // PHARO_ASMJIT_T1_STUB_ONLY).  Callers running
+                                    // tryExecute on a stub block get a bogus
+                                    // ExitSend with stale send-state from cull:'s
+                                    // outer send → that's the (3+4) corruption.
+                                    // The chain-loop block-resume path checks
+                                    // this and bails to interp if set.
 
     // 1 byte pad to offset 48
 

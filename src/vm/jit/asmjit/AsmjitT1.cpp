@@ -1638,6 +1638,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->hasLitVarWrite    = false;
     jm->maxRecvFieldIndex = 0;
     jm->isSpliceTarget    = false;
+    jm->isStubOnEntry     = !isReal;
     // canBailMidMethod = true when the emitter produces a mid-method
     // ExitMustBool bail (conditional jumps).  The chain loop's
     // inline-activate path (Interpreter.cpp:18807-18809) skips this

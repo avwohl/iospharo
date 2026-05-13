@@ -19251,7 +19251,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // g_debug.t1NoBlockResume disables the chain-loop
                             // block-resume tryExecute fast path (block runs
                             // via interp dispatch).  See DebugSettings.hpp.
+                            // Skip tryExecute on stub-only block methods —
+                            // their stub bail with EXIT_SEND would be treated
+                            // as a real send by the chain loop (with stale
+                            // icDataPtr/sendArgCount from the outer send),
+                            // causing the cull:-bug DNU on nil.  Bail to
+                            // interp instead, which can run the block body
+                            // through normal dispatch.
+                            jit::JITMethod* blockJM = nullptr;
                             if (!g_debug.t1NoBlockResume
+                                    && (primIdx == 207 || primIdx == 209)) {
+                                blockJM = jitRuntime_.methodMap().lookup(method_.rawBits());
+                            }
+                            if (blockJM && !blockJM->isStubOnEntry
+                                    && !g_debug.t1NoBlockResume
                                     && (primIdx == 207 || primIdx == 209)) {
                                 // Block evaluation: instead of bailing, switch
                                 // the chain loop to execute the block's code.
