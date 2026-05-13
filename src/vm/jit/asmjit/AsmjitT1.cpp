@@ -1449,14 +1449,51 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             return nullptr;
         }
     }
-    // PHARO_T1_NO_BLOCKS=1: bisect knob.  Reject all CompiledBlock methods
-    // (so blocks only run via interp).  Useful for narrowing whether a
-    // specific block body's JIT compile is the corruption trigger.
-    if (__builtin_expect(std::getenv("PHARO_T1_NO_BLOCKS") != nullptr, 0)) {
+    // Block JIT-compile bisect knobs.
+    //   PHARO_T1_NO_BLOCKS=1            — reject every CompiledBlock.
+    //   PHARO_T1_BLOCKS_FIRST_N=K       — accept the first K block
+    //                                     compiles, reject the rest.
+    //   PHARO_T1_BLOCKS_ONLY_N=K        — accept only block index K
+    //                                     (1-based; 0 = none).
+    //   PHARO_T1_BLOCKS_SKIP_FROM=A
+    //   PHARO_T1_BLOCKS_SKIP_TO=B       — reject blocks in range [A,B]
+    //                                     inclusive (combine with FIRST_N
+    //                                     to bisect partner blocks).
+    //   PHARO_T1_BLOCKS_TRACE=1         — log every block compile with
+    //                                     bcLen + first 16 bytecodes.
+    {
         uint32_t cls = methObj->classIndex();
         if (cls == interp.compiledBlockClassIndex()) {
-            g_failed++;
-            return nullptr;
+            static int blockCount = 0;
+            blockCount++;
+            const char* noBlocks   = std::getenv("PHARO_T1_NO_BLOCKS");
+            const char* firstN     = std::getenv("PHARO_T1_BLOCKS_FIRST_N");
+            const char* onlyN      = std::getenv("PHARO_T1_BLOCKS_ONLY_N");
+            const char* skipFrom   = std::getenv("PHARO_T1_BLOCKS_SKIP_FROM");
+            const char* skipTo     = std::getenv("PHARO_T1_BLOCKS_SKIP_TO");
+            const char* trace      = std::getenv("PHARO_T1_BLOCKS_TRACE");
+            bool reject = false;
+            if (noBlocks) reject = true;
+            if (firstN  && blockCount > atoi(firstN)) reject = true;
+            if (onlyN   && blockCount != atoi(onlyN)) reject = true;
+            if (skipFrom && skipTo) {
+                int a = atoi(skipFrom), b = atoi(skipTo);
+                if (blockCount >= a && blockCount <= b) reject = true;
+            }
+            if (trace) {
+                fprintf(stderr,
+                        "[T1-BLOCK] #%d oop=0x%llx bcLen=%zu %s bc=",
+                        blockCount,
+                        (unsigned long long)compiledMethod.rawBits(),
+                        bcLenRaw, reject ? "REJECT" : "accept");
+                for (size_t bi = 0; bi < bcLenRaw && bi < 16; bi++)
+                    fprintf(stderr, "%02x ", bc[bi]);
+                fprintf(stderr, "\n");
+            }
+            if (reject) {
+                g_failed++;
+                return nullptr;
+            }
         }
     }
     // Trim trailer bytes past the method's last unconditional return,
