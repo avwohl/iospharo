@@ -191,8 +191,15 @@ struct JITMethod {
     bool        isSpliceTarget;     // SistaRuntime registered a splice for this method —
                                     // stencils must skip executionCount bumps to avoid the
                                     // T1-vs-Sista race (project_t1_vs_sista_race).
+    bool        canBailMidMethod;   // Emits ExitMustBool (and similar) mid-body.  The chain-loop
+                                    // inline-activate path at Interpreter.cpp:18807-18809 invokes
+                                    // a callee without pushing a C++ frame; a mid-method bail
+                                    // through that path returns false into the caller's frame
+                                    // and infinite-loops.  When this flag is set the chain loop
+                                    // falls back to activateMethod-recursive activation, which
+                                    // does push a frame.
 
-    // 2 bytes pad to offset 48
+    // 1 byte pad to offset 48
 
     // --- Sizes / offsets ---
     uint32_t  totalSize;          // Total allocation size including header + code + IC entries

@@ -18729,7 +18729,8 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     jitRuntime_.methodMap().lookup(chainTarget.rawBits());
                 if (chainJM && chainJM->isExecutable()) {
                     bool chainHasPrim = (chainJM->methodHeader >> 16) & 1;
-                    if (!chainHasPrim || chainJM->hasPrimPrologue) {
+                    if ((!chainHasPrim || chainJM->hasPrimPrologue)
+                            && !chainJM->canBailMidMethod) {
                         // --- Save caller state + precompute resume ---
                         Oop* savedSP = state.sp;
                         Oop savedRecv = state.receiver;

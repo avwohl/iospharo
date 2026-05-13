@@ -229,45 +229,22 @@ bool allBytecodesSupported(const uint8_t* bc, size_t bcLen) {
         // we'd need to handle specially (e.g., past the live region).
         if (op >= SistaV1::ShortJumpBase
                 && op <= SistaV1::ShortJumpFalseLast) {
-            // Conditional jumps default-DISABLED because of a real
-            // architectural issue: when our T1 method gets inline-
-            // activated by the chain loop (Interpreter.cpp:18807-18809
-            // JIT_CALL with no C++ frame push), a mid-method bail with
-            // ExitMustBool can't return cleanly to interp — the
-            // chain-loop handler at line 18575 just sets ip+sp and
-            // returns false, but no SavedFrame was pushed for the
-            // callee.  Interp then dispatches the callee's bytecodes
-            // in the CALLER's frame (wrong) → infinite loop or worse.
-            // Verified via bisect 2026-05-11 (mini.txt FAILS even with
-            // ALWAYS_BAIL, narrowed to bcLen ∈ [11, ?]).
+            // Conditional jumps remain DISABLED by default.  Enabling them
+            // (PHARO_ASMJIT_T1_ENABLE_JUMPS=1) causes the eval-startup
+            // path to DNU on garbage class indices — symptoms point at a
+            // JIT-side emit bug (corrupted stack or wrong jump target),
+            // NOT at the bail protocol as the memory note originally
+            // claimed.  Verified 2026-05-12: ExitMustBool fires 0 times
+            // even with jumps enabled and no canBailMidMethod gate, so
+            // the hang isn't a bail cascade.
             //
-            // ExitArithOverflow has the same theoretical problem but
-            // rarely triggers (SmI fast path almost always wins),
-            // so it has been latent.  ExitMustBool fires on every
-            // if/while which exposes it.
-            //
-            // PHARO_ASMJIT_T1_ENABLE_JUMPS=1: forces enable for further
-            // investigation.  Default = bail-stub the method.
+            // The canBailMidMethod field + gate in this file and in
+            // Interpreter.cpp:18731-18733 is correct infrastructure
+            // for when this emit bug is fixed, but is inert today
+            // because the gate only fires when cond jumps emit.
             static const bool enableJumps =
                 std::getenv("PHARO_ASMJIT_T1_ENABLE_JUMPS") != nullptr;
-            // Bisect knobs (only meaningful with ENABLE_JUMPS=1).
-            static const bool noCondJumps =
-                std::getenv("PHARO_ASMJIT_T1_NO_COND_JUMPS") != nullptr;
-            static const bool noJumpTrue =
-                std::getenv("PHARO_ASMJIT_T1_NO_JUMP_TRUE") != nullptr;
-            static const bool noJumpFalse =
-                std::getenv("PHARO_ASMJIT_T1_NO_JUMP_FALSE") != nullptr;
-            static const int maxBcLenForJumps = []() {
-                const char* v = std::getenv("PHARO_ASMJIT_T1_MAX_BCLEN_FOR_JUMPS");
-                return v ? atoi(v) : 9999;
-            }();
             if (!enableJumps) return false;
-            if (noCondJumps && op > SistaV1::ShortJumpLast) return false;
-            if (noJumpTrue && op >= SistaV1::ShortJumpTrueBase
-                           && op <= SistaV1::ShortJumpTrueLast) return false;
-            if (noJumpFalse && op >= SistaV1::ShortJumpFalseBase
-                            && op <= SistaV1::ShortJumpFalseLast) return false;
-            if ((int)bcLen > maxBcLenForJumps) return false;
             int target = SistaV1::shortJumpTarget(op, (int)i);
             if (target < 0 || (size_t)target >= bcLen) return false;
             if (op > SistaV1::ShortJumpLast && (size_t)(i + 1) >= bcLen) {
@@ -728,12 +705,10 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             a.jmp(bcLabels[targetIdx]);
             return true;
         }
-        // Conditional jumps: gated by allBytecodesSupported on
-        // PHARO_ASMJIT_T1_ENABLE_JUMPS, since the mid-method
-        // ExitMustBool bail breaks chain-loop inline-activated callees
-        // (no SavedFrame for the caller — see the comment in
-        // allBytecodesSupported).  This emit code is reachable only
-        // when ENABLE_JUMPS is set (debug/bisect path).
+        // Conditional jumps emit a mid-method ExitMustBool bail.  The
+        // method gets canBailMidMethod=true in compileViaAsmjit so the
+        // chain loop's inline-activate gate skips it (see
+        // Interpreter.cpp:18731-18733).
         bool jumpOnTrue = (op >= SistaV1::ShortJumpTrueBase
                            && op <= SistaV1::ShortJumpTrueLast);
         asmjit::Label notBoolean = a.new_label();
@@ -1553,6 +1528,27 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     jm->hasLitVarWrite    = false;
     jm->maxRecvFieldIndex = 0;
     jm->isSpliceTarget    = false;
+    // canBailMidMethod = true when the emitter produces a mid-method
+    // ExitMustBool bail (conditional jumps).  The chain loop's
+    // inline-activate path (Interpreter.cpp:18807-18809) skips this
+    // method when set; the activateMethod-recursive path is used
+    // instead, which pushes a C++ frame the bail can return into.
+    // Only real-emit methods can bail mid-method.  Stub-on-entry methods
+    // (isReal=false) bail with ExitSend on entry — no mid-method bail, so
+    // the inline-activate gate doesn't need to block them.
+    {
+        bool hasCondJump = false;
+        if (isReal) {
+            for (size_t i = 0; i < bcLen; ) {
+                uint8_t op = bc[i];
+                if (SistaV1::isConditionalShortJump(op)) { hasCondJump = true; break; }
+                int len = SistaV1::bytecodeLength(op);
+                if (len <= 0 || i + (size_t)len > bcLen) break;
+                i += (size_t)len;
+            }
+        }
+        jm->canBailMidMethod = hasCondJump;
+    }
 
     std::memcpy(jm->codeStart(), buf.data(), emitted);
     // Write bcToCode table after the machine code.  Required by the
