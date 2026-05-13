@@ -5255,6 +5255,20 @@ terminate_process:
 void Interpreter::returnFromMethod() {
     Oop value = pop();
 
+    if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_RETURN") != nullptr, 0)) {
+        static size_t retCount = 0;
+        std::string sel = memory_.selectorOf(method_);
+        if (sel == "cull:" && retCount < 30) {
+            retCount++;
+            uint32_t cls = value.isObject() && value.rawBits() > 0x10000
+              ? value.asObjectPtr()->classIndex() : 0xffffffff;
+            fprintf(stderr,
+                    "[CULL-RETURN #%zu] returnValue=0x%llx (cls=%u) fd=%zu\n",
+                    retCount, (unsigned long long)value.rawBits(), cls,
+                    frameDepth_);
+        }
+    }
+
     // Check if we're executing inside a block (CompiledBlock).
     // If so, a "return from method" (^) should actually return from the HOME method,
     // not just from this block.
@@ -17371,6 +17385,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     state.literals = methObj->slots() + 1;
     state.tempBase = framePointer_ + 1;
 
+    if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_ENTRY") != nullptr, 0)) {
+        static size_t entryCount = 0;
+        std::string sel = memory_.selectorOf(method);
+        if (sel == "cull:" && entryCount < 30) {
+            entryCount++;
+            Oop arg = state.tempBase[0];
+            uint32_t cls0 = receiver_.isObject() && receiver_.rawBits() > 0x10000
+              ? receiver_.asObjectPtr()->classIndex() : 0xffffffff;
+            uint32_t cls1 = arg.isObject() && arg.rawBits() > 0x10000
+              ? arg.asObjectPtr()->classIndex() : 0xffffffff;
+            fprintf(stderr,
+                    "[CULL-ENTRY #%zu] rcvr=0x%llx (cls=%u) arg=0x%llx (cls=%u) "
+                    "fd=%zu fp=%p sp=%p\n",
+                    entryCount, (unsigned long long)receiver_.rawBits(), cls0,
+                    (unsigned long long)arg.rawBits(), cls1, frameDepth_,
+                    (void*)framePointer_, (void*)stackPointer_);
+        }
+    }
+
     state.memory = &memory_;
     state.interp = this;
 
@@ -18279,6 +18312,30 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
         case jit::ExitSend: {
             // IC miss: do method lookup, patch IC, and chain into callee
             // instead of bailing to interpreter (which loses JIT continuity).
+            if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_BAIL") != nullptr, 0)) {
+                static size_t cullTraceCount = 0;
+                std::string activeSel = memory_.selectorOf(state.method);
+                if (activeSel == "cull:" && cullTraceCount < 30) {
+                    cullTraceCount++;
+                    int nArgs = state.sendArgCount;
+                    Oop sl0 = state.sp[-1];
+                    Oop sl1 = nArgs >= 1 ? state.sp[-2] : Oop::nil();
+                    Oop t0  = state.tempBase ? state.tempBase[0] : Oop::nil();
+                    int bcOff = state.method.isObject()
+                      ? (int)(state.ip - state.method.asObjectPtr()->bytes())
+                      : -1;
+                    fprintf(stderr,
+                            "[CULL-BAIL #%zu] bcOff=%d nArgs=%d "
+                            "sp=%p tempBase=%p temp[0]=0x%llx "
+                            "sp[-1]=0x%llx sp[-2]=0x%llx fd=%zu\n",
+                            cullTraceCount, bcOff, nArgs,
+                            (void*)state.sp, (void*)state.tempBase,
+                            (unsigned long long)t0.rawBits(),
+                            (unsigned long long)sl0.rawBits(),
+                            (unsigned long long)sl1.rawBits(),
+                            frameDepth_);
+                }
+            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
             jitICMisses_++;
