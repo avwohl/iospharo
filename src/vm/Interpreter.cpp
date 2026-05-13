@@ -5258,14 +5258,21 @@ void Interpreter::returnFromMethod() {
     if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_RETURN") != nullptr, 0)) {
         static size_t retCount = 0;
         std::string sel = memory_.selectorOf(method_);
-        if (sel == "cull:" && retCount < 30) {
+        if (sel == "cull:") {
             retCount++;
             uint32_t cls = value.isObject() && value.rawBits() > 0x10000
               ? value.asObjectPtr()->classIndex() : 0xffffffff;
-            fprintf(stderr,
-                    "[CULL-RETURN #%zu] returnValue=0x%llx (cls=%u) fd=%zu\n",
-                    retCount, (unsigned long long)value.rawBits(), cls,
-                    frameDepth_);
+            // CHECK: if returnValue is heap object but classAtIndex returns nil,
+            // we've got a corrupt value — log unconditionally.
+            bool corrupt = value.isObject() && value.rawBits() > 0x10000
+                           && memory_.classAtIndex(cls).isNil();
+            if (corrupt || retCount <= 30) {
+                fprintf(stderr,
+                        "[CULL-RETURN #%zu] returnValue=0x%llx (cls=%u) "
+                        "fd=%zu%s\n",
+                        retCount, (unsigned long long)value.rawBits(), cls,
+                        frameDepth_, corrupt ? " *** CORRUPT ***" : "");
+            }
         }
     }
 
@@ -17388,19 +17395,23 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_ENTRY") != nullptr, 0)) {
         static size_t entryCount = 0;
         std::string sel = memory_.selectorOf(method);
-        if (sel == "cull:" && entryCount < 30) {
+        if (sel == "cull:" && entryCount < 10) {
             entryCount++;
             Oop arg = state.tempBase[0];
-            uint32_t cls0 = receiver_.isObject() && receiver_.rawBits() > 0x10000
-              ? receiver_.asObjectPtr()->classIndex() : 0xffffffff;
-            uint32_t cls1 = arg.isObject() && arg.rawBits() > 0x10000
-              ? arg.asObjectPtr()->classIndex() : 0xffffffff;
+            std::string rcvCls = memory_.classNameOf(receiver_);
+            std::string argCls = memory_.classNameOf(arg);
+            Oop rcvSlot2 = (receiver_.isObject()
+                            && receiver_.rawBits() > 0x10000
+                            && receiver_.asObjectPtr()->slotCount() > 2)
+              ? receiver_.asObjectPtr()->slotAt(2) : Oop::nil();
             fprintf(stderr,
-                    "[CULL-ENTRY #%zu] rcvr=0x%llx (cls=%u) arg=0x%llx (cls=%u) "
-                    "fd=%zu fp=%p sp=%p\n",
-                    entryCount, (unsigned long long)receiver_.rawBits(), cls0,
-                    (unsigned long long)arg.rawBits(), cls1, frameDepth_,
-                    (void*)framePointer_, (void*)stackPointer_);
+                    "[CULL-ENTRY #%zu] rcvrCls=%s rcvr.slot[2]=0x%llx(%s) "
+                    "argCls=%s\n",
+                    entryCount,
+                    rcvCls.c_str(),
+                    (unsigned long long)rcvSlot2.rawBits(),
+                    rcvSlot2.isSmallInteger() ? "SmI" : "obj",
+                    argCls.c_str());
         }
     }
 
