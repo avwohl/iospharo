@@ -1089,7 +1089,8 @@ int main(int argc, char* argv[]) {
         // lower-priority processes get CPU time even when high-priority
         // processes (like FFI struct compilation at pri-79) run for minutes.
         // Skip in bench mode — heartbeat causes process switches that preempt benchFib.
-        if (!heartbeatStarted && !benchMode) {
+        if (!heartbeatStarted && !benchMode
+                && !std::getenv("PHARO_NO_HEARTBEAT")) {
             interpreter.startHeartbeat();
             heartbeatStarted = true;
         }
