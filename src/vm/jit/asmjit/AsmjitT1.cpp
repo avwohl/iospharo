@@ -1607,8 +1607,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                         bcLen, (unsigned long long)compiledMethod.rawBits());
                 for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
                     fprintf(stderr, "%02x ", bc[bi]);
-                fprintf(stderr, "primIdx=%d argCount=%d tempCount=%d\n",
-                        primIdx, jm->argCount, jm->tempCount);
+                fprintf(stderr, "primIdx=%d argCount=%d tempCount=%d advRes=%d "
+                        "numBC=%u\n",
+                        primIdx, jm->argCount, jm->tempCount,
+                        (int)advertiseResume, jm->numBytecodes);
+                fprintf(stderr, "  bcToCode:");
+                for (size_t bi = 0; bi <= bcLen && bi < 32; bi++)
+                    fprintf(stderr, " [%zu]=%u", bi, bcToCode[bi]);
+                fprintf(stderr, "\n");
             }
         }
     }
