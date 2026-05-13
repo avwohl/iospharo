@@ -1744,6 +1744,32 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                      static_cast<unsigned long long>(compiledMethod.rawBits()),
                      (void*)jm, (void*)jm->codeStart(), emitted, bcLen);
     }
+    // PHARO_T1_DUMP_SEL=<selector>: dump raw emitted bytes for the
+    // named method to /tmp/jit_<sel>.bin (overwrites).  Useful for
+    // objdump-ing the exact code that ran.
+    if (const char* dumpSel = std::getenv("PHARO_T1_DUMP_SEL")) {
+        std::string sel = memory.selectorOf(compiledMethod);
+        if (sel == dumpSel) {
+            static int dumpIdx = 0;
+            dumpIdx++;
+            std::string path = std::string("/tmp/jit_") + sel
+                + "_" + std::to_string(dumpIdx) + ".bin";
+            // Sanitize: replace ':' with '_' for filesystem-friendly name.
+            for (auto& c : path) if (c == ':') c = '_';
+            if (FILE* f = std::fopen(path.c_str(), "wb")) {
+                std::fwrite(jm->codeStart(), 1, emitted, f);
+                std::fclose(f);
+                std::fprintf(stderr,
+                             "[T1-DUMP] #%d wrote %zu bytes of #%s oop=0x%llx bcLen=%zu bc=",
+                             dumpIdx, emitted, sel.c_str(),
+                             (unsigned long long)compiledMethod.rawBits(),
+                             bcLen);
+                for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
+                    std::fprintf(stderr, "%02x ", bc[bi]);
+                std::fprintf(stderr, "isReal=%d\n", (int)isReal);
+            }
+        }
+    }
 
     return jm;
 }
