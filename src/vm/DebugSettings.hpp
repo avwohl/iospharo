@@ -57,6 +57,7 @@ struct DebugSettings {
     bool t1BlocksTrace = false;       // PHARO_T1_BLOCKS_TRACE
     // Method-dump for objdump inspection.
     const char* t1DumpSel = nullptr;  // PHARO_T1_DUMP_SEL (selector to dump)
+    const char* t1SkipSelectors = nullptr; // PHARO_T1_SKIP_SELECTORS — CSV of selectors to reject from real-emit
     // Skip JIT re-entry after a method return (returns to interp dispatch).
     bool noJITResumeAfterReturn = false; // PHARO_NO_JIT_RESUME_AFTER_RETURN
     // Skip auto-start of the heartbeat thread.

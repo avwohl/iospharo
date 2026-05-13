@@ -1464,6 +1464,25 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             return nullptr;
         }
     }
+    // g_debug.t1SkipSelectors: comma-separated selector list to reject
+    // from real-emit (compile as stub-on-entry).  Unlike index-based
+    // bisects, selectors are stable across runs even when compile
+    // order is non-deterministic.  Set via PHARO_T1_SKIP_SELECTORS=
+    // "addTemp:,methodClass,validate" etc.
+    if (g_debug.t1SkipSelectors) {
+        std::string sel = memory.selectorOf(compiledMethod);
+        const char* list = g_debug.t1SkipSelectors;
+        size_t selLen = sel.size();
+        for (const char* p = list; *p; ) {
+            const char* end = std::strchr(p, ',');
+            size_t len = end ? (size_t)(end - p) : std::strlen(p);
+            if (len == selLen && std::memcmp(p, sel.c_str(), len) == 0) {
+                g_failed++;
+                return nullptr;
+            }
+            p = end ? end + 1 : p + len;
+        }
+    }
     // Block JIT-compile bisect knobs.
     //   PHARO_T1_NO_BLOCKS=1            — reject every CompiledBlock.
     //   PHARO_T1_BLOCKS_FIRST_N=K       — accept the first K block
