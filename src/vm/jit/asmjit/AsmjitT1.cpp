@@ -1659,6 +1659,14 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
             }
         }
         jm->canBailMidMethod = hasCondJump;
+        // PHARO_T1_FORCE_SIMPLE=1: force ALL JIT methods to be treated
+        // as if they can bail mid-method.  Skips the chain loop's
+        // inline-activate optimization for every method, routing every
+        // send through activateMethod + interp dispatch.  Used to test
+        // "one path like Cog" simplification before doing the rewrite.
+        if (std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr) {
+            jm->canBailMidMethod = true;
+        }
         if (hasCondJump) {
             g_condJumpRealCompiles++;
             if (std::getenv("PHARO_ASMJIT_T1_TRACE_COND")) {

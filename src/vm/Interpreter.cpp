@@ -19248,7 +19248,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             // method_, ip_, sp_, receiver_ for the block.
                             // ExitReturn from a block is always a local return
                             // (NLR compiles to stencil_send, not a return).
-                            if (primIdx == 207 || primIdx == 209) {
+                            static const bool forceSimple =
+                                std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr;
+                            if (!forceSimple && (primIdx == 207 || primIdx == 209)) {
                                 // Block evaluation: instead of bailing, switch
                                 // the chain loop to execute the block's code.
                                 // activateBlock has set up method_, ip_, sp_
@@ -19326,6 +19328,15 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         }
                         state.j2jDepth = 0;
                         state.j2jTotalCalls = 0;
+                        {
+                            static const bool forceSimple =
+                                std::getenv("PHARO_T1_FORCE_SIMPLE") != nullptr;
+                            if (forceSimple) {
+                                // Skip JIT resume; let interp dispatcher
+                                // pick up the next bytecode.
+                                return true;
+                            }
+                        }
                         if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                             return true;
                         }
