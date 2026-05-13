@@ -10087,6 +10087,21 @@ void Interpreter::sendDoesNotUnderstand(Oop selector, int argCount) {
                 fprintf(stderr, "[DNU]   rcvr cls=%u fmt=%d class=%s\n",
                         cls, (int)rH->format(), memory_.classNameOf(rcvr).c_str());
                 if (cls == 0) suspiciousRcvr = true;  // Invalid object
+                // 2026-05-13 cull: bug — trap on the suspect 1MB-aligned
+                // receiver pattern (low 20 bits = 0).  Caught under lldb,
+                // we can then inspect call stack + stack region to find
+                // where the bad value was written.
+                if ((rcvr.rawBits() & 0xFFFFF) == 0) {
+                    fprintf(stderr, "[DNU] 1MB-aligned check: rcvr=0x%llx classAtIdx(%u).isNil=%d trap_env=%d\n",
+                            (unsigned long long)rcvr.rawBits(), cls,
+                            memory_.classAtIndex(cls).isNil() ? 1 : 0,
+                            std::getenv("PHARO_TRAP_BAD_DNU") != nullptr ? 1 : 0);
+                    if (std::getenv("PHARO_TRAP_BAD_DNU") != nullptr) {
+                        fprintf(stderr, "[DNU] *** TRAP on suspect receiver ***\n");
+                        fflush(stderr);
+                        __builtin_trap();
+                    }
+                }
             } else if (rcvr.isSmallInteger()) {
                 fprintf(stderr, "[DNU]   rcvr is SmallInteger %lld\n", rcvr.asSmallInteger());
                 suspiciousRcvr = true;
@@ -17412,17 +17427,17 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     if (__builtin_expect(std::getenv("PHARO_TRACE_CULL_ENTRY") != nullptr, 0)) {
         static size_t entryCount = 0;
         std::string sel = memory_.selectorOf(method);
-        if (sel == "cull:" && entryCount < 5) {
+        if (sel == "cull:") {
             entryCount++;
-            std::string rcvCls = memory_.classNameOf(receiver_);
-            char buf[512] = {0};
-            int off = 0;
+            // Track unique CompiledBlocks per dump (just print each once).
+            static std::unordered_map<uint64_t, int> seen;
             if (receiver_.isObject() && receiver_.rawBits() > 0x10000) {
                 ObjectHeader* h = receiver_.asObjectPtr();
-                // slot 1 = CompiledBlock
                 if (h->slotCount() > 1) {
                     Oop cb = h->slotAt(1);
-                    if (cb.isObject() && cb.rawBits() > 0x10000) {
+                    uint64_t cbBits = cb.rawBits();
+                    if (cb.isObject() && cbBits > 0x10000 && seen[cbBits] < 1) {
+                        seen[cbBits]++;
                         ObjectHeader* cbObj = cb.asObjectPtr();
                         Oop cbHdr = cbObj->slotAt(0);
                         int nLit = cbHdr.isSmallInteger()
@@ -17432,18 +17447,20 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         uint8_t fmt = static_cast<uint8_t>(cbObj->format());
                         int unusedBytes = (fmt >= 24) ? (fmt - 24) : 0;
                         size_t bcLen = totalBytes - (1+nLit)*8 - unusedBytes;
+                        char buf[512] = {0};
+                        int off = 0;
                         off += snprintf(buf+off, sizeof(buf)-off,
                                         "CB=0x%llx nLit=%d bcLen=%zu bc=",
-                                        (unsigned long long)cb.rawBits(),
+                                        (unsigned long long)cbBits,
                                         nLit, bcLen);
-                        for (size_t i = 0; i < bcLen && i < 24; i++)
+                        for (size_t i = 0; i < bcLen && i < 32; i++)
                             off += snprintf(buf+off, sizeof(buf)-off,
                                             "%02x ", bcStart[i]);
+                        fprintf(stderr,
+                                "[CULL-CB-UNIQUE #%zu] %s\n", seen.size(), buf);
                     }
                 }
             }
-            fprintf(stderr,
-                    "[CULL-ENTRY #%zu] %s\n", entryCount, buf);
         }
     }
 

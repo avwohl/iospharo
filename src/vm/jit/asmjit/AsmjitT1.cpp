@@ -36,6 +36,7 @@
 #include "../PlatformJIT.hpp"
 #include "../SistaV1.hpp"
 #include "../../ObjectMemory.hpp"
+#include "../../Interpreter.hpp"
 
 #include <cstdio>
 #include <cstdlib>
@@ -1444,6 +1445,16 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
         primIdx = supportedPrimIndex(bc, bcLenRaw);
         if (primIdx < 0) {
             // Unsupported prim: bail compile, let C++ handle it.
+            g_failed++;
+            return nullptr;
+        }
+    }
+    // PHARO_T1_NO_BLOCKS=1: bisect knob.  Reject all CompiledBlock methods
+    // (so blocks only run via interp).  Useful for narrowing whether a
+    // specific block body's JIT compile is the corruption trigger.
+    if (__builtin_expect(std::getenv("PHARO_T1_NO_BLOCKS") != nullptr, 0)) {
+        uint32_t cls = methObj->classIndex();
+        if (cls == interp.compiledBlockClassIndex()) {
             g_failed++;
             return nullptr;
         }
