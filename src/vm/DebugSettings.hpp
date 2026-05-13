@@ -58,6 +58,10 @@ struct DebugSettings {
     // Method-dump for objdump inspection.
     const char* t1DumpSel = nullptr;  // PHARO_T1_DUMP_SEL (selector to dump)
     const char* t1SkipSelectors = nullptr; // PHARO_T1_SKIP_SELECTORS — CSV of selectors to reject from real-emit
+    // Trace JITRuntime::tryExecute calls for matching selectors.  Helped
+    // identify pushLiteral: as the #138 cond-jump bug trigger in May 2026
+    // by surfacing receiver class + slot count at each JIT entry.
+    const char* traceExecSels = nullptr; // PHARO_TRACE_EXEC_SELS — CSV of selectors to trace
     // Skip JIT re-entry after a method return (returns to interp dispatch).
     bool noJITResumeAfterReturn = false; // PHARO_NO_JIT_RESUME_AFTER_RETURN
     // Skip auto-start of the heartbeat thread.

@@ -2613,6 +2613,50 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
         codeZone_.touch(jm);
         jm->stats->executionCount++;
     }
+    // PHARO_TRACE_EXEC_SELS: CSV of selectors to trace on tryExecute.
+    // Logs receiver class + slot count + IC info per entry, gated by
+    // selector match.  Helped identify pushLiteral: as the #138 cond-
+    // jump bug trigger by showing two distinct pushLiteral: methods
+    // (OCIRBuilder + OCIRBytecodeGenerator) and counting per-oop entries.
+    if (g_debug.traceExecSels) {
+        std::string s;
+        if (compiledMethod.isObject() && compiledMethod.rawBits() > 0x10000) {
+            ObjectMemory& mem = state.interp->memory();
+            s = mem.selectorOf(compiledMethod);
+        }
+        size_t selLen = s.size();
+        bool match = false;
+        for (const char* p = g_debug.traceExecSels; *p && !match; ) {
+            const char* end = std::strchr(p, ',');
+            size_t len = end ? (size_t)(end - p) : std::strlen(p);
+            if (len == selLen && std::memcmp(p, s.c_str(), len) == 0)
+                match = true;
+            p = end ? end + 1 : p + len;
+        }
+        if (match) {
+            static size_t cnt = 0;
+            cnt++;
+            if (cnt <= 50 || (cnt & 0xFF) == 0) {
+                int recvSlots = -1;
+                std::string rcls = "?";
+                if (state.receiver.isObject() && state.receiver.rawBits() > 0x10000) {
+                    ObjectMemory& mem2 = state.interp->memory();
+                    ObjectHeader* h = state.receiver.asObjectPtr();
+                    recvSlots = (int)h->slotCount();
+                    rcls = mem2.classNameOf(state.receiver);
+                }
+                fprintf(stderr,
+                        "[EXEC #%zu] %s argCount=%d sp=%p oop=0x%llx "
+                        "canBail=%d nIC=%u rcvr=%s slots=%d\n",
+                        cnt, s.c_str(),
+                        state.argCount, (void*)state.sp,
+                        (unsigned long long)compiledMethod.rawBits(),
+                        (int)jm->canBailMidMethod,
+                        (unsigned)jm->numICEntries,
+                        rcls.c_str(), recvSlots);
+            }
+        }
+    }
 
     // Promote hot methods: recompile Tier 1 with IC profiling data.
     // Threshold: 500 executions, tier 1 only, must have send sites.

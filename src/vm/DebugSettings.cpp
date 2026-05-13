@@ -81,6 +81,7 @@ DebugSettings::DebugSettings() {
     t1BlocksTrace       = envPresent("PHARO_T1_BLOCKS_TRACE");
     t1DumpSel           = envStr("PHARO_T1_DUMP_SEL");
     t1SkipSelectors     = envStr("PHARO_T1_SKIP_SELECTORS");
+    traceExecSels       = envStr("PHARO_TRACE_EXEC_SELS");
     noJITResumeAfterReturn = envPresent("PHARO_NO_JIT_RESUME_AFTER_RETURN");
     noHeartbeat         = envPresent("PHARO_NO_HEARTBEAT");
 
