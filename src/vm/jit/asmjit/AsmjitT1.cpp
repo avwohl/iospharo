@@ -703,7 +703,15 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         if (op == 0x60) {            // +
             a.add(rcx, rdx);
             a.jo(bail);
-            a.shl(rcx, asmjit::Imm(3));
+            // Retag: shl by 3.  shl's OF is undefined for counts > 1,
+            // so do it as three add+jo to catch the case where the
+            // result fits in 64-bit signed (no jo on `add` above) but
+            // not in 61-bit signed (would overflow on retag).  Concrete
+            // example: SmI maxVal + 1 → 2^60, retag shl produces
+            // 0x8000000000000000 (sign bit) which is wrong.
+            a.add(rcx, rcx); a.jo(bail);
+            a.add(rcx, rcx); a.jo(bail);
+            a.add(rcx, rcx); a.jo(bail);
             a.or_(rcx, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
@@ -711,7 +719,11 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         } else if (op == 0x61) {     // -
             a.sub(rcx, rdx);
             a.jo(bail);
-            a.shl(rcx, asmjit::Imm(3));
+            // See `+` comment above: retag-shift overflow check.
+            // Triggered by `0 - SmI minVal` = +2^60 (one past SmI maxVal).
+            a.add(rcx, rcx); a.jo(bail);
+            a.add(rcx, rcx); a.jo(bail);
+            a.add(rcx, rcx); a.jo(bail);
             a.or_(rcx, asmjit::Imm(SMI_TAG));
             a.mov(ptr(rax, -16), rcx);
             a.sub(rax, 8);
