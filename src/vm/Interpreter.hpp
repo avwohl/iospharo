@@ -3119,9 +3119,20 @@ void Interpreter::forEachRoot(Visitor&& visitor) {
             //   selectorBits = Symbol Oop (needs GC update)
             // `numICEntries` is the SITE count (yes, misnamed), sized as
             // numSites * IC_BYTES_PER_SITE in the code zone.
-            if (m->numICEntries > 0) {
-                uint8_t* icStart = m->codeStart() + m->codeSize
-                                 - m->numICEntries * jit::IC_BYTES_PER_SITE;
+            if (m->numICEntries > 0 && m->icBuffer) {
+                // 2026-05-03: IC zone moved out of MAP_JIT to heap-side
+                // `m->icBuffer` (calloc'd by CodeZone::allocate).  The
+                // previous code computed icStart as
+                // `m->codeStart() + m->codeSize - numICEntries*IC_BYTES_PER_SITE`
+                // — that formula matched the OLD in-codezone IC layout
+                // but now reads stray bytes from the machine-code tail,
+                // not the IC.  Worse, GC writes (visitor updates oop
+                // bits in place) corrupted the selBitsArray that lives
+                // at the end of the JIT method's payload, producing
+                // bogus sendSel reads at chain-loop ExitSend dispatch
+                // (the f138 #linkTo:-instead-of-#push bug, root-caused
+                // 2026-05-13).
+                uint8_t* icStart = reinterpret_cast<uint8_t*>(m->icBuffer);
                 for (uint32_t i = 0; i < m->numICEntries; i++) {
                     uint64_t* slots = reinterpret_cast<uint64_t*>(
                         icStart + i * jit::IC_BYTES_PER_SITE);

@@ -164,12 +164,12 @@ struct JITMethod {
 
     // --- Code geometry ---
     // codeSize is misnamed for historical reasons.  It is the size of the
-    // ENTIRE payload after this header (machine code + literal pool +
-    // bcToCode table + IC area).  Used by `findMethodByPC` as the method's
-    // full footprint and by IC-relative pointer arithmetic:
-    //   icStart = codeStart() + codeSize - numICEntries * IC_BYTES_PER_SITE
-    // For the actual machine-code byte count, subtract literalPool +
-    // bcToCodeTable + IC area.
+    // ENTIRE payload after this header (machine code + bcToCode table +
+    // selBitsArray).  Used by `findMethodByPC` as the method's full
+    // footprint.  Pre-2026-05-03 the payload also ended with the IC
+    // zone (numICEntries * IC_BYTES_PER_SITE), but ICs are now in
+    // heap-side `icBuffer` — do NOT compute icStart from codeSize.
+    // Use icBuffer (or icZoneStart()) instead.
     uint32_t  codeSize;
     uint16_t  numICEntries;       // Number of inline cache entries
     uint16_t  numBytecodes;       // Source bytecode count (for sizing heuristics)

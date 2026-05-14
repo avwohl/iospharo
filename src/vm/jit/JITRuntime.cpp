@@ -2646,14 +2646,14 @@ bool JITRuntime::tryExecute(Oop compiledMethod, JITState& state, JITMethod* jm) 
                     rcls = mem2.classNameOf(state.receiver);
                 }
                 fprintf(stderr,
-                        "[EXEC #%zu] %s argCount=%d sp=%p oop=0x%llx "
-                        "canBail=%d nIC=%u rcvr=%s slots=%d\n",
+                        "[EXEC #%zu] %s argCount=%d oop=0x%llx rcvr=%s slots=%d "
+                        "canBail=%d nIC=%u\n",
                         cnt, s.c_str(),
-                        state.argCount, (void*)state.sp,
+                        state.argCount,
                         (unsigned long long)compiledMethod.rawBits(),
+                        rcls.c_str(), recvSlots,
                         (int)jm->canBailMidMethod,
-                        (unsigned)jm->numICEntries,
-                        rcls.c_str(), recvSlots);
+                        (unsigned)jm->numICEntries);
             }
         }
     }

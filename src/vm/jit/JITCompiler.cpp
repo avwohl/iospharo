@@ -2216,9 +2216,9 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
     // bits = slot index. When kind != 0, the send stencil inlines the field
     // access directly, bypassing the C++ boundary crossing entirely.
     // Task #41: side-channel selBits array, one u64 per send site.
-    // Placed BEFORE IC data (not after) so the invariant
-    // `icStart = codeStart + codeSize - numICEntries*IC_BYTES_PER_SITE`
-    // stays true for all callers.  Accessed via JITMethod::selBitsArray().
+    // (Historically placed BEFORE the in-codezone IC data; 2026-05-03
+    // moved IC out to heap-side icBuffer.  selBitsArray remains in-zone.)
+    // Accessed via JITMethod::selBitsArray().
     uint32_t selBitsArrayOffset = (bcToCodeTableOffset + bcToCodeTableSize + 7) & ~7u;
     uint32_t selBitsArraySize = numSendSites * sizeof(uint64_t);
     // 2026-05-03: IC data moved out of MAP_JIT into a heap-side buffer
