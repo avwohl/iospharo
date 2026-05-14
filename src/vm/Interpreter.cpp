@@ -17598,8 +17598,21 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
     // countdown only decrements on interpreter bytecode dispatch.
     auto chargeJITBytecodes = [this](const jit::JITState& s) {
         if (s.jitMethod) {
-            checkCountdown_ -= s.jitMethod->numBytecodes;
-            g_stepNum += s.jitMethod->numBytecodes;
+            // asmjit-T1 sets numBytecodes=0 for methods with sends
+            // (advertiseResume=false).  Charging 0 means the countdown
+            // never reaches 0 and periodic_checks (including the timer
+            // semaphore + DelaySemaphoreScheduler wake-up) never fires —
+            // the scheduler dies and tests hang at the harness's
+            // fork-watchdog Delay.wait pattern.  Floor the charge at 32:
+            // every chain iteration walks the countdown down by at least
+            // 32 (representative of ~1 send + a few bytecodes), so a
+            // 1024-step countdown reaches 0 after ~32 chain iterations —
+            // tight enough that periodic_checks (and the timer-semaphore
+            // recheck) fire on a ~1-10ms cadence under asmjit-T1.
+            uint32_t charge = s.jitMethod->numBytecodes;
+            if (charge < 32) charge = 32;
+            checkCountdown_ -= static_cast<int>(charge);
+            g_stepNum += charge;
         }
     };
 
