@@ -3462,14 +3462,28 @@ void Interpreter::enterInterpreterFromCallback(VMCallbackContext* vmcc) {
                 bool stillHandler = savedHandler.isObject() &&
                                     !savedHandler.isNil() &&
                                     savedHandler.rawBits() == currentProcess.rawBits();
-                if (stillHandler) {
+                // Queue the current process so it can resume after we
+                // restore the suspended-in-callout process.  Skip if it's
+                // already on a queue (semaphore wait, etc.) — the
+                // SDL_GetVersion infinite-loop bug fired when we
+                // putToSleep'd a process that was already waiting on a
+                // semaphore, double-queueing it.  Without ANY requeue,
+                // the process is orphaned: context saved but unscheduled,
+                // which kills the SUnit runner main on the first FFI
+                // callback (FFICallbackParametersTest etc.).
+                Oop currentMyList = memory_.fetchPointer(
+                    ProcessMyListIndex, currentProcess);
+                bool alreadyQueued = currentMyList.isObject()
+                    && !currentMyList.isNil()
+                    && currentMyList.rawBits() != memory_.nil().rawBits();
+                if (!alreadyQueued) {
                     putToSleep(currentProcess);
                 }
                 if (g_debug.callbackDebug) {
-                    fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d\n",
+                    fprintf(stderr, "[CALLBACK-RETURN-REQUEUE] active=0x%llx handler=0x%llx stillHandler=%d alreadyQueued=%d\n",
                             (unsigned long long)currentProcess.rawBits(),
                             (unsigned long long)savedHandler.rawBits(),
-                            (int)stillHandler);
+                            (int)stillHandler, (int)alreadyQueued);
                     fflush(stderr);
                 }
             }
