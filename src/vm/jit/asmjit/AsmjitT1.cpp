@@ -2035,6 +2035,28 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
                 fprintf(stderr, "\n");
             }
         }
+        // PHARO_SORTSTR_WATCH=1: dump bcToCode for #isEmpty + #size, the
+        // methods involved in sortStructs:into:'s failing chain.  Tells us
+        // whether the bytecode→code mapping is plausible (e.g., whether
+        // bcToCode[2] for #isEmpty's PushZero is distinct from bcToCode[4]
+        // for ReturnTop).
+        if (g_debug.sortstrWatch && isReal && bcLen > 0) {
+            std::string sel = memory.selectorOf(compiledMethod);
+            if (sel == "isEmpty" || sel == "size") {
+                fprintf(stderr,
+                        "[T1-COMPILE-DBG] sel=#%s bcLen=%zu emitted=%zu "
+                        "oop=0x%llx primIdx=%d numBC=%u bc=",
+                        sel.c_str(), bcLen, emitted,
+                        (unsigned long long)compiledMethod.rawBits(),
+                        primIdx, jm->numBytecodes);
+                for (size_t bi = 0; bi < bcLen && bi < 32; bi++)
+                    fprintf(stderr, "%02x ", bc[bi]);
+                fprintf(stderr, "\n  bcToCode:");
+                for (size_t bi = 0; bi <= bcLen && bi < 32; bi++)
+                    fprintf(stderr, " [%zu]=%u", bi, bcToCode[bi]);
+                fprintf(stderr, "\n");
+            }
+        }
     }
 
     std::memcpy(jm->codeStart(), buf.data(), emitted);

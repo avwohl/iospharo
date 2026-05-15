@@ -19888,6 +19888,36 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 uint32_t codeOff = savedJitMethod->codeOffsetForBC(pastSendOff);
                                 if (codeOff > 0 && codeOff < savedJitMethod->codeSize)
                                     savedResumeEntry = savedJitMethod->codeStart() + codeOff;
+                                // PHARO_SORTSTR_WATCH: log bc→code resolution
+                                // for sends inside Collection>>#isEmpty.  If the
+                                // mapping is wrong, savedResumeEntry will resume
+                                // at the wrong bytecode.
+                                if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+                                    std::string sMSel = memory_.selectorOf(savedMethod);
+                                    if (sMSel == "isEmpty") {
+                                        std::string tSel = memory_.selectorOf(chainTarget);
+                                        fprintf(stderr,
+                                            "[ISEMPTY-RESUME] caller=#%s target=#%s "
+                                            "pastSendOff=%u codeOff=%u codeSize=%u "
+                                            "numBC=%u savedResumeEntry=%p\n",
+                                            sMSel.c_str(), tSel.c_str(),
+                                            pastSendOff, codeOff,
+                                            savedJitMethod->codeSize,
+                                            savedJitMethod->numBytecodes,
+                                            (void*)savedResumeEntry);
+                                        // Also dump the bcToCode table.
+                                        const uint32_t* tbl = savedJitMethod->bcToCodeTable();
+                                        fprintf(stderr,
+                                            "  bcToCode[0..%u]:",
+                                            savedJitMethod->numBytecodes);
+                                        for (uint32_t i = 0;
+                                                i <= savedJitMethod->numBytecodes
+                                                && i < 16; i++) {
+                                            fprintf(stderr, " [%u]=%u", i, tbl[i]);
+                                        }
+                                        fprintf(stderr, "\n");
+                                    }
+                                }
                             }
                         }
 
@@ -20226,7 +20256,54 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             state.j2jDepth = 0;
                             state.j2jTotalCalls = 0;
                             state.yieldCountdown = 1000;
+                            // PHARO_SORTSTR_WATCH: log when tryResume is about to
+                            // run for the savedMethod (caller of the just-completed
+                            // send).  We expect tryResume to refuse when numBC=0
+                            // and `return true` to bail; what happens after that
+                            // bail is the actual bug.
+                            if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+                                std::string sMSel = memory_.selectorOf(method);
+                                if (sMSel == "isEmpty") {
+                                    Oop tos = stackPointer_[-1];
+                                    std::string tCls = tos.isSmallInteger() ? "SmI"
+                                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                                            ? memory_.classNameOf(tos) : "imm";
+                                    fprintf(stderr,
+                                        "[ISEMPTY-BAIL-PRE] method=#%s bcOff=%u "
+                                        "fd=%zu sp=%p tos=0x%llx(%s) ip=%p ipOff=%lld\n",
+                                        sMSel.c_str(), bcOffset, frameDepth_,
+                                        (void*)stackPointer_,
+                                        (unsigned long long)tos.rawBits(),
+                                        tCls.c_str(),
+                                        (void*)instructionPointer_,
+                                        (long long)(instructionPointer_
+                                          - (method.asObjectPtr()->bytes()
+                                             + (1 + memory_.numLiteralsOf(method))*8)));
+                                }
+                            }
                             if (!jitRuntime_.tryResume(method, bcOffset, state)) {
+                                if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+                                    std::string sMSel = memory_.selectorOf(method);
+                                    if (sMSel == "isEmpty") {
+                                        Oop tos = stackPointer_[-1];
+                                        std::string tCls = tos.isSmallInteger() ? "SmI"
+                                            : (tos.isObject() && tos.rawBits() >= 0x10000)
+                                                ? memory_.classNameOf(tos) : "imm";
+                                        fprintf(stderr,
+                                            "[ISEMPTY-BAIL-POST] tryResume FAILED — "
+                                            "method_=#%s fd=%zu sp=%p tos=0x%llx(%s) "
+                                            "ip=%p ipOff=%lld returning true\n",
+                                            memory_.selectorOf(method_).c_str(),
+                                            frameDepth_,
+                                            (void*)stackPointer_,
+                                            (unsigned long long)tos.rawBits(),
+                                            tCls.c_str(),
+                                            (void*)instructionPointer_,
+                                            (long long)(instructionPointer_
+                                              - (method_.asObjectPtr()->bytes()
+                                                 + (1 + memory_.numLiteralsOf(method_))*8)));
+                                    }
+                                }
                                 return true;
                             }
                             chargeJITBytecodes(state);
