@@ -16960,6 +16960,30 @@ void Interpreter::tryJITResumeInCaller() {
             // state.ip to the conditional bytecode.  Hand back to the
             // interpreter so its shortJumpIf{True,False} re-executes
             // and calls sendMustBeBoolean per spec.
+            if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
+                static size_t mbN = 0;
+                mbN++;
+                if (mbN <= 10) {
+                    Oop tos = state.sp[-1];
+                    std::string mSel = memory_.selectorOf(state.method);
+                    std::string tosCls = tos.isSmallInteger() ? "SmI"
+                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                            ? memory_.classNameOf(tos) : "imm";
+                    int64_t ipOff = -1;
+                    if (state.method.isObject()) {
+                        ObjectHeader* mh = state.method.asObjectPtr();
+                        size_t nL = memory_.numLiteralsOf(state.method);
+                        uint8_t* bcS = mh->bytes() + (1 + nL) * 8;
+                        ipOff = state.ip - bcS;
+                    }
+                    fprintf(stderr,
+                        "[JIT-MUSTBOOL-RES #%zu] method=#%s ipOff=%lld "
+                        "tos=0x%llx tosCls=%s sp=%p\n",
+                        mbN, mSel.c_str(), (long long)ipOff,
+                        (unsigned long long)tos.rawBits(),
+                        tosCls.c_str(), (void*)state.sp);
+                }
+            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             inJITResume_ = false;
@@ -19419,6 +19443,30 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             // stack and set ip to the conditional bytecode.  Bail to
             // interp; the conditional re-executes there and fires
             // sendMustBeBoolean per spec.
+            if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
+                static size_t mbN = 0;
+                mbN++;
+                if (mbN <= 10) {
+                    Oop tos = state.sp[-1];
+                    std::string mSel = memory_.selectorOf(state.method);
+                    std::string tosCls = tos.isSmallInteger() ? "SmI"
+                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                            ? memory_.classNameOf(tos) : "imm";
+                    int64_t ipOff = -1;
+                    if (state.method.isObject()) {
+                        ObjectHeader* mh = state.method.asObjectPtr();
+                        size_t nL = memory_.numLiteralsOf(state.method);
+                        uint8_t* bcS = mh->bytes() + (1 + nL) * 8;
+                        ipOff = state.ip - bcS;
+                    }
+                    fprintf(stderr,
+                        "[JIT-MUSTBOOL #%zu] method=#%s ipOff=%lld "
+                        "tos=0x%llx tosCls=%s sp=%p\n",
+                        mbN, mSel.c_str(), (long long)ipOff,
+                        (unsigned long long)tos.rawBits(),
+                        tosCls.c_str(), (void*)state.sp);
+                }
+            }
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp;
             return false;
@@ -19803,6 +19851,40 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
 
                             // Sync interpreter state for resume
                             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
+
+                            // PHARO_T1_RESUME_TOS_LOG=1: log retVal +
+                            // state.sp[-1] right after the chain code
+                            // writes retVal to TOS.  Path-agnostic: fires
+                            // for both precomputed-resume and fallback
+                            // tryResume paths.  Tags entries with which
+                            // resume branch will run next.
+                            if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
+                                static size_t logN = 0;
+                                Oop tos = state.sp[-1];
+                                bool isBool = (tos.rawBits() == memory_.trueObject().rawBits()
+                                              || tos.rawBits() == memory_.falseObject().rawBits());
+                                bool isNil = (tos.rawBits() == memory_.nil().rawBits());
+                                std::string callerSel = memory_.selectorOf(savedMethod);
+                                bool ofInterest = (callerSel == "sortStructs:into:");
+                                if (logN < 50 || !isBool || ofInterest) {
+                                    logN++;
+                                    std::string targetSel = memory_.selectorOf(chainTarget);
+                                    std::string tosCls = tos.isSmallInteger() ? "SmI"
+                                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                                            ? memory_.classNameOf(tos)
+                                            : isNil ? "nil" : "imm";
+                                    fprintf(stderr,
+                                        "[RESUME-TOS #%zu] caller=#%s target=#%s "
+                                        "retVal=0x%llx tos=0x%llx tosCls=%s "
+                                        "isBool=%d nArgs=%d sp=%p branch=%s\n",
+                                        logN, callerSel.c_str(), targetSel.c_str(),
+                                        (unsigned long long)retVal.rawBits(),
+                                        (unsigned long long)tos.rawBits(),
+                                        tosCls.c_str(), (int)isBool, nArgs,
+                                        (void*)state.sp,
+                                        savedResumeEntry ? "precomp" : "tryResume");
+                                }
+                            }
 
                             // Use precomputed resume to skip tryResume overhead
                             if (__builtin_expect(savedResumeEntry != nullptr, 1)) {
@@ -20218,6 +20300,31 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                 state.j2jTotalCalls = 0;
                 state.yieldCountdown = 1000;
 
+                // PHARO_T1_RESUME_TOS_LOG=1: log state.sp[-1] right before
+                // tryResume calls into JIT.  Path: activateMethod fallback
+                // (callee was non-JIT or had unsafe primitive).
+                if (__builtin_expect(g_debug.t1ResumeTosLog, 0)) {
+                    static size_t logN = 0;
+                    Oop tos = state.sp[-1];
+                    bool isBool = (tos.rawBits() == memory_.trueObject().rawBits()
+                                  || tos.rawBits() == memory_.falseObject().rawBits());
+                    bool isNil = (tos.rawBits() == memory_.nil().rawBits());
+                    std::string callerSel = memory_.selectorOf(method);
+                    bool ofInterest = (callerSel == "sortStructs:into:");
+                    if (logN < 50 || !isBool || ofInterest) {
+                        logN++;
+                        std::string tosCls = tos.isSmallInteger() ? "SmI"
+                            : (tos.isObject() && tos.rawBits() >= 0x10000)
+                                ? memory_.classNameOf(tos)
+                                : isNil ? "nil" : "imm";
+                        fprintf(stderr,
+                            "[RESUME-TOS-ACT #%zu] caller=#%s bcOff=%u "
+                            "tos=0x%llx tosCls=%s isBool=%d sp=%p\n",
+                            logN, callerSel.c_str(), bcOffset,
+                            (unsigned long long)tos.rawBits(),
+                            tosCls.c_str(), (int)isBool, (void*)state.sp);
+                    }
+                }
                 if (!jitRuntime_.tryResume(method, bcOffset, state)) {
                     return true;
                 }

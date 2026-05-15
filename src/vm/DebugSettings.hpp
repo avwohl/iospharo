@@ -98,6 +98,11 @@ struct DebugSettings {
     // PHARO_DRIFT_CHECK=1: after every joint method_/instructionPointer_
     // update, verify IP is within method_'s bytecode area.  Off by default.
     bool driftCheck = false;
+    // PHARO_T1_RESUME_TOS_LOG=1: log state.sp[-1] (what the JIT resume
+    // entry will read as TOS) right before JIT_CALL into the precomputed
+    // resume.  Pinpoints whether the cached-dispatch's retVal write
+    // survives to the resume point.  Off by default.
+    bool t1ResumeTosLog = false;
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N
