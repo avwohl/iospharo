@@ -17,6 +17,12 @@ section number for git-archaeology continuity.  Note: the
 current "## A. Open VM issues" section — they share the
 letter+number by accident across two numbering generations.
 
+- **JIT default flip** 2026-05-15 (`b5a7c837` + `d2566953`).
+  Asmjit-T1 replaced the legacy stencil JIT as the default path.
+  Phase4b.38 routes through `DebugSettings::useAsmjitT1` (default
+  true; `PHARO_NO_ASMJIT_T1=1` reverts).  Phase4b.39 added the
+  immutable-bit check to popStoreRecv so JIT-compiled setters
+  honor `beReadOnlyObject` (ObjectTest 26/28 → 28/28).
 - **A0a** FFI `C11 class >> #current` DNU cascade — APPEARS FIXED
   2026-04-22.  Cause likely one of `17a0ff7 / 61eef4f / cafe6a2`.
 - **A0b** Other stock-Cog-passing error buckets — APPEARS FIXED
