@@ -839,18 +839,17 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(fallThru);
         return true;
     }
-    // Phase 4b.2 (partial): set up IC context and ExitSend.  The
-    // chain loop's ExitSend handler does method lookup, patches the
-    // IC for next time via patchJITICAfterSend, and inline-activates
-    // the callee — significantly faster than the prior bail-with-
-    // ExitArithOverflow which went through full interp send dispatch.
+    // Send sites set up IC context and exit via either ExitSendCached
+    // (cache hit, monomorphic — slot 0 only) or ExitSend (miss, full
+    // lookup via patchJITICAfterSend in the chain loop).
     //
-    // Inline IC HIT probe + ExitSendCached emit is NOT enabled in
-    // this step.  Empirical bisect: even with valid IC context, the
-    // chain loop's resume path after callee return interacts with
-    // our methods in ways that cause mustBeBoolean cascades.
-    // Resolving requires deeper J2JSave/SavedFrame protocol work.
-    // For now we get IC management without the inline probe.
+    // The inline IC probe gates on `g_debug.t1ICProbe` (default-on,
+    // PHARO_T1_NO_IC_PROBE=1 to opt out).  Layout of icData[i*3..]:
+    //   [0] key — classIndex for objects, (tag|0x80000000) for SmI/Char/SmF
+    //   [1] method Oop
+    //   [2] extra (flags + J2J entry addr)
+    // The first-empty-slot fill in patchJITICAfterSend means slot 0
+    // is the monomorphic cache for this site.
     if (isPhase4SendOp(op)) {
         int nArgs = sendNArgs(op);
 
@@ -859,6 +858,7 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.mov(rsi, ptr(rdx, (int)offsetof(JITMethod, icBuffer)));
         a.add(rsi, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
+        // Common state setup (same fields for hit and miss).
         a.mov(ptr(rdi, OFF_ICDATAPTR), rsi);
         a.mov(dword_ptr(rdi, OFF_SENDARGCOUNT), asmjit::Imm(nArgs));
         a.mov(rax, ptr(rdi, OFF_METHOD));
@@ -867,6 +867,69 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         // determine send length, then advances itself.
         a.add(rax, asmjit::Imm(bcOffsetFromMethObj));
         a.mov(ptr(rdi, OFF_IP), rax);
+
+        // Selector-range bisect knob: PHARO_T1_IC_PROBE_MIN/MAX limit
+        // which opcodes get the probe.  Default: all sends (0x70..0xAF).
+        bool probeThis = g_debug.t1ICProbe;
+        if (probeThis) {
+            int icMin = g_debug.t1ICProbeMin;
+            int icMax = g_debug.t1ICProbeMax;
+            if (icMin >= 0 && (int)op < icMin) probeThis = false;
+            if (icMax >= 0 && (int)op > icMax) probeThis = false;
+        }
+        if (probeThis) {
+            // === Compute send-receiver's IC lookup key into rdx ===
+            // The send's receiver is at stackValue(nArgs) = sp[-1-nArgs]
+            // (NOT state.receiver, which is the *enclosing* method's self).
+            // Object (tag=0):  classIndex = low 22 bits of header word.
+            // Immediate:       key = (tag | 0x80000000) — matches
+            //                  patchJITICAfterSend in Interpreter.cpp:16660.
+            asmjit::Label imm = a.new_label();
+            asmjit::Label haveKey = a.new_label();
+            a.mov(rcx, ptr(rdi, OFF_SP));
+            int rcvrOffsetBytes = -8 * (nArgs + 1);
+            a.mov(rax, ptr(rcx, rcvrOffsetBytes));   // rax = send receiver
+            a.mov(rdx, rax);
+            a.and_(rdx, asmjit::Imm(0x7));   // tag bits
+            a.jnz(imm);
+            // Object path: edx = header_low32 & 0x3FFFFF.  32-bit ops
+            // zero-extend into rdx, so the result is properly bounded.
+            a.mov(edx, dword_ptr(rax));
+            a.and_(edx, asmjit::Imm(0x3FFFFF));
+            a.jmp(haveKey);
+            a.bind(imm);
+            // Immediate path: keep tag in rdx, OR with 0x80000000
+            // (32-bit imm; `or edx, ...` zero-extends to rdx).
+            a.or_(edx, asmjit::Imm(0x80000000));
+            a.bind(haveKey);
+
+            // === Probe icData[0] ===
+            // Three-condition match: icData[0] == key AND icData[0] != 0
+            // AND icData[2] == 0 (no specialization bits set).  The
+            // extras-zero check is critical: when bits 63..57 are set
+            // the IC site is inlined-getter/setter/returnsSelf/J2J
+            // (sendInlineMonoJ2J et al), and dispatching the raw method
+            // via ExitSendCached produces a different result than the
+            // intended inline behavior (sometimes wrong, sometimes
+            // infinite-recursive — see copyTo: hang at IP=0x80..0xAF).
+            asmjit::Label miss = a.new_label();
+            a.cmp(rdx, ptr(rsi));            // icData[0] = key
+            a.jne(miss);
+            a.cmp(rdx, asmjit::Imm(0));      // also reject empty IC
+            a.je(miss);
+            a.cmp(qword_ptr(rsi, 16), asmjit::Imm(0));  // icData[2] = extras
+            a.jne(miss);
+
+            // === HIT: set cachedTarget + ExitSendCached ===
+            a.mov(rax, ptr(rsi, 8));         // icData[1] = method Oop
+            a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
+            a.mov(dword_ptr(rdi, OFF_EXIT),
+                  asmjit::Imm(EXIT_SEND_CACHED));
+            a.ret();
+
+            a.bind(miss);
+        }
+
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
         a.ret();
         return true;
@@ -1238,23 +1301,70 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         a.ret(x30);
         return true;
     }
-    // Phase 4b.2 (partial) single-byte sends on ARM64: set up IC
-    // context and ExitSend.  See x86 version for rationale.
+    // ARM64 send emit: see x86 version for IC probe rationale + layout.
     if (isPhase4SendOp(op)) {
+        using namespace asmjit::a64;
         int nArgs = sendNArgs(op);
 
-        // Per-site IC address.
+        // Per-site IC address into x5.
         a.ldr(x5, ptr(x0, OFF_JITMETHOD));
         a.ldr(x5, ptr(x5, (int)offsetof(JITMethod, icBuffer)));
         a.add(x5, x5, asmjit::Imm(siteIdx * (int)IC_BYTES_PER_SITE));
 
+        // Common state setup.
         a.str(x5, ptr(x0, OFF_ICDATAPTR));
         a.mov(w3, asmjit::Imm(nArgs));
         a.str(w3, ptr(x0, OFF_SENDARGCOUNT));
         a.ldr(x6, ptr(x0, OFF_METHOD));
-        // state.ip = AT the send opcode (see x86 version).
         a.add(x6, x6, asmjit::Imm(bcOffsetFromMethObj));
         a.str(x6, ptr(x0, OFF_IP));
+
+        bool probeThis = g_debug.t1ICProbe;
+        if (probeThis) {
+            int icMin = g_debug.t1ICProbeMin;
+            int icMax = g_debug.t1ICProbeMax;
+            if (icMin >= 0 && (int)op < icMin) probeThis = false;
+            if (icMax >= 0 && (int)op > icMax) probeThis = false;
+        }
+        if (probeThis) {
+            // === Lookup key into x4 ===
+            // Send-receiver lives at sp[-1-nArgs], NOT state.receiver.
+            //   Object: low 22 bits of *recv.
+            //   Immediate: (tag | 0x80000000).
+            asmjit::Label imm = a.new_label();
+            asmjit::Label haveKey = a.new_label();
+            a.ldr(x2, ptr(x0, OFF_SP));
+            int rcvrOffsetBytes = -8 * (nArgs + 1);
+            a.ldur(x1, ptr(x2, rcvrOffsetBytes));
+            a.and_(x4, x1, asmjit::Imm(0x7));
+            a.cbnz(x4, imm);
+            a.ldr(w4, ptr(x1));               // low 32 bits of header
+            a.and_(w4, w4, asmjit::Imm(0x3FFFFF));
+            a.b(haveKey);
+            a.bind(imm);
+            a.orr(w4, w4, asmjit::Imm(0x80000000U));
+            a.bind(haveKey);
+
+            // === Probe icData[0] ===  (see x86 version for the
+            // three-condition rationale: match + non-zero + no specialization.)
+            asmjit::Label miss = a.new_label();
+            a.ldr(x6, ptr(x5));               // icData[0] = key
+            a.cmp(x4, x6);
+            a.b_ne(miss);
+            a.cbz(x4, miss);                  // key == 0 → fresh IC
+            a.ldr(x6, ptr(x5, 16));           // icData[2] = extras
+            a.cbnz(x6, miss);                 // non-zero extras → inline-getter/J2J
+
+            // === HIT: cachedTarget + ExitSendCached ===
+            a.ldr(x6, ptr(x5, 8));            // icData[1] = method Oop
+            a.str(x6, ptr(x0, OFF_CACHED_TARGET));
+            a.mov(w3, asmjit::Imm(EXIT_SEND_CACHED));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+
+            a.bind(miss);
+        }
+
         a.mov(w3, asmjit::Imm(EXIT_SEND));
         a.str(w3, ptr(x0, OFF_EXIT));
         a.ret(x30);

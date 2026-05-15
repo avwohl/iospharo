@@ -81,6 +81,13 @@ DebugSettings::DebugSettings() {
     t1ForceBailMid      = t1ForceSimple || envPresent("PHARO_T1_FORCE_BAIL_MID");
     t1NoBlockResume     = t1ForceSimple || envPresent("PHARO_T1_NO_BLOCK_RESUME");
     t1NoPostPrimResume  = t1ForceSimple || envPresent("PHARO_T1_NO_POST_PRIM_RESUME");
+    {
+        const bool optIn = envPresent("PHARO_T1_IC_PROBE");
+        const bool optOut = envPresent("PHARO_T1_NO_IC_PROBE");
+        t1ICProbe = optIn && !optOut;
+    }
+    t1ICProbeMin        = envInt("PHARO_T1_IC_PROBE_MIN", -1);
+    t1ICProbeMax        = envInt("PHARO_T1_IC_PROBE_MAX", -1);
     t1NoBlocks          = envPresent("PHARO_T1_NO_BLOCKS");
     t1BlocksFirstN      = envInt("PHARO_T1_BLOCKS_FIRST_N", -1);
     t1BlocksOnlyN       = envInt("PHARO_T1_BLOCKS_ONLY_N", -1);

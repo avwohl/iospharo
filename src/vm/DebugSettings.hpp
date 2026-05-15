@@ -58,6 +58,18 @@ struct DebugSettings {
     bool t1ForceBailMid = false;      // PHARO_T1_FORCE_BAIL_MID — force canBailMidMethod=true
     bool t1NoBlockResume = false;     // PHARO_T1_NO_BLOCK_RESUME — skip chain-loop block-resume tryExecute
     bool t1NoPostPrimResume = false;  // PHARO_T1_NO_POST_PRIM_RESUME — skip post-prim tryResume
+    // Inline IC probe in JIT send emit (DEFAULT-OFF until correctness
+    // is established).  When on, every send site reads icData[0] and
+    // exits with ExitSendCached on a match — skipping the chain loop's
+    // method-lookup + IC-patch path.  Diagnostic only as of 2026-05-15:
+    // empirically yields 37% raw hit rate but introduces correctness
+    // bugs (infinite Context>>copyTo: recursion at startup; with an
+    // icData[2]==0 guard, downstream DNUs).  See docs/jit-ic-probe.md
+    // for the full investigation.  PHARO_T1_IC_PROBE=1 enables for
+    // experimentation.
+    bool t1ICProbe = false;           // PHARO_T1_IC_PROBE / opt-out PHARO_T1_NO_IC_PROBE
+    int  t1ICProbeMin = -1;           // PHARO_T1_IC_PROBE_MIN — only probe opcodes >= this
+    int  t1ICProbeMax = -1;           // PHARO_T1_IC_PROBE_MAX — only probe opcodes <= this
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N

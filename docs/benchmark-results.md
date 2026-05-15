@@ -1,5 +1,59 @@
 # Benchmark Results: Our VM vs Reference Pharo VM
 
+## 2026-05-15 — asmjit-T1 default on x86_64 (Linux)
+
+After the asmjit-T1 rebuild (phase 4b.38, commit `b5a7c837`) became
+default, the JIT now compiles cleanly on x86_64 Linux and passes
+**39/39** of the differential fuzzer corpus. Stock Cog/Sista on the
+same image and host is still ~65–100× faster on tinyBenchmarks; our
+JIT is currently a **net regression vs our own interpreter** because
+IC dispatch is unpopulated.
+
+Host: Ubuntu 25.10, gcc 15 (libstdc++ 15), x86_64, single image
+`/tmp/harness/Pharo.image` (Pharo 13.1 build 84a2d1, pulled via
+`https://get.pharo.org/64/130+vm`).
+
+tinyBenchmarks (expression `1 tinyBenchmarks`):
+
+    Configuration              bytecodes/sec    sends/sec   vs stock
+    Stock Pharo (Cog/Sista)    7,592 M          459 M        1.0×
+    Our VM, interp only          200 M           11.0 M      38× / 42× slower
+    Our VM, asmjit-T1 JIT        114 M            4.9 M      67× / 94× slower
+
+The IC hit rate reported by the JIT stats is **0%**
+(`IC: 0/22M (0% hit)`), so every send takes the cold/poly fallback
+through `Interpreter::sendBytecode`. The JIT spends most of its time
+on send dispatch, which is why it loses to the interp on send-heavy
+workloads even though the per-bytecode emit is tighter.
+
+Counters from a representative run:
+
+    compiled: 3476 methods
+    IC: 0/22M (0% hit, 3592 patched, 0 stale)
+    activations: 5.8M (100% hits)
+    chain: actChain=0 actFall=472K | primChain=1.1M primFall=899
+    T2-IC: 0/0 (0% hit) — Tier2 not engaged on this host
+
+Stock Pharo's send/sec is 100× ours; the bytecode/sec gap is also
+~65×, indicating the asmjit-T1 emit hasn't yet caught up on the
+non-send path either (likely register-spill heavy on x86 SysV ABI).
+
+### What's correct, what's not
+
+Correct (passes fuzzer + parity vs interp on these classes):
+SmallInteger arithmetic with overflow bail, conditional jumps,
+pushReceiver/Temp/Lit/RecvVar, returnTop/Receiver, popStoreRecv with
+read-only check, block creation, exception handling end-to-end.
+
+Underperforming: every send (cold IC path), block invocation,
+recompile after stub, J2J chain falls back rather than chaining.
+
+### Next perf step
+
+Land an actual inline cache in the send emit — even a 1-entry
+monomorphic cache should bring send/sec from 4.9M toward stock's
+range. See `docs/jit-t2-inline-ic-plan.md` for the design sketch.
+
 ## 2026-04-17 (late) — T2 reverted to default off; honest JIT assessment
 
 Followup measurements revealed the JIT is **net-negative** on common
