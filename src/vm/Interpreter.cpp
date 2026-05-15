@@ -149,6 +149,56 @@ static inline void checkSortstrWatch(const char* where, size_t fd) {
     }
 }
 
+// Forward decls.  dumpCxxBacktrace is defined inside namespace pharo {} below.
+namespace pharo {
+    extern struct DebugSettings g_debug;
+    void dumpCxxBacktrace(const char* tag);
+}
+
+// PHARO_DRIFT_CHECK=1: after every joint method_/instructionPointer_
+// update, verify IP is within method_'s bytecode area.  Logs +
+// backtrace on first 5 drifts.  Used to pinpoint the chain-loop /
+// popFrame path that desynchronizes the pair under the IC probe.
+//
+// Free function so call sites don't need Interpreter access.  Reads
+// g_debug.driftCheck (zero-cost when off).
+static inline void driftCheck(const char* where, uint64_t methodOop,
+                              uint8_t* ip, size_t fd, int exitReason) {
+    if (__builtin_expect(!pharo::g_debug.driftCheck, 1)) return;
+    static bool announced = false;
+    if (!announced) {
+        announced = true;
+        fprintf(stderr, "[DRIFT-CHECK enabled] first call at %s\n", where);
+    }
+    if (methodOop == 0 || (methodOop & 7) != 0 || methodOop < 0x10000) return;
+    auto* obj = reinterpret_cast<uint8_t*>(methodOop);
+    uint64_t hdr = *reinterpret_cast<uint64_t*>(obj);
+    uint64_t slotCount = (hdr >> 56) & 0xFF;
+    if (slotCount == 0xFF) {
+        uint64_t overflow = *reinterpret_cast<uint64_t*>(obj - 8);
+        slotCount = (overflow << 8) >> 8;
+    }
+    uint64_t fmt = (hdr >> 24) & 0x1F;
+    if (fmt < 24) return;  // not a CompiledMethod
+    uint64_t byteSize = slotCount * 8 - (fmt - 24);
+    uint8_t* bcArea = obj + 8;
+    uint8_t* bcEnd = bcArea + byteSize;
+    if (ip >= bcArea && ip < bcEnd) return;  // OK
+
+    static size_t driftN = 0;
+    driftN++;
+    if (driftN > 5) return;
+    fprintf(stderr,
+        "[DRIFT #%zu @%s] method_oop=0x%llx (fmt=%d slots=%llu byteSize=%llu) "
+        "bcRange=[%p, %p) IP=%p IP-bcEnd=%lld fd=%zu exit=%d\n",
+        driftN, where,
+        (unsigned long long)methodOop,
+        (int)fmt, (unsigned long long)slotCount, (unsigned long long)byteSize,
+        (void*)bcArea, (void*)bcEnd, (void*)ip,
+        (long long)(ip - bcEnd), fd, exitReason);
+    pharo::dumpCxxBacktrace("DRIFT");
+}
+
 namespace pharo {
 
 #if PHARO_JIT_ENABLED
@@ -10184,6 +10234,7 @@ bool Interpreter::popFrame() {
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
 
+    driftCheck("popFrame@10221", method_.rawBits(), instructionPointer_, savedFrames_.size(), -1);
     return true;
 }
 
@@ -10247,6 +10298,8 @@ void Interpreter::popFrameForJIT(jit::JITState* state) {
     currentFrameMaterializedCtx_ = frame.materializedContext;
     framePointer_ = frame.savedFP;
     argCount_ = frame.savedArgCount;
+
+    driftCheck("popFrameForJIT@10286", method_.rawBits(), instructionPointer_, savedFrames_.size(), -1);
 }
 #endif // PHARO_JIT_ENABLED
 
@@ -19462,6 +19515,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                     ObjectHeader* mObj = state.method.asObjectPtr();
                     if (mObj) bytecodeEnd_ = mObj->bytes() + mObj->byteSize();
                 }
+                driftCheck("J2J-materialize@19499", method_.rawBits(),
+                           instructionPointer_, savedFrames_.size(),
+                           (int)jit::ExitJ2JCall);
             }
 
             chargeJITBytecodes(state);
@@ -19960,6 +20016,9 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         case jit::ExitJ2JCall:    jitStencilFallJ2JCall_++; break;
                         default:                  jitStencilFallOther_++; break;
                         }
+                        driftCheck("chain-fallback@19993", method_.rawBits(),
+                                   instructionPointer_, savedFrames_.size(),
+                                   (int)state.exitReason);
 
                         // Bail: let interpreter dispatch handle the callee
                         return true;

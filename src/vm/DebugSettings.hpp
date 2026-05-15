@@ -95,6 +95,9 @@ struct DebugSettings {
     // change to that slot logs (via checkSortstrWatch()) — pinpoints the
     // dispatched method that corrupts the caller frame.
     bool sortstrWatch = false;
+    // PHARO_DRIFT_CHECK=1: after every joint method_/instructionPointer_
+    // update, verify IP is within method_'s bytecode area.  Off by default.
+    bool driftCheck = false;
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N
