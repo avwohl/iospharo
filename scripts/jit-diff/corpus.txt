@@ -51,3 +51,6 @@ block_003	([:x :y | x + y] value: 3 value: 4) printString	^'7'$
 exc_001	([1/0] on: ZeroDivide do: [:e | 'caught']) printString	^'''caught'''$
 exc_002	([nil foo] on: MessageNotUnderstood do: [:e | 'mnu']) printString	^'''mnu'''$
 exc_003	([Error signal: 'boom'] on: Error do: [:e | e messageText]) printString	^'''boom'''$
+# === immutability (popStoreRecv read-only check) ===
+imm_001	([(1 -> 2) beReadOnlyObject key: 9] on: ModificationForbidden do: [:e | 'caught']) printString	^'''caught'''$
+imm_002	((Association key: 1 value: 2) key: 9; key) printString	^'9'$

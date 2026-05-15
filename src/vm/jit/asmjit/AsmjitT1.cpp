@@ -610,17 +610,38 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         return true;
     }
     // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
-    // Direct heap write — no GC barrier (the stencil JIT writes inline too;
-    // see stencils.cpp::stencil_popStoreRecvVar).  If a generational GC
-    // is added later, both paths need barriers.
+    // Tests the receiver's immutable bit (header bit 23) before writing
+    // and bails to interp if set — mirrors Interpreter::setReceiverInstVar,
+    // which sends #attemptToAssign:withIndex: (Object's default raises
+    // ModificationForbidden).  Without this check, JIT-compiled setters
+    // bypassed the read-only enforcement (ObjectTest>>testBeRecursively-
+    // ReadOnlyObject failed under default JIT).  Direct heap write
+    // otherwise — no GC barrier (the stencil JIT writes inline too).
     if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
         int n = op - SistaV1::PopStoreRecvBase;
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.mov(rdx, ptr(rdi, OFF_RECEIVER));
+        // Test bit 23 of the 64-bit header.  test r/m32, imm32 reads
+        // the low 4 bytes and ANDs against imm32; ImmutableBit lives
+        // in that half so a 32-bit test is sufficient.
+        a.test(dword_ptr(rdx),
+               asmjit::Imm(static_cast<int32_t>(0x800000)));
+        a.jne(bail);
         a.mov(rcx, ptr(rdi, OFF_SP));
         a.sub(rcx, 8);
         a.mov(ptr(rdi, OFF_SP), rcx);
         a.mov(rax, ptr(rcx));
-        a.mov(rdx, ptr(rdi, OFF_RECEIVER));
         a.mov(ptr(rdx, OBJ_SLOT_0 + n * 8), rax);
+        a.jmp(end);
+        a.bind(bail);
+        a.mov(r8, ptr(rdi, OFF_METHOD));
+        a.add(r8, asmjit::Imm(bcOffsetFromMethObj));
+        a.mov(ptr(rdi, OFF_IP), r8);
+        a.mov(dword_ptr(rdi, OFF_EXIT),
+              asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.ret();
+        a.bind(end);
         return true;
     }
     // returnReceiver: returnValue = receiver; exitReason = ExitReturn; ret.
@@ -1049,15 +1070,30 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
         return true;
     }
     // popStoreRecv N (0xC8..0xCF): pop TOS, store into receiver.slot[N].
-    // No write barrier — matches stencil_popStoreRecvVar.
+    // Tests the immutable bit (header bit 23) before writing and bails
+    // to interp if set — see the x86 version above for full rationale.
     if (op >= SistaV1::PopStoreRecvBase && op <= SistaV1::PopStoreRecvLast) {
         int n = op - SistaV1::PopStoreRecvBase;
+        asmjit::Label bail = a.new_label();
+        asmjit::Label end  = a.new_label();
+        a.ldr(x4, ptr(x0, OFF_RECEIVER));
+        a.ldr(w5, ptr(x4));                 // low 32 bits of header
+        a.tst(w5, asmjit::Imm(0x800000));   // bit 23 = ImmutableBit
+        a.b_ne(bail);
         a.ldr(x2, ptr(x0, OFF_SP));
         a.sub(x2, x2, asmjit::Imm(8));
         a.str(x2, ptr(x0, OFF_SP));
         a.ldr(x1, ptr(x2));
-        a.ldr(x4, ptr(x0, OFF_RECEIVER));
         a.str(x1, ptr(x4, OBJ_SLOT_0 + n * 8));
+        a.b(end);
+        a.bind(bail);
+        a.ldr(x5, ptr(x0, OFF_METHOD));
+        a.add(x5, x5, asmjit::Imm(bcOffsetFromMethObj));
+        a.str(x5, ptr(x0, OFF_IP));
+        a.mov(w3, asmjit::Imm(EXIT_ARITH_OVERFLOW));
+        a.str(w3, ptr(x0, OFF_EXIT));
+        a.ret(x30);
+        a.bind(end);
         return true;
     }
     auto emitReturnPtr = [&](int srcOff) {
