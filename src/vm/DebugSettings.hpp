@@ -42,6 +42,16 @@ struct DebugSettings {
     bool noResume = false;            // PHARO_NO_RESUME
     bool resumeJ2J = false;           // PHARO_RESUME_J2J (external resume trampoline)
 
+    // --- asmjit-T1 path (default JIT since phase4b.37) ---
+    // The asmjit-T1 emitter replaces the legacy stencil JIT.  See
+    // scripts/jit-diff/plan_asmjit_replacement.md.  Default ON;
+    // PHARO_NO_ASMJIT_T1=1 falls back to the stencil pipeline (which is
+    // 0/37 on the differential fuzzer corpus and only retained for
+    // bisection / regression checks).  PHARO_USE_ASMJIT_T1=1 is still
+    // accepted as an explicit opt-in (no-op when default is on).
+    bool useAsmjitT1 = true;          // PHARO_USE_ASMJIT_T1 / opt-out PHARO_NO_ASMJIT_T1
+    bool useAsmjitT1Trace = false;    // PHARO_USE_ASMJIT_T1_TRACE
+
     // --- asmjit-T1 simplification / bisect knobs ---
     // Splits of the original PHARO_T1_FORCE_SIMPLE which set all three.
     bool t1ForceSimple = false;       // PHARO_T1_FORCE_SIMPLE (enables all three below)

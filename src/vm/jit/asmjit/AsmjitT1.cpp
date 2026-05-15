@@ -1785,7 +1785,7 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     if (isReal) g_compiledReal++;
     else        g_compiledStub++;
 
-    static const bool trace = std::getenv("PHARO_USE_ASMJIT_T1_TRACE") != nullptr;
+    const bool trace = g_debug.useAsmjitT1Trace;
     bool emitTrace = trace && (g_compiled <= 10 || (g_compiled % 100 == 0)
                                 || (isReal && g_compiledReal <= 30));
     if (emitTrace) {

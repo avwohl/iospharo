@@ -1563,27 +1563,19 @@ JITMethod* JITCompiler::compile(Oop compiledMethod, JITMethod* oldVersion) {
         }
     }
 
-    // PHARO_USE_ASMJIT_T1=1: route through the asmjit-emitted Tier-1
-    // path instead of the stencil pipeline.  Phase 1 of the JIT
-    // rebuild (see scripts/jit-diff/plan_asmjit_replacement.md).
-    // Every method compiles to a tiny "set ExitSend; ret" trampoline,
-    // so the runtime sees a JIT-compiled method but execution
-    // immediately bails to the interpreter on entry.  Goal: prove
-    // the integration plumbing works end-to-end before adding real
-    // bytecode emit functions in Phase 2+.
-    {
-        static const bool useAsmjitT1 =
-            std::getenv("PHARO_USE_ASMJIT_T1") != nullptr;
-        if (useAsmjitT1) {
-            JITMethod* jm = compileViaAsmjit(zone_, methodMap_, memory_,
-                                              interp_, compiledMethod);
-            if (jm) {
-                methodsCompiled_++;
-            } else {
-                compilationsFailed_++;
-            }
-            return jm;
+    // Asmjit-T1 is the default JIT path (since phase4b.37; 37/37 on the
+    // differential fuzzer corpus, stencil JIT is 0/37).  See
+    // scripts/jit-diff/plan_asmjit_replacement.md.  PHARO_NO_ASMJIT_T1=1
+    // falls back to the legacy stencil pipeline below for bisection.
+    if (g_debug.useAsmjitT1) {
+        JITMethod* jm = compileViaAsmjit(zone_, methodMap_, memory_,
+                                          interp_, compiledMethod);
+        if (jm) {
+            methodsCompiled_++;
+        } else {
+            compilationsFailed_++;
         }
+        return jm;
     }
 
     // Stencil compile path follows.

@@ -1,5 +1,15 @@
 # Plan: replace stencils with direct asmjit emission
 
+## Status (2026-05-14)
+
+**Asmjit-T1 is now the default JIT** (DebugSettings::useAsmjitT1 = true).
+37/37 differential fuzzer PASS without env vars.  Stencil pipeline kept
+as opt-in via `PHARO_NO_ASMJIT_T1=1` for bisection — but is 0/37 on the
+same corpus and slated for deletion in Phase 7 cutover.  All
+`PHARO_USE_ASMJIT_T1=1` invocations in older scripts/memory are no-ops.
+
+
+
 ## Why
 
 The current copy-and-patch stencil JIT is 41,400 lines across 31

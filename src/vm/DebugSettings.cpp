@@ -68,6 +68,14 @@ DebugSettings::DebugSettings() {
     noResume         = envPresent("PHARO_NO_RESUME");
     resumeJ2J        = envPresent("PHARO_RESUME_J2J");
 
+    // --- asmjit-T1 path (default since phase4b.37, 37/37 fuzzer PASS) ---
+    {
+        const bool noT1 = envPresent("PHARO_NO_ASMJIT_T1");
+        const bool explicitOn = envPresent("PHARO_USE_ASMJIT_T1");
+        useAsmjitT1 = explicitOn || !noT1;
+    }
+    useAsmjitT1Trace    = envPresent("PHARO_USE_ASMJIT_T1_TRACE");
+
     // --- asmjit-T1 simplification / bisect knobs ---
     t1ForceSimple       = envPresent("PHARO_T1_FORCE_SIMPLE");
     t1ForceBailMid      = t1ForceSimple || envPresent("PHARO_T1_FORCE_BAIL_MID");
