@@ -1687,6 +1687,36 @@ void Interpreter::interpret() {
         DISPATCH_NEXT();
     }
     op_push0: {
+        // PHARO_SORTSTR_WATCH: log push0 inside #isEmpty's body (or any
+        // method named #isEmpty) — we want to see if the interpreter is
+        // continuing #isEmpty's body after the JIT bail.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)
+                && pharo::g_sortstrWatchT0Active
+                && method_.isObject() && method_.rawBits() > 0x10000) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "isEmpty") {
+                static size_t pzCount = 0;
+                pzCount++;
+                if (pzCount <= 10) {
+                    Oop tos = stackTop();
+                    std::string tCls = tos.isSmallInteger() ? "SmI"
+                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                            ? memory_.classNameOf(tos) : "imm";
+                    size_t numLits = memory_.numLiteralsOf(method_);
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    uint8_t* bcS = mObj->bytes() + (1 + numLits) * 8;
+                    long ipOff = instructionPointer_ - bcS;
+                    fprintf(stderr,
+                        "[ISEMPTY-PUSH0 #%zu] in=#isEmpty ipOff=%ld "
+                        "tos=0x%llx(%s) nextBC=0x%02x fd=%zu fastPath=%d\n",
+                        pzCount, ipOff,
+                        (unsigned long long)tos.rawBits(), tCls.c_str(),
+                        *instructionPointer_, frameDepth_,
+                        (int)(*instructionPointer_ == 0x66
+                              && tos.isSmallInteger()));
+                }
+            }
+        }
         // Speculative: push0 + arith= (356K, "x = 0" pattern)
         if (*instructionPointer_ == 0x66) { // arith =
             Oop rcvr = stackTop();
@@ -1782,6 +1812,35 @@ void Interpreter::interpret() {
 
     op_jumpFalse: {
         Oop val = pop();
+        // PHARO_SORTSTR_WATCH: log every jumpFalse inside sortStructs:into:.
+        // Captures the value that JumpFalse sees so we know which #isEmpty
+        // call corresponds to the MUSTBOOL.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)
+                && pharo::g_sortstrWatchT0Active
+                && method_.isObject() && method_.rawBits() > 0x10000) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "sortStructs:into:") {
+                static size_t jfCount = 0;
+                jfCount++;
+                if (jfCount <= 20) {
+                    bool isBool = (val.rawBits() == memory_.trueObject().rawBits()
+                                  || val.rawBits() == memory_.falseObject().rawBits());
+                    std::string vCls = val.isSmallInteger() ? "SmI"
+                        : (val.isObject() && val.rawBits() >= 0x10000)
+                            ? memory_.classNameOf(val) : "imm";
+                    size_t numLits = memory_.numLiteralsOf(method_);
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    uint8_t* bcS = mObj->bytes() + (1 + numLits) * 8;
+                    long ipOff = instructionPointer_ - bcS;
+                    fprintf(stderr,
+                        "[SORTSTR-JF #%zu] ipOff=%ld val=0x%llx(%s) isBool=%d "
+                        "fd=%zu sp=%p\n",
+                        jfCount, ipOff,
+                        (unsigned long long)val.rawBits(), vCls.c_str(),
+                        (int)isBool, frameDepth_, (void*)stackPointer_);
+                }
+            }
+        }
         // PHARO_T1_TRACE_HIT diagnostic: log non-Boolean TOS at jumpFalse
         // for sortStructs:into: with extra context (the failing send was
         // just before, so log fp-relative stack to identify the bug).
@@ -2112,6 +2171,35 @@ void Interpreter::interpret() {
 
     // ====== SLOW PATH (extensions, returns, closures, etc.) ======
     op_slow:
+        // PHARO_SORTSTR_WATCH: log ReturnTop (0x5C) inside #isEmpty.
+        // Captures whether the interpreter actually runs #isEmpty's
+        // ReturnTop after the JIT bail.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)
+                && bytecode == 0x5C
+                && pharo::g_sortstrWatchT0Active
+                && method_.isObject() && method_.rawBits() > 0x10000) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "isEmpty") {
+                static size_t rtCount = 0;
+                rtCount++;
+                if (rtCount <= 10) {
+                    Oop tos = stackTop();
+                    std::string tCls = tos.isSmallInteger() ? "SmI"
+                        : (tos.isObject() && tos.rawBits() >= 0x10000)
+                            ? memory_.classNameOf(tos) : "imm";
+                    size_t numLits = memory_.numLiteralsOf(method_);
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    uint8_t* bcS = mObj->bytes() + (1 + numLits) * 8;
+                    long ipOff = instructionPointer_ - bcS;
+                    fprintf(stderr,
+                        "[ISEMPTY-RETTOP #%zu] in=#isEmpty ipOff=%ld "
+                        "tos=0x%llx(%s) fd=%zu sp=%p\n",
+                        rtCount, ipOff,
+                        (unsigned long long)tos.rawBits(), tCls.c_str(),
+                        frameDepth_, (void*)stackPointer_);
+                }
+            }
+        }
         inExtension_ = false;
         dispatchBytecode(bytecode);
         if (__builtin_expect(!running_, 0)) goto cg_exit;
