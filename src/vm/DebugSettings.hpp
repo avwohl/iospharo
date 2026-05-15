@@ -90,6 +90,11 @@ struct DebugSettings {
     // mismatches.  Off by default.
     bool t1ICHitVerify = false;       // PHARO_T1_IC_HIT_VERIFY
     bool t1TraceHit = false;          // PHARO_T1_TRACE_HIT — log IC-hit events
+    // PHARO_SORTSTR_WATCH=1: install a slot watcher on sortStructs:into:'s
+    // temp 3 (fp+4) right after PopStoreTemp 3 writes it.  Any subsequent
+    // change to that slot logs (via checkSortstrWatch()) — pinpoints the
+    // dispatched method that corrupts the caller frame.
+    bool sortstrWatch = false;
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N

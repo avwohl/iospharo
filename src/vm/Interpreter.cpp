@@ -121,6 +121,36 @@ constexpr bool ENABLE_DEBUG_LOGGING = false;
 
 uint64_t g_stepNum = 0;  // Global step counter for hang debugging (non-static for use in Primitives.cpp)
 
+// Slot watcher for the sortStructs:into: corruption hunt.  See checkSortstrWatch()
+// in this file.  Active only under PHARO_SORTSTR_WATCH=1.
+Oop* g_sortstrWatchSlot = nullptr;
+uint64_t g_sortstrWatchExpected = 0;
+bool g_sortstrWatchActive = false;
+size_t g_sortstrWatchFD = 0;
+size_t g_sortstrWatchEventNum = 0;
+}  // namespace pharo
+
+// Forward decl; defined as Interpreter method below.
+static inline void checkSortstrWatch(const char* where, size_t fd) {
+    using namespace pharo;
+    if (!g_sortstrWatchActive || !g_sortstrWatchSlot) return;
+    uint64_t cur = g_sortstrWatchSlot->rawBits();
+    if (cur != g_sortstrWatchExpected) {
+        g_sortstrWatchEventNum++;
+        fprintf(stderr,
+            "[SORTSTR-WATCH-FIRE #%zu] %s fd=%zu addr=%p "
+            "was=0x%llx now=0x%llx\n",
+            g_sortstrWatchEventNum, where, fd,
+            (void*)g_sortstrWatchSlot,
+            (unsigned long long)g_sortstrWatchExpected,
+            (unsigned long long)cur);
+        // Caller is responsible for dumping savedFrames_ + active method
+        // (since this helper doesn't have Interpreter access).
+    }
+}
+
+namespace pharo {
+
 #if PHARO_JIT_ENABLED
 // Handle to the Sista runtime created lazily inside activateMethod.
 // recoverJITAfterGC() clears its cache — raw oop keys become stale
@@ -1716,6 +1746,36 @@ void Interpreter::interpret() {
 
     op_popStoreTemp: {
         Oop value = pop();
+        // PHARO_SORTSTR_WATCH=1: when we're in sortStructs:into: and at
+        // the PopStoreTemp 3 byte, install a slot watcher on fp+4.
+        // The watcher's address + expected value get checked at every
+        // pushFrame/popFrame/key VM event so we can identify the code
+        // that mutates the slot.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+            std::string sel = memory_.selectorOf(method_);
+            if (sel == "sortStructs:into:" && (bytecode & 0x07) == 3
+                    && !g_sortstrWatchActive) {
+                g_sortstrWatchSlot = framePointer_ + 4;
+                g_sortstrWatchExpected = value.rawBits();
+                g_sortstrWatchActive = true;
+                g_sortstrWatchFD = frameDepth_;
+                std::string vcls = value.isSmallInteger() ? "SmI"
+                    : value.isObject() && value.rawBits() >= 0x10000
+                        ? memory_.classNameOf(value) : "imm";
+                fprintf(stderr,
+                    "[SORTSTR-WATCH-INSTALL] fp+4=%p expected=0x%llx "
+                    "class=%s fd=%zu byte_idx=%d\n",
+                    (void*)g_sortstrWatchSlot,
+                    (unsigned long long)g_sortstrWatchExpected,
+                    vcls.c_str(), frameDepth_, (int)(bytecode & 0x07));
+                // Also dump nil's Oop bits so we can compare.
+                fprintf(stderr,
+                    "  nil_oop=0x%llx true_oop=0x%llx false_oop=0x%llx\n",
+                    (unsigned long long)memory_.nil().rawBits(),
+                    (unsigned long long)memory_.trueObject().rawBits(),
+                    (unsigned long long)memory_.falseObject().rawBits());
+            }
+        }
         // B5 diagnostic: watch for decodeBytes: storing SmallInt to byteStream.
         if (g_debug.b5Trace && (bytecode & 0x07) == 1 &&
             method_.isObject() && value.isSmallInteger()) {
@@ -6438,6 +6498,199 @@ void Interpreter::sendLiteralTwoArgs(int literalIndex) {
 }
 
 void Interpreter::sendSelector(Oop selector, int argCount) {
+    // PHARO_SORTSTR_WATCH: catch the FIRST time sendSelector receives
+    // a non-Symbol selector — that's where the bad send originates.
+    if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+        bool isSym = false;
+        if (selector.isObject() && selector.rawBits() > 0x10000) {
+            ObjectHeader* sh = selector.asObjectPtr();
+            isSym = sh->isBytesObject();
+        }
+        if (!isSym) {
+            static size_t bsCount = 0;
+            bsCount++;
+            if (bsCount <= 5) {
+                std::string clsName = classNameOfMethod(method_);
+                std::string mSel = memory_.selectorOf(method_);
+                size_t numLits = memory_.numLiteralsOf(method_);
+                ObjectHeader* mObj = method_.isObject() ? method_.asObjectPtr() : nullptr;
+                uint8_t* bcStart = mObj ? mObj->bytes() + (1 + numLits) * 8 : nullptr;
+                long ipOff = bcStart ? instructionPointer_ - bcStart : -1;
+                size_t bcLenA = mObj ? mObj->byteSize() - (1 + numLits) * 8 : 0;
+                fprintf(stderr,
+                    "[SORTSTR-BADSEL #%zu] sel=0x%llx (not-sym) argc=%d "
+                    "in=%s>>%s ipOff=%ld bcLen=%zu method_oop=0x%llx ip=%p\n",
+                    bsCount,
+                    (unsigned long long)selector.rawBits(), argCount,
+                    clsName.c_str(), mSel.c_str(), ipOff, bcLenA,
+                    (unsigned long long)method_.rawBits(),
+                    (void*)instructionPointer_);
+                if (mObj && bcStart && bcLenA > 0) {
+                    fprintf(stderr, "  bytecodes near ip:");
+                    long lo = std::max(0L, ipOff - 8);
+                    long hi = std::min((long)bcLenA - 1, ipOff + 4);
+                    for (long i = lo; i <= hi; i++) {
+                        fprintf(stderr, " [%ld]%02x", i, bcStart[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    fprintf(stderr, "  full method bytecodes (%zu):", bcLenA);
+                    for (size_t i = 0; i < bcLenA && i < 32; i++) {
+                        fprintf(stderr, " %02x", bcStart[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    // Dump RAW MEMORY around IP (including bytes past
+                    // bcLen — they may be from adjacent objects).
+                    fprintf(stderr, "  raw bytes near IP (32 around):");
+                    uint8_t* ipB = (uint8_t*)instructionPointer_;
+                    for (int off = -16; off <= 15; off++) {
+                        fprintf(stderr, " %s%02x", off == 0 ? "[" : "",
+                                ipB[off]);
+                        if (off == 0) fprintf(stderr, "]");
+                    }
+                    fprintf(stderr, "\n");
+                    // Dump bytecodeEnd_ to see how much past end we are.
+                    fprintf(stderr,
+                        "  bytecodeEnd_=%p  IP - bytecodeEnd_ = %lld\n",
+                        (void*)bytecodeEnd_,
+                        (long long)(instructionPointer_ - bytecodeEnd_));
+                    // Dump 200 bytes starting at the method, so we can see
+                    // what's PAST it in adjacent memory.
+                    uint8_t* methStart = (uint8_t*)method_.rawBits();
+                    fprintf(stderr, "  method+0..200 (16-byte rows):\n");
+                    for (int row = 0; row < 13; row++) {
+                        fprintf(stderr, "    +%02x:", row*16);
+                        for (int b = 0; b < 16; b++) {
+                            uint8_t v = methStart[row*16 + b];
+                            fprintf(stderr, " %02x", v);
+                        }
+                        fprintf(stderr, "\n");
+                    }
+                    // The address 0x...c13d is at offset 0x8d = 141.
+                    // Adjacent object starts at offset 67 (= 8 header + 59 byteSize).
+                    fprintf(stderr,
+                        "  IP offset within method memory: %ld\n",
+                        (long)(instructionPointer_ - methStart));
+                    // Try to identify the NEXT method object after this one
+                    // (it likely contains the bytecode at IP).
+                    {
+                        size_t totalBytes2 = mObj->byteSize();
+                        size_t methObjSize = 8 + totalBytes2;
+                        // Round up to 8-byte boundary?
+                        if (methObjSize & 7) methObjSize = (methObjSize + 7) & ~7;
+                        Oop nextOop = Oop::fromRawBits(method_.rawBits() + methObjSize);
+                        if (nextOop.isObject() && nextOop.rawBits() > 0x10000
+                            && memory_.isValidPointer(nextOop)) {
+                            std::string nextSel = memory_.selectorOf(nextOop);
+                            std::string nextCls = classNameOfMethod(nextOop);
+                            size_t nextNumLits = memory_.numLiteralsOf(nextOop);
+                            ObjectHeader* nh = nextOop.asObjectPtr();
+                            fprintf(stderr,
+                                "  NEXT method: oop=0x%llx %s>>%s numLits=%zu "
+                                "byteSize=%zu classIdx=%u\n",
+                                (unsigned long long)nextOop.rawBits(),
+                                nextCls.c_str(), nextSel.c_str(),
+                                nextNumLits, nh->byteSize(), nh->classIndex());
+                            // Where would NEXT's bytecode at offset 20 be?
+                            uint8_t* nextBcStart = nh->bytes() + (1 + nextNumLits) * 8;
+                            fprintf(stderr,
+                                "  NEXT.bcStart=%p NEXT.bcStart+20=%p (IP=%p match=%d)\n",
+                                (void*)nextBcStart,
+                                (void*)(nextBcStart + 20),
+                                (void*)instructionPointer_,
+                                (nextBcStart + 20) == instructionPointer_);
+                        }
+                    }
+                    // Scan from IP backwards looking for a method header
+                    // (large SmI with 0x7FFF mask matching plausible numLits).
+                    for (int back = 1; back < 200; back++) {
+                        uint64_t* p = (uint64_t*)(instructionPointer_ - back);
+                        // Check if this looks like a SmI header (low bit 1).
+                        if (((*p) & 7) == 1) {
+                            int64_t v = (int64_t)*p >> 3;
+                            int nL = v & 0x7FFF;
+                            if (nL >= 2 && nL < 100 && (v >> 16) != 0) {
+                                // Probably a method header
+                                fprintf(stderr,
+                                    "  candidate method header at offset -%d "
+                                    "(method oop guess 0x%llx): smI=%lld nL=%d\n",
+                                    back,
+                                    (unsigned long long)((uint64_t)p - 8),  // method addr is 8 before header slot
+                                    (long long)v, nL);
+                                if (back > 20) break;  // first match probably right
+                            }
+                        }
+                    }
+                }
+                extern void dumpCxxBacktrace(const char*);
+                dumpCxxBacktrace("SORTSTR-BADSEL");
+            }
+        }
+    }
+    {
+        using namespace pharo;
+        if (__builtin_expect(g_sortstrWatchActive && g_sortstrWatchSlot, 0)) {
+            uint64_t cur = g_sortstrWatchSlot->rawBits();
+            if (cur != g_sortstrWatchExpected) {
+                g_sortstrWatchEventNum++;
+                std::string sel = memory_.selectorOf(method_);
+                std::string clsName = classNameOfMethod(method_);
+                std::string sendSel = memory_.selectorOf(selector);
+                fprintf(stderr,
+                    "[SORTSTR-WATCH-FIRE #%zu] sendSelector "
+                    "in=%s>>%s about-to-send=#%s selOop=0x%llx argc=%d "
+                    "fd=%zu was=0x%llx now=0x%llx\n",
+                    g_sortstrWatchEventNum, clsName.c_str(), sel.c_str(),
+                    sendSel.c_str(),
+                    (unsigned long long)selector.rawBits(),
+                    argCount, frameDepth_,
+                    (unsigned long long)g_sortstrWatchExpected,
+                    (unsigned long long)cur);
+                // Dump method literals to compare against the selOop.
+                Oop methHdr = method_;
+                if (methHdr.isObject() && methHdr.rawBits() > 0x10000) {
+                    size_t numLits = memory_.numLiteralsOf(methHdr);
+                    ObjectHeader* mh = methHdr.asObjectPtr();
+                    fprintf(stderr,
+                        "  method=%s>>%s numLits=%zu method_oop=0x%llx\n",
+                        clsName.c_str(), sel.c_str(), numLits,
+                        (unsigned long long)methHdr.rawBits());
+                    for (size_t i = 0; i < std::min(numLits, (size_t)6); i++) {
+                        Oop lit = mh->slotAt(1 + i);
+                        std::string lcls = "?";
+                        if (lit.isSmallInteger()) lcls = "SmI";
+                        else if (lit.isObject() && lit.rawBits() > 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            lcls = memory_.classNameOf(lit);
+                            if (lh->isBytesObject() && lh->byteSize() < 60) {
+                                std::string b((char*)lh->bytes(), lh->byteSize());
+                                fprintf(stderr,
+                                    "    lit[%zu]=0x%llx (%s) bytes=\"%s\"\n",
+                                    i, (unsigned long long)lit.rawBits(),
+                                    lcls.c_str(), b.c_str());
+                                continue;
+                            }
+                        }
+                        fprintf(stderr, "    lit[%zu]=0x%llx (%s)\n",
+                                i, (unsigned long long)lit.rawBits(),
+                                lcls.c_str());
+                    }
+                }
+                // Dump saved frames around the corruption to help identify
+                // the dispatched method that mutated sortStructs:into:'s frame.
+                fprintf(stderr, "  Saved frames:\n");
+                for (size_t i = std::max((size_t)0, frameDepth_ > 8 ? frameDepth_ - 8 : 0);
+                     i < frameDepth_; i++) {
+                    std::string fsel = memory_.selectorOf(savedFrames_[i].savedMethod);
+                    std::string fcls = classNameOfMethod(savedFrames_[i].savedMethod);
+                    fprintf(stderr, "    [%zu] %s>>%s\n", i, fcls.c_str(), fsel.c_str());
+                }
+                fprintf(stderr, "    [%zu (current)] %s>>%s\n",
+                        frameDepth_, clsName.c_str(), sel.c_str());
+                // Disarm.
+                g_sortstrWatchActive = false;
+            }
+        }
+    }
 #if PHARO_HOT_PATH_DIAG
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
@@ -9226,6 +9479,143 @@ void Interpreter::activateBlock(Oop block, int argCount) {
 // ===== FRAME MANAGEMENT =====
 
 bool Interpreter::pushFrame(Oop method, int argCount) {
+    checkSortstrWatch("pushFrame", frameDepth_);
+    // PHARO_SORTSTR_WATCH: trace every DNU activation (not gated by
+    // watcher state).  Identifies the FIRST DNU that fires under the IC
+    // probe — this is the smoking gun for what my probe corrupts.
+    if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+        std::string sel = memory_.selectorOf(method);
+        if (sel == "doesNotUnderstand:") {
+            static size_t dnuCount = 0;
+            dnuCount++;
+            if (dnuCount <= 10) {
+                std::string callerSel = memory_.selectorOf(method_);
+                std::string callerCls = classNameOfMethod(method_);
+                // arg 0 is the Message oop; try to print its selector.
+                Oop msg = stackValue(0);
+                Oop msgSel = Oop::nil();
+                if (msg.isObject() && msg.rawBits() > 0x10000) {
+                    ObjectHeader* mh = msg.asObjectPtr();
+                    if (mh->slotCount() >= 1) msgSel = mh->slotAt(0);
+                }
+                std::string msgSelStr = memory_.oopToString(msgSel);
+                std::string rcvr0Cls = "?";
+                if (argCount >= 0) {
+                    Oop rcvr = stackValue(argCount);  // recv of DNU
+                    rcvr0Cls = memory_.classNameOf(memory_.classOf(rcvr));
+                }
+                fprintf(stderr,
+                    "[SORTSTR-DNU #%zu] in=%s>>%s dnu_rcvr_class=%s "
+                    "msgSel=#%s msgSelOop=0x%llx fd=%zu "
+                    "instructionPointer_=%p method_oop=0x%llx\n",
+                    dnuCount, callerCls.c_str(), callerSel.c_str(),
+                    rcvr0Cls.c_str(),
+                    msgSelStr.empty() ? "?" : msgSelStr.c_str(),
+                    (unsigned long long)msgSel.rawBits(),
+                    frameDepth_,
+                    (void*)instructionPointer_,
+                    (unsigned long long)method_.rawBits());
+                // Dump C++ backtrace on the first DNU.
+                if (dnuCount == 1) {
+                    extern void dumpCxxBacktrace(const char* tag);
+                    dumpCxxBacktrace("SORTSTR-FIRST-DNU");
+                }
+                // Dump caller's bytecodes + ip offset for the FIRST DNU.
+                if (dnuCount == 1 && method_.isObject()) {
+                    // Dump the entire method's bytecodes.
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    size_t numLits = memory_.numLiteralsOf(method_);
+                    size_t totalBytes = mObj->byteSize();
+                    size_t litsBytes = (1 + numLits) * 8;
+                    size_t bcLenActual = totalBytes > litsBytes
+                        ? totalBytes - litsBytes : 0;
+                    fprintf(stderr,
+                        "  method.byteSize=%zu litsBytes=%zu bcLen=%zu\n",
+                        totalBytes, litsBytes, bcLenActual);
+                    uint8_t* bcStart = mObj->bytes() + litsBytes;
+                    fprintf(stderr, "  full bytecodes (%zu):", bcLenActual);
+                    for (size_t i = 0; i < bcLenActual && i < 64; i++) {
+                        fprintf(stderr, " %02x", bcStart[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    // The byte AT instructionPointer_ - 1 (since DISPATCH_NEXT
+                    // pre-increments IP) is the failing send opcode.
+                    long ipOff = instructionPointer_ - bcStart;
+                    fprintf(stderr,
+                        "  ipOff=%ld byte_at_ip-1=0x%02x byte_at_ip=0x%02x\n",
+                        ipOff,
+                        (ipOff >= 1 && (size_t)ipOff - 1 < bcLenActual) ? bcStart[ipOff-1] : 0,
+                        ((size_t)ipOff < bcLenActual) ? bcStart[ipOff] : 0);
+                }
+                if (dnuCount == 1 && method_.isObject()) {
+                    size_t numLits = memory_.numLiteralsOf(method_);
+                    ObjectHeader* mObj = method_.asObjectPtr();
+                    uint8_t* bcStart = mObj->bytes() + (1 + numLits) * 8;
+                    long ipOff = instructionPointer_ - bcStart;
+                    fprintf(stderr,
+                        "  caller_ip_off=%ld numLits=%zu\n", ipOff, numLits);
+                    fprintf(stderr, "  bytecodes near ipOff=%ld:", ipOff);
+                    size_t bcLen = mObj->byteSize() - (1 + numLits) * 8;
+                    long lo = std::max(0L, ipOff - 8);
+                    long hi = std::min((long)bcLen - 1, ipOff + 4);
+                    for (long i = lo; i <= hi; i++) {
+                        fprintf(stderr, " %02x", bcStart[i]);
+                    }
+                    fprintf(stderr, "\n");
+                    fprintf(stderr, "  literals (first 8):\n");
+                    for (size_t li = 0; li < std::min(numLits, (size_t)8); li++) {
+                        Oop lit = mObj->slotAt(1 + li);
+                        std::string lcls = "?";
+                        if (lit.isSmallInteger()) lcls = "SmI";
+                        else if (lit.rawBits() == 0) lcls = "0";
+                        else if (lit.isNil()) lcls = "nil";
+                        else if (lit.isObject() && lit.rawBits() >= 0x10000) {
+                            ObjectHeader* lh = lit.asObjectPtr();
+                            lcls = memory_.classNameOf(lit);
+                            if (lh->isBytesObject() && lh->byteSize() < 60) {
+                                std::string b((char*)lh->bytes(), lh->byteSize());
+                                fprintf(stderr,
+                                    "    lit[%zu]=0x%llx (%s) bytes=\"%s\"\n",
+                                    li, (unsigned long long)lit.rawBits(),
+                                    lcls.c_str(), b.c_str());
+                                continue;
+                            }
+                        }
+                        fprintf(stderr, "    lit[%zu]=0x%llx (%s)\n",
+                                li, (unsigned long long)lit.rawBits(),
+                                lcls.c_str());
+                    }
+                }
+                // Show details of the message Oop and its selector slot
+                if (msg.isObject() && msg.rawBits() > 0x10000) {
+                    ObjectHeader* mh = msg.asObjectPtr();
+                    fprintf(stderr,
+                        "  Message: oop=0x%llx classIdx=%u slotCount=%zu\n",
+                        (unsigned long long)msg.rawBits(),
+                        mh->classIndex(), mh->slotCount());
+                    for (size_t i = 0; i < std::min(mh->slotCount(), (size_t)4); i++) {
+                        Oop sl = mh->slotAt(i);
+                        std::string sCls = "?";
+                        if (sl.isSmallInteger()) sCls = "SmI";
+                        else if (sl.isObject() && sl.rawBits() >= 0x10000) {
+                            ObjectHeader* sh = sl.asObjectPtr();
+                            sCls = memory_.classNameOf(sl);
+                            if (sh->isBytesObject() && sh->byteSize() < 60) {
+                                std::string b((char*)sh->bytes(), sh->byteSize());
+                                fprintf(stderr,
+                                    "    msg.slot[%zu]=0x%llx (%s) bytes=\"%s\"\n",
+                                    i, (unsigned long long)sl.rawBits(),
+                                    sCls.c_str(), b.c_str());
+                                continue;
+                            }
+                        }
+                        fprintf(stderr, "    msg.slot[%zu]=0x%llx (%s)\n",
+                                i, (unsigned long long)sl.rawBits(), sCls.c_str());
+                    }
+                }
+            }
+        }
+    }
     // 2026-05-07 A1 hunt: count pushFrame calls per selector
     static const bool a1Trace =
         std::getenv("PHARO_A1_TRACE") != nullptr;
@@ -9554,6 +9944,7 @@ Oop Interpreter::getErrorObjectFromPrimFailCode() {
 
 
 bool Interpreter::popFrame() {
+    checkSortstrWatch("popFrame", frameDepth_);
     // 2026-05-07 A1 hunt: log popFrame for pollEvent:
     static const bool a1Trace =
         std::getenv("PHARO_A1_TRACE") != nullptr;
@@ -10377,6 +10768,36 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
     // Send #run:with:in: (special object 49)
     Oop runWithInSelector = memory_.specialObject(SpecialObjectIndex::SelectorRunWithIn);
     sendSelector(runWithInSelector, 3);
+}
+
+// Dump C++ backtrace via glibc's backtrace() + addr2line + nm.
+// Used by SORTSTR diagnostic.
+#include <execinfo.h>
+#include <cxxabi.h>
+void dumpCxxBacktrace(const char* tag) {
+    void* buf[40];
+    int n = backtrace(buf, 40);
+    char** syms = backtrace_symbols(buf, n);
+    fprintf(stderr, "=== %s backtrace (%d frames) ===\n", tag, n);
+    for (int i = 0; i < n; i++) {
+        // Symbols look like "binary(_ZN5pharo11Interpreter...+0xNN) [0x...]".
+        // Demangle the mangled name.
+        const char* s = syms[i];
+        const char* lp = strchr(s, '(');
+        const char* plus = lp ? strchr(lp, '+') : nullptr;
+        if (lp && plus && plus > lp + 1) {
+            std::string mangled(lp + 1, plus - lp - 1);
+            int status = 0;
+            char* demangled = abi::__cxa_demangle(mangled.c_str(), nullptr, nullptr, &status);
+            if (status == 0 && demangled) {
+                fprintf(stderr, "  #%d %s%s\n", i, demangled, plus);
+                std::free(demangled);
+                continue;
+            }
+        }
+        fprintf(stderr, "  #%d %s\n", i, s);
+    }
+    std::free(syms);
 }
 
 // IC-hit ring buffer for debugging Path B regressions.  Populated by
@@ -17373,6 +17794,7 @@ extern "C" int pharo_jit_convert_send(jit::JITState* state) {
 }
 
 bool Interpreter::tryJITActivation(Oop method, int argCount) {
+    checkSortstrWatch("tryJITActivation:entry", frameDepth_);
     if (__builtin_expect(traceSpCorrupt_, 0)) {
         uint64_t spB = (uint64_t)stackPointer_;
         uint64_t fpB = (uint64_t)framePointer_;
@@ -18685,6 +19107,35 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
+            // PHARO_SORTSTR_WATCH: check state.method vs state.ip mismatch.
+            // If state.ip isn't in state.method's bytecode range, that's
+            // the JIT producing an inconsistent state.
+            if (__builtin_expect(g_debug.sortstrWatch, 0) && state.method.isObject()
+                && state.method.rawBits() > 0x10000) {
+                ObjectHeader* mh = state.method.asObjectPtr();
+                size_t numLits = memory_.numLiteralsOf(state.method);
+                uint8_t* mBcStart = mh->bytes() + (1 + numLits) * 8;
+                uint8_t* mBcEnd = mh->bytes() + mh->byteSize();
+                if (state.ip < mBcStart || state.ip >= mBcEnd) {
+                    static size_t mismCount = 0;
+                    mismCount++;
+                    if (mismCount <= 10) {
+                        std::string mSel = memory_.selectorOf(state.method);
+                        fprintf(stderr,
+                            "[STATE-MISMATCH #%zu @ExitSendCached] "
+                            "state.method=#%s bcRange=[%p, %p) state.ip=%p\n",
+                            mismCount, mSel.c_str(),
+                            (void*)mBcStart, (void*)mBcEnd,
+                            (void*)state.ip);
+                        fprintf(stderr,
+                            "  cached=#%s (0x%llx) jitMethod=%p\n",
+                            memory_.selectorOf(cached).c_str(),
+                            (unsigned long long)cached.rawBits(),
+                            state.jitMethod);
+                    }
+                }
+            }
+
             // Diagnostic: PHARO_T1_TRACE_HIT=1 logs each IC-hit event
             // into a ring buffer so sendMustBeBoolean can dump the last
             // N hits when a failure fires (see HitRingBuffer in
@@ -19151,6 +19602,7 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                         // --- Enter callee JIT code ---
                         // No flip — W^X audit 2026-04-26.
                         JIT_CALL(chainJM->codeStart(), &state);
+                        checkSortstrWatch("chain-loop:inline-activate-return", frameDepth_);
                         chargeJITBytecodes(state);
                         jitJ2JStencilCalls_ += 1 + state.j2jTotalCalls;
 
@@ -19311,6 +19763,34 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                                 // Direct resume — no hash lookup or codeOffsetForBC.
                                 // Stay in X — W^X audit 2026-04-26.
                                 JIT_CALL(savedResumeEntry, &state);
+                                // PHARO_SORTSTR_WATCH: detect state.method
+                                // / state.ip mismatch after resume.
+                                if (__builtin_expect(g_debug.sortstrWatch, 0)
+                                        && state.method.isObject()
+                                        && state.method.rawBits() > 0x10000) {
+                                    ObjectHeader* mO = state.method.asObjectPtr();
+                                    size_t nL = memory_.numLiteralsOf(state.method);
+                                    uint8_t* mBcS = mO->bytes() + (1 + nL) * 8;
+                                    uint8_t* mBcE = mO->bytes() + mO->byteSize();
+                                    if (state.ip < mBcS || state.ip >= mBcE) {
+                                        static size_t resMis = 0;
+                                        resMis++;
+                                        if (resMis <= 10) {
+                                            std::string sMSel = memory_.selectorOf(state.method);
+                                            std::string callerSel = memory_.selectorOf(savedMethod);
+                                            fprintf(stderr,
+                                                "[RESUME-MISMATCH #%zu] "
+                                                "caller=#%s state.method=#%s "
+                                                "state.ip=%p bcRange=[%p, %p) "
+                                                "exit=%d\n",
+                                                resMis, callerSel.c_str(),
+                                                sMSel.c_str(),
+                                                (void*)state.ip,
+                                                (void*)mBcS, (void*)mBcE,
+                                                state.exitReason);
+                                        }
+                                    }
+                                }
                                 jitJ2JActChains_++;
                                 jitJ2JStencilCalls_ += state.j2jTotalCalls;
                                 chargeJITBytecodes(state);
@@ -19700,6 +20180,7 @@ jit_loop_exit:
             // Callee returned — pop one frame, push return value.
             // Remaining inline frames (if any) are left for the interpreter.
             popFrame();
+            checkSortstrWatch("tryJITActivation:after-popFrame", frameDepth_);
             // PHARO_T1_TRACE_HIT: log if a JIT method whose top-level
             // selector is a predicate returns non-Boolean.
             if (__builtin_expect(g_debug.t1TraceHit, 0)) {

@@ -839,17 +839,6 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
         a.bind(fallThru);
         return true;
     }
-    // Send sites set up IC context and exit via either ExitSendCached
-    // (cache hit, monomorphic — slot 0 only) or ExitSend (miss, full
-    // lookup via patchJITICAfterSend in the chain loop).
-    //
-    // The inline IC probe gates on `g_debug.t1ICProbe` (default-on,
-    // PHARO_T1_NO_IC_PROBE=1 to opt out).  Layout of icData[i*3..]:
-    //   [0] key — classIndex for objects, (tag|0x80000000) for SmI/Char/SmF
-    //   [1] method Oop
-    //   [2] extra (flags + J2J entry addr)
-    // The first-empty-slot fill in patchJITICAfterSend means slot 0
-    // is the monomorphic cache for this site.
     if (isPhase4SendOp(op)) {
         int nArgs = sendNArgs(op);
 
@@ -1626,6 +1615,17 @@ bool emitMethodBytes(const uint8_t* bc, size_t bcLen, uint64_t nilBits,
         for (size_t i = 0; i < bcRealLen; i++) {
             int globalIdx = (int)i + emitSkip;
             a.bind(bcLabels[globalIdx]);
+            // Diagnostic: track every emit's bcOffsetFromMethObj for the
+            // sortStructs corruption hunt.
+            static const bool t1TraceEmit =
+                std::getenv("PHARO_T1_TRACE_EMIT") != nullptr;
+            if (__builtin_expect(t1TraceEmit, 0)) {
+                fprintf(stderr,
+                    "[T1-EMIT] i=%zu globalIdx=%d op=0x%02x "
+                    "bcOffsetFromMethObj=%d siteIdx=%d\n",
+                    i, globalIdx, bcReal[i],
+                    bcOffsetBase + globalIdx, siteIdx);
+            }
             if (!emitOne_x86(a, bcReal[i], nilBits,
                              bcOffsetBase + globalIdx, siteIdx,
                              bcLabels, globalIdx)) {
@@ -1851,6 +1851,24 @@ JITMethod* compileViaAsmjit(CodeZone& zone, MethodMap& methodMap,
     static const bool noTrim =
         std::getenv("PHARO_ASMJIT_T1_NO_TRIM") != nullptr;
     size_t bcLen = noTrim ? bcLenRaw : computeLiveLength(bc, bcLenRaw);
+    // Diagnostic for the sortStructs:into: corruption hunt.
+    if (__builtin_expect(g_debug.sortstrWatch, 0)) {
+        std::string sel = memory.selectorOf(compiledMethod);
+        if (sel == "startup:" || sel == "registeredClass") {
+            static size_t cCount = 0;
+            cCount++;
+            fprintf(stderr,
+                "[T1-COMPILE-TRACE #%zu] #%s bcLenRaw=%zu bcLen=%zu "
+                "method_oop=0x%llx bytes:",
+                cCount, sel.c_str(),
+                bcLenRaw, bcLen,
+                (unsigned long long)compiledMethod.rawBits());
+            for (size_t bi = 0; bi < bcLenRaw && bi < 32; bi++) {
+                fprintf(stderr, " %02x", bc[bi]);
+            }
+            fprintf(stderr, "\n");
+        }
+    }
 
     // Buffer for emitted bytes.  Send emit (1-slot IC probe + miss path)
     // takes ~25 instructions ≈ 100 bytes; arith ≈ 70 bytes; pushes ≈ 30

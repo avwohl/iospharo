@@ -201,6 +201,100 @@ verifier + hit ring buffer) is in place. Next session can pick up by:
    an unexpected type (SmI from a method that should return
    Boolean), that's the smoking gun.
 
+## Third debug pass (2026-05-15) — lldb-style instrumented dive
+
+Added `PHARO_SORTSTR_WATCH=1` and a suite of new diagnostics:
+
+- `[SORTSTR-WATCH-INSTALL]` — installs a slot watcher on
+  `sortStructs:into:`'s `fp+4` after `PopStoreTemp 3`.
+- `[SORTSTR-WATCH-FIRE]` — fires when that slot changes value, dumps
+  current frame chain.
+- `[SORTSTR-DNU]` — logs every doesNotUnderstand: activation with the
+  caller, the DNU receiver class, and the message's selector Oop.
+- `[SORTSTR-BADSEL]` — logs whenever `sendSelector` receives a non-Symbol
+  selector (the actual point of failure), with caller method bytecodes
+  + literals + raw memory dump near IP.
+- `[STATE-MISMATCH @ExitSendCached]` — runtime check that the chain
+  loop's `state.method` and `state.ip` are consistent on every
+  IC-cached dispatch.
+- `[RESUME-MISMATCH]` — checks the same invariant after the
+  inline-activate fast-path `JIT_CALL(savedResumeEntry)` returns.
+- `[T1-COMPILE-TRACE]` — logs every JIT compile of `startup:` or
+  `registeredClass` with `bcLenRaw` and trimmed `bcLen`.
+- Backtrace dumping via glibc's `backtrace()` at the first BADSEL.
+
+### What the trace revealed
+
+The very first `doesNotUnderstand:` under the probe fires inside
+`ClassSessionHandler>>registeredClass`, dispatched with a **`nil` Oop
+as the selector**. The full state:
+
+    method_  = ClassSessionHandler>>registeredClass    (0x...c0b0, 5 literals)
+    instructionPointer_  = method_ + 0x8d (141)
+    bcLen of registeredClass    = 11 (live = 6 with returnTop at byte 5)
+    NEXT method in heap = ClassSessionHandler>>startup:  at method_+0x48
+    NEXT.byteSize = 51, NEXT.numLits = 4
+    NEXT.bcStart + 21 = method_ + 0x8d  (== the failing IP)
+
+The dispatcher's instructionPointer_ is **141 bytes past the start of
+`registeredClass`'s memory**, sitting in the THIRD method object's
+header bytes (the object that follows `startup:` in heap). The
+dispatched byte (`*instructionPointer_ - 1`) = `0x98` is actually
+identityHash byte #4 of the third method's `ObjectHeader`, but the
+dispatcher reads it as `op_send1` (lit index 8). With `method_` set
+to `registeredClass` (numLits=5), `literal(8)` returns nil, and
+`sendSelector(nil, 1)` fires the DNU.
+
+Backtrace at BADSEL shows: `main → interpret() → sendSelector` — so
+we're in the interp's main dispatch loop (NOT a JIT path).
+
+### What this means
+
+The bug is **method_ / instructionPointer_ drift**. Some code path
+sets `method_ = registeredClass` while `instructionPointer_` is left
+pointing at adjacent heap memory (somewhere inside or just past
+`startup:`).
+
+`STATE-MISMATCH @ExitSendCached` and `RESUME-MISMATCH` checks fire
+**zero** times — so the drift isn't at those checkpoints. The drift
+must happen between checkpoints, in code that:
+
+1. Writes `method_` without updating `instructionPointer_`, OR
+2. Writes `instructionPointer_` without updating `method_`.
+
+The JIT compiles `startup:` and `registeredClass` each ONCE with
+`bcLen=6` (only `4c 80 40 91 d8 58` for startup:, `10 81 00 82 70 5c`
+for registeredClass). So neither method's JIT can produce
+`state.ip = startup: + 69` directly — the max `bcOffsetFromMethObj`
+my emit generates for these is `(bcOffsetBase + 5)`, which is
+within 11 bytes of the method's bcStart.
+
+So the bad `instructionPointer_` is set by **chain-loop or popFrame
+code**, not by the JIT's `state.ip` writes.
+
+### Next session: where to look
+
+1. The chain loop's FALLBACK path at line ~19887 (`method_ =
+   exitMethod; instructionPointer_ = state.ip`) — verify that
+   `exitMethod` matches state.ip's containing method.
+2. The J2J materialization at line ~19420 (`state.method =
+   Oop::fromRawBits(state.jitMethod->compiledMethodOop); method_ =
+   state.method`) — verify state.jitMethod's compiled method matches
+   state.ip's containing method.
+3. `popFrame` paths around lines 10095-10120 — verify that
+   `instructionPointer_ = frame.savedIP` lands in
+   `frame.savedMethod`'s byte range.
+
+A targeted assertion `assert(instructionPointer_ >= method_.bytes() &&
+instructionPointer_ < method_.bytes() + method_.byteSize())` placed
+at every site that updates `method_` or `instructionPointer_` would
+identify the exact drift point. The `lldb` workflow that would
+catch this: set a hardware watchpoint on the `method_` field, run
+under the probe, and dump the call stack each time `method_` is
+written. The current MCP setup doesn't expose lldb directly, so the
+in-process backtrace via `backtrace()` is the workaround — but it
+needs to be wired into the `method_` assignment sites.
+
 ## Knobs reference
 
   PHARO_T1_IC_PROBE=1                    enable probe

@@ -95,6 +95,7 @@ DebugSettings::DebugSettings() {
     t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
     t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");
     t1TraceHit          = envPresent("PHARO_T1_TRACE_HIT");
+    sortstrWatch        = envPresent("PHARO_SORTSTR_WATCH");
     t1NoBlocks          = envPresent("PHARO_T1_NO_BLOCKS");
     t1BlocksFirstN      = envInt("PHARO_T1_BLOCKS_FIRST_N", -1);
     t1BlocksOnlyN       = envInt("PHARO_T1_BLOCKS_ONLY_N", -1);
