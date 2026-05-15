@@ -7427,6 +7427,30 @@ void Interpreter::sendSelector(Oop selector, int argCount) {
         }
 #endif
 
+        // PHARO_SORTSTR_WATCH: capture cache state right before the
+        // interpreter's inline-spec dispatch fires for #isEmpty/related
+        // sends from sortStructs:into:.
+        if (__builtin_expect(g_debug.sortstrWatch, 0)
+                && pharo::g_sortstrWatchT0Active
+                && method_.isObject()) {
+            std::string callerSel = memory_.selectorOf(method_);
+            if (callerSel == "sortStructs:into:" || callerSel == "isEmpty"
+                    || callerSel == "anyOne") {
+                std::string selStr = memory_.oopToString(selector);
+                std::string mSel = memory_.selectorOf(cached->method);
+                std::string mCls = classNameOfMethod(cached->method);
+                std::string rCls = memory_.classNameOf(rcvr);
+                fprintf(stderr,
+                    "[CACHE-PROBE] caller=#%s sel=#%s rcvr=%s "
+                    "cached_method=%s>>#%s accIdx=%d setIdx=%d "
+                    "retSelf=%d prim=%d\n",
+                    callerSel.c_str(), selStr.c_str(), rCls.c_str(),
+                    mCls.c_str(), mSel.c_str(),
+                    (int)cached->accessorIndex, (int)cached->setterIndex,
+                    (int)cached->returnsSelf, cached->primitiveIndex);
+            }
+        }
+
         // Getter fast path: pushRecvVar N + returnTop
         // Skip method activation — replace receiver with inst var value
         // Guard: byte objects have no named inst vars — reading their
@@ -8025,6 +8049,64 @@ void Interpreter::handleStackOverflow(int argCount) {
 // ===== METHOD ACTIVATION =====
 
 void Interpreter::activateMethod(Oop method, int argCount) {
+    // PHARO_SORTSTR_WATCH: log activations from sortStructs:into: with the
+    // dispatched method's identity + first bytecodes.  Captures what method
+    // is actually being run when sendSelector(#isEmpty, 0) fires.
+    if (__builtin_expect(g_debug.sortstrWatch, 0)
+            && pharo::g_sortstrWatchT0Active
+            && method.isObject() && method.rawBits() > 0x10000) {
+        std::string callerSel = memory_.selectorOf(method_);
+        if (callerSel == "sortStructs:into:") {
+            static size_t actCount = 0;
+            actCount++;
+            std::string calleeSel = memory_.selectorOf(method);
+            std::string calleeCls = classNameOfMethod(method);
+            ObjectHeader* mh = method.asObjectPtr();
+            size_t nLits = memory_.numLiteralsOf(method);
+            size_t totalBytes = mh->byteSize();
+            size_t litsBytes = (1 + nLits) * 8;
+            size_t bcLen = totalBytes > litsBytes ? totalBytes - litsBytes : 0;
+            uint8_t* bcS = mh->bytes() + litsBytes;
+            int primIdx = primitiveIndexOf(method);
+            Oop rcvr = (argCount >= 0) ? stackValue(argCount) : Oop::nil();
+            std::string rCls = memory_.classNameOf(rcvr);
+            fprintf(stderr,
+                "[SORTSTR-ACT #%zu] caller=#sortStructs:into: target=%s>>#%s "
+                "method_oop=0x%llx bcLen=%zu prim=%d argCount=%d "
+                "recv=0x%llx(%s)\n",
+                actCount, calleeCls.c_str(), calleeSel.c_str(),
+                (unsigned long long)method.rawBits(), bcLen, primIdx,
+                argCount, (unsigned long long)rcvr.rawBits(), rCls.c_str());
+            if (calleeSel == "isEmpty") {
+                fprintf(stderr, "  bytecodes:");
+                for (size_t i = 0; i < bcLen && i < 24; i++) {
+                    fprintf(stderr, " %02x", bcS[i]);
+                }
+                fprintf(stderr, "\n");
+                // Dump first few literals
+                fprintf(stderr, "  literals (first 4):");
+                for (size_t li = 0; li < std::min(nLits, (size_t)4); li++) {
+                    Oop lit = mh->slotAt(1 + li);
+                    fprintf(stderr, " %s", memory_.oopToString(lit).c_str());
+                }
+                fprintf(stderr, "\n");
+                // Dump receiver slots (firstIndex, lastIndex, array if it's OC)
+                if (rcvr.isObject() && rcvr.rawBits() >= 0x10000) {
+                    ObjectHeader* rh = rcvr.asObjectPtr();
+                    fprintf(stderr, "  recv slots:");
+                    for (size_t si = 0; si < std::min(rh->slotCount(), (size_t)4); si++) {
+                        Oop s = rh->slotAt(si);
+                        fprintf(stderr, " [%zu]=0x%llx", si,
+                                (unsigned long long)s.rawBits());
+                        if (s.isSmallInteger()) {
+                            fprintf(stderr, "(SmI %lld)", s.asSmallInteger());
+                        }
+                    }
+                    fprintf(stderr, "\n");
+                }
+            }
+        }
+    }
     if (__builtin_expect(!pushFrame(method, argCount), 0)) {
         handleStackOverflow(argCount);
         return;
