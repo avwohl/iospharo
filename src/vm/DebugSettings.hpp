@@ -89,6 +89,7 @@ struct DebugSettings {
     // selector AND receiver class matches the IC key on each HIT.  Logs
     // mismatches.  Off by default.
     bool t1ICHitVerify = false;       // PHARO_T1_IC_HIT_VERIFY
+    bool t1TraceHit = false;          // PHARO_T1_TRACE_HIT — log IC-hit events
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N

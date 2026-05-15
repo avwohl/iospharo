@@ -10327,10 +10327,57 @@ void Interpreter::invokeObjectAsMethod(Oop nonMethod, Oop selector, int argCount
     sendSelector(runWithInSelector, 3);
 }
 
+// IC-hit ring buffer for debugging Path B regressions.  Populated by
+// the chain-loop ExitSendCached handler when PHARO_T1_TRACE_HIT=1.
+// Dumped here by sendMustBeBoolean when a MUSTBOOL fires so we can see
+// what IC hits preceded the failure.
+namespace {
+struct ICHitRec {
+    uint64_t n;
+    std::string callerSel;
+    std::string cachedSel;
+    std::string rcvrCls;
+    int nArgs;
+    int primIdx;
+    void* sp;
+};
+constexpr size_t IC_HIT_RING = 30;
+ICHitRec g_icHitRing[IC_HIT_RING];
+size_t g_icHitTotal = 0;
+size_t g_icHitHead = 0;
+} // namespace
+
+void recordICHit(const std::string& callerSel, const std::string& cachedSel,
+                 const std::string& rcvrCls, int nArgs, int primIdx, void* sp) {
+    g_icHitTotal++;
+    g_icHitRing[g_icHitHead] = {g_icHitTotal, callerSel, cachedSel, rcvrCls,
+                                nArgs, primIdx, sp};
+    g_icHitHead = (g_icHitHead + 1) % IC_HIT_RING;
+}
+
+static void dumpICHitRing() {
+    if (g_icHitTotal == 0) return;
+    fprintf(stderr, "=== Last %zu IC hits (of %zu total) ===\n",
+            std::min(g_icHitTotal, IC_HIT_RING), g_icHitTotal);
+    size_t start = (g_icHitTotal >= IC_HIT_RING) ? g_icHitHead : 0;
+    size_t n = std::min(g_icHitTotal, IC_HIT_RING);
+    for (size_t i = 0; i < n; i++) {
+        const ICHitRec& r = g_icHitRing[(start + i) % IC_HIT_RING];
+        fprintf(stderr, "  [HIT #%lu] caller=#%s cached=#%s rcvr=%s "
+                       "nArgs=%d prim=%d sp=%p\n",
+                (unsigned long)r.n, r.callerSel.c_str(),
+                r.cachedSel.c_str(), r.rcvrCls.c_str(),
+                r.nArgs, r.primIdx, r.sp);
+    }
+}
+
 void Interpreter::sendMustBeBoolean(Oop value) {
     // Send mustBeBoolean to the non-boolean value, let Smalltalk handle it.
     static int logCount = 0;
     logCount++;
+    if (g_debug.t1TraceHit && logCount == 1) {
+        dumpICHitRing();
+    }
     if (logCount <= 30 || logCount % 1000 == 0) {
         std::string valClass = memory_.nameOfClass(memory_.classOf(value));
         // Compute IP offset relative to bytecode start
@@ -18585,6 +18632,25 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             countICHitDbg(state.icDataPtr);
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
+
+            // Diagnostic: PHARO_T1_TRACE_HIT=1 logs each IC-hit event
+            // into a ring buffer so sendMustBeBoolean can dump the last
+            // N hits when a failure fires (see HitRingBuffer in
+            // sendMustBeBoolean).
+            if (__builtin_expect(g_debug.t1TraceHit, 0)) {
+                extern void recordICHit(const std::string& callerSel,
+                                        const std::string& cachedSel,
+                                        const std::string& rcvrCls,
+                                        int nArgs, int primIdx, void* sp);
+                int nArgs = state.sendArgCount;
+                Oop rcvr = state.sp[-(nArgs + 1)];
+                std::string callerSel = memory_.selectorOf(state.method);
+                std::string cachedSel = memory_.selectorOf(cached);
+                std::string rcvrCls = memory_.classNameOf(rcvr);
+                int primIdx = primitiveIndexOf(cached);
+                recordICHit(callerSel, cachedSel, rcvrCls, nArgs, primIdx,
+                            (void*)state.sp);
+            }
 
             // Diagnostic: verify cached method's selector matches the IC
             // site's stored selector + receiver class matches IC key.
