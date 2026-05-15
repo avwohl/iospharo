@@ -19181,6 +19181,32 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
                             state.argCount = savedArgCount;
                             state.method = savedMethod;
 
+                            // PHARO_T1_TRACE_HIT diagnostic: log if state.sp
+                            // at callee-return differs from the savedSP
+                            // (would indicate the callee leaked SP).
+                            if (__builtin_expect(g_debug.t1TraceHit, 0)) {
+                                ptrdiff_t spDelta = state.sp - savedSP;
+                                // Negative or zero is unusual.  For a normal
+                                // callee, state.sp should equal savedSP
+                                // because the callee's returnTop pops the
+                                // return value (which was the last push).
+                                if (spDelta != 0) {
+                                    static size_t deltaCount = 0;
+                                    deltaCount++;
+                                    if (deltaCount <= 20) {
+                                        std::string callerSel = memory_.selectorOf(state.method);
+                                        std::string targetSel = memory_.selectorOf(chainTarget);
+                                        fprintf(stderr,
+                                            "[HIT-SP-DELTA #%zu] caller=#%s target=#%s "
+                                            "spDelta=%+ld slots (state.sp=%p savedSP=%p)\n",
+                                            deltaCount, callerSel.c_str(),
+                                            targetSel.c_str(),
+                                            (long)spDelta,
+                                            (void*)state.sp, (void*)savedSP);
+                                    }
+                                }
+                            }
+
                             // Pop receiver+args, push return value
                             state.sp[-(nArgs + 1)] = retVal;
                             state.sp -= nArgs;
