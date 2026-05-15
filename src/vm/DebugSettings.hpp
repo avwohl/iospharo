@@ -70,6 +70,25 @@ struct DebugSettings {
     bool t1ICProbe = false;           // PHARO_T1_IC_PROBE / opt-out PHARO_T1_NO_IC_PROBE
     int  t1ICProbeMin = -1;           // PHARO_T1_IC_PROBE_MIN — only probe opcodes >= this
     int  t1ICProbeMax = -1;           // PHARO_T1_IC_PROBE_MAX — only probe opcodes <= this
+    // Per-specialization opt-outs (default-on when probe enabled).
+    // PHARO_T1_NO_INLINE_GETTER / SETTER / RETURNS_SELF to disable
+    // individually — bisect tool for debugging path B regressions.
+    bool t1InlineGetter = true;       // PHARO_T1_NO_INLINE_GETTER inverts
+    bool t1InlineSetter = true;       // PHARO_T1_NO_INLINE_SETTER inverts
+    bool t1InlineReturnsSelf = true;  // PHARO_T1_NO_INLINE_RETURNS_SELF inverts
+    // Diagnostic: force probe to always-miss so the probe COMPUTATION runs
+    // but exits via ExitSend regardless of icData[0] match.  Isolates
+    // whether bugs are in the probe arithmetic or in the HIT path.
+    bool t1ProbeAlwaysMiss = false;   // PHARO_T1_PROBE_ALWAYS_MISS
+    // Probe HIT path exits via EXIT_SEND instead of EXIT_SEND_CACHED.
+    // Diagnostic: isolates whether the bug is in cached-method dispatch
+    // or in the probe arithmetic.  Equivalent to always-miss EXCEPT
+    // the state setup runs the full HIT branch.
+    bool t1HitAsMiss = false;         // PHARO_T1_HIT_AS_MISS
+    // Diagnostic: verify cached method's selector matches the IC site's
+    // selector AND receiver class matches the IC key on each HIT.  Logs
+    // mismatches.  Off by default.
+    bool t1ICHitVerify = false;       // PHARO_T1_IC_HIT_VERIFY
     // Block-compile bisect.
     bool t1NoBlocks = false;          // PHARO_T1_NO_BLOCKS
     int  t1BlocksFirstN = -1;         // PHARO_T1_BLOCKS_FIRST_N

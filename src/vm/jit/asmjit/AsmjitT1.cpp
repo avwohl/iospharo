@@ -886,48 +886,136 @@ bool emitOne_x86(asmjit::x86::Assembler& a, uint8_t op,
             //                  patchJITICAfterSend in Interpreter.cpp:16660.
             asmjit::Label imm = a.new_label();
             asmjit::Label haveKey = a.new_label();
+            asmjit::Label miss = a.new_label();
+            asmjit::Label dispatchCached = a.new_label();
+            asmjit::Label tryGetter = a.new_label();
+            asmjit::Label trySetter = a.new_label();
+            asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label endOfSend = a.new_label();
+
             a.mov(rcx, ptr(rdi, OFF_SP));
             int rcvrOffsetBytes = -8 * (nArgs + 1);
             a.mov(rax, ptr(rcx, rcvrOffsetBytes));   // rax = send receiver
             a.mov(rdx, rax);
             a.and_(rdx, asmjit::Imm(0x7));   // tag bits
             a.jnz(imm);
-            // Object path: edx = header_low32 & 0x3FFFFF.  32-bit ops
-            // zero-extend into rdx, so the result is properly bounded.
+            // Object path: edx = header_low32 & 0x3FFFFF (classIndex).
+            // 32-bit ops zero-extend into rdx, so the result is bounded.
             a.mov(edx, dword_ptr(rax));
             a.and_(edx, asmjit::Imm(0x3FFFFF));
             a.jmp(haveKey);
             a.bind(imm);
-            // Immediate path: keep tag in rdx, OR with 0x80000000
-            // (32-bit imm; `or edx, ...` zero-extends to rdx).
             a.or_(edx, asmjit::Imm(0x80000000));
             a.bind(haveKey);
 
-            // === Probe icData[0] ===
-            // Three-condition match: icData[0] == key AND icData[0] != 0
-            // AND icData[2] == 0 (no specialization bits set).  The
-            // extras-zero check is critical: when bits 63..57 are set
-            // the IC site is inlined-getter/setter/returnsSelf/J2J
-            // (sendInlineMonoJ2J et al), and dispatching the raw method
-            // via ExitSendCached produces a different result than the
-            // intended inline behavior (sometimes wrong, sometimes
-            // infinite-recursive — see copyTo: hang at IP=0x80..0xAF).
-            asmjit::Label miss = a.new_label();
-            a.cmp(rdx, ptr(rsi));            // icData[0] = key
+            // === Probe icData[0] only (slot 0 monomorphic) ===
+            a.cmp(rdx, ptr(rsi));
             a.jne(miss);
-            a.cmp(rdx, asmjit::Imm(0));      // also reject empty IC
+            a.cmp(rdx, asmjit::Imm(0));      // reject empty IC slot
             a.je(miss);
-            a.cmp(qword_ptr(rsi, 16), asmjit::Imm(0));  // icData[2] = extras
-            a.jne(miss);
+            if (g_debug.t1ProbeAlwaysMiss) {
+                a.jmp(miss);                  // diagnostic: never take HIT
+            }
 
-            // === HIT: set cachedTarget + ExitSendCached ===
-            a.mov(rax, ptr(rsi, 8));         // icData[1] = method Oop
-            a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
-            a.mov(dword_ptr(rdi, OFF_EXIT),
-                  asmjit::Imm(EXIT_SEND_CACHED));
+            // === Examine extras (icData[2]) to choose dispatch ===
+            // r8 = extras.  If 0 → plain dispatch via ExitSendCached.
+            // Otherwise the patchJITICAfterSend classification chose an
+            // inline-getter (bit 63), inline-setter (bit 62),
+            // returnsSelf (bit 61), or one of the other flags we don't
+            // inline yet (bit 60 J2J, 59 BLOCK_VALUE, 58 returnsLiteral,
+            // 57 multi-slot, 48..52 primKind).  Unhandled extras →
+            // dispatch the cached method and let the chain loop +
+            // activated method do the work.
+            a.mov(r8, qword_ptr(rsi, 16));
+            a.test(r8, r8);
+            a.jz(dispatchCached);
+
+            // Inline specializations need a heap-class receiver
+            // (the stencil's `tag == 0` gate). Immediates fall through
+            // to plain cached dispatch.
+            a.test(rax.r8(), asmjit::Imm(7));
+            a.jnz(dispatchCached);
+
+            if (g_debug.t1InlineGetter) {
+                a.bt(r8, asmjit::Imm(63));
+                a.jc(tryGetter);
+            }
+            if (g_debug.t1InlineSetter) {
+                a.bt(r8, asmjit::Imm(62));
+                a.jc(trySetter);
+            }
+            if (g_debug.t1InlineReturnsSelf) {
+                a.bt(r8, asmjit::Imm(61));
+                a.jc(tryReturnsSelf);
+            }
+            a.jmp(dispatchCached);
+
+            // === Inline getter ===
+            // val = receiver->slots[slotIdx]; sp[-1-nArgs] = val; sp -= nArgs.
+            // For 0-arg getters (the common case) nArgs=0 → sp unchanged,
+            // val replaces receiver at sp[-1].
+            a.bind(tryGetter);
+            a.mov(rcx, r8);
+            a.and_(rcx, asmjit::Imm(0xFFFF));    // slotIdx
+            a.mov(rdx, ptr(rax, rcx, 3, 8));     // [rax + slotIdx*8 + 8]
+            a.mov(rcx, ptr(rdi, OFF_SP));
+            a.mov(ptr(rcx, rcvrOffsetBytes), rdx);
+            if (nArgs > 0) {
+                a.sub(rcx, asmjit::Imm(8 * nArgs));
+                a.mov(ptr(rdi, OFF_SP), rcx);
+            }
+            a.jmp(endOfSend);
+
+            // === Inline setter ===
+            // arg = sp[-1]; receiver->slots[slotIdx] = arg;
+            // sp[-1-nArgs] = receiver (already true); sp -= nArgs.
+            // No write barrier — the YG scavenge does a full old-space scan
+            // (ObjectMemory.cpp:1538) so missed remembered-set updates are
+            // tolerated.  The stencil JIT's inline setter relies on this
+            // same property.
+            a.bind(trySetter);
+            a.mov(rcx, r8);
+            a.and_(rcx, asmjit::Imm(0xFFFF));
+            a.mov(rdx, ptr(rdi, OFF_SP));
+            a.mov(r9, ptr(rdx, -8));             // arg = sp[-1]
+            a.mov(ptr(rax, rcx, 3, 8), r9);      // recv->slot[slotIdx] = arg
+            if (nArgs > 0) {
+                a.sub(rdx, asmjit::Imm(8 * nArgs));
+                a.mov(ptr(rdi, OFF_SP), rdx);
+            }
+            a.jmp(endOfSend);
+
+            // === returnsSelf ===
+            // Receiver is already at sp[-1-nArgs]; just pop nArgs and
+            // it becomes TOS.
+            a.bind(tryReturnsSelf);
+            if (nArgs > 0) {
+                a.mov(rcx, ptr(rdi, OFF_SP));
+                a.sub(rcx, asmjit::Imm(8 * nArgs));
+                a.mov(ptr(rdi, OFF_SP), rcx);
+            }
+            a.jmp(endOfSend);
+
+            // === Plain cached dispatch (no inline opt) ===
+            a.bind(dispatchCached);
+            if (g_debug.t1HitAsMiss) {
+                a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
+                a.ret();
+            } else {
+                a.mov(rax, ptr(rsi, 8));         // icData[1] = method Oop
+                a.mov(ptr(rdi, OFF_CACHED_TARGET), rax);
+                a.mov(dword_ptr(rdi, OFF_EXIT),
+                      asmjit::Imm(EXIT_SEND_CACHED));
+                a.ret();
+            }
+
+            // === Miss — chain loop does the IC fill ===
+            a.bind(miss);
+            a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
             a.ret();
 
-            a.bind(miss);
+            a.bind(endOfSend);
+            return true;  // inline paths fall through to next bytecode
         }
 
         a.mov(dword_ptr(rdi, OFF_EXIT), asmjit::Imm(EXIT_SEND));
@@ -1327,15 +1415,21 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             if (icMax >= 0 && (int)op > icMax) probeThis = false;
         }
         if (probeThis) {
-            // === Lookup key into x4 ===
-            // Send-receiver lives at sp[-1-nArgs], NOT state.receiver.
-            //   Object: low 22 bits of *recv.
-            //   Immediate: (tag | 0x80000000).
+            // See x86 version for the protocol; this is the ARM64 mirror
+            // with the inline-getter / inline-setter / returnsSelf
+            // specializations.
             asmjit::Label imm = a.new_label();
             asmjit::Label haveKey = a.new_label();
+            asmjit::Label miss = a.new_label();
+            asmjit::Label dispatchCached = a.new_label();
+            asmjit::Label tryGetter = a.new_label();
+            asmjit::Label trySetter = a.new_label();
+            asmjit::Label tryReturnsSelf = a.new_label();
+            asmjit::Label endOfSend = a.new_label();
+
             a.ldr(x2, ptr(x0, OFF_SP));
             int rcvrOffsetBytes = -8 * (nArgs + 1);
-            a.ldur(x1, ptr(x2, rcvrOffsetBytes));
+            a.ldur(x1, ptr(x2, rcvrOffsetBytes));   // x1 = receiver
             a.and_(x4, x1, asmjit::Imm(0x7));
             a.cbnz(x4, imm);
             a.ldr(w4, ptr(x1));               // low 32 bits of header
@@ -1345,24 +1439,85 @@ bool emitOne_arm64(asmjit::a64::Assembler& a, uint8_t op,
             a.orr(w4, w4, asmjit::Imm(0x80000000U));
             a.bind(haveKey);
 
-            // === Probe icData[0] ===  (see x86 version for the
-            // three-condition rationale: match + non-zero + no specialization.)
-            asmjit::Label miss = a.new_label();
-            a.ldr(x6, ptr(x5));               // icData[0] = key
+            a.ldr(x6, ptr(x5));               // icData[0]
             a.cmp(x4, x6);
             a.b_ne(miss);
-            a.cbz(x4, miss);                  // key == 0 → fresh IC
-            a.ldr(x6, ptr(x5, 16));           // icData[2] = extras
-            a.cbnz(x6, miss);                 // non-zero extras → inline-getter/J2J
+            a.cbz(x4, miss);
+            if (g_debug.t1ProbeAlwaysMiss) {
+                a.b(miss);                     // diagnostic: never take HIT
+            }
 
-            // === HIT: cachedTarget + ExitSendCached ===
+            // x7 = extras
+            a.ldr(x7, ptr(x5, 16));
+            a.cbz(x7, dispatchCached);
+
+            // Inline specializations need heap receiver (tag==0)
+            a.tst(x1, asmjit::Imm(0x7));
+            a.b_ne(dispatchCached);
+
+            if (g_debug.t1InlineGetter) {
+                a.tbnz(x7, asmjit::Imm(63), tryGetter);
+            }
+            if (g_debug.t1InlineSetter) {
+                a.tbnz(x7, asmjit::Imm(62), trySetter);
+            }
+            if (g_debug.t1InlineReturnsSelf) {
+                a.tbnz(x7, asmjit::Imm(61), tryReturnsSelf);
+            }
+            a.b(dispatchCached);
+
+            // === Inline getter: val = recv->slots[slotIdx] ===
+            a.bind(tryGetter);
+            a.and_(x6, x7, asmjit::Imm(0xFFFF));   // slotIdx
+            // val = *(recv + 8 + slotIdx*8)
+            a.add(x3, x1, x6, asmjit::a64::lsl(3));
+            a.ldr(x6, ptr(x3, 8));
+            a.ldr(x2, ptr(x0, OFF_SP));
+            a.stur(x6, ptr(x2, rcvrOffsetBytes));
+            if (nArgs > 0) {
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+            }
+            a.b(endOfSend);
+
+            // === Inline setter: recv->slots[slotIdx] = arg ===
+            a.bind(trySetter);
+            a.and_(x6, x7, asmjit::Imm(0xFFFF));
+            a.ldr(x2, ptr(x0, OFF_SP));
+            a.ldur(x3, ptr(x2, -8));            // arg = sp[-1]
+            a.add(x4, x1, x6, asmjit::a64::lsl(3));
+            a.str(x3, ptr(x4, 8));
+            if (nArgs > 0) {
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+            }
+            a.b(endOfSend);
+
+            // === returnsSelf ===
+            a.bind(tryReturnsSelf);
+            if (nArgs > 0) {
+                a.ldr(x2, ptr(x0, OFF_SP));
+                a.sub(x2, x2, asmjit::Imm(8 * nArgs));
+                a.str(x2, ptr(x0, OFF_SP));
+            }
+            a.b(endOfSend);
+
+            // === Plain cached dispatch ===
+            a.bind(dispatchCached);
             a.ldr(x6, ptr(x5, 8));            // icData[1] = method Oop
             a.str(x6, ptr(x0, OFF_CACHED_TARGET));
             a.mov(w3, asmjit::Imm(EXIT_SEND_CACHED));
             a.str(w3, ptr(x0, OFF_EXIT));
             a.ret(x30);
 
+            // === Miss ===
             a.bind(miss);
+            a.mov(w3, asmjit::Imm(EXIT_SEND));
+            a.str(w3, ptr(x0, OFF_EXIT));
+            a.ret(x30);
+
+            a.bind(endOfSend);
+            return true;
         }
 
         a.mov(w3, asmjit::Imm(EXIT_SEND));

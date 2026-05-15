@@ -88,6 +88,12 @@ DebugSettings::DebugSettings() {
     }
     t1ICProbeMin        = envInt("PHARO_T1_IC_PROBE_MIN", -1);
     t1ICProbeMax        = envInt("PHARO_T1_IC_PROBE_MAX", -1);
+    t1InlineGetter      = !envPresent("PHARO_T1_NO_INLINE_GETTER");
+    t1InlineSetter      = !envPresent("PHARO_T1_NO_INLINE_SETTER");
+    t1InlineReturnsSelf = !envPresent("PHARO_T1_NO_INLINE_RETURNS_SELF");
+    t1ProbeAlwaysMiss   = envPresent("PHARO_T1_PROBE_ALWAYS_MISS");
+    t1HitAsMiss         = envPresent("PHARO_T1_HIT_AS_MISS");
+    t1ICHitVerify       = envPresent("PHARO_T1_IC_HIT_VERIFY");
     t1NoBlocks          = envPresent("PHARO_T1_NO_BLOCKS");
     t1BlocksFirstN      = envInt("PHARO_T1_BLOCKS_FIRST_N", -1);
     t1BlocksOnlyN       = envInt("PHARO_T1_BLOCKS_ONLY_N", -1);

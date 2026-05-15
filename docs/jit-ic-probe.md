@@ -118,3 +118,76 @@ Send-rate parity with stock Pharo (~100× our current rate) will
 require either the inline specializations (path B) or a per-hit
 class re-validation (path A). Both are substantial work; this
 note is a hand-off, not a fix.
+
+## Path B attempt 2026-05-15 — narrows the bug to ExitSendCached
+
+Took another swing at path B. Added inline-getter (bit 63),
+inline-setter (bit 62), and returnsSelf (bit 61) emit paths in
+both x86 and ARM64. Each individually gated:
+
+    PHARO_T1_NO_INLINE_GETTER=1     # skip bit 63 path → dispatch_cached
+    PHARO_T1_NO_INLINE_SETTER=1     # skip bit 62 path
+    PHARO_T1_NO_INLINE_RETURNS_SELF=1
+
+Diagnostic knobs:
+
+    PHARO_T1_PROBE_ALWAYS_MISS=1    # probe runs but never takes HIT exit
+    PHARO_T1_HIT_AS_MISS=1          # HIT path exits via ExitSend instead of
+                                    # ExitSendCached
+    PHARO_T1_IC_HIT_VERIFY=1        # check cached method's selector and
+                                    # receiver class match the IC at each hit
+
+The bisect revealed: **the bug is not in the inline specializations
+or the probe arithmetic**. It's specifically in the
+`ExitSendCached` dispatch path from our T1 emit.
+
+    Configuration                               Result
+    ----------------------------------------    -----------------------
+    probe OFF (default)                         eval "3+4" → '7' ✓
+    probe ON, always-miss (HIT skips exit)     '7' ✓
+    probe ON, hit-as-miss (HIT→ExitSend)       '7' ✓
+    probe ON, all specs OFF (HIT→ExitSendCached)  MUSTBOOL ✗
+    probe ON, only getter (bit 63)             MUSTBOOL ✗
+    probe ON, only setter                      MUSTBOOL ✗
+    probe ON, only returnsSelf                 MUSTBOOL ✗
+
+So even with all the inline opts gated off — just the "raw cached
+dispatch" via `ExitSendCached` — the result is wrong. With
+`PHARO_T1_IC_HIT_VERIFY=1` the runtime verify check found **zero**
+selector or receiver-class mismatches: the dispatched method oop
+is the correct method for the correct receiver class.
+
+The failure mode: `#sortStructs:into:` (interp-executed because it
+has a 2-byte `PushArray` we don't compile) sends `#isEmpty` to its
+first arg. The cached implementation is reached via our chain
+loop's `ExitSendCached` path → fallback → `executePrimitive` (or
+inline-activate), runs to completion, returns its value. But the
+*value pushed on the caller's stack* comes back as an SmI 160
+(some collection's size) instead of a Boolean. Subsequent
+`jumpFalse` fires MUSTBOOL.
+
+The same code path is exercised by the legacy stencil JIT (which
+also exits via `ExitSendCached` when its inline-opts don't fire),
+so the chain-loop ExitSendCached handler is known-correct under
+that exerciser. What's different about our T1's exit state isn't
+yet known; possibilities:
+
+- A pre-send state field that's set differently (state.receiver,
+  state.tempBase, state.literals, j2j-pool fields).
+- The bcToCode resume address landing on the wrong bytecode for
+  T1-compiled methods after the callee returns.
+- An interaction with `upgradeICToJ2J` writing extras that
+  conflict with T1-compiled callees.
+
+The infrastructure (probe + spec emits + bisect knobs + hit
+verifier) is in place. Next session can pick up by:
+
+1. Re-running with `PHARO_T1_IC_PROBE=1 PHARO_T1_IC_HIT_VERIFY=1`
+   and adding a stderr trace at the chain-loop's `ExitSendCached`
+   handler logging the cached method, receiver, expected selector,
+   and the value on the stack after dispatch.
+2. Comparing T1 and stencil JIT's state-at-exit byte-for-byte.
+3. Looking at `state.j2jSaveCursor / j2jSaveLimit / j2jDepth` —
+   these are set by the inline-activate path but not by our send
+   emit. If T1's callee uses them differently, that could cause
+   stack confusion.

@@ -18586,6 +18586,67 @@ bool Interpreter::tryJITActivation(Oop method, int argCount) {
             instructionPointer_ = state.ip;
             stackPointer_ = state.sp; do { if (__builtin_expect(traceSpCorrupt_,0)) { uint64_t _spB=(uint64_t)stackPointer_; if((_spB&7)==1){static int _n=0;if(_n++<8){void*_ra=__builtin_return_address(0);Dl_info _info{};int _got=dladdr(_ra,&_info);fprintf(stderr,"[SP-CORRUPT-stateSp] sp=0x%llx caller=%s+%lld method=#%s fd=%zu\n",(unsigned long long)_spB,_got&&_info.dli_sname?_info.dli_sname:"?",_got?(long long)((uint8_t*)_ra-(uint8_t*)_info.dli_saddr):0LL,memory_.selectorOf(method_).c_str(),frameDepth_);}}} } while(0);
 
+            // Diagnostic: verify cached method's selector matches the IC
+            // site's stored selector + receiver class matches IC key.
+            // Off by default; only useful for debugging Path B regressions.
+            if (__builtin_expect(g_debug.t1ICHitVerify, 0) && state.icDataPtr) {
+                uint64_t selBits = state.icDataPtr[jit::IC_SELBITS_SLOT];
+                if (selBits == 0 && state.jitMethod) {
+                    auto* jm = reinterpret_cast<jit::JITMethod*>(state.jitMethod);
+                    if (uint64_t* sba = jm->selBitsArray()) {
+                        uint8_t* icStart = jm->icZoneStart();
+                        ptrdiff_t off =
+                            reinterpret_cast<uint8_t*>(state.icDataPtr) - icStart;
+                        if (off >= 0 && (off % jit::IC_BYTES_PER_SITE) == 0) {
+                            uint32_t siteIdx =
+                                (uint32_t)(off / jit::IC_BYTES_PER_SITE);
+                            if (siteIdx < jm->numICEntries)
+                                selBits = sba[siteIdx];
+                        }
+                    }
+                }
+                Oop sendSel = Oop::fromRawBits(selBits);
+                size_t nLits = memory_.numLiteralsOf(cached);
+                Oop cachedSel = nLits >= 2
+                    ? memory_.fetchPointer(nLits - 1, cached) : Oop();
+                if (cachedSel.isObject()
+                    && cachedSel.rawBits() > 0x10000
+                    && !cachedSel.asObjectPtr()->isBytesObject()
+                    && cachedSel.asObjectPtr()->slotCount() >= 2) {
+                    cachedSel = cachedSel.asObjectPtr()->slotAt(1);
+                }
+                Oop rcvr = state.sp[-(state.sendArgCount + 1)];
+                uint64_t rcvrKey;
+                uint64_t tag = rcvr.rawBits() & 0x7;
+                if (tag == 0 && rcvr.rawBits() >= 0x10000) {
+                    rcvrKey = rcvr.asObjectPtr()->classIndex();
+                } else {
+                    rcvrKey = tag | 0x80000000ULL;
+                }
+                bool selMis = cachedSel.rawBits() != sendSel.rawBits();
+                bool keyMis = rcvrKey != state.icDataPtr[0];
+                if (selMis || keyMis) {
+                    static size_t mismatch = 0;
+                    mismatch++;
+                    if (mismatch <= 10) {
+                        fprintf(stderr,
+                                "[IC-HIT-VERIFY #%zu] MIS%s%s "
+                                "site_sel=#%s cached_sel=#%s "
+                                "caller_method=#%s "
+                                "rcvr_class=%s rcvr_key=0x%llx ic_key=0x%llx\n",
+                                mismatch,
+                                selMis ? "SEL" : "",
+                                keyMis ? "KEY" : "",
+                                memory_.selectorOf(sendSel).c_str(),
+                                memory_.selectorOf(cached).c_str(),
+                                memory_.selectorOf(state.method).c_str(),
+                                memory_.classNameOf(rcvr).c_str(),
+                                (unsigned long long)rcvrKey,
+                                (unsigned long long)state.icDataPtr[0]);
+                    }
+                }
+            }
+
             // Upgrade IC entry to J2J if target is now JIT-compiled
             upgradeICToJ2J(state.icDataPtr, cached, state.sendArgCount, state.method);
 
